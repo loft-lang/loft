@@ -749,6 +749,16 @@ release back to the walk, which reports it.  First bisect step for a copied reco
 reads its source's data, or a store that grows across rebinds of such a record; guard
 `tests/scripts/157-a-record-of-plain-vectors-copies-and-releases-by-its-fields.loft`.
 
+**`LOFT_NO_RELEASE_PLAN=1`** (runtime, BOTH backends) sends a record whose heap is texts and
+vectors of text-owning elements through the walk of its type again when it is released in a
+store that lives on (a reused buffer, an element written over).  With it off, such a record is
+released by its type's plan (`Stores::release_by_plan`, at most eight slots, an element of at
+most four texts): each text deleted, each vector's element texts and then its block, every field
+cleared, in the walk's order.  A pointer past the store or a length that does not fit sends the
+release back to the walk, which reports it.  First bisect step for a store that grows across
+rebinds of such a record, or a text that reads freed bytes after one; guard
+`tests/scripts/a-record-of-texts-is-released-by-its-plan.loft`.
+
 **A removed record a stored reference named leaves a tombstone (default-ON, both backends,
 `@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
 keeps such a record's header word as a one-word block that no claim reuses and frees the rest,

@@ -522,11 +522,11 @@ the record it points at, not a place of the holder's.
                  after the first.  The release is the reuse's, at the call site
                  that reuses: a buffer offered once (a placed record, a return
                  arena) holds nothing yet and pays nothing.  A record buffer is
-                 not a store root, so the release is the walk of its fields, not
-                 a reset; it walks the record's own type, or a struct-enum's
-                 PARENT type, so it follows the variant the buffer HOLDS rather
-                 than the one about to be written.  A record of scalars has
-                 nothing to release and emits nothing.  A record whose every
+                 not a store root, so the release is the walk of its fields (or
+                 its type's RELEASE PLAN, the walk's frees in its order, when its
+                 heap is texts and vectors of text-owning elements), not a reset,
+                 of its own type or a struct-enum's PARENT type: the variant the
+                 buffer HOLDS.  A record of scalars releases and emits nothing.  A record whose every
                  heap slot is EMPTY at the release — each text and collection
                  slot zero, each struct-enum tag absent or naming a variant that
                  owns no heap, read from the type's cached slot list — releases

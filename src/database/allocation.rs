@@ -5503,7 +5503,7 @@ impl Stores {
         Some(())
     }
 
-    /// `remove_claims_mode` for a record with a release plan: each text deleted, each
+    /// `@FR-H-ClearRelease` — `remove_claims_mode` for a record with a release plan: each text deleted, each
     /// vector's element texts and then its block, the fields cleared — what the type walk
     /// does for such a record, in its order, without asking each field's type what it is.
     /// `false`, with nothing done, for a type without a plan and when any pointer it would

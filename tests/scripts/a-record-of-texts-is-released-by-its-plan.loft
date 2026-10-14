@@ -1,5 +1,5 @@
-// `@FR-H-ReleasePlan` — a record whose heap is texts, and vectors whose elements own texts at
-// most, is released by its type's plan: each text deleted, each vector's element texts and
+// `@FR-H-ClearRelease`'s record clause, by plan — a record whose heap is texts, and vectors
+// whose elements own texts at most, is released by its type's plan: each text deleted, each vector's element texts and
 // then its block, every field cleared, in the order the type walk releases them.  Every cell
 // rebuilds its record many times through one binding, so each pass releases the last one;
 // it asserts the VALUES a hand computation gives AND that the live-record count does not move
@@ -10,7 +10,14 @@
 // c2 (a text beside a vector of scalars), c3 (an absent vector field), c4 (empty texts and
 // vectors), c6 (a text two records deep inside a vector element).  Declined to the walk: c5
 // (an element of five texts, an enum payload, a vector of vectors).  c7 replaces an element
-// of a vector of such records, which releases the old element by its plan.
+// of a vector of such records, which releases the old element by its plan.  A plan runs only
+// where a record is released in a store that lives on — a buffer reused per pass (c1, c2,
+// c5's elements) or an element written over (c3, c6, c7); a store dropped whole needs none.
+//
+// @falsified-by: tests/falsified/a-record-of-texts-is-released-by-its-plan.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the leak channel — the patch keeps each vector element's texts; every value
+//   holds and c1's live-record count grows from 52 at pass 5 to 148 at pass 17.  A second
+//   plant, the record's own texts kept, fails the same way on both backends.
 
 struct Box2 { x: integer, y: integer }
 struct Btn { id: integer, at: Box2, label: text, key: text, on: boolean }
