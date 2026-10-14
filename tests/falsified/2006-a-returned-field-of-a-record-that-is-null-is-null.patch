@@ -1,0 +1,22 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 7dfb38ef6..fe6e95a65 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -16678,7 +16678,7 @@ impl Parser {
+             Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
+             // A FIELD of a record that may be absent is absent with it (loft#2006).  The read
+             // is pure, so the test re-reads it.
+-            Value::Call(_, _) if self.copy_source_may_be_absent(&orig) => Some(orig.clone()),
++            Value::Call(_, _) if false && self.copy_source_may_be_absent(&orig) => Some(orig.clone()),
+             Value::Call(d, _)
+                 if *d == self.data.def_nr("OpGetDbRef")
+                     && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+@@ -16867,7 +16867,7 @@ impl Parser {
+                 // A record local is such a leaf whatever its type: a dense one can hold the
+                 // `null` its parameter was handed (`@FR-N-Store`).
+                 // …and so is a field path rooted at one.
+-                Value::Var(_) | Value::Call(_, _) => p.copy_source_may_be_absent(v),
++                Value::Var(x) => p.record_local_may_be_absent(*x),
+                 // A literal's block ends in the buffer it just built, which is there.
+                 Value::Block(bl) if bl.name == "Object" => false,
+                 Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(p, x)),

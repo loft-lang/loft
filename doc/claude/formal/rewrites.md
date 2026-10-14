@@ -3222,7 +3222,9 @@ line in `Output::output_function`'s prelude.
                  typed write per field; absent, the record copy's own null arm — a
                  destination just created is written absent, an existing one keeps
                  what it held (`@C137`).  A copy from a DENSE tuple is that write only
-                 where the tuple is surely present.  Leaves of
+                 where the tuple is surely present.  A presence test of a dense
+                 COMPILER TEMPORARY is never served: its preamble `null` is what the
+                 release machinery tests where no bind ran.  Leaves of
                  a `-> S?` body: its own `Object` build (present), the bare `null`
                  sentinel (absent), a `-> S?` call or `τ?` value local, and a leaf
                  whose own tuple is DENSE — a `-> S` call, a dense value local, and a

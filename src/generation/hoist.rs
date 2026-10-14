@@ -16432,6 +16432,16 @@ fn local_uses_ok(
     // would be expected at (a tuple parameter, a copy into a record).
     let key = c.locals.get(&v).copied();
     let nullable = key.is_some_and(is_nullable_layout);
+    // A presence test of a DENSE compiler temporary (the phantom buffer aside) is never the
+    // constant "present" (`@FR-N-Store`): its `null` is a hoisted preamble the release
+    // machinery tests where no bind ran — a work ref's displaced record before the call
+    // writes the buffer, a `??` lift bound in one arm and released on every path — so such a
+    // temporary keeps the record form.  Only the TEST: after its bind a temporary is
+    // present, so a copy from it, its result and a join's widening keep `local_surely_present`.
+    let temp_test_unserved = !nullable
+        && c.data.def(c.def_nr).variables().is_compiler_generated(v)
+        && own_retbuf(c.data, c.own) != Some(v);
+    let present = || local_surely_present(v, c, &mut HashSet::new());
     let no_objects = HashSet::new();
     let objects = phantom.unwrap_or(&no_objects);
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
@@ -16482,9 +16492,13 @@ fn local_uses_ok(
                 }
                 // `(R-ValueLocal)` — a hand-off to a TUPLE PARAMETER, and a nullable tuple's
                 // presence test.
-                accounted += handoffs_and_presence(data, params, *d, name, args, v, key, &|| {
-                    local_surely_present(v, c, &mut HashSet::new())
-                });
+                let temp_test = temp_test_unserved
+                    && arg_is_v(0)
+                    && args.len() == 1
+                    && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull");
+                if !temp_test {
+                    accounted += handoffs_and_presence(data, params, *d, name, args, v, key, &present);
+                }
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)
@@ -16521,7 +16535,7 @@ fn local_uses_ok(
                     && (!view_offs.is_empty()
                         || (!nullable
                             && arg_is_v(0)
-                            && !local_surely_present(v, c, &mut HashSet::new())));
+                            && !present()));
                 // The copy inside a discharged-view return is dropped with the block and
                 // its source stands as a LEAF read, accounted above as served — so that
                 // one mention is not counted here a second time (a bare mint beside it

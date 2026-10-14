@@ -117,6 +117,18 @@ All notable changes to the loft language and interpreter.
   source is a position `promote_presence` asks.  A presence test of a surely present dense
   tuple is a constant (`PresenceEmitter`), and a `null` leaf in a dense function's result
   promotes the function.
+- **A compiler temporary's presence test is never a constant** (`hoist::local_uses_ok`).
+  The presence clause above serves a presence test of a dense value local as the constant
+  "present" where the local is surely present, and `local_surely_present` skips a local's
+  `null` as its declaration.  For a compiler temporary that `null` is a hoisted preamble the
+  release machinery TESTS where no bind ran: a call's work buffer for the record it displaces
+  before the call writes it, a `??` lift bound in one arm and released on every path.  The
+  constant materialised a record never minted and released it (`D0`), on 20 native cells of
+  the drop gate.  Such a test is not served, so the temporary keeps the record form; only the
+  test — after its bind a temporary is present, so a copy from it, a function's result and a
+  join's widening read as before, and the rewrite census admits exactly what it did
+  (`R-ValueRecord` 18 in bench 17, `vec2`/`vec3`/`vertex` among them).  The live
+  `work_refs` set could not answer it: `Function::copy` starts it empty in the scope pass.
 - 253 corpus files change native code; the interpreter's output is identical on all 2350
   that ran, and every one of the 253 answers the same on both backends.
 

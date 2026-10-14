@@ -109,12 +109,15 @@ fn one_arm(c: boolean) -> JH { src = mk_dense(); return if c { src.h } else { JH
 fn two_fields(c: boolean) -> JH { src = mk_two(); return if c { src.h } else { JH { id: 3 } }; }
 
 // Both arms project the SAME local, different members: the skip is per arm, not per local.
+// Each arm is its own copy, and each is refused.
+// @EXPECT_ERROR: cannot copy a member of `src` here
 // @EXPECT_ERROR: cannot copy a member of `src` here
 fn both_arms(c: boolean) -> JH { src = mk_two(); return if c { src.h } else { src.g }; }
 
 // The arms project DIFFERENT locals: each answers for its own, and the one an arm does not
 // name owes its whole record on that path.
 // @EXPECT_ERROR: cannot copy a member of `p` here
+// @EXPECT_ERROR: cannot copy a member of `q` here
 fn two_locals(c: boolean) -> JH { p = mk_dense(); q = mk_two(); return if c { p.h } else { q.h }; }
 
 // A member two levels down out of one arm.
