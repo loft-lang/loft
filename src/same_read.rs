@@ -472,7 +472,282 @@ fn rewrite_in(
         eprintln!("same-read: {fname} binds {gi} get-or-insert lookup(s)");
     }
     *operators = out;
-    n + g + gi
+    let m = bind_match_reads(data, vars, block);
+    if m > 0 && trace() {
+        eprintln!("same-read: {fname} binds {m} read(s) a slice match's patterns share");
+    }
+    n + g + gi + m
+}
+
+// ─── THE MATCH CLAUSE ──────────────────────────────────────────────────────────────────
+
+fn match_off() -> bool {
+    crate::env_once!(std::env::var("LOFT_NO_MATCH_READ").is_ok_and(|v| v != "0"))
+}
+
+/// A length a pattern test proves: `base + n <= len(subject)`, `base` the cursor's position
+/// local or `None` for a plain subject.
+type Proved = (Option<u16>, i32);
+
+/// The element read `subject[base + k]` (`OpGetVector(subject, size, index)` with the index
+/// `k` or `base + k`, `k >= 0`), as its `(base, k)`.
+fn elem_read(data: &Data, v: &Value, subject: u16) -> Option<Proved> {
+    let Value::Call(op, args) = v.unspan() else {
+        return None;
+    };
+    let [s, Value::Int(_), idx] = args.as_slice() else {
+        return None;
+    };
+    if data.def(*op).name() != "OpGetVector" || !matches!(s.unspan(), Value::Var(x) if *x == subject)
+    {
+        return None;
+    }
+    index_of(data, idx)
+}
+
+/// `k` or `base + k` with `k >= 0`, as `(base, k)`.
+fn index_of(data: &Data, idx: &Value) -> Option<Proved> {
+    match idx.unspan() {
+        Value::Int(k) if *k >= 0 => Some((None, *k)),
+        Value::Call(op, a) if data.def(*op).name() == "OpAddInt" => match a.as_slice() {
+            [b, k] => match (b.unspan(), k.unspan()) {
+                (Value::Var(b), Value::Int(k)) if *k >= 0 => Some((Some(*b), *k)),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Is `v` `len(subject)`?
+fn is_len(data: &Data, v: &Value, subject: u16) -> bool {
+    matches!(v.unspan(), Value::Call(op, a) if data.def(*op).name() == "OpLengthVector"
+        && matches!(a.as_slice(), [s] if matches!(s.unspan(), Value::Var(x) if *x == subject)))
+}
+
+/// The lengths a TRUE `c` proves: a length test `base + n <= len` (or `n == len`), and both
+/// halves of a short-circuit `if a { b } else { false }`.
+fn proves(data: &Data, c: &Value, subject: u16, out: &mut Vec<Proved>) {
+    match c.unspan() {
+        Value::If(a, b, f) if matches!(f.unspan(), Value::Boolean(false)) => {
+            proves(data, a, subject, out);
+            proves(data, b, subject, out);
+        }
+        Value::Call(op, a) if a.len() == 2 => {
+            let name = data.def(*op).name();
+            if name == "OpLeInt" && is_len(data, &a[1], subject) {
+                out.extend(index_of(data, &a[0]));
+            } else if name == "OpEqInt" {
+                for (l, n) in [(&a[0], &a[1]), (&a[1], &a[0])] {
+                    if is_len(data, l, subject)
+                        && let Value::Int(n) = n.unspan()
+                    {
+                        out.push((None, *n));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The one element `v` reads, when every element read inside it is the same one.
+fn one_elem(data: &Data, v: &Value, subject: u16) -> Option<Proved> {
+    let mut seen: Option<Proved> = None;
+    let mut other = false;
+    v.any_node(&mut |n| {
+        if let Value::Call(..) = n
+            && let Some(e) = elem_read(data, n, subject)
+        {
+            other |= seen.is_some_and(|s| s != e);
+            seen = Some(e);
+        }
+        other
+    });
+    if other { None } else { seen }
+}
+
+/// Visit the outermost integer computations of a single element in `v`, each with whether
+/// the tests enclosing it prove the element in range.  `f` answers `Some(t)` to replace
+/// the computation with the local `t`.
+fn visit(
+    data: &Data,
+    v: &mut Value,
+    subject: u16,
+    facts: &mut Vec<Proved>,
+    f: &mut dyn FnMut(&Value, Proved, bool) -> Option<u16>,
+) {
+    match v {
+        Value::Span(s) => visit(data, &mut s.1, subject, facts, f),
+        Value::If(c, t, e) => {
+            visit(data, c, subject, facts, f);
+            let at = facts.len();
+            proves(data, c, subject, facts);
+            visit(data, t, subject, facts, f);
+            facts.truncate(at);
+            visit(data, e, subject, facts, f);
+        }
+        Value::Call(op, _) => {
+            let op = *op;
+            if matches!(data.def(op).returned, crate::data::Type::Integer(..))
+                && let Some((base, k)) = one_elem(data, v, subject)
+            {
+                let inside = facts.iter().any(|(b, n)| *b == base && *n > k);
+                if let Some(t) = f(v, (base, k), inside) {
+                    *v = Value::Var(t);
+                }
+                return;
+            }
+            if let Value::Call(_, args) = v {
+                for a in args.iter_mut() {
+                    visit(data, a, subject, facts, f);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// THE MATCH CLAUSE — a slice `match`'s arms each test the subject again: its length, then
+/// the element at each position the pattern names (`[NeedVal { idx }, Pos { word }]` reads
+/// element 0's variant in every arm that starts with a variant test).  The arm tests run one
+/// after another with nothing between them, so a read two of them make is one read: the
+/// length and each integer computation of one element (a variant number, a scalar
+/// element) are bound once, before the first test.
+///
+/// Only the chain's own tests change — never an arm's body, its bindings or its guard: a
+/// guarded arm runs its bindings and the guard inside its own branch, and the tests after a
+/// failed guard run there too, unchanged.  Every test must be pure, so nothing between two
+/// of them writes a local or a store.  An element read is bound under `base + k + 1 <= len`,
+/// and replaced only where the tests enclosing it prove that much (`base + n <= len` with
+/// `n > k`): there the bound value IS the value the read answers, and a read the plain
+/// chain never makes — one past the end, which would raise — is never made.
+fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &mut Block) -> usize {
+    if match_off() || block.name != "vector_match" {
+        return 0;
+    }
+    let live: Vec<usize> = (0..block.operators.len())
+        .filter(|i| !matches!(block.operators[*i], Value::Line(_)))
+        .collect();
+    let (Some(&first), Some(&last)) = (live.first(), live.last()) else {
+        return 0;
+    };
+    let Value::Set(subject, _) = block.operators[first].unspan() else {
+        return 0;
+    };
+    let subject = *subject;
+    if first == last || !matches!(block.operators[last].unspan(), Value::If(..)) {
+        return 0;
+    }
+    // The arm tests: the condition of each `if` down the chain's else-spine.
+    let mut tests: Vec<&mut Value> = Vec::new();
+    let mut at = &mut block.operators[last];
+    loop {
+        match at {
+            Value::Span(s) => at = &mut s.1,
+            Value::If(c, _, e) => {
+                tests.push(&mut **c);
+                at = &mut **e;
+            }
+            _ => break,
+        }
+    }
+    if tests.len() < 2 || !tests.iter().all(|t| pure(data, t)) {
+        return 0;
+    }
+    // Count each computation where its element is proved in range.
+    let mut groups: Vec<(Value, Proved, usize)> = Vec::new();
+    for t in &mut tests {
+        visit(data, t, subject, &mut Vec::new(), &mut |e, at, inside| {
+            if inside {
+                match groups.iter_mut().find(|(g, _, _)| same_read(g, e)) {
+                    Some((_, _, n)) => *n += 1,
+                    None => groups.push((e.clone(), at, 1)),
+                }
+            }
+            None
+        });
+    }
+    groups.retain(|(_, _, n)| *n >= 2);
+    let lens: usize = tests
+        .iter()
+        .map(|t| {
+            let mut n = 0;
+            t.any_node(&mut |x| {
+                n += usize::from(is_len(data, x, subject));
+                false
+            });
+            n
+        })
+        .sum();
+    if groups.is_empty() && lens < 2 {
+        return 0;
+    }
+    let scope = block.scope;
+    let int_tp = data.def(data.def_nr("OpLengthVector")).returned.clone();
+    let len_call = Value::Call(data.def_nr("OpLengthVector"), vec![Value::Var(subject)]);
+    let mut before = Vec::new();
+    let len_val = if lens >= 2 {
+        let l = vars.add_unique("match_len", &int_tp, scope);
+        before.push(Value::Set(l, Box::new(len_call.clone())));
+        Some(l)
+    } else {
+        None
+    };
+    let mut temps = Vec::new();
+    for (e, (base, k), _) in &groups {
+        let need = match base {
+            Some(b) => Value::Call(
+                data.def_nr("OpAddInt"),
+                vec![Value::Var(*b), Value::Int(k + 1)],
+            ),
+            None => Value::Int(k + 1),
+        };
+        let len = len_val.map_or_else(|| len_call.clone(), Value::Var);
+        let test = Value::Call(data.def_nr("OpLeInt"), vec![need, len]);
+        let tp = match e {
+            Value::Call(op, _) => data.def(*op).returned.clone(),
+            _ => int_tp.clone(),
+        };
+        let t = vars.add_unique("match_read", &tp, scope);
+        before.push(Value::Set(
+            t,
+            Box::new(Value::If(
+                Box::new(test),
+                Box::new(e.clone()),
+                Box::new(Value::Int(0)),
+            )),
+        ));
+        temps.push(t);
+    }
+    for t in &mut tests {
+        visit(data, t, subject, &mut Vec::new(), &mut |e, _, inside| {
+            if !inside {
+                return None;
+            }
+            groups
+                .iter()
+                .position(|(g, _, _)| same_read(g, e))
+                .map(|i| temps[i])
+        });
+        if let Some(l) = len_val {
+            replace_len(data, t, subject, l);
+        }
+    }
+    let bound = before.len();
+    let tail = block.operators.split_off(last);
+    block.operators.extend(before);
+    block.operators.extend(tail);
+    bound
+}
+
+fn replace_len(data: &Data, v: &mut Value, subject: u16, l: u16) {
+    if is_len(data, v, subject) {
+        *v = Value::Var(l);
+        return;
+    }
+    v.for_each_child_mut(&mut |c| replace_len(data, c, subject, l));
 }
 
 /// Bind the repeated reads of every statement in the program; answers how many.
