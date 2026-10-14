@@ -893,7 +893,10 @@ integers each, so the count is the limit a function meets.
 
 Guards: `tests/scripts/a-nesting-within-the-bound-compiles.loft`,
 `the-counts-within-the-limit-compile.loft` and their refused twins,
-`the-variable-limit-arrives-before-the-frame-cap.loft`, `tests/limits.rs`.
+`the-variable-limit-arrives-before-the-frame-cap.loft`, `tests/limits.rs`.  The per-commit
+copies prove each relation under LOWERED limits (`// @LIMIT:`, `// @FRAME_LIMIT:`;
+`LOFT_LIMIT` and `LOFT_FRAME_LIMIT` for a `loft` run), which can only lower them; the same
+files at 300 and 64 KiB are `tests/limits_full/`, run nightly.
 
 ## See also
 - [STDLIB.md](STDLIB.md) — Standard library API (math, text, collections, file I/O, logging, parallel)

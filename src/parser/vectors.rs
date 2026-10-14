@@ -916,13 +916,13 @@ impl Parser {
                         Level::Error,
                         "Tuple literals require at least 2 elements"
                     );
-                } else if types.len() > crate::limits::LIMIT as usize && self.first_pass {
+                } else if types.len() > self.data.limits.count as usize && self.first_pass {
                     // `crate::limits`: a tuple holds at most 300 elements.
                     diagnostic!(
                         self.lexer,
                         Level::Error,
                         "a tuple holds at most {} elements, this literal has {} — use a struct",
-                        crate::limits::LIMIT,
+                        self.data.limits.count,
                         types.len()
                     );
                 }

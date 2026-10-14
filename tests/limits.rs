@@ -53,12 +53,17 @@ fn nested_calls(n: usize) -> String {
 }
 
 fn run(tag: &str, src: &str, backend: &str) -> Output {
+    run_with(tag, src, backend, &[])
+}
+
+fn run_with(tag: &str, src: &str, backend: &str, env: &[(&str, &str)]) -> Output {
     let path = std::env::temp_dir().join(format!("loft_limits_{}_{tag}.loft", std::process::id()));
     fa::write(&path, src).expect("write probe");
     let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .args([backend, path.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_ERRORS", "compact")
+        .envs(env.iter().copied())
         .output()
         .expect("spawn loft");
     let _ = fa::remove_file(&path);
@@ -112,5 +117,53 @@ fn values_pending_in_nested_calls_up_to_64_kib_run_and_past_it_are_refused() {
         assert_refused("calls27", &nested_calls(27), backend);
         // 40 deep is where the position wrapped and the interpreter printed 54.
         assert_refused("calls40", &nested_calls(40), backend);
+    }
+}
+
+/// `width` integers a tuple, `n - 1` such locals beside the running total — the `wide` function
+/// of `tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft` at count `n`.
+fn wide(n: usize, width: usize) -> String {
+    let mut s = String::from("fn main() {\n");
+    for i in 0..n - 1 {
+        let items: Vec<String> = (0..width).map(|j| (i + j).to_string()).collect();
+        s += &format!("  v{i} = ({});\n", items.join(", "));
+    }
+    s += "  t = 0;\n";
+    for i in 0..n - 1 {
+        s += &format!("  t += v{i}.{};\n", width - 1);
+    }
+    s + "  println(\"{t}\");\n}\n"
+}
+
+/// Lowered limits (`LOFT_LIMIT`, `LOFT_FRAME_LIMIT` — `loft::limits::Limits`) keep the relation
+/// the real ones have: at a count of 30 and 30 × 218 bytes, 29 tuples of 27 integers fit and 28
+/// integers a tuple are the frame refusal, naming the lowered cap.  Σ_{i<29} (i + 26) = 1160.
+#[test]
+fn lowered_limits_refuse_one_integer_more() {
+    let env = [("LOFT_LIMIT", "30"), ("LOFT_FRAME_LIMIT", "6540")];
+    for backend in ["--interpret", "--native"] {
+        let out = run_with("wide27", &wide(30, 27), backend, &env);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.trim() == "1160",
+            "wide27 {backend}: exit {:?}\nstdout: {stdout}\nstderr: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let out = run_with("wide28", &wide(30, 28), backend, &env);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "wide28 {backend}: exit\nstderr: {stderr}"
+        );
+        assert_eq!(
+            stderr
+                .matches("`main` needs more than 6540 bytes of stack")
+                .count(),
+            1,
+            "wide28 {backend}: one refusal naming the lowered cap\n{stderr}"
+        );
+        assert!(out.stdout.is_empty(), "wide28 {backend}: ran anyway");
     }
 }

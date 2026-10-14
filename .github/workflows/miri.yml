@@ -1150,6 +1150,14 @@ jobs:
       - name: Interpreter corpus — whole, in one process
         run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
 
+      # The limit guards at the real 300 / 64 KiB (`tests/limits_full/`).  The per-commit corpus
+      # proves the same relations under LOWERED limits (`// @LIMIT:`); this run proves the real
+      # numbers fit on the runner's thread, on both backends.
+      - name: Limit guards at full size
+        run: |
+          cargo test --release --test wrap limits_at_full_size -- --ignored
+          cargo test --release --test native native_limits_at_full_size -- --ignored
+
       # Four heavy gates whose `#[ignore]` reason names this job: each needs rustc per
       # program or a long poison run, so they sit over the PR ceiling, and until they ran
       # here nothing ran them at all.  `--native` links the canonical

@@ -195,6 +195,7 @@ impl<'a> Stack<'a> {
         self.position = self
             .position
             .checked_add(bytes)
+            .filter(|&p| u32::from(p) <= self.data.limits.frame)
             .unwrap_or_else(|| crate::limits::frame_too_large(self.data, self.def_nr));
     }
 

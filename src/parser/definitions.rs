@@ -3991,7 +3991,7 @@ impl Parser {
                 let name = self.vars.name(v);
                 !self.vars.is_argument(v) && !name.starts_with('_') && !name.contains('#')
             })
-            .nth(crate::limits::LIMIT as usize)
+            .nth(self.data.limits.count as usize)
         else {
             return;
         };
@@ -4009,7 +4009,7 @@ impl Parser {
             &format!(
                 "`{fn_name}` binds more than {} variables — `{name}` is one more; move part of \
                  the work into a function of its own",
-                crate::limits::LIMIT
+                self.data.limits.count
             ),
         );
     }
@@ -4311,13 +4311,13 @@ impl Parser {
             self.pending_param_facts
                 .push(std::mem::take(&mut self.type_fact));
             // `crate::limits`: a function takes at most 300 parameters.
-            if arguments.len() == crate::limits::LIMIT as usize && self.first_pass {
+            if arguments.len() == self.data.limits.count as usize && self.first_pass {
                 self.lexer.pos_diagnostic(
                     Level::Error,
                     &name_pos,
                     &format!(
                         "`{fn_name}` takes more than {} parameters — pass a struct instead",
-                        crate::limits::LIMIT
+                        self.data.limits.count
                     ),
                 );
             }
@@ -4948,12 +4948,12 @@ impl Parser {
             // codegen needs the host field offset.  Mirrors the
             // `sub_type` tuple arm below.  Idempotent.
             // `crate::limits`: a tuple holds at most 300 elements.
-            if types.len() > crate::limits::LIMIT as usize && !self.first_pass {
+            if types.len() > self.data.limits.count as usize && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "a tuple holds at most {} elements, this type has {} — use a struct",
-                    crate::limits::LIMIT,
+                    self.data.limits.count,
                     types.len()
                 );
             }
@@ -6028,14 +6028,14 @@ impl Parser {
             self.init_field_deps.clear();
             field_at.push((a_name.clone(), field_pos));
             // `crate::limits`: a struct holds at most 300 fields.
-            if field_at.len() == crate::limits::LIMIT as usize + 1 && self.first_pass {
+            if field_at.len() == self.data.limits.count as usize + 1 && self.first_pass {
                 self.lexer.pos_diagnostic(
                     Level::Error,
                     &field_pos,
                     &format!(
                         "a struct holds at most {} fields — `{a_name}` is one more; group some \
                          of them into a struct of their own",
-                        crate::limits::LIMIT
+                        self.data.limits.count
                     ),
                 );
             }

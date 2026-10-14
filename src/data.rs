@@ -6366,6 +6366,9 @@ pub const RETIRED: &str = "_retired";
 /// The immutable data of a parsed loft program
 pub struct Data {
     pub definitions: Vec<Definition>,
+    /// The structural limits this program is compiled under (`crate::limits::Limits`): the
+    /// defaults, or lowered by a test.
+    pub limits: crate::limits::Limits,
     /// Parsing continues against this `Data` after it is compiled — the REPL, the debugger,
     /// live reload, a host calling functions by name.  A whole-program rewrite that changes
     /// a SIGNATURE (`value_record::rewrite_program`, `@FR-R-ValueRecord`) runs only on a
@@ -7239,6 +7242,7 @@ impl Data {
     pub fn new() -> Data {
         Data {
             definitions: Vec::new(),
+            limits: crate::limits::Limits::default(),
             open_world: false,
             program_closed: false,
             fn_fields_settled: 0,
