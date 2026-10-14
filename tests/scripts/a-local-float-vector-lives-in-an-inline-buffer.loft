@@ -12,8 +12,8 @@
 // @falsified-by: tests/falsified/a-local-float-vector-lives-in-an-inline-buffer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the VALUE channel, native only — the patch drops every element pushed past the
 //   inline capacity, so the vector stays at 64 elements.
-//   WITNESS: under the patch native fails v3 with `64 null 64` where this file says
-//   `100 99 64`.
+//   WITNESS: under the patch native fails v3 with `64 63 -1 63 0 -1` where this file says
+//   `100 99 64 63 0 99`: the length stops at 64 and every read past it is null.
 //   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
 //   both — only native's values move.
 
