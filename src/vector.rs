@@ -1654,12 +1654,12 @@ fn verify_folded_read<T: Copy>(
 #[must_use]
 pub unsafe fn text_at(ptr: *const u8, size: u32, rec: u32) -> &'static str {
     if rec == 0 || rec > i32::MAX as u32 {
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     // SAFETY: the caller's span; `rec` is a record inside it, so its length word is too.
     let len = unsafe { ptr.add(rec as usize * 8 + 4).cast::<u32>().read_unaligned() };
     if (len / 8) + rec > size {
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     // SAFETY: the bytes `[rec*8+8, +len)` lie inside the span by the test above, and a text
     // record's bytes are the UTF-8 the store wrote.
@@ -1737,7 +1737,7 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
     // past-the-end case cost the walk its registers (measured 9.0 µs against 6.9 on the
     // stdlib `join`).
     if from >= 0 {
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     text_elem_cold(db, from, stores)
 }
@@ -1751,7 +1751,7 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
 fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
     let elem = get_vector(db, 4, from, stores);
     if elem.rec == 0 {
-        crate::state::STRING_NULL
+        crate::store::STRING_NULL
     } else {
         let store = keys::store(&elem, stores);
         store.get_str(store.get_u32_raw(elem.rec, elem.pos))

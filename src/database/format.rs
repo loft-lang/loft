@@ -761,7 +761,7 @@ impl Stores {
     pub fn os_variable(&mut self, name: &str) -> String {
         std::env::var_os(name)
             .and_then(|s| s.into_string().ok())
-            .unwrap_or_else(|| crate::state::STRING_NULL.to_string())
+            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
     }
 
     /**
@@ -2548,8 +2548,8 @@ impl ShowDb<'_> {
 /// store number with a slot in `rec`, a native one its own reserved number — so a field or an
 /// element holding one renders as its kind rather than as either backend's numbers.
 pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
-    store_nr == crate::state::COROUTINE_STORE
-        || store_nr == crate::codegen_runtime::NATIVE_COROUTINE_STORE
+    store_nr == super::COROUTINE_STORE
+        || store_nr == super::NATIVE_COROUTINE_STORE
 }
 
 #[cfg(test)]

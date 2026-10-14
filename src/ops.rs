@@ -215,7 +215,7 @@ pub fn format_text(s: &mut String, val: &str, width: i64, dir: i8, token: u8) {
     // substitution is consistent with `?? ` / `!`.  Both backends route text
     // interpolation through this fn (interp `OpFormatText` + the native
     // `generation/text.rs` emitter), so this one site fixes both.
-    let val = if val == crate::state::STRING_NULL {
+    let val = if val == crate::store::STRING_NULL {
         "null"
     } else {
         val
@@ -787,8 +787,8 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
 #[must_use]
 pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    let a_null = a == crate::state::STRING_NULL;
-    let b_null = b == crate::state::STRING_NULL;
+    let a_null = a == crate::store::STRING_NULL;
+    let b_null = b == crate::store::STRING_NULL;
     if a_null || b_null {
         return a_null && !b_null;
     }
@@ -801,8 +801,8 @@ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 #[must_use]
 pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    let a_null = a == crate::state::STRING_NULL;
-    if a_null || b == crate::state::STRING_NULL {
+    let a_null = a == crate::store::STRING_NULL;
+    if a_null || b == crate::store::STRING_NULL {
         return a_null;
     }
     a <= b
@@ -814,12 +814,12 @@ pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 /// `"a" + t` the two-byte `"a\0"`, a present text no null test sees (loft#1924).
 #[inline]
 pub fn append_text(dst: &mut String, src: &str) {
-    if dst.as_str() == crate::state::STRING_NULL {
+    if dst.as_str() == crate::store::STRING_NULL {
         return;
     }
-    if src == crate::state::STRING_NULL {
+    if src == crate::store::STRING_NULL {
         dst.clear();
-        dst.push_str(crate::state::STRING_NULL);
+        dst.push_str(crate::store::STRING_NULL);
         return;
     }
     dst.push_str(src);

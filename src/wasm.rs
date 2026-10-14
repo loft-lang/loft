@@ -478,7 +478,7 @@ pub fn host_env_variable(name: &str) -> String {
         // `""`, exactly as `var_os` returning `Some("")` does natively.
         host_call("env_variable", &args)
             .as_string()
-            .unwrap_or_else(|| crate::state::STRING_NULL.to_string())
+            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
     }
     #[cfg(not(feature = "wasm"))]
     {

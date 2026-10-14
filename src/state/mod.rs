@@ -43,7 +43,7 @@ fn dev_soft_halt_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
 
-pub const STRING_NULL: &str = "\0";
+pub use crate::store::STRING_NULL;
 
 /// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
 /// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
@@ -254,9 +254,7 @@ fn fast_stack_allowed() -> bool {
         || std::env::var_os("LOFT_NO_FAST_STACK").is_some())
 }
 
-/// Reserved store number for coroutine `DbRef` encoding (CO1.1).
-/// Cannot clash with real Stores allocations (limited by `Stores::max`).
-pub const COROUTINE_STORE: u16 = u16::MAX;
+pub use crate::database::COROUTINE_STORE;
 
 /// Lifecycle state of a coroutine frame (CO1.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -950,14 +948,8 @@ impl State {
         }
     }
 
-    /// Most frames a loft call stack may hold — `main` included, since `main` is a
-    /// frame like any other and `stack_trace()` reports it as one.
-    ///
-    /// Set below the store stack limit (~8000 bytes / ~8 bytes per frame) so the depth
-    /// check fires before a store out-of-bounds panic.  Both backends enforce it against
-    /// the same quantity: `fn_call` reads `call_stack.len()`, the generated binary reads
-    /// its shadow stack in `cr_call_push` (loft#1058).
-    pub const MAX_CALL_DEPTH: u32 = 10_000;
+    /// Most frames a loft call stack may hold: [`crate::limits::MAX_CALL_DEPTH`].
+    pub const MAX_CALL_DEPTH: u32 = crate::limits::MAX_CALL_DEPTH;
 
     pub fn static_fn(&mut self, name: &str, call: Call) {
         let lib = Arc::make_mut(&mut self.library);

@@ -192,7 +192,7 @@ impl RuntimeErrorKind {
             }
             RuntimeErrorKind::StackOverflow => format!(
                 "call stack overflow — exceeded {} stack frames",
-                crate::state::State::MAX_CALL_DEPTH
+                crate::limits::MAX_CALL_DEPTH
             ),
             RuntimeErrorKind::UserPanic { message } => format!("panic: {message}"),
             RuntimeErrorKind::AssertionFailed { message } => {
@@ -447,7 +447,7 @@ impl RuntimeError {
     }
 
     /// Construct a `StackOverflow` error against the DECLARATION of the function whose
-    /// entry exceeded [`crate::state::State::MAX_CALL_DEPTH`].
+    /// entry exceeded [`crate::limits::MAX_CALL_DEPTH`].
     ///
     /// Both backends detect the overflow at that entry and both know the callee's
     /// declaration, so this is the position they can agree on — the interpreter reads it

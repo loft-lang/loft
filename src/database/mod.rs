@@ -37,6 +37,14 @@ pub use types::Type;
 /// See `doc/claude/CONST_STORE.md` for the full design.
 pub const CONST_STORE: u16 = 1;
 
+/// Reserved store number for coroutine `DbRef` encoding (CO1.1).
+/// Cannot clash with real Stores allocations (limited by `Stores::max`).
+pub const COROUTINE_STORE: u16 = u16::MAX;
+
+/// Sentinel `store_nr` for `DbRef`s that point to native coroutine generators.
+/// Must not clash with any real `Stores` allocation (stores use 0..`Stores::max`).
+pub const NATIVE_COROUTINE_STORE: u16 = 0xFFFD;
+
 use crate::keys::{Content, DbRef};
 use crate::store::{Store, StoreChange};
 use std::collections::HashMap;

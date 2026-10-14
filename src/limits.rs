@@ -48,3 +48,12 @@ pub fn frame_too_large(data: &crate::data::Data, d_nr: u32) -> ! {
         ),
     )
 }
+
+/// Most frames a loft call stack may hold — `main` included, since `main` is a frame like any
+/// other and `stack_trace()` reports it as one.
+///
+/// Set below the store stack limit (~8000 bytes / ~8 bytes per frame) so the depth check fires
+/// before a store out-of-bounds panic.  Both backends enforce it against the same quantity:
+/// `fn_call` reads `call_stack.len()`, the generated binary reads its shadow stack in
+/// `cr_call_push` (loft#1058).
+pub const MAX_CALL_DEPTH: u32 = 10_000;

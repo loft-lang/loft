@@ -42,6 +42,12 @@
 
 #[cfg(feature = "mmap")]
 use mmap_storage::file::Storage as MmapStorage;
+
+/// The text null: a loft `text` that holds no value is this one NUL byte, and
+/// [`Store::text_is_null`] reads nullity from the content.  The interpreter, the runtime
+/// emitted programs link and every store reader share it; `crate::state` re-exports it
+/// under the path emitted Rust names (`loft::state::STRING_NULL`).
+pub const STRING_NULL: &str = "\0";
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
@@ -5217,7 +5223,7 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn text_is_null(&self, rec: u32, pos: u32) -> bool {
-        self.get_str(self.get_u32_raw(rec, pos)) == crate::state::STRING_NULL
+        self.get_str(self.get_u32_raw(rec, pos)) == STRING_NULL
     }
 
     /// The store's DATA span — its buffer's address and its size in words — for a loop that
@@ -5234,11 +5240,11 @@ impl Store {
     #[inline]
     pub fn get_str<'a>(&self, rec: u32) -> &'a str {
         if rec == 0 || rec > i32::MAX as u32 {
-            return crate::state::STRING_NULL;
+            return STRING_NULL;
         }
         let len = self.get_u32_raw(rec, 4);
         if (len / 8) + rec > self.size {
-            return crate::state::STRING_NULL;
+            return STRING_NULL;
         }
         unsafe {
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(

@@ -5178,9 +5178,7 @@ pub fn n_parallel_buf_drop_fn_native(cell: &std::cell::UnsafeCell<Stores>) {
 
 // ── N8b.1: Native coroutine runtime ─────────────────────────────────────────
 
-/// Sentinel `store_nr` for `DbRef`s that point to native coroutine generators.
-/// Must not clash with any real `Stores` allocation (stores use 0..`Stores::max`).
-pub const NATIVE_COROUTINE_STORE: u16 = 0xFFFD;
+pub use crate::database::NATIVE_COROUTINE_STORE;
 
 /// Return value from `LoftCoroutine::next_i64` when the generator is exhausted.
 ///

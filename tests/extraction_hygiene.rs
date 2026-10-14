@@ -720,3 +720,35 @@ fn native_libraries_follow_clean_binding_pattern() {
         violations.join("\n")
     );
 }
+
+/// @PLN191 — the library crate is split into layers (core, front, gen, runtime, facade) that
+/// will become crates, and a crate can only name the crates below it.  `scripts/crate_layers.py
+/// check` reads every `crate::` reference between top-level modules from the tree and holds
+/// it to the layering: every module assigned to one layer, and the references that still point
+/// UP held to a budget that may only fall — and must be lowered the moment it does, so the
+/// budget is always the tree's count.  The same command a person runs, so the gate and the
+/// tool cannot drift; skipped (not failed) where `python3` is unavailable.
+#[test]
+fn library_modules_keep_their_layers() {
+    let out = match loft::platform::process::harness_command("python3")
+        .current_dir(workspace_root())
+        .arg("scripts/crate_layers.py")
+        .arg("check")
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("SKIP library_modules_keep_their_layers: python3 unavailable ({e})");
+            return;
+        }
+    };
+    assert!(
+        out.status.success(),
+        "the library's modules are out of step with their layers:\n{}{}\n\
+         Run `python3 scripts/crate_layers.py check -v` to reproduce; `sites A B` lists every \
+         reference from module A to module B.  A new module is added to the layer it belongs \
+         in; an upward reference is cut, never budgeted — @PLN191.",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}

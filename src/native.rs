@@ -4193,7 +4193,7 @@ fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
         let s_rec = stores.store(&v).get_u32_raw(v.rec, value_pos);
         stores.store(&v).get_str(s_rec).to_string()
     } else {
-        crate::state::STRING_NULL.to_string()
+        crate::store::STRING_NULL.to_string()
     };
     stores
         .store_mut(&dest)
