@@ -24,6 +24,7 @@ pub mod file_hold;
 pub mod fnref;
 pub mod hoist;
 pub mod keyed_place;
+pub mod keyed_entry;
 pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;

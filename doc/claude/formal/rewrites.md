@@ -2566,10 +2566,47 @@ the native run of the cells, panics under the verify naming both answers, and pa
 under the switch).  Cells `tests/scripts/158-keyed-fast-paths.loft`; pin
 `tests/keyed_fast_paths.rs::a_hash_lookup_by_one_integer_key_takes_the_typed_entry`.
 Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_long_key`,
-`codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half — a keyed append
-that skips the per-element type-table walk the same way — is not built: its emission
-runs through the mint and push rewrites (`hoist::mint_path`), and it is priced at ~300 of
-an insert's 2,100 instructions.
+`codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
+below, for an element that owns no heap.
+
+### A keyed insert writes the entry its key names
+
+```
+  (R-KeyedEntry)  c += [T{k: e₀, f₁: e₁, …}] where c is a `hash<T[k]>` with ONE key of
+                  `integer` width, T owns no heap, no linked group holds T's records
+                  (`@FR-Col-Group`), and the literal writes EVERY field of T — the plain
+                  claim (`OpNewRecord`), field writes and file (`OpFinishRecord`) — is
+                  emitted as: the values e₀ … eₙ evaluated in source order into temps,
+                  then ONE probe for e₀ that answers the entry already under that key or
+                  a fresh one, its key written and filed in the bucket the probe ended
+                  on, then the other temps written into that entry.  A repeated key
+                  therefore overwrites the entry it finds: what `(Col-Insert)`'s
+                  replacement leaves (every field of the new record, under the same key,
+                  in the same bucket), with no slot claimed and none released.
+```
+
+**In words.** The plain form builds the record before it knows whether its key is
+present, so a repeated key costs a claimed arena slot, zeroed and written, then the probe,
+then the old entry released.  The rule asks the key first.  The order the program sees is
+the plain form's: its values are evaluated while its entry is claimed but not filed, and
+nothing a value can read sees an unfiled entry, so evaluating them before the probe
+changes no value.  A held view of the old entry is not a witness either, because a view
+taken while its collection grows is copied out (the advice says so).  Hash iteration runs
+in key order through a sorted snapshot, so where the entry sits is not observable.  Where a
+snapshot of the collection is LIVE, a replace takes the displaced record out of it and an
+overwrite would not.  So `Stores::keyed_entry_long` takes the general path there at run
+time, and also where the collection has no table yet: it claims, writes the key and files
+the record through `record_finish` first, which a hash may do because it places an entry
+by its key alone.  The heap-free condition is what makes an overwrite release nothing: a
+replaced text or vector would otherwise be stranded.  A miss pays one walk and the arena
+index the claim answers (no `arena::index_of` scan to recover it), so new keys gain too:
+gridmesh `field_add_cell` 22.97 → 15.06 ms, `build_index` 10.16 → 7.49 ms (hand price of
+the repeated-key half alone −26 %).  Switch `LOFT_NO_KEYED_ENTRY`.  Falsifier
+`LOFT_KEYED_VERIFY=1`, which looks every answered entry up again through the general
+entry and panics where the two differ.  Cells
+`tests/scripts/a-keyed-insert-writes-the-entry-its-key-names.loft`.  Sites:
+`generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
+`Stores::keyed_entry_long`, `hash::entry_long`.
 
 ### A result vector adopts the return buffer
 

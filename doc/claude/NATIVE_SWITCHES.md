@@ -742,6 +742,12 @@ build its literal in a store of its own and copy it in again — with it on, the
 staged, the record under the key is removed, a fresh one is claimed in the collection's store
 and written, and the subscript's key links it — and is the first bisect step for a wrong value,
 key or count after a keyed literal assignment on native.
+**`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
+hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
+repeated key — with it on, one probe answers the entry the key names and the literal's staged
+values are written into it — and is the first bisect step for a wrong value or count after a
+keyed insert on native; `LOFT_KEYED_VERIFY=1` checks every answered entry against the general
+lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
 is the first bisect step for a freed, leaked or wrong lookup result on native;
