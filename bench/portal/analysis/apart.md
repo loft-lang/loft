@@ -109,8 +109,8 @@ into a parent that keeps them, and those are destination passing's.
 
 1. **Instance 2 — BUILT** (§ Built below).  Its gate (`generation::apart_value::plan`) is
    the one every later instance reuses.
-2. Instance 3 as an **inline buffer with spill**, priced here at −48 % on `rig_world_frame3`;
-   `draw_bezier`'s stack is its second row once the library's slice copy is gone.
+2. **Instance 3 — BUILT** (§ Built below); `draw_bezier`'s stack is its next row once the
+   library's slice copy is gone.
 3. The two library fixes in the triage (`draw_bezier`, `surface_fitted_spread`) are a
    library branch each — this stream's to make, no consumer in the loop.
 
@@ -138,3 +138,25 @@ that calls a twin is rewritten now, and the only drops left are `mul_op`'s buffe
 
 Left on this instance's reach: `return g(…)` forwarded through a hidden buffer (the cells'
 first `e2` was declined on it), `len(v)` through the stdlib wrapper, and fields of another type.
+
+## Built — instance 3, 2026-10-14
+
+`(R-Apart)` instance 3, x86-64 laptop, `--native-release`, at `dab609a29`: a `vector<float>`
+local or work buffer as `codegen_runtime::ApVec<64>` (64 elements inline, a heap spill past
+them).  The hand form re-taken on this box first: 1545 → 692 ns a call (the arm64 price was
+−48 %).
+
+| | before | after |
+|---|--:|--:|
+| `rig_world_frame3`, ns a call, one core, three alternated runs | 1540 | **747** (hand form, no spill test: 692) |
+| `rig_world_frame3` against its twin (`perf_check`, recorded) | 5.33× | **2.59×** |
+| `bone_shape_has` (hex_body, not targeted) | 2.49× | 1.40× |
+| `mesh_emit` (16_consumer_shapes, not targeted) | 2.54× | 2.01× |
+| `lock` (12_drawing) | 1.31× | 1.09× (native −3 %) |
+
+Every hash unchanged; no routine of the four lanes got slower.  The gap to the hand form is the
+spill test per push and the length test per read, which a vector past 64 elements needs.  The
+census: `R-Apart/vector` in hex_body (30), hex_terrain (11), 16_consumer_shapes (4) and
+12_drawing (1), and the header, push, `len` and base admissions that drop with it are those
+vectors' own.  12_drawing's lane found the one mention the hooks missed — a free on a `return`
+path, written through an `Insert` — as a `rustc` error, which is the design's backstop.
