@@ -20041,6 +20041,7 @@ impl Parser {
         };
 
         let mut f = Self::probe_project_lib(id);
+        self.probe_own_package(id, cur_dir, &mut f);
         if blocked(&f) {
             f = format!("{id}.loft");
         }
@@ -20997,6 +20998,46 @@ impl Parser {
         } else {
             format!("{id}.loft")
         }
+    }
+
+    /// loft#2010 — the package this file is in answers for its own NAME, first: `use <id>`
+    /// where `<id>` is its `[package] name` binds its own entry.
+    ///
+    /// A package is identified by its manifest's NAME, never by the directory it sits in.
+    /// Before this probe the only route from a package's `tests/` to its own entry was the
+    /// sibling probe, `<parent>/<id>/src/<id>.loft`, which finds the package itself only
+    /// when its directory happens to be named `<id>`.  In a checkout called anything else
+    /// the name fell through to whatever else answered to it — the installed registry
+    /// copy, or a neighbouring directory called `<id>` — and the suite ran against that
+    /// instead, green when the API had not changed.  Which CLI spelling ran the tests
+    /// decided it too, since only some of them put the source directory on `--lib`.
+    ///
+    /// Only the package's own NAME, deliberately not every module of its `src/`: binding
+    /// a package's other modules local-first is the precedence change loft#949 measured
+    /// and declined (it rebinds the `graphics` ⟷ `mesh3d` overlap — see
+    /// [`Self::module_name_clash`]).  No other package ships a module under this
+    /// package's own name, so this branch moves nothing that overlap depends on.
+    fn probe_own_package(&mut self, id: &str, cur_dir: &str, f: &mut String) {
+        let Some((root, _)) = self.package_declared_deps(cur_dir) else {
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let manifest_path = root.join("loft.toml");
+        let Some(m) = manifest::read_manifest(&manifest_path.to_string_lossy()) else {
+            return;
+        };
+        if m.name.as_deref() != Some(id) {
+            return;
+        }
+        let Some(candidate) = m
+            .entry_or_default()
+            .map(|e| root.join(e))
+            .filter(|c| crate::file_access::is_file(c))
+        else {
+            return;
+        };
+        *f = candidate.to_string_lossy().into_owned();
+        self.register_native_manifest(&manifest_path, &root);
     }
 
     /// `<dir>/lib/<id>.loft` — a `lib/` directory relative to `dir`

@@ -7937,13 +7937,9 @@ fn main() {
             let manifest_path = std::path::Path::new("loft.toml");
             if fa::exists(manifest_path) {
                 let manifest = loft::manifest::read_manifest("loft.toml").unwrap_or_default();
-                let entry = manifest.entry.unwrap_or_else(|| "src".to_string());
-                let src_dir = std::path::Path::new(&entry)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("src"));
                 let abs_src = std::env::current_dir()
                     .unwrap_or_default()
-                    .join(src_dir)
+                    .join(manifest.source_dir())
                     .to_string_lossy()
                     .to_string();
                 lib_dirs.push(abs_src);
@@ -8973,6 +8969,19 @@ fn main() {
         // default.  300s is far longer than any single test's compile+run,
         // short enough to catch a true infinite loop.
         loft::timeout::arm(300, loft::timeout::env_grace_secs());
+        // loft#2010 — the `--tests <dir>` flag gets the package paths the `loft test`
+        // subcommand set up above from the working directory, found from the TARGET, the
+        // way a single-file run finds them from its script.
+        if !test_subcommand
+            && let Some(target) = file_access::try_plain_canonical(std::path::Path::new(test_dir))
+        {
+            let start = if fa::is_dir(&target) {
+                target.as_path()
+            } else {
+                target.parent().unwrap_or(&target)
+            };
+            add_package_paths(start, &mut lib_dirs, &mut native_lib_paths);
+        }
         // Env-var equivalent so external CI doesn't need to thread the flag
         // through `loft test` invocations buried in shell loops.
         let deny_warnings = deny_warnings
@@ -9061,58 +9070,10 @@ fn main() {
     // Auto-detect loft.toml by walking up from the script file's directory.
     // This lets `loft lib/graphics/examples/01.loft` find the graphics package
     // without requiring the user to cd into the package directory first.
-    if !abs_file.is_empty() {
-        let script_dir = std::path::Path::new(&abs_file).parent();
-        if let Some(mut search) = script_dir.map(std::path::Path::to_path_buf) {
-            loop {
-                let candidate = search.join("loft.toml");
-                if fa::exists(&candidate) {
-                    if let Some(manifest) =
-                        manifest::read_manifest(candidate.to_str().unwrap_or("loft.toml"))
-                    {
-                        // Add the package's src/ directory to lib_dirs.
-                        let entry = manifest.entry.unwrap_or_else(|| "src".to_string());
-                        let src_dir = std::path::Path::new(&entry)
-                            .parent()
-                            .unwrap_or(std::path::Path::new("src"));
-                        let abs_src = search.join(src_dir).to_string_lossy().to_string();
-                        if !lib_dirs.contains(&abs_src) {
-                            lib_dirs.push(abs_src);
-                        }
-                        // Add parent directory so sibling packages (deps) are found.
-                        if !manifest.dependencies.is_empty() {
-                            if let Some(parent) =
-                                file_access::try_plain_canonical(search.join(".."))
-                            {
-                                let ps = parent.to_string_lossy().to_string();
-                                if !lib_dirs.contains(&ps) {
-                                    lib_dirs.push(ps);
-                                }
-                            }
-                        }
-                        // Register native lib path for auto-build/loading.
-                        if let Some(ref stem) = manifest.native {
-                            let pkg_dir = search.to_string_lossy().to_string();
-                            if let Some(so_path) = extensions::auto_build_native(&pkg_dir, stem) {
-                                native_lib_paths.push(so_path);
-                            }
-                        }
-                    }
-                    // Auto-add lib/ subdirectory for package imports.
-                    let lib_dir = search.join("lib");
-                    if fa::is_dir(&lib_dir) {
-                        let ls = lib_dir.to_string_lossy().to_string();
-                        if !lib_dirs.contains(&ls) {
-                            lib_dirs.push(ls);
-                        }
-                    }
-                    break;
-                }
-                if !search.pop() {
-                    break;
-                }
-            }
-        }
+    if !abs_file.is_empty()
+        && let Some(script_dir) = std::path::Path::new(&abs_file).parent()
+    {
+        add_package_paths(script_dir, &mut lib_dirs, &mut native_lib_paths);
     }
 
     // Canonicalize library paths so relative --lib dirs resolve correctly
@@ -12534,6 +12495,68 @@ fn resolve_test_target(arg: &str) -> String {
         out.push_str(sel);
     }
     out
+}
+
+/// The import paths of the package that `start` lies in: walk up to the nearest
+/// `loft.toml` and put the package's source directory on `lib_dirs` (and its parent,
+/// for sibling dependencies, when it declares any), its `lib/` directory, and its
+/// own native library.
+///
+/// ONE function for a single-file run and the `--tests <dir>` flag (loft#2010): the
+/// flag used to set none of these, so a suite run through it found the package's own
+/// modules only by the sibling-directory accident, while `loft test` and a single
+/// file found them — three spellings of one run answering differently.
+fn add_package_paths(
+    start: &std::path::Path,
+    lib_dirs: &mut Vec<String>,
+    native_lib_paths: &mut Vec<String>,
+) {
+    let mut search = start.to_path_buf();
+    loop {
+        let candidate = search.join("loft.toml");
+        if fa::exists(&candidate) {
+            if let Some(manifest) =
+                manifest::read_manifest(candidate.to_str().unwrap_or("loft.toml"))
+            {
+                // Add the package's src/ directory to lib_dirs.
+                let abs_src = search
+                    .join(manifest.source_dir())
+                    .to_string_lossy()
+                    .to_string();
+                if !lib_dirs.contains(&abs_src) {
+                    lib_dirs.push(abs_src);
+                }
+                // Add parent directory so sibling packages (deps) are found.
+                if !manifest.dependencies.is_empty()
+                    && let Some(parent) = file_access::try_plain_canonical(search.join(".."))
+                {
+                    let ps = parent.to_string_lossy().to_string();
+                    if !lib_dirs.contains(&ps) {
+                        lib_dirs.push(ps);
+                    }
+                }
+                // Register native lib path for auto-build/loading.
+                if let Some(ref stem) = manifest.native {
+                    let pkg_dir = search.to_string_lossy().to_string();
+                    if let Some(so_path) = extensions::auto_build_native(&pkg_dir, stem) {
+                        native_lib_paths.push(so_path);
+                    }
+                }
+            }
+            // Auto-add lib/ subdirectory for package imports.
+            let lib_dir = search.join("lib");
+            if fa::is_dir(&lib_dir) {
+                let ls = lib_dir.to_string_lossy().to_string();
+                if !lib_dirs.contains(&ls) {
+                    lib_dirs.push(ls);
+                }
+            }
+            return;
+        }
+        if !search.pop() {
+            return;
+        }
+    }
 }
 
 #[cfg(test)]

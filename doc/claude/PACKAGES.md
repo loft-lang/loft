@@ -263,7 +263,11 @@ pub fn transform(canvas: Canvas, mat: math.Mat4) -> Canvas {
 
 When the compiler encounters `use math;` it searches:
 
-1. **Local `src/`** — sibling files in the same package
+1. **Local `src/`** — sibling files in the same package.  Inside a package, its own
+   `[package] name` binds its own entry, whatever its directory is called — a package is
+   identified by its manifest, not its path (`tests/own_package_resolution.rs`).  Every
+   spelling of a test run (`loft test`, `--tests <dir>`, one file) puts the package's
+   source directory on the import path
 2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`: the importing
    package's, then the **root project's**, so a path the root declares answers a `use`
    anywhere in the program, however deep (`tests/transitive_binding.rs`)
