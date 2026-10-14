@@ -3,7 +3,7 @@ axis: clarity
 met-by: tests/dump_ignored_tests (strand 3) — `re.match(...).group(1)` and `re.sub` with a callback in the originals
 status: open
 fix: the library's own next increment (its README § roadmap): `replace` / `replace_all`, `find_all -> vector<Match>`, capture groups and named groups — a loft-libs-core change, not the stdlib
-ref: 
+ref: @PLN192 — regex 0.5.0 built on the library's testbed (loft-libs-core branch `pln192`): `capture` / `capture_all` with groups, `named`, `replace_on`; struck when the port re-measures over the published release
 probe: 011.probe.loft
 expect: refused
 checked: 647c14b83

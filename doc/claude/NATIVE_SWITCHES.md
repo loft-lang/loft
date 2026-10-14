@@ -169,6 +169,17 @@ the copy.  Its FORMAT clause is under the same switch: a text local bound to a f
 string (`cs = "{c}"`) whose work text is the format's own reads that work text as a `&str`
 instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads the local,
 and a local copied into another variable, keep the copy.
+**`LOFT_NO_SLICE_BORROW=1`** (`@FR-R-SliceBorrow`, default-ON, generation time, `--native`
+only) makes a text local bound to a value slice of a plain text parameter — `t = line[2..5]`,
+or a slice of a local that itself borrows — copy the slice into a `String` again; with it
+off, `t` is bound as the `&str` the slice answers (`let var_t: &str = OpGetTextSub(…)`) and
+read bare, where every mention of `t` is a text VALUE read (the reading of
+`LOFT_NO_TEXT_BORROW` above).  The first bisect step for a wrong or stale text read through
+a slice-bound local on native; `LOFT_TRACE_TEXT_BORROW=1` names each such local as "a slice
+of a parameter's text" or its decline.  An append to `t`, a rebind to a built text, a `&t`
+link, `t` handed to a `&text` parameter, tupled or returned, a slice of a `&text` or rebound
+parameter, a slice of an OWNED local and a generator keep the copy.  `LOFT_NO_TEXT_BORROW=1`
+turns this clause off with the rest.
 **`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
 only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
 local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext

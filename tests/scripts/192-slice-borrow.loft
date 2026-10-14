@@ -12,8 +12,12 @@
 // a loop.  `LOFT_NO_SLICE_BORROW=1`, `LOFT_NO_TEXT_BORROW=1`, `LOFT_POISON=1`,
 // `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
 //
-// @falsified-at: pending — see tests/slice_borrow.rs (the emission pins) and the record
-// below once the sabotage has run.
+// @falsified-at: none on the value channel — every cell's VALUE holds under any admission
+// (the rewrite changes what is EMITTED, and rustc refuses a wrong admission instead of
+// running it), so the falsifier is tests/slice_borrow.rs: hand-measured 2026-10-14, the
+// source widened to any text variable (`slice_of(to).is_some()` in place of the
+// parameter-or-borrowed test) turns 2 of its 3 pins red while this file prints `ok` on
+// both backends; restored, all three pass.
 
 struct Row { label: text, n: integer }
 

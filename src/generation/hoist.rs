@@ -4412,7 +4412,7 @@ pub fn borrowed_store_texts(
     // `LOFT_NO_SLICE_BORROW=1` keeps the copy for this clause alone.
     let slice_disabled = std::env::var("LOFT_NO_SLICE_BORROW").is_ok_and(|v| v != "0");
     let plain_text_arg = |s: u16| {
-        vars.is_argument(s) && matches!(vars.tp(s).base(), Type::Text(_))  && !rebound.contains(&s)
+        vars.is_argument(s) && matches!(vars.tp(s).base(), Type::Text(_)) && !rebound.contains(&s)
     };
     let slice_of =
         |to: &Value| call_named(to, data, "OpGetTextSub").and_then(|a| as_var(a.first()));
@@ -4601,9 +4601,9 @@ pub fn borrowed_store_texts(
         .iter()
         .copied()
         .filter(|&v| {
-            body.any_node(&mut |n| {
-                matches!(n, Value::Set(x, to) if *x == v && slice_of(to).is_some())
-            })
+            body.any_node(
+                &mut |n| matches!(n, Value::Set(x, to) if *x == v && slice_of(to).is_some()),
+            )
         })
         .collect();
     if trace {

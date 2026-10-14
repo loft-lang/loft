@@ -191,13 +191,13 @@ The cells, each hand-computed, `--interpret` and `--native`, graduated to
 | Item | Source | Verify (goes RED if the phase is wrong) | Status |
 |---|---|---|---|
 | **P0** probe the four claims (XS) | § P0 | a prediction written before each run | **Done** — a, b held in the value channel; a's representation claim fell; d found the defect |
-| **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | Open |
-| **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | Open |
-| **P3** `(R-SliceBorrow)`: a text local bound to a slice of an unwritten text is a `&str` (S, compiler, native) | § P3 | emission pins in the shape of `tests/text_borrow.rs`; cells under `LOFT_NO_SLICE_BORROW=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`; `make rewrite-census` gains the row; a planted admission of a written subject reads stale bytes under the verify switch | Open |
-| **P4** `(R-DecodeView)`'s text-source clause: B may be a `text` parameter; a `vector<R>` of admitted records is a holder (M, compiler, native) | § P4 | `LOFT_TRACE_DECODE_VIEW` names no decline on `capture`'s twin and its emission holds no `to_string` / `set_str` for a text field; the holder-axis cells; `make perf-check` on the two ports' rows | Open — **after the rule itself is built** (its own plan, priced in `bench/portal/analysis/over-9x.md`); this plan contributes the clause and the regex corpus as its rows |
-| **P5** the broken-pattern warning (XS, library) | § Broken patterns | a cell asserting the one warning on stderr and its absence on the second use; `@RGX-003` re-measured | Open |
+| **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | **Built** on the testbed (loft-libs-core branch `pln192`, `regex/tests/captures.loft`, 21 tests both backends, the guide identical on both); the re-twin waits on the release |
+| **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | **Built** (same branch); the `^` / `\b` cells are green |
+| **P3** `(R-SliceBorrow)`: a text local bound to a slice of a parameter is a `&str` (S, compiler, native) | § P3 | emission pins `tests/slice_borrow.rs`; cells `tests/scripts/192-slice-borrow.loft` under `LOFT_NO_SLICE_BORROW=1`; the census row `R-SliceBorrow`; a planted admission of any text variable turns the pins red | **Built** — the slice arm of `(R-TextBorrow)`'s store-read clause; a slice of an OWNED local is the clause left open |
+| **P4** `(R-DecodeView)` for a `Match`: a `text` subject as the frame, and where a STRUCT keeps its span (M, compiler, native) | § P4 | `LOFT_TRACE_DECODE_VIEW` names no decline on `capture`'s twin and its emission holds no `to_string` / `set_str` for a text field; the holder-axis cells; `make perf-check` on the two ports' rows | Open — the rule's instance 1 is **built** (`157-native-4x`, joined here): view types are ENUMS of 16 bytes or more, the span in the record's spare last word, one per record; `Match` and `Group` are structs with no spare word, so P4 is first the design question § P4 asks |
+| **P5** the broken-pattern warning (XS, library) | § Broken patterns | the warning in `.loft/log.txt` once per pattern per process, absent on the second use; `@RGX-003` re-measured | **Built** — one `WARN` line through `log_warn`, the `[divide_by_zero]` channel |
 | **P6** `Pattern` typed-format target (S, library, optional) | § built-in feel | a hole holding `.` matches only a literal dot; the type trigger loads the library with no `use`; `(F-Target-Pos)`: an argument position does not target | Open |
-| **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | Open |
+| **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | **Built** — 0.5.0, `api_compatible_with = "0.5.0"`; the publish is the maintainer's signing run |
 
 P1 → P2 → P5 → P7 ship as one library release (0.5.0), each a commit the testbed gates
 alone (LIBRARY_AUTHORING.md § The testbed).  P3 is independent and pays for every script
@@ -250,15 +250,34 @@ It is `(R-WorkView)` with the work buffer replaced by a parameter or local, unde
 (`hoist::borrowed_text_walks` decides (1)–(3) for a walk).  Decided in the formal register
 as a rule with its own `@FR-` tag, its code sites citing it, `make rule-coverage` counting it.
 
-### P4 — the clause this plan owes `(R-DecodeView)`
+### P4 — what a `Match` needs from `(R-DecodeView)`
 
-The rule's source B is "a byte vector"; a regex subject is a `text`.  The clause: *B may be a
-`text` parameter or local, and a span of it is the subject's bytes at `[a, b)` — already
-valid UTF-8 on a code-point boundary, so condition (5) holds by construction and no
-`text_from_bytes` test is paid.*  And a holder clause: *a `vector<R>` whose every element is
-an admitted R, built in the confined region, is itself a holder of the region.*  Both are
-measured on `capture` and `capture_all`; neither changes the invariant the rule already
-states (a span answers what the owned copy would, because B outlives it unchanged).
+Instance 1 of the rule (`src/generation/decode_view.rs`, `157-native-4x`) keeps a decoded
+enum's span in the record's LAST EIGHT BYTES: an enum record is padded to its largest
+variant, so a variant with one text field and room to spare has a free word, and the span
+`[lo, lo + n)` of the frame lives there with its sign bit set (`0` is the owned form).  A
+root is a function whose byte-vector parameter is the frame; a vector of view records is a
+holder already.  Two things a `Match` needs that it does not have:
+
+1. **A `text` subject as the frame.**  The clause: *B may be a `text` parameter, and a span
+   of it is the subject's bytes at `[a, b)` — valid UTF-8 on a code-point boundary by the
+   engine's guarantee, so the UTF-8 test `dv_span_text` pays on a byte frame is not paid.*
+2. **Where a STRUCT keeps its span — the open question.**  `Group { text: text?, start:
+   integer, end: integer }` and `Match` are structs: laid out field by field, no padding,
+   no spare word.  Three answers, to decide before building:
+   - *a spare word on every record of a struct the rule admits* — eight bytes more on every
+     `Group` in every program, interpreter included, since a layout is per type and shared;
+   - *the twin layout the rule's text first proposed* — `Group__dv` with a span word, used
+     only by the region's twins, no cost outside it; the larger build, and the one the rule
+     already names;
+   - *the record's own fields* — a `Group` already holds its span as `start` / `end`, so a
+     declaration that `text` IS the subject at `[start, end)` costs no byte and no twin
+     layout, at the price of a field form the language does not have today (a sibling of
+     `virtual`), which is the one of the three that touches the surface.
+
+   The measurement that decides: `capture`'s twin under each, on `dump_ignored_tests`'s
+   row.  Until then a `Match`'s texts are owned copies on both backends, and the consumer's
+   `line[m.start..m.end]` is the view (P3).
 
 ## Open design questions
 

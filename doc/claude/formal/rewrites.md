@@ -2145,6 +2145,45 @@ compile rather than a wrong answer.  Cells
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
 
+### A slice of a parameter is read where it lies
+
+```
+  (R-SliceBorrow) a text LOCAL t whose every binding is a value slice s[a..b] (R-Slice-Value)
+                  of a plain text PARAMETER s — not `&text`, not rebound by the body — or of a
+                  local that itself borrows under this rule or (R-TextBorrow)'s store-read
+                  clause, and whose every mention is a text VALUE read by that clause's
+                  reading (an operand at a `text` position, the source of a bind into another
+                  slot, `size`, a comparison, a walk of its characters, its own release) —
+                  never a rebind to a built text, an append, a `&t` link, a `&text` argument,
+                  a tuple, a store, a return, a capture or a yield — is the `&str` the slice
+                  answers: no `String` is built, and a slice of t reads the same bytes.  A
+                  slice of a plain parameter names no store, so the store-read clause's store
+                  condition is not asked of it.  Declines, keeping the copy: a slice of an
+                  OWNED local (its buffer can grow under the borrow; the path condition is a
+                  later clause), of a `&text` or rebound parameter, a record FIELD bound from
+                  a slice (a store write), a generator.  Native only; the interpreter copies
+                  the slice into the local as the IR spells it and is the oracle.
+```
+
+**In words.**  `t = line[2..5]` was `OpGetTextSub(line, 2, 5).to_string()`: the slice op
+already answers a `&str` into the parameter, and the bind copied it into an owned `String`
+for every script that cuts a field out of a line — the regex consumer's
+`key = line[m.start..m.end]` (@PLN192), finding 002's tokenisers, every `find` followed by a
+slice.  The parameter's bytes are the caller's for the whole frame, so the one condition that
+makes a borrow of them wrong is the local escaping the frame or being written, which is what
+(R-TextBorrow)'s reading already decides; the rule is that clause with a slice as one more
+source.  rustc checks the same borrow, so a wrong admission — a slice of a local that is
+appended to while the borrow lives — is a refused compile, never a wrong answer; the planted
+defect that widens the source to any text variable turns the emission pins red (2 of 3) while
+every cell's VALUE holds.  Switch `LOFT_NO_SLICE_BORROW` (this clause alone;
+`LOFT_NO_TEXT_BORROW` keeps the copy everywhere); trace `LOFT_TRACE_TEXT_BORROW=1`
+names each local as "a slice of a parameter's text" or its decline.  Cells
+`tests/scripts/192-slice-borrow.loft` (t1–t12, both backends); pins `tests/slice_borrow.rs`.
+Sites: the slice arm of `hoist::borrowed_store_texts` (`plain_text_arg`, `slice_of`), the
+store-condition skip beside the format clause's, `Output::slice_borrow_count` for the census.
+What it does not do: the texts INSIDE a record — a `Match`'s `text`, a `Group`'s — are store
+fields, which (R-DecodeView) answers with a span, not this rule.
+
 ### A character walk steps an ASCII byte in one move
 
 ```
