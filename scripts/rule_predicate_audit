@@ -23,24 +23,15 @@
 // surface type; `Parts` is the LAYOUT view of it (the narrow integer widths live there,
 // not in `Type`) — reading only `Type::` made the whole narrow-width family invisible.
 //
+// A list of variant names is a SET of texts — the `script` library's: `set([])` builds
+// one (its builder trigger loads the library), `put` / `minus` / `words` are its methods
+// and `Word` its element.  The sites keep first-seen order beside the keyed index.
+//
 // Usage:  scripts/rule_predicate_audit [--near] [--min N]
 
-struct Name { key: text }
-struct Entry { key: text, names: sorted<Name[key]>, sites: vector<text> }
+struct Entry { key: text, names: sorted<Word[key]>, sites: vector<text> }
 struct Idx { key: text, at: integer }
 struct Sites { by_key: hash<Idx[key]>, entries: vector<Entry> }
-struct Path { path: text }
-struct Paths { all: sorted<Path[path]> }
-
-fn walk(dir: text, out: Paths) {
-  for name in list_dir(dir) ?? [] {
-    if name.starts_with(".") { continue; }
-    p = "{dir}/{name}";
-    if is_symlink(p) { continue; }
-    if is_dir(p) { walk(p, out); }
-    else if name.ends_with(".rs") { out.all += [Path { path: p }]; }
-  }
-}
 
 fn is_word(b: integer) -> boolean {
   (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
@@ -53,8 +44,8 @@ fn is_space(b: integer) -> boolean {
 fn newlines(s: text) -> integer { s.size() - s.replace("\n", "").size() }
 
 // The sorted, distinct `Type::`/`Parts::` variant names in a `matches!` argument list.
-fn variants(g: text) -> sorted<Name[key]> {
-  names: sorted<Name[key]> = [];
+fn variants(g: text) -> sorted<Word[key]> {
+  names = set([]);
   n = g.size();
   i = 0;
   while i < n {
@@ -70,7 +61,7 @@ fn variants(g: text) -> sorted<Name[key]> {
     if b >= 48 && b <= 57 { continue; }
     e = start;
     while e < n && is_word(g.byte_at(e)) { e += 1; }
-    if e > start { names += [Name { key: g[start..e] }]; i = e; }
+    if e > start { names.put(g[start..e]); i = e; }
   }
   names
 }
@@ -107,11 +98,9 @@ fn index_of(sites: Sites, key: text) -> integer {
 }
 
 fn collect(root: text, min_len: integer, sites: Sites) {
-  paths = Paths { all: [] };
-  walk(root, paths);
-  for p in paths.all {
-    src = file(p.path).content() ?? "";
-    rel = p.path[root.size() + 1..];
+  for p in root.walk(".rs") {
+    src = file(p).content() ?? "";
+    rel = p[root.size() + 1..];
     n = src.size();
     pos = 0;
     line = 1;
@@ -128,7 +117,7 @@ fn collect(root: text, min_len: integer, sites: Sites) {
       names = variants(src[i + 1..r[0]]);
       if names.len() >= min_len {
         key = "";
-        for nm in names { key = if key == "" { nm.key } else { "{key} | {nm.key}" }; }
+        for w in names.words() { key = if key == "" { w } else { "{key} | {w}" }; }
         slot = index_of(sites, key);
         if slot < 0 {
           slot = sites.entries.len();
@@ -144,18 +133,14 @@ fn collect(root: text, min_len: integer, sites: Sites) {
 }
 
 // The one name in exactly one of two sets, or null when the symmetric difference is not a
-// single name: the sizes differ by one and every name of the smaller is in the larger.
-fn one_apart(a: sorted<Name[key]>, b: sorted<Name[key]>) -> text? {
+// single name: the sizes differ by one and the larger minus the smaller is one name.
+fn one_apart(a: sorted<Word[key]>, b: sorted<Word[key]>) -> text? {
   if len(a) + 1 != len(b) && len(b) + 1 != len(a) { return null; }
   big = if len(a) > len(b) { a } else { b };
   small = if len(a) > len(b) { b } else { a };
-  extra: text? = null;
-  for x in big {
-    if small[x.key] != null { continue; }
-    if extra != null { return null; }
-    extra = x.key;
-  }
-  extra
+  d = big.minus(small);
+  if len(d) != 1 { return null; }
+  d[0]
 }
 
 fn main() {
