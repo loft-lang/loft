@@ -281,6 +281,31 @@ real reach, it costs minutes, and it finds the shapes no cell crossed: a build j
 nullable value inside a function that returns a dense record, for one, which no corpus file
 contained and the full gate therefore passed.  Then add a cell for every shape it finds.
 
+### The order of a lowering change, and what each build is for
+
+A release build of the whole crate is the expensive step, so each build must answer a
+question that nothing cheaper can.  In order:
+
+1. **Name the cause from an artifact, not a guess.**  Before any build: reproduce by hand,
+   read the IR (`loft introspect`) and the emitted Rust (`--native-emit`) of the failing
+   function, and point at the node or line that is wrong.  A fix built on a hypothesis that
+   the artifact never showed is a build that may change nothing.
+2. **Compile questions go to `cargo check`**, not to a build.
+3. **One heavy job at a time.**  A build, a corpus census, a `cargo test` of many binaries, a
+   falsify run (two more full builds in their own target directories) and the drop gate
+   (dozens of native compiles) each fill the machine; run beside one another they slow
+   every one of them and the build being waited on most of all.
+4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites
+   it touches, `cargo test --release --test ownership_drop_gate` on both backends for
+   anything that changes what a value is held in or when it is released, the poison and
+   stack sweeps (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`), the corpus census above, and both
+   clippy legs.  A gate first run on GitHub after the push costs a gate run, a fix build and
+   a red tip a sibling may already have joined.
+5. **Receipts last.**  `scripts/falsify.sh` reads the working tree for its own build, so it
+   runs after the fix is committed and while no source edit is pending.
+6. **One issue per push.**  A defect found while verifying is filed with its repro at once;
+   it is the next push, not part of this one.
+
 ## Diff against the proven sibling — when your new path misbehaves
 
 > This is the codegen instance of a **general** design method — *when the answer
