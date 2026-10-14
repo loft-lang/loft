@@ -710,6 +710,9 @@ pub struct Stores {
     /// Script-level arguments (set by the CLI after parsing its own flags).
     /// When non-empty, `os_arguments()` returns these instead of raw `std::env::args`.
     pub user_args: Vec<String>,
+    /// `@FR-R-DecodeView` — the byte frame the running decode region's spans read: set by a
+    /// region's root for the length of its call (`codegen_runtime::DvFrame`), null outside one.
+    pub dv_frame: DbRef,
     /// Monotonic timestamp captured at `Stores::new()`.  Used by `ticks()` to return
     /// microseconds elapsed since program start; cloned into worker Stores unchanged so
     /// all threads share the same reference point.
@@ -808,6 +811,7 @@ impl Clone for Stores {
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: self.user_args.clone(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: self.start_time,
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1575,6 +1579,7 @@ impl Stores {
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: Vec::new(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: Instant::now(),
             // `Stores::new()` must not call `Instant::now()` or

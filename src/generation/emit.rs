@@ -126,6 +126,14 @@ impl Output<'_> {
         {
             return Ok(());
         }
+        // `@FR-R-DecodeView` — a span field's write and a span text's read, in the same
+        // dispatch for the same reason.
+        if !self.dv.region.is_empty()
+            && let Some(code) = node.native()
+            && self.dv_expr(w, code)?
+        {
+            return Ok(());
+        }
         match node.kind() {
             // Phase 09 step 0.7 — synthetic raw-expression passthrough (fn-ref
             // dispatch); emit the string verbatim.

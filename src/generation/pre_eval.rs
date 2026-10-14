@@ -687,6 +687,13 @@ impl Output<'_> {
             }
             return Ok(());
         }
+        // `@FR-R-DecodeView` — a span write writes its operands where they stand.
+        if let Some(operands) = self.dv_operands(v) {
+            for x in operands {
+                self.collect_pre_evals_inner(x, result)?;
+            }
+            return Ok(());
+        }
         if let Value::Set(_, rhs) = v {
             return self.collect_pre_evals_inner(rhs, result);
         }

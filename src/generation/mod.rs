@@ -15,6 +15,8 @@ pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
+pub mod decode_view;
+mod decode_view_emit;
 pub mod destination;
 mod dispatch;
 mod emit;
@@ -1131,6 +1133,12 @@ pub struct Output<'a> {
     /// and whether the value structs are written.
     pub apart_ctx: Option<apart_emit::ApartCtx>,
     pub apart_twin: bool,
+    /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
+    /// its `__dv` twin.
+    pub dv: decode_view::DvPlan,
+    pub dv_active: bool,
+    /// The node a hook is re-emitting through the ordinary path, which it must not take again.
+    pub dv_bypass: usize,
     pub apart_types_done: bool,
     /// Whether `value_records` has been computed for this program — a whole-program
     /// analysis asked once, whatever it answered (an empty answer is an answer).
@@ -2524,6 +2532,9 @@ impl<'a> Output<'a> {
             apart: apart_value::ApartPlan::default(),
             apart_ctx: None,
             apart_twin: false,
+            dv: decode_view::DvPlan::default(),
+            dv_active: false,
+            dv_bypass: 0,
             apart_types_done: false,
             value_records_done: false,
             value_record_locals: HashMap::new(),
@@ -2804,7 +2815,12 @@ impl Output<'_> {
     /// this (#305).
     #[must_use]
     pub fn fn_ident(&self, def: &crate::data::Definition) -> String {
-        disambiguated_fn_ident(&self.dup_fn_names, def)
+        let id = disambiguated_fn_ident(&self.dup_fn_names, def);
+        if self.dv_renames(def) {
+            format!("{id}__dv")
+        } else {
+            id
+        }
     }
 
     /// The Rust place for loft variable `var` — the generator's struct field when the
@@ -9832,6 +9848,16 @@ extern crate loft;"
             // interpreter, so that build has no plan.
             if !self.emit_live {
                 self.apart = apart_value::plan(self.data, self.stores, &value_fns);
+                self.dv = decode_view::plan(self.data, self.stores);
+                // A function both plans re-emit would need a twin of a twin.
+                if self
+                    .dv
+                    .region
+                    .iter()
+                    .any(|d| self.apart.twins.contains_key(d))
+                {
+                    self.dv = decode_view::DvPlan::default();
+                }
             }
             self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
@@ -9874,6 +9900,22 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
+            // `@FR-R-DecodeView` — a region function's `__dv` twin, and its inputs twin.
+            if self.dv.region.contains(&dnr) {
+                self.dv_active = true;
+                let r = self.output_function(w, dnr, program_store.as_ref());
+                let r = r.and_then(|()| match self.callee_inputs_of(dnr) {
+                    Some(inputs) => {
+                        self.twin = Some(inputs);
+                        let r = self.output_function(w, dnr, program_store.as_ref());
+                        self.twin = None;
+                        r
+                    }
+                    None => Ok(()),
+                });
+                self.dv_active = false;
+                r?;
+            }
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
@@ -9901,13 +9943,16 @@ extern crate loft;"
             .iter()
             .position(|r| !self.dest_emitted.contains(r))
         {
-            let (dnr, vo) = self.dest_requests[at];
-            self.dest_emitted.insert((dnr, vo));
+            let (key, vo) = self.dest_requests[at];
+            self.dest_emitted.insert((key, vo));
+            let dnr = key & !decode_view::DV_BIT;
             let Some(Some(shape)) = self.dest_memo.get(&(dnr, vo)).cloned() else {
                 continue;
             };
             self.dest_twin = Some(shape);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.dest_twin = None;
             r?;
             any = true;
@@ -9930,10 +9975,12 @@ extern crate loft;"
             .iter()
             .position(|r| !self.vr_emitted.contains(r))
         {
-            let dnr = self.vr_requests[at];
-            self.vr_emitted.insert(dnr);
+            let key = self.vr_requests[at];
+            self.vr_emitted.insert(key);
             self.vr_twin = true;
-            let r = self.output_function(w, dnr, program_store);
+            self.dv_active = key & decode_view::DV_BIT != 0;
+            let r = self.output_function(w, key & !decode_view::DV_BIT, program_store);
+            self.dv_active = false;
             self.vr_twin = false;
             r?;
             any = true;
@@ -9954,14 +10001,17 @@ extern crate loft;"
             .iter()
             .position(|r| !self.ap_emitted.contains(r))
         {
-            let dnr = self.ap_requests[at];
-            self.ap_emitted.insert(dnr);
+            let key = self.ap_requests[at];
+            self.ap_emitted.insert(key);
+            let dnr = key & !decode_view::DV_BIT;
             let Some(b) = append_twin::buffer(self.data, dnr) else {
                 continue;
             };
             self.append_twin_buf = Some(b);
             self.append_twin_views = append_twin::views(self.data.def(dnr).variables(), b);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.append_twin_buf = None;
             self.append_twin_views.clear();
             r?;
@@ -9983,8 +10033,9 @@ extern crate loft;"
             .iter()
             .position(|r| !self.rg_emitted.contains(r))
         {
-            let (dnr, twin) = self.rg_requests[at];
-            self.rg_emitted.insert((dnr, twin));
+            let (key, twin) = self.rg_requests[at];
+            self.rg_emitted.insert((key, twin));
+            let dnr = key & !decode_view::DV_BIT;
             if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
                 eprintln!(
                     "ranged-call: emits {}{}__rg",
@@ -10003,7 +10054,9 @@ extern crate loft;"
             }
             self.range_override.push(std::rc::Rc::new(facts));
             self.emitting_ranged = true;
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.emitting_ranged = false;
             self.range_override.pop();
             self.twin = None;
@@ -10025,10 +10078,13 @@ extern crate loft;"
             .iter()
             .position(|r| !self.rt_emitted.contains(r))
         {
-            let dnr = self.rt_requests[at];
-            self.rt_emitted.insert(dnr);
+            let key = self.rt_requests[at];
+            self.rt_emitted.insert(key);
+            let dnr = key & !decode_view::DV_BIT;
             self.refill_twin_buf = hoist::retbuf_var(self.data, dnr);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.refill_twin_buf = None;
             r?;
             self.output_ranged_variants(w, program_store)?;
@@ -10912,6 +10968,7 @@ extern crate loft;"
         // first body `Set(v, Null)` still emits `null_named` + `OpDatabase`
         // at its IR position via `predeclared`.
         let mut vdb_prologue = self.apart_prologue();
+        vdb_prologue.push_str(&self.dv_prologue(def_nr));
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin
