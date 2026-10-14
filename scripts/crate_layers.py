@@ -17,6 +17,9 @@ the exported macros by name — and answers:
   sites A B       every reference from module A to module B, by file:line
   runtime [-v]    the references out of the RUNTIME set, by module pair (every site with -v);
                   `check` holds their count to RUNTIME_BUDGET
+  runtime-add MOD / runtime-drop MOD
+                  put MOD in / take MOD out of RUNTIME (rewrites the list here, sorted); then
+                  `lower`, which refuses when the count out of the set rose
   move MOD LAYER  put module MOD in LAYER (rewrites LAYERS in this file, sorted)
   lower [--relayer]
                   set every budget the tree has fallen below to the tree's count; it never
@@ -56,7 +59,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "lib", "libscan", "limits", "literal_append", "lockfile", "log_config", "logger",
         "loop_kernels", "loop_shape", "manifest", "migrate_long", "narrow", "native_build", "net",
         "net_profile", "null_census", "op_census", "op_layout", "op_sets", "ops", "package",
-        "package_layout", "page_metrics", "paged_reader", "placement", "platform",
+        "package_layout", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
         "platform_census", "png_store", "process_run", "pure_reuse", "radix_db", "radix_tree",
         "registry", "registry_advisories", "registry_index", "registry_keys", "registry_signing",
         "repeat_run", "repl_doc", "resolution", "resolution_scope", "return_field",
@@ -104,18 +107,17 @@ BUDGET: dict[tuple[str, str], int] = {
 # ratchet that only falls.  A module leaves the set only when nothing in the set names it.
 RUNTIME: list[str] = [
     "arena", "btree", "c_call", "c_libs", "c_signature", "cache", "calc", "call_frames",
-    "codegen_runtime", "compiled_stdlib", "crash_report", "data_ref", "database", "extensions",
+    "codegen_runtime", "compiled_stdlib", "crash_report", "data_ref", "database", "engine_host",
     "file_access", "git_query", "hash", "integrity", "json", "keys", "limits", "log_config",
     "logger", "loop_kernels", "narrow", "native", "native_gate", "native_lib", "net",
-    "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "parallel", "placement",
+    "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement",
     "platform", "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope",
     "rewrite_census", "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store",
-    "store_budget", "store_census", "timeout", "tls", "trie_db", "vector", "wasm",
-    "wasm_assets",
+    "store_budget", "store_census", "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 304
+RUNTIME_BUDGET: int = 185
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 
@@ -401,6 +403,23 @@ def runtime_crossings(mods) -> list[tuple[str, str, str]]:
     return out
 
 
+def rewrite_runtime(members: list[str]) -> None:
+    me = Path(__file__)
+    src = me.read_text(encoding="utf-8")
+    a = src.index("RUNTIME: list[str] = [")
+    b = src.index("\n]\n", a) + 3
+    words = [f'"{m}",' for m in sorted(set(members))]
+    lines, cur = [], "   "
+    for w in words:
+        if len(cur) + 1 + len(w) > 98:
+            lines.append(cur)
+            cur = "   "
+        cur += " " + w
+    lines.append(cur)
+    src = src[:a] + "RUNTIME: list[str] = [\n" + "\n".join(lines) + "\n]\n" + src[b:]
+    me.write_text(src, encoding="utf-8")
+
+
 def set_runtime_budget(n: int) -> None:
     me = Path(__file__)
     src = me.read_text(encoding="utf-8")
@@ -484,6 +503,15 @@ def main(argv):
         for r in raised:
             print(f"NOT raised — cut these instead: {r}")
         return 1 if raised else 0
+    if cmd in ("runtime-add", "runtime-drop"):
+        mod = argv[2]
+        if mod not in mods:
+            print(f"no module {mod!r} in lib.rs")
+            return 2
+        members = set(RUNTIME) | {mod} if cmd == "runtime-add" else set(RUNTIME) - {mod}
+        rewrite_runtime(sorted(members))
+        print(f"{mod} {'in' if cmd == 'runtime-add' else 'out of'} the runtime set; run `lower`")
+        return 0
     if cmd == "runtime":
         cross = runtime_crossings(mods)
         pairs = defaultdict(list)

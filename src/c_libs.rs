@@ -657,3 +657,55 @@ fn resolve_in_loaded(symbol: &str) -> Option<*const ()> {
     // already-loaded CRT and base modules on Windows (`platform::symbol_in_process`).
     crate::platform::symbol_in_process(symbol)
 }
+
+/// @PLN174 F5 — set in a `LoftStoreCtx` word above the store number when the store was
+/// MINTED for the bridge's vector return and holds nothing yet: the foreign callback
+/// then adopts the bytes into that store instead of minting another (which would leave
+/// the minted one orphaned).  The cdylib reads only the low 16 bits (`LoftStore::store_nr`)
+/// and passes the word back untouched, so the bit is the host's to use.
+pub const CTX_RETURN_STORE: usize = 1 << 16;
+
+/// The foreign-vector callback's body, shared by the interpreter's dispatcher
+/// (`CURRENT_STORES`) and the generated `--native` call (`native_call`, the same cell):
+/// adopt `len` bytes at `ptr` — `(ptr, len, cap, release)` a cdylib's `Vec<u8>` — as a
+/// read-only `vector<u8>`, into the return store when `ctx` says it was minted for this
+/// answer, into a fresh store otherwise.  Answers the bare `FOREIGN_REC` for the
+/// consumer to turn into the store's handle (`bridge_push_ref`), or the null ref when the
+/// block is declined (a length past `u32`), which leaves it the cdylib's to free.
+pub(crate) fn adopt_foreign_block(
+    stores: &mut crate::database::Stores,
+    ctx: usize,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    elem_size: u32,
+    release: unsafe extern "C" fn(*mut u8, usize, usize),
+) -> loft_ffi::LoftRef {
+    let null = loft_ffi::LoftRef {
+        store_nr: 0,
+        rec: 0,
+        pos: 0,
+    };
+    let Ok(count) = u32::try_from(len / elem_size.max(1) as usize) else {
+        return null;
+    };
+    if elem_size > 1 && !(ptr as usize).is_multiple_of(elem_size as usize) {
+        return null;
+    }
+    let owner = crate::store::ForeignOwner::Extern {
+        ptr,
+        len,
+        cap,
+        release,
+    };
+    let db = if ctx & CTX_RETURN_STORE != 0 {
+        stores.foreign_vector_in(ctx as u16, ptr, count, elem_size, owner)
+    } else {
+        stores.foreign_vector(ptr, count, elem_size, owner)
+    };
+    loft_ffi::LoftRef {
+        store_nr: db.store_nr,
+        rec: crate::store::FOREIGN_REC,
+        pos: 8,
+    }
+}

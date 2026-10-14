@@ -351,7 +351,7 @@ pub fn probe_and_mark_exports(
     so: &std::path::Path,
 ) -> BridgeProbe {
     let mut probe = BridgeProbe::default();
-    if !crate::extensions::load_cdylib(&so.to_string_lossy()) {
+    if !crate::c_libs::load_cdylib(&so.to_string_lossy()) {
         // `load_cdylib` has already printed the classified dlopen diagnostic.
         probe.not_loaded = true;
         probe.unresolved = export
@@ -368,7 +368,7 @@ pub fn probe_and_mark_exports(
             "loft_shared_{}",
             crate::generation::disambiguated_fn_ident(&dups, data.def(d))
         );
-        if crate::extensions::bridge_symbol_resolves(&sym) {
+        if crate::c_libs::bridge_symbol_resolves(&sym) {
             resolvable.insert(d);
         } else {
             probe.unresolved.push(data.def(d).original_name().clone());
@@ -1340,7 +1340,7 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
     let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
         .and_then(|m| m.native)
         .unwrap_or_else(|| crate_name.replace('-', "_"));
-    let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) else {
+    let Some(so) = crate::native_build::resolve_native_lib(pkg_dir, &stem) else {
         return Vec::new();
     };
     let so_path = std::path::PathBuf::from(&so);

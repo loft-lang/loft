@@ -269,7 +269,7 @@ pub fn register(state: &mut crate::state::State, data: &crate::data::Data) {
     // looked up, so a program that never calls into it runs on a machine where
     // it is not installed.
     for lib in data.c_libraries.iter().filter(|c| !c.optional) {
-        crate::extensions::load_c_library(&lib.name, &lib.pkg_dir);
+        crate::c_libs::load_c_library(&lib.name, &lib.pkg_dir);
     }
     // The miss path and the availability query both work off the WHOLE list:
     // re-opening an already-open required library is a no-op, and the query has
@@ -324,7 +324,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     use crate::c_signature::CArg;
     use crate::keys::{DbRef, Str};
 
-    let idx = crate::extensions::current_lib_idx();
+    let idx = crate::call_frames::current_lib_idx();
     let binding = {
         let guard = C_BINDINGS
             .lock()

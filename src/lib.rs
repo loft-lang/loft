@@ -419,6 +419,7 @@ pub mod const_eval;
 pub mod coroutine_layout;
 pub mod create;
 pub mod fill;
+pub mod par_pool;
 pub mod parallel;
 pub mod platform;
 pub mod state;

@@ -4096,7 +4096,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    let batches = crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let mut local: Vec<i64> = Vec::with_capacity(end - start);
         for row_idx in start..end {
             let elm =
@@ -4110,7 +4110,7 @@ where
         }
         (start, local)
     });
-    crate::parallel::merge_batches(batches, n, 0i64)
+    crate::par_pool::merge_batches(batches, n, 0i64)
 }
 
 /// Text-returning variant of `n_parallel_for_native`.  The worker closure returns
@@ -4161,7 +4161,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    let batches = crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let row_count = end - start;
         // `@FR-H-Claim` — the s_pos array record needs 4 bytes for the record-size header (fld 0..4) plus
         // 4 bytes per row; writes start at fld 4 — writing from fld 0 overwrote the record's
@@ -4260,7 +4260,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let mut batch: Vec<(usize, DbRef)> = Vec::with_capacity(end - start);
         for row_idx in start..end {
             let elm =
@@ -4314,7 +4314,7 @@ pub fn n_parallel_block_native(
     }
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let _: Vec<()> =
-        crate::parallel::parallel_workers(stores, arms.len(), arms.len(), |start, end, mut ws| {
+        crate::par_pool::parallel_workers(stores, arms.len(), arms.len(), |start, end, mut ws| {
             for arm in &arms[start..end] {
                 // P199 — see `run_native_workers_primitive` for the `&UnsafeCell<Stores>`
                 // cast; generated arm closures take the same ABI a worker closure does.
@@ -4358,7 +4358,7 @@ pub fn n_parallel_discard_native<F>(
     let input_t = input;
     let n_threads = (threads.max(1) as usize).min(n);
     let _: Vec<()> =
-        crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+        crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
             for row_idx in start..end {
                 let elm =
                     vector::get_vector(&input_t, elem_size as u32, row_idx as i64, &ws.allocations);
@@ -4471,7 +4471,7 @@ where
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
     let mut batches =
-        crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+        crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
             let mut acc = init;
             // V1: vector<integer> rows are i64s at row position; stride is
             // 8 bytes.  Read unaligned to match `read_primitive_at` in
@@ -4874,7 +4874,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    let batches = crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let mut local: Vec<(u32, DbRef)> = Vec::with_capacity(end - start);
         for row_idx in start..end {
             let elm =
@@ -4886,7 +4886,7 @@ where
         (start, local)
     });
     let null_fn = (u32::MAX, DbRef::NULL);
-    crate::parallel::merge_batches(batches, n, null_fn)
+    crate::par_pool::merge_batches(batches, n, null_fn)
 }
 
 /// fn-ref-return Queue runtime entry — runs workers, buffers one `(u32, DbRef)`
@@ -6270,7 +6270,7 @@ unsafe extern "C" fn _ffi_foreign(
 ) -> loft_ffi::LoftRef {
     CODEGEN_STORES.with(|c| {
         let stores = unsafe { &mut *c.get() };
-        crate::extensions::adopt_foreign_block(
+        crate::c_libs::adopt_foreign_block(
             stores,
             ctx._opaque as usize,
             ptr,

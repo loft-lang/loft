@@ -13,9 +13,10 @@
 use crate::platform::process::{Program, Spawn};
 // The opened-library table and symbol lookup live in `c_libs` (core); these are the paths
 // callers name here, and what the wiring below reads.
+use crate::c_libs::adopt_foreign_block;
+pub use crate::c_libs::{CTX_RETURN_STORE, bridge_symbol_resolves, load_cdylib};
 #[cfg(feature = "native-extensions")]
 use crate::c_libs::{FnPtr, NATIVE_REGISTRY, get_bridge, load_one, try_dlsym};
-pub use crate::c_libs::{bridge_symbol_resolves, load_cdylib};
 #[cfg(feature = "native-extensions")]
 pub use crate::c_libs::{load_c_library, try_dlsym_pub};
 // Finding or building a package's native library lives in `native_build` (core),
@@ -179,58 +180,6 @@ struct LoftStore {
             unsafe extern "C" fn(*mut u8, usize, usize),
         ) -> loft_ffi::LoftRef,
     >,
-}
-
-/// @PLN174 F5 — set in a `LoftStoreCtx` word above the store number when the store was
-/// MINTED for the bridge's vector return and holds nothing yet: the foreign callback
-/// then adopts the bytes into that store instead of minting another (which would leave
-/// the minted one orphaned).  The cdylib reads only the low 16 bits (`LoftStore::store_nr`)
-/// and passes the word back untouched, so the bit is the host's to use.
-pub const CTX_RETURN_STORE: usize = 1 << 16;
-
-/// The foreign-vector callback's body, shared by the interpreter's dispatcher
-/// (`CURRENT_STORES`) and the generated `--native` call (`native_call`, the same cell):
-/// adopt `len` bytes at `ptr` — `(ptr, len, cap, release)` a cdylib's `Vec<u8>` — as a
-/// read-only `vector<u8>`, into the return store when `ctx` says it was minted for this
-/// answer, into a fresh store otherwise.  Answers the bare `FOREIGN_REC` for the
-/// consumer to turn into the store's handle (`bridge_push_ref`), or the null ref when the
-/// block is declined (a length past `u32`), which leaves it the cdylib's to free.
-pub(crate) fn adopt_foreign_block(
-    stores: &mut crate::database::Stores,
-    ctx: usize,
-    ptr: *mut u8,
-    len: usize,
-    cap: usize,
-    elem_size: u32,
-    release: unsafe extern "C" fn(*mut u8, usize, usize),
-) -> loft_ffi::LoftRef {
-    let null = loft_ffi::LoftRef {
-        store_nr: 0,
-        rec: 0,
-        pos: 0,
-    };
-    let Ok(count) = u32::try_from(len / elem_size.max(1) as usize) else {
-        return null;
-    };
-    if elem_size > 1 && !(ptr as usize).is_multiple_of(elem_size as usize) {
-        return null;
-    }
-    let owner = crate::store::ForeignOwner::Extern {
-        ptr,
-        len,
-        cap,
-        release,
-    };
-    let db = if ctx & CTX_RETURN_STORE != 0 {
-        stores.foreign_vector_in(ctx as u16, ptr, count, elem_size, owner)
-    } else {
-        stores.foreign_vector(ptr, count, elem_size, owner)
-    };
-    loft_ffi::LoftRef {
-        store_nr: db.store_nr,
-        rec: crate::store::FOREIGN_REC,
-        pos: 8,
-    }
 }
 
 /// Compact native signature: parameter types + return type.
@@ -1042,7 +991,7 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     use crate::native_lib::LibArg;
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let lib_idx = CURRENT_LIB_IDX.with(std::cell::Cell::get);
+    let lib_idx = crate::call_frames::current_lib_idx();
     // loft#715 — mark that a bridge call is on the stack.  A fault raised from
     // here is a BRIDGE fault, and it used to read exactly like a program fault:
     // `Cannot add to none-structure '<type>'` names a type, never the library
@@ -1238,7 +1187,7 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
 #[cfg(feature = "native-extensions")]
 fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
     // Read the current library index from the thread-local.
-    let lib_idx = CURRENT_LIB_IDX.with(std::cell::Cell::get);
+    let lib_idx = crate::call_frames::current_lib_idx();
 
     // P245: clone the (sym, sig) entry out of NATIVE_SIGS and DROP the
     // mutex guard before invoking the native function.  The native fn
@@ -1491,12 +1440,6 @@ fn bridge_push_ref(
     stores.put(stack, dbref);
 }
 
-// Thread-local: current library index being dispatched.
-// Set by `State::static_call()` before invoking the Call function.
-std::thread_local! {
-    static CURRENT_LIB_IDX: std::cell::Cell<u16> = const { std::cell::Cell::new(0) };
-}
-
 // ── Store callback infrastructure for FFI allocation ─────────────────────
 
 // Thread-local raw pointer to the interpreter's Stores during a native call.
@@ -1559,19 +1502,7 @@ unsafe extern "C" fn ffi_reload(ctx: LoftStoreCtx, out_ptr: *mut *mut u8, out_si
     }));
 }
 
-/// Set the current library index for auto-dispatch. Called from `State::static_call()`.
-/// The library index of the static call in flight — the only way a
-/// `Call = fn(&mut Stores, &mut DbRef)` handler learns WHICH binding it is
-/// serving. Read by the `#c` dispatcher (@PLN24 arc B) for the same reason the
-/// native auto-dispatcher reads it.
-#[must_use]
-pub fn current_lib_idx() -> u16 {
-    CURRENT_LIB_IDX.with(std::cell::Cell::get)
-}
-
-pub fn set_current_lib_idx(idx: u16) {
-    CURRENT_LIB_IDX.with(|c| c.set(idx));
-}
+pub use crate::call_frames::{current_lib_idx, set_current_lib_idx};
 
 pub use crate::call_frames::current_shared_bridge;
 

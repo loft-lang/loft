@@ -319,3 +319,22 @@ pub fn current_shared_bridge() -> Option<String> {
     #[cfg(not(feature = "native-extensions"))]
     None
 }
+
+thread_local! {
+    /// The library index of the static call in flight, set by `State::static_call()`.
+    static CURRENT_LIB_IDX: Cell<u16> = const { Cell::new(0) };
+}
+
+/// The library index of the static call in flight — the only way a
+/// `Call = fn(&mut Stores, &mut DbRef)` handler learns WHICH binding it is
+/// serving. Read by the `#c` dispatcher (@PLN24 arc B) for the same reason the
+/// native auto-dispatcher reads it.
+#[must_use]
+pub fn current_lib_idx() -> u16 {
+    CURRENT_LIB_IDX.with(Cell::get)
+}
+
+/// Set the current library index for auto-dispatch. Called from `State::static_call()`.
+pub fn set_current_lib_idx(idx: u16) {
+    CURRENT_LIB_IDX.with(|c| c.set(idx));
+}
