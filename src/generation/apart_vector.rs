@@ -224,7 +224,8 @@ pub fn buffer_init(data: &Data, x: &Value) -> Option<(u16, Vec<u16>)> {
 }
 
 fn is_float_vector(tp: &Type) -> bool {
-    !tp.peel_optional().1 && matches!(tp.base(), Type::Vector(e, _) if matches!(**e, Type::Float))
+    !tp.peel_optional().1
+        && matches!(tp.base(), Type::Vector(e, _) if matches!(e.base(), Type::Float))
 }
 
 struct Walk<'a> {
