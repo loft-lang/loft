@@ -493,6 +493,7 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         prefill: super::types::PrefillImage::default(),
         heap_slots: super::types::HeapSlots::default(),
         plain_vectors: super::types::PlainVectors::default(),
+        release_plan: super::types::ReleasePlan::default(),
     })
 }
 
