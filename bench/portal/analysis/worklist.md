@@ -101,9 +101,9 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Fifteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
-this box); `map_json` (2.68×), `mat4_mul` (0.57×, S2) and `rig_world_frame3` (2.59×, S3)
-have left the cut, and `insert_text`
+Fourteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
+this box); `map_json` (2.68×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.59×, S3) and
+`field_add_cell` (4.54×, X5 a and c) have left the cut, and `insert_text`
 reads on either side of the line from one run to the next.  The three `tuple_link_*` rows the file
 still carries are of routines the bench no longer has.  Where each one's time
 goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
@@ -112,7 +112,6 @@ hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 7.68 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
 | 5.07 | `check_request` (7.55 before `(R-DecodeView)`) | the decode's result store minted and freed per call; the key bindings copied (S6) | on the line |
 | 7.44 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.38 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
@@ -139,7 +138,7 @@ between 3.5× and 6.9×.
 | X2 | BUILT for a store the frame owns — `(R-Header)`'s apart clause: a vector the loop only reads, in a store this activation minted or a work buffer the caller lends, and which nothing in the loop is handed, keeps its header and base whatever the loop calls (no callee verdict is asked).  NOT built: the same for a PARAMETER's vectors, which a callee can be handed by another route — `(R-Alias)`'s versioned clause with a run-time test | cbor `encode` (−20 %, the hand price: `ranks`, `koff`, `klen`, `keybuf`); `flow_layout_full` level (its headers were held already or root in a parameter); `arguments/parse` and `rig_world_frame3` unmoved — their unheld vectors are fields of a parameter record | measured | nothing more on `arguments/parse`: PRICED and dropped.  Its declines are a text set through an existing address (`self.results[i] = word`, `OpSetTextReplace`) and a free on an exit path; with the gate admitting both — a ceiling, since neither is sound as the gate's other readers stand — the row moves −5.3 % (25.45 → 24.10 ms, 21 → 15 unheld reads), the text set alone −4.5 %.  What is left of its vector runtime is single reads outside any loop |
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 % before S1c) | *est.* only | after X2: re-profile, then price |
 | X4 | BUILT — `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | `check_request` is profiled (rustc-vs-twin.md § Re-profiled: claims 32 %, spread); `(R-DecodeView)` (decided, C141) next, S8 after its decision |
-| X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
+| X5 | keyed inserts and walks: **a** BUILT — the second lookup of a get-or-insert (`if !h[k] { h += […] }; b = h[k]` looked the key up twice on a hit) is `(R-SameRead)`'s get-or-insert clause, an ENGINE cure rather than the library edit first planned: a loft rewrite of a library for speed is the last resort after code generation (LIBRARY_AUTHORING.md § The library contract, rule 7), and the idiom is everyone's; **b** C7; **c** BUILT for an integer-keyed hash of a heap-free element — `(R-KeyedEntry)`: one probe answers the entry the key names, a repeated key is overwritten in place (no claim, no release) and a new one is filed under the index its claim answered (no `arena::index_of`); an element that owns heap, a text key and the other keyed kinds keep the claim per entry; **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (c: 22.95 → 15.08 ms, −34 %; a: 15.04 → 13.63 ms, −9.4 % of the −12.7 % priced), `build_index` (c: 10.11 → 7.50 ms, −26 %; b 8 %), `collect_dirty_inputs` (c: −10 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, c built; d unpriced, and P4 needs a range proof | `field_add_cell` is left with the table's growth (~15 %, a re-hash of every entry from its record) and the new keys' arena claims; d next |
 | X6 | BUILT — `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4), token offsets from the lexer (J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8), each token written where it is kept (J10); over-9x.md § moros `map_json` | `map_json` | measured: 7.44× → 2.68× (J4 −2 %, J8 −12.6 %, J6 and J7 −17 %, J9 −33 %, J5 and J10 −22 %) | the row is under 5× and has left this list; over-9x.md § What is left |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
@@ -167,9 +166,11 @@ before it; the slowest row goes first; a step with no price is priced before it 
    (−34 %, 80 % of the −46 % hand price).  The row is on the line; what is left is flat —
    the store `decode` mints and frees per call (~10 %), the entries vector's build, and the
    key bindings copied (S6's match-binding clause, priced −1.5 %).
-5. **`field_add_cell` (7.68×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
-   on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
-   move with it.
+5. **`field_add_cell`** — X5 a and c are built: `(R-KeyedEntry)` and `(R-SameRead)`'s
+   get-or-insert clause, 7.68× → 4.54× (−41 %); `build_index` 4.16× → 3.11×, and the keyed
+   lane's `hash_fill`, never targeted, 3.83× → 2.98×.  The row has left the cut; what is left
+   on it is the table's growth (~15 %, every entry re-hashed from its record) and the new
+   keys' arena claims.
 6. **`panel_build` (7.44×)** — size S9 on the row as item 2 left it, then build.
 7. **`arguments/parse` (7.38×)** — X7: read `find_long_opt`, `classify` and `parse` by line.
 8. **`mapfile_to_painted` (7.01×), `reload_and_record` (6.67×)** — X5 d: P3 first, P4 with
