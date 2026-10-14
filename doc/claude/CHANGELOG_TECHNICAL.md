@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The copy a return makes tests its source at every root (loft#2006, 2026-10-15)
+
+- **A source that may be nothing, whatever its root** (`@FR-N-Store`, `@FR-N-Road`).
+  `Parser::copy_source_may_be_absent` answers for an `OpGet…` read (an element out of range,
+  a keyed entry that is not there, a stored reference that holds none), a user call that
+  answers a record, and anything read off either.  `bind_return_source` reads it once where a
+  user call forbids the re-read: a read path rooted at a call binds the call to an owned
+  `_ret_root_N` first (the spelling `d = f(x); return d.inner`), a read with a call in its
+  index goes into a `τ?` handle `_ret_src_N`, and a pure read is re-read.  Pass 2 only, never
+  in a generic template.  `(R-ReturnField)` hands the call-root exits over as before.
+  `D-types-36` is closed.
+
 ### Every whole-record copy tests its source (loft#1997, loft#2004, 2026-10-13)
 
 - **One answer for three decoders** (`@FR-N-Store`, `@FR-B-Copy`, `@FR-N-Road`).

@@ -1391,9 +1391,17 @@ Closed by it:
   matrix (16 programs, a null root and a present one each, three roads, the rewrite on and
   off) holds; the rewrite admits the same thirteen exits of its pinned guard and emits them
   as before.  Guard `2006-a-returned-field-of-a-record-that-is-null-is-null.loft`.
-  STILL OPEN: the matrix found the same answer at two more roots — a CALL
-  (`return f(x).inner`, whose lift is bound inside the copy block, after any test) and an
-  element read out of range (`return w[i]`, `return w[i].a`).
+  The matrix found the same answer at more roots — a CALL (`return f(x).inner`, whose lift
+  was bound inside the copy block, after any test), an element read out of range
+  (`return w[i]`, `return w[i].a`), a keyed entry that is not there, and a read whose index
+  calls a user function.  **Closed 2026-10-15** (loft#2006, second half): every such source
+  may be absent (`copy_source_may_be_absent`), and `bind_return_source` reads it once where a
+  user call forbids the re-read — a call root bound to an owned local first (the spelling
+  `d = f(x); return d.inner`), a call in an index read into a `τ?` handle — while a pure read
+  is re-read.  `(R-ReturnField)` still hands the two call-root exits over.  The 19-line
+  matrix holds on both backends with the rewrite on and off, both call counts are 1; of the
+  2354 corpus programs, 29 change emission and all 29 answer as before on both backends,
+  bar the guard itself.
 
 ## The presence walk of 2026-10-13 (loft#1993, loft#1994)
 

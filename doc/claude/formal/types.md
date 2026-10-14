@@ -702,13 +702,12 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **D-types-36** (open; the tracking issue is loft#2006) — violates `(N-Store)`: a stored null reads back as null.  The <!-- doc-lint: ok -->
-  copy a `return` makes tests a source that is a local or a field path rooted at one.  A
-  source rooted at a CALL (`return f(x).inner`) or at an element read (`return w[i]`,
-  `return w[i].a` with `i` out of range) is copied bare, so nothing answers a PRESENT record
-  of zeros on both backends.
+`D-types-36` opened 2026-10-14 and CLOSED 2026-10-15 (loft#2006): the copy a `return` makes
+tests its source at every root — a local, a field path, a call (bound first), an element or
+keyed read (re-read), a read whose index calls (read once).  The record is in
+[types-history.md](types-history.md).
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
