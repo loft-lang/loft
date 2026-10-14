@@ -1,0 +1,5 @@
+// loft#1934 shape — a RECURSIVE function threading its own result.  Nullable half.
+struct S { a: integer }
+struct B { s: S, v: vector<S> }
+fn f(n: integer) -> S? { if n <= 0 { S { a: 0 } } else { r = f(n - 1); r.a += n; r } }
+fn main() { t = f(10); println("{t.a ?? -1}"); }

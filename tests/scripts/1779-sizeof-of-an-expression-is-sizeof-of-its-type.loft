@@ -67,7 +67,8 @@ fn test_scalars() {
 fn test_positions() {
   p = P { a: 1, b: 2, c: 3 };
   assert(sizeof(p.a) == 1 && sizeof(p.b) == 2 && sizeof(p.c) == 4, "fields: {sizeof(p.a)} {sizeof(p.b)} {sizeof(p.c)}");
-  assert(sizeof(p) == sizeof(P) && sizeof(P) == 7, "struct: {sizeof(p)} {sizeof(P)}");
+  // i32, u16, u8 = 7 bytes, padded to 8 (@C138).
+  assert(sizeof(p) == sizeof(P) && sizeof(P) == 8, "struct: {sizeof(p)} {sizeof(P)}");
   assert(narrow(9) == 2, "parameter: {narrow(9)}");
   assert(sizeof(give()) == 2, "function result: {sizeof(give())}");
   v: vector<u8> = [1, 2];

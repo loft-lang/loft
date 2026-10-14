@@ -5,7 +5,7 @@
 // The field sets DIFFER on purpose: with `ck_cells` here and `ck_base` there,
 // picking the wrong winner used to surface as "Unknown field" naming the struct
 // nobody meant — which is the misdirection the issue is about.
-pub struct Chunk { ck_cx: integer, ck_cz: integer, ck_cells: integer }
+pub struct Chunk { pub ck_cx: integer, pub ck_cz: integer, pub ck_cells: integer }
 
 pub fn a_only() -> integer { return 10 }
 pub fn shared() -> integer { return 1 }

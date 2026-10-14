@@ -1,0 +1,13 @@
+diff --git a/src/value_record.rs b/src/value_record.rs
+index 202d2b381..1a8fac546 100644
+--- a/src/value_record.rs
++++ b/src/value_record.rs
+@@ -1362,7 +1362,7 @@ impl Rewrite<'_> {
+                 {
+                     let mut value = args.pop().unwrap_or(Value::Null);
+                     self.uses(&mut value);
+-                    *n = Value::TuplePut(v, i, Box::new(value));
++                    *n = Value::TuplePut(v, 0, Box::new(value));
+                     return;
+                 }
+                 let d = *op;

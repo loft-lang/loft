@@ -9,12 +9,14 @@
 // Kept because the answer can regress: a change to symbol resolution would
 // otherwise surface as a lazy fetch that mysteriously finds nothing.
 
+// approved exemption: needs the host's sqlite library name from platform (winsqlite3.dll on Windows); future work outside @PLN184
 #![cfg(all(feature = "native-extensions", unix))]
 
 mod common;
 extern crate loft;
 
 use common::cached_default;
+use loft::file_access as fa;
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
@@ -22,6 +24,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 /// versioned `.so.0` on Linux, the plain `.dylib` macOS ships in its shared
 /// cache.  One name for both would not fail; it would SKIP, which is the outcome
 /// a whole platform's coverage disappears into.
+// approved exemption: needs the host's sqlite library name from platform (winsqlite3.dll on Windows); future work outside @PLN184
 const SQLITE_LIB: &str = if cfg!(target_os = "macos") {
     "libsqlite3.dylib"
 } else {
@@ -224,9 +227,14 @@ fn seed(path: &std::path::Path, ddl: &str) {
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_pln129_{name}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch dir");
     dir.join("people.db")
+}
+
+/// `name` in the directory holding `path` (`std`: `Path::with_file_name`).
+fn sibling(path: &std::path::Path, name: &str) -> std::path::PathBuf {
+    fa::parent(path).unwrap_or_default().join(name)
 }
 
 #[test]
@@ -300,19 +308,20 @@ fn the_derived_query_runs_and_its_columns_come_back() {
         .expect("query");
     assert_eq!(rows[0][0], Some(Cell::Int(1)));
 
-    // A second open of the same target REUSES the handle, and this is what
-    // PROVES it rather than merely restating it: with the file unlinked, a fresh
-    // open could not possibly succeed, and the cached handle still reads. A
-    // connection per fault would cost more than the eager load laziness
+    // A second open of the same target REUSES the handle: the same open database, not a
+    // new one.  A connection per fault would cost more than the eager load laziness
     // replaces.
-    std::fs::remove_file(&path).expect("unlink");
     let again = SqlConn::open(Driver::Sqlite, &path.to_string_lossy()).expect("reopen is cached");
+    assert!(
+        again.same_connection(&conn),
+        "a second open reuses the handle"
+    );
     let rows = again
         .query(
             "SELECT \"name\" FROM \"person\" WHERE \"id\" = ?",
             &[Cell::Int(42)],
         )
-        .expect("the cached handle still reads");
+        .expect("the cached handle reads");
     assert_eq!(rows[0][0], Some(Cell::Text("grace".to_string())));
 }
 
@@ -451,8 +460,8 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
         return;
     };
     let dir = scratch("graph");
-    let persons = dir.with_file_name("persons.db");
-    let companies = dir.with_file_name("companies.db");
+    let persons = sibling(&dir, "persons.db");
+    let companies = sibling(&dir, "companies.db");
     seed(
         &companies,
         "CREATE TABLE sqcompany(id INTEGER PRIMARY KEY, name TEXT); \
@@ -467,7 +476,7 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/129-lazy-sql-graph.loft");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_PERSONS", format!("sqlite:{}", persons.display()))
@@ -527,7 +536,7 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
 
 /// The refusal a lookup reports for this database, or `""` when the fetch worked.
 fn bind_and_look(db_path: &std::path::Path, program: &std::path::Path) -> String {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg(program)
         .env("LOFT_SQL_TARGET", format!("sqlite:{}", db_path.display()))
@@ -548,7 +557,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
         .join("tests/scripts/129-lazy-sql-schema.loft");
 
     // The control: a table with an indexed key and matching types FETCHES.
-    let good = scratch("schema_ok").with_file_name("good.db");
+    let good = sibling(&scratch("schema_ok"), "good.db");
     seed(
         &good,
         "CREATE TABLE sqchecked(id INTEGER PRIMARY KEY, name TEXT); \
@@ -559,7 +568,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
     assert!(out.contains("why=[]"), "control must report healthy: {out}");
 
     // A column the type declares and the table does not.
-    let missing = scratch("schema_col").with_file_name("missing.db");
+    let missing = sibling(&scratch("schema_col"), "missing.db");
     seed(
         &missing,
         "CREATE TABLE sqchecked(id INTEGER PRIMARY KEY, naam TEXT); \
@@ -577,7 +586,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
 
     // A column whose affinity cannot hold the field: `name` is loft `text` and
     // the column is INTEGER, so every fetch would reinterpret someone's data.
-    let wrong = scratch("schema_type").with_file_name("wrong.db");
+    let wrong = sibling(&scratch("schema_type"), "wrong.db");
     seed(
         &wrong,
         "CREATE TABLE sqchecked(id INTEGER PRIMARY KEY, name INTEGER); \
@@ -593,7 +602,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
     // The one that does NOT announce itself: no index on the key. Every answer
     // stays right and every fault reads the whole table — a working feature and
     // a catastrophic one, which is why this is measured rather than assumed.
-    let unindexed = scratch("schema_scan").with_file_name("scan.db");
+    let unindexed = sibling(&scratch("schema_scan"), "scan.db");
     seed(
         &unindexed,
         "CREATE TABLE sqchecked(id INTEGER, name TEXT); \
@@ -620,7 +629,7 @@ fn an_explicit_query_populates_the_collection_both_backends() {
     else {
         return;
     };
-    let path = scratch("b2").with_file_name("liked.db");
+    let path = sibling(&scratch("b2"), "liked.db");
     seed(
         &path,
         "CREATE TABLE sqliked(id INTEGER PRIMARY KEY, name TEXT); \
@@ -630,7 +639,7 @@ fn an_explicit_query_populates_the_collection_both_backends() {
         .join("tests/scripts/129-lazy-sql-query.loft");
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_TARGET", format!("sqlite:{}", path.display()))
@@ -693,7 +702,7 @@ fn a_key_range_is_one_query_both_backends() {
     let Some(_sqlite) = sqlite_guard("a_key_range_is_one_query_both_backends") else {
         return;
     };
-    let path = scratch("range").with_file_name("events.db");
+    let path = sibling(&scratch("range"), "events.db");
     let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
     seed(
         &path,
@@ -707,7 +716,7 @@ fn a_key_range_is_one_query_both_backends() {
         .join("tests/scripts/129-lazy-sql-range.loft");
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_TARGET", format!("sqlite:{}", path.display()))
@@ -760,7 +769,7 @@ fn a_range_of_five_records_costs_one_query() {
     let Some(_sqlite) = sqlite_guard("a_range_of_five_records_costs_one_query") else {
         return;
     };
-    let path = scratch("range_count").with_file_name("evcount.db");
+    let path = sibling(&scratch("range_count"), "evcount.db");
     let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
     seed(
         &path,
@@ -806,7 +815,7 @@ fn a_slice_reads_what_is_resident_and_fetches_nothing() {
     let Some(_sqlite) = sqlite_guard("a_slice_reads_what_is_resident_and_fetches_nothing") else {
         return;
     };
-    let path = scratch("slice_count").with_file_name("evslice.db");
+    let path = sibling(&scratch("slice_count"), "evslice.db");
     let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
     seed(
         &path,
@@ -859,7 +868,7 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
     else {
         return;
     };
-    let path = scratch("owner").with_file_name("hands.db");
+    let path = sibling(&scratch("owner"), "hands.db");
     seed(
         &path,
         "CREATE TABLE sqhand(id INTEGER PRIMARY KEY, name TEXT, company_id INTEGER); \
@@ -870,7 +879,7 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
         .join("tests/scripts/129-lazy-sql-owner.loft");
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_TARGET", format!("sqlite:{}", path.display()))
@@ -943,7 +952,7 @@ fn a_lazy_fetch_can_be_a_loft_function() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/133-lazy-loft-driver.loft");
     let run = |backend: &str| -> String {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(&script)
@@ -1067,7 +1076,7 @@ fn a_lazy_driver_serves_one_element_type_and_the_miss_finds_it() {
         let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(fixture);
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(&script)
@@ -1230,7 +1239,7 @@ fn a_contained_driver_fault_releases_what_it_held() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/133-lazy-unwind.loft");
     let run = |backend: &str| -> String {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(&script)

@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `for e in hash` visits in KEY order (`Col-Order`), and for a COMPOUND key that order is
+// lexicographic: the first part, then the next.  The walk's sort is
+// decorated (`keys::sort_records`): a key of two to four integer parts is read once per record
+// into an array and the arrays sorted, a descending part stored as its bitwise complement.  What
+// can go wrong is a part read at the wrong width or offset (c3's byte part after a wide one), an
+// order that compares only the first part (every cell has repeated first parts), and the
+// comparator's road for a key the decorated form does not read (c5's five parts) answering
+// differently.  A hash key has no descending part (refused at compile time), so the walk never
+// meets one.  Every expected order is written out by
+// hand.  `LOFT_NO_FAST_ORDER=1` answers the same, and `LOFT_KEYED_VERIFY=1` checks the
+// decorated order against `keys::compare` pair by pair inside the runtime.
+//
+// @falsified-at: none — a lever with no earlier build to catch; the cells assert the walk's
+//   order themselves, and the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-hash-walk-orders-a-compound-key.patch — the decorated form
+//   reading only the first part of the key.
+//   CHANNEL: an assertion, on BOTH backends; a panic under LOFT_KEYED_VERIFY=1.
+//   WITNESS: `c1 -2,-1 -2,0 -2,1 -1,-1 -1,0 -1,1 0,-1 0,1 0,0 …` (r out of order within q).
+//   HOLDS: LOFT_NO_FAST_ORDER=1 green on both (the comparator road).
+
+struct P { q: integer, r: integer, v: integer }
+struct ByQR { rows: hash<P[q, r]> }
+struct M { a: integer, k: u8, b: integer }
+struct ByAKB { rows: hash<M[a, k, b]> }
+struct F { a: integer, b: integer, c: integer, d: integer }
+struct ByABCD { rows: hash<F[a, b, c, d]> }
+struct G { a: integer, b: integer, c: integer, d: integer, e: integer }
+struct ByABCDE { rows: hash<G[a, b, c, d, e]> }
+
+// The fifteen (q, r) pairs of q in -2..2, r in -1..1, inserted scrambled: i·7 mod 5 and
+// i·2 mod 3 run through every pair once for i in 0..14.
+fn qr(i: integer) -> P { P { q: (i * 7) % 5 - 2, r: (i * 2) % 3 - 1, v: i } }
+
+// c1: ascending on both parts.
+fn c1() -> text {
+  h = ByQR { rows: [] };
+  for i in 0..15 { h.rows += [qr(i)]; }
+  out = "";
+  for e in h.rows { out += "{e.q},{e.r} "; }
+  out
+}
+
+// c3: a byte part between two integer parts, negative integers on both sides.
+fn c3() -> text {
+  h = ByAKB { rows: [] };
+  h.rows += [M { a: 1, k: 200, b: -5 }, M { a: -3, k: 7, b: 9 }, M { a: 1, k: 3, b: 4 },
+             M { a: 1, k: 200, b: -6 }, M { a: -3, k: 7, b: -9 }, M { a: 1, k: 3, b: -4 },
+             M { a: 0, k: 255, b: 0 }];
+  out = "";
+  for e in h.rows { out += "{e.a},{e.k},{e.b} "; }
+  out
+}
+
+// c4: four parts, the first three repeated.
+fn c4() -> text {
+  h = ByABCD { rows: [] };
+  h.rows += [F { a: 2, b: 1, c: 1, d: 9 }, F { a: 1, b: 2, c: 3, d: 4 }, F { a: 2, b: 1, c: 1, d: -9 },
+             F { a: 1, b: 2, c: 3, d: 3 }, F { a: 1, b: 2, c: 2, d: 100 }, F { a: 2, b: 0, c: 5, d: 5 }];
+  out = "";
+  for e in h.rows { out += "{e.a}{e.b}{e.c}:{e.d} "; }
+  out
+}
+
+// c5: five parts — past what the decorated form reads, so the comparator orders it.
+fn c5() -> text {
+  h = ByABCDE { rows: [] };
+  h.rows += [G { a: 1, b: 1, c: 1, d: 1, e: 2 }, G { a: 1, b: 1, c: 1, d: 1, e: 1 },
+             G { a: 0, b: 9, c: 9, d: 9, e: 9 }, G { a: 1, b: 1, c: 1, d: 0, e: 7 }];
+  out = "";
+  for e in h.rows { out += "{e.d}{e.e} "; }
+  out
+}
+
+fn main() {
+  assert(c1() == "-2,-1 -2,0 -2,1 -1,-1 -1,0 -1,1 0,-1 0,0 0,1 1,-1 1,0 1,1 2,-1 2,0 2,1 ",
+         "c1 {c1()}");
+  assert(c3() == "-3,7,-9 -3,7,9 0,255,0 1,3,-4 1,3,4 1,200,-6 1,200,-5 ", "c3 {c3()}");
+  assert(c4() == "122:100 123:3 123:4 205:5 211:-9 211:9 ", "c4 {c4()}");
+  assert(c5() == "99 07 11 12 ", "c5 {c5()}");
+  println("ok");
+}

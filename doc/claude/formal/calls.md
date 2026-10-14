@@ -314,7 +314,7 @@ cannot see.
               declared second, in either order, within one source: `x.m(…)` would reach one
               body and `m(x, …)` the other.  The one definition that answers both spellings
               is the `self` method, `fn m(self: τ, …)`, in the stdlib, a library and a
-              program alike; `both` is a deprecated spelling of `self` (C123).  A plain
+              program alike; `both` is a deprecated spelling of `self` (@C123).  A plain
               function whose first parameter has ANOTHER type (`m(q: Qt)` beside
               `m(self: Pt)`) is an overload, kept live by its argument type.
 ```
@@ -325,29 +325,96 @@ cannot see.
 from muscle memory built in Rust, where the receiver's float width decides, and `sin(v)` for
 one who never learned that convention and should not be forced into it.  A `self` method answers
 both ((F-Recv)), and an import list reaches it by name; `both`, which once was the only spelling
-an import list could find, therefore names nothing more and is deprecated (C123).
+an import list could find, therefore names nothing more and is deprecated (@C123).
 
 Before this was refused in both orders the free function simply went dead: `doit(p)` resolves
 the method key first, so `fn doit(self: Pt)` followed by `fn doit(p: Pt)` answered the method's
 value from both spellings with no diagnostic, and so did the opposite order.  Only a `both` method
 followed by the function was caught, because only `both` registers a bare-name dispatcher.
 
-Across SOURCES the rule is C97's: a library's plain function beside a STDLIB method of its name
+Across SOURCES the rule is @C97's: a library's plain function beside a STDLIB method of its name
 stays legal (the library is module-scoped, so the stdlib can grow) and is warned
 `shadowed-by-method`, because its bare name belongs to the stdlib; a program's function beside a
-stdlib method is this refusal (C95).  A generic template is keyed the same way, so
+stdlib method is this refusal (@C95).  A generic template is keyed the same way, so
 `fn pick<T>(self: vector<T>)` beside `fn pick<T>(v: vector<T>)` is refused too.
 
 *Anchors:* `Data::add_fn` (`src/data.rs`, `shadowed_method` / `shadowed_free`);
 `tests/scripts/a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`;
-DESIGN_DECISIONS.md C123.
+DESIGN_DECISIONS.md @C123.
+
+### A library's surface is its `pub` items, by either spelling
+
+```
+  (F-Surface) a library L's surface is the items L declares `pub` and the names L passes on
+              with `pub use`.  A program reaches L's surface by `use L::*` / `use L::(…)` or
+              by the qualifier `L::name`, and NEITHER spelling reaches anything else:
+                - an item L declares without `pub` is refused — "`name` is not `pub` in `L`";
+                - a name L only imports for its own use (a plain `use`, @C98) is refused,
+                  naming the qualifier of the library that owns it.
+              L's own code reaches all of its items.  A package qualifying its OWN name
+              (`L::name` inside L) means "in this file" and is not an outside reach.
+
+  (F-Visible) everything a file F declares is private to F; `pub` gives consent (@C140).
+              A TYPE T of F, outside F, is
+                - INVISIBLE when T is not `pub` and no `pub` item of F names it: not named;
+                - NAME ONLY when T is not `pub` but a `pub` fn's signature of F, or a `pub`
+                  field of a visible type of F, names it (transitively through type
+                  arguments): named, passed and stored; never built; its variant names
+                  hidden;
+                - `pub` when declared `pub`: as name only, and built — a struct literal when
+                  every field is `pub`, an enum's variants.
+              A FIELD of a struct or of a variant is private to F; `pub` on it makes it
+              readable, writable and matchable wherever its type is visible.  A literal of a
+              name-only type outside F is refused, naming the cure (build it with F's
+              functions, or `pub` on the type).
+              An ALIAS `type A = τ` of F that is name only is ABSTRACT outside F: a value of
+              A is bound, handed to a parameter, variable, field or result declared A,
+              compared with `==` and printed; reading τ — an operator, a member or element
+              read, a method or parameter of τ, destructuring, a place or result declared
+              τ — is refused, and so is a plain τ handed where A is declared.  A
+              `vector<A>` holds A's: an element read and a loop variable are A, and an
+              operation that never looks at an element (`len`, `+=` of `vector<A>`,
+              `insert`, `reverse` — a callee whose parameter is an untyped `vector` or an
+              unbounded `vector<T>`) takes it; a bounded generic (`sort`, `sum`) reads τ.
+              The same holds at every depth a value carries A: a tuple member, a vector
+              of vectors, a transparent `pub type` that names A, a keyed lookup's key, the
+              value of an `if` / `match` / block / comprehension (its branches must agree),
+              a destructured or pattern-bound member, a lambda's parameter and result
+              through a generic's type variable, a named argument.  An `if` on an A, a
+              `match` on one, and a literal or variant pattern against an A member read τ.
+              Inside F, and as a `pub type`, A is τ.  A tuple spelled inline is no declaration: its
+              members are visible wherever it is.
+```
+
+**`(F-Visible)` in words.** The levels are decided by what F's own `pub` items mention, so a
+`pub fn` just works: the type it returns can be named by the caller and passed back, while its
+fields and its construction stay F's until F says otherwise.  The census
+(`scripts/pub_census.sh`, `LOFT_TRACE_VISIBILITY=1`) lists every outside use that lacks its
+`pub`; one check (`Parser::check_visibility`) answers both it and the refusal.
+
+**In words.** `pub` is the boundary a library draws, and the owner's ruling is that the
+boundary holds: definitions without it "should not be reachable at all" from outside.  A
+boundary that only the glob import respected would make every private helper reachable as
+`L::helper`, so no library could rename one without breaking a consumer.  The refusal names
+the one-edit cure — the owner's qualifier for an imported name, `pub` on the library's side
+for its own item.
+
+*Anchors:* `Data::qualified_refusal` (`src/data.rs`), asked where a `L::` qualifier is
+parsed — `parse_var` (`src/parser/objects.rs`) for values, calls, literals and variants, and
+the type parser (`src/parser/definitions.rs`) for `L::Type` — beside `Data::exported`, which
+the glob import reads; `tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`
+and `…-reaches-what-a-library-publishes.loft`; DESIGN_DECISIONS @C97, @C98.  A type named above
+its declaration is a forward-reference stub, not an item: it travels with any import
+(`Data::passes_on`) and the declaration that adopts it decides its `pub` (the definition loop
+in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one file,
+`a-module-names-its-importers-*.loft` across two.
 
 
 ---
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation is closed; the record is in [calls-history.md](calls-history.md).
+**OPEN: 0.**  The closed record is in [calls-history.md](calls-history.md).
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

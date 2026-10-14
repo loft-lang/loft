@@ -1,0 +1,57 @@
+// @FR-Const-Foreign / @FR-B-Copy — a mapped file's vector stored as an ELEMENT of a vector is
+// copied in, as a bind of it copies: the element is the program's own, reads back the file's
+// bytes, and takes a write while the mapping stays as it was.  The element append reached the
+// record deep copy, which read the mapping as a record in its store, and both backends crashed
+// on a corrupt reference before anything wrote (loft#1906).  Values worked out by hand: the
+// file holds "hello" = 104 101 108 108 111.
+// @falsified-at: 15181f86e — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-mapped-vector-appended-as-an-element-is-copied.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+// CHANNEL: panic on both backends — the control's record copy reads the mapping as a record
+//   and dies on the corrupt reference (`Store access out of bounds`).
+// HOLDS: asserts 0, leak none and free-refusals 0 on both trees and both backends, as measured
+//   by `make falsify` at 15181f86e.
+
+fn appended(p: text) -> integer {
+  v: vector<vector<u8>> = [];
+  v += [file_map(p) ?? []];
+  // one element of 5 bytes, the second 101
+  len(v) * 1000 + len(v[0]) * 100 + v[0][1]
+}
+
+fn appended_from_a_binding(p: text) -> integer {
+  m = file_map(p) ?? [];
+  v: vector<vector<u8>> = [];
+  v += [m];
+  v += [m];
+  // two elements, each "hello": 2 * 1000 + the last byte 111
+  len(v) * 1000 + v[1][4]
+}
+
+fn the_element_takes_a_write(p: text) -> integer {
+  m = file_map(p) ?? [];
+  v: vector<vector<u8>> = [];
+  v += [m];
+  v[0][0] = 72;
+  // the copy holds 72, the mapping still 104
+  v[0][0] * 1000 + m[0]
+}
+
+// Control: a copy appended already worked.
+fn appended_after_a_copy(p: text) -> integer {
+  m = file_map(p) ?? [];
+  w = m;
+  v: vector<vector<u8>> = [];
+  v += [w];
+  len(v[0]) * 100 + v[0][2]
+}
+
+fn main() {
+  // A name of this run's own: the wrap, native and other suites run this file at once.
+  p = "loft_1906_{now()}_{ticks()}_mapped.tmp";
+  assert(write_bytes(p, [104, 101, 108, 108, 111]), "write");
+  assert(appended(p) == 1601, "a mapped vector appended as an element: {appended(p)}");
+  assert(appended_from_a_binding(p) == 2111, "appended from a binding: {appended_from_a_binding(p)}");
+  assert(the_element_takes_a_write(p) == 72104, "the element takes a write: {the_element_takes_a_write(p)}");
+  assert(appended_after_a_copy(p) == 608, "a copy appended: {appended_after_a_copy(p)}");
+  assert(delete(p), "cleanup");
+}

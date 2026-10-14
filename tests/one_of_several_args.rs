@@ -4,6 +4,7 @@
 //! several arguments has no single witness, so the bind COPIES on every run.  The guard
 //! (`tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft`) holds the values;
 //! this pins the lowering: no runtime guard against one argument on either backend.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,7 +16,8 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "120");
     cmd
 }
@@ -69,11 +71,11 @@ fn native_copies_without_a_witness() {
         .output()
         .expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     let pick = section(&rust, "n_pick_one");
     assert!(
         pick.contains("if _src.store_nr == u16::MAX || _src.store_nr == _dst.store_nr {"),
@@ -83,5 +85,5 @@ fn native_copies_without_a_witness() {
         !pick.contains("_src.store_nr != var_cv.store_nr"),
         "pick_one: no witness compare against one argument"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

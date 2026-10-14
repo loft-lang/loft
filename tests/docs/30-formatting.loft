@@ -176,11 +176,11 @@ fn main() {
   // A zero pad is for numbers, and `null` is not one, so it pads with spaces.
   assert("{absent:08}" == "    null", "`null` is never zero-padded");
   // An operation inside a hole that cannot produce a value yields null rather
-  // than stopping the program, and the text says which fault it was.  Building
-  // a message — a log line, an error report — can therefore never itself fail.
+  // than stopping the program, and the null prints as `null`.  Building a
+  // message — a log line, an error report — can therefore never itself fail.
   top = 5;
   bottom = 0;
-  assert("{top / bottom}" == "null(/0)", "a division by zero names its cause");
+  assert("{top / bottom}" == "null", "a division by zero prints null");
   // ## Character format
   c = 'A';
   assert("{c}" == "A", "character default");

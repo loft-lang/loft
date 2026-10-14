@@ -30,6 +30,7 @@
 
 pub mod coroutine;
 pub mod default;
+pub mod file_ops;
 pub mod float_compare;
 pub mod int_arith;
 pub mod int_compare;
@@ -126,6 +127,21 @@ pub fn emit_op(ctx: &mut EmitCtx<'_, '_>, name: &str, args: &[Value]) -> io::Res
 /// priority over the special-case match arms (phase 00 step 0.6).
 /// While the registry is empty this always returns false, so the
 /// dispatch falls through to today's match unchanged.
+/// `@FR-R-FoldCompare` — the predicates [`text_ops::FoldCompareEmitter`] is registered for:
+/// the names `pre_eval` asks before lifting an operand the emitter may not read.
+pub const FOLD_COMPARE_OPS: [&str; 4] = [
+    "t_4text_starts_with",
+    "t_4text_ends_with",
+    "OpEqText",
+    "OpNeText",
+];
+
+/// Is `name` one of [`FOLD_COMPARE_OPS`]?
+#[must_use]
+pub fn is_fold_compare(name: &str) -> bool {
+    FOLD_COMPARE_OPS.contains(&name)
+}
+
 pub fn has_custom_emitter(name: &str) -> bool {
     registry().contains_key(name)
 }
@@ -188,6 +204,16 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // identically; n_parallel_for_light is a thread-count hint that
     // doesn't change emission shape).
     r.insert("n_parallel_for", Box::new(parallel::ParallelForEmitter));
+    // A file read the site types statically: `OpReadFileInt` with constant width and sign.
+    r.insert("OpReadFile", Box::new(file_ops::ReadFileEmitter));
+    // `@FR-R-FoldCompare` — a text predicate over a case fold, answered without the fold.
+    {
+        use crate::codegen_runtime::fold_op;
+        let ops = [fold_op::STARTS, fold_op::ENDS, fold_op::EQ, fold_op::NE];
+        for (name, op) in FOLD_COMPARE_OPS.into_iter().zip(ops) {
+            r.insert(name, Box::new(text_ops::FoldCompareEmitter { op }));
+        }
+    }
     r.insert(
         "n_parallel_for_light",
         Box::new(parallel::ParallelForEmitter),
@@ -264,6 +290,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         r.insert(op, Box::new(vector_ops::HoistedPushEmitter));
     }
     r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
+    r.insert("OpKeepRange", Box::new(vector_ops::KeepRangeEmitter));
     r.insert("OpNewRecord", Box::new(vector_ops::NewRecordEmitter));
     r.insert("OpFinishRecord", Box::new(vector_ops::FinishRecordEmitter));
 
@@ -314,6 +341,14 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("OpPutRef", Box::new(ref_ops::OpPutRefEmitter));
     r.insert("OpCopyRecord", Box::new(ref_ops::OpCopyRecordEmitter));
     r.insert("OpDistinctStore", Box::new(ref_ops::OpDistinctStoreEmitter));
+    r.insert(
+        "OpConvBoolFromRef",
+        Box::new(ref_ops::PresenceEmitter { absent: false }),
+    );
+    r.insert(
+        "OpRefIsNull",
+        Box::new(ref_ops::PresenceEmitter { absent: true }),
+    );
     r.insert("OpRefAlias", Box::new(ref_ops::OpRefAliasEmitter));
     r.insert("OpClear", Box::new(ref_ops::OpClearEmitter));
     r.insert("OpSizeofRef", Box::new(ref_ops::OpSizeofRefEmitter));
@@ -581,9 +616,19 @@ mod tests {
         // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`), and its
         // boolean and enum kinds two more (`OpPushBoolean`, `OpPushEnum`, the byte kind at
         // bias 0).  `(G-Hold)` adds one, `OpCoroutineRetainEmitter`: a second holder of a
-        // generator handle takes a hold on its frame.
+        // generator handle takes a hold on its frame.  `@FR-R-Refresh`'s keep-range clause adds
+        // one, `KeepRangeEmitter` for `OpKeepRange`: a self-slice pop on a vector whose push
+        // header the loop holds refreshes that header at its own site.  `@FR-R-TypedRead`
+        // adds one, `ReadFileEmitter` for `OpReadFile`: a fixed-width integer read calls
+        // `OpReadFileInt::<W, SIGNED>`; every other read falls through to the template.
+        // `@FR-R-FoldCompare` adds four, `FoldCompareEmitter` for `starts_with`, `ends_with`,
+        // `OpEqText` and `OpNeText`: a predicate over a case fold compares without building
+        // it; every other one falls through to its template.  `@FR-R-ValueRecord`'s nullable
+        // clause adds two, `PresenceEmitter` for `OpConvBoolFromRef` and `OpRefIsNull`: the
+        // presence test of a `τ?` value local reads its tuple's presence word; every other
+        // operand falls through to the template.
         assert!(
-            count <= 132,
+            count <= 140,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

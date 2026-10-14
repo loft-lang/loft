@@ -108,14 +108,23 @@ pub enum RuntimeErrorKind {
     /// DEFAULT instead: the lowest value in range, or null where the type admits
     /// it.  Reported rather than silent, because the value the program computed is
     /// not the value the slot now holds — but recoverable, like every other
-    /// uncomputable: one value degrades and the run continues (C80).
+    /// uncomputable: one value degrades and the run continues (@C80).
     RangeDefaulted { value: i64, lo: i64, hi: i64 },
+    /// `@FR-E-Report` — a write whose place names no record (an absent key, a null view on the
+    /// path) was dropped (`@FR-H-WriteNull`), and no `else` arm owned it.  Recoverable: the
+    /// program continues and the place keeps no value (@C80); an index out of range reports
+    /// as `IndexOutOfBounds` where it was found instead, once.
+    WriteDropped,
     /// A call would have taken the stack past `State::MAX_CALL_DEPTH` frames.
     StackOverflow,
     /// `panic("msg")` builtin called from loft code.
     UserPanic { message: String },
     /// `assert(test, "msg", file, line)` builtin called with `test == false`.
     AssertionFailed { message: String },
+    /// `exit(code)` builtin: the program ends with `code` as its status — not a fault,
+    /// but it halts the dispatch loop the way one does, and `main.rs` turns it into the
+    /// process's exit status in silence (@PLN179 finding 009).
+    Exit { code: i64 },
     /// A fault raised inside a PLACED library and relayed across the crossing.
     ///
     /// `label` and `detail` are the ORIGINAL fault's, carried over the wire
@@ -138,10 +147,12 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::ShiftOutOfRange => "shift_out_of_range",
             RuntimeErrorKind::CastOutOfRange => "cast_out_of_range",
             RuntimeErrorKind::RangeDefaulted { .. } => "range_defaulted",
+            RuntimeErrorKind::WriteDropped => "write_dropped",
             RuntimeErrorKind::WriteToLockedStore { .. } => "write_to_locked_store",
             RuntimeErrorKind::StackOverflow => "stack_overflow",
             RuntimeErrorKind::UserPanic { .. } => "user_panic",
             RuntimeErrorKind::AssertionFailed { .. } => "assertion_failed",
+            RuntimeErrorKind::Exit { .. } => "exit",
             RuntimeErrorKind::Relayed { label, .. } => label,
         }
     }
@@ -164,6 +175,11 @@ impl RuntimeErrorKind {
                      took its default instead"
                 )
             }
+            RuntimeErrorKind::WriteDropped => {
+                "a write to a place that names no record was dropped — add `else { … }` to the \
+                 assignment to handle it"
+                    .to_string()
+            }
             RuntimeErrorKind::ShiftOutOfRange => {
                 "shift amount out of range [0,64) or result is the reserved null value".to_string()
             }
@@ -182,6 +198,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::AssertionFailed { message } => {
                 format!("assertion failed: {message}")
             }
+            RuntimeErrorKind::Exit { code } => format!("exit({code})"),
             // Already rendered on the far side; describing it again would
             // prefix a second `panic:` onto one that is already there.
             RuntimeErrorKind::Relayed { detail, .. } => detail.clone(),
@@ -189,17 +206,50 @@ impl RuntimeErrorKind {
     }
 }
 
+/// `exit(code)` on the `--native` backend: flush what the program printed and end the
+/// process with `code` as its status, saying nothing.  The generated code has no
+/// dispatch loop to halt, so the one body a `#rust` template can give `exit` ends the
+/// process at the call site, as `n_panic`'s generated body does through
+/// [`RuntimeError::report_and_exit`].  The status is the low eight bits on every host,
+/// which is what a shell sees of `exit 256` too.
+pub fn exit_program(code: i64) -> ! {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // A status is one byte by contract, as a shell sees `exit 300`: Windows keeps all 32
+    // bits of a process status, so the byte is taken here, where both backends end, rather
+    // than left to the OS (the same program answers the same status everywhere).
+    std::process::exit(i32::from(code.to_le_bytes()[0]))
+}
+
 impl RuntimeError {
+    /// `exit(code)` on the interpreter: an `Exit` halt with no position, which the dispatch
+    /// loop stops on like any other and `main.rs` turns into the exit status without a
+    /// message.
+    #[must_use]
+    pub fn exit(code: i64) -> Self {
+        let kind = RuntimeErrorKind::Exit { code };
+        let message = kind.describe();
+        Self {
+            kind,
+            position: None,
+            op_pc: u32::MAX,
+            message,
+            call_chain: Vec::new(),
+            crossed_placement: false,
+        }
+    }
+
     /// Construct a `UserPanic` error at the loft surface call site.
     /// `file` / `line` come from the `panic("msg", file, line)` stub
     /// arguments injected by the parser at the loft call site.
     #[must_use]
-    pub fn user_panic(message: String, file: String, line: u32) -> Self {
+    pub fn user_panic(message: String, file: &str, line: u32) -> Self {
         let position = if file.is_empty() {
             None
         } else {
             Some(Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(file),
                 line,
                 pos: 1,
             })
@@ -374,12 +424,12 @@ impl RuntimeError {
 
     /// Construct an `AssertionFailed` error at the loft surface call site.
     #[must_use]
-    pub fn assertion_failed(message: String, file: String, line: u32) -> Self {
+    pub fn assertion_failed(message: String, file: &str, line: u32) -> Self {
         let position = if file.is_empty() {
             None
         } else {
             Some(Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(file),
                 line,
                 pos: 1,
             })
@@ -440,12 +490,12 @@ impl RuntimeError {
     }
 
     #[must_use]
-    pub fn stack_overflow(file: String, line: u32) -> Self {
+    pub fn stack_overflow(file: &str, line: u32) -> Self {
         let position = if file.is_empty() {
             None
         } else {
             Some(Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(file),
                 line,
                 pos: 1,
             })
@@ -489,7 +539,7 @@ impl RuntimeError {
 /// `true` means the fault has been logged and the caller must RETURN rather than halt;
 /// `false` means production mode is off and the caller halts as it otherwise would.
 ///
-/// This is the whole of `DESIGN_DECISIONS.md § C66` — *"a single error should not bring
+/// This is the whole of @C66` — *"a single error should not bring
 /// everything down"* — and it lives here because BOTH backends have to reach the same
 /// answer.  The interpreter's `native.rs::n_panic` / `n_assert` and the bodies the native
 /// generator emits for those two are separate code that implements one documented
@@ -544,7 +594,7 @@ pub fn locked_write_advice(origin: &str) -> String {
 }
 
 /// `@FR-H-WriteLocked` in a PRODUCTION run: the write is discarded and logged, and the
-/// program continues on the store's old bytes (C80 — nothing stops a production program).
+/// program continues on the store's old bytes (@C80 — nothing stops a production program).
 /// Answers `false` outside production, where the caller halts with the report instead.
 ///
 /// Logged at the first discard and then at every doubling of the count, so a loop that
@@ -580,10 +630,10 @@ pub fn logged_in_production(
         return false;
     }
     // Routed through `log_runtime_kind` rather than `log` so the entry carries the same
-    // `[user_panic]` / `[assertion_failed]` label and the same C66 severity as every other
+    // `[user_panic]` / `[assertion_failed]` label and the same @C66 severity as every other
     // production-mode runtime event, on whichever backend produced it.
     let position = Position {
-        file: file.into(),
+        file: crate::lexer::intern_file(file),
         line,
         pos: 1,
     };
@@ -600,18 +650,18 @@ mod tests {
 
     #[test]
     fn user_panic_carries_message_and_position() {
-        let err = RuntimeError::user_panic("oops".into(), "test.loft".into(), 42);
+        let err = RuntimeError::user_panic("oops".into(), "test.loft", 42);
         assert!(matches!(err.kind, RuntimeErrorKind::UserPanic { .. }));
         assert_eq!(err.kind.label(), "user_panic");
         assert!(err.message.contains("oops"));
         let pos = err.position.as_ref().expect("position present");
-        assert_eq!(&*pos.file, "test.loft");
+        assert_eq!(pos.file, "test.loft");
         assert_eq!(pos.line, 42);
     }
 
     #[test]
     fn assertion_failed_carries_message_and_position() {
-        let err = RuntimeError::assertion_failed("x == 5".into(), "fixture.loft".into(), 7);
+        let err = RuntimeError::assertion_failed("x == 5".into(), "fixture.loft", 7);
         assert!(matches!(err.kind, RuntimeErrorKind::AssertionFailed { .. }));
         assert_eq!(err.kind.label(), "assertion_failed");
         assert!(err.message.contains("x == 5"));
@@ -621,13 +671,13 @@ mod tests {
 
     #[test]
     fn empty_file_means_no_position() {
-        let err = RuntimeError::user_panic("oops".into(), String::new(), 0);
+        let err = RuntimeError::user_panic("oops".into(), "", 0);
         assert!(err.position.is_none());
     }
 
     #[test]
     fn to_diag_entry_renders_level_and_position() {
-        let err = RuntimeError::user_panic("boom".into(), "x.loft".into(), 3);
+        let err = RuntimeError::user_panic("boom".into(), "x.loft", 3);
         let entry = err.to_diag_entry();
         assert_eq!(entry.level, Level::Error);
         assert_eq!(entry.file, "x.loft");
@@ -655,6 +705,7 @@ mod tests {
             RuntimeErrorKind::AssertionFailed {
                 message: "a".into(),
             },
+            RuntimeErrorKind::Exit { code: 2 },
         ];
         let mut labels: Vec<&str> = kinds.iter().map(RuntimeErrorKind::label).collect();
         labels.sort_unstable();

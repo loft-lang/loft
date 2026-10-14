@@ -44,7 +44,9 @@ REPO_TAG="$REPO_SLUG.$REPO_HASH"
 [ -n "$scratch" ] || scratch="/var/tmp/loft-test-scratch-$REPO_TAG"
 PID_FILE="/tmp/loft_test.$REPO_TAG.pid"
 
-free_gb() { df -P -B1G "$REPO_ROOT" | awk 'NR == 2 { print $4 }'; }
+# `-Pk` is POSIX (GNU and BSD df both take it); `-B1G` is GNU-only and answered nothing on
+# macOS, so every comparison below failed and the guard could neither sweep nor stop a gate.
+free_gb() { df -Pk "$REPO_ROOT" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 alive() { local p; p=$(cat "$1" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
 
 start=$(free_gb)

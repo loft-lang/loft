@@ -29,7 +29,7 @@ enum Src {
   Down { at: integer },
 }
 
-fn next(self: Src) -> integer? {
+operator next(self: Src) -> integer? {
   match self {
     Up { at, stop } => if at >= stop { null } else { self.at += 1; at + 1 },
     Down { at } => if at <= 0 { null } else { self.at -= 1; at },
@@ -38,7 +38,7 @@ fn next(self: Src) -> integer? {
 
 struct Counter { at: integer, stop: integer }
 
-fn next(self: Counter) -> integer? {
+operator next(self: Counter) -> integer? {
   if self.at >= self.stop { return null; }
   self.at += 1;
   self.at

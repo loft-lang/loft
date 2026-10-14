@@ -195,7 +195,7 @@ fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) 
 /// Four forms establish a store, matching the four emitters measured to break:
 ///
 /// - `OpDatabase(v, …)` — a struct literal built into `v`'s own store;
-/// - `Set(v, Var(src))` — the C86 whole-value bind, which codegen lowers to
+/// - `Set(v, Var(src))` — the @C86 whole-value bind, which codegen lowers to
 ///   `OpDatabase` + `OpCopyRecord` into a fresh store (the `bx = other` swap);
 /// - `Set(v, Call(f, …))` — a bind from a user function's return (`bx = mk(22)`);
 /// - passing `v` as a `&` argument to a callee that reassigns that parameter wholesale
@@ -231,6 +231,9 @@ fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) 
 /// other expression is not recognised — [`reshaped_containers`] and [`established_stores`] are
 /// both lower bounds, and a missed case keeps today's behaviour rather than inventing a new
 /// one.
+///
+/// `@FR-H-ShortRef` — a short-term view holds still only while its container takes no growth,
+/// removal or reordering; across one, this is where the view gets its own copy.
 pub(super) fn collect_views_to_materialise(
     code: &Value,
     function: &Function,

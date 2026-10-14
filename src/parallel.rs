@@ -63,6 +63,11 @@ pub struct WorkerProgram {
     /// `&Data` held by the spawning frame, which outlives `thread::scope`.
     pub data_ptr: crate::data_ref::DataRef,
     pub fn_positions: Arc<Vec<u32>>,
+    /// The parent's constant table (`State::const_refs`): a worker runs the same bytecode, and
+    /// `OpConstRef` indexes this table — empty, a worker that read a top-level vector constant
+    /// panicked (loft#1917).  The DbRefs stay valid because a worker borrows the parent's
+    /// stores read-only.
+    pub const_refs: Arc<Vec<crate::keys::DbRef>>,
     /// `@FR-R-FrameHeadroom` — the parent's per-function frame heights: a worker pushes
     /// frames of the same functions, through the same direct-path operators.
     pub frame_headroom: Arc<Vec<u32>>,
@@ -106,6 +111,7 @@ impl WorkerProgram {
         state.fn_positions.clone_from(&*self.fn_positions);
         state.frame_headroom = Arc::clone(&self.frame_headroom);
         state.line_numbers = (*self.line_numbers).clone();
+        state.const_refs.clone_from(&*self.const_refs);
         state
     }
 }
@@ -184,7 +190,7 @@ where
                 // as on `thread::scope`: `pool.install` blocks until the parallel iterator
                 // has `collect`ed every task, so no worker (nor its read-only borrow of
                 // `stores`) outlives this call, and `stores` outlives `pool.install`.
-                // Workers never write the parent (C93 → compile error), so the shared
+                // Workers never write the parent (@C93 → compile error), so the shared
                 // read-only buffers are race-free.  `WorkerStores: Send` (unsafe impl),
                 // so a borrowed one moves into a rayon task like the copy did.
                 let worker_stores = unsafe { stores.clone_for_light_worker() };
@@ -1032,6 +1038,9 @@ pub fn run_parallel_queue_ref(
     // reassignment workers like `if neg { v = Fail{...} }` fall
     // into this case because their codegen unconditionally
     // `OpFreeRef`s every variant temp at end-of-fn).
+    // `data` is not read: reviving a RECORD result walks none of its fields (see
+    // `revive_record_chain`), and a tuple's members carry their own types.
+    let _ = data;
     let mut visited: std::collections::HashSet<u16> = std::collections::HashSet::new();
     for r in &refs {
         if r.store_nr == u16::MAX {
@@ -1041,7 +1050,6 @@ pub fn run_parallel_queue_ref(
             stores,
             r,
             ret_type,
-            data,
             &mut visited,
             &mut adopted,
             parent_store_count,
@@ -1072,7 +1080,6 @@ fn revive_record_chain(
     stores: &mut Stores,
     record_ref: &DbRef,
     record_type: &crate::data::Type,
-    data: &crate::data::Data,
     visited: &mut std::collections::HashSet<u16>,
     adopted: &mut Vec<u16>,
     parent_store_count: u16,
@@ -1115,23 +1122,14 @@ fn revive_record_chain(
         adopted.push(store_nr);
     }
 
-    // For plain `Type::Reference(struct_d, _)`, `attributes` lists
-    // the struct's fields — safe to walk for owned DbRef sub-fields.
-    // For `Type::Enum(_, true, _)`, `attributes` lists the parent
-    // enum's *variants*, NOT the active variant's fields — walking
-    // them as DbRef offsets reads garbage and segfaults.  Reaching
-    // the active variant requires reading the discriminant + type
-    // tag; deferred until a test with nested DbRef-in-variant
-    // payload exposes the gap (the spine's current corpus has no
-    // such test — Pass/Fail variants in `par_struct_to_struct_enum_t4`
-    // hold only byte / integer / text, none owned-DbRef).
+    // A RECORD result — a struct (`-> S`, `-> S?`), a struct-enum, a vector — has nothing
+    // further to revive: every sub-record it owns (a collection field, a nested struct, a
+    // text) lives in the record's OWN store (@FR-H-NewRec), and a field holds only a 4-byte
+    // record id that `Stores::get_ref` completes from the holder.  Its fields are therefore
+    // never walked as 12-byte `DbRef`s at their STACK offsets: that reads past a collection
+    // field into whatever follows it, and revives a store the record does not own.  Only a
+    // stack-laid tuple carries whole `DbRef`s that may name other stores.
     let elem_types: Vec<Type> = match record_type {
-        Type::Reference(struct_d, _) => data
-            .def(*struct_d)
-            .attributes
-            .iter()
-            .map(|a| a.typedef.clone())
-            .collect(),
         Type::Tuple(elems) => elems.clone(),
         _ => return,
     };
@@ -1148,15 +1146,7 @@ fn revive_record_chain(
         let cur: DbRef =
             stores.allocations[store_nr as usize].read::<DbRef>(record_ref.rec, field_pos);
         if cur.store_nr != u16::MAX && (cur.store_nr as usize) < stores.allocations.len() {
-            revive_record_chain(
-                stores,
-                &cur,
-                field_tp,
-                data,
-                visited,
-                adopted,
-                parent_store_count,
-            );
+            revive_record_chain(stores, &cur, field_tp, visited, adopted, parent_store_count);
         }
     }
 }
@@ -1726,7 +1716,17 @@ pub(crate) fn read_tuple_at_wide(
     // coincided (every integer 8 bytes); once narrow elements got their declared
     // width (`u8` = 1) the reader walked the row at the wrong stride and returned
     // garbage — a `par` over `vector<(u8,u16)>` summed to 1012184093813119760.
-    let in_vec_offsets = crate::data::element_storage_offsets(elem_types);
+    // `@FR-L-Tuple` — the `__tuple<…>` record's own finished positions where the program's
+    // types are at hand (a stored tuple packs largest alignment first, and an inline struct
+    // member has a width the hand-computed view cannot know); that view otherwise.
+    let in_vec_offsets: Vec<usize> = stores
+        .parallel_ctx
+        .as_ref()
+        .and_then(|ctx| crate::data::stored_tuple_offsets(ctx.data(), stores, elem_types))
+        .map_or_else(
+            || crate::data::element_storage_offsets(elem_types),
+            |o| o.into_iter().map(usize::from).collect(),
+        );
     // The row's address is the store's to answer (`block_src`, bounded by the row's
     // storage width): a foreign store's rows lie outside its block.
     let row_width = elem_types

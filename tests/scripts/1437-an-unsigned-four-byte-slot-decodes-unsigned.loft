@@ -82,7 +82,7 @@ fn an_absent_u32_is_absent_and_not_minus_one() {
   // field rendered as a number, and a nullable field is the half a render can least
   // afford to get wrong.
   v: vector<N> = [N { a: null, c: 3 }];
-  assert_eq("{v[0]}", "{{c:3}}", "an absent field is omitted, as at every other width");
+  assert_eq("{v[0]}", "{{a:null,c:3}}", "an absent field renders null, as at every other width (@C143)");
   r: N = v[0];
   assert_eq("{r.a ?? -1}", "-1", "and the field read still says absent");
 }
@@ -166,7 +166,7 @@ struct S { i: i32?, c: integer }
 
 fn a_signed_four_byte_field_keeps_its_own_null_code() {
   a: vector<S> = [S { i: null, c: 1 }];
-  assert_eq("{a[0]}", "{{c:1}}", "absent");
+  assert_eq("{a[0]}", "{{i:null,c:1}}", "absent");
   p: vector<S> = [S { i: -2147483647, c: 2 }];
   assert_eq("{p[0]}", "{{i:-2147483647,c:2}}", "and a present value beside its sentinel");
 }

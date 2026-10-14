@@ -79,10 +79,10 @@ scalar. Nothing forces a call site to discharge it: a nullable field reads strai
 null, and `??` / `?` are offered at the point of use rather than demanded at every read. A
 fit-failure yields null rather than stopping the program.
 
-**Rationale.** [C90](DESIGN_DECISIONS.md) (one bit-pattern reserved per nullable scalar) ·
-[C80](DESIGN_DECISIONS.md) (the spreadsheet fault model — nothing stops a running calculation) ·
-[C85](DESIGN_DECISIONS.md) (overflow types non-null; the game keeps running) ·
-[C127](DESIGN_DECISIONS.md) (a declared narrow range has no null; an unfitting value takes the
+**Rationale.** [@C90](DESIGN_DECISIONS.md) (one bit-pattern reserved per nullable scalar) ·
+[@C80](DESIGN_DECISIONS.md) (the spreadsheet fault model — nothing stops a running calculation) ·
+[@C85](DESIGN_DECISIONS.md) (overflow types non-null; the game keeps running) ·
+[@C127](DESIGN_DECISIONS.md) (a declared narrow range has no null; an unfitting value takes the
 type's default)
 
 **Verified by.** `formal/types.md` `(N-Reserve)`, `formal/operational.md` `(E-Uncomp)` /
@@ -100,7 +100,7 @@ OCAML_BAR D1
 mutable. `const` is opt-in and is a *semantic* claim judged from the line, not an optimisation
 hint.
 
-**Rationale.** [C124](DESIGN_DECISIONS.md) (a `const` value reaches only a `const` parameter;
+**Rationale.** [@C124](DESIGN_DECISIONS.md) (a `const` value reaches only a `const` parameter;
 semantics is judged by the line) · the mutable-by-default choice itself is **— none recorded**
 
 **Verified by.** `tests/docs/01-keywords.loft` · **`tests/comparisons/variables.loft`**
@@ -124,9 +124,9 @@ that is about to change.
 last-use elision, a collection parameter is already shared, and `&` binds a live reference for
 the cases that need write-back. There is no user-facing borrow checker.
 
-**Rationale.** [C79](DESIGN_DECISIONS.md) (ownership is internal; no user-facing borrow
-checker) · [C77](DESIGN_DECISIONS.md) (heap aliases by default; `&` binds a live reference) ·
-[C86](DESIGN_DECISIONS.md) (whole-value heap binds COPY; aliasing is a last-use elision)
+**Rationale.** [@C79](DESIGN_DECISIONS.md) (ownership is internal; no user-facing borrow
+checker) · [@C77](DESIGN_DECISIONS.md) (heap aliases by default; `&` binds a live reference) ·
+[@C86](DESIGN_DECISIONS.md) (whole-value heap binds COPY; aliasing is a last-use elision)
 
 **Verified by.** `formal/ownership.md` and `formal/binding.md` (the `@FR-B-*` / `@FR-O-*`
 families, with cited sites) · `doc/claude/OWNERSHIP_MODEL.md` is the north star · **`tests/comparisons/parameters.loft`**
@@ -141,8 +141,8 @@ families, with cited sites) · `doc/claude/OWNERSHIP_MODEL.md` is the north star
 types of all parameters; the most specific applicable one is selected. Enum payloads are named
 fields read directly, and `match` is for dispatch, never forced for extraction.
 
-**Rationale.** [C89](DESIGN_DECISIONS.md) (no tuple-style enum variants; a matcher reads like
-grammar and is never forced) · [C123](DESIGN_DECISIONS.md) (one name has one body per receiver
+**Rationale.** [@C89](DESIGN_DECISIONS.md) (no tuple-style enum variants; a matcher reads like
+grammar and is never forced) · [@C123](DESIGN_DECISIONS.md) (one name has one body per receiver
 type) · [@PLN162](https://github.com/loft-lang/plans/issues/162) § *What NOT to take from
 Julia* holds the non-goals
 
@@ -159,12 +159,12 @@ Julia* holds the non-goals
 may be captured by exactly one closure; a capturing closure cannot be stored in a collection;
 a closure cannot write through a captured `&` scalar parameter.
 
-**Rationale.** [C38](DESIGN_DECISIONS.md) (copy-at-definition) ·
-[C74](DESIGN_DECISIONS.md) (a mutated scalar captured by only ONE closure) ·
-[C75](DESIGN_DECISIONS.md) (closure-carrying struct values are frame-bound) ·
-[C115](DESIGN_DECISIONS.md) (no write through a captured `&` scalar) ·
-[C116](DESIGN_DECISIONS.md) (a collection element holds a plain fn-ref, never a capturing
-closure) · [C62](DESIGN_DECISIONS.md) / [C63](DESIGN_DECISIONS.md) (no `|x|` annotations, no
+**Rationale.** [@C38](DESIGN_DECISIONS.md) (copy-at-definition) ·
+[@C74](DESIGN_DECISIONS.md) (a mutated scalar captured by only ONE closure) ·
+[@C75](DESIGN_DECISIONS.md) (closure-carrying struct values are frame-bound) ·
+[@C115](DESIGN_DECISIONS.md) (no write through a captured `&` scalar) ·
+[@C116](DESIGN_DECISIONS.md) (a collection element holds a plain fn-ref, never a capturing
+closure) · [@C62](DESIGN_DECISIONS.md) / [@C63](DESIGN_DECISIONS.md) (no `|x|` annotations, no
 nested `fn`)
 
 **Verified by.** `formal/closures.md` · `tests/docs/26-closures.loft` ·
@@ -180,8 +180,8 @@ nested `fn`)
 and a keyed collection stays a record set. Several type variables and generic types are
 **in flight**, not absent by decision.
 
-**Rationale.** [C126](DESIGN_DECISIONS.md) (a generic's type variables are unrestricted; a
-keyed collection stays a record set) — which *revised* [C110](DESIGN_DECISIONS.md), so read
+**Rationale.** [@C126](DESIGN_DECISIONS.md) (a generic's type variables are unrestricted; a
+keyed collection stays a record set) — which *revised* [@C110](DESIGN_DECISIONS.md), so read
 them in that order
 
 **Planned.** [@PLN165](https://github.com/loft-lang/plans/issues/165) — arc C (several
@@ -201,11 +201,11 @@ against @PLN165)
 failure is a value (`FileResult`); an internal bug fails at startup, not at runtime; a
 production program never aborts on a user-attributable edge case.
 
-**Rationale.** [C66](DESIGN_DECISIONS.md) (production programs never abort on user-attributable
-edge cases) · [C67](DESIGN_DECISIONS.md) (fail at startup, not at runtime — no programmer-side
-try/catch) · [C80](DESIGN_DECISIONS.md) (the spreadsheet fault model)
+**Rationale.** [@C66](DESIGN_DECISIONS.md) (production programs never abort on user-attributable
+edge cases) · [@C67](DESIGN_DECISIONS.md) (fail at startup, not at runtime — no programmer-side
+try/catch) · [@C80](DESIGN_DECISIONS.md) (the spreadsheet fault model)
 
-**Verified by.** `tests/docs/23-safety.loft` · `tests/docs/13-file.loft` · `formal/` C80's rule
+**Verified by.** `tests/docs/23-safety.loft` · `tests/docs/13-file.loft` · `formal/` @C80's rule
 family · **`tests/comparisons/exceptions.loft`**
 
 **Seen from.** vs Python §9
@@ -218,10 +218,10 @@ family · **`tests/comparisons/exceptions.loft`**
 the subscript is uniformly key-addressed, two `index` collections over one element type and key
 are refused, and a keyed collection is refused as a vector element.
 
-**Rationale.** [C68](DESIGN_DECISIONS.md) (keyed collections dedup on insert) ·
-[C99](DESIGN_DECISIONS.md) (a keyed subscript is uniformly KEY-addressed) ·
-[C113](DESIGN_DECISIONS.md) / [C114](DESIGN_DECISIONS.md) / [C117](DESIGN_DECISIONS.md) /
-[C118](DESIGN_DECISIONS.md)
+**Rationale.** [@C68](DESIGN_DECISIONS.md) (keyed collections dedup on insert) ·
+[@C99](DESIGN_DECISIONS.md) (a keyed subscript is uniformly KEY-addressed) ·
+[@C113](DESIGN_DECISIONS.md) / [@C114](DESIGN_DECISIONS.md) / [@C117](DESIGN_DECISIONS.md) /
+[@C118](DESIGN_DECISIONS.md)
 
 **Verified by.** `tests/docs/07-vector.loft`, `10-sorted`, `11-index`, `12-hash` ·
 `formal/collections.md` · `tests/scripts/158-keyed-fast-paths.loft`
@@ -235,8 +235,8 @@ are refused, and a keyed collection is refused as a vector element.
 **loft's answer.** `par(...)` is a built-in parallel for-loop. A worker's captured parent state
 is read-only and a write to it is a compile error. Under WASM it runs sequentially.
 
-**Rationale.** [C93](DESIGN_DECISIONS.md) (a `par` worker's captured parent state is read-only)
-· [C3](DESIGN_DECISIONS.md) (WASM `par()` runs sequentially)
+**Rationale.** [@C93](DESIGN_DECISIONS.md) (a `par` worker's captured parent state is read-only)
+· [@C3](DESIGN_DECISIONS.md) (WASM `par()` runs sequentially)
 
 **Verified by.** `tests/docs/19-threading.loft` · `THREADING.md` · **`tests/comparisons/parallel.loft`**
 
@@ -249,9 +249,13 @@ is read-only and a write to it is a compile error. Under WASM it runs sequential
 **loft's answer.** Embedded expressions in a text literal; every string is a format string.
 `print` stays text-only — no bare `print(value)`, no variadic `print`.
 
-**Rationale.** [C100](DESIGN_DECISIONS.md) (`print` stays text-only)
+**Rationale.** [@C100](DESIGN_DECISIONS.md) (`print` stays text-only) ·
+[@C142](DESIGN_DECISIONS.md) (a null in a `{…}` hole renders plain `null`, never its cause) ·
+[@C143](DESIGN_DECISIONS.md) (a rendered record shows its null fields)
 
-**Verified by.** `tests/docs/30-formatting.loft` · **`tests/comparisons/formatting.loft`**
+**Verified by.** `tests/docs/30-formatting.loft` · **`tests/comparisons/formatting.loft`** ·
+`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` ·
+`tests/scripts/a-record-renders-its-null-fields.loft`
 
 **Seen from.** vs Rust §13 · vs Python §6
 
@@ -263,8 +267,8 @@ is read-only and a write to it is a compile error. Under WASM it runs sequential
 module namespace, and the Rust ecosystem is BOUND rather than reimplemented. `server` ships TCP
 and WS primitives, not an HTTP framework.
 
-**Rationale.** [C84](DESIGN_DECISIONS.md) (`server` ships minimal primitives) ·
-[C97](DESIGN_DECISIONS.md) / [C98](DESIGN_DECISIONS.md) / [C101](DESIGN_DECISIONS.md) (module
+**Rationale.** [@C84](DESIGN_DECISIONS.md) (`server` ships minimal primitives) ·
+[@C97](DESIGN_DECISIONS.md) / [@C98](DESIGN_DECISIONS.md) / [@C101](DESIGN_DECISIONS.md) (module
 namespacing) · [BROADENING.md](BROADENING.md) § Domain fit matrix holds the per-domain
 reasoning
 
@@ -284,7 +288,7 @@ has built on the behaviour.
 |---|---|---|
 | `loops` | vs Rust §5, vs Python §4 | why there is no `loop` keyword (`while true` is the form); OCAML_BAR carries this as an *erratum*, which is not a decision |
 | `filtered-loops`, `loop-attributes`, `named-break` | vs Rust §6–8 | these are features (`@F`), not decisions — but the comparison presents them as trades, and the trade is unrecorded |
-| `methods` | vs Rust §9 | methods by `self` name rather than `impl` blocks; [C123](DESIGN_DECISIONS.md) covers one name per receiver type but not the absence of `impl` |
+| `methods` | vs Rust §9 | methods by `self` name rather than `impl` blocks; [@C123](DESIGN_DECISIONS.md) covers one name per receiver type but not the absence of `impl` |
 | `structs` | vs Python §3 | structs instead of classes AND dicts — two refusals presented as one |
 | `signatures` | vs Python §12 | defaults and named arguments, but no `*args` |
 | `xor` / `exponentiation` | vs Rust §4, vs Python §14 | `^` is XOR and `**`/`pow()` exponentiates — a spelling choice against two languages' habits |

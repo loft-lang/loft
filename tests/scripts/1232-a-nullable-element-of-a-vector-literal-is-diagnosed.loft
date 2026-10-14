@@ -55,7 +55,7 @@
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
 // @EXPECT_WARNING: a nullable `integer?` is stored into element 0 of this vector literal of the non-null type `integer`
-// @EXPECT_WARNING: a nullable `integer(0, 255)?` is stored into element 0 of this vector literal of the non-null type `integer(0, 255)`
+// @EXPECT_WARNING: a nullable `u8?` is stored into element 0 of this vector literal of the non-null type `u8`
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
 //   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 

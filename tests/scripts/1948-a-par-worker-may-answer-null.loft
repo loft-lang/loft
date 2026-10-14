@@ -1,0 +1,245 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1948, `@FR-N-Shape` / `@FR-C-Par` — a `par` worker declared `-> τ?` answers what its
+// `-> τ` twin answers, and a `null` it answers reaches the body as `null`.  `τ?` is a marker over
+// τ's own storage, so the LANE a result rides (ref, text, wide, narrow) is chosen from τ and
+// the null travels in τ's band; only the loop binding keeps the declared `?`, so `r == null`
+// and `r.a ?? 0` read the marker.
+//
+// What was wrong, per lane, measured on both backends before the fix:
+//   - ref (`S?`, `vector<T>?`) and text (`text?`): refused at compile time ("Parallel worker
+//     return type 'S?' (size 12) is not supported").
+//   - wide / narrow scalars (`integer?`, `float?`, `boolean?`, `character?`, an enum `?`,
+//     `i32?`, `u8?`): accepted, then the interpreter panicked in the retired materialised
+//     path (`n_parallel_for`).
+//   Peeling the lane choice alone then exposed four more, each kept as a cell below:
+//   - `--native` copied a worker's `nullref` as a record (a panic in the copy);
+//   - `--native` answered a buffered text worker's WORK BUFFER instead of the text it
+//     returned, so a `null` (and, for a plain `-> text` worker, a literal early return)
+//     arrived as `""`;
+//   - the narrow lane read a boolean's in-band null (byte 255) as `true`;
+//   - the narrow lane packed a nullable narrow integer's `i64::MIN` to its low bytes and
+//     read back `0`, so `i32?` / `u8?` ride the WIDE lane;
+//   - the interpreter's ref lane revived a record result's fields as whole `DbRef`s, which
+//     for a `vector` field read past it into a store it then kept alive (a leak).
+//
+// Every cell compares against the sequential loop AND a hand-written string, over several
+// thread counts, so a shared wrong answer cannot pass.  Cross-backend; `main` runs every
+// cell so the leak gate reads the file.
+//
+// @falsified-at: 223fd78f0 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1948-a-par-worker-may-answer-null.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT, on both backends — the control refuses the file at compile time, so
+//   this receipt scores that abort ONLY; the value, panic and leak channels behind it are
+//   scored one mechanism at a time by the five patches below.
+//   ARMED: LOFT_STRICT_STORES=1 LOFT_POISON=1 (the leak cell needs strict stores).
+//   WITNESS: one refusal per ref- or text-lane worker, "Parallel worker return type 'S1948?'
+//   (size 12) is not supported" and its twins for `T1948?`, `B1948?`, `vector<integer>?`
+//   (size 12) and `text?` (size 16).
+//   HOLDS: asserts, leak, panic and free-refusal are clean on both trees.
+//
+// The five mechanisms, each scored with `LOFT_STRICT_STORES=1 LOFT_POISON=1 falsify.sh
+// --patch` on 63b798d51 by a patch that reverts that hunk alone (re-derive by hand: each is
+// a few lines):
+//   native-null-copy (drop the `is_null` skip in `n_parallel_queue_ref_native`) — native exit
+//     1 -> 0, native panicked at src/database/allocation.rs -> clean; interpret INERT (its ref
+//     lane never copied).
+//   native-text-buffer (`buffered_text_call` answers `_w`, not the returned `Str`) — native
+//     exit 1 -> 0, 1 assertion failure -> 0; interpret INERT.
+//   bool-null-true (the narrow boolean wrap is plain `OpNeInt(raw, 0)`) — interpret and
+//     native exit 1 -> 0, 1 assertion failure -> 0 each.
+//   narrow-int-packed (`narrow_route_for_declared` without its nullable-integer exit) —
+//     interpret and native exit 1 -> 0, 1 assertion failure -> 0 each.
+//   revive-walks-fields (`revive_record_chain` walks a struct's fields again) — interpret
+//     exit 1 -> 0, leaked kt=19 main_vector<integer>×1 -> clean; native INERT (its ref lane
+//     deep-copies instead of reviving).
+//   HOLDS, for all five: every other channel is equal on both trees, and HERE is clean.
+
+struct S1948 { a: integer }
+struct T1948 { a: integer, s: text }
+struct B1948 { xs: vector<integer> }
+enum C1948 { Red, Green, Blue }
+
+fn s_some(x: integer) -> S1948? { S1948 { a: x * 2 } }
+fn s_gap(x: integer) -> S1948? { if x % 2 == 0 { return null; } S1948 { a: x * 10 } }
+fn s_none(x: integer) -> S1948? { if x > -1 { return null; } S1948 { a: 1 } }
+fn s_plain(x: integer) -> S1948 { S1948 { a: x * 2 } }
+fn t_gap(x: integer) -> T1948? { if x == 2 { return null; } T1948 { a: x, s: "t{x}" } }
+fn b_gap(x: integer) -> B1948? { if x == 2 { return null; } B1948 { xs: [x, x + 1] } }
+fn v_gap(x: integer) -> vector<integer>? { if x % 2 == 1 { return null; } [x, x * 2] }
+fn txt_gap(x: integer) -> text? { if x == 2 { return null; } "t{x}" }
+fn txt_none(x: integer) -> text? { if x > 0 { return null; } "z" }
+fn txt_arg(x: integer, k: integer) -> text? { if x == k { return null; } "p{x}" }
+fn txt_lit(x: integer) -> text { if x == 2 { return "two"; } "t{x}" }
+fn int_gap(x: integer) -> integer? { if x == 2 { return null; } x * 10 }
+fn flt_gap(x: integer) -> float? { if x == 2 { return null; } x as float * 1.5 }
+fn i32_gap(x: integer) -> i32? { if x == 2 { return null; } x * 7 }
+fn u8_gap(x: integer) -> u8? { if x == 2 { return null; } x * 7 }
+fn bool_gap(x: integer) -> boolean? { if x == 2 { return null; } x > 1 }
+fn bool_plain(x: integer) -> boolean { x > 1 }
+fn chr_gap(x: integer) -> character? { if x == 2 { return null; } if x == 1 { 'a' } else { 'c' } }
+fn enum_gap(x: integer) -> C1948? { if x == 2 { return null; } if x == 1 { C1948.Red } else { C1948.Blue } }
+
+enum Shp1948 { Circle { r: integer }, Sq { s: integer } }
+fn shp_gap(x: integer) -> Shp1948? {
+  if x == 2 { return null; }
+  if x == 1 { Shp1948::Circle { r: x } } else { Shp1948::Sq { s: x } }
+}
+fn shp_text(p: Shp1948?) -> text {
+  if p == null { return "null"; }
+  match p { Circle { r } => "c{r}", Sq { s } => "q{s}" }
+}
+fn s_of_word(w: text) -> S1948? { if w == "bb" { return null; } S1948 { a: len(w) } }
+fn s_of_s(e: S1948) -> S1948? { if e.a == 2 { return null; } S1948 { a: e.a * 10 } }
+
+fn s_text(r: S1948?) -> text { if r == null { "-" } else { "{r.a}" } }
+
+fn test_a_struct_result_that_is_never_null() {
+  for n in [1, 2, 8] {
+    s = 0;
+    for x in [1, 2, 3] par(r = s_some(x), n) { s += r.a ?? 0; }
+    assert(s == 12, "S? N={n}: {s}");
+  }
+  s = 0;
+  for x in [1, 2, 3] par(r = s_plain(x), 2) { s += r.a; }
+  assert(s == 12, "S control: {s}");
+}
+
+fn test_a_struct_result_that_is_sometimes_null() {
+  for n in [1, 3, 8] {
+    a = ""; b = "";
+    for x in 1..11 { a += "{s_text(s_gap(x))},"; }
+    for x in 1..11 par(r = s_gap(x), n) { b += "{s_text(r)},"; }
+    assert(a == b && b == "10,-,30,-,50,-,70,-,90,-,", "S? gaps N={n}: {b}");
+  }
+}
+
+// The element the worker is handed is a struct or a text rather than an integer; and the
+// result is a struct-ENUM (`Enum(_, true)`), the third record shape on the ref lane.
+fn test_other_inputs_and_a_struct_enum_result() {
+  b = "";
+  for e in [S1948 { a: 1 }, S1948 { a: 2 }, S1948 { a: 3 }] par(r = s_of_s(e), 2) { b += "{s_text(r)},"; }
+  assert(b == "10,-,30,", "struct input: {b}");
+  b = "";
+  for w in ["a", "bb", "ccccc"] par(r = s_of_word(w), 2) { b += "{s_text(r)},"; }
+  assert(b == "1,-,5,", "text input: {b}");
+  b = "";
+  for x in [1, 2, 3] par(r = shp_gap(x), 2) { b += "{shp_text(r)}|"; }
+  assert(b == "c1|null|q3|", "struct-enum?: {b}");
+}
+
+fn test_a_struct_result_that_is_always_null() {
+  nulls = 0;
+  for x in [1, 2, 3, 4, 5] par(r = s_none(x), 2) { if r == null { nulls += 1; } }
+  assert(nulls == 5, "all null: {nulls}");
+}
+
+fn test_a_struct_with_owned_fields_or_null() {
+  for n in [1, 2] {
+    b = "";
+    for x in [1, 2, 3] par(r = t_gap(x), n) { if r == null { b += "null|"; } else { b += "{r.s}:{r.a}|"; } }
+    assert(b == "t1:1|null|t3:3|", "T? N={n}: {b}");
+    s = 0; nulls = 0;
+    for x in [1, 2, 3] par(r = b_gap(x), n) { if r == null { nulls += 1; } else { for q in r.xs { s += q; } } }
+    assert(s == 10 && nulls == 1, "B? N={n}: {s} {nulls}");
+  }
+}
+
+// The interpreter's ref lane revived a record result's FIELDS as if each were a whole
+// `DbRef` at its stack offset.  A `vector` field is a 4-byte record id, so the read ran past
+// it: here the `B1948?` loop revived a store the `T1948?` loop had already dropped, and that
+// store was never freed again (`LOFT_STRICT_STORES=1`: NEVER FREED kt=T1948).  It needs the
+// outer loop — the same four `par` loops written out flat read other bytes.
+fn test_two_record_lanes_in_a_loop() {
+  for n in [1, 2] {
+    b = ""; s = 0;
+    for x in [1, 2, 3] par(r = t_gap(x), n) { b += "{r.a ?? 0}|"; }
+    for x in [1, 2, 3] par(r = b_gap(x), n) { if r != null { for q in r.xs { s += q; } } }
+    assert(b == "1|0|3|" && s == 10, "two lanes N={n}: {b} {s}");
+  }
+}
+
+fn test_a_vector_result_or_null() {
+  for n in [1, 3] {
+    s = 0; nulls = 0;
+    for x in 1..8 par(r = v_gap(x), n) { if r == null { nulls += 1; } else { for q in r { s += q; } } }
+    assert(s == 36 && nulls == 4, "vector? N={n}: {s} {nulls}");
+  }
+}
+
+fn test_a_text_result_or_null() {
+  for n in [1, 2, 8] {
+    a = ""; b = "";
+    for x in [1, 2, 3] { a += "{txt_gap(x)}|"; }
+    for x in [1, 2, 3] par(r = txt_gap(x), n) { b += "{r}|"; }
+    assert(a == b && b == "t1|null|t3|", "text? N={n}: {b}");
+  }
+  b = ""; nulls = 0;
+  for x in [1, 2, 3, 4, 5] par(r = txt_none(x), 2) { b += "{r}|"; if r == null { nulls += 1; } }
+  assert(b == "null|null|null|null|null|" && nulls == 5, "text? all null: {b} {nulls}");
+  k = 2; b = "";
+  for x in [1, 2, 3] par(r = txt_arg(x, k), 2) { b += "{r}|"; }
+  assert(b == "p1|null|p3|", "text? with an argument: {b}");
+}
+
+fn test_a_text_worker_returning_a_literal() {
+  b = "";
+  for x in [1, 2, 3] par(r = txt_lit(x), 2) { b += "{r}|"; }
+  assert(b == "t1|two|t3|", "text literal: {b}");
+}
+
+fn test_a_wide_scalar_or_null() {
+  for n in [1, 2] {
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = int_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "10|null|30|" && nulls == 1, "integer? N={n}: {b} {nulls}");
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = flt_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "1.5|null|4.5|" && nulls == 1, "float? N={n}: {b} {nulls}");
+  }
+}
+
+fn test_a_narrow_integer_or_null() {
+  for n in [1, 2] {
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = i32_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "7|null|21|" && nulls == 1, "i32? N={n}: {b} {nulls}");
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = u8_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "7|null|21|" && nulls == 1, "u8? N={n}: {b} {nulls}");
+  }
+}
+
+fn test_a_narrow_scalar_or_null() {
+  for n in [1, 2] {
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = bool_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "false|null|true|" && nulls == 1, "boolean? N={n}: {b} {nulls}");
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = bool_plain(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "false|true|true|" && nulls == 0, "boolean N={n}: {b} {nulls}");
+    // (F-Render): a null character renders as nothing.
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = chr_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "a||c|" && nulls == 1, "character? N={n}: {b} {nulls}");
+    b = ""; nulls = 0;
+    for x in [1, 2, 3] par(r = enum_gap(x), n) { b += "{r}|"; if r == null { nulls += 1; } }
+    assert(b == "Red|null|Blue|" && nulls == 1, "enum? N={n}: {b} {nulls}");
+  }
+}
+
+fn main() {
+  test_a_struct_result_that_is_never_null();
+  test_a_struct_result_that_is_sometimes_null();
+  test_a_struct_result_that_is_always_null();
+  test_other_inputs_and_a_struct_enum_result();
+  test_a_struct_with_owned_fields_or_null();
+  test_two_record_lanes_in_a_loop();
+  test_a_vector_result_or_null();
+  test_a_text_result_or_null();
+  test_a_text_worker_returning_a_literal();
+  test_a_wide_scalar_or_null();
+  test_a_narrow_integer_or_null();
+  test_a_narrow_scalar_or_null();
+}

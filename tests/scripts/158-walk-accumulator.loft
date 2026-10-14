@@ -8,18 +8,29 @@
 // plain answer compared with the checked one at every operator).  The cells: the bench's
 // shape (a1), a negative step (a2), TWO walks stepping one accumulator (a3), a step under
 // an `if` (a4), the seed's block re-run by an OUTER loop — re-seeded per pass, admitted
-// (a5); and the shapes that must DECLINE and still answer right: the seed OUTSIDE the
-// loop that holds the walk (a6), a step by a non-literal (a7), a walk over a text the body
-// appends to — walked as it was (a8), a second seed (a9), a counted loop instead of a walk (a10), a parameter
-// as the seed (a11).
+// (a5), and the seed OUTSIDE a counted loop holding the walk (a6) — the trips multiply;
+// and the shapes that must DECLINE and still answer right: a step by a non-literal (a7), a
+// walk over a text the body appends to — walked as it was (a8), a second seed (a9), a
+// parameter as the seed (a11).
+// A COUNTED loop bounds its trips too — at most `hi - lo + 1` over its counter's range — so a
+// step under one is admitted (a10), under one whose end is an outer counter (a12, the
+// insertion sort's `j -= 1`), and under two nested ones, the bounds multiplying (a15).  It
+// declines under a counted loop whose end is unranged (a13) and under a `while` (a14).  a16
+// and a17 are the BOUNDARY PAIR: the same step of 2·10^9 under a loop over a vector's length
+// (at most 2^32 trips), seeded at 0 — 2·10^9 · (2^32 + 1) fits an i64, admitted — and at
+// 10^18, where the bound passes i64::MAX and the step keeps its template.  a18 is the value
+// falsifier of the counted-loop clause: three steps of 2 from i64::MAX - 4 overflow on the
+// third, which answers null; admitted, the plain add would wrap to a negative number.
 //
 // @EXPECT_WARNING: Warning[loop-source-written]
 // @falsified-at: hand-measured (2026-09-22) — `LOFT_HOIST_VERIFY=1` is the falsifier: with
-// the accumulator's range widened by hand to admit a12's overflow (a step of 2^40 under a
+// the accumulator's range widened by hand to admit an overflow (a step of 2^40 under a
 // walk of 2^24 characters is not constructible here), the checking form of the plain add
 // compares its wrapped answer with the checked template's null at the operator and
 // panics; on the build as shipped every plain add agrees with its template on every cell,
-// and `LOFT_NO_RANGE_ARITH=1` restores the template and the same values.
+// and `LOFT_NO_RANGE_ARITH=1` restores the template and the same values.  The counted-loop
+// clause, hand-measured (2026-10-04): with `trips` planted to answer 0, a18's steps are
+// admitted and the cell fails with `a18 -9223372036854775807`; restored, it answers null.
 
 // a1 — the bench's shape: two literal steps under one walk.
 fn count_marks(src: text) -> integer {
@@ -76,7 +87,7 @@ fn a5() {
   println("a5 {out}");
 }
 
-// a6 — DECLINES: the seed OUTSIDE the loop that holds the walk (the trips multiply).
+// a6 — the seed OUTSIDE the counted loop that holds the walk: the trips multiply (5 · 2^32), admitted.
 fn a6() {
   t = "abc"; n = 0;
   for _j in 0..4 { for c in t { n += 1; } }
@@ -111,7 +122,7 @@ fn a9() {
   println("a9 {n}");
 }
 
-// a10 — DECLINES: a counted loop, not a walk (its trips are not a text's size).
+// a10 — a counted loop over a literal range: at most 8 trips, admitted.
 fn a10() {
   n = 0;
   for _i in 0..7 { n += 2; }
@@ -134,4 +145,86 @@ fn a11() {
   println("a11 {a} {b}");
 }
 
-fn main() { a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9(); a10(); a11(); }
+// a12 — the insertion sort's cursor: `j` seeded from the outer counter, stepped down under
+// an inner counted loop whose END is that counter, leaving by `break`.
+fn a12() {
+  v = [5, 3, 9, 1, 7];
+  n = len(v);
+  for i in 1..n {
+    key = v[i];
+    j = i;
+    for _ in 0..i {
+      if v[j - 1] > key {
+        v[j] = v[j - 1];
+        j -= 1;
+      } else {
+        break;
+      }
+    }
+    v[j] = key;
+  }
+  assert("{v}" == "[1,3,5,7,9]", "a12 {v}");
+  println("a12 {v}");
+}
+
+// a13 — DECLINES: a counted loop whose end is a parameter (unranged, so the trips are not
+// bounded).
+fn upto(m: integer) -> integer {
+  k = 0;
+  for _ in 0..m { k += 3; }
+  k
+}
+
+fn a13() {
+  r = upto(4);
+  assert(r == 12, "a13 {r}");
+  println("a13 {r}");
+}
+
+// a14 — DECLINES: a step under a `while`, which no counter bounds.
+fn a14() {
+  w = 0;
+  t = 0;
+  while t < 5 { w += 4; t += 1; }
+  assert(w == 20, "a14 {w}");
+  println("a14 {w}");
+}
+
+// a15 — two nested counted loops: the bounds multiply (11 · 11 · 1), admitted.
+fn a15() {
+  q = 0;
+  for _a in 0..10 { for _b in 0..10 { q += 1; } }
+  assert(q == 100, "a15 {q}");
+  println("a15 {q}");
+}
+
+// a16 / a17 — the boundary pair: one loop over a vector's length, the same step, the seed
+// alone moving the bound across i64::MAX.
+fn a16() {
+  xs = [1, 2, 3];
+  g = 0;
+  for _x in 0..len(xs) { g += 2000000000; }
+  assert(g == 6000000000, "a16 {g}");
+  println("a16 {g}");
+}
+
+fn a17() {
+  xs = [1, 2, 3];
+  h = 1000000000000000000;
+  for _x in 0..len(xs) { h += 2000000000; }
+  assert(h == 1000000006000000000, "a17 {h}");
+  println("a17 {h}");
+}
+
+// a18 — DECLINES, and the value says why: the counted loop's bound (5 trips of 2) does not
+// fit above i64::MAX - 4, and the third step really overflows, so the answer is null (wrapped,
+// it would be i64::MIN + 1 — not the sentinel, so a wrongly admitted step is seen).
+fn a18() {
+  e = 9223372036854775803;
+  for _x in 0..3 { e += 2; }
+  r = e ?? -1;
+  assert(r == -1, "a18 {r}");
+  println("a18 {r}");
+}
+
+fn main() { a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9(); a10(); a11(); a12(); a13(); a14(); a15(); a16(); a17(); a18(); }

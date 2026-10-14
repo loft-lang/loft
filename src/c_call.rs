@@ -37,7 +37,7 @@
 //! refused, and a library could ship a binding only half of loft could call.
 //! The ladder was extended to 32 and `--native` is held to the same number:
 //! unifying by RAISING rather than narrowing, so nothing that compiled stopped
-//! compiling. See `c_signature::MAX_C_ARITY` and DESIGN_DECISIONS.md § C106.
+//! compiling. See `c_signature::MAX_C_ARITY` and DESIGN_DECISIONS.md § @C106.
 
 #![cfg(feature = "native-extensions")]
 
@@ -312,7 +312,7 @@ pub fn library_symbol_table(data: &crate::data::Data) -> Vec<(String, Vec<String
         let Some(Ok(sig)) = crate::c_signature::of(data, d_nr, target) else {
             continue;
         };
-        if let Some(pkg) = data.c_owner_pkg(&def.position().file) {
+        if let Some(pkg) = data.c_owner_pkg(def.position().file.as_str()) {
             by_pkg.entry(pkg).or_default().push(sig.symbol);
         }
     }
@@ -497,7 +497,7 @@ pub fn register_native(libs: &[(&str, &str)], syms: &[(&str, &[&str])]) {
 /// A library the program never declared answers false rather than probing the
 /// dynamic linker for it. Asking about one is a program bug, and false is the
 /// answer that keeps a caller on its fallback path instead of into a fault
-/// (C80: no runtime errors, ever).
+/// (@C80: no runtime errors, ever).
 /// [`library_available`], for generated Rust — the main binary AND every
 /// auto-built package cdylib.
 ///
@@ -570,57 +570,9 @@ fn resolve_in_loaded(symbol: &str) -> Option<*const ()> {
     if let Some((p, _)) = crate::extensions::try_dlsym_pub(symbol) {
         return Some(p);
     }
-    #[cfg(unix)]
-    {
-        use libloading::os::unix::Library;
-        // `Library::this()` is the process handle: symbols already linked in
-        // (libc) and anything loaded with global visibility.
-        let this = Library::this();
-        let mut name = symbol.to_string();
-        name.push('\0');
-        if let Ok(sym) = unsafe { this.get::<*const ()>(name.as_bytes()) } {
-            return Some(*sym);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use libloading::os::windows::Library;
-        // There is no process-wide symbol table on Windows: `GetProcAddress`
-        // answers per MODULE, and the C runtime is its own DLL rather than
-        // something linked into the executable's export table. So the Unix
-        // `Library::this()` step has no direct twin — searching only the
-        // executable finds nothing, which is why `strlen` and `atoi` were
-        // unresolvable and the whole `#c`-against-libc surface was Linux/macOS
-        // only.
-        //
-        // Ask the modules the process ALREADY has open, in the order a C
-        // symbol is most likely to live: the executable itself (its own
-        // exports), then the UCRT, then the legacy CRT shim, then the Win32
-        // base DLLs. `open_already_loaded` is `GetModuleHandle` — it never
-        // loads anything, so this widens the search without changing what the
-        // process has mapped.
-        if let Ok(this) = Library::this()
-            && let Ok(sym) = unsafe { this.get::<*const ()>(symbol.as_bytes()) }
-        {
-            return Some(*sym);
-        }
-        for module in [
-            "ucrtbase.dll",
-            "api-ms-win-crt-string-l1-1-0.dll",
-            "api-ms-win-crt-convert-l1-1-0.dll",
-            "api-ms-win-crt-stdio-l1-1-0.dll",
-            "api-ms-win-crt-heap-l1-1-0.dll",
-            "msvcrt.dll",
-            "kernel32.dll",
-        ] {
-            if let Ok(lib) = Library::open_already_loaded(module)
-                && let Ok(sym) = unsafe { lib.get::<*const ()>(symbol.as_bytes()) }
-            {
-                return Some(*sym);
-            }
-        }
-    }
-    None
+    // Then what the process already has open — the process handle on Unix, the
+    // already-loaded CRT and base modules on Windows (`platform::symbol_in_process`).
+    crate::platform::symbol_in_process(symbol)
 }
 
 /// Everything the interpreter needs to make one `#c` call, resolved once at
@@ -864,7 +816,7 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 ///   loft text carries a length and can hold an interior NUL; a C string cannot,
 ///   so the crossing truncates there rather than inventing a length.
 /// - **Invalid UTF-8 is replaced, not refused** — loft text is UTF-8, and a
-///   locale-encoded byte from C must not take the program down (C80).
+///   locale-encoded byte from C must not take the program down (@C80).
 ///
 /// The pointer is COPIED and never freed. See the return check in
 /// `c_signature::check` for why borrowed is the only safe default.
@@ -1035,7 +987,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/c_abi/liblc_types.so"
         );
-        if !std::path::Path::new(so).exists() {
+        if !crate::file_access::exists(so) {
             // The fixture is built by `make` in that directory; without it this
             // test has nothing to measure and must not read as a pass.
             eprintln!("SKIP: {so} not built");

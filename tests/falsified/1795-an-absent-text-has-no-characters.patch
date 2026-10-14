@@ -1,8 +1,8 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index 164298b7e..4ceb5fa18 100644
+index ff87f9a40..ac6cf65c2 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -789,10 +789,8 @@ fn OpConstText(_value: const text) -> text;
+@@ -919,10 +919,8 @@ fn OpConstText(_value: const text) -> text;
  #rust"s.string_from_code();"
  fn OpConvTextFromNull() -> text;
  #rust"Str::new(crate::state::STRING_NULL)"
@@ -14,22 +14,23 @@ index 164298b7e..4ceb5fa18 100644
  /// Number of characters (Unicode code points) in the text — the human
  /// count, as in every mainstream language. For a byte length (bounds checks, the
  /// limit of byte-positioned indexing / slicing) use `size`.
-@@ -801,9 +799,8 @@ pub fn len(self: text) -> integer {
+@@ -931,10 +929,9 @@ pub fn len(self: text) -> integer {
  }
  #pure
  
 -// @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
  fn OpSizeText(v1: text) -> integer;
+ #cold
 -#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
 +#rust"@v1.len() as i64"
  /// Number of bytes in the text. This is the bound for byte-positioned
  /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
  /// For the human character count use `len`.
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index a6ea8bbcf..18bacf5d9 100644
+index 458824ff5..230a9973c 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -954,11 +954,11 @@ fn get_record_lookup(
+@@ -958,11 +958,11 @@ fn get_record_lookup(
  /// else can reach the vector the call would have built.
  ///
  /// It yields exactly the elements `split` in `default/02_files.loft` returns: none for an
@@ -46,7 +47,7 @@ index a6ea8bbcf..18bacf5d9 100644
  pub struct LazySplit<'a> {
      rest: Option<&'a str>,
      separator: char,
-@@ -984,11 +984,7 @@ impl<'a> Iterator for LazySplit<'a> {
+@@ -988,11 +988,7 @@ impl<'a> Iterator for LazySplit<'a> {
  #[inline]
  #[must_use]
  pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
@@ -60,12 +61,12 @@ index a6ea8bbcf..18bacf5d9 100644
  }
  
 diff --git a/src/fill.rs b/src/fill.rs
-index 19e3a7393..2c3ab98ca 100644
+index 915a6921a..205819a02 100644
 --- a/src/fill.rs
 +++ b/src/fill.rs
-@@ -1638,27 +1638,13 @@ fn conv_text_from_null(s: &mut State) {
- 
- fn length_text(s: &mut State) {
+@@ -3420,14 +3420,7 @@ fn conv_text_from_null_r(s: &mut State, r: Regs) -> Regs {
+ #[inline(always)]
+ fn length_text<const F: bool>(s: &mut State) {
      let v_v1 = s.string();
 -    let new_value = {
 -        let __t = v_v1.str();
@@ -76,10 +77,12 @@ index 19e3a7393..2c3ab98ca 100644
 -        }
 -    };
 +    let new_value = v_v1.str().chars().count() as i64;
-     s.put_stack(new_value);
+     s.put_stack_m::<F, _>(new_value);
  }
  
- fn size_text(s: &mut State) {
+@@ -3440,14 +3433,7 @@ fn length_text_r(s: &mut State, r: Regs) -> Regs {
+ #[inline(always)]
+ fn size_text<const F: bool>(s: &mut State) {
      let v_v1 = s.string();
 -    let new_value = {
 -        let __t = v_v1.str();
@@ -90,6 +93,6 @@ index 19e3a7393..2c3ab98ca 100644
 -        }
 -    };
 +    let new_value = v_v1.str().len() as i64;
-     s.put_stack(new_value);
+     s.put_stack_m::<F, _>(new_value);
  }
  

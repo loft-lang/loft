@@ -166,12 +166,14 @@ struct Attribute {
   const_field: boolean, // @PLN40 — write-once struct field; last bool keeps prior offsets stable
   value_const: boolean, // C124 — a value-const field, or a `const` parameter read at every call
   work_buffer: boolean, // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
+  pub_field: boolean, // @PLN187 — a field declared `pub`
   value: vector<Node>,
   check: vector<Node>,
   check_message: vector<Node>,
   alias_d_nr: integer,
   assigned_lambda_d_nr: integer,
   links: text, // @PLN86 F8b — group#right member links; "" = unlinked
+  fact: text, // @PLN187 where the declared type names a `type` alias; "" = nowhere
 }
 
 struct Variable {
@@ -200,9 +202,25 @@ struct Variable {
   // loft#1834 — a user identifier names it (a signature or a mention), so a user's `_`-prefixed
   // name is not read as a compiler temporary; `is_compiler_generated` reads it
   user_named: boolean,
+  // loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it, because
+  // the copy-fill a whole-value bind lowers to is the same op a user's append is
+  user_appended: boolean,
+  // loft#1840 — a whole-value bind COPIED a place into it (B-Copy); the `lost-write` lint
+  // reports an append only into a copy, never into a collection being built
+  copy_bound: boolean,
+  // loft#1522 — a construction work-ref still names its store, so no rebind frees it; read by
+  // `owns_displaced_store`, the displacement free both emitters ask (loft#1858)
+  buffer_witnessed: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
+  // @PLN87 P2.1 — a rebound parameter's entry witness (u16::MAX = none): which store the CALLER
+  // handed, so its release is the function-exit free and no other (loft#1858)
+  rebind_orig: integer,
+  // The scope that declares it: the yield emitter skips a temp declared INSIDE the yielded
+  // value (loft#1676), and a warm load that read every scope as unknown nulled a live local
+  // (loft#1858)
+  scope: integer,
 }
 
 struct Function {
@@ -257,6 +275,9 @@ struct Definition {
   instance_of: integer, // @PLN165 D3 the type template an instance was minted from; -1 = none
   instance_args: vector<TypeT>, // @PLN165 D3 that instance's type arguments, header order
   builtin: boolean, // @PLN165 arc E #builtin: a call selecting it lowers through the special form of its name
+  operator_form: boolean, // @PLN182 written `operator`: what an operator form on its `self` type reaches
+  returned_fact: text, // @PLN187 where the declared result names a `type` alias; "" = nowhere
+  returned_const: boolean, // @FR-Const-Foreign `-> const T`: the producer's data is value-const
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can
@@ -350,7 +371,7 @@ enum DbParts {
   PtSorted { content: integer, keys: vector<KeyField> },
   PtOrdered { content: integer, keys: vector<KeyField> },
   PtHash { content: integer, fields: vector<integer> },
-  PtIndex { content: integer, keys: vector<KeyField>, left: integer },
+  PtIndex { content: integer, keys: vector<KeyField> },
   PtRadix { content: integer, fields: vector<integer> },
   PtDbRef,
   PtChildRec { content: integer },

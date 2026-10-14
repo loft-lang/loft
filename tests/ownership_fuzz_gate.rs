@@ -28,8 +28,8 @@
 //! (#426B), nested_field (P13) — and the self-test proves the detectors CAN
 //! fire on exactly those shapes via the preserved `LOFT_NO_JOIN_OWN=1` path.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -45,7 +45,7 @@ fn fuzz_dir() -> PathBuf {
 
 /// Run the harness with the given args; return (exit_ok, combined output).
 fn run_harness(args: &[&str]) -> (bool, String) {
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(fuzz_dir().join("ownership_fuzz.py"))
         .args(args)
         .current_dir(workspace_root())
@@ -117,13 +117,13 @@ fn fuzz_gate_map54_full_replay() {
 
 fn tempfile_dir() -> PathBuf {
     let d = std::env::temp_dir().join(format!("loft_fuzz_gate_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).expect("create cell dir");
+    let _ = fa::remove_dir_all(&d);
+    fa::create_dir_all(&d).expect("create cell dir");
     d
 }
 
 fn generate_cells(dir: &PathBuf) {
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(fuzz_dir().join("grammar_gen.py"))
         .arg("--out")
         .arg(dir)

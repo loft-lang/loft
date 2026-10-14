@@ -136,13 +136,13 @@ fn test_a_nested_field_view_displaces_the_copy() {
 // too — but the interpreter released the copy at the rebind AND freed `x` at exit, which
 // landed on `b`'s store; the value survived only because nothing read `b` afterwards.
 fn test_the_dense_twin_frees_exactly_once() {
-  c = Pair { v: 4 };
+  c = Pair { v: 4, other: null };
   b = Pair { v: 2, other: c };
   a = Pair { v: 1, other: b };
   x: Pair = a;
   x = x.other;
   t = x.v;
-  filler = Pair { v: 9 };
+  filler = Pair { v: 9, other: null };
   got = t * 100 + b.v * 10 + filler.v;
   assert(got == 229, "view of b, b intact, filler distinct: got {got}, want 229");
 }

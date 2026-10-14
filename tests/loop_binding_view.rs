@@ -30,8 +30,8 @@
 //!
 //! Calibrated: red on `origin/main` (`3 emit=1`) and green here, on BOTH backends.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -49,7 +49,7 @@ fn run(backend: &str) -> String {
     // under the iteration loop the release binary is rebuilt only for the suites that
     // spawn it (@PLN159 I), so spawning it here cost `--subject scopes` a 95 s
     // non-incremental build for one test.
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     if !backend.is_empty() {
         cmd.arg(backend);
     }
@@ -106,7 +106,7 @@ fn a_loop_over_a_collection_field_does_not_free_its_owner() {
 /// Reads the order out of the file rather than trusting a comment in it.
 #[test]
 fn the_fixture_still_declares_item_after_holder() {
-    let src = std::fs::read_to_string(
+    let src = fa::read_to_string(
         repo_root().join("tests/fixtures/loop_view_dep/holderlib/src/holder.loft"),
     )
     .expect("read the holder fixture");

@@ -52,33 +52,61 @@ pub enum Verdict {
 /// symbol does (with sealed shapes inlined, so a sealed rename is not a break).
 #[must_use]
 pub fn diff(old: &[Member], new: &[Member]) -> Verdict {
+    // A type the OLD surface sealed and the new one PUBLISHES is compared by its shape on both
+    // sides: the old signatures inlined it, so naming it now rewrites every signature that
+    // uses it while no caller can tell (`arguments` 0.2.5 made `Args` pub — the type twenty
+    // pub methods already took — and read as twenty dropped-parameter breaks).  Its shape is
+    // the new surface's own, so a field the publication also changed still breaks.
+    let old_sealed: std::collections::HashSet<&str> = old
+        .iter()
+        .filter(|m| m.tier == Tier::Sealed)
+        .map(|m| m.name.as_str())
+        .collect();
+    let published: Vec<&str> = new
+        .iter()
+        .filter(|m| m.tier == Tier::Public && old_sealed.contains(m.name.as_str()))
+        .map(|m| m.name.as_str())
+        .collect();
     let old_pub = inlined_public(old);
-    let new_pub = inlined_public(new);
+    let new_pub = inlined_public_also(new, &published);
     let new_map: HashMap<(&str, &str), &str> = new_pub
         .iter()
         .map(|(n, k, s)| ((n.as_str(), *k), s.as_str()))
         .collect();
 
     let mut breaks = Vec::new();
-    for (name, kind, sig) in &old_pub {
-        match new_map.get(&(name.as_str(), *kind)) {
-            None => breaks.push(format!("removed {kind} `{name}`")),
-            Some(new_sig) if *new_sig != sig.as_str() => {
-                // A textual difference is not automatically a break for an aggregate. A
-                // struct's signature is its member list, so GAINING a method rewrites the
-                // string while leaving every existing use valid. Measured on real libraries:
-                // `server` 0.3.1 -> 0.5.0 added the method `bound` and read as a break, which
-                // would have failed a purely additive release had this been a gate.
-                let reason = if matches!(*kind, "fn" | "method" | "operator") {
-                    signature_break(sig, new_sig)
-                } else {
-                    aggregate_break(sig, new_sig)
-                };
-                if let Some(reason) = reason {
-                    breaks.push(format!("changed {kind} `{name}` — {reason}"));
-                }
+    for (name, kind, marked) in &old_pub {
+        let (sig, old_pub_fields) = split_pub(marked);
+        let Some(new_marked) = new_map.get(&(name.as_str(), *kind)) else {
+            breaks.push(format!("removed {kind} `{name}`"));
+            continue;
+        };
+        let (new_sig, mut new_pub_fields) = split_pub(new_marked);
+        // A field that LOST `pub` breaks every reader outside its file (@C140); gaining it
+        // is additive.
+        for f in old_pub_fields {
+            if let Some(i) = new_pub_fields.iter().position(|n| *n == f) {
+                new_pub_fields.swap_remove(i);
+            } else if new_sig.contains(&format!("{f}:")) {
+                breaks.push(format!(
+                    "changed {kind} `{name}` — `{f}` is no longer `pub`"
+                ));
             }
-            Some(_) => {}
+        }
+        if new_sig != sig {
+            // A textual difference is not automatically a break for an aggregate. A
+            // struct's signature is its member list, so GAINING a method rewrites the
+            // string while leaving every existing use valid. Measured on real libraries:
+            // `server` 0.3.1 -> 0.5.0 added the method `bound` and read as a break, which
+            // would have failed a purely additive release had this been a gate.
+            let reason = if matches!(*kind, "fn" | "method" | "operator") {
+                signature_break(&sig, &new_sig)
+            } else {
+                aggregate_break(&sig, &new_sig)
+            };
+            if let Some(reason) = reason {
+                breaks.push(format!("changed {kind} `{name}` — {reason}"));
+            }
         }
     }
     if breaks.is_empty() {
@@ -157,11 +185,11 @@ fn signature_break(old_sig: &str, new_sig: &str) -> Option<String> {
 
 /// One receiver, written either way: `both` and `self` name the SAME parameter.
 ///
-/// C123 revised: *"`both` still compiles and means `self`"* — the two spellings were measured
+/// @C123 revised: *"`both` still compiles and means `self`"* — the two spellings were measured
 /// identical across method and free calls, overloads, **named and default arguments**, nullable
 /// and scalar receivers, enum-variant and generic dispatch. So a first parameter renamed between
 /// them changes nothing a caller can observe, and reporting it as a break would refuse the very
-/// migration C123 prescribes — it names `regex`'s `matches` as the published case to rename.
+/// migration @C123 prescribes — it names `regex`'s `matches` as the published case to rename.
 ///
 /// Applied at position 0 ONLY, because only the first parameter is the receiver: `both` at any
 /// other position is an ordinary name whose rename IS a break. The type is untouched, so
@@ -283,6 +311,36 @@ fn aggregate_break(old_sig: &str, new_sig: &str) -> Option<String> {
     }
 }
 
+/// A signature without its `pub ` field markers, and the fields that carried one, in order.
+/// `pub` is a keyword, so it never names a type or a field: every `pub ` before a name is a
+/// marker ([`crate::api_surface`] renders one on each `pub` field).
+fn split_pub(sig: &str) -> (String, Vec<String>) {
+    let mut plain = String::with_capacity(sig.len());
+    let mut fields = Vec::new();
+    let mut rest = sig;
+    while let Some(at) = rest.find("pub ") {
+        let starts_word = !rest[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        plain.push_str(&rest[..at]);
+        if starts_word {
+            let after = &rest[at + 4..];
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            fields.push(name);
+            rest = after;
+        } else {
+            plain.push_str("pub ");
+            rest = &rest[at + 4..];
+        }
+    }
+    plain.push_str(rest);
+    (plain, fields)
+}
+
 /// Parse `{ a: fn, b: integer }` into `[(a, fn), (b, integer)]`. `None` when the signature is
 /// not a brace-delimited member list (a plain function signature, say).
 fn members_of(sig: &str) -> Option<Vec<(String, String)>> {
@@ -302,9 +360,17 @@ fn members_of(sig: &str) -> Option<Vec<(String, String)>> {
 /// The PUBLIC members of a surface, each with sealed types inlined into its signature (so a
 /// sealed rename is invisible and a sealed field change flows through).
 fn inlined_public(surface: &[Member]) -> Vec<(String, &'static str, String)> {
+    inlined_public_also(surface, &[])
+}
+
+/// [`inlined_public`], also inlining the PUBLIC types named in `also` — the ones an older
+/// surface sealed, so both sides of a diff spell them the same way.
+fn inlined_public_also(surface: &[Member], also: &[&str]) -> Vec<(String, &'static str, String)> {
     let sealed: HashMap<&str, &str> = surface
         .iter()
-        .filter(|m| m.tier == Tier::Sealed)
+        .filter(|m| {
+            m.tier == Tier::Sealed || (m.tier == Tier::Public && also.contains(&m.name.as_str()))
+        })
         .map(|m| (m.name.as_str(), m.signature.as_str()))
         .collect();
     surface
@@ -371,6 +437,39 @@ mod tests {
         matches!(v, Verdict::Break(_))
     }
 
+    /// @C140 — a field gaining `pub` is additive, losing it breaks its readers; the marker
+    /// stays out of the shape, including a sealed shape inlined into a fn signature.
+    #[test]
+    fn a_field_gaining_pub_is_additive_and_losing_it_breaks() {
+        let plain = vec![pubm("P", "struct", "{ x: integer, y: text }")];
+        let one = vec![pubm("P", "struct", "{ pub x: integer, y: text }")];
+        let both = vec![pubm("P", "struct", "{ pub x: integer, pub y: text }")];
+        assert_eq!(diff(&plain, &one), Verdict::Superset);
+        assert_eq!(diff(&one, &both), Verdict::Superset);
+        match diff(&both, &one) {
+            Verdict::Break(why) => assert!(why[0].contains("`y` is no longer `pub`"), "{why:?}"),
+            v @ Verdict::Superset => panic!("losing `pub` must break: {v:?}"),
+        }
+        let gone = vec![pubm("P", "struct", "{ pub x: integer }")];
+        match diff(&both, &gone) {
+            Verdict::Break(why) => assert_eq!(why.len(), 1, "removed, not also un-`pub`: {why:?}"),
+            v @ Verdict::Superset => panic!("removing a field must break: {v:?}"),
+        }
+        let sealed_old = vec![
+            sealed("Q", "struct", "{ n: integer }"),
+            pubm("mk", "fn", "() -> Q"),
+        ];
+        let sealed_new = vec![
+            sealed("Q", "struct", "{ pub n: integer }"),
+            pubm("mk", "fn", "() -> Q"),
+        ];
+        assert_eq!(diff(&sealed_old, &sealed_new), Verdict::Superset);
+        assert!(
+            is_break(&diff(&sealed_new, &sealed_old)),
+            "a sealed field losing `pub`"
+        );
+    }
+
     #[test]
     fn pure_additions_are_a_superset() {
         let old = vec![pubm("make", "fn", "() -> integer")];
@@ -390,7 +489,7 @@ mod tests {
 
     #[test]
     fn a_receiver_renamed_both_to_self_is_not_a_break() {
-        // C123: `both` still compiles and MEANS `self`, so this rename — the migration C123
+        // @C123: `both` still compiles and MEANS `self`, so this rename — the migration @C123
         // prescribes, naming `regex`'s `matches` — changes nothing a caller can observe.
         let old = vec![pubm(
             "matches",
@@ -445,6 +544,37 @@ mod tests {
         let old = vec![pubm("f", "fn", "(a: integer) -> integer")];
         let new = vec![pubm("f", "fn", "(a: number) -> integer")];
         assert!(is_break(&diff(&old, &new)), "a widened param still breaks");
+    }
+
+    #[test]
+    fn publishing_a_sealed_type_with_its_shape_is_not_a_break() {
+        // `arguments` 0.2.5: `Args` was sealed and every pub method took it; making it pub
+        // names it in each signature instead of inlining it, and no caller can tell.
+        let old = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            sealed("Args", "struct", "{ name: text, n: integer }"),
+        ];
+        let new = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            pubm("Args", "struct", "{ name: text, n: integer }"),
+        ];
+        assert_eq!(diff(&old, &new), Verdict::Superset);
+    }
+
+    #[test]
+    fn publishing_a_sealed_type_with_a_changed_field_still_breaks() {
+        let old = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            sealed("Args", "struct", "{ name: text, n: integer }"),
+        ];
+        let new = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            pubm("Args", "struct", "{ name: text, n: float }"),
+        ];
+        assert!(
+            is_break(&diff(&old, &new)),
+            "the field the publication changed still breaks"
+        );
     }
 
     #[test]

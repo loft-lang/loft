@@ -99,7 +99,7 @@ impl Scopes<'_> {
         new_args[0] = branch;
         let call = Value::Call(*d, new_args);
         Some(match val {
-            Value::Span(b) => Value::Span(Box::new((b.0.clone(), call))),
+            Value::Span(b) => Value::Span(Box::new((b.0, call))),
             _ => call,
         })
     }

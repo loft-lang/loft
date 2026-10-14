@@ -174,6 +174,9 @@ impl Scopes<'_> {
             }
         }
         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
+        if v != ov {
+            self.split_binds.entry(v).or_insert((ov, 0)).1 += 1;
+        }
         // A handle view given a member's handle on one arm and one of its own on another
         // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
         let tagged;
@@ -336,7 +339,7 @@ impl Scopes<'_> {
         // the whole loop.  A first-iteration free is a no-op — the entry null-init
         // leaves the elements at the sentinel, which `free` ignores.
         if was_in_scope
-            && let Type::Tuple(elems) = function.tp(v)
+            && let Type::Tuple(elems) = function.tp(v).base()
             && !value.reads_var(v)
             && !value.reads_var(ov)
         {
@@ -685,7 +688,7 @@ impl Scopes<'_> {
         }
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
-        if matches!(function.tp(v), Type::Tuple(_)) {
+        if matches!(function.tp(v).base(), Type::Tuple(_)) {
             let joined = if matches!(value.unspan(), Value::If(..)) {
                 branch_tuple_call_mints(value, function, data, data.def_nr("OpNullRefSentinel"))
             } else {
@@ -852,7 +855,7 @@ impl Scopes<'_> {
         // became an owner of a store it only viewed and freed it (the loft#1181 capture).  The
         // nullable spelling copies through the join guard instead (`nullable_join_first_bind`,
         // whose own strip sits below), which copies exactly the borrow it can witness.
-        let mut record_target = function.tp(v);
+        let mut record_target = crate::use_analysis::first_bind_shape(function.tp(v));
         while let Type::RefVar(inner) = record_target {
             record_target = inner.base();
         }
@@ -1426,7 +1429,20 @@ impl Scopes<'_> {
         if first_binding {
             self.binding_now.push(v);
         }
+        // The records this statement's prefix will release (below), known before the value is
+        // scanned so the rebuild inside it does not release them a second time.
+        let prefix_from = self.prefix_released.len();
+        let built_before = captures_built_in_value(value, data);
+        if !built_before.is_empty()
+            && built_before
+                .iter()
+                .all(|(_, c)| self.owner_witness.contains_key(c))
+        {
+            self.prefix_released
+                .extend(built_before.iter().map(|(rec, _)| *rec));
+        }
         let scanned = self.scan(value, function, data);
+        self.prefix_released.truncate(prefix_from);
         if first_binding {
             self.binding_now.pop();
         }
@@ -1453,6 +1469,31 @@ impl Scopes<'_> {
         // Set(v, Insert([preamble..., final_call])).
         // This keeps Set(v, Call(...)) as a bare Call, which codegen's
         // gen_set_first_at_tos can handle correctly.
+        // The scanned value may carry its source position: a `Span` around the `Insert` hid the
+        // shape from the flatten (the `unspan` contract), so a call bound after an argument's
+        // preamble reached the bind dispatch as `Set(v, Insert(…))` and never had its result
+        // copied or adopted per `@FR-O-Move` — a callee answering its by-value parameter was
+        // ALIASED and then freed as the local's own (loft#1884).  The position stays on the
+        // final value.  Not where the scan already reads the value as a construction DELIVERED
+        // through the call (`delivered_work_ref`, loft#1575's `s = me(Bx { … })`): the binding
+        // adopts that work-ref's store and the work-ref is disarmed, so the bind must stay the
+        // plain adopt — flattened, the split would copy and the disarmed store would leak.
+        let delivered = delivered_work_ref(value, function, data).is_some();
+        let scanned = match scanned {
+            Value::Span(b)
+                if !delivered && matches!(&b.1, Value::Insert(ops) if ops.len() >= 2) =>
+            {
+                let (pos, inner) = *b;
+                let Value::Insert(mut ops) = inner else {
+                    unreachable!("matched as an Insert above")
+                };
+                if let Some(last) = ops.pop() {
+                    ops.push(Value::Span(Box::new((pos, last))));
+                }
+                Value::Insert(ops)
+            }
+            other => other,
+        };
         let (mut ls, mut set_value) = if let Value::Insert(mut ops) = scanned {
             if ops.len() >= 2 {
                 let final_val = ops.pop().unwrap();
@@ -1772,15 +1813,12 @@ impl Scopes<'_> {
                 .all(|(_, c)| self.owner_witness.contains_key(c))
         {
             for (rec, _) in &built_here {
+                // `@FR-L-CapOwn` — the record gives up what it adopted through its own
+                // cascade, emitted here; the store free releases only the record.
+                if let Some(hook) = super::drops::drop_hook(function, *rec, data) {
+                    prefix.push(hook);
+                }
                 prefix.push(call("OpFreeRef", *rec, data));
-            }
-        }
-        for (_, c) in &built_here {
-            if let Some(&cw) = self.owner_witness.get(c) {
-                prefix.push(v_set(
-                    cw,
-                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
-                ));
             }
         }
         // loft#1628, `@FR-H-Drop` — a REBIND of a witnessed local that still holds a record it took

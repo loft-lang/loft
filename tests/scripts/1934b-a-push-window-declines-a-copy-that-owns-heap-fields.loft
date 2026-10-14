@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1934, `@FR-R-PushFill` — a counted loop that appends a record COPIED from another store
+// keeps its answer on `--native` when the record owns heap fields.  The record push window
+// caches a raw base into the vector's store and admits a whole-record copy into the fresh
+// element as "the element's own bytes".  That holds for a flat record; a `text` field is
+// deep-copied INTO the vector's store, which grows and moves under the cached base, and the
+// next windowed write landed in freed memory — a segfault, reported as a bare exit 1.  The
+// window now declines such a copy.  A generic instance reaches it: it takes no return buffer,
+// so its answer is minted and copied into the element.
+//
+// Axes it MOVES: the copied record's heap field (a text, a vector, none — the flat control,
+// which the window still admits), the source of the copy (a generic instance's answer, a
+// local), and the loop length (past the vector store's first growth).  Each cell checks the
+// LENGTH and the values of the first, a middle and the last element, hand-computed from the
+// loop bound.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1934b-a-push-window-declines-a-copy-that-owns-heap-fields.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   CHANNEL: the EXIT, on `--native` alone — the push window is a native rewrite.
+//   WITNESS: native control `exit 1, asserts 0`: the binary segfaults (139) once the vector
+//   store grows, and the runner reports it as a bare exit 1.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct T1934 { a: integer, t: text }
+struct V1934 { a: integer, xs: vector<integer> }
+struct F1934 { a: integer, b: integer }
+
+fn same1934<X>(x: X) -> X { y: X = x; y }
+
+fn test_a_generic_answer_with_a_text_field() {
+  q = T1934 { a: 3, t: "q" };
+  v: vector<T1934> = [];
+  for i in 0..20000 { v += [same1934(q)]; }
+  assert(len(v) == 20000 && v[0].a == 3 && v[9999].t == "q" && v[19999].a == 3, "text: {len(v)} {v[19999].a}");
+}
+
+fn test_a_generic_answer_with_a_vector_field() {
+  q = V1934 { a: 4, xs: [1, 2, 3] };
+  v: vector<V1934> = [];
+  for i in 0..20000 { v += [same1934(q)]; }
+  assert(len(v) == 20000 && len(v[19999].xs) == 3 && v[12345].xs[2] == 3, "vector: {len(v)} {len(v[19999].xs)}");
+}
+
+fn test_a_local_with_a_text_field() {
+  v: vector<T1934> = [];
+  for i in 0..20000 {
+    p = T1934 { a: i, t: "p" };
+    v += [p];
+  }
+  assert(len(v) == 20000 && v[0].a == 0 && v[19999].a == 19999 && v[7777].t == "p", "local: {len(v)} {v[19999].a}");
+}
+
+fn test_a_flat_record_is_still_appended() {
+  q = F1934 { a: 5, b: 6 };
+  v: vector<F1934> = [];
+  for i in 0..20000 { v += [same1934(q)]; }
+  assert(len(v) == 20000 && v[19999].b == 6, "flat: {len(v)} {v[19999].b}");
+}
+
+fn main() {
+  test_a_generic_answer_with_a_text_field();
+  test_a_generic_answer_with_a_vector_field();
+  test_a_local_with_a_text_field();
+  test_a_flat_record_is_still_appended();
+}

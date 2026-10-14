@@ -272,10 +272,16 @@ impl OpEmitter for OpFreeRefEmitter {
             // result buffer that was never minted on this path (the common case of a `?`
             // that found its element) then costs a compare instead of a call the runtime
             // answers with the same test.  The reset to the sentinel stays inside.
-            if let Value::Var(_) = db_val {
+            if let Value::Var(v) = db_val {
+                // `@FR-R-RebindBuffer` — a buffer a rebind handed a store to parks it.
+                let release = if ctx.output.rebind_handed.contains(v) {
+                    "codegen_runtime::cr_park_or_free"
+                } else {
+                    "OpFreeRef"
+                };
                 write!(
                     ctx.w,
-                    "if {lvalue}.store_nr != u16::MAX {{ OpFreeRef(cell,{lvalue}, \"{label}\"); {lvalue}.store_nr = u16::MAX; }}"
+                    "if {lvalue}.store_nr != u16::MAX {{ {release}(cell,{lvalue}, \"{label}\"); {lvalue}.store_nr = u16::MAX; }}"
                 )?;
             } else {
                 write!(ctx.w, "OpFreeRef(cell,")?;
@@ -400,11 +406,20 @@ impl OpEmitter for OpFreeRefIfDistinctEmitter {
             // (loft#759) emits as `*var_b`, and `*var_b.store_nr` binds as
             // `*(var_b.store_nr)` — a deref of the `u16` field, which is
             // E0614, not a comparison.
+            // `@FR-R-RebindBuffer` — a buffer a rebind handed a store to releases it as the
+            // exchange it replaced would have: parked as the spare.
+            let release = if let Value::Var(v) = ph_val
+                && ctx.output.rebind_handed.contains(v)
+            {
+                "codegen_runtime::cr_park_or_free"
+            } else {
+                "OpFreeRef"
+            };
             write!(ctx.w, "if (")?;
             ctx.emit(ph_val)?;
             write!(ctx.w, ").store_nr != (")?;
             ctx.emit(wit_val)?;
-            write!(ctx.w, ").store_nr {{ OpFreeRef(cell,")?;
+            write!(ctx.w, ").store_nr {{ {release}(cell,")?;
             ctx.emit(ph_val)?;
             write!(ctx.w, ", \"{ph_name}\")")?;
             if let Value::Var(_) = ph_val {
@@ -701,6 +716,37 @@ impl OpEmitter for OpRefAliasEmitter {
                 || ctx.output.value_phantom == Some(*v))
         {
             return write!(ctx.w, "DbRef::NULL");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
+/// `OpConvBoolFromRef` / `OpRefIsNull` — the PRESENCE test of a record, with the
+/// `@FR-R-ValueRecord` nullable clause (@C144): a `τ?` VALUE LOCAL is a tuple whose last element is
+/// the presence word (`hoist::ValueTuple::presence`), so `if x` reads it and `x == null`
+/// negates it.  The gate accounts exactly these two tests against a nullable value local
+/// (`hoist::local_uses_ok`); a dense one never reaches here, its presence tests decline it.
+/// Every other operand takes its template.
+pub struct PresenceEmitter {
+    /// `true` for `OpRefIsNull` (answers ABSENCE), `false` for `OpConvBoolFromRef`.
+    pub absent: bool,
+}
+
+impl OpEmitter for PresenceEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let [arg] = args
+            && let Value::Var(v) = arg.unspan()
+            && let Some(key) = ctx.output.value_record_locals.get(v).copied()
+            && let Some(at) = ctx
+                .output
+                .value_records
+                .types
+                .get(&key)
+                .and_then(super::super::hoist::ValueTuple::presence)
+        {
+            let place = ctx.output.var_place(*v);
+            let not = if self.absent { "!" } else { "" };
+            return write!(ctx.w, "({not}{place}.{at})");
         }
         super::default::DefaultEmitter.emit(ctx, args)
     }

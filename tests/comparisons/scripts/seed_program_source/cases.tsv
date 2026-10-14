@@ -1,0 +1,4 @@
+# orig: fuzz/seed_program_source.sh
+# port: fuzz/seed_program_source
+# case	twin options	arguments	mark
+corpus	--files fuzz/corpus/program_source --by-content		slow

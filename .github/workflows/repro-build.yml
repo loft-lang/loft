@@ -67,6 +67,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -77,6 +79,7 @@ jobs:
   # machine, one commit) and catches a strictly earlier failure: both real causes so far
   # were visible here, days before any release existed to verify.
   roundtrip:
+    # @windows-exempt: the reproducible-build check of the Linux release artefact
     name: Round trip (this commit)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -139,7 +142,7 @@ jobs:
       # itself, so no toolchain action here — one would only pin the wrong compiler.
       - name: Install musl tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools
 
       - name: Rebuild the release and compare
         shell: bash

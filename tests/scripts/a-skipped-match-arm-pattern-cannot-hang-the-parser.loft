@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An arm naming no variant of the subject's enum is reported and SKIPPED, field pattern and
+// all.  The skip consumed only names and commas inside the pattern's braces, so any other
+// token there — the `:` of `Zz { a: 1 }` — advanced nothing and the parser looped for ever:
+// the run ended only at the watchdog (`phase=parse`, exit 134).  It takes the `{ … }` group
+// whole now (`skip_braced`), whatever it holds.
+// @falsified-at: 64f4ff30e — interpret exit 134 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 134 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, n
+// @falsified-by: tests/falsified/a-skipped-match-arm-pattern-cannot-hang-the-parser.patch — interpret exit 134 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 134 
+//   CHANNEL: exit and expectations — the control never finishes (loft's watchdog stops the
+//     parser, exit 134); this tree refuses the program with the expected errors.
+//   ARMED: nothing.
+//   WITNESS: on the control, "[timeout] hard-kill … phase=parse" with no diagnostic.
+//   HOLDS: a refusal, never a hang, on both backends.
+// @EXPECT_ERROR: 'Zz' is not a variant of E
+
+enum E { A { a: integer }, B }
+
+fn main() {
+  e = E.B;
+  v = match e { A { a } => a, Zz { a: 1 } => 0, B => 7 };
+  println("{v}");
+}

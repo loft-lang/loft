@@ -1,0 +1,26 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 1ce68cba0..a820c2c58 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1462,12 +1462,6 @@ impl Parser {
+                 // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
+                 // bits read as a float, a `null` or a `text` crashed the interpreter and broke
+                 // the native build, and a nullable ended the loop early on `--native` only.
+-                // The yielded value's type from here on: the element type once the store face
+-                // converted it.  A call's tuple result is a `__tuple` RECORD that the
+-                // conversion unboxes into a stack tuple, so asking the hand-over below about
+-                // the pre-conversion type copied that stack tuple as if it were the record
+-                // (`OpCopyRecord` over a tuple value: SIGSEGV, loft#1903).
+-                let mut v_tp = v_tp;
+                 if let Type::Iterator(elem_tp, _) = r_type.base() {
+                     let elem = (**elem_tp).clone();
+                     if v_tp == Type::Null {
+@@ -1475,8 +1469,6 @@ impl Parser {
+                         v = self.null_value(&elem);
+                     } else if !self.convert_store_dense(&mut v, &v_tp, &elem, "the yielded value") {
+                         self.validate_convert("yield", &v_tp, &elem, &expr_start.position);
+-                    } else if matches!(elem.base(), Type::Tuple(_)) {
+-                        v_tp = elem;
+                     }
+                 }
+                 // @P328 — when yielding a NON-CAPTURING closure into an

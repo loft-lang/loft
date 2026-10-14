@@ -95,8 +95,15 @@ const BASELINE: &str = "1";
 /// what this token buys, and the reason it shipped before H rather than with it.
 pub const HASH: &str = "2";
 
-/// `index<T[k]>` — the red-black tree in `crate::tree`.
-pub const INDEX: &str = "1";
+/// `index<T[k]>` — the B+tree in `crate::btree` (@C147): the collection's slot names
+/// an ARENA record whose node 0 is the header and whose nodes hold 8-byte key parts beside
+/// record numbers, descended by part and broken by the record's key.
+///
+/// `2` is that tree.  The slot used to name the ROOT RECORD of a red-black tree threaded
+/// through the element records' own `#left/#right/#color` fields; a store written then and
+/// read now would take that record for an arena header and descend through bytes nothing
+/// laid out as nodes, so it must REFUSE rather than answer.
+pub const INDEX: &str = "2";
 
 /// `spatial<T[k]>` — the radix/Morton tree in `crate::radix_db`.
 pub const RADIX: &str = "1";

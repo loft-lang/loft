@@ -14,7 +14,7 @@
 # parser, the scope pass or the runtime applies gives the interpreter and native the SAME
 # answer, right or wrong, so their agreement proves nothing, and LOFT_STRICT_STORES /
 # LOFT_POISON catch a leak or a double free, not a stale value.  The switch is the only
-# second answer, and C122 makes it a complete one: a rewrite is free exactly where its
+# second answer, and @C122 makes it a complete one: a rewrite is free exactly where its
 # conditions hold, so wherever the program's output moves with the switch, the rewrite
 # changed a meaning.  loft#1647 read a loop's first pass on both backends for six days;
 # `LOFT_NO_LAZY_BUFFER=1` told the difference at once.

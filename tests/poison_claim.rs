@@ -10,29 +10,25 @@
 //! on zeros rather than paying a memset on every claim.  The number only moves DOWN — a
 //! new dependence is a regression, and the remaining ones are named in
 //! `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § Zero-on-claim.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The scripts that still read un-initialised store words, by name.  Each is a PRODUCER
 /// that does not initialise what it hands out; the fix is at that site, never a wider
-/// memset.  Shrink this list; do not grow it.
-const KNOWN_DEPENDENT: &[&str] = &[
-    "75-native-stub",
-    "945-stdlib-worked-examples",
-    "a-keyed-view-joins-a-nullable-element-vector",
-    "json-walker-absent-field",
-];
+/// memset (`@FR-H-Claim`, `@C137`).  Empty, and it stays empty.
+const KNOWN_DEPENDENT: &[&str] = &[];
 
 fn scripts() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts");
-    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+    let mut out: Vec<PathBuf> = fa::read_dir(dir)
         .expect("tests/scripts")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .filter(|p| {
-            let src = std::fs::read_to_string(p).unwrap_or_default();
+            let src = fa::read_to_string(p).unwrap_or_default();
             !src.contains("@EXPECT_ERROR") && !src.contains("@IGNORE")
         })
         .collect();
@@ -40,15 +36,17 @@ fn scripts() -> Vec<PathBuf> {
     out
 }
 
-/// True when `script` fails under a poisoned claim — it read a word nothing initialised.
-fn depends_on_zero_claim(script: &Path) -> bool {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
-        .arg("--interpret")
-        .arg(script)
-        .env("LOFT_POISON_CLAIM", "1")
-        .env("LOFT_TIMEOUT", "60")
-        .output()
-        .expect("spawn loft");
+/// Does `script` fail the way a read of un-initialised words fails, with claims `poisoned`
+/// or not?
+fn fails(script: &Path, poisoned: bool) -> bool {
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    cmd.arg("--interpret").arg(script).env("LOFT_TIMEOUT", "60");
+    if poisoned {
+        cmd.env("LOFT_POISON_CLAIM", "1");
+    } else {
+        cmd.env_remove("LOFT_POISON_CLAIM");
+    }
+    let out = cmd.output().expect("spawn loft");
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -58,6 +56,13 @@ fn depends_on_zero_claim(script: &Path) -> bool {
         || text.contains("BUG (#")
         || text.contains("refused to walk")
         || text.contains("out of bounds")
+}
+
+/// True when `script` fails under a poisoned claim AND NOT without it — it read a word nothing
+/// initialised.  A script that fails either way (an `@EXPECT_FAIL` cell's deliberate panic) is
+/// not the claim's.
+fn depends_on_zero_claim(script: &Path) -> bool {
+    fails(script, true) && !fails(script, false)
 }
 
 /// The names of the dependent scripts, in corpus order.  Each script is its own process, so
@@ -88,7 +93,7 @@ fn census(scripts: &[PathBuf]) -> Vec<String> {
         .iter()
         .zip(hits)
         .filter(|(_, hit)| *hit)
-        .map(|(p, _)| p.file_stem().unwrap().to_string_lossy().to_string())
+        .map(|(p, _)| fa::file_stem(p).unwrap())
         .collect()
 }
 

@@ -6,8 +6,8 @@
 //! an admitted rebuild reads `keep_vector_range(`, a declined one does not.  The cells' values
 //! pass on either form, so only this pin sees an admission drift.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft";
@@ -32,7 +32,8 @@ const EXPECTED: &[(&str, usize)] = &[
 fn emit(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = std::env::temp_dir().join(format!("compact_{}_{}.rs", std::process::id(), env.len()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -43,13 +44,13 @@ fn emit(env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

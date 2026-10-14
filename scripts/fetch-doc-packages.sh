@@ -47,7 +47,10 @@ cd "$WORK" || exit 1
 # `loft api --registry` prints two `#` header lines and then one `<name> <version> — …`
 # line per package.  It also populates the cached index as a side effect, so this is
 # both the package list and the fetch of the thing that lists them.
-mapfile -t PACKAGES < <("$LOFT" api --registry 2>/dev/null | awk '/^[a-z]/ { print $1 }')
+# A `while read`, not `mapfile`: macOS ships bash 3.2, which has no `mapfile`, and the
+# reference pages are a derived artefact every checkout may re-derive.
+PACKAGES=()
+while IFS= read -r pkg; do PACKAGES+=("$pkg"); done < <("$LOFT" api --registry 2>/dev/null | awk '/^[a-z]/ { print $1 }')
 
 if [ ${#PACKAGES[@]} -eq 0 ]; then
   echo "fetch-doc-packages: the registry index lists no packages — is the registry reachable?" >&2

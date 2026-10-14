@@ -32,11 +32,12 @@ fn main() {
     // nullable field has to have somewhere to record that it is ABSENT (loft#896;
     // a dense `F797Roofs` there reads as present-and-zeroed forever).  So
     // F797Sess = 8 (s_before) + 8 (s_roofs) + 8 (s_middle) + 4 (s_many) + 16
-    // (s_maybe) + 8 (s_after) = 52, and F797Outer inlines that plus its own
-    // integer = 60.  A field dropped from the layout shrinks these; reading the
+    // (s_maybe) + 8 (s_after) = 52, padded to 56 — a record's size is a multiple of its
+    // 8-byte alignment (`@FR-L-Align`, @C138) — and F797Outer inlines that plus its own
+    // integer = 64.  A field dropped from the layout shrinks these; reading the
     // values back cannot catch that on its own, because the read follows whatever
     // offsets the layout ended up with.
     assert(sizeof(F797Roofs) == 8, "F797Roofs is one integer");
-    assert(sizeof(F797Sess) == 52, "every F797Sess field has storage");
-    assert(sizeof(F797Outer) == 60, "F797Outer inlines a whole F797Sess plus a tail");
+    assert(sizeof(F797Sess) == 56, "every F797Sess field has storage");
+    assert(sizeof(F797Outer) == 64, "F797Outer inlines a whole F797Sess plus a tail");
 }

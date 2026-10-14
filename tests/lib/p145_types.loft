@@ -1,5 +1,5 @@
-pub struct Hex { mat: integer, height: integer }
-pub struct Chunk { cx: integer, cy: integer, cz: integer, hexes: vector<Hex> }
+pub struct Hex { pub mat: integer, pub height: integer }
+pub struct Chunk { pub cx: integer, pub cy: integer, pub cz: integer, pub hexes: vector<Hex> }
 pub struct MatDef { name: text, r: integer }
 pub struct WallDef { name: text, body: text }
 pub struct ItemDef { name: text, kind: text }

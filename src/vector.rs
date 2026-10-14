@@ -156,6 +156,7 @@ pub fn alloc_vector_from_bytes(store: &mut Store, elem_size: u32, count: u32, da
 /// O8.1a: Pre-allocate a vector record with capacity for `count` elements.
 /// Sets the vector pointer and length=0.  Subsequent `vector_append` calls
 /// will find enough space and never call `store.resize`.
+#[inline]
 pub fn pre_alloc_vector(db: &DbRef, count: u32, elem_size: u32, stores: &mut [Store]) {
     // #618: the null test comes FIRST, before any store deref — the same order
     // `clear_vector` uses, and the rule `DbRef::is_null` states ("every store
@@ -312,7 +313,7 @@ fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
 /// `None` for a vector with no record yet or a full one — and the caller then takes
 /// [`vector_append`], which handles both (and null).  Inlined into the typed appends: called,
 /// the slot came back through memory as three narrow stores the caller re-read as one wide
-/// load, a store-forward stall on every push (2026-10-01).
+/// load, a store-forward stall on every push.
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub(crate) fn append_slot_in_capacity(db: &DbRef, size: u32, store: &Store) -> Option<DbRef> {
@@ -437,6 +438,8 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // keeps the ~2x ladder.
         if needed > cur_cap {
             let new_vec = store.resize(vec_rec, checked_vec_cap(needed.saturating_mul(2), size));
+            // `@FR-H-LongRef` — the content moved, the field holding it did not: rewrite the
+            // owner slot, the place every long-term reference to this vector names.
             if new_vec != vec_rec {
                 store.set_u32_raw(db.rec, db.pos, new_vec);
                 vec_rec = new_vec;
@@ -702,6 +705,7 @@ pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     }
 }
 
+#[inline]
 pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
     if db.is_null() || db.rec == 0 || db.pos == 0 {
         // Null (absent) or unallocated/empty vector ref — nothing to clear.
@@ -770,20 +774,37 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
         );
     }
     let store = keys::store(db, stores);
-    if from == i64::MIN {
-        return DbRef::NULL;
-    }
     let v_rec = store.collection_rec(db.rec, db.pos);
-    let l = length_vector(db, stores);
-    let f = if from < 0 { from + i64::from(l) } else { from };
-    if f < 0 || f >= i64::from(l) {
-        DbRef::NULL
-    } else {
-        DbRef {
+    match elem_index(from, length_vector(db, stores)) {
+        None => DbRef::NULL,
+        Some(f) => DbRef {
             store_nr: db.store_nr,
             rec: v_rec,
-            pos: checked_vec_pos(f as u32, size),
-        }
+            pos: checked_vec_pos(f, size),
+        },
+    }
+}
+
+/// The element an index addresses in a vector `len` long — the ONE definition every
+/// element read shares, the fused readers' fast path included: a non-negative index
+/// addresses from the front, a negative one from the end (`v[-1]` is the last element),
+/// and anything outside `[0, len)` after that — `i64::MIN` among them — addresses
+/// nothing.  `from + len` cannot overflow: `len` fits in a `u32`, so the sum of a negative
+/// `from` and it stays negative exactly when `from < -len`.
+///
+/// Pure arithmetic, so a reader can answer every index inline with no call — what lets
+/// LLVM merge two reads of the same element and unswitch the loop around them
+/// (`@FR-R-Cold`'s fold clause).
+#[must_use]
+#[inline]
+pub fn elem_index(from: i64, len: u32) -> Option<u32> {
+    let len = i64::from(len);
+    let f = if from < 0 { from + len } else { from };
+    // `f < len <= u32::MAX` once the unsigned test passes, so the narrowing is exact.
+    if (f as u64) < (len as u64) {
+        Some(f as u32)
+    } else {
+        None
     }
 }
 
@@ -816,8 +837,10 @@ pub struct FillSpan {
 ///
 /// `locked` is the store's lock state, read with the rest: no loop the hoist admits can
 /// lock or unlock a store (every op that does is a writer the hoist refuses), so it holds
-/// for the loop too, and a hoisted writer tests this local instead of the store —
-/// `@FR-H-WriteLocked` once per loop, not once per element.
+/// for the loop too, and a hoisted writer reads this local instead of the store —
+/// `@FR-H-WriteLocked` once per loop, not once per element.  A locked header has no
+/// writable element ([`crate::database::Stores::vec_set_at`]): its writes leave the fast
+/// path by the bounds test and are refused by the runtime's own setter.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VecHeader {
     pub store_nr: u16,
@@ -915,6 +938,26 @@ pub struct PushHeader {
     pub cap: u32,
 }
 
+/// `LOFT_HOIST_VERIFY=1`'s check of `@FR-R-Refresh`'s keep-range clause: the header a
+/// self-slice pop refreshed in place must equal the one derived from the record.
+///
+/// # Panics
+/// When the held header's record or length differs from the derived one — the refresh
+/// is stale, and the message names both.
+pub fn verify_kept_header(held: &VecHeader, db: &DbRef, stores: &[Store]) {
+    let fresh = vec_header(db, stores);
+    assert!(
+        held.rec == fresh.rec && held.len == fresh.len && held.store_nr == fresh.store_nr,
+        "keep-range refresh stale: held rec {} len {} store {}, derived rec {} len {} store {}",
+        held.rec,
+        held.len,
+        held.store_nr,
+        fresh.rec,
+        fresh.len,
+        fresh.store_nr
+    );
+}
+
 /// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
 #[must_use]
 pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
@@ -986,8 +1029,16 @@ pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
 /// A null, unallocated or empty vector answers `len: 0`, which makes every fast-path
 /// bounds test in [`get_vector_hoisted`] fail — so those cases route to `get_vector` and
 /// keep its exact answer without needing a marker of their own.
+///
+/// `inline(always)`: a hoisted loop's prelude derives one header per vector it reads, and
+/// in a large function LLVM kept this as a call — 4 ns each, 8 % of `mat4_mul` (priced by
+/// hand on the emitted Rust, bench/portal/analysis/under-10x.md).
 #[must_use]
-#[inline]
+#[expect(
+    clippy::inline_always,
+    reason = "a hoisted prelude in a large function kept it as a call (priced -8 % on mat4_mul)"
+)]
+#[inline(always)]
 pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
     if db.is_null() || db.rec == 0 || db.pos == 0 {
         return VecHeader {
@@ -1072,6 +1123,42 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     }
 }
 
+/// `@FR-R-RecPtr`'s base clause — the address of the element `at` bytes past a held element
+/// BASE, for an index the caller has already tested against the held header's length.  The
+/// result is never null, and saying so is the point: a field read through it ([`rec_get`])
+/// tests its address for the null record, and once the compiler knows the address cannot be
+/// null that test and the absent value it guards fold away for the whole loop body.
+///
+/// # Safety
+///
+/// `base` must be [`vec_base`] of a header whose `len` is above zero, and `at` inside that
+/// vector's elements.  Such a base is never null: [`vec_base`] answers null only for an
+/// absent vector (`rec == 0`), whose header length is 0, and otherwise the live store's own
+/// buffer plus an offset, or a foreign store's span, which exists whenever its length is.
+///
+/// # Panics
+///
+/// Under `verify` (`LOFT_HOIST_VERIFY=1`), when the address IS null — the fact is checked
+/// instead of assumed.  Never in the emitted default.
+#[must_use]
+#[allow(clippy::inline_always)] // the fact is only seen where the body is: inlined, or it states nothing
+#[inline(always)]
+pub unsafe fn held_elem_ptr(base: *const u8, at: usize, verify: bool) -> *const u8 {
+    // SAFETY: the caller's contract — `at` is inside the vector `base` is element 0 of.
+    let p = unsafe { base.add(at) };
+    if verify {
+        assert!(
+            !p.is_null(),
+            "held element address is null — a base taken for an empty or absent vector"
+        );
+    } else {
+        // SAFETY: a base of a non-empty vector is not null (above), and neither is an
+        // offset inside its allocation.
+        unsafe { std::hint::assert_unchecked(!p.is_null()) };
+    }
+    p
+}
+
 /// `@FR-R-RecPtr` — the address of a record's first byte: what every scalar field read
 /// and in-place write of a record VIEW (`e = tbl[i]?`, `s = o.inner`) may go through for
 /// the rest of its block, derived ONCE after the binding.  Null for the null record, so
@@ -1087,13 +1174,14 @@ pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
     if db.rec == 0 {
         std::ptr::null()
     } else {
-        // SAFETY: `rec` is a claimed record and `pos` a field offset inside it, so the
-        // offset stays within the allocation `base_ptr` was made for.
-        unsafe {
-            stores[db.store_nr as usize]
-                .base_ptr()
-                .add(db.rec as usize * 8 + db.pos as usize)
-        }
+        // Counted from the record's byte 8, which `elem_base` answers for an owned record
+        // and for a FOREIGN store's record alike (@PLN174: its elements sit at `pos` 8
+        // onward in the span, as an owned vector's do in its record).  Taken from
+        // `base_ptr` alone, an element of a foreign vector read bytes of the empty store.
+        stores[db.store_nr as usize]
+            .elem_base(db.rec)
+            .wrapping_add(db.pos as usize)
+            .wrapping_sub(8)
     }
 }
 
@@ -1171,10 +1259,11 @@ pub unsafe fn rec_set<T: Copy>(
     verify: bool,
 ) {
     // `@FR-H-WriteLocked` — `locked` is [`rec_locked`] (or the header's, or the window's)
-    // held beside the address; only a locked store is asked, and it refuses the write.
-    if ptr.is_null()
-        || (locked && !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld))
-    {
+    // held beside the address.  The null record and the locked store leave the fast path
+    // by ONE test; [`rec_set_refused`] tells them apart and asks the locked store, which
+    // refuses the write.
+    if ptr.is_null() | locked {
+        rec_set_refused(ptr.is_null(), db.store_nr, db.rec, db.pos + fld, stores);
         return;
     }
     if verify {
@@ -1191,6 +1280,22 @@ pub unsafe fn rec_set<T: Copy>(
             .cast::<T>()
             .write_unaligned(val)
     };
+}
+
+/// The slow half of [`rec_set`]: nothing for the null record (`@FR-H-WriteNull`), and for a
+/// record in a locked store the store's own refusal (`@FR-H-WriteLocked`) — a development
+/// run halts in it, a production run logs the write, and the caller drops it either way.
+/// Enforces `@FR-R-Cold`: outlined, so the write itself is a test and a store.  It takes the
+/// record's fields BY VALUE: a `&DbRef` handed to a function the optimiser cannot see into
+/// makes the caller's `DbRef` live in memory for the whole loop, and on x86-64 its fields are
+/// then written narrow and read back wide every pass — a store-forwarding stall per element
+/// (`timer_spend` 45.5 → 11.7 ms when this took a reference).
+#[cold]
+#[inline(never)]
+fn rec_set_refused(null: bool, store_nr: u16, rec: u32, at: u32, stores: &[Store]) {
+    if !null {
+        let _ = stores[store_nr as usize].write_allowed(rec, at);
+    }
 }
 
 /// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or
@@ -1219,9 +1324,10 @@ pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
     i64::try_from(bound).ok()
 }
 
-/// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
-/// against the header's length, then a single unaligned load at `base + from * size + fld`.
-/// The cold path — an index outside the vector — is the same one.
+/// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the index resolved
+/// against the header's length ([`elem_index`]), then a single unaligned load at
+/// `base + index * size + fld`; an index that addresses nothing answers `absent`.  No call
+/// on any path, so two reads of one element merge (`@FR-R-Cold`'s fold clause).
 ///
 /// # Safety
 ///
@@ -1248,29 +1354,35 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
     absent: T,
     stores: &[Store],
 ) -> T {
-    if from >= 0 && from < i64::from(h.len) {
-        if VERIFY {
-            assert_eq!(
-                *h,
-                vec_header(db, stores),
-                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
-            );
-            assert!(
-                std::ptr::eq(base, vec_base(h, stores)),
-                "hoisted vector base is stale — a store grew or moved under the loop"
-            );
+    let val = match elem_index(from, h.len) {
+        Some(f) => {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    vec_header(db, stores),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+                assert!(
+                    std::ptr::eq(base, vec_base(h, stores)),
+                    "hoisted vector base is stale — a store grew or moved under the loop"
+                );
+            }
+            // SAFETY: `base` is element 0 of a live vector record in a store the loop
+            // cannot grow (the emitter's growth-free proof), and `f < len` keeps the
+            // address inside the record's claim; `read_unaligned` because an element
+            // offset need not be aligned for `T` (loft#1481).
+            unsafe {
+                base.add(f as usize * size as usize + fld as usize)
+                    .cast::<T>()
+                    .read_unaligned()
+            }
         }
-        // SAFETY: `base` is element 0 of a live vector record in a store the loop cannot
-        // grow (the emitter's growth-free proof), and `from < len` keeps the address inside
-        // the record's claim; `read_unaligned` because an element offset need not be
-        // aligned for `T` (loft#1481).
-        return unsafe {
-            base.add(from as usize * size as usize + fld as usize)
-                .cast::<T>()
-                .read_unaligned()
-        };
+        None => absent,
+    };
+    if VERIFY {
+        verify_folded_read(val, db, size, from, fld, absent, stores);
     }
-    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+    val
 }
 
 /// `(R-BoundedNest)`'s reduction clause — the plain part of `acc = acc + v[i]` over the
@@ -1428,8 +1540,8 @@ pub unsafe fn elem_field_at<T: Copy, const VERIFY: bool>(
 }
 
 /// The general typed read of a record's scalar field — `absent` for the null record, else
-/// the load: what a fused read answers off its fast path ([`get_elem_hoisted_cold`]), for a
-/// record already in hand.  The fallback of [`elem_field_at`], applied to the join's result.
+/// the load: what an element read answers once [`get_vector`] has addressed the element, for
+/// a record already in hand.  The fallback of [`elem_field_at`], applied to the join's result.
 #[must_use]
 #[inline]
 pub fn field_of<T: Copy>(db: &DbRef, fld: u32, absent: T, stores: &[Store]) -> T {
@@ -1449,14 +1561,15 @@ pub fn field_of<T: Copy>(db: &DbRef, fld: u32, absent: T, stores: &[Store]) -> T
 /// getter, which had already been decided by the bounds test. What remains is one comparison
 /// and one load.
 ///
-/// `absent` is the getter's own null sentinel (`f32::NAN`, `i64::MIN`, …), so an index the
-/// fast path refuses answers exactly what the unfused pair answered. Off the fast path this
-/// routes back through [`get_vector`], which is what keeps negative indices addressing from
-/// the end rather than reading `absent`.
+/// `absent` is the getter's own null sentinel (`f32::NAN`, `i64::MIN`, …), so an index that
+/// addresses nothing answers exactly what the unfused pair answered.  The index is resolved
+/// by [`elem_index`], the definition [`get_vector`] uses, so a negative index addresses from
+/// the end here too — inline, with no call on any path (`@FR-R-Cold`'s fold clause).
 ///
 /// # Panics
 ///
-/// Under `VERIFY`, when the header no longer describes `db`. Never in the emitted default.
+/// Under `VERIFY`, when the header no longer describes `db`, or when the answer differs from
+/// a fresh read through [`get_vector`]. Never in the emitted default.
 #[must_use]
 #[inline]
 pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
@@ -1468,30 +1581,66 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
     absent: T,
     stores: &[Store],
 ) -> T {
-    if from >= 0 && from < i64::from(h.len) {
-        if VERIFY {
-            assert_eq!(
-                *h,
-                vec_header(db, stores),
-                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
-            );
+    let val = match elem_index(from, h.len) {
+        Some(f) => {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    vec_header(db, stores),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+            }
+            stores[h.store_nr as usize].read::<T>(h.rec, checked_vec_pos(f, size) + fld)
         }
-        return stores[h.store_nr as usize]
-            .read::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
+        None => absent,
+    };
+    if VERIFY {
+        verify_folded_read(val, db, size, from, fld, absent, stores);
     }
-    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+    val
 }
 
-/// The off-fast-path half of [`get_elem_hoisted`]: an out-of-range or negative index, which
-/// routes back through [`get_vector`] so a negative one still addresses from the end.
+/// `LOFT_HOIST_VERIFY=1`'s check of a folded element read ([`get_elem_at`],
+/// [`get_elem_hoisted`]): the answer must be bit-identical to the unfused read — the element
+/// [`get_vector`] addresses, or `absent` where it addresses nothing.  Bit equality is the
+/// exact test: both sides read the same field bytes or answer the same sentinel.
 ///
-/// Enforces `@FR-R-Cold` (formal/rewrites.md).
-/// `#[inline(never)]` is load-bearing rather than a hint (loft#1508).  Its caller is generic
-/// and `#[inline]`, so rustc sees the whole body and decides on SIZE — and with this half
-/// folded in, the body carried a second call and a second read and lost that decision.  The
-/// caller then stayed out of line at every one of its call sites, which on a real workload
-/// cost ~11% of self time for a fast path that is a compare and a load.  Keeping the cold
-/// half behind a call is what lets the hot half be inlined into its callers.
+/// # Panics
+///
+/// When the two answers differ — the fold resolved an index to another element than
+/// `get_vector` does, or read through a stale header.
+#[cold]
+#[inline(never)]
+fn verify_folded_read<T: Copy>(
+    val: T,
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    absent: T,
+    stores: &[Store],
+) {
+    let elem = get_vector(db, size, from, stores);
+    let fresh = if elem.rec == 0 {
+        absent
+    } else {
+        keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
+    };
+    let n = std::mem::size_of::<T>();
+    // SAFETY: both are live `T` values on this frame; a scalar `T` has no padding, so its
+    // `size_of` bytes are initialised.
+    let (a, b) = unsafe {
+        (
+            std::slice::from_raw_parts((&raw const val).cast::<u8>(), n),
+            std::slice::from_raw_parts((&raw const fresh).cast::<u8>(), n),
+        )
+    };
+    assert_eq!(
+        a, b,
+        "folded element read disagrees with get_vector at index {from} — elem_index or a stale header"
+    );
+}
+
 /// The text record `rec` of the store whose data span is `(ptr, size)` ([`Store::text_span`])
 /// — what [`Store::get_str`] answers for it, computed off the span: the null text for the
 /// null record, for a record number outside the store and for a length past its end; the
@@ -1593,10 +1742,10 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
     text_elem_cold(db, from, stores)
 }
 
-/// The out-of-range half of [`text_elem_at`], behind a call for the reason
-/// [`get_elem_hoisted_cold`] gives: folded in, the hot half — a compare, a load and a slice
-/// — lost its inline and the whole read stayed a call per element (measured: 8.4 µs where
-/// the inlined form prices 6.9 on the stdlib `join`).
+/// The negative-index half of [`text_elem_at`], behind a call although it only reads: folded
+/// in — the resolution through [`elem_index`] inline, in any arrangement — the text walk on
+/// the stdlib `join` row lost 10–14 %, and a text reader gains nothing from the fold's merge,
+/// which needs the same element read twice (`@FR-R-Cold`'s fold clause names this exception).
 #[cold]
 #[inline(never)]
 fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
@@ -1606,24 +1755,6 @@ fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
     } else {
         let store = keys::store(&elem, stores);
         store.get_str(store.get_u32_raw(elem.rec, elem.pos))
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn get_elem_hoisted_cold<T: Copy>(
-    db: &DbRef,
-    size: u32,
-    from: i64,
-    fld: u32,
-    absent: T,
-    stores: &[Store],
-) -> T {
-    let elem = get_vector(db, size, from, stores);
-    if elem.rec == 0 {
-        absent
-    } else {
-        keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
     }
 }
 
@@ -2015,7 +2146,7 @@ pub fn vector_prev(data: &DbRef, pos: &mut i32, size: u16, stores: &[Store]) {
 const ORDERED_STRIDE: u32 = 4;
 
 /// The `(start, finish)` cursor pair for iterating an `ordered` collection over a
-/// key range — the shared derivation both backends call, the way `tree::range_cursors`
+/// key range — the shared derivation both backends call, the way `btree::range_cursors`
 /// is shared for an `index`.
 ///
 /// Both cursors are BYTE OFFSETS into the slot vector, which is the unit
@@ -2387,6 +2518,39 @@ pub fn reverse_vector(db: &DbRef, elem_size: u32, stores: &mut [Store]) {
         }
         lo += 1;
         hi -= 1;
+    }
+}
+
+#[cfg(test)]
+mod elem_index_tests {
+    //! [`super::elem_index`] — the one definition of which element an index addresses —
+    //! against hand-computed answers: from the front, from the end, and the edges where a
+    //! sum near the type's limits would overflow if it were computed the other way.
+    use super::elem_index;
+
+    #[test]
+    fn front_end_and_nothing() {
+        assert_eq!(elem_index(0, 5), Some(0));
+        assert_eq!(elem_index(4, 5), Some(4));
+        assert_eq!(elem_index(5, 5), None);
+        assert_eq!(elem_index(-1, 5), Some(4));
+        assert_eq!(elem_index(-5, 5), Some(0));
+        assert_eq!(elem_index(-6, 5), None);
+        assert_eq!(elem_index(0, 0), None);
+        assert_eq!(elem_index(-1, 0), None);
+    }
+
+    #[test]
+    fn limits() {
+        assert_eq!(elem_index(i64::MIN, 5), None);
+        assert_eq!(elem_index(i64::MIN, u32::MAX), None);
+        assert_eq!(elem_index(i64::MAX, u32::MAX), None);
+        assert_eq!(
+            elem_index(i64::from(u32::MAX) - 1, u32::MAX),
+            Some(u32::MAX - 1)
+        );
+        assert_eq!(elem_index(-i64::from(u32::MAX), u32::MAX), Some(0));
+        assert_eq!(elem_index(-i64::from(u32::MAX) - 1, u32::MAX), None);
     }
 }
 

@@ -35,17 +35,17 @@ pub fn ext_make_bytes(n: integer) -> vector<u8>;
 // Pattern 8b (@PLN174 F5): the SAME bytes handed over WITHOUT a copy — a read-only
 // foreign store over the cdylib's own buffer (`foreign_vector_from_owned`), with no
 // argument, so the dispatcher's return store is the one adopted.
-pub fn ext_make_bytes_foreign(n: integer) -> vector<u8>;
+pub fn ext_make_bytes_foreign(n: integer) -> const vector<u8>;
 #native "loft_ext_make_bytes_foreign"
 
 // Pattern 8c (@PLN174 F5): a foreign answer beside a vector ARGUMENT — the handle
 // pins the argument's store, so the foreign bytes take a store of their own.
-pub fn ext_reverse_foreign(data: vector<u8>) -> vector<u8>;
+pub fn ext_reverse_foreign(data: const vector<u8>) -> const vector<u8>;
 #native "loft_ext_reverse_foreign"
 
 // Pattern 8d: the control for 8c — the same reversal answered as an OWNED vector
 // (`alloc_vector_from_bytes`) beside a vector argument.
-pub fn ext_reverse_owned(data: vector<u8>) -> vector<u8>;
+pub fn ext_reverse_owned(data: const vector<u8>) -> vector<u8>;
 #native "loft_ext_reverse_owned"
 
 // Pattern 9: STRUCT (non-vector heap) RETURN via the FFI alloc_record path.

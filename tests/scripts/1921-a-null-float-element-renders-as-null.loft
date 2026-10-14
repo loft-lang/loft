@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1921 — `@FR-F-Render`: a `float` or `single` null renders as the word `null`, and a
+// vector's elements are rendered by the same rule — so an element null is `null` in the
+// loft form and under `:j`, never `NaN` (which is not JSON at all).
+//
+// The scalar hole renders through `ops::format_float`, which always said `null`; an element
+// or a record's field renders through the store walker (`database::format`), which wrote the
+// NaN raw on both backends.
+//
+// Cells: a `vector<float?>` and a `vector<single?>` in both forms; a computed NaN (`0.0 /
+// 0.0`) in a non-nullable `vector<float>`; a nested vector; a vector FIELD of a struct in
+// both forms; and the controls — a non-null element, `inf` (a real value, not null), and the
+// scalar hole beside it.
+//
+// @falsified-by: tests/falsified/1921-a-null-float-element-renders-as-null.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   CHANNEL: value — four cells assert the rendered string, on both backends.
+//   WITNESS: on the control `[nf(), 2.0]` renders `[NaN,2]` in both forms, and `[1,NaN]`
+//   for a computed `0.0 / 0.0`.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and the
+//   controls (a non-null element, `inf`, the scalar hole) pass on both.
+
+struct Row { k: integer, xs: vector<float?> }
+
+fn nf() -> float? { null }
+fn ns() -> single? { null }
+
+fn test_a_null_float_element_renders_null() {
+  v: vector<float?> = [nf(), 2.0];
+  assert("{v}" == "[null,2]", "loft form: got {v}");
+  assert("{v:j}" == "[null,2]", "json: got {v:j}");
+  assert(len(v) == 2, "length: got {len(v)}");
+}
+
+fn test_a_null_single_element_renders_null() {
+  s: vector<single?> = [ns(), 2.0f];
+  assert("{s}" == "[null,2]", "loft form: got {s}");
+  assert("{s:j}" == "[null,2]", "json: got {s:j}");
+}
+
+fn test_a_computed_nan_element_renders_null() {
+  z = 0.0;
+  x: vector<float> = [1.0];
+  x += [z / z];
+  assert("{x}" == "[1,null]", "got {x}");
+}
+
+fn test_a_nested_and_a_field_vector_render_null() {
+  vv: vector<vector<float?>> = [[nf()], [3.0]];
+  assert("{vv}" == "[[null],[3]]", "nested: got {vv}");
+  r = Row { k: 1, xs: [nf(), 0.5] };
+  assert("{r}" == "{{k:1,xs:[null,0.5]}}", "field: got {r}");
+  assert("{r:j}" == "{{\"k\":1,\"xs\":[null,0.5]}}", "field json: got {r:j}");
+}
+
+fn test_control_non_null_and_inf() {
+  w: vector<float> = [1.5, 2.0];
+  assert("{w}|{w:j}" == "[1.5,2]|[1.5,2]", "got {w}|{w:j}");
+  z = 0.0;
+  y: vector<float> = [1.0, 2.0];
+  y[0] = 1.0 / z;
+  assert("{y}" == "[inf,2]", "inf is a value: got {y}");
+  assert("{nf()}" == "null", "scalar hole: got {nf()}");
+}

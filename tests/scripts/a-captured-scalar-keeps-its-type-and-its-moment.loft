@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-CapScalar — a captured SCALAR is captured by value when the closure is built: the
+// outer variable moving afterwards does not reach the closure.  @FR-L-CapBox / @FR-L-CapWrite
+// — a captured scalar the closure ASSIGNS keeps its declared type exactly, and the write lands
+// in the outer variable: every cell below answers what the same statement on an uncaptured
+// variable of that type answers (the twin beside it), and a later call continues from the
+// previous write.  Walked as a 48-cell matrix on both backends; it found no defect, and this
+// file keeps that negative result.  The narrowing refusal is
+// `a-captured-narrow-scalar-is-refused-what-its-type-refuses.loft`.
+//
+// Axes this file MOVES:  the scalar type (integer · u8 · i32 · float · single · boolean ·
+//                        character · enum · integer? · text?), the write (a fitting literal ·
+//                        a wide value into a nullable narrow slot · a compound step past the
+//                        range), the range (u8 · i32 · a `limit`, each with and without `?`),
+//                        and the call count.
+// Axes it HOLDS FIXED:   a closure called in the frame that built it.
+//
+// @falsified-at: 6494bf787 — INERT on all four channels, both backends, and that is the correct
+//   answer for a CONTROL: the walk found these rules holding.  What the file pins is their
+//   values, so a later change to capture or to a captured write is measured against them.
+//   WITNESS: `build_time() "3 3 3 1.5 1.5 true a Red 3 ab"`, `nullable_narrow() "null null
+//   null null null"`, `compound_steps() "0 0 null null 0 3"`, `successive_calls() "253 null 3
+//   200"` on both trees.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+enum Col { Red, Green }
+
+fn build_time() -> text {
+  i: integer = 3;
+  b: u8 = 3;
+  w: i32 = 3;
+  f: float = 1.5;
+  s: single = 1.5f;
+  t: boolean = true;
+  c: character = 'a';
+  e = Col.Red;
+  ni: integer? = 3;
+  nt: text? = "ab";
+  g = || { "{i} {b} {w} {f} {s} {t} {c} {e} {ni} {nt}" };
+  i = 9;
+  b = 9;
+  w = 9;
+  f = 9.5;
+  s = 9.5f;
+  t = false;
+  c = 'z';
+  e = Col.Green;
+  ni = null;
+  nt = null;
+  g()
+}
+
+fn nullable_narrow() -> text {
+  n = 300;
+  x: u8? = 1;
+  fx = fn() { x = n; };
+  fx();
+  y: u8? = 1;
+  y = n;
+  w = 5000000000;
+  p: i32? = 1;
+  fp = fn() { p = w; };
+  fp();
+  q: i32? = 1;
+  q = w;
+  k = 1001;
+  r: integer limit(0, 1000)? = 1;
+  fr = fn() { r = k; };
+  fr();
+  "{x} {y} {p} {q} {r}"
+}
+
+fn compound_steps() -> text {
+  a: u8 = 200;
+  fa = fn() { a += 100; };
+  fa();
+  a2: u8 = 200;
+  a2 += 100;
+  w: i32 = 2147483000;
+  fw = fn() { w += 1000; };
+  fw();
+  w2: i32 = 2147483000;
+  w2 += 1000;
+  m: integer limit(0, 1000) = 990;
+  fm = fn() { m += 20; };
+  fm();
+  s: single = 1.5f;
+  fs = fn() { s = s * 2.0f; };
+  fs();
+  "{a} {a2} {w} {w2} {m} {s}"
+}
+
+fn successive_calls() -> text {
+  x: u8? = 250;
+  f = fn() { x = (x ?? 0) + 3; };
+  f();
+  first = "{x}";
+  f();
+  c = 0;
+  inc = fn() { c += 1; };
+  inc();
+  inc();
+  inc();
+  lit: u8 = 1;
+  setlit = fn() { lit = 200; };
+  setlit();
+  "{first} {x} {c} {lit}"
+}
+
+fn main() {
+  assert(build_time() == "3 3 3 1.5 1.5 true a Red 3 ab", "build-time values: got {build_time()}");
+  assert(nullable_narrow() == "null null null null null", "checked narrowing into a capture: got {nullable_narrow()}");
+  assert(compound_steps() == "0 0 null null 0 3", "C127 defaults and i32's sentinel: got {compound_steps()}");
+  assert(successive_calls() == "253 null 3 200", "a later call continues: got {successive_calls()}");
+}

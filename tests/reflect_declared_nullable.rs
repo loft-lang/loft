@@ -22,8 +22,8 @@
 //! attributes have derived it from every element type since @PLN114; a declared field now
 //! agrees with them.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -117,15 +117,15 @@ fn run(tag: &str, src: &str, backend: &str) -> String {
         "loft_995_{tag}_{backend_tag}_{}.loft",
         std::process::id()
     ));
-    std::fs::write(&path, src).expect("write probe");
-    let out = Command::new(loft_bin())
+    fa::write(&path, src).expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let all = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

@@ -51,7 +51,7 @@ pair `⟨code, env⟩`: the lambda body plus a captured environment (the outer v
   (L-FnAbsent)  a fn-ref read where nothing is — an element of a `vector<fn(…)>` out of range —
              is the ABSENT function.  A function type has no null (types.md `(N-Opt)`), so the
              absence is not a value a program can test: `f != null` and `f ?? g` are both
-             refused, alike.  Calling the absent function is a fault in the sense of C80: the
+             refused, alike.  Calling the absent function is a fault in the sense of @C80: the
              call answers its return type's null (nothing for `void`) and the program goes on.
              Its arguments are evaluated first, exactly as for a call that dispatches.  To fall
              back to another function, check the index, or keep the function in a struct field
@@ -71,7 +71,9 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  value the variable had when the closure was formed.
   (L-CapHeap)    a captured HEAP value (struct/vector) is SHARED: a mutation-through the source
                  AFTER capture is visible inside the closure (consistent with calls.md
-                 F-ParamHeap — capture, like a call, shares heap state, copies scalars).
+                 F-ParamHeap — capture, like a call, shares heap state, copies scalars).  A
+                 captured FN-REF is such a value: its closure record is shared, and owned or
+                 borrowed by (L-CapOwn) exactly as a captured struct is.
   (L-CapWrite)   a captured SCALAR the closure REASSIGNS is SHARED IN THE WRITE DIRECTION:
                  the closure's write reaches the outer variable, and a later call sees what
                  the previous one wrote.  This does not weaken (L-CapScalar) — the closure
@@ -129,8 +131,18 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  from inside the closure all reach the caller — and a `&integer` / `&text` is
                  COPIED at creation by (L-CapScalar).  The `&` itself does NOT survive into
                  the closure, so a write that would replace what it points AT is REFUSED
-                 (a decided edge, DESIGN_DECISIONS C115 — not a deviation: the copy is what
+                 (a decided edge, DESIGN_DECISIONS @C115 — not a deviation: the copy is what
                  (L-CapScalar) requires, so no code change closes it).
+  (L-CapRebind)  a WHOLE-VALUE rebind of a captured heap local is not a mutation-through: a
+                 record built before it keeps the store it was built with and answers the
+                 build-time value; the local names a store of its own from the rebind on.  So
+                 the rebind never clears or refills a store a record still holds — it moves
+                 the local to a fresh one first, after reading the local for the right-hand
+                 side (ownership.md O-Detach) — and the store the record keeps is released ONCE
+                 (L-CapOwn): by the record's cascade where it adopted it, else at the local's
+                 scope end.  A second rebind before the next build finds the local on its own
+                 store and replaces it in place.  Every spelling of the rebind is one rule: a
+                 literal, a call, a variable, a branch, a field and `[]`.
 ```
 
 ⚠ **A REASSIGNMENT of the captured variable is not a mutation-through, and the two are worth
@@ -220,9 +232,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
-CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
-2026-09-23; `D-clo-27` closed 2026-09-12).
+**OPEN: 0.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each
@@ -233,7 +243,7 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
 > identity, every kind and spelling) and `1320-…` (a branch-joined binding).  What they hold
 > FIXED: **every closure is built in the frame that calls it**, every witness variable is assigned
 > once, and no closure is stored in a container or in a struct a container holds (a decided
-> refusal, C115/#247).  ONE shape is still DECLINED and asserted by value only — `c ?? d`, where
+> refusal, @C115/#247).  ONE shape is still DECLINED and asserted by value only — `c ?? d`, where
 > either capture may come back — and it keeps the leak it had.  The second, **a capture variable
 > reassigned after the build, is no longer declined**: loft#1446 put it on store identity and
 > `1446-…` asserts it, across one and two closures, one and two reassignments, a reassignment
@@ -257,7 +267,7 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
 > local and a literal): each arm builds into a store of its own, and every one of them is the
 > local's join owner (loft#1726).
 
-`D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
+`D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to
 it from inside the closure has no shared record to land in, and the heap twin takes the same
 refusal one rule over.
@@ -295,5 +305,5 @@ the companion [closures-history.md](closures-history.md).
 Closures are a full first-class contract: construction, every container measured above, and
 re-assignment into a place that already holds one. What a closure may not do is bounded by
 two decisions rather than by gaps — one capture shape per fn-ref attribute, and no capturing
-closure inside a collection (DESIGN_DECISIONS.md C116, loft#247) or inside a struct that a
+closure inside a collection (DESIGN_DECISIONS.md @C116, loft#247) or inside a struct that a
 collection holds (#318).

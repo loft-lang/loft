@@ -5,7 +5,7 @@
 //
 // `Equatable` declares `==` alone, and that is deliberate: an interface demanding every
 // spelling would break every user type implementing the minimum, and the bound's own doc
-// says it is *"satisfied by … user types defining OpEq"*.  So the bound names precisely the
+// says every type meets it, `==` comparing the fields (C132).  So the bound names precisely the
 // operator `!=` derives from, and refusing `!=` left the interface unable to serve the
 // commonest use of itself — a guard that fires on inequality — forcing every generic
 // comparison to be written backwards.  The swap that derives `>` from `<` was already
@@ -19,7 +19,7 @@
 // concrete `<=` on loft's float null, and each operand would be emitted twice.
 //
 // Every `Equatable` type is swept, because the bound's doc names them: integer, single,
-// float, text, boolean, and a user type defining `OpEq`.  The `==` cells are the CONTROL —
+// float, text, boolean, and a user type compared by its fields.  The `==` cells are the CONTROL —
 // they passed before this fix and must keep passing, since the derivation is a fallback
 // reached only after the direct stub lookup comes up empty.
 //
@@ -30,8 +30,7 @@
 //   HERE build rather than any result.
 
 struct Ne1144P { ne_px: integer }
-fn OpEq(self: Ne1144P, other: Ne1144P) -> boolean { self.ne_px == other.ne_px }
-fn to_text(self: Ne1144P) -> text { "P({self.ne_px})" }
+operator to_text(self: Ne1144P) -> text { "P({self.ne_px})" }
 
 fn ne1144_g<T: Equatable>(ne_a: T, ne_b: T) -> boolean { ne_a != ne_b }
 fn ne1144_eq<T: Equatable>(ne_a: T, ne_b: T) -> boolean { ne_a == ne_b }
@@ -63,7 +62,7 @@ fn main() {
   assert(ne1144_g(true, false) == (true != false), "boolean differ");
   assert(ne1144_g(true, true) == (true != true), "boolean same");
 
-  // ---- a user type, reached through its own OpEq ----
+  // ---- a user type, compared by its fields ----
   ne_p1 = Ne1144P { ne_px: 1 };
   ne_p2 = Ne1144P { ne_px: 2 };
   ne_p3 = Ne1144P { ne_px: 1 };

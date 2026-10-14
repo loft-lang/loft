@@ -192,28 +192,20 @@ fn test_json_bare_enum_unchanged() {
 // the escaper and came back as a one-character string: a present, corrupt value
 // where the program meant nothing.
 //
-// loft#1270 moved the expectation from `{"note":null,…}` to the OMITTED key, and the two
-// are the same rule read one step further.  #769 asked whether the sentinel may reach the
-// wire AS TEXT; it may not, and that half is unchanged.  What it did not ask is whether the
-// KEY belongs there at all, so its assertion froze whatever the literal path happened to
-// write — at a moment when the PARSE path already omitted it.  One value then had two
-// documents and neither round trip was stable.  Every other nullable field's null is
-// omitted (`{"a":1}` for an absent integer, and #1269 wrote the same convention down for a
-// null collection), so text was the one type spelling absence differently.
-//
-// The distinction the type carries is asserted next door, and it is the cell that matters:
-// absent and empty must still DIFFER and each survive as itself.
-fn test_json_null_text_is_omitted() {
+// The key is written with JSON `null` (@C143, `@FR-F-Render-Fields`): a record shows every
+// field it declares, a null one included, and the document reads back to the same value.
+// The sentinel itself must never reach the wire as text — #769's own question.
+fn test_json_null_text_is_written_null() {
   n = JNote { note: null, n: 4 };
   j = "{n:j}";
-  assert(j == `{{"n":4}}`, "null text: {j}");
+  assert(j == `{{"note":null,"n":4}}`, "null text: {j}");
 
   // the sentinel must not reach the output as a value — #769's own question
   assert(!j.contains("\0"), "a NUL byte reached the document: {j}");
-  assert(!j.contains("note"), "the absent key was written: {j}");
 
-  // and the document is now stable under a round trip (loft#1270)
+  // and the document is stable under a round trip (loft#1270)
   assert("{JNote.parse(j):j}" == j, "the document moved: {JNote.parse(j):j} vs {j}");
+  assert(JNote.parse(j).note == null, "the null did not come back");
 }
 
 // The distinction the type exists to carry: absent and empty are different

@@ -97,8 +97,9 @@ fn probe_bytes(key: &[Content]) -> &[u8] {
 ///
 /// The tree lives in `coll`'s store, its record id in `coll`'s 4-byte field (the
 /// `hash`-bucket convention). A growing insert can relocate the tree, so the
-/// (possibly new) id is written back. Two records may share a key — they differ in
-/// the id suffix and land adjacent, which `r8b` pins.
+/// (possibly new) id is written back. This layer does not deduplicate — two records
+/// with one key land adjacent, differing in the id suffix (`r8b`) — because the
+/// collection insert displaces the record already under the key first (@C68).
 pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     let Some(key) = keys.first() else {
         return;
@@ -156,6 +157,19 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
         return false;
     }
     rt::rtree_remove(store, tree, rec.rec, &TextOracle { key })
+}
+
+/// The tree's own footprint in bytes (`radix_tree::rtree_bytes`), 0 when none is allocated.
+#[must_use]
+pub fn table_bytes(coll: &DbRef, stores: &[Store]) -> u32 {
+    if coll.is_null() {
+        return 0;
+    }
+    let store = crate::keys::store(coll, stores);
+    match store.collection_rec(coll.rec, coll.pos) {
+        0 => 0,
+        tree => rt::rtree_bytes(store, tree),
+    }
 }
 
 /// Number of element records. Reads the tree's cached length word (O(1)).
@@ -375,12 +389,7 @@ mod tests {
 
     /// A collection field holding the tree id, plus an element record per word.
     fn collection(store: &mut Store) -> (DbRef, Vec<(&'static str, u32)>) {
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(store);
         let keys = vec![w_key()];
         let mut recs = Vec::new();
         for w in WORDS {
@@ -679,12 +688,7 @@ mod paged {
         let words = corpus();
         let keys = vec![w_key()];
         let mut store = Store::new_in_use(1 << 20);
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         let mut order: Vec<usize> = (0..words.len()).collect();
         for i in 0..words.len() {
             if i % DUP_EVERY == 0 {
@@ -877,12 +881,7 @@ mod paged {
         ];
         let keys = vec![w_key()];
         let mut store = Store::new_in_use(1 << 14);
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         for w in SIX {
             let ptr = store.set_str(w);
             let rec = store.claim(4);
@@ -1072,7 +1071,7 @@ mod pages {
             "/usr/share/dict/ngerman",
             "/usr/share/dict/portuguese",
         ] {
-            let Ok(text) = std::fs::read_to_string(f) else {
+            let Ok(text) = crate::file_access::read_to_string(f) else {
                 continue;
             };
             for w in text.lines() {

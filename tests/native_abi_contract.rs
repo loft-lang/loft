@@ -25,6 +25,7 @@
 //!     returns -1 and its `.loft` test asserts the round trip on both backends.  That is
 //!     what proves the rule is about real values and not just about text matching.
 
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -49,7 +50,7 @@ fn allowed_rust_types(loft_ty: &str) -> Option<&'static [&'static str]> {
 fn loft_native_decls(pkg: &Path) -> HashMap<String, (Vec<String>, Option<String>)> {
     let mut out = HashMap::new();
     for file in walk(pkg, "loft") {
-        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let text = fa::read_to_string(&file).unwrap_or_default();
         let lines: Vec<&str> = text.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             if !line.trim_start().starts_with("#native") {
@@ -101,24 +102,24 @@ fn parse_fn_decl(line: &str) -> Option<(String, Vec<String>, Option<String>)> {
 fn rust_exports(crate_dir: &Path) -> HashMap<String, (Vec<String>, Option<String>)> {
     let mut out = HashMap::new();
     let lib = crate_dir.join("src/lib.rs");
-    if !lib.exists() {
+    if !fa::exists(&lib) {
         return out;
     }
     let mut files = vec![lib.clone()];
-    let text = std::fs::read_to_string(&lib).unwrap_or_default();
+    let text = fa::read_to_string(&lib).unwrap_or_default();
     for line in text.lines() {
         let t = line.trim().trim_start_matches("pub ").trim();
         if let Some(rest) = t.strip_prefix("mod ")
             && let Some(name) = rest.strip_suffix(';')
         {
             let cand = crate_dir.join(format!("src/{}.rs", name.trim()));
-            if cand.exists() {
+            if fa::exists(&cand) {
                 files.push(cand);
             }
         }
     }
     for f in files {
-        let src = std::fs::read_to_string(&f).unwrap_or_default();
+        let src = fa::read_to_string(&f).unwrap_or_default();
         // Signatures may span lines; join on the opening brace.
         let flat = src.replace('\n', " ");
         let mut rest = flat.as_str();
@@ -154,21 +155,17 @@ fn walk(root: &Path, ext: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+        let Ok(rd) = fa::read_dir(&dir) else {
             continue;
         };
-        for e in rd.flatten() {
-            let p = e.path();
-            let name = p
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if p.is_dir() {
+        for e in rd {
+            let p = e.os_spelling();
+            let name = fa::file_name(&p).unwrap_or_default();
+            if fa::is_dir(&p) {
                 if name != "target" && name != ".loft" && name != ".git" {
                     stack.push(p);
                 }
-            } else if p.extension().is_some_and(|x| x == ext) {
+            } else if fa::has_extension(&p, ext) {
                 out.push(p);
             }
         }
@@ -232,13 +229,13 @@ fn native_declarations_and_exports_agree() {
     let mut checked = 0;
     let mut problems = Vec::new();
     for base in ["tests/fixtures/libs", "tests/lib"] {
-        let Ok(rd) = std::fs::read_dir(root.join(base)) else {
+        let Ok(rd) = fa::read_dir(root.join(base)) else {
             continue;
         };
-        for e in rd.flatten() {
-            let pkg = e.path();
+        for e in rd {
+            let pkg = e.os_spelling();
             let crate_dir = pkg.join("native");
-            if !crate_dir.join("src/lib.rs").exists() {
+            if !fa::exists(crate_dir.join("src/lib.rs")) {
                 continue;
             }
             checked += 1;
@@ -269,22 +266,22 @@ fn native_declarations_and_exports_agree() {
 #[test]
 fn the_check_detects_a_deliberate_mismatch() {
     let dir = std::env::temp_dir().join(format!("loft_abi_probe_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("src")).expect("mkdir src");
-    std::fs::create_dir_all(dir.join("native/src")).expect("mkdir native/src");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(dir.join("src")).expect("mkdir src");
+    fa::create_dir_all(dir.join("native/src")).expect("mkdir native/src");
+    fa::write(
         dir.join("src/probe.loft"),
         "pub fn probe_value() -> integer;\n#native\n",
     )
     .expect("write loft");
-    std::fs::write(
+    fa::write(
         dir.join("native/src/lib.rs"),
         "#[no_mangle]\npub extern \"C\" fn n_probe_value() -> i32 { -1 }\n",
     )
     .expect("write rust");
 
     let problems = check_crate(&dir, &dir.join("native"));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 
     assert!(
         problems.iter().any(|p| p.contains("n_probe_value")),

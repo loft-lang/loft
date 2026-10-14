@@ -65,12 +65,17 @@ fn two_exits(n: integer) -> vector<integer> {
 }
 fn maybe(n: integer) -> vector<integer>? { if n < 0 { null } else { mkints(n) } }
 
-// d7 — the callee MINTS into its buffer instead of filling it.  A vector LITERAL return lowers
-// to `OpDatabase(__vdb_1)` on the buffer PARAMETER, so handing it the destination would have it
-// mint over the place.  `(R-Place)` names this decline and three sampled callees suggested it
-// was vacuous; it is not, and the corpus is what said so (1152).
+// d7 — the callee MINTS a record into its buffer instead of filling it: a projection chain
+// lowers to `OpDatabase(__retbuf, GIn)` on the buffer PARAMETER, so handing it the destination
+// would have it mint over the place.  `(R-Place)` names this decline and three sampled callees
+// suggested it was vacuous; it is not, and the corpus is what said so (1152).  A returned vector
+// LITERAL mints a `main_vector<T>` wrapper, which on a place answers the place (`a4`).
+struct GIn { es: vector<Pt> }
+struct GW { k: integer, inner: GIn }
+fn wrapg() -> GW { GW { k: 5, inner: GIn { es: [Pt { x: 1, y: 1 }, Pt { x: 2, y: 2 }] } } }
+fn mkproj() -> vector<Pt> { return wrapg().inner.es; }
+fn d7(h2: Grouped) { h2.es = mkproj(); }
 fn mklit() -> vector<Pt> { [Pt { x: 1, y: 1 }, Pt { x: 2, y: 2 }] }
-fn d7(h2: Grouped) { h2.es = mklit(); }
 // d8 — a field of a struct-ENUM VARIANT.  The place exists only if the enum holds that variant:
 // it lowers through a variant check whose other arm is the null sentinel, so it does not
 // unconditionally EXIST, which is what `(R-Place)` requires.
@@ -80,6 +85,8 @@ fn d8(sh: Shape) { sh.sa = mkpts(2); }
 fn a1(h: Holder, n: integer) { h.v = mkints(n); }
 fn a2(sc: Sc, i: integer, n: integer) { o = sc.ops[i]?; o.pts = mkpts(n); }
 fn a3(h: Holder, n: integer) { h.v = mkints(n); h.n = len(h.v); }
+// a4 — a returned vector LITERAL, into a linked group's member that held values.
+fn a4(h2: Grouped) { h2.es = mklit(); }
 
 // ---- DECLINES the rule lists -----------------------------------------------------
 // d1 — an argument REACHES the destination's store: source and destination alias.
@@ -102,6 +109,9 @@ fn main() {
   ok("a2 element's field   ", "{len(o2.pts)},{totp(o2.pts)}", "3,9");
   h3 = Holder { v: [], n: 0, tag: "t" }; a3(h3, 5);
   ok("a3 read the dest after", "{len(h3.v)},{tot(h3.v)},{h3.n}", "5,10,5");
+  g4 = Grouped { es: [Pt { x: 7, y: 70 }, Pt { x: 8, y: 80 }, Pt { x: 9, y: 90 }], by_x: [] }; a4(g4);
+  // `by_x[8]` is gone with the old elements: `?.y` discharges the absent key to 0 (the old y's are 70..90).
+  ok("a4 literal callee    ", "{len(g4.es)},{len(g4.by_x)},{g4.by_x[2]?.y},{g4.by_x[8]?.y}", "2,2,2,0");
 
   h4 = Holder { v: [1, 2, 3], n: 0, tag: "t" }; d1(h4);
   ok("d1 arg reaches dest  ", "{len(h4.v)},{tot(h4.v)}", "3,9");
@@ -124,5 +134,5 @@ fn main() {
   sh8: Shape = ShSome { sa: [], sb: [] }; d8(sh8);
   ok("d8 enum variant field ", "{len(sh8.sa)},{len(sh8.sb)}", "2,2");
 
-  println("164-buffer-is-the-place: 13 cells, the result built where it will live");
+  println("164-buffer-is-the-place: 14 cells, the result built where it will live");
 }

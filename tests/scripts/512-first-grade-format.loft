@@ -12,14 +12,14 @@
 struct Money {
   cents: integer not null,
 }
-fn to_text(self: Money, spec: text) -> text {
+operator to_text(self: Money, spec: text) -> text {
   if spec == "dollars" { "D{self.cents}" } else { "c{self.cents}" }
 }
 
 struct Plain1 {
   v: integer not null,
 }
-fn to_text(self: Plain1) -> text {
+operator to_text(self: Plain1) -> text {
   "P{self.v}"
 }
 

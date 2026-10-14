@@ -1,0 +1,14 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 5ab975cca..91489ca5f 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -17518,6 +17518,9 @@ impl Parser {
+     /// `OpGetDbRef` read, on any arm)?  That record's store belongs to whatever holds it, not
+     /// to this frame or an argument, so `@FR-F-Ret`'s fresh value is a copy made here.
+     fn return_reads_a_stored_reference(&self, tail: &Value) -> bool {
++        if tail.unspan() != &Value::Null {
++            return false;
++        }
+         match tail.unspan() {
+             Value::Return(inner) | Value::Drop(inner) => {
+                 self.return_reads_a_stored_reference(inner)

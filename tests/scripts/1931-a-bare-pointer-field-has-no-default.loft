@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @EXPECT_ERROR: field `l: reference<Leaf1931>` is a pointer with no default
+// @EXPECT_ERROR: record `Holder1931` has no default: field `l: reference<Leaf1931>` is a pointer with no default
+//
+// loft#1931, `@FR-D-NoRef` — a bare `reference<T>` has no default: there is no "the null
+// pointer" in a language whose storage is non-null by default, so a record holding one has no
+// default either.  `Holder { n: 3 }` and `q?` both compiled and the field read back null, with
+// no diagnostic, while writing `l: null` out warned that the field is non-null.  Both are now
+// refused, as an omitted bare enum field is (`(D-NoEnumF)`).  The cure each message names,
+// `reference<Leaf>?`, defaults to null — `issue_328_reference_self_recursive_walk` and the
+// `(D-Opt)` cells pin that side.
+//
+// @falsified-by: tests/falsified/1931-a-bare-pointer-field-has-no-default.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the EXPECTATION — the control compiles `Holder1931 { n: 3 }` and `q?`, so neither
+//   refusal appears.
+//   WITNESS: `FAIL/2` on both backends against `0/2` here (scored at 6598df45d).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct Leaf1931 { v: integer }
+struct Holder1931 { n: integer, l: reference<Leaf1931> }
+
+fn main() {
+  h = Holder1931 { n: 3 };
+  q: Holder1931? = null;
+  d = q?;
+  println("{h.n} {d.n}");
+}

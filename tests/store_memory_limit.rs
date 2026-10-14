@@ -13,8 +13,8 @@
 //! file still passes. The exact byte figures are deliberately not asserted — they move
 //! with the store's growth factor, and pinning them would make this a change-detector.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -23,8 +23,8 @@ fn loft_bin() -> PathBuf {
 /// Write `body` to a temp `.loft` file and run it under `--tests`, returning stdout+stderr.
 fn run_tests(name: &str, body: &str, limit: Option<&str>) -> String {
     let path = std::env::temp_dir().join(format!("loft_memlimit_{name}.loft"));
-    std::fs::write(&path, body).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&path, body).expect("write probe");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret").arg("--tests").arg(&path);
     // Bound the run: a ceiling that fails to fire must end the test, not the machine.
     cmd.env("LOFT_TIMEOUT", "120");
@@ -32,7 +32,7 @@ fn run_tests(name: &str, body: &str, limit: Option<&str>) -> String {
         cmd.env("LOFT_MEMORY_LIMIT", l);
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

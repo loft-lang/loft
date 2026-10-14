@@ -301,7 +301,7 @@ than a third spelling both would have to learn.  Guard:
 >
 > ⚠ **A shipped DIAGNOSTIC already asserted the fixed behaviour**, and that is the strongest
 > argument here — stronger than the aliasing itself. `c = t.0; c[0] = 41` drew
-> `warning[lost-write]: a whole-value bind COPIES the heap value (C86), so the mutation lands in
+> `warning[lost-write]: a whole-value bind COPIES the heap value (@C86), so the mutation lands in
 > the copy`, while the write reached `vl` through two levels of binding. A diagnostic that
 > describes the contract wrongly is worse than a missing one, because it is believed.
 >
@@ -585,6 +585,22 @@ member, not the family.
 ### the status line formal/README.md's area table carried until 2026-09-04
 
 **0 open** (2026-08-31) — D-tup-1 closed 2026-08-20 (the reference tuple has a rule; `&(τ,…)`'s SCALAR-only restriction is now binding.md's D-bind-11, not an unspecified composition), and D-tup-4's keyed half closed 2026-08-31 (loft#1230: a keyed collection given to a tuple is COPIED like its vector twin, so `(T-Cons)`'s independence holds for every element type) — positional products (n≥2); `.i` a compile-time index; `(a,b) = …` destructuring; tuple returns. ⚠ its differential oracle is all-`(integer, integer)`: the doc read `0 open` through loft#1004 and loft#1005, both `text`-element deviations it could not see
+
+## Deviations carried by tuples.md until 2026-10-06
+
+Opened and closed in the same change; the chapter's `OPEN:` line never carried it.
+
+* **D-tup-20** *(opened 2026-10-06, CLOSED 2026-10-06; loft#1893)* — `(T-Absent)` for an
+  exhausted generator: a missed read of a tuple answers a present tuple whose every member is
+  null (`v[i]` past the end does, on both backends), but `next()` past a tuple generator's end
+  answered whatever the channel left — `""` and `0` on the interpreter, `null` and `0` natively —
+  and on the interpreter an `(integer, integer)` read a POINTER as its first member: the null an
+  exhausted advance pushes is chosen by byte size, and 16 bytes is a `Str`'s.  **Fix.**  The
+  parser lowers a tuple `next()` to bind the handle once, advance into a pass-through temporary
+  (skip-free: the tuple is handed to whoever binds it, `(G-Own)`), and answer each member's null
+  when that advance found the generator done.  A first version let the temporary own the
+  yielded record, and `LOFT_POISON` read it freed.  Guard
+  `tests/scripts/an-exhausted-tuple-generator-answers-null-members.loft`.
 
 ## Deviations carried by tuples.md until 2026-09-29
 
@@ -985,3 +1001,18 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
 
   Until one is chosen the refusal is the safe answer: it is loud, both backends agree, and no
   guard pins it, so whichever way it is ruled costs no expectation.  `OPEN` stays **1**.
+
+## Every reference tuple became the record (2026-10-06, loft#1883)
+
+The owner chose to make every `&(…)` the `__tuple<…>` record (option A of loft#1883): *"it should
+work fine as a semantic construction; the internal representation is not that important, only
+when tuples grow big that will impact speed."*  Until then a scalar-only `&(…)` was STACK-backed
+and `(T-Ref-Src)` refused a vector element or a struct field of tuple type, on the basis that a
+stored tuple is read into a fresh by-value tuple.  Two things had contradicted that basis: the
+loop variable over a `vector<(…)>` already named a stored element in place, and @C138 made a
+stored tuple's bytes exactly the record's layout.  Measured on the change: the link to a stored
+tuple costs what the same link to a struct element costs (200 µs and 201 µs for 8,192 updates on
+the release tier); a scalar `&(…)` local takes one claim before its loop and its member accesses
+are loads and stores through the hoisted address.  The change also fixed a record-backed
+`&(…)` callee declared below its caller (refused before, for any member type) and the
+annotated link to a struct place (`b: &P = v[1]`, which lost its write).

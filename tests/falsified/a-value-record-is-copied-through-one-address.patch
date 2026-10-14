@@ -1,0 +1,13 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 0fab0774d..982e47bda 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -2040,7 +2040,7 @@ impl Output<'_> {
+             if through && let Some((ty, absent)) = kinds[i] {
+                 write!(
+                     w,
+-                    "unsafe {{ vector::rec_get::<{ty}>(__rp, &__rt, ({off}_i64) as u32, {absent}, &stores.allocations, {verify}) }}"
++                    "unsafe {{ vector::rec_get::<{ty}>(__rp, &__rt, ({off}_i64 + 8) as u32, {absent}, &stores.allocations, {verify}) }}"
+                 )?;
+                 continue;
+             }

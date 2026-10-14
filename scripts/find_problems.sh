@@ -40,6 +40,9 @@
 #   ./scripts/find_problems.sh --peek                  # in-flight peek
 #   ./scripts/find_problems.sh --wait                  # wait for a --bg run
 #   ./scripts/find_problems.sh --stop                  # stop THIS checkout's --bg run
+#   ./scripts/find_problems.sh --poison-host windows   # the selection under the emulated
+#                                                      #   Windows host (LOFT_POISON_HOST): on
+#                                                      #   request, never the standing gate
 #
 # The selection flags combine with --bg: `--full --bg`, `--subject parser --bg`.
 #
@@ -146,6 +149,13 @@ LOG_DEFAULT=/tmp/loft_test.$REPO_TAG.log
 OUT_DEFAULT=/tmp/loft_problems.$REPO_TAG.txt
 OUT_STABLE=/tmp/loft_problems.txt
 PID_FILE=/tmp/loft_test.$REPO_TAG.pid
+# The hard cap: no single run passes 20 minutes (scripts/hard_cap.sh; CI_BUDGET.md).  Counted
+# from this invocation, so the native-fixture rebuild is inside it.
+HARD_CAP_SECS=1200
+INVOKED_AT=$(date +%s)
+# Milliseconds since the epoch.  `date +%s%N` is GNU-only: BSD date (macOS) prints a literal
+# `N`, and every timing line this script wrote there was garbage.
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 
 # Refresh every derived artefact that the test suite depends on before
 # running it.  There are three classes of stale artefact, each of which
@@ -239,12 +249,12 @@ sweep_test_tmp() {
 rebuild_one() {
   local label="$1" dir="$2" cmd="$3" log="$4" timing_file="$5"
   local start_ns end_ns elapsed_ms
-  start_ns=$(date +%s%N)
+  start_ns=$(now_ms)
   if ! bash -c "$cmd" >> "$log" 2>&1; then
     echo "warning: rebuild of $dir failed — see $log" >&2
   fi
-  end_ns=$(date +%s%N)
-  elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+  end_ns=$(now_ms)
+  elapsed_ms=$(( end_ns - start_ns ))
   printf '  %-44s %6d.%03ds\n' "$label" \
     "$(( elapsed_ms / 1000 ))" "$(( elapsed_ms % 1000 ))" \
     > "$timing_file"
@@ -267,9 +277,9 @@ selection_needs() {
     src="$REPO_ROOT/tests/$b.rs"
     [[ -f "$src" ]] || { NEED_RELEASE=1; NEED_WASM=1; return 0; }
     # A SPAWN of the release binary — `join("target/release/loft")` or a
-    # `Command::new(…release/loft…)` on a non-comment line.  `parse_errors`,
+    # `harness_command(…release/loft…)` (or `Command::new`) on a non-comment line.  `parse_errors`,
     # `testing` and `exit_codes` only NAME the path in a comment or a string.
-    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|Command::new\([^)]*release/loft' && NEED_RELEASE=1
+    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|(Command::new|harness_command)\([^)]*release/loft' && NEED_RELEASE=1
     if [[ "$b" =~ wasm|html|deliver|browser|gl_|android ]] || grep -qE -- '"--html"|"--native-wasm"|wasm32|"--deliver"' "$src"; then
       NEED_WASM=1
     fi
@@ -287,7 +297,7 @@ rebuild_native_cdylibs() {
   local timing_dir
   timing_dir=$(mktemp -d /tmp/loft_timings.XXXXXX)
   local rebuild_start_ns
-  rebuild_start_ns=$(date +%s%N)
+  rebuild_start_ns=$(now_ms)
 
   if [[ "${LOFT_PARALLEL_REBUILD:-0}" == 1 ]]; then
     echo "=== rebuild_native_cdylibs (parallel; per-step timings) ===" >&2
@@ -380,10 +390,10 @@ rebuild_native_cdylibs() {
   if [[ "$NEED_WASM" == 0 ]]; then
     printf '  %-44s %s\n' "wasm rlibs" "skipped — no wasm/html binary in the selection" >&2
   fi
-  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/wasm32-unknown-unknown" ]]; then
-    echo "== rebuild wasm32-unknown-unknown rlib ==" >> "$log"
+  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/loft/html/wasm32-unknown-unknown" ]]; then
+    echo "== rebuild wasm32-unknown-unknown rlib (the --html shape) ==" >> "$log"
     schedule "wasm32 rlib" "$repo_root" \
-      "cd '$repo_root' && cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random -q"
+      "cd '$repo_root' && cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html -q"
   fi
 
   # 3b. The wasm32-wasip2 rlib that `--native-wasm` links (html_wasm's wasip2 cells).
@@ -439,8 +449,8 @@ rebuild_native_cdylibs() {
   rm -rf "$timing_dir"
 
   local rebuild_end_ns
-  rebuild_end_ns=$(date +%s%N)
-  local rebuild_ms=$(( (rebuild_end_ns - rebuild_start_ns) / 1000000 ))
+  rebuild_end_ns=$(now_ms)
+  local rebuild_ms=$(( rebuild_end_ns - rebuild_start_ns ))
   printf '  %-44s %6d.%03ds\n' \
     "(rebuild_native_cdylibs total wall-clock)" \
     "$(( rebuild_ms / 1000 ))" "$(( rebuild_ms % 1000 ))" \
@@ -551,6 +561,12 @@ while [[ $# -gt 0 ]]; do
       else
         SELECT_LABEL="curated"; TEST_SELECT="$(curated_filter)"
       fi ;;
+    --poison-host)
+      # @PLN184 Track W — every selected test meets Windows' rules over this file system.
+      shift
+      [[ "${1:-}" == windows ]] || { echo "--poison-host takes: windows" >&2; exit 2; }
+      export LOFT_POISON_HOST=windows
+      shift ;;
     --list-subjects)
       echo "subjects (use: --subject <name>):"
       for s in $(subject_names); do
@@ -581,7 +597,7 @@ set -- "${_args[@]+"${_args[@]}"}"
 # Announced only by the modes that actually RUN something.  `--peek`/`--wait`/
 # `--stop` inspect an existing run, and telling them which selection they would
 # have used is noise about a decision they are not making.
-announce_selection() { echo "selection: $SELECT_LABEL"; }
+announce_selection() { echo "selection: $SELECT_LABEL${LOFT_POISON_HOST:+ under LOFT_POISON_HOST=$LOFT_POISON_HOST}"; }
 
 # A run of the curated or full set links every test binary — 382 of them, 16 GB under
 # `target/debug` (2026-09-28) — and a disk that cannot hold that ends the run in the
@@ -741,16 +757,15 @@ if [[ "${1:-}" == "--bg" ]]; then
   RUNNER="$(sweep_test_tmp; test_runner_cmd)"
   echo "test runner: $RUNNER"
   (
-    start_ns=$(date +%s%N)
+    run_start=$(date +%s)
     eval "$RUNNER" > "$LOG" 2>&1 || true
-    end_ns=$(date +%s%N)
-    elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
-    printf '  %-44s %6d.%03ds\n' "$RUNNER" \
-      "$(( elapsed_ms / 1000 ))" "$(( elapsed_ms % 1000 ))" \
-      >> "$TIMINGS_FILE"
+    printf '  %-44s %6ds\n' "$RUNNER" "$(( $(date +%s) - run_start ))" >> "$TIMINGS_FILE"
     summarise "$LOG" "$OUT"
     rm -f "$PID_FILE"
   ) > /dev/null 2>&1 &
+  # The hard cap: the run ends at HARD_CAP_SECS from this invocation's start (hard_cap.sh).
+  scripts/hard_cap.sh "$!" "$(( HARD_CAP_SECS - ($(date +%s) - INVOKED_AT) ))" "$LOG" \
+    > /dev/null 2>&1 &
   # ^ stdio detached: the subshell writes only to files, but an inherited
   #   stdout keeps a caller's pipe (`--bg | tail`) open until the whole
   #   suite ends — silently serialising the "background" run.
@@ -763,24 +778,30 @@ fi
 # Default: foreground run — stream output AND write summary.
 LOG="${1:-$LOG_DEFAULT}"
 OUT="${2:-$OUT_DEFAULT}"
+: > "$LOG"
+scripts/hard_cap.sh "$$" "$(( HARD_CAP_SECS - ($(date +%s) - INVOKED_AT) ))" "$LOG" &
 find tests/ -name '*.loftc' -delete 2>/dev/null || true
 find /tmp -maxdepth 1 -name '*.loftc' -delete 2>/dev/null || true
 rebuild_native_cdylibs
 announce_selection
 RUNNER="$(sweep_test_tmp; test_runner_cmd)"
 echo "test runner: $RUNNER"
-fg_start_ns=$(date +%s%N)
+fg_start=$(date +%s)
 # `|| true` so test failures don't short-circuit `set -e` and skip
-# the post-run summary block.
-eval "$RUNNER" 2>&1 | tee "$LOG" || true
-fg_end_ns=$(date +%s%N)
-fg_elapsed_ms=$(( (fg_end_ns - fg_start_ns) / 1000000 ))
-printf '  %-44s %6d.%03ds\n' "$RUNNER" \
-  "$(( fg_elapsed_ms / 1000 ))" "$(( fg_elapsed_ms % 1000 ))" \
-  >> "$TIMINGS_FILE"
+# the post-run summary block.  The cap was armed at the start of this invocation and ends the
+# runner (not this shell) at HARD_CAP_SECS, so the summary below still reports what finished.
+eval "$RUNNER" 2>&1 | tee -a "$LOG" || true
+printf '  %-44s %6ds\n' "$RUNNER" "$(( $(date +%s) - fg_start ))" >> "$TIMINGS_FILE"
 summarise "$LOG" "$OUT"
 echo
 echo "=== Wall-clock timing summary ==="
 cat "$TIMINGS_FILE"
 echo "wrote problems summary to $OUT"
 wc -l "$OUT"
+# The exit status says what the run found, so a caller that judges it — `ci-run.sh recheck`'s
+# `changed` step — cannot report a pass over a failure: 1 when the summary names a failed test
+# or the hard cap ended the run before everything ran.  (The runner's own status is swallowed
+# above so the summary is always written.)
+if [ "$(sed -n 2p "$OUT")" != "(none)" ] || grep -aq "^HARD CAP: " "$LOG"; then
+  exit 1
+fi

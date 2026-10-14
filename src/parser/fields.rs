@@ -90,7 +90,7 @@ impl Parser {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
         // receiver is nullable (`s: S? = null`, `w.inner` where `inner: Inner?`),
         // reading `s.field` yields the field type's null when the receiver is absent
-        // (C80), so `s.field == null` is NOT "always false" and `s.field ?? d` is NOT
+        // (@C80), so `s.field == null` is NOT "always false" and `s.field ?? d` is NOT
         // redundant.  `get_field` sets `expr_not_null` from the FIELD's own nullness;
         // clear it below when the receiver's TYPE is `Optional`.  (The receiver TYPE is
         // the right signal — `expr_not_null` alone is false even for a non-null
@@ -196,9 +196,7 @@ impl Parser {
         // @PLN115 S6 — capture the member name's position for the resolution index,
         // but only when recording: `Position` holds a `String`, so an unconditional
         // clone would tax every field access on a normal compile.
-        let field_pos = self
-            .record_resolutions
-            .then(|| self.lexer.peek_pos().clone());
+        let field_pos = self.record_resolutions.then(|| *self.lexer.peek_pos());
         let Some(field) = self.lexer.has_identifier() else {
             // `.<digits>` is the TUPLE spelling and nothing else (`@FR-T-Proj`), so reaching
             // here with one means the receiver is not a tuple — a fact only this site knows,
@@ -239,6 +237,11 @@ impl Parser {
             }
             return t;
         };
+        // @PLN187 — a method on a `vector<Handle>` may be a special form that records no
+        // definition; its name lets `check_postfix` find the declaration.
+        if self.abstract_on() {
+            self.postfix_member.clone_from(&field);
+        }
         // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
         // its DENSE type: the mutation is admissible whatever the chain's nullability, and it
         // does nothing when a link is absent (the runtime already skips it — verified on every
@@ -318,6 +321,16 @@ impl Parser {
         // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
         // `t` for anything a person reads.
         let mut dnr = self.data.type_def_nr(&t);
+        if matches!(t, Type::Vector(_, _))
+            && field == "clear"
+            && self.lexer.peek_token("(")
+            && let Some(ops) = self.vector_clear_lowering(code, &t)
+        {
+            self.lexer.token("(");
+            self.lexer.token(")");
+            *code = Value::Insert(ops);
+            return Type::Void;
+        }
         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
             return Type::Boolean;
         }
@@ -341,6 +354,7 @@ impl Parser {
         // to a host field is independently rejected by 2.4, and a field is rarely both
         // read-linked and written — F5 reworks the write path.)
         if fnr != usize::MAX && self.in_sandbox && !self.first_pass {
+            let built = self.sandbox_built_local(code);
             let reads: Vec<String> = self
                 .member_access
                 .get(&(dnr, field.clone()))
@@ -352,12 +366,14 @@ impl Parser {
                         .collect()
                 })
                 .unwrap_or_default();
-            let read_count = reads.len();
-            if !reads.is_empty() {
-                let pos = self.lexer.peek_pos().clone();
+            let read_count = if built { 0 } else { reads.len() };
+            // `@FR-Cap-Own` — a field of a value this function built reveals nothing of the
+            // host's (loft#1929: reading it was refused).
+            if !reads.is_empty() && !built {
+                let pos = *self.lexer.peek_pos();
                 let entry = self.sandbox_field_reads.entry(self.context).or_default();
                 for t in reads {
-                    entry.push((t, pos.clone()));
+                    entry.push((t, pos));
                 }
             }
             // @PLN86 F5 — remember this field access so a raw write at the assignment
@@ -384,6 +400,20 @@ impl Parser {
             self.first_pass,
         );
         if fnr == usize::MAX {
+            // `ix.len()` — the method spelling of `len(ix)`, which no stdlib definition can
+            // carry (see `index_len`).  Both passes, so first-pass inference sees `integer`.
+            if field == "len"
+                && matches!(t.peel_optional().0, Type::Index(_, _, _))
+                && self.lexer.peek_token("(")
+            {
+                self.lexer.token("(");
+                self.lexer.token(")");
+                let recv = t.clone();
+                if let Some(tp) = self.index_len(code, &recv, vec![code.clone()], None) {
+                    return tp;
+                }
+                return crate::data::I64.clone();
+            }
             // Plan-17 phase 01 (B) — bounded-T method dispatch must run
             // on BOTH passes so the call's return type propagates into
             // first-pass type inference of the enclosing variable.
@@ -562,6 +592,8 @@ impl Parser {
                     let recv = self.guard_variant_receiver(enum_d, &field, &t, code.clone());
                     *code = self.get_field(found_d_nr, found_fnr, recv);
                     self.data.attr_used(found_d_nr, found_fnr);
+                    self.check_visibility("field", found_d_nr, found_fnr);
+                    self.produced = Some(self.attr_fact_of(found_d_nr, found_fnr));
                 }
                 return t;
             } else if !self.first_pass {
@@ -725,7 +757,11 @@ impl Parser {
             // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
             // has at this receiver, else under the slot's routine; the definition the call
             // reaches is selected once the argument types exist (`parse_method_selecting`).
+            // A set in which several members take this receiver offers no hint at all: the
+            // slot's routine is its FIRST member, and hinting with it typed an untyped `|x|`
+            // by declaration order (loft#1926).
             let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
+                _ if self.data.receiver_shared_in_set(&field, &dispatch) => u32::MAX,
                 [one] if self.data.def(*one).name.starts_with("t_") => *one,
                 _ => r_nr,
             };
@@ -796,6 +832,7 @@ impl Parser {
                         "EnumUnitLit",
                     );
                     self.data.attr_used(dnr, fnr);
+                    self.check_visibility("variant", dnr, fnr);
                     return Type::Enum(dnr, true, crate::data::Deps::none());
                 }
             }
@@ -837,7 +874,7 @@ impl Parser {
                 self.last_field_read_site = Some(key);
             }
         }
-        // A field of a NULLABLE receiver can itself be null (C80), regardless of the
+        // A field of a NULLABLE receiver can itself be null (@C80), regardless of the
         // field's declared non-nullness — so it is not "not null" for the redundant-
         // check / redundant-coalesce lints.
         if receiver_nullable && self.expr_not_null {
@@ -845,6 +882,12 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         self.data.attr_used(dnr, fnr);
+        self.check_visibility("field", dnr, fnr);
+        // a field read produces the field's fact; a METHOD's slot is a routine, and its call
+        // already left the call's answer (`parse_method_selecting`)
+        if !matches!(self.data.attr_type(dnr, fnr).base(), Type::Routine(_)) {
+            self.produced = Some(self.attr_fact_of(dnr, fnr));
+        }
         // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
         self.wrap_projection_nullable(&mut t, receiver_optional);
         t
@@ -855,7 +898,7 @@ impl Parser {
     ///
     /// `get_field` types the read from the FIELD's declared nullness, which is the field's own
     /// promise and says nothing about whether the receiver is there to hold it: reading `s.f`
-    /// on an absent `s: S?` yields the C80 null whatever `f` declares.  The lint clear beside
+    /// on an absent `s: S?` yields the @C80 null whatever `f` declares.  The lint clear beside
     /// this call already knew that — it is why `s.f ?? d` is not reported redundant — but a
     /// lint switch is not a type, and `(N-Store)` reads the type.
     ///
@@ -1051,7 +1094,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// The guard goes on the RECEIVER, not the access:
     /// `if tag(c) ∈ declaring { c } else { null }`. A null receiver ALREADY reads as null
     /// and ALREADY swallows a write, on both backends — so the read answers the type's
-    /// sentinel (the same answer C80 gives a hash miss or an out-of-range index) and the
+    /// sentinel (the same answer @C80 gives a hash miss or an out-of-range index) and the
     /// write is suppressed, with no new opcode. And because only the receiver changed, the
     /// access is still a PLACE: the assignment path needs no lvalue notion for a guarded
     /// read, which is what made the write half unbuildable when the guard wrapped the
@@ -1170,6 +1213,32 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             }
         }
         None
+    }
+
+    /// `v.clear()` and `clear(v)` where the clear owes more than a length reset: the vector
+    /// holds a linked group's records, so the sibling views empty with it (`@FR-Col-Group`),
+    /// or its element type is linked, so each record is released and a stored reference to
+    /// one reads null (`@FR-H-Removed`).  The ops are `v = []`'s (`Parser::clear_vector_at`),
+    /// so every spelling of a clear answers alike.  `None` keeps the plain `clear` call.
+    pub(crate) fn vector_clear_lowering(
+        &mut self,
+        place: &Value,
+        vec_tp: &Type,
+    ) -> Option<Vec<Value>> {
+        if self.first_pass {
+            return None;
+        }
+        let site = self.keyed_field_site(place);
+        let grouped =
+            site.is_some_and(|(st, off)| !self.database.keyed_group_members(st, off).is_empty());
+        if !grouped
+            && self
+                .linked_clear_release(place, site, Some(vec_tp))
+                .is_none()
+        {
+            return None;
+        }
+        Some(self.clear_vector_at(place, site, Some(vec_tp)))
     }
 
     /// `v.remove(i)` — answers whether `i` named an element.  On the vector member of a
@@ -1550,7 +1619,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // `index_provably_fit` trusts the INDEX — the number the developer typed, a loop
             // variable, a bounded computation (loft#1436) — and says nothing about whether the
             // COLLECTION exists.  Reading an element of an ABSENT vector yields the element
-            // type's null (C80) whatever the index, so a nullable receiver types the read `τ?`
+            // type's null (@C80) whatever the index, so a nullable receiver types the read `τ?`
             // even where the index is trusted, and `@FR-N-Store` asks for the discharge.
             // `@FR-N-Opt`'s side condition — the third constructor, and the one where the
             // missing question was not latent.  A `vector<fn() -> integer>` read by a plain
@@ -1593,8 +1662,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // rewritten to `__nullable<S>`; resolve names against the key-bearing def.
             let el = crate::typedef::key_bearing_def(&self.data, el_nr);
             let mut key_types = Vec::new();
+            let mut key_facts = Vec::new(); // @PLN187
             for k in &keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
+                if self.abstract_on() {
+                    key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                }
             }
             // @PLN48 S3 — a `spatial` RANGE SLICE `xs[(fx,fy)..(tx,ty)]` /
             // `xs[(fx,fy)..:n]` / `xs[(fx,fy)..]`: iterate the records whose Morton
@@ -1625,6 +1698,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 }
             } else {
                 let dep = self.container_dep(code, &t);
+                self.pending_key_facts = std::mem::take(&mut key_facts);
                 self.parse_key(code, &t, &key_types);
                 if let Some(cv) = dep {
                     elm_type = elm_type.depending(cv);
@@ -1664,10 +1738,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else if let Type::Sorted(el, keys, _) | Type::Index(el, keys, _) = &t {
             let el = crate::typedef::key_bearing_def(&self.data, *el);
             let mut key_types = Vec::new();
+            let mut key_facts = Vec::new(); // @PLN187
             for (k, _) in keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
+                if self.abstract_on() {
+                    key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                }
             }
             let dep = self.container_dep(code, &t);
+            self.pending_key_facts = std::mem::take(&mut key_facts);
             self.parse_key(code, &t, &key_types);
             if let Some(cv) = dep {
                 elm_type = elm_type.depending(cv);
@@ -1704,47 +1783,30 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             {
                 elm_type = Type::optional(elm_type);
             }
-        } else if self.user_index_op(&t) != u32::MAX {
-            // @PLN125 arc C — `x[i]` on a library type is the call the type declared.
-            // `OpIndex` takes the receiver and the indices, so the lowering is the
-            // ordinary method call `t_<LEN><Type>_OpIndex(x, i, …)`, and every rule that
-            // governs a method call — argument conversion, the heap-return buffer, the
-            // ownership deps, the arity and type checks — governs this one because it IS
-            // one.
-            //
-            // loft#996 — COMMA-separated indices, so `m[r, c]` reaches the two-index
-            // method the feature's own motivating case (a matrix) wants. That
-            // declaration was always accepted and callable as `OpIndex(m, r, c)`; only
-            // its own syntax could not reach it, and the parser said `Expect token ]` at
-            // the comma. Passing the indices through as ARGUMENTS is what the accepted
-            // declaration already means, and it leaves the arity check where it belongs:
-            // `call_nr` reports a mismatch against the signature the author wrote.
-            //
-            // The index expressions are parsed here rather than by `parse_method`, which
-            // reads a parenthesised argument list; the brackets are the caller's
-            // (`operators.rs` consumes the `]`).
-            let md_nr = self.user_index_op(&t);
-            let recv = code.clone();
-            let mut args = vec![recv];
-            let mut types = vec![t.clone()];
-            let mut arg_pos = vec![self.lexer.peek_pos().clone()];
-            loop {
-                arg_pos.push(self.lexer.peek_pos().clone());
-                if self.user_index_slice_refused(&t) {
-                    return Type::Never;
-                }
-                let mut idx = Value::Null;
-                let idx_t = self.expression(&mut idx);
-                args.push(idx);
-                types.push(idx_t);
-                if self.user_index_slice_refused(&t) {
-                    return Type::Never;
-                }
-                if !self.lexer.has_token(",") {
-                    break;
-                }
+        } else if let Type::Reference(d, _) | Type::Enum(d, _, _) = t.base()
+            && !self.data.is_type_var_placeholder(*d)
+            && !self.data.def(*d).is_stdlib()
+            && matches!(
+                self.data.def_type(*d),
+                DefType::Struct | DefType::Enum | DefType::EnumValue
+            )
+        {
+            // C132 (@PLN182 Q10) — `[…]` belongs to the built-in collections; a program's type
+            // has no subscript.  Every index is read, so `m[r, c]` is one refusal and not a
+            // syntax-error cascade at the comma.
+            let name = self.data.def(*d).name().to_string();
+            self.skip_bracket_content();
+            // Not the receiver either: `b[0] = 9` must not read as `b = 9`.
+            *code = Value::Null;
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{name}` cannot be indexed: `[…]` belongs to the built-in collections — \
+                     give `{name}` a method that reads an element, and call it"
+                );
             }
-            elm_type = self.call_nr(code, md_nr, &args, &types, true, &arg_pos, None);
+            return Type::Never;
         } else if t.is_unknown() {
             // @P278/P281 — pass-1 Unknown receiver: consume the
             // entire bracket content including range syntax
@@ -1761,22 +1823,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // is the same ordering dependency a named argument had at
             // `skip_remaining_args`.  Whatever this pass cannot resolve, it still
             // has to be able to read.
-            if !self.lexer.peek_token("]") {
-                if !self.lexer.peek_token("..") && !self.lexer.peek_token("..=") {
-                    let mut p = Value::Null;
-                    self.expression(&mut p);
-                }
-                if (self.lexer.has_token("..") || self.lexer.has_token("..="))
-                    && !self.lexer.peek_token("]")
-                {
-                    let mut p2 = Value::Null;
-                    self.expression(&mut p2);
-                }
-                while self.lexer.has_token(",") && !self.lexer.peek_token("]") {
-                    let mut pn = Value::Null;
-                    self.expression(&mut pn);
-                }
-            }
+            self.skip_bracket_content();
             // The element is not the receiver.  Left as the receiver's `Var`, a store
             // `v[0] = 2.5` read as `v = 2.5` and typed the variable `float` in this pass,
             // so pass 2 refused every later `v[i]` of a vector a forward-declared function
@@ -1792,6 +1839,29 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         elm_type
     }
 
+    /// Read whatever stands between `[` and `]` — indices, a compound key `[a, b]`, and every
+    /// range spelling (`a..b`, `a..=b`, `a..`, `..b`, `..`) — for a subscript that is refused or
+    /// not resolvable yet, so the caller's `]` matches and no "Expect token ]" cascade follows.
+    fn skip_bracket_content(&mut self) {
+        if self.lexer.peek_token("]") {
+            return;
+        }
+        if !self.lexer.peek_token("..") && !self.lexer.peek_token("..=") {
+            let mut p = Value::Null;
+            self.expression(&mut p);
+        }
+        if (self.lexer.has_token("..") || self.lexer.has_token("..="))
+            && !self.lexer.peek_token("]")
+        {
+            let mut p2 = Value::Null;
+            self.expression(&mut p2);
+        }
+        while self.lexer.has_token(",") && !self.lexer.peek_token("]") {
+            let mut pn = Value::Null;
+            self.expression(&mut pn);
+        }
+    }
+
     /// @PLN25 DN3 (index) — is a vector index provably in-bounds, so `v[i]` cannot be OOB-null?
     /// True for a non-negative constant literal (the developer typed it), a for-loop iteration
     /// variable (`for i in <range> { v[i] }` — the loop's bound is the contract), or (@PLN102 D1)
@@ -1804,7 +1874,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     ///
     /// Such a read yields null at runtime when the element is absent, whatever the
     /// element type says: an out-of-range index and a missing key both produce the
-    /// null value (C80).  The index arms already clear `expr_not_null` for exactly
+    /// null value (@C80).  The index arms already clear `expr_not_null` for exactly
     /// that reason — a bare `v[i]` warning about an overrun while `v[i] ?? d`
     /// warned "redundant" left the author no clean idiom.  A following field read
     /// re-armed the flag from the FIELD's own non-nullness and put the trap back
@@ -1880,7 +1950,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             }
             // @PLN102 D1 — a computed index like `m[k*4+row]` is the matrix-indexing contract: an
             // integer-arithmetic tree over constants and active loop vars. Trust it exactly as a
-            // bare loop var (a real OOB still faults → null at runtime, C80). This deliberately does
+            // bare loop var (a real OOB still faults → null at runtime, @C80). This deliberately does
             // NOT thread the `i < len(v)` guard through arithmetic — that proof is specific to
             // `v[i]` and does not survive `v[i*2]` — so `index_arith_trusted` reads only the two
             // by-contract leaves, never `index_bounded`.
@@ -1923,7 +1993,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // `@FR-N-Domain` — the LAST-ELEMENT idiom, `v[len(v) - 1]`.  `len` OF THE VECTOR
             // BEING INDEXED is a trusted leaf for the same reason the arm above trusts a
             // constant: it is the developer's explicit contract, and a genuine overrun still
-            // raises the recoverable OOB fault (C80).  `v[-1]` — the same element, spelled
+            // raises the recoverable OOB fault (@C80).  `v[-1]` — the same element, spelled
             // negatively — has been trusted here since loft#1436; spelling it with `len` is not
             // a weaker claim, and the rule's own elision names a GUARD, which `if len(v) >= 2`
             // is.  Published `web` 0.3.0 writes exactly this and stopped compiling when
@@ -1962,102 +2032,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         )
     }
 
-    /// @PLN125 arc C — the `OpIndex` a library type defines for `x[i]`, or `u32::MAX`.
-    ///
-    /// The last place a library type was visibly not a built-in one: `OpIndex` was the one
-    /// operator the parser never dispatched, so a matrix, a bitset, a row or a ring buffer
-    /// had to read as `x.at(i)` while every other operator already had its
-    /// `OpCamelCase` method (@PLN99). This follows that precedent exactly — the method is
-    /// found the same way, by the same `t_<LEN><Type>_Op…` name — so nothing about the
-    /// shape is new.
-    ///
-    /// Looked up as a METHOD, not through `find_fn`, whose fallback to a global
-    /// `n_OpIndex` would let an unrelated free function of that name capture every
-    /// subscript in the program.
-    ///
-    /// One home for the answer: [`Self::index_type`] uses it for the TYPE of `x[i]` and
-    /// [`Self::parse_index`] for the CODE, and a type that answers one must answer the
-    /// other or the two disagree about what indexing means.
-    pub(crate) fn user_index_op(&self, t: &Type) -> u32 {
-        let d = match t.base() {
-            Type::Reference(d, _) | Type::Enum(d, _, _) => *d,
-            _ => return u32::MAX,
-        };
-        if d as usize >= self.data.definitions.len() {
-            return u32::MAX;
-        }
-        // loft#1153 — a HOLDER's stub and a concrete type's method are spelled differently,
-        // and this site looks up BOTH: `x[0]` reaches here for a bounded type variable and for a
-        // struct defining `OpIndex` alike.  `method_key` is the one home that knows which.
-        // `x[i]` is arity 2 — receiver plus index — which is what keys a HOLDER's stub
-        // (loft#1275); for a concrete type the arity is not part of the spelling.
-        let md = self.data.def_nr(&self.data.method_key(d, "OpIndex", 2));
-        if md == u32::MAX || !matches!(self.data.def_type(md), DefType::Function | DefType::Generic)
-        {
-            return u32::MAX;
-        }
-        // A stub is named for the HOLDER — a type variable or an associated type — and
-        // holder names are shared: `fn a<I: Indexable>` mints `t_1I_OpIndex`, and an
-        // unrelated `fn b<I>(x: I) { x[0] }` in the same program would then find it and
-        // subscript a type it was never promised anything about. So for a holder the
-        // lookup is not enough; the BOUNDS have to declare it. (The same guard the
-        // binary-operator path carries, for the same reason.)
-        if self.data.is_type_var_placeholder(d) && !self.has_bound_for_method("OpIndex", d, None) {
-            return u32::MAX;
-        }
-        md
-    }
-
-    /// Refuse `x[a..b]` on a library type, and say what to write — loft#996.
-    ///
-    /// A slice is not a subscript with a different argument: every built-in kind lowers
-    /// its own (`parse_vector_index`, `parse_text_index`, `parse_spatial_slice`,
-    /// `parse_trie_slice`), each to a dedicated runtime call, and there is no range VALUE
-    /// in the language for a user method to take. So this cannot be sugar for `OpIndex`
-    /// the way the comma form is — it needs a range type or an `OpSlice` of its own, which
-    /// is a language addition and not a parse.
-    ///
-    /// What it must not do is stay `Expect token ]` pointing at the `..`, beside the two
-    /// messages this feature already gets right. Answers `true` when the subscript is a
-    /// slice, having consumed the rest of the bracket so the caller's `]` still matches —
-    /// the same recovery the pass-1 `Unknown` receiver takes above, and for the same
-    /// reason: returning with `..2` unread cascades into `Expect token ]` on pass 1, which
-    /// aborts before pass 2 can report anything at all.
-    fn user_index_slice_refused(&mut self, t: &Type) -> bool {
-        if !self.lexer.peek_token("..") && !self.lexer.peek_token("..=") {
-            return false;
-        }
-        if !self.first_pass {
-            let name = match t.base() {
-                Type::Reference(d, _) | Type::Enum(d, _, _) => self.data.def(*d).name().to_string(),
-                _ => String::from("this type"),
-            };
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`{name}` defines `OpIndex`, which takes INDEX arguments — there is no \
-                 range value to hand it, so `x[a..b]` has nothing to dispatch to; write \
-                 the bounds as indices (`x[a, b]`, if `OpIndex` declares two) or give the \
-                 type a method that slices (`x.slice(a, b)`)"
-            );
-        }
-        // Consume `..` / `..=` and any till-expression, leaving the `]` for the caller.
-        let _ = self.lexer.has_token("..") || self.lexer.has_token("..=");
-        if !self.lexer.peek_token("]") {
-            let mut till = Value::Null;
-            self.expression(&mut till);
-        }
-        true
-    }
-
     pub(crate) fn index_type(&mut self, t: &Type) -> Type {
-        // @PLN125 arc C — a library type that defines `OpIndex` indexes like a built-in
-        // one, and the element type is what that method returns.  Answered BEFORE the
-        // refusal below, which is what used to be the only answer for a struct.
-        let user_op = self.user_index_op(t);
-        if user_op != u32::MAX {
-            return self.data.def(user_op).returned().clone();
-        }
         if let Type::Vector(v_t, _) = t {
             *v_t.clone()
         } else if let Type::Sorted(d_nr, _, _)
@@ -2119,9 +2094,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "generic type {name}: `[…]` needs a bound that declares it — add \
-                         `op [] (self: Self, i: integer) -> τ` to an interface and bound \
-                         `{name}` by it"
+                        "generic type {name}: `[…]` belongs to the built-in collections — bound \
+                         `{name}` by an interface with a method that reads an element, and \
+                         call it"
                     );
                 }
                 Type::Reference(d, _) | Type::Enum(d, _, _) => {
@@ -2129,8 +2104,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "`{name}` cannot be indexed — define \
-                         `fn OpIndex(self: {name}, i: integer) -> τ` to give it `x[i]`"
+                        "`{name}` cannot be indexed: `[…]` belongs to the built-in collections — \
+                         give `{name}` a method that reads an element, and call it"
                     );
                 }
                 // QUALITY-history.md 6d: the "Indexing a non vector" message fires for two
@@ -2225,6 +2200,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // change (`known` / is_base / is_linked / deref type are untouched).
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
+        } else if let Some(open) = self.open_tuple_of(elm_type) {
+            // An element that is a tuple of a type variable names its open tuple (loft#1868).
+            Self::type_var_stride(open)
         } else if let Type::Reference(tv, _) | Type::Enum(tv, _, _) = elm_type.base()
             && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
                 || self.data.is_open_instance(*tv))
@@ -2291,7 +2269,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // @PLN102 strict-index lint (gated by `LOFT_LINT_STRICT_INDEX`, advisory). The index is
         // trusted in-bounds because it is a for-loop iter var — but if that loop is bounded by
         // `len(<other vector>)`, `for i in 0..len(v) { w[i] }` types `w[i]` non-null yet reads
-        // C80-null on overrun. Warn on the mismatch; the type stays non-null (a real proof would
+        // @C80-null on overrun. Warn on the mismatch; the type stays non-null (a real proof would
         // break the ubiquitous `for i in 0..n { v[i] }` idiom — see `strict_index_lint_enabled`).
         if self.last_index_fit
             && !self.first_pass
@@ -2337,11 +2315,16 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // `unbox_tuple_from_dbref`).  Without this the assignment `p = pairs[0]`
         // wrote DbRef bytes into the tuple slot and `p.0` / `p.1` decoded them
         // as garbage integers.
-        if self.database.is_linked(known) {
+        // A VECTOR element is its own 4-byte handle, read through its record by `get_val`.  Its
+        // `known` cannot say so: `type_elm` answers the generic `vector` definition, whose
+        // known type is whichever slot the database registered first, not a property of this
+        // element — so it is not asked here.
+        let vector_element = matches!(etp.base(), Type::Vector(_, _));
+        if !vector_element && self.database.is_linked(known) {
             *code = self.cl("OpVectorRef", &[code.clone(), p]);
         } else {
             *code = self.cl("OpGetVector", &[code.clone(), Value::Int(elm_size), p]);
-            if self.database.is_base(known) {
+            if vector_element || self.database.is_base(known) {
                 // Element's DECLARED nullability drives the sentinel decode (see
                 // the Nullable-iterator branch above); the OOB-nullable read
                 // result is orthogonal (the caller null-checks `v[i]` regardless).
@@ -2472,7 +2455,30 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// Whether that work-ref BORROWS what it points at or owns it is
     /// [`Parser::vector_element_cursor_deps`]' question — it decides both the deps the
     /// cursor is typed with and whether the scope-exit free applies (loft#857/#858).
+    /// The OPEN tuple a type is, when it is a tuple of a type variable — `(T, U)` inside a
+    /// template, whose record has no layout until a monomorph closes it (loft#1868, `(G-Type)`
+    /// read for the anonymous tuple template).
+    pub(crate) fn open_tuple_of(&mut self, tp: &Type) -> Option<u32> {
+        let Type::Tuple(elems) = tp.base() else {
+            return None;
+        };
+        if !elems.iter().any(|t| self.data.mentions_type_var(t)) {
+            return None;
+        }
+        let d = self.data.tuple_def(&mut self.lexer, elems);
+        (d != u32::MAX && self.data.is_open_instance(d)).then_some(d)
+    }
+
     pub(crate) fn unbox_tuple_from_dbref(&mut self, dbref: Value, elems: &[Type]) -> Value {
+        // A tuple of a type variable has no member offsets yet: the read is unboxed by each
+        // monomorph at the tuple it closes to (loft#1868).
+        if self.open_tuple_of(&Type::Tuple(elems.to_vec())).is_some() {
+            return v_block(
+                vec![dbref],
+                Type::Tuple(elems.to_vec()),
+                Self::TV_TUPLE_READ,
+            );
+        }
         let elems_vec = elems.to_vec();
         let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
         if tuple_d_nr == u32::MAX {
@@ -2558,7 +2564,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
             // read op, because that is what set the layout.
             let et = &crate::data::Data::tuple_member_stored(et);
-            tuple_elems.push(self.get_val(et, false, off, Value::Var(tmp), u32::MAX));
+            // A `τ?` member spells absence in its own bytes (`@FR-L-Null`), so it is read with
+            // its nullability — the one encoding its write (`set_field`, `emit_set_one_element`)
+            // stores.
+            let nullable = matches!(et, Type::Optional(_));
+            tuple_elems.push(self.get_val(et, nullable, off, Value::Var(tmp), u32::MAX));
         }
         v_block(
             vec![v_set(tmp, dbref), Value::Tuple(tuple_elems)],
@@ -2579,6 +2589,17 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let Value::Block(b) = code.unspan() else {
             return None;
         };
+        // A tuple of a type variable defers its unbox (`TV_TUPLE_READ`, loft#1868), whose one
+        // operand is the element's address.
+        if b.name == Self::TV_TUPLE_READ && b.operators.len() == 1 {
+            return Some(b.operators[0].clone());
+        }
+        // A struct field of tuple type read while a `&` link parses (loft#1883).
+        if b.name == Self::TUPLE_FIELD_PLACE
+            && let Some(Value::Drop(field)) = b.operators.first().map(Value::unspan)
+        {
+            return Some((**field).clone());
+        }
         if b.name != "tuple_unbox" {
             return None;
         }
@@ -2586,6 +2607,53 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             Value::Set(_, dbref) => Some((**dbref).clone()),
             _ => None,
         }
+    }
+
+    /// Member `idx` of a record-backed tuple `d_nr` (`__tuple<…>`, members `elems`) read off
+    /// `base` — the ONE read the projection `t.i` and the destructuring `for (a, b) in v`
+    /// share.  At the synthetic struct's own field offset; for an OPEN tuple (a tuple of a
+    /// type variable, which has no offsets yet) deferred to each monomorph as an open
+    /// instance's field is (`Parser::TV_FIELD`, loft#1868).
+    pub(crate) fn stored_tuple_member_read(
+        &mut self,
+        d_nr: u32,
+        idx: usize,
+        elems: &[Type],
+        base: Value,
+    ) -> Value {
+        if self.data.is_open_instance(d_nr) {
+            return self.get_field(d_nr, idx, base);
+        }
+        let offset = if let Some(v) =
+            crate::data::stored_tuple_offsets_for_def(&self.data, &self.database, d_nr, elems.len())
+        {
+            u32::from(v[idx])
+        } else {
+            crate::data::element_stack_offsets(elems)[idx] as u32
+        };
+        let nullable = matches!(elems[idx], Type::Optional(_));
+        self.get_val(&elems[idx], nullable, offset, base, u32::MAX)
+    }
+
+    /// [`Self::stored_tuple_member_place`] for an element of a tuple of a TYPE VARIABLE
+    /// (loft#1868): the read is a deferred unbox (`TV_TUPLE_READ`), and `.k` of it is the
+    /// element record's field `k`, deferred to each monomorph as an open instance's field is
+    /// — a place a write reaches, where the unboxed copy was not.  Only for an element READ
+    /// FROM A PLACE, as there.
+    pub(crate) fn open_tuple_member_place(&mut self, code: &Value, idx: usize) -> Option<Value> {
+        let Value::Block(b) = code.unspan() else {
+            return None;
+        };
+        if b.name != Self::TV_TUPLE_READ || b.operators.len() != 1 {
+            return None;
+        }
+        let open = self.open_tuple_of(&b.result)?;
+        let dbref = b.operators[0].clone();
+        self.vector_element_cursor_deps(&dbref)?;
+        if idx >= self.data.def(open).attributes.len() {
+            return None;
+        }
+        Some(self.get_field(open, idx, dbref))
     }
 
     /// `@FR-T-Proj`, loft#1698 — `v[i].k` on a `vector<(…)>` as the member's PLACE: the member read off the
@@ -2883,9 +2951,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 // the start of the end expression, and (after it is parsed) the start of the
                 // `]` that closes the slice.  Taken here because this is the only point that
                 // brackets the whole bound whatever it is spelled as.
-                let bound_start = self.lexer.peek_pos().clone();
+                let bound_start = *self.lexer.peek_pos();
                 let ot_type = self.expression(&mut other);
-                let bound_end = self.lexer.peek_pos().clone();
+                let bound_end = *self.lexer.peek_pos();
                 let bound_span = (bound_end.line == bound_start.line
                     && bound_end.pos > bound_start.pos)
                     .then(|| {
@@ -3327,6 +3395,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         w
     }
 
+    /// @C99 — a keyed subscript is addressed by KEY (lookup, range, removal), never by position.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_key(&mut self, code: &mut Value, typedef: &Type, key_types: &[Type]) {
         // A keyed kind with NO key only arrives after its declaration was refused
@@ -3348,7 +3417,14 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let _index_t = if open_start {
             Type::Null // from=[] → no lower bound
         } else {
+            // A lookup key is a checked position like a call argument: the key field's type
+            // is pushed on the one `⇐` channel, so a bare variant (`h[Green]`) resolves
+            // against the key's enum exactly as `f(Green)` does against a parameter's.
+            let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
             let t = self.expression(&mut p);
+            let first_fact = std::mem::take(&mut self.operand_fact);
+            self.check_key_fact(0, &first_fact); // @PLN187
+            self.expected = saved_expected;
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
             if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
                 // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
@@ -3389,7 +3465,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     break;
                 }
                 let mut ex = Value::Null;
+                let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
                 let ex_t = self.expression(&mut ex);
+                let ex_fact = std::mem::take(&mut self.operand_fact);
+                self.check_key_fact(nr, &ex_fact); // @PLN187
+                self.expected = saved_expected;
                 if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
                     && !self.first_pass
                 {
@@ -3654,9 +3734,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // `e#remove` needs the type to free what an element owns.
         let mut elem_tp = u16::MAX;
         match self.database.types[known as usize].parts {
-            Parts::Index(_, _, _) => {
+            Parts::Index(_, _) => {
+                // The index TYPE: its walk steps by record and finds each record's slot
+                // by key, so the stepper needs the keys, not a link offset.
                 on = 1;
-                arg = self.database.fields(known);
+                arg = known;
             }
             Parts::Sorted(tp, _) => {
                 on = 2;
@@ -3693,7 +3775,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             on += 128;
         }
         // Key DIRECTION is the comparator's business and nothing else's: `keys::compare`
-        // reverses per descending key, so the tree `tree::put` builds is already in the
+        // reverses per descending key, so the tree `btree::add` builds is already in the
         // declared order and a forward walk of it is the declared order.  The reverse bit
         // therefore carries ONE fact — did the user write `rev(...)` — the same way it
         // does for `sorted`, whose `ordered_range_cursors` reads no sign at all
@@ -3708,8 +3790,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         ls.push(Value::Int(i32::from(on)));
         ls.push(Value::Int(i32::from(arg)));
         // What `OpRemove` is handed, which is NOT always `arg`:
-        //  - Index (on 1): the COLLECTION type, so it can reach `fields()` and
-        //    `remove_owned(..., tp)`;
+        //  - Index (on 1): the COLLECTION type, which is `arg` itself;
         //  - Sorted / Ordered (on 2 / 3): the ELEMENT type, because removing an
         //    element has to free what it owns and a width cannot say what that is
         //    (loft#903).  `arg` stays the STRIDE the stepper needs.
@@ -3736,6 +3817,108 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             ls.push(Value::Keys(
                 self.database.types[known as usize].keys.clone(),
             ));
+        }
+    }
+}
+
+// `@FR-Cap-Read` / `@FR-Cap-Own` — the sandbox's read records for the operations that read a
+// field without a `.field` site of their own.
+impl Parser {
+    /// Is `subject` a local this sandboxed function only ever assigned struct literals
+    /// ([`Parser::sandbox_built`])?  Such data is the script's own.
+    pub(crate) fn sandbox_built_local(&self, subject: &Value) -> bool {
+        matches!(subject.unspan(), Value::Var(v)
+            if self.sandbox_built.get(&(self.context, *v)) == Some(&true))
+    }
+
+    /// A sandboxed read of member `field` of `sd` other than through `.field` — a `match`
+    /// pattern binding it or testing it.  Recorded when the member carries a `#read` link and
+    /// `subject` is not data this function built.
+    pub(crate) fn sandbox_read_member(&mut self, sd: u32, field: &str, subject: &Value) {
+        if !self.in_sandbox || self.first_pass || self.sandbox_built_local(subject) {
+            return;
+        }
+        let reads: Vec<String> = self
+            .member_links(sd, field)
+            .iter()
+            .filter(|t| t.ends_with("#read"))
+            .cloned()
+            .collect();
+        if reads.is_empty() {
+            return;
+        }
+        let pos = *self.lexer.peek_pos();
+        let entry = self.sandbox_field_reads.entry(self.context).or_default();
+        for t in reads {
+            entry.push((t, pos));
+        }
+    }
+
+    /// A sandboxed WHOLE-value read — the value rendered as text or JSON reads every field it
+    /// reaches, so each `#read`-linked member anywhere in `tp` is a read (loft#1929: `"{p}"`
+    /// printed a field `p.hidden` was refused for).
+    pub(crate) fn sandbox_read_whole(&mut self, tp: &Type, subject: &Value) {
+        if !self.in_sandbox || self.first_pass || self.sandbox_built_local(subject) {
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut reads = Vec::new();
+        self.collect_read_links(tp, &mut seen, &mut reads);
+        if reads.is_empty() {
+            return;
+        }
+        let pos = *self.lexer.peek_pos();
+        let entry = self.sandbox_field_reads.entry(self.context).or_default();
+        for t in reads {
+            entry.push((t, pos));
+        }
+    }
+
+    fn collect_read_links(
+        &self,
+        tp: &Type,
+        seen: &mut std::collections::HashSet<u32>,
+        out: &mut Vec<String>,
+    ) {
+        match tp.base() {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                if !seen.insert(*d) {
+                    return;
+                }
+                for a in 0..self.data.attributes(*d) {
+                    let name = self.data.attr_name(*d, a);
+                    out.extend(
+                        self.member_links(*d, &name)
+                            .iter()
+                            .filter(|t| t.ends_with("#read"))
+                            .cloned(),
+                    );
+                    let inner = self.data.attr_type(*d, a);
+                    self.collect_read_links(&inner, seen, out);
+                }
+                let variants: Vec<u32> = self.data.children_of(*d).collect();
+                for v in variants {
+                    self.collect_read_links(
+                        &Type::Reference(v, crate::data::Deps::none()),
+                        seen,
+                        out,
+                    );
+                }
+            }
+            Type::Vector(e, _) => self.collect_read_links(e, seen, out),
+            Type::Hash(d, _, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _) => {
+                self.collect_read_links(&Type::Reference(*d, crate::data::Deps::none()), seen, out);
+            }
+            Type::Tuple(elems) => {
+                for e in elems {
+                    self.collect_read_links(e, seen, out);
+                }
+            }
+            _ => {}
         }
     }
 }

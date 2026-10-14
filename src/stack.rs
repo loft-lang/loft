@@ -52,6 +52,9 @@ pub struct Stack<'a> {
     /// native's unconditional post-free reset (`generation/ops/ref_ops.rs`), scoped
     /// to the vars that actually need it.
     pub owned_reassigned: std::collections::HashSet<u16>,
+    /// `@FR-T-Record` — per tuple local, the narrow members a `&` names, which hold their field
+    /// encoding (`tuple_links::linked_narrow_members`, derived once from the function's IR).
+    pub linked_members: std::collections::HashMap<u16, u64>,
 }
 
 impl<'a> Stack<'a> {
@@ -64,6 +67,7 @@ impl<'a> Stack<'a> {
             loops: Vec::new(),
             function,
             owned_reassigned: std::collections::HashSet::new(),
+            linked_members: crate::tuple_links::linked_narrow_members(data, def_nr),
         }
     }
 
@@ -181,7 +185,17 @@ impl<'a> Stack<'a> {
             self.data.def(d_nr).name
         );
         self.position -= parameters;
-        self.position += ret;
+        self.grow(ret);
+    }
+
+    /// Push `bytes` onto the evaluation position.  Positions are 16-bit, so a frame whose
+    /// pending values pass 64 KiB is refused here (`crate::limits::frame_too_large`) rather
+    /// than wrapped into a position that reads another value's bytes.
+    pub fn grow(&mut self, bytes: u16) {
+        self.position = self
+            .position
+            .checked_add(bytes)
+            .unwrap_or_else(|| crate::limits::frame_too_large(self.data, self.def_nr));
     }
 
     pub fn add_op(&mut self, name: &str, state: &mut State) {

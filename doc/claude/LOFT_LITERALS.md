@@ -157,7 +157,7 @@ assert(add5(10) == 15, "the captured `n` survives the return");
   unless the closure MUTATES the capture, in which case the scalar is promoted to a
   shared heap cell and writes propagate both ways (plan-22; the
   single-closure accumulator pattern).  A mutated scalar may be captured by
-  only ONE closure (C74, #314).  The captured binding may be a local **or a
+  only ONE closure (@C74, #314).  The captured binding may be a local **or a
   parameter**: a mutated parameter is copied into a hidden local first, so the
   closure's writes are visible for the rest of the function and the CALLER's value
   is untouched — a scalar parameter stays by-value (#685).  Mutating a `const`
@@ -215,19 +215,19 @@ as a crash much later in an unrelated function that touched the same value.
 it (`for e in sp { e.f(21) }` answers), and it refuses a capturing one with the same message
 every other collection gives.
 
-See [THREADING.md](THREADING.md) § fn Expression for how function references are used with `par(...)`.
+See [THREADING.md § Function References](THREADING.md#function-references) for how function references are used with `par(...)`.
 
 ---
 
 ## String literals
 
 Loft has two string literal syntaxes. Both support `{expr}` interpolation. The strict rules for
-interpolation and value→text rendering (per-type forms, format specs, fault-safe `{a/b}` → `null(/0)`)
+interpolation and value→text rendering (per-type forms, format specs, fault-safe `{a/b}` → `null`)
 are [formal/formatting.md](formal/formatting.md).
 
 ### Double-quoted strings (`"..."`)
 
-Single-line. Supports `\n`, `\t`, `\\`, `\"` escapes.
+Single-line. Supports `\n`, `\t`, `\\`, `\"` and `` \` `` escapes.
 
 ```
 "hello {name}"           // interpolation
@@ -239,7 +239,8 @@ Rules: [formal/formatting.md](formal/formatting.md) `(F-Interp)`, `(F-Escape)`.
 
 ### Backtick strings (`` `...` ``)
 
-**Multi-line.** Bare `"` is literal inside backtick strings (no escaping needed).
+**Multi-line.** Bare `"` is literal inside backtick strings (no escaping needed); a backtick
+itself is written `` \` ``, so a block that quotes code (`` \`make ci\` ``) is one literal.
 Auto-strips leading indentation: the **first content line** sets the base, and that many
 leading spaces come off every line that has them.  A blank line does not set the base,
 a line indented less than the base comes out flush, and a TAB-indented line is left

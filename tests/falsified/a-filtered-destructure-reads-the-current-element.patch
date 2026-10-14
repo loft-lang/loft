@@ -1,0 +1,27 @@
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index a33ee1a80..c3c4b43b5 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3564,7 +3564,6 @@
+         let mut create_iter = expr;
+         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
+         let iter_next = self.iterator(&mut create_iter, in_type, &it, iter_var, pre_var);
+-        Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
+         (
+             iter_var,
+             pre_var,
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 5a8fe1ce7..b6ddf5859 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -3346,9 +3346,7 @@
+         // `(I-Comp)` — the comprehension's header IS a `for` loop's, so it destructures as one
+         // does: `[for (a, b) in v { … }]` binds the members, through the loop statement's own
+         // binder code (`destructure_binders`).
+-        let Ok(destructure_names) = self.parse_destructure_names() else {
+-            return Type::Null;
+-        };
++        let destructure_names: Option<Vec<String>> = None;
+         let src_id = if destructure_names.is_some() {
+             let pos = self.lexer.peek().position;
+             format!("__destructure_t_{}_{}", pos.line, pos.pos)

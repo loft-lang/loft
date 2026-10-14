@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-LongRef` — a linked element type (here: a keyed collection of `P` elsewhere) lays
+// `vector<P>` out as `array<P>`.  A nested `vector<vector<P>>` local then named its content by
+// the renamed spelling, `vector<array<P>>`, minted a second type for the one collection after
+// the layout was finished, and the runtime table did not carry it: `vv[0] += [x]` indexed past
+// it and panicked, on both backends (loft#1974).  Cells: an append to the element of a local,
+// a second element added beside it, and the same through a struct field.
+//
+// @falsified-at: 3378f14b8 — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1974-a-nested-vector-of-a-linked-type-appends-to-its-element.patch — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   CHANNEL: the panic.  By hand, the control's interpreter run directly panics as well
+//   (`index out of bounds: the len is 107 but the index is 107`, exit 1); the tool's
+//   interpret column did not see it.
+
+struct P { k: integer, name: text }
+struct Idx { by: hash<P[k]> }
+struct W { vv: vector<vector<P>> }
+
+fn local() {
+  vv: vector<vector<P>> = [[P { k: 1, name: "a" }]];
+  vv[0] += [P { k: 6, name: "w" }];
+  assert(len(vv[0]) == 2 && vv[0][1].name == "w", "local: {len(vv[0])}");
+  vv += [[P { k: 7, name: "x" }, P { k: 8, name: "y" }]];
+  vv[1] += [P { k: 9, name: "z" }];
+  assert(len(vv) == 2 && len(vv[1]) == 3 && vv[1][2].name == "z", "local: the second element");
+  assert(vv[0][0].name == "a", "local: the first element kept its records");
+}
+
+fn field() {
+  w = W { vv: [[P { k: 1, name: "a" }]] };
+  w.vv[0] += [P { k: 6, name: "w" }];
+  assert(len(w.vv[0]) == 2 && w.vv[0][1].name == "w", "field: {len(w.vv[0])}");
+}
+
+fn main() {
+  local();
+  field();
+}

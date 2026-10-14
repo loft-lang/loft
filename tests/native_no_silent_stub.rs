@@ -26,8 +26,8 @@
 //! keeps holding for built-ins that do not exist yet — which is the whole point of a
 //! guard for a silence.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -50,17 +50,17 @@ fn main() {\n\
 fn emit(tag: &str) -> String {
     let src = std::env::temp_dir().join(format!("loft_993_{tag}_{}.loft", std::process::id()));
     let out_rs = std::env::temp_dir().join(format!("loft_993_{tag}_{}.rs", std::process::id()));
-    std::fs::write(&src, PROBE).expect("write probe");
-    let st = Command::new(loft_bin())
+    fa::write(&src, PROBE).expect("write probe");
+    let st = loft::platform::process::harness_command(loft_bin())
         .args(["--native-emit", out_rs.to_str().expect("path")])
         .arg(&src)
         .env("LOFT_TIMEOUT", "300")
         .status()
         .expect("spawn loft");
     assert!(st.success(), "--native-emit must succeed");
-    let rs = std::fs::read_to_string(&out_rs).expect("read emitted Rust");
-    let _ = std::fs::remove_file(&src);
-    let _ = std::fs::remove_file(&out_rs);
+    let rs = fa::read_to_string(&out_rs).expect("read emitted Rust");
+    let _ = fa::remove_file(&src);
+    let _ = fa::remove_file(&out_rs);
     rs
 }
 
@@ -150,18 +150,18 @@ fn yield_frame_still_runs_on_both_backends() {
             backend.trim_start_matches('-'),
             std::process::id()
         ));
-        std::fs::write(
+        fa::write(
             &src,
             "fn main() { n = 0; while n < 3 { println(\"frame {n}\"); n += 1; yield_frame(); } }\n",
         )
         .expect("write probe");
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&src)
             .env("LOFT_TIMEOUT", "300")
             .output()
             .expect("spawn loft");
-        let _ = std::fs::remove_file(&src);
+        let _ = fa::remove_file(&src);
         let all = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),

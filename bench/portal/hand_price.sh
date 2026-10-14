@@ -17,6 +17,11 @@
 # `src/main.rs` passes for a shipped binary; `target/release` must be current
 # (`cargo build --release --lib --bin loft`, `make check-rlib`).
 #
+# A RUNTIME change (an edit to the rlib, not to the emitter) is A/B'd the same way without
+# editing any Rust: emit once, save `target/release/deps/libloft.rlib` from each build, copy
+# each into place before compiling the same emitted file, and interleave the two binaries'
+# runs — formal/rewrites-history.md § (R-Cold)'s fold clause is the worked example.
+#
 # Worked examples, with what each priced: bench/portal/analysis/vector-build.md § Method,
 # bench/portal/analysis/records.md § Built (R2 — where skipping this cost a rebuild cycle).
 set -euo pipefail
@@ -26,16 +31,17 @@ if [ $# -ne 2 ]; then
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 rel="$root/target/release"
-ffi="$(ls "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | head -1 || true)"
+ffi="$(ls -t "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | head -1 || true)"
 ring="$(ls -d "$rel"/build/ring-*/out 2>/dev/null | head -1 || true)"
 if [ ! -f "$rel/deps/libloft.rlib" ] || [ -z "$ffi" ]; then
   echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft" >&2
   exit 2
 fi
 args=(--edition=2024 -o "$2" "$1" -C opt-level=3 -C codegen-units=1
-      -Clink-arg=-Wl,--allow-multiple-definition
       --extern "loft=$rel/deps/libloft.rlib" -L "dependency=$rel/deps"
       --extern "loft_ffi=$ffi")
 [ -n "$ring" ] && args+=(-L "native=$ring")
+# macOS ld64 rejects the GNU option; `src/main.rs` leaves it out there too.
+[ "$(uname -s)" != Darwin ] && args+=(-Clink-arg=-Wl,--allow-multiple-definition)
 # rustc's warnings about generated code are noise here; an error is the answer.
 rustc "${args[@]}" 2> >(grep -E "^error" -A 14 >&2 || true)

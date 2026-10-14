@@ -1,0 +1,5 @@
+// loft#1934 shape — a caller REBINDING the same local from two calls.  Dense half.
+struct S { a: integer }
+struct B { s: S, v: vector<S> }
+fn f(p: vector<S>, i: integer) -> S { p[i] }
+fn main() { q: vector<S> = [S { a: 7 }, S { a: 8 }]; t = f(q, 0); t = f(q, 1); t.a = 99; println("{t.a} {q[0].a} {q[1].a}"); }

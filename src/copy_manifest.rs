@@ -186,7 +186,7 @@ pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str) {
 ///
 /// Separate message from [`note_materialised_view`] because the cause is a different one and
 /// so is the remedy: nothing about the container's shape changed — the NAME stopped meaning
-/// the store, so the fix at the use site is to bind the whole value (which copies, C86) or
+/// the store, so the fix at the use site is to bind the whole value (which copies, @C86) or
 /// to take the view again after the reassignment.
 /// Note that `var` was copied out of `container` because `container` GROWS while `var` is
 /// live (loft#1373).

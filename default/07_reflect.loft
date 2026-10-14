@@ -54,19 +54,19 @@ pub enum TypeKind {
 
 /// One field of a record or of a struct-enum variant.
 pub struct FieldInfo {
-  name: text,
+  pub name: text,
   /// The field type's name, as the store records it.
-  type_name: text,
+  pub type_name: text,
   /// Byte offset of the field within its record.
-  position: integer,
-  kind: TypeKind,
+  pub position: integer,
+  pub kind: TypeKind,
   /// Was the field DECLARED nullable (`text?` rather than `text`)?
   ///
   /// Not a layout fact — a nullable field occupies the same bytes and spells an
   /// absent value with a sentinel — so nothing in the stored bytes implies it,
   /// and it reaches you only because the compiler records it. It is what a
   /// generated `CREATE TABLE` needs for `NOT NULL`.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 
 /// WHICH keyed collection a type is — the shape of its lookup.
@@ -91,26 +91,26 @@ pub enum CollectionKind {
 
 /// One key field of a keyed collection.
 pub struct KeyInfo {
-  name: text,
+  pub name: text,
   /// Byte offset of this field within the ELEMENT record — the same number the
   /// element type's `FieldInfo.position` carries, so a caller joins the two by
   /// VALUE rather than by matching names. A name is a display fact; the
   /// position is what the collection actually keys on.
-  position: integer,
+  pub position: integer,
   /// Does the collection order this key ascending?
   ///
   /// `true` for a kind that has no order of its own (`hash`, `radix`), and for a
   /// `trie`, whose single key IS ordered ascending by byte. Only a kind that can
   /// be declared descending ever answers `false`. Match `collection` first where the
   /// difference between "ascending" and "unordered" matters.
-  ascending: boolean,
+  pub ascending: boolean,
 }
 
 /// One variant of an enum.
 pub struct VariantInfo {
-  name: text,
+  pub name: text,
   /// The discriminant this variant is stored as. Never 0 — 0 means absent.
-  tag: integer,
+  pub tag: integer,
 }
 
 /// The declared shape of one type.
@@ -120,16 +120,16 @@ pub struct VariantInfo {
 /// holds one. Empty is the honest answer for a kind that has no such thing —
 /// a caller matches `kind` first.
 pub struct TypeInfo {
-  name: text,
-  kind: TypeKind,
+  pub name: text,
+  pub kind: TypeKind,
   /// Bytes one record of this type occupies; 0 for a type with no record.
-  size: integer,
-  const fields: vector<FieldInfo>,
-  const variants: vector<VariantInfo>,
+  pub size: integer,
+  pub const fields: vector<FieldInfo>,
+  pub const variants: vector<VariantInfo>,
   /// For a vector or a keyed collection, the element type's name.
-  element: text,
+  pub element: text,
   /// For a keyed collection, which of the six it is; `NotKeyed` otherwise.
-  collection: CollectionKind,
+  pub collection: CollectionKind,
   /// The key fields of a keyed collection, in KEY ORDER — the order a composite
   /// lookup binds them in, which is why it is a vector and not a set.
   ///
@@ -138,7 +138,7 @@ pub struct TypeInfo {
   /// keys through its `Some` payload. Empty rather than partial is deliberate —
   /// a query built from half a composite key is a WRONG query, not a narrower
   /// one, so a key list is delivered whole or not at all.
-  const keys: vector<KeyInfo>,
+  pub const keys: vector<KeyInfo>,
 }
 
 /// The declared shape of `value`'s type.
@@ -213,7 +213,7 @@ pub fn type_named(name: text) -> TypeInfo?;
 pub struct ValueInfo {
   /// What the type's own descriptor says lives at that position — never what
   /// the caller expected to find there.
-  kind: TypeKind,
+  pub kind: TypeKind,
   /// The SCALAR at that position holds loft's NULL.
   ///
   /// Separate from the payload because a null is not a value a payload can
@@ -224,10 +224,10 @@ pub struct ValueInfo {
   /// `false` for a `kind` that has no scalar reading and for `OtherKind` — a
   /// field that was never read is not a field that read as null, and those are
   /// three answers rather than two.
-  is_null: boolean,
-  i: integer,
-  f: float,
-  t: text,
+  pub is_null: boolean,
+  pub i: integer,
+  pub f: float,
+  pub t: text,
 }
 
 /// The value `value` holds at byte `position` — the VALUE half of reflection.

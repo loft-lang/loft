@@ -7,8 +7,8 @@
 //! `scripts/emission_audit.py`, at emission time, before any run.  A clean audit that
 //! resolves no holder is vacuous, so each corpus must also bind at least one; and the audit
 //! must be able to FAIL, so a hand-made double holder is fed to it and must be refused.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CORPORA: &[&str] = &[
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-l-in-place-callee-cells.loft",
@@ -50,26 +50,27 @@ fn root() -> PathBuf {
 }
 
 fn emit(src: &Path, out: &Path) -> String {
-    let status = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--native-emit")
-        .arg(out)
-        .arg(src)
-        .env("LOFT_TIMEOUT", "180")
-        .output()
-        .expect("spawn loft --native-emit");
+    let status =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--native-emit")
+            .arg(out)
+            .arg(src)
+            .env("LOFT_TIMEOUT", "180")
+            .output()
+            .expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted for {} (exit {:?}): {}",
         src.display(),
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Run the audit; answers `(exit ok, summary line, full output)`.
 fn audit(rust: &Path) -> (bool, String, String) {
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(root().join("scripts/emission_audit.py"))
         .arg(rust)
         .current_dir(root())
@@ -107,7 +108,7 @@ fn every_corpus_emits_within_the_rules_and_binds_a_holder() {
             holders_bound(&summary) >= 1,
             "{corpus}: the audit resolved no holder — a vacuous pass ({summary})"
         );
-        let _ = std::fs::remove_file(&out);
+        let _ = fa::remove_file(&out);
     }
 }
 
@@ -131,11 +132,11 @@ fn the_audit_refuses_a_second_holder_for_one_path() {
         at + 1,
         format!("{}let __vh_999 = {tail}", " ".repeat(indent)),
     );
-    std::fs::write(&out, lines.join("\n")).expect("write the doubled emission");
+    fa::write(&out, lines.join("\n")).expect("write the doubled emission");
     let (ok, _, text) = audit(&out);
     assert!(
         !ok && text.contains("R-State") && text.contains("__vh_999"),
         "the audit must refuse a second holder for one path:\n{text}"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

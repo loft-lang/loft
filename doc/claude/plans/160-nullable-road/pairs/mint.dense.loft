@@ -1,0 +1,5 @@
+// loft#1934 shape — a RECORD LITERAL returned (a mint).  Dense half.
+struct S { a: integer }
+struct B { s: S, v: vector<S> }
+fn f(n: integer) -> S { S { a: n } }
+fn main() { t = f(7); t.a += 1; println("{t.a}"); }

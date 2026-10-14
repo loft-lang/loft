@@ -1399,7 +1399,7 @@ one of a near-copy pair and not the other is how they came to differ from `is_pa
 
 ⚠ **I wrote "all four test-only, no user impact" and it was wrong about
 `walk_deep_parent_write`.** `parse_parallel` calls it through
-`worker_calls_parent_write_deep` (`parser/collections.rs`) and turns a `Some` into the C93
+`worker_calls_parent_write_deep` (`parser/collections.rs`) and turns a `Some` into the @C93
 `Level::Error` that REFUSES the program. A subtree the walker does not enter is a refusal that
 does not happen.
 
@@ -1467,7 +1467,7 @@ by comparison, and one returning a VALUE is usually a resolver over a narrower g
 | `expressions::ir_has_user_call` | the compound-assign once-only hoist, and a re-evaluability check | 210 over 32 programs | **the corpus said 0 — see B4i** |
 | `generation::calls::may_borrow_store` | the argument hoist that keeps two `&mut Stores` borrows apart (E0499) | **151 823** over 214 of 220 | **0** |
 | `emit::text_arm_yields_owned_string` + `text_arm_ends_in_text_call` | the `.to_string()` unification that keeps a `String` arm and a `&str` arm compiling (E0308) | **102 073** over 253 of 260 | **0** |
-| `scopes::accessor_root_var` | the C93 par refusal (B6b below) | 47 over 7 — useless; settled by construction | **0** |
+| `scopes::accessor_root_var` | the @C93 par refusal (B6b below) | 47 over 7 — useless; settled by construction | **0** |
 
 ⚠ **The text pair is the case where the shapes DO arrive and the answer still never moves.**
 `If` and `Return` both reach their `_ => false` — 42 `Return`s in a single program — and a
@@ -1483,7 +1483,7 @@ warning — the safe direction), `tail_has_tuple_leaf` (its scrutinee is `.tail(
 peels `Block`/`Insert`/`Span`).
 
 **Third site: `scopes::accessor_root_var`, clean — and it yields the reading rule.** Its `None`
-makes `raw_write_to_captured` bail, so the C93 par refusal never fires: the same soundness
+makes `raw_write_to_captured` bail, so the @C93 par refusal never fires: the same soundness
 surface as B6's `walk_deep_parent_write`. The corpus is useless here — **7 programs, 47
 arrivals, 0 bails**, only `Var` and one `Call` ever arriving — so the shape was built:
 
@@ -1494,7 +1494,7 @@ for e in rows par(r = w(e), 2) {}
 ```
 
 The bail fires (`kind=Call`) **and the write does not reach parent state** — `rows` is
-unchanged — while the control `s.v[0] = 99` is still refused with the C93 error. So there was
+unchanged — while the control `s.v[0] = 99` is still refused with the @C93 error. So there was
 nothing to refuse.
 
 **A site the corpus never reaches at all — recorded, not chased.**
@@ -1893,7 +1893,7 @@ BOTH halves: no copy, and therefore no elision either, because `ConstructOps` is
 store; `s = S { n: 1, v: vl }` and `vv = [vl]` both copy, both backends. Everything downstream
 follows from it: `t.0` reads as a projection off a BORROWED base, so `c = t.0; c[0] = 41` writes
 through two levels of binding — while `lost-write` warns on that exact line that *"a whole-value
-bind COPIES the heap value (C86), so the mutation lands in the copy"*. The write is not lost; it
+bind COPIES the heap value (@C86), so the mutation lands in the copy"*. The write is not lost; it
 lands in `vl`.
 
 ⚠ **The measurement nearly went out as the wrong finding.** The first matrix scored `c = t.0`
@@ -2221,7 +2221,7 @@ drift."* The measurement says otherwise:
 | `scopes::amp_writeback_owned_copy` | GetVector, VectorRef, GetField |
 | `data::is_place_read` | GetField, GetVector, VectorRef |
 | `generation::dispatch` — the `&`-ref construction | GetField, GetVector, VectorRef |
-| `parser::operators` — the C86 view materialise | GetField, GetVector, VectorRef, **GetDbRef** |
+| `parser::operators` — the @C86 view materialise | GetField, GetVector, VectorRef, **GetDbRef** |
 
 Seven hand-spelled lists, four distinct memberships, and the two that had the right answer are
 byte-identical copies of each other. The keystone claim was a measurement and it did not survive
@@ -2240,7 +2240,7 @@ list is the early-abstraction failure this thread was opened to avoid.
 **They are also DE-RANKED, because the shape each one's missing op predicts was probed and every
 cell is clean.** All four omit `OpGetRecord`, so the prediction is that a keyed lookup behaves
 differently from a vector element at each: `e = h[k]; bump(e)` through a `&` parameter,
-`r = &h[k]; r.b = 55`, and `w = mkg().h[k]` bound and read after forty stores of churn — the C86
+`r = &h[k]; r.b = 55`, and `w = mkg().h[k]` bound and read after forty stores of churn — the @C86
 escape the last one materialises for. Every cell answers what its vector twin answers, on both
 backends. So the count of drifted lists is seven and the count of defects behind them is one; the
 others need their own evidence before anyone spends a session on them, which is what the queue is
@@ -2939,7 +2939,7 @@ re-measuring a derived row on a join rather than carrying the best-looking numbe
 value is nobody's, and here it beats all of them.  The contributors are loft#1629 (the
 debugger's frame reader and writer peel `τ?` to its scalar base), loft#1614 and loft#1631
 (`intervals.rs`'s early-`first_def` test, the link tests, and `Function::record_copy_source`),
-loft#1600's `result_type.base()` fix below, and C127, which retired `NarrowSlot.spare` and
+loft#1600's `result_type.base()` fix below, and @C127, which retired `NarrowSlot.spare` and
 `reserves_sentinel_unconditionally` along with the branches that discriminated on them.)
 
 (2026-09-23, loft#1600 on `tuxedo-165-generics`: **316**, opaque tests 1306, re-pinned with
@@ -5638,7 +5638,7 @@ promise** (fixed here, D-op-6), **one rule that over-claimed** (fixed in the doc
 misattributed diagnostic** (filed, loft#1169). A position sweep of the fix then turned up a
 second root, unrelated to the rule and also filed (loft#1170).
 
-**The finding: `&&` and `||` kept a null RIGHT operand.** C73 — the three-state boolean — says
+**The finding: `&&` and `||` kept a null RIGHT operand.** @C73 — the three-state boolean — says
 `&&`/`||`/`!` coerce `null` to `false`, and the parser types the whole expression the non-null
 `Type::Boolean` on the strength of it. But `true && maybe()` answered **`null`**, so
 
@@ -5661,12 +5661,12 @@ boolean position picks up a real conversion (`integer?` gets `OpConvBoolFromInt`
 kept as the control cell — but `boolean?` → `boolean` shares a base type and converts to
 **nothing at all**. Fixed in `Parser::boolean_operator`, the one site that knows both operands
 are truthiness positions, by wrapping a nullable-boolean right operand in `b == true`; that is
-C73's own raw compare, it is parser-side so both backends inherit it from one IR change, and
+@C73's own raw compare, it is parser-side so both backends inherit it from one IR change, and
 short-circuit is untouched (measured with a counting right operand, not argued).
 
 **The rule is what let it stand, and no oracle could have moved the register.** `(E-NullArg)`
 named comparisons as the ONLY exception to contagion and never mentioned truthiness — so a `&&`
-answering `null` read as the rule being *obeyed*, not as C73 being broken. The register said
+answering `null` read as the rule being *obeyed*, not as @C73 being broken. The register said
 `OPEN: 2` throughout. This is a sharper version of B7d's lesson: there, an `OPEN: 0` was only as
 strong as its oracle; here it was only as strong as **the rules above it**, and no amount of
 measuring would have found a deviation from a rule that described the wrong contract.
@@ -5809,7 +5809,7 @@ I had already written "want null" into a probe and a guard comment before readin
 `OpDivFloat` that says all of this.
 
 **That is the third false positive this family of rules has produced, and it is the same shape
-as the defect the walk started from.** `(E-NullArg)` forbade what C73 ships; `(E-Uncomp)` forbade
+as the defect the walk started from.** `(E-NullArg)` forbade what @C73 ships; `(E-Uncomp)` forbade
 what loft#983 decided. An incomplete rule does not merely fail to catch bugs — it MANUFACTURES
 them, and each costs a probe, a hypothesis and very nearly a wrong fix. Both carve-outs are
 written down now, each beside the rule it corrects —
@@ -6472,7 +6472,7 @@ sixteenth and seventeenth cells, and the two guards
 `139-drop-cascade.loft` c8 went from `alive,30` to `alive,30,30` once the arm copied — and
 its struct twin already read `alive,30,30`: a whole-value copy of a record holding a
 droppable released it once per RECORD.  `h2 = h` twice, `t = s` twice, `t = s; return t`
-THREE times with two of them before the caller had read its copy.  C111's own words name the
+THREE times with two of them before the caller had read its copy.  @C111's own words name the
 failure (*"two records holding one resource"*) and its answer (move-on-construction), and
 `INTERFACES.md`'s move rule covered a field, a payload and an element but not the plain
 copy that is the same step with no container around it.  `scopes::copy_moves_drop_from` is
@@ -6537,7 +6537,7 @@ literal's work-ref dropped beside the container's cascade.  It peels field and e
 reads to the root now, through a keyed read never.
 
 **Rule.**  `formal/heap.md` had no drop clause at all — every drop question of these two
-days was settled from C111 and INTERFACES.md prose.  `(H-Drop)` states the one release per
+days was settled from @C111 and INTERFACES.md prose.  `(H-Drop)` states the one release per
 resource at the owner's death (scope end, reassignment, container cascade) and the move
 with a copy; `(H-Drop-Not)` names the boundary (an overwritten field's or element's old
 value, a removed element, a keyed collection's records).  Guard
@@ -7242,9 +7242,9 @@ more once the first defect named the axis it lived on (the SPELLING of the store
 
 **The compound path is right everywhere** — every `+= -= *= /= %=` cell answers the rule's
 default (`0`, or `10` for `limit(10,20)`) on a local, a field, an element, a struct in a vector
-and a return, and `i32` answers `null` as C85 decided.  The plain-assignment cells are right by
+and a return, and `i32` answers `null` as @C85 decided.  The plain-assignment cells are right by
 REFUSAL: `c: u8 = a + b` — `a` and `b` themselves `u8` — is *"cannot implicitly narrow integer
-to u8"*, because C85 types the sum `integer`; so are the `match`, the block, the argument, the
+to u8"*, because @C85 types the sum `integer`; so are the `match`, the block, the argument, the
 return and the literal field.  Two spellings were not refused, and both answered wrong:
 
 - **A value-`if` was a `??` to every narrow store (loft#1379, `sev:high`, `silent-wrong`; in
@@ -9252,7 +9252,7 @@ nothing.
 **The boundary now has ONE home:** `tests/scripts/bind-copies-or-views-the-whole-boundary.loft`.
 The cells existed before, scattered across four files (`294-vector-element-view-semantics`,
 `85-store-lifetime-reference-default-views`, `reference-tuple-heap-element-through-a-record`, the
-C86 field cells) and no single one said what the rule WAS.  Ask that file rather than re-deriving
+@C86 field cells) and no single one said what the rule WAS.  Ask that file rather than re-deriving
 it from the code.
 
 ### One rule, how many implementations? — the checklist, and its first entry was drifted (2026-08-24)
@@ -10300,6 +10300,35 @@ depends on the text shape (`len(b1#errors) > 0`, `b2#errors != empty`,
 `"[{b3#errors}]"`) and on the clear-on-read, and it says so in its own comment.  Deciding it
 belongs to [COMPATIBILITY.md](COMPATIBILITY.md)'s process, not to a fix pass.
 
+**DECIDED 2026-10-12 (owner): `record#errors` is a `vector<text>`, and a read does not clear
+it.**  One entry per error of the last `Type.parse(text)`, empty after a success, replaced by
+the next parse; each read builds a fresh vector (`Stores::parse_errors_vector`), so the
+reader's copy and the register never alias.  The accessor left the destination-passing text
+producers (`is_text_dest_native`, `native_returns_owned_string`) and returns the way
+`arguments()` does.
+
+Re-measured on the build before the change: `for e in r#errors` ran 14 times — the direct
+loop evaluated the accessor once and walked its characters, so the "0 iterations" above no
+longer held; a second read answered `""`.
+
+What the old spellings do now, measured: `r#errors != ""`, `e == ""` and `x: text =
+r#errors` are refused at compile time; `if r#errors { … }` draws the gating
+`constant-condition` warning; `len(r#errors) > 0` keeps its meaning; `"{r#errors}"` prints
+the vector (`["line 1:1 path:"]`) where it printed the bare text.  No published library and
+no consumer read `#errors` (a grep of the eight `loft-libs-*` repos, moros, dryopea and
+crawler).
+
+Two guards were using `#errors` as their side-effecting text producer and lost that subject:
+`repro_p272_inline_format_compare.loft` now counts the calls of a producer of its own, which
+native still emits through the `_pre_N` hoist the defect lived in, and
+`197-struct-json-parse-errors-dest.loft` keeps its `to_json` cells only.
+
+Left as it was: the walker stops at the first error, so a parse yields at most one entry.
+
+**DECIDED the same day (owner): the errors are per record.**  The program-wide register and
+its uncalled second writer `i_parse_error_push` are gone; what replaced them, and the
+programs it was decided from, is [DESIGN_DECISIONS_FAILURE.md § C148](DESIGN_DECISIONS_FAILURE.md).
+
 ### Native runtime cluster
 
 | Item | Section | Status |
@@ -10675,7 +10704,7 @@ site in `default/`, `lib/`, or `tests/` uses `Struct.parse(text)`.
 Shipped via @PLAN01 (`doc/claude/plans/finished/01-integer-i64/`).
 `integer` is i64 end-to-end; `Type::Long` / `long` keyword / `l` literal
 suffix removed; 34 duplicate `Op*Long` opcodes reclaimed; binary-format
-lint in place; `.loftc` cache removed.  C54.D (Rust-style literal
+lint in place; `.loftc` cache removed.  @C54.D (Rust-style literal
 suffixes) was closed by decision — see `DESIGN_DECISIONS.md`.  User-
 facing shape: CHANGELOG.md § "Integer → i64 migration".
 
@@ -12775,7 +12804,7 @@ session-of-the-week background bite.
     their intro — visible above the fold, not buried in the
     cross-references list at the bottom.  PLANNING.md's version
     targets feature proposals; PROBLEMS.md's version targets new
-    bug reports (with pointers to C3 / C38 / C54.D as the classic
+    bug reports (with pointers to C3 / C38 / @C54.D as the classic
     re-opens).  Regression guard —
     `tests/doc_hygiene.rs::planning_and_problems_link_to_design_decisions`
     asserts both files mention `DESIGN_DECISIONS.md` in their first

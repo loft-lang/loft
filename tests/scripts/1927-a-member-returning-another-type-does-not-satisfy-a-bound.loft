@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1927 — `(G-Sat)`: a type satisfies an interface by a function of the SIGNATURE
+// `[Self ↦ C](p̄ -> R)`, and `R` is part of it.  Satisfaction compared the parameters (loft#1818)
+// and, for the return, only two NAMED types; every other return was accepted, and the generic —
+// typed with the interface's `R` — read what the member answered as that type: a `-> float`
+// `size` behind `-> integer` printed the float's bits plus one (`4612811918334230529`) on the
+// interpreter and failed rustc on `--native`; a `-> text` one printed `50`; a
+// `-> vector<text>` one answered a handle as an integer on both backends.
+//
+// Axes this file MOVES:  the member's return (a scalar of another type · text · a vector of
+//                        another element · nothing at all), the implementor (a struct · the
+//                        built-in `integer`).
+// Axes it HOLDS FIXED:   one-member interfaces; `self: Self` alone.
+//
+// @falsified-by: tests/falsified/1927-a-member-returning-another-type-does-not-satisfy-a-bound.patch — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control satisfies every bound, so none of the five refusals
+//   is made.
+//   ARMED: nothing.
+//   WITNESS: each cell alone, on the control: `4612811918334230529` (the float's bits + 1) on
+//   the interpreter and rustc E0308 on `--native` for `A`; `51539607563` on both backends
+//   for `C`'s vector handle (loft#1927's matrix).
+//   HOLDS: nothing else — the file is the refusals.
+// @EXPECT_ERROR: 'A' does not satisfy interface 'Sz': 'size' returns 'float' but the interface declares 'integer'
+// @EXPECT_ERROR: 'B' does not satisfy interface 'Sz': 'size' returns 'text' but the interface declares 'integer'
+// @EXPECT_ERROR: 'C' does not satisfy interface 'Ls': 'items' returns 'vector<text>' but the interface declares 'vector<integer>'
+// @EXPECT_ERROR: 'D' does not satisfy interface 'Sz': 'size' returns nothing but the interface declares 'integer'
+// @EXPECT_ERROR: 'integer' does not satisfy interface 'Wd': 'width' returns 'float' but the interface declares 'integer'
+
+interface Sz { fn size(self: Self) -> integer }
+interface Ls { fn items(self: Self) -> vector<integer> }
+interface Wd { fn width(self: Self) -> integer }
+
+struct A { a: integer }
+struct B { b: integer }
+struct C { c: integer }
+struct D { d: integer }
+fn size(self: A) -> float { 2.5 }
+fn size(self: B) -> text { "big" }
+fn items(self: C) -> vector<text> { ["p", "q"] }
+fn size(self: D) { }
+fn width(self: integer) -> float { 1.5 }
+
+fn g<T: Sz>(x: T) -> integer { x.size() + 1 }
+fn h<T: Ls>(x: T) -> integer { x.items()[0] + 1 }
+fn k<T: Wd>(x: T) -> integer { x.width() + 1 }
+
+fn main() {
+  println("{g(A { a: 1 })}");
+  println("{g(B { b: 1 })}");
+  println("{h(C { c: 1 })}");
+  println("{g(D { d: 1 })}");
+  println("{k(4)}");
+}

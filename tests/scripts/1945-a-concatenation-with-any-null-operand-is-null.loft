@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1945 — `@FR-E-NullArg`: any op with a null operand produces null, and a text
+// concatenation is such an op for EVERY operand type (owner ruling 2026-10-08): a
+// concatenation is not a second spelling of interpolation.  `"{x}"` renders a null as the
+// word `null`; `"a" + x` is null.
+//
+// Since loft#1924 a null TEXT operand made the concatenation null; every other type was
+// rendered, so `"ready: " + flag` read "ready: null".  A null `character?` LEFT operand was
+// appended as a text (SIGSEGV on the interpreter, rustc E0614 natively), and `t += c` on one
+// was refused as a retype.  Every non-text operand now passes the language's null test
+// (`append_concat_operand`), at the one home both `a + b` and `t += x` use; a null makes the
+// accumulator null, and an accumulator that is null stays so.
+//
+// Cells: a null of every kind on the right; in the middle and after a value; a null
+// character on the left; variables and fields; `+=` with every kind and through a `&text`;
+// a call evaluated once; a heap operand rebuilt in a loop; and the controls — present
+// values render as before, and interpolation keeps the word.
+//
+// @falsified-by: tests/falsified/1945-a-concatenation-with-any-null-operand-is-null.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control aborts the file at the null `character?`
+//   LEFT operand (SIGSEGV on `--interpret`, rustc E0614 on `--native`), so only the abort is
+//   scored.
+//   WITNESS: by hand on the control, cell by cell: `"a" + ni() == null` and the six other
+//   kinds answer `false` (`"anull"`), `"ready: " + flag` reads `ready: null`, `t += ni()`
+//   leaves `t` present, and `t += nc()` is refused as a retype of `t`.
+//   HOLDS: leak, panic and free-refusal are equal on BOTH trees (`LOFT_STRICT_STORES=1` clean
+//   here on both backends, the heap-operand loop included).
+
+struct P { x: integer }
+struct Q { p: P?, n: integer?, f: float? }
+enum E { A, B }
+
+fn ni() -> integer? { null }
+fn nf() -> float? { null }
+fn ns() -> single? { null }
+fn nc() -> character? { null }
+fn nb() -> boolean? { null }
+fn ne() -> E? { null }
+fn np() -> P? { null }
+
+fn counted(log: vector<integer>, n: integer) -> integer? {
+  log += [n];
+  if n > 0 { n } else { null }
+}
+
+fn add_to(t: &text, n: integer?) { t += n; }
+
+fn test_a_null_of_every_kind_on_the_right() {
+  assert("{"a" + ni() == null} {"a" + nf() == null} {"a" + ns() == null} {"a" + nc() == null}" == "true true true true",
+    "scalars: got {"a" + ni() == null} {"a" + nf() == null} {"a" + ns() == null} {"a" + nc() == null}");
+  assert("{"a" + nb() == null} {"a" + ne() == null} {"a" + np() == null}" == "true true true",
+    "boolean, enum, record: got {"a" + nb() == null} {"a" + ne() == null} {"a" + np() == null}");
+}
+
+fn test_the_middle_the_left_and_after_a_value() {
+  m1 = "a" + ni() + "b";
+  m2 = "a" + 1 + ni() + 2;
+  y = nc() + "a";
+  assert(m1 == null, "middle: got '{m1}'");
+  assert(m2 == null, "after a value, before another: got '{m2}' len {len(m2)}");
+  assert(y == null, "a null character on the left: got '{y}'");
+}
+
+fn test_variables_and_fields() {
+  flag: boolean? = nb();
+  q = Q { p: null, n: null, f: null };
+  assert("ready: " + flag == null, "a boolean variable");
+  assert("n=" + q.n == null, "an integer field");
+  assert("f=" + q.f == null, "a float field");
+  assert("p=" + q.p == null, "a record field");
+}
+
+fn test_append_with_every_kind() {
+  s1 = "x";
+  s1 += ni();
+  s2 = "x";
+  s2 += nb();
+  s3 = "x";
+  s3 += nc();
+  s4 = "x";
+  s4 += np();
+  assert("{s1 == null} {s2 == null} {s3 == null} {s4 == null}" == "true true true true",
+    "got {s1 == null} {s2 == null} {s3 == null} {s4 == null}");
+  r = "r";
+  add_to(r, null);
+  assert(r == null, "through a &text: got '{r}'");
+  k = "k";
+  add_to(k, 4);
+  assert(k == "k4", "through a &text, present: got '{k}'");
+}
+
+fn test_evaluated_once_and_in_a_loop() {
+  log: vector<integer> = [];
+  a = "a" + counted(log, 3);
+  b = "b" + counted(log, 0);
+  assert(a == "a3" && b == null, "values: got '{a}' '{b}'");
+  assert(len(log) == 2, "each operand evaluated once: {len(log)} calls");
+  n = 0;
+  for i in 0..200 {
+    s = "p" + (if i % 2 == 0 { P { x: i } } else { np() });
+    if s == null { n += 1; }
+  }
+  assert(n == 100, "a heap operand in a loop: n={n}");
+}
+
+fn test_control_present_values_and_interpolation() {
+  assert("{"a" + 5} {"a" + 1.5} {"a" + 2.5f} {"a" + 'b'} {"a" + true} {"a" + E.B} {"a" + P { x: 3 }} {'c' + "a"}" == "a5 a1.5 a2.5 ab atrue aB a{{x:3}} ca",
+    "got {"a" + 5} {"a" + 1.5} {"a" + 2.5f} {"a" + 'b'} {"a" + true} {"a" + E.B} {"a" + P { x: 3 }} {'c' + "a"}");
+  t = "x";
+  t += 7;
+  t += 'y';
+  t += 0.5;
+  assert(t == "x7y0.5" && len(t) == 6, "appends: got '{t}'");
+  flag: boolean? = nb();
+  assert("[{flag}] [{ni()}] [{nf()}] [{np()}]" == "[null] [null] [null] [null]",
+    "interpolation: got [{flag}] [{ni()}] [{nf()}] [{np()}]");
+}

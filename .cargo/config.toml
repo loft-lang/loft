@@ -40,3 +40,16 @@ linker = "scripts/cc-mold"
 # given setup, comment this block out — cargo falls back to `link.exe`.
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
+
+# macOS: debug info in one `.dSYM` per binary instead of the compiler's object files.  The
+# macOS default (`split-debuginfo = unpacked`) leaves every codegen unit's `.o` beside the
+# binary as its debug info, and nothing removes the previous build's: one checkout reached
+# 391,000 of them in `target/debug/deps`.  That directory is where every test binary runs
+# from, and a process in a directory that size starts each child ~0.3 s late (measured: 40
+# spawns took 0.5 s from a small directory, 13 s beside 400,000 empty files), so every
+# `loft` / `rustc` / compiled-cell spawn of the suite paid it.  `packed` runs `dsymutil` per
+# link (~0.9 s for a test binary) and deletes the objects.  A profile cannot be set per OS,
+# so it is a target flag; an exported RUSTFLAGS replaces it, which only the profiling,
+# sanitizer and wasm builds do.  TEST_ENVIRONMENTS.md § macOS.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "split-debuginfo=packed"]

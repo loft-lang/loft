@@ -6,4 +6,9 @@ fn main() {
     b: integer = 2;
     println("{a + b} {a - b} {a * b} {a / b} {a % b} {a ** b}");   // 9 5 14 3 1 49
     println("{a > b} {a == b} {a > 0 and b > 0} {a | b} {a & b}"); // true false true 7 2
+    total = 10;
+    total += a;                        // compound assignment: total = total + a
+    total *= b;                        // 34
+    total -= 4;                        // 30
+    println("{total}");                // 30
 }

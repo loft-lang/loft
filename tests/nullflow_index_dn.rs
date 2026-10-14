@@ -14,7 +14,7 @@
 //! The negative control proves the index trust does NOT over-reach: an arithmetic index touching a
 //! plain (non-loop, non-constant) variable stays `τ?`.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -26,8 +26,8 @@ fn workspace_root() -> std::path::PathBuf {
 /// Returns `(success, stdout, stderr)`. `tag` keeps the temp script unique across parallel tests.
 fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, String) {
     let script = std::env::temp_dir().join(format!("loft_nfidx_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&script, body).expect("write script");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&script, body).expect("write script");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -39,7 +39,7 @@ fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, S
         cmd.env("LOFT_NO_NULLFLOW", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -66,7 +66,7 @@ const UNTRUSTED_INDEX: &str = "fn main(){ v=[10,20,30,40]; w=[1,1]; sum: integer
 // binds a present value → `total + x` must not nullify. Counter(3) yields 0,1,2 → total 3.
 const CUSTOM_ITER: &str = "struct Counter { current: integer, limit: integer }\n\
      fn new_counter(limit: integer) -> Counter { Counter { current: 0, limit: limit } }\n\
-     fn next(self: Counter) -> integer? { val = self.current; self.current = val + 1;\n\
+     operator next(self: Counter) -> integer? { val = self.current; self.current = val + 1;\n\
          if val >= self.limit { return null; } val }\n\
      fn main(){ c = new_counter(3); total = 0; for x in c { total = total + x; }\n\
          print(\"r={total}\\n\"); }\n";

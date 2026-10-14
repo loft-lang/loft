@@ -60,7 +60,7 @@ impl CTarget {
     #[must_use]
     pub fn host() -> CTarget {
         CTarget {
-            long_bits: if cfg!(windows) { 32 } else { 64 },
+            long_bits: crate::platform::c_long_bits(),
             char_signed: !cfg!(any(target_arch = "aarch64", target_arch = "arm")),
         }
     }
@@ -95,6 +95,8 @@ impl CTarget {
 /// routine takes none, so `dgemm_` costs **13**. Even LAPACK's 20+-argument
 /// drivers now fit. The margin is far wider than the ceiling was chosen for,
 /// which is a good position to be in and not a reason to move it.
+///
+/// @C106 — the one ceiling both backends share.
 pub const MAX_C_ARITY: usize = 32;
 
 /// A C type as spelled in a `#c` signature.
@@ -267,6 +269,8 @@ impl CElement {
     /// * **`text`.** Its elements are loft's own 4-byte heap handles, so C
     ///   dereferencing them as `char *` follows a store offset as an address —
     ///   measured, an immediate SIGSEGV.
+    ///
+    /// @C108 — a loft vector and its C pointee are one layout, or the vector does not cross.
     #[must_use]
     fn of_loft(t: &Type) -> Option<CElement> {
         let bytes = u8::try_from(crate::data::element_storage_size(t)).ok()?;
@@ -357,6 +361,8 @@ impl CSignature {
     ///
     /// Separate from `parse` because a float is a perfectly good C type and a
     /// perfectly bad binding: the author needs to be told which one they hit.
+    ///
+    /// @C109 — a float return crosses `#c`; a float argument is refused.
     #[must_use]
     pub fn boundary_refusals(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -753,6 +759,8 @@ pub enum PlanFailure {
 /// # Errors
 ///
 /// [`PlanFailure`] when no reading fits; the caller turns it into the message.
+///
+/// @C107 — the C signature, not the loft type, decides whether a `vector` carries a count.
 pub fn plan(params: &[Type], sig: &CSignature) -> Result<Vec<CArg>, PlanFailure> {
     let p = params.len();
     let a = sig.params.len();
@@ -840,6 +848,8 @@ fn options(shape: &LoftCShape, sig: &CSignature, c: usize) -> Vec<CArg> {
 /// Only at a POINTER, and only one whose pointee is the same layout — or one
 /// that resolves to nothing, which is the opaque escape hatch (`void*`,
 /// `struct foo*`) an author uses to say "these are bytes, I mean it".
+///
+/// @C108 — the pointee must be the vector's own layout (or opaque).
 fn pointee_takes(t: Option<&CType>, img: CElement) -> bool {
     match t {
         Some(CType::Pointer { elem, .. }) => elem.is_none_or(|e| e == img),

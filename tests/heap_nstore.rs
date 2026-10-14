@@ -20,7 +20,7 @@
 //! and loft#1232 settled the compatibility half — reporting where there was silence is a strict
 //! gain, refusing what a shipped package already compiles is the break the freeze forbids.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -31,8 +31,8 @@ fn loft_bin() -> std::path::PathBuf {
 /// parallel tests.
 fn run(body: &str, backend: &str, heap_on: bool, tag: &str) -> (bool, String, String) {
     let script = std::env::temp_dir().join(format!("loft_hns_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&script, body).expect("write script");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&script, body).expect("write script");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend).arg(&script).env("LOFT_TIMEOUT", "120");
     if heap_on {
         cmd.env_remove("LOFT_NO_HEAP_NSTORE");
@@ -40,7 +40,7 @@ fn run(body: &str, backend: &str, heap_on: bool, tag: &str) -> (bool, String, St
         cmd.env("LOFT_NO_HEAP_NSTORE", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -154,15 +154,15 @@ fn the_opt_out_silences_every_position() {
 fn opting_out_of_nullflow_restores_silence_not_a_refusal() {
     let src = "struct It { v: integer }\nfn f() -> It { return null; }\n               fn main() { print(\"{f() == null}\\n\"); }\n";
     let script = std::env::temp_dir().join(format!("loft_hns_{}_noflow.loft", std::process::id()));
-    std::fs::write(&script, src).expect("write script");
-    let out = Command::new(loft_bin())
+    fa::write(&script, src).expect("write script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_NULLFLOW", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         heap_notices(&err),

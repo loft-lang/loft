@@ -21,8 +21,8 @@
 //! retires the rule the guard is for. `a_registry_dep_still_outranks_a_same_named_local_file`
 //! is the one that fails if the exemption is widened past path deps.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -37,8 +37,8 @@ fn dirs_registry() -> PathBuf {
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 const CONSUMER_MANIFEST: &str = "[package]\nname    = \"consumer\"\nversion = \"0.1.0\"\n\
@@ -77,10 +77,10 @@ fn build_tree(root: &Path, declare: bool) {
 /// Run `loft test` on the tree, optionally with `--lib lib/`. Returns the combined output.
 fn run_suite(tag: &str, declare: bool, with_lib_flag: bool) -> String {
     let root = std::env::temp_dir().join(format!("loft_963_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     build_tree(&root, declare);
 
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("test");
     if with_lib_flag {
         cmd.arg("--lib").arg(root.join("lib"));
@@ -94,7 +94,7 @@ fn run_suite(tag: &str, declare: bool, with_lib_flag: bool) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     all
 }
 
@@ -152,19 +152,17 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
     // Needs a registry package to outrank the local file WITH, and the only honest one
     // is a real dependency.  Self-skip rather than reach the network from a unit test:
     // a cached extraction is what makes this run offline-clean.
-    let cached = dirs_registry()
-        .read_dir()
+    let cached = fa::read_dir(dirs_registry())
         .ok()
         .into_iter()
         .flatten()
-        .flatten()
-        .any(|e| e.file_name().to_string_lossy().starts_with("arguments-"));
+        .any(|e| e.file_name().is_some_and(|n| n.starts_with("arguments-")));
     if !cached {
         eprintln!("SKIP: no ~/.loft/registry/arguments-* extraction to outrank the local file");
         return;
     }
     let root = std::env::temp_dir().join(format!("loft_963_shadow_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     write(
         &root.join("loft.toml"),
         "[package]\nname    = \"shadowp\"\nversion = \"0.1.0\"\n\n[library]\n\
@@ -185,7 +183,7 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
         "use shadowp::*;\nfn main() { print(\"{probe()}\\n\"); }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(root.join("run.loft"))
         .env("LOFT_TIMEOUT", "120")
@@ -197,7 +195,7 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !all.contains("-999"),
@@ -211,5 +209,54 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
         all.contains("Unknown function arg_count"),
         "expected the local module NOT to be bound — a green here without this is a \
          run that resolved nothing\n{all}"
+    );
+}
+
+/// A `loft.toml` string is TOML's: a backslash starts an escape.  A Windows path written as
+/// the shell prints it (`lib\mylib`) holds `\m`, which is not one, and the lexer read it as
+/// `lib?ylib` and said nothing — so the run failed on what the dependency should have
+/// declared ("Undefined type", "Unknown function"), naming the script and never the manifest.
+/// It is reported at the manifest's line now, on every OS; the doubled spelling is what a
+/// Windows author writes, and `lib_process`'s type-trigger test writes it that way.
+#[test]
+fn an_undoubled_backslash_in_a_path_dep_is_reported_at_the_manifest() {
+    let root = std::env::temp_dir().join(format!("loft_bslash_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    build_tree(&root, false);
+    let manifest =
+        format!("{CONSUMER_MANIFEST}\n[dependencies]\nmylib = {{ path = \"lib\\mylib\" }}\n");
+    // The dependency is the manifest's last line.
+    let dep_line = format!("loft.toml:{}:", manifest.lines().count());
+    write(&root.join("loft.toml"), &manifest);
+    write(
+        &root.join("run.loft"),
+        "use consumer::*;\nfn main() { print(\"{doubled()}\\n\"); }\n",
+    );
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--interpret")
+        .arg(root.join("run.loft"))
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_ERRORS", "compact")
+        .current_dir(&root)
+        .output()
+        .expect("spawn loft");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fa::remove_dir_all(&root);
+    assert!(
+        !out.status.success(),
+        "a manifest it could not read must fail the run\n{all}"
+    );
+    let at_manifest: Vec<&str> = all
+        .lines()
+        .filter(|l| l.contains("backslash") && l.contains(&dep_line))
+        .collect();
+    assert_eq!(
+        at_manifest.len(),
+        1,
+        "the escape must be reported once, at the manifest's dependency line\n{all}"
     );
 }

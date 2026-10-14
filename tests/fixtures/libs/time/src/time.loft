@@ -465,72 +465,34 @@ pub fn total_days(self: Duration) -> integer {
 }
 
 // ── DateTime operators (comparison + typed arithmetic) ──
-pub fn OpLt(self: DateTime, other: DateTime) -> boolean {
-  self.ms < other.ms
-}
-pub fn OpLe(self: DateTime, other: DateTime) -> boolean {
-  self.ms <= other.ms
-}
-pub fn OpGt(self: DateTime, other: DateTime) -> boolean {
-  self.ms > other.ms
-}
-pub fn OpGe(self: DateTime, other: DateTime) -> boolean {
-  self.ms >= other.ms
-}
-pub fn OpEq(self: DateTime, other: DateTime) -> boolean {
-  self.ms == other.ms
-}
-pub fn OpNe(self: DateTime, other: DateTime) -> boolean {
-  self.ms != other.ms
-}
-pub fn OpMin(self: DateTime, other: DateTime) -> Duration {
-  Duration { ms: self.ms - other.ms }
-}
-pub fn OpAdd(self: DateTime, span: Duration) -> DateTime {
-  DateTime { ms: self.ms + span.ms }
-}
-// `-` on a DateTime is the difference `dt - dt` (above); operators key on the
-// receiver type, so subtracting a Duration is the `minus` method (or `dt + (-span)`).
-pub fn minus(self: DateTime, span: Duration) -> DateTime {
-  DateTime { ms: self.ms - span.ms }
-}
-pub fn negate(self: Duration) -> Duration {
-  Duration { ms: 0 - self.ms }
-}
+// `==` and `!=` compare the one field, so two DateTimes are equal at the same millisecond.
+// Orders instants, so dates compare with `<`, `<=`, `>`, `>=` like numbers.
+pub operator compare(self: DateTime, other: DateTime) -> Ordering { self.ms.compare(other.ms) }
+// DateTime - DateTime is the Duration BETWEEN them, which is why a span never has to be
+// spelled as a bare integer.
+pub operator minus(self: DateTime, other: DateTime) -> Duration { Duration { ms: self.ms - other.ms } }
+// DateTime - Duration moves backward by the span; `dt.minus(span)` is the same call.
+pub operator minus(self: DateTime, span: Duration) -> DateTime { DateTime { ms: self.ms - span.ms } }
+// DateTime + Duration moves forward by the span.
+pub operator plus(self: DateTime, span: Duration) -> DateTime { DateTime { ms: self.ms + span.ms } }
+// The same span, backwards.
+pub operator negate(self: Duration) -> Duration { Duration { ms: 0 - self.ms } }
 
 // ── Duration operators ──
-pub fn OpAdd(self: Duration, other: Duration) -> Duration {
-  Duration { ms: self.ms + other.ms }
-}
-pub fn OpMin(self: Duration, other: Duration) -> Duration {
-  Duration { ms: self.ms - other.ms }
-}
-pub fn OpMul(self: Duration, factor: integer) -> Duration {
-  Duration { ms: self.ms * factor }
-}
-pub fn OpLt(self: Duration, other: Duration) -> boolean {
-  self.ms < other.ms
-}
-pub fn OpLe(self: Duration, other: Duration) -> boolean {
-  self.ms <= other.ms
-}
-pub fn OpGt(self: Duration, other: Duration) -> boolean {
-  self.ms > other.ms
-}
-pub fn OpGe(self: Duration, other: Duration) -> boolean {
-  self.ms >= other.ms
-}
-pub fn OpEq(self: Duration, other: Duration) -> boolean {
-  self.ms == other.ms
-}
-pub fn OpNe(self: Duration, other: Duration) -> boolean {
-  self.ms != other.ms
-}
+// `==` and `!=` compare the length.
+// Orders spans by length.
+pub operator compare(self: Duration, other: Duration) -> Ordering { self.ms.compare(other.ms) }
+// Two spans add.
+pub operator plus(self: Duration, other: Duration) -> Duration { Duration { ms: self.ms + other.ms } }
+// One span less another.
+pub operator minus(self: Duration, other: Duration) -> Duration { Duration { ms: self.ms - other.ms } }
+// A span scaled by a whole number — `minutes(5) * 3` is fifteen minutes.
+pub operator times(self: Duration, factor: integer) -> Duration { Duration { ms: self.ms * factor } }
 
-// ── custom formatting (the per-type to_text hook) ──
+// ── custom formatting (`operator to_text`: "{dt}" and "{dt:spec}") ──
 // "" / "datetime" -> YYYY-MM-DD HH:MM · "date" -> YYYY-MM-DD · "time" -> HH:MM
 // "seconds" -> HH:MM:SS · "iso" -> …THH:MM:SSZ · "wday" -> Mon · "month" -> May
-pub fn to_text(self: DateTime, spec: text) -> text {
+pub operator to_text(self: DateTime, spec: text) -> text {
   // The if-chain is bound to `r` and returned, NOT left as the tail expression:
   // a tail `if` inside a format-hook `to_text(self, spec)` mis-selects its branch
   // on both backends (a loft format-hook bug — repro filed upstream). Binding the
@@ -549,7 +511,7 @@ pub fn to_text(self: DateTime, spec: text) -> text {
   r
 }
 // A Duration renders as [-]H:MM:SS (hours may exceed 24).
-pub fn to_text(self: Duration, spec: text) -> text {
+pub operator to_text(self: Duration, _spec: text) -> text {
   neg = self.ms < 0;
   tot = if neg { 0 - self.ms } else { self.ms };
   ss = (tot / MS_PER_SECOND) % 60;
@@ -560,14 +522,14 @@ pub fn to_text(self: Duration, spec: text) -> text {
 }
 
 // ── conversions (`as`) ──
-fn OpConvIntFromDateTime(civ: DateTime) -> integer {
-  civ.ms
+pub operator to_integer(self: DateTime) -> integer {
+  self.ms
 }
-fn OpConvDateTimeFromInt(civ: integer) -> DateTime {
-  DateTime { ms: civ }
+pub operator to_date_time(self: integer) -> DateTime {
+  DateTime { ms: self }
 }
 // text -> DateTime: a TOTAL best-effort parse (bad input -> epoch); see the
 // FALLIBILITY note above for the checked path via `parse`.
-fn OpConvDateTimeFromText(civ: text) -> DateTime {
-  DateTime { ms: parse(civ) ?? 0 }
+pub operator to_date_time(self: text) -> DateTime {
+  DateTime { ms: parse(self) ?? 0 }
 }

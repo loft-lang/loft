@@ -1,0 +1,13 @@
+diff --git a/src/scopes/text_replace.rs b/src/scopes/text_replace.rs
+index 0e1aaa574..0f43d8b37 100644
+--- a/src/scopes/text_replace.rs
++++ b/src/scopes/text_replace.rs
+@@ -133,7 +133,7 @@ fn visit(n: &mut Value, under_call: bool, at: &Site<'_>, data: &Data, facts: &Fa
+ fn borrows_text(v: &Value, data: &Data, vars: &Function) -> bool {
+     v.any_node(&mut |n| match n {
+         Value::Call(d, _) => matches!(data.def(*d).returned().base(), Type::Text(_)),
+-        Value::Var(x) => vars.is_argument(*x) && matches!(vars.tp(*x).base(), Type::Text(_)),
++        Value::Var(x) => matches!(vars.tp(*x).base(), Type::Text(_)),
+         _ => false,
+     })
+ }

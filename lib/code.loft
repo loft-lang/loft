@@ -109,18 +109,18 @@ struct Definition {
 // reads source, and the builders below are the only way it is written — see the file
 // header for which half of them is wired up today.
 pub struct Code {
-  definitions: vector < Definition >,
-  def_names: hash < Definition[name] >,
-  types: vector < Type >,
-  blocks: vector < integer >,
+  pub definitions: vector < Definition >,
+  pub def_names: hash < Definition[name] >,
+  pub types: vector < Type >,
+  pub blocks: vector < integer >,
   // Start positions of blocks, if and loop statements.
-  code: vector < Value >,
+  pub code: vector < Value >,
   // `null` = no definition currently being built (reset at `end_define`). @PLN25: explicitly
   // nullable (`i32?`) so the scalar non-null default flip (DN1) keeps this null-holder.
-  cur_def: i32?,
+  pub cur_def: i32?,
   // not null: `255` is a meaningful sentinel ("no current arg"), not the
   // null-encoding — a nullable `u8` would reject `255` (its usable range is 0..=254).
-  cur_arg: u8
+  pub cur_arg: u8
 }
 
 pub fn get_type(self: Code, name: text) -> u16 {

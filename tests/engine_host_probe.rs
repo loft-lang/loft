@@ -11,6 +11,7 @@
 //   (`State::static_fn`, the `fn(&mut Stores, &mut DbRef)` ABI) — probe 2,
 //   with the kernel skeleton.
 use loft::compile;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use loft::state::State;
 
@@ -21,7 +22,7 @@ use loft::state::State;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -42,7 +43,7 @@ fn on_call(args: vector<text>) {{
         outp.to_string_lossy().replace('\\', "/")
     );
     let tmp = test_tmp().join(format!("eh_probe_{}.loft", std::process::id()));
-    std::fs::write(&tmp, &src).unwrap();
+    fa::write(&tmp, &src).unwrap();
 
     let mut parser = Parser::new();
     parser.parse_dir("default", true, false).expect("stdlib");
@@ -58,12 +59,12 @@ fn on_call(args: vector<text>) {{
     for i in 1..=50 {
         state.execute_argv("on_call", &data, &[i.to_string()]);
     }
-    let out = std::fs::read_to_string(&outp).expect("report file");
+    let out = fa::read_to_string(&outp).expect("report file");
     assert_eq!(
         out.trim(),
         "call 50 sum=1275",
         "50th dispatch intact: {out}"
     );
-    let _ = std::fs::remove_file(&tmp);
-    let _ = std::fs::remove_file(&outp);
+    let _ = fa::remove_file(&tmp);
+    let _ = fa::remove_file(&outp);
 }

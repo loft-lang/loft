@@ -8,13 +8,15 @@
 //! the held header AT the call.  `LOFT_NO_TWIN_BASE=1` restores the header-only twin.  The
 //! cell corpus (`tests/scripts/157-twin-base.loft`) says the VALUES hold on both backends,
 //! in both switch states and under the falsifiers; this pins what is emitted and runs it.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str = "tests/scripts/157-twin-base.loft";
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_TWIN_BASE")
@@ -38,13 +40,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         env,
     );
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

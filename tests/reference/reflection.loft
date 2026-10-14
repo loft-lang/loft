@@ -14,7 +14,7 @@ fn test_type_of_names_the_type_and_its_fields() {
   for f in t.fields { println("  {f.name}: {f.type_name} @{f.position}") }
   fields = "";
   for f in t.fields { fields += " {f.name}: {f.type_name} @{f.position}"; }
-  assert("{t.name} ({t.size} bytes)" == "Row (12 bytes)", "the name and the size");
+  assert("{t.name} ({t.size} bytes)" == "Row (16 bytes)", "the name and the size");
   assert(fields == " id: integer @0 name: text @8", "each field with its type and offset");
 }
 

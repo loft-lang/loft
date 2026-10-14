@@ -316,9 +316,10 @@ Calls `database.finish()` to compute final field byte offsets for all record typ
 ## Function calling convention — the heap-return buffer (@PLN55)
 
 Every BODY-carrying plain fn returning `Reference` / `Vector` /
-struct-`Enum` carries one hidden attribute `__retbuf` (typed as the
-return type, last position) plus a backing argument var from its pass-1
-signature parse — **arity is a pure function of the declaration**.
+struct-`Enum`, or a `?` of one (`Type::takes_ret_buffer`), carries one
+hidden attribute `__retbuf` (typed as the return type's base, last
+position) plus a backing argument var from its pass-1 signature parse —
+**arity is a pure function of the declaration**.
 
 - **Promotion** (`ref_return`): an NRVO-promotable returned local takes
   over the buffer by ROLE SWAP — the attribute is renamed to the local
@@ -519,7 +520,7 @@ wrapped; see `plans/28-error-messages/01-spans-on-ir.md § Resolution
 Runtime faults (divide-by-zero, index OOB, null deref, narrowing-cast
 overflow, `panic`/`assert`) build a `runtime_error::RuntimeError` and
 store it in `Stores::runtime_error` with `had_fatal = true`. Per
-[DESIGN_DECISIONS § C66](DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt),
+[DESIGN_DECISIONS § @C66](DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt),
 the faulting op then **completes with its sentinel** (null DbRef, char 0,
 `i64::MIN`, …) and execution **continues** — loft programs must not abort
 on user-attributable edge cases. The stored error carries the source

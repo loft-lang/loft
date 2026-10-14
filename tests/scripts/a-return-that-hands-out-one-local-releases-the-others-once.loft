@@ -15,10 +15,10 @@
 //   and a sibling return's re-mint displaced its record with no release: j8 j9 j10 j11 j13.
 //
 // Controls that were right before the fix and must stay right: j2 (the absent `??` path),
-// j14 (nullable locals, which are not promoted), j15 (a path that never assigns the promoted
-// local, called repeatedly into a reused caller buffer — a release there would be the caller's
-// record a second time).  j6 scores ORDER: the local a call arm reads is released after that
-// call, where its life ends, not before it.
+// j14 (nullable locals, promoted like j8's dense ones since loft#1934), j15 (a path that never
+// assigns the promoted local, called repeatedly into a reused caller buffer — a release there
+// would be the caller's record a second time).  j6 scores ORDER: the local a call arm reads is
+// released after that call, where its life ends, not before it.
 //
 // The trace file is this guard's own.
 //

@@ -1,0 +1,15 @@
+// @FR-T-Chk-Lam — a lambda's body is checked against the expected return τ, so it refuses what
+// a named function's return refuses: a value that may not fit a narrow τ, and a value of another
+// type.
+// @falsified-at: none — the rules held when this walk measured them; the guard keeps them held.
+
+fn app_u(f: fn(integer) -> u8, n: integer) -> integer { f(n) }
+fn app_r(f: fn(integer) -> integer, n: integer) -> integer { f(n) }
+
+fn main() {
+  // @EXPECT_ERROR: cannot implicitly narrow integer to u8
+  a = app_u(|x| { x * 1000 }, 1);
+  // @EXPECT_ERROR: expected integer, got text
+  b = app_r(|x| { "t{x}" }, 1);
+  println("{a} {b}");
+}

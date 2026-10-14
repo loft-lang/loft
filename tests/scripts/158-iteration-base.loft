@@ -26,9 +26,13 @@
 // plain (its assert fails), and LOFT_HOIST_VERIFY=1 panics "record view address is stale"
 // at the first field read.  Restored byte-identically: interpret / native / every switch
 // / every falsifier green.
+// w16-w18 (2026-10-05): the address built WITHOUT its range test (`|| true` planted in
+// `emit_record_ptr`) leaves every value right — the non-null fact cannot move a value — and
+// LOFT_HOIST_VERIFY=1 panics "held element address is null" at w16's absent vector.
 
 struct Ent { id: integer, q: integer, r: integer }
 struct Seg { x0: float, y0: float, w: float }
+struct Pt { x: float?, k: integer }
 struct Named { nm: text, xs: vector<integer>, k: integer }
 struct Chunk { cx: integer, hexes: vector<Ent> }
 struct Map { chunks: vector<Chunk>, tag: integer }
@@ -176,8 +180,50 @@ fn w15() {
   println("w15 {t} {u}");
   assert(t == 180 && u == 2135, "w15");
 }
+// w16-w18: the held-base address is NON-NULL inside the in-range test (`vector::held_elem_ptr`
+// says so to the optimiser, which then drops every field read's null test).  An empty walk
+// never enters it, nor does one over an ABSENT vector (a field never set, `m.chunks`); a null
+// FIELD is still read as null through the address (only the record is known present, not its
+// values); w18, a walk left early, takes its address by `rec_ptr` and is the control.
+fn w16_sum(v: const vector<Ent>) -> integer { t = 0; for e in v { t += e.q + 1; } t }
+fn w16_cx(m: const Map) -> integer { t = 0; for c in m.chunks { t += c.cx + 1; } t }
+fn w16() {
+  v = ents(0);
+  t = w16_sum(v);
+  u = 0;
+  for e in v { u += e.id; }
+  m = Map { tag: 3 };
+  a = w16_cx(m);
+  println("w16 {t} {u} {a}");
+  assert(t == 0 && u == 0 && a == 0, "w16");
+}
+// The bounds of x0: a null x0 compares FIRST (`null < 3.0` holds), so the low bound becomes
+// null and stays null; `null > 3.0` does not hold, so the high bound keeps 3.
+fn w17_bounds(v: const vector<Pt>) -> text {
+  lo: float? = 100.0;
+  hi: float? = -100.0;
+  for p in v {
+    if p.x < lo { lo = p.x; }
+    if p.x > hi { hi = p.x; }
+  }
+  "{lo} {hi}"
+}
+fn w17() {
+  a = w17_bounds([Pt { x: 3.0, k: 1 }, Pt { x: null, k: 2 }, Pt { x: 1.0, k: 3 }]);
+  b = w17_bounds([Pt { x: 3.0, k: 1 }, Pt { x: -2.5, k: 2 }, Pt { x: 1.0, k: 3 }]);
+  println("w17 {a} | {b}");
+  assert(a == "null 3" && b == "-2.5 3", "w17 got {a} | {b}");
+}
+fn w18() {
+  v = ents(10);
+  t = 0;
+  for e in v { if e.id == 4 { break; } t += e.q; }
+  println("w18 {t}");
+  assert(t == 18, "w18");
+}
 
 fn main() {
   w1(); w2(); w3(); w4(); w5(); w6(); w7(); w8(); w9(); w11(); w12(); w13(); w14(); w15();
+  w16(); w17(); w18();
   println("iteration base ok");
 }

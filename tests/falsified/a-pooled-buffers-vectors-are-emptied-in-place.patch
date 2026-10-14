@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 206fcc989..9b9eecb68 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -9428,7 +9428,7 @@ pub fn refill_vector_callee(
+     stores: &Stores,
+     callee: u32,
+ ) -> Result<u16, &'static str> {
+-    if !refill_vectors_enabled() {
++    if true || !refill_vectors_enabled() {
+         return Err("the vector clause is switched off");
+     }
+     let Some(buf) = retbuf_var(data, callee) else {

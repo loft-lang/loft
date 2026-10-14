@@ -396,7 +396,7 @@ takes a report located in its own function, so a failure names the cell that wen
 **An expectation claims only what it names.**  Under `loft test` / `--tests` — the path a
 library's CI takes, with `LOFT_DENY_WARNINGS=1` — an `@EXPECT_WARNING` quiets the warnings
 containing its text and nothing else: every OTHER warning in the file is printed and fails
-`--deny-warnings` exactly as in a file with no expectation (C123;
+`--deny-warnings` exactly as in a file with no expectation (@C123;
 `tests/post_scope_lints_under_tests.rs`,
 `an_expected_warning_does_not_exempt_the_other_warnings_in_its_file`).
 

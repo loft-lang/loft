@@ -60,6 +60,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -68,6 +70,7 @@ jobs:
   # tested by NOTHING and no red night ever appears (how graphics-stack packages
   # sat untested).  Fail the night if any repo package is missing from the index.
   coverage:
+    # @windows-exempt: platform-free — reads the registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +87,7 @@ jobs:
   # version can stop resolving: dropped from index.json (walks its history), or
   # listed but no longer downloadable.
   retention:
+    # @windows-exempt: platform-free — reads the registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,6 +105,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   discover:
+    # @windows-exempt: platform-free — lists packages
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.list.outputs.packages }}
@@ -191,6 +196,7 @@ jobs:
           fi
 
   validate:
+    # @windows-exempt: a library's platforms are its own CI's choice
     needs: discover
     runs-on: ubuntu-latest
     strategy:
@@ -208,7 +214,7 @@ jobs:
       # main CI Test job's Linux install so a published library validates under
       # the same provisioning its own source repo's CI had.
       - name: Install mold + ALSA + headless GL
-        run: sudo apt-get update -y && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
 
       - name: Update to latest stable rustc
         run: rustup update stable && rustc --version

@@ -19,6 +19,21 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > the same commit red or green — and the cancel threw away the leg's output, the one thing that
 > would have said why it ran long.
 >
+> **A WARM local run of the whole suite fits in 20 minutes** (owner): nothing to rebuild, every
+> test.  When one does not, that is the trigger to optimise the SUITE — split it, parallelise
+> it, or move tests to a nightly or PR leg — and the limit is never raised.  Enforced twice:
+> `global-timeout = "20m"` in `.config/nextest.toml`'s default profile (nextest itself cancels
+> the run, however it was started), and `scripts/hard_cap.sh`, which `find_problems.sh` arms
+> around a whole invocation, rebuild included.  Where a warm run stands, measured per binary:
+> `cargo nextest run --status-level pass` and sum each binary's durations — the matrix suites
+> that compile one native program per cell are the place to look first.  First check that the
+> time is the tests' own: a test whose cells each take most of a second while the same cell by
+> hand takes milliseconds is a SPAWN cost, and a crowded `target/debug/deps` is one
+> (TEST_ENVIRONMENTS.md § macOS).  Two levers are measured and unbuilt, for when a warm run
+> breaks the cap again: link the loft runtime as a shared library for test/semantics builds
+> (each test binary carries ~9 MB of runtime code, re-linked per cell), and emit only the
+> stdlib functions a program reaches (a one-line program emits ~500 functions, 3 722 lines).
+>
 > **The same rule holds for a NIGHTLY job that outgrows its limit: the limit stays, and the job
 > does less repeated work** (owner's direction).  The valgrind sweep was cancelled at
 > its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column
@@ -429,6 +444,16 @@ box idle for a measurement, and then for the suite, is how a verified unit sat f
   names a different, smaller set and measures the wrong thing.
 
 
+## Agents beside the work: at most two that debug or fix
+
+**The rule.** A session runs at most TWO extra agents that debug or fix at the same time.  Each
+one builds its own tree and runs its own checks (`find_problems --changed`, subjects, falsify
+controls) — a full loft retest per agent — and every checkout on this box shares the CPU and
+the disk.  Past two, the agents' checks stop finishing inside their caps and each worktree's
+`target/` (tens of GB) pushes the disk toward its floor.  At two, do the next task in the main
+session or wait for one to finish; remove a finished agent's worktree once its commits are
+joined (`git worktree unlock` + `git worktree remove`), which is where the disk goes.
+
 ## After a red gate: recheck, do not restart
 
 **The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
@@ -436,7 +461,8 @@ it NAMED and run `scripts/ci-run.sh recheck`; do not start another gate.  A rech
 last gate in this tree (`.ci-gate-head`, written by `start`) and runs, each timed:
 
 * the pre-flight — `cargo fmt --check`, QUALITY.md's audit rows against
-  `ir_walker_audit.py`, `check_doc_drift.sh` (`scripts/gate_preflight.sh`, ~15 s);
+  `ir_walker_audit.py`, the `τ?` shape-test ratchet (`make optional-ratchet`),
+  `check_doc_drift.sh` (`scripts/gate_preflight.sh`, under a minute);
 * both clippy variants the gate runs, when Rust changed since the gate;
 * EXACTLY the tests the gate failed (`.ci-failed`, nextest `binary_id(=…) & test(=…)`);
 * `find_problems.sh --changed <gate sha>` — the subjects the change since the gate touches.
@@ -451,6 +477,17 @@ shared lifetime/codegen machinery.  `--changed` maps a PATH to a subject, and a 
 compiler ACCEPTS can break a cell in a subject it never names (a new refusal broke three tests
 in `codegen` from a `.loft` under `doc/claude/plans/`, 2026-09-24).  A fix to a constant, a
 fixture, a derived row, formatting or a lint attribute is not that.
+
+**The same holds for a set of subject runs, a corpus suite, or any run larger than the failure it
+reports.**  When `find_problems.sh` subjects (or `cargo test` over several binaries) come back
+with one or a few failures, the answer is EXACTLY those tests — `cargo test --release --test
+<binary> <name>`, or the one subject that holds them — plus `--changed` for what the fix itself
+touches.  Never re-launch the whole set because a failure was fixed, and never stop a run that is
+still answering to start the same set again on a newer build: every subject the earlier run
+passed is still answered unless the fix's reach is unknown in the sense of the paragraph above,
+and then it is ONE new run, not a restart per fix.  Re-running everything is the easy reflex
+because it needs no thought about what moved; deciding what moved is the work, and a rerun of
+forty-five minutes for one test is the cost of skipping it.
 
 ### Sizing the checks for a performance change
 
@@ -515,7 +552,7 @@ does not belong on a PR, however cheap it is.**
 |---|---|---|
 | **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), several advisory doc jobs | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
-| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
+| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
 | **Sundays 05:30** | `registry-validation` (scope `full`) — EVERY non-yanked published version, 164 legs.  The nightly only ever validated the tip, so 121 of 164 versions were checked by nothing (loft#1462, the gate hole behind #1448).  Weekly rather than nightly because a rotted OLD release breaks nobody until somebody pins it | `schedule` |
 | **nightly 06:17 + on `src/**`,`default/**`** | `revalidate-libs` — ONE suite pass per published lib, scored twice: does it still compile + test (a break is the freeze's business), and is it RELEASE-READY — RED on any warning, since a lib carrying them fails its own `LOFT_DENY_WARNINGS` CI. **Advisory, never a required check**; blocking on a release | `schedule`, `push`, `pull_request` |
@@ -530,6 +567,18 @@ does not belong on a PR, however cheap it is.**
 | **library repos** | one `library-ci` per repo, all callers of `library-ci-reusable.yml`, and **`ci / <package>` is a REQUIRED check on every repo's `main`** (41 contexts, one per package; `strict` off, so a PR need not be rebased onto a moved `main`, and `enforce_admins` off, so the owner's direct pushes to `main` still land — the way every library fix reaches it today): the per-package test matrix, plus a repo-level **`unreleased work`** job — a branch ahead of the default branch with no PR, a PR nobody has touched, or a `loft.toml` version the registry has never seen, each red after 14 days without activity (`scripts/unreleased-work.py`, `stale-days` to tune) | `push: main`, `pull_request` |
 | **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
+
+### The test step runs in two passes
+
+`make ci` and `ci.yml`'s Test step run nextest twice.  The MAIN pass (`--profile ci`) runs
+everything but the starvation victims, with the rustc-storm makers — `native`, `n2_cdylib`,
+`n3_parity`, `n3_use_native`, the drop gate's native cells — in the six-slot `heavy-wide` group
+and `html_wasm` in `html-wasm-wide`.  The SECOND pass (`--profile ci-victims`) runs the
+networked tests a storm starves — `multiplayer_v2`, `multiplayer_v3`, `wasm_debug_relay` —
+one at a time, after every storm has ended.  `scripts/ci_test_filter.py victims` prints that
+set from `.config/nextest.toml`, so the Makefile, the workflow and nextest select one list.
+The second pass writes its junit to `target/nextest/ci-victims/`; the duration and speed gates
+read the main pass's.  The `default` profile keeps the single serial group for local runs.
 
 ## The schedule is not a clock — the release gate (2026-09-04)
 

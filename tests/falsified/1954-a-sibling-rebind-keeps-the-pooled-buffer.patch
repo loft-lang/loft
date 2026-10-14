@@ -1,0 +1,139 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index f38e2d685..3165f5f12 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -290,11 +290,6 @@ struct Scopes<'s> {
+     /// The locals whose one real bind follows an enclosing null on every path and every pass
+     /// ([`null_led_first_binds_in`]): that bind displaces no store.
+     null_led_first: HashSet<u16>,
+-    /// The scope pass's SPLIT COPIES (`var_mapping`) — each copy to the variable it was split
+-    /// from — with how many source binds each copy took.  The whole-body counts above are
+-    /// keyed by the ORIGINAL variable, so a copy is never in them; a question about the copy's
+-    /// own binds reads it here (loft#1954).
+-    split_binds: HashMap<u16, (u16, usize)>,
+     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
+     /// `scan_if` a local whose every mention lies inside one arm.
+     mentions: HashMap<u16, usize>,
+diff --git b/src/scopes/buffers.rs a/src/scopes/buffers.rs
+index 962005f1b..bed3f1de3 100644
+--- b/src/scopes/buffers.rs
++++ a/src/scopes/buffers.rs
+@@ -137,14 +137,12 @@ pub(super) fn reuse_record_buffers(
+             continue;
+         }
+         if !ungated
+-            && fed_locals.get(&av).is_some_and(|vs| {
+-                vs.iter()
+-                    .any(|&v| reassigned.contains(&v) && !function.rebind_keeps_displaced(v))
+-            })
++            && fed_locals
++                .get(&av)
++                .is_some_and(|vs| vs.iter().any(|v| reassigned.contains(v)))
+         {
+             // The result local is reassigned somewhere: its set lowering frees the store
+-            // it displaces, which would be this buffer's.  A local whose rebind keeps what
+-            // it displaces (the loft#1522 veto) releases nothing there.
++            // it displaces, which would be this buffer's.
+             decline(av, "its result local is assigned more than once");
+             continue;
+         }
+diff --git b/src/scopes/phase.rs a/src/scopes/phase.rs
+index b734792bf..fe945dc35 100644
+--- b/src/scopes/phase.rs
++++ a/src/scopes/phase.rs
+@@ -176,7 +176,6 @@ pub(super) fn run_scan_phase(
+         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
+         null_led: null_led_in(orig_code, data),
+         null_led_first: null_led_first_binds_in(orig_code, data),
+-        split_binds: HashMap::default(),
+         mentions: var_mentions_in(orig_code),
+         sunk: sunk.clone(),
+         assigned: assigned_in(orig_code),
+@@ -542,7 +541,13 @@ pub(super) fn run_scan_phase(
+         d_nr,
+         &scopes.witness_buffer,
+         &scopes.minted_pairs,
+-        &reassigned_locals(&scopes),
++        // A local whose other binds are the nulls in front of it on every pass displaces
++        // nothing (`null_led_first_binds_in`, loft#1643).
++        &scopes
++            .multi_assigned
++            .difference(&scopes.null_led_first)
++            .copied()
++            .collect(),
+     );
+     lazy_buffer_mints(&mut code, &mut function, data);
+     function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
+@@ -616,32 +621,6 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
+     out
+ }
+ 
+-/// The locals assigned more than once, as the record-buffer pool asks it (`@FR-O-LazyBuffer`
+-/// with `@FR-O-Buffer`): a result local bound again releases the store it displaces, which
+-/// under reuse is the pooled buffer.  A local whose other binds are the nulls in front of it
+-/// on every pass displaces nothing (`null_led_first_binds_in`, loft#1643).
+-///
+-/// The body counts are keyed by the ORIGINAL variable and cover every sibling scope at once,
+-/// so the original is answered from them (an over-count, in the safe direction).  A SPLIT
+-/// COPY is a variable of its own that no body count names, so it is answered from its own
+-/// binds: two sibling loops binding `y`, the second twice, left the second loop's copy out of
+-/// the set, and its buffer was pooled and freed by its own rebind (loft#1954).  A copy of a
+-/// null-led local keeps the exemption, because the one real bind and the nulls leading it sit
+-/// in one enclosing block and so in one copy.
+-fn reassigned_locals(scopes: &Scopes) -> HashSet<u16> {
+-    let mut out: HashSet<u16> = scopes
+-        .multi_assigned
+-        .difference(&scopes.null_led_first)
+-        .copied()
+-        .collect();
+-    for (&copy, &(orig, binds)) in &scopes.split_binds {
+-        if binds >= 2 && !scopes.null_led_first.contains(&orig) {
+-            out.insert(copy);
+-        }
+-    }
+-    out
+-}
+-
+ /// Variables that are the target of two or more `Set` nodes anywhere in `node`.
+ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
+     fn count(node: &Value, out: &mut HashMap<u16, usize>) {
+diff --git b/src/scopes/scan_set.rs a/src/scopes/scan_set.rs
+index 240c6d1ac..3c62d9a98 100644
+--- b/src/scopes/scan_set.rs
++++ a/src/scopes/scan_set.rs
+@@ -174,9 +174,6 @@ impl Scopes<'_> {
+             }
+         }
+         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
+-        if v != ov {
+-            self.split_binds.entry(v).or_insert((ov, 0)).1 += 1;
+-        }
+         // A handle view given a member's handle on one arm and one of its own on another
+         // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
+         let tagged;
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 48f47f934..4d2f6be95 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -5211,20 +5211,10 @@ impl Function {
+             // proxy answers "owned" for such a local because the adoption leaves its dep list
+             // empty, so without this the rebind released the buffer's store out from under it;
+             // the buffer's own scope-exit free is what releases it, once.
+-            && !self.rebind_keeps_displaced(v)
++            && !(self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled())
+             && !crate::data::is_null_sentinel_detach(v, value, data, self)
+     }
+ 
+-    /// Does a rebind of `v` release NOTHING it displaces, whatever the right-hand side?  The
+-    /// loft#1522 veto: `v` adopted a construction work-ref's store, and the buffer frees it
+-    /// once at function exit.  The one spelling of the veto, read by
+-    /// [`Self::owns_displaced_store`] and by the record-buffer pool, whose only objection to a
+-    /// local bound twice is the store such a rebind would release (`@FR-O-LazyBuffer`).
+-    #[must_use]
+-    pub fn rebind_keeps_displaced(&self, v: u16) -> bool {
+-        self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled()
+-    }
+-
+     /// `@FR-O-Buffer` — the compiler-built buffer the CALL in `value` is handed for its result,
+     /// when `v = value` reassigns `v`: the one store the displaced free must never release.
+     ///

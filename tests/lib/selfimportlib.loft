@@ -4,7 +4,7 @@
 // Fixture for tests/scripts/a-self-method-is-imported-by-name.loft: a package whose functions
 // are `self` methods, imported by name.
 
-pub struct Box { n: integer }
+pub struct Box { pub n: integer }
 
 pub fn twice(self: Box) -> integer { self.n * 2 }
 

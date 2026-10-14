@@ -5,7 +5,7 @@
 // renders through its `to_text`.
 
 struct Point { x: integer, y: integer }
-fn to_text(self: Point) -> text { "({self.x}, {self.y})" }
+operator to_text(self: Point) -> text { "({self.x}, {self.y})" }
 
 fn test_print_takes_one_format_string() {
   a = 1; b = 2; c = 3;

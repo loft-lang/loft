@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1856 — the entry pulls in the module that names this type before it declares it
+// (loft#801's shape), from a `pub` function.  The declaration below keeps it private.
+// Apart from fwd1856 so that a guard on this cell compiles on a build where the other
+// cell does not.
+pub use fwd1856h_inner::*;
+
+struct F1856Hid { h_n: integer }

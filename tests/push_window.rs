@@ -8,9 +8,10 @@
 //! loop, and closes it once; `LOFT_NO_PUSH_WINDOW=1` restores the header push.  The cell
 //! corpus (`tests/scripts/158-push-window.loft`) says the VALUES hold on both backends, in
 //! every switch state and under the falsifiers; this pins what is emitted.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-push-window.loft";
 
@@ -43,14 +44,16 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_d4", 0, 0, 1),
     // d5's first loop writes ANOTHER vector in place beside its push: an in-place set
     // reallocates nothing, so since the window's write test is asked as the header hoist
-    // asks it that loop takes the window; its second loop pushes two paths and keeps both
-    // headers.
-    ("n_d5", 1, 1, 2),
+    // asks it that loop takes the window; its second loop pushes two paths, each reserved
+    // and each through a window of its own (the several-paths clause).
+    ("n_d5", 3, 3, 0),
     ("n_d7", 0, 0, 1),
     // Never a counted push loop: `len(v)` reads as another write to the path (d2), a
     // filter is a `continue` (d6); a callee handed the vector declines the whole hoist (d3).
+    // A filter's `continue` stays inside its own loop, so the deep window serves d6's two
+    // loops — the comprehension's pushes and the statement's — with no reservation.
     ("n_d2", 0, 0, 1),
-    ("n_d6", 0, 0, 3),
+    ("n_d6", 2, 3, 0),
     ("n_d3", 0, 0, 0),
     // `x` owns its store and takes a window; `y`, `z` and `q` are rebound to a call's
     // buffer later, so their root is not provably exclusive and they keep the header.
@@ -70,7 +73,8 @@ const SWITCHES: [&str; 6] = [
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args).env("LOFT_TIMEOUT", "300");
     for s in SWITCHES {
         cmd.env_remove(s);
@@ -98,13 +102,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         env,
     );
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

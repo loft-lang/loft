@@ -1,0 +1,26 @@
+// @FR-I-For — a filtered loop `for (a, b) in v if p { … }` tests `p` on THIS element, so the
+// header's unpack runs before the filter: it is a step of the loop, where the loop variable is
+// bound, not the head of the body.  Unpacked in the body, the filter read the binders before
+// they held anything, and the interpreter skipped every element in silence ("" for "y2zz3").
+// One loop per function: on the old tree a second filtered destructure in one function was
+// refused outright (its filter named the first loop's ended binders), which would hide the
+// wrong values the first one shows.
+// @falsified-at: 16f39fb97 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-filtered-destructure-reads-the-current-element.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the interpreter's assertion (the skipped elements); --native does not compile the control.
+
+fn g() -> iterator<(integer, text)> { yield (1, "x"); yield (2, "yy"); yield (3, "zzz"); }
+
+fn on_first(v: vector<(integer, text)>) -> text { s = ""; for (a, b) in v if a > 1 { s += "{b}{a}" }; s }
+fn on_text(v: vector<(integer, text)>) -> text { s = ""; for (a, b) in v if len(b) > 1 { s += "{b}{a};" }; s }
+fn over_generator() -> text { s = ""; for (a, b) in g() if a != 2 { s += "{b};" }; s }
+fn with_break(v: vector<(integer, text)>) -> text { s = ""; for (a, b) in v if a > 1 { if a == 3 { break }; s += b }; s }
+
+fn main() {
+  v = [(1, "x"), (2, "y"), (3, "zz")];
+  assert(on_first(v) == "y2zz3", "a filter on the first member: {on_first(v)}");
+  assert(on_text(v) == "zz3;", "a filter on a text member: {on_text(v)}");
+  assert(over_generator() == "x;zzz;", "over a generator: {over_generator()}");
+  assert(with_break(v) == "y", "with a break in the body: {with_break(v)}");
+}

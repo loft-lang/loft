@@ -52,7 +52,10 @@ so the scope is not quietly narrowed:
    assigned incrementally (a site without one yet renders `error: …` as before) — adding a code is
    additive, never a breaking change.
 3. **The libs** — the standard library (`default/*.loft`) **and** published libraries: a
-   program calling a stdlib function or a `use`d library keeps working.
+   program calling a stdlib function or a `use`d library keeps working.  The two hold it
+   differently: the standard library ships with loft and freezes with it; a published library
+   does not freeze — a program keeps working at the version its manifest declares, and a breaking
+   change is a new release that consumers opt into (`api_compatible_with`).
 
 And the surfaces a running program *depends* on, so "keeps running" includes "its data and
 dependencies keep working":
@@ -148,7 +151,7 @@ fix is usually *to add a diagnostic or a fault*, and adding it is the one-way do
 **But the *first* resolution of a would-be-error is a rewrite to correct function, not an
 error.** Because contract 1 lets loft only ever *drop* errors, a situation that would "normally"
 (in another language) fault is handled — wherever it sensibly can be — by **defining a
-correct-functioning semantic**: the C80 spreadsheet model, where a divide-by-zero or an
+correct-functioning semantic**: the @C80 spreadsheet model, where a divide-by-zero or an
 out-of-range read yields the reserved null and the program keeps running instead of halting.
 Erroring is the *narrower* choice, reserved for what cannot be given a sane defined behavior (and,
 being a compile-time add, is the safe one-way door above). **This is why the pre-freeze checking
@@ -388,9 +391,12 @@ health nightly is what finds them; a cure is never applied by this repo in their
 |---|---|---|---|---|
 | PR #1465 (2026-09-08) | iterating a NULLABLE projection needs a discharge | moros `hex_voxel` `named_label`: `for ly in w.w_chunks[ci].ck_layers` — took 4 moros packages / 125 test files down | `for ly in w.w_chunks[ci]?.ck_layers` | same values as 2026.8.0 on both backends; an out-of-range chunk still walks nothing |
 | loft#1600 (2026-09-23) | a local bound inside a block does not exist after its `}` (`local-out-of-scope`) | Moros-Economy-Development `loft_planet` `dispersal.loft`: two locals declared inside `if weld { … }`, read after it — 26 of 42 files | declare the local before the block, with the value the path that skips the block MEANS | **not mechanical**: 2026.8.0 read a stale value on the skipped path (`if c { h = 3 }; h + 1` answered 4 for `c == false`), so the refusal surfaced a latent wrong answer; the planet's own agent has since applied it at function scope |
-| C98 (2026-09-28) | a bare `use lib;` binds only the `lib::` qualifier; an import serves its own file only | a file calling a library's names bare after `use lib;` (moros `lavition_ui`, Moros-Economy-Development `loft_planet`, crawler, dryopea repros — about 31 files, counted with `--check`); a package entry whose `use module;` lines offered its modules' names to consumers | `use lib;` → `use lib::*;` where names are used bare (or `use lib::(a, b);`, or write `lib::name`); in a package entry that offers its modules, `use module;` → `pub use module::*;`; a bare `use self::m;` (moros `hex_editor`) is refused and becomes `use self::m::*;` | mechanical: `use lib::*;` is exactly the old bare behaviour for the file itself; the error names the library and both cures |
-| C124 (2026-09-28) | a `const` value handed to a plain record or collection parameter (`const-to-plain-parameter`, a warning until now) | Moros-Economy-Development `loft_planet/tests/14-workflow.loft`: `cmp_f` (`a`, `b`) and `direct_chain` (`g`), 13 calls | declare the parameter `const` when the function only reads it (`fn cmp_f(a: const T, b: const T)`), or pass a copy | the parameters are only read, so `const` changes no answer |
-| C91 (2026-09-29) | not a refusal — an ANSWER changes: `==` / `!=` on a struct, a struct-enum and a keyed collection compare content where they compared identity (a vector's `==` and `&a == &b` are new) | the census (`scripts/eq_census.sh`, `index/eq_census.txt`) found 22 identity sites, all in this repo, and none in the libraries or consumers that compile; 1280 consumer files did not compile at census time (the C98 republish) and are re-measured after it | where a `==` asked whether two names are ONE record, write `&a == &b` (`&a != &b`) | an equality that meant content was already answering it for a `value struct`, a text or a scalar; a copy (`b = a`) is now equal to its source |
+| @C98 (2026-09-28) | a bare `use lib;` binds only the `lib::` qualifier; an import serves its own file only | a file calling a library's names bare after `use lib;` (moros `lavition_ui`, Moros-Economy-Development `loft_planet`, crawler, dryopea repros — about 31 files, counted with `--check`); a package entry whose `use module;` lines offered its modules' names to consumers | `use lib;` → `use lib::*;` where names are used bare (or `use lib::(a, b);`, or write `lib::name`); in a package entry that offers its modules, `use module;` → `pub use module::*;`; a bare `use self::m;` (moros `hex_editor`) is refused and becomes `use self::m::*;` | mechanical: `use lib::*;` is exactly the old bare behaviour for the file itself; the error names the library and both cures |
+| @C124 (2026-09-28) | a `const` value handed to a plain record or collection parameter (`const-to-plain-parameter`, a warning until now) | Moros-Economy-Development `loft_planet/tests/14-workflow.loft`: `cmp_f` (`a`, `b`) and `direct_chain` (`g`), 13 calls | declare the parameter `const` when the function only reads it (`fn cmp_f(a: const T, b: const T)`), or pass a copy | the parameters are only read, so `const` changes no answer |
+| @C91 (2026-09-29) | not a refusal — an ANSWER changes: `==` / `!=` on a struct, a struct-enum and a keyed collection compare content where they compared identity (a vector's `==` and `&a == &b` are new) | the census (`scripts/eq_census.sh`, `index/eq_census.txt`) found 22 identity sites, all in this repo, and none in the libraries or consumers that compile; 1280 consumer files did not compile at census time (the @C98 republish) and are re-measured after it | where a `==` asked whether two names are ONE record, write `&a == &b` (`&a != &b`) | an equality that meant content was already answering it for a `value struct`, a text or a scalar; a copy (`b = a`) is now equal to its source |
+| @C140 | a field read, written or matched outside the FILE that declares it without `pub`; a struct literal outside its file unless every field is `pub`; a variant of a non-`pub` enum; reading the representation of a non-`pub` `type` alias a `pub` fn returns | a package of several files whose files read each other's fields (crawler 399 items with its `--lib` flags, moros's five `lib/*` packages — every test file, mostly fields of `moros_map`'s `types`, `spawn` and `palette` and `moros_sim`'s `player` — Moros-Economy-Development `loft_planet`, routing, zero-trust-shared-files, and moros `lavition_ui` 0.1.1 as PUBLISHED — revalidate-libs refuses its own `UiRect`, `ListBox`, `Panel`, `DrawText` fields across its files); a library locked at a release before its `pub` (mesh3d 0.1.2, hex_edge 0.2.1, server 0.7.1, …), whose OWN code is then refused | 1. raise each library's floor to its first `pub` release and `loft update`; 2. from a loft checkout: `PUB_CENSUS_TREES="dir:<project>" CENSUS_FLAGS="<the project's --lib flags>" scripts/pub_census.sh c.txt`, then `scripts/pub_migrate.py c.txt --tree dir --root <project>`, repeated until the census lists nothing in the project (twice on crawler) | mechanical: `pub` changes no value.  A row the migration leaves (declared in a registry copy) is a library gap: report it.  The census measures only files that compile up to this check, so the earlier cures in this table come first |
+| PR #1967 | a function that binds more than 300 variables of its own — one of the structural limits ([LOFT.md § Limits](LOFT.md#limits)); parameters and the compiler's temporaries are not counted | crawler `src/sim.loft` `sim_new_gen_s`: one function of 1436 lines that binds more than 340 names, so `--check src/story.loft` stops at its 301st, `bnear` | move a stage of the function that reads a few values and produces a few into a function of its own, until each binds 300 or fewer | **not mechanical**: the split is the author's.  The build stops at this function, so the @C140 census of crawler counts only after it.  The limit is guarded on both backends by `tests/scripts/the-counts-within-the-limit-compile.loft` and its refused twins |
+| @PLN109 (shipped in 2026.8.0) | not a refusal — an ANSWER changes: a JSON number written without a fraction or exponent parses as `JInteger`, so `v.kind()` answers `"JInteger"` where it answered `"JNumber"` | crawler `src/genbundles.loft` `jint`: `if f.kind() == "JNumber" { return f.as_long(); }` fell through to its default, and every generated room size and weight became 0 | test both kinds (`k == "JInteger" \|\| k == "JNumber"`), or match the variants | `as_long` answers a `JInteger` exactly and truncates a `JNumber`, so the cure keeps the old values |
 
 ## The `contract` integer under this promise
 
@@ -411,6 +417,10 @@ a breaking-change tracker:
   may move; this whole document takes effect at the `0 → 1` flip.
 
 ## Before the flip: the pre-freeze audit (the one-way door)
+
+**Tracking.** Every issue or plan that must land before the flip carries `contract:before-1`;
+after the flip the same kind of work carries `contract:compat` and keeps the old behaviour beside
+the new one ([LABELS.md § `contract:before-1`](../../.github/LABELS.md)).
 
 The `0 → 1` flip is **irreversible** — every wart it freezes is frozen forever. So the flip
 is **gated on a thorough, surface-by-surface examination** of everything the promise will
@@ -505,7 +515,7 @@ only the second kind can say the quiet was earned:
   truly gone rather than currently absent. The window the owner reads is **two consecutive
   weeks** ([STABILITY_ROADMAP.md § The owner's directive](STABILITY_ROADMAP.md)). ⚠ A fix
   whose only rule change is a clause in `formal/rewrites.md` is `settled`, not strained: by
-  C122 a rewrite is not the contract, and counting the optimiser's rule motion as the
+  @C122 a rewrite is not the contract, and counting the optimiser's rule motion as the
   language's would keep this gate from ever reading zero while the perf stream runs
   ([.github/LABELS.md § contract:](../../.github/LABELS.md)).
 - **Rule coverage at or above its contract-1 floors** — `make rule-coverage`, currently
@@ -637,7 +647,7 @@ we have not walked.
 | Surface | Additive (allowed) | Regression (a bug) |
 |---|---|---|
 | **Language syntax** | a new construct that leaves existing parses unchanged | old source no longer parses; a new reserved word colliding with an identifier; a precedence/associativity change that re-groups valid code |
-| **Language semantics** | a new capability with no effect on existing programs | same source, different runtime result (the C86 class); changed evaluation order, overflow, null, coercion a program observes |
+| **Language semantics** | a new capability with no effect on existing programs | same source, different runtime result (the @C86 class); changed evaluation order, overflow, null, coercion a program observes |
 | **Errors** | a *new* error for previously-*undefined*/UB input; better human-only prose no program observes | an error that used to fire no longer does (or vice-versa); a changed error identity/type a program catches; changed observable content |
 | **Stdlib API** | a new function/method/type; a new optional parameter | removing/renaming a public function; a signature change that breaks existing calls; a *different result* for the same inputs |
 | **Published libs** | a new library; a new library version | a registry/resolution change that stops an installed library loading; see the note below on library authors' own obligation |
@@ -653,12 +663,18 @@ that loft would have broken, before this promise) is caught.
 
 ## Bug fixes — the one careful line
 
-A fix whose old behavior was a **crash, a fault, or undefined behavior** is always allowed:
-a program that crashes was not *functioning*, so nothing that functions relies on it.
+The promise is that **programs that worked before still work afterwards** — the contract keeps
+loft usable and developable, it never stops a bug being fixed; what it forbids is forcing a change
+on a user whose program runs perfectly.  The line between the two is **whether a test could rely
+on the old result**:
 
-A fix that changes the **observable result of a functioning program** is a **regression**,
-even when the old result was "wrong" — because the program functioned, and the promise is to
-that program, not to our sense of correctness. The reconciliation is the escape valve: if
+- **Not reliable in a test — always fixable.**  A crash, a fault, a segfault, uninitialized
+  garbage, an answer that varies with the run, the backend or the reuse of memory: no working
+  program depends on it, so the fix changes nothing anyone relied on.
+- **A stable result — kept, even when it is wrong.**  An answer a program gets every run, on every
+  backend, is one a test can pin, so a program may depend on it.  Changing it is a
+  **regression**, even when the old result was "wrong" — the promise is to that program, not to
+  our sense of correctness. The reconciliation is the escape valve: if
 the behavior genuinely must change, key the new behavior on a newer contract and keep the old
 one for old programs. "We fixed a bug" is never a licence to change what a working program
 does.
@@ -717,7 +733,7 @@ does slip it is a bug fixed before other work, per the promise.
 - [plans/113-contract-keyed-semantics/README.md](plans/113-contract-keyed-semantics/README.md) —
   @PLN113, the edition-style escape valve that keys a semantic split on the declared `contract`.
 - [GOALS.md](GOALS.md) — the AS/400 standard and Goal F.
-- [DESIGN_DECISIONS.md § C86](DESIGN_DECISIONS.md) — the archetypal silent regression.
+- [DESIGN_DECISIONS.md § @C86](DESIGN_DECISIONS.md) — the archetypal silent regression.
 - [plans/97-layout-contract/](plans/97-layout-contract/) — the layout-identity hash.
 - [RELEASE.md](RELEASE.md) — release cadence + calendar versioning (the release tag, kept
   distinct from `contract`).

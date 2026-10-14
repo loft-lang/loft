@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `fn(D)` lambda handed to a generic's `fn(const T)` parameter binds `T` to `D` through both
+// parameters — one type, so no binding clash.  What fails is the rest of the parameter: a
+// `fn(D)` may write its argument, so it cannot stand where a `fn(const D)` promises not to.
+// The clash check reported it as `T` bound "to D … and to D", naming the same type twice; the
+// argument check's own message, the one the concrete call gives, now reaches the author.
+//
+// @falsified-by: tests/falsified/a-const-function-parameter-mismatch-is-not-a-binding-clash.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; only the message moves.
+//   ARMED: nothing.
+//   WITNESS: on the control "`appk` binds T to D through `x` and to D through `k`".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: expected fn(const D) -> integer, got fn(D) -> integer on argument 2 of call to appk
+
+struct D { ms: integer }
+
+fn appk < T, K > (x: const T, k: fn(const T) -> K) -> K { k(x) }
+
+fn main() {
+  d = D { ms: 7 };
+  println("{appk(d, fn(e: D) -> integer { e.ms })}");
+}

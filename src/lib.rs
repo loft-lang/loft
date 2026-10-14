@@ -1,5 +1,7 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 #![warn(clippy::pedantic)]
 #![allow(
     // Numeric casts: pervasive in the interpreter's hot paths; every
@@ -303,6 +305,7 @@ pub mod json;
 pub mod keys;
 pub mod lease;
 mod lexer;
+pub mod limits;
 pub mod lsp;
 pub mod narrow;
 pub mod native;
@@ -341,9 +344,12 @@ pub mod const_fn;
 pub mod copy_view;
 pub mod discharge_into;
 pub mod exit_vector;
+pub mod file_access;
+pub mod forward_result;
 pub mod forward_walk;
 pub mod in_range;
 pub mod leaf_inline;
+pub mod literal_append;
 pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;
@@ -351,8 +357,11 @@ pub mod ownership_cfg;
 pub mod paged_reader;
 pub mod place_result;
 pub mod placement;
-pub mod portable_path;
+#[cfg(test)]
+mod platform_census;
+pub mod pure_reuse;
 pub mod rebind_place;
+pub mod repeat_run;
 pub mod resolution;
 pub mod resolution_scope;
 pub mod return_field;
@@ -362,6 +371,8 @@ pub mod scopes;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;
+pub mod text_run;
+pub mod tuple_links;
 pub mod use_analysis;
 pub mod value_record;
 mod variables;
@@ -370,6 +381,7 @@ pub mod vector;
 
 pub mod trace;
 
+pub mod btree;
 pub mod codegen_runtime;
 pub mod generation;
 pub mod ops;
@@ -384,7 +396,6 @@ mod radix_tree;
 mod spatial;
 pub mod store;
 pub mod store_budget;
-pub mod tree;
 pub mod trie_db;
 mod typedef;
 
@@ -405,10 +416,13 @@ pub mod live_dispatch;
 pub mod live_reload;
 pub mod process_run;
 pub mod repl;
+pub mod repl_doc;
 pub mod rpc;
 pub mod script;
 pub mod serve;
 pub mod startup_cache;
+#[cfg(any(feature = "registry", feature = "remote-store"))]
+pub(crate) mod tls;
 pub mod wasm_debug;
 // @PLAN12 phase 3.5a (2026-05-24) — re-export `extensions::native_call`
 // at the crate root so generated native code can write
@@ -458,6 +472,10 @@ pub mod timeout;
 pub mod triggers;
 pub mod verify_self;
 
+pub mod doc_catalogue;
+pub mod doc_construct;
+pub mod doc_render;
+pub mod doc_site;
 pub mod documentation;
 pub mod migrate_long;
 pub mod stdlib_sources;

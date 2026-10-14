@@ -44,7 +44,7 @@ loft debug prog.loft:12 [--lib dir]      # STOP at line 12: read/edit the live f
                                          #   reach for this INSTEAD of adding println — DEBUG.md
 make doc                                 # regenerate doc/*.html: fetches the library packages,
                                          #   then gendoc.  A bare `cargo run --bin gendoc` on a box
-                                         #   without them refuses (it would stub the lib pages)
+                                         #   without them keeps the committed lib pages
 make ci                                  # fmt → clippy → test (full local gate).  Unreliable
                                          #   here (memory, a sibling gate)?  Run the SAME gate
                                          #   on GitHub, no PR needed: `gh workflow run ci.yml
@@ -181,6 +181,10 @@ scripts/join.py run [SRC …]              # JOIN sibling branches: survey what 
                                          #   artefacts.json, verify — stops at each decision.
                                          #   Steps one by one: survey/apply/rederive/verify/
                                          #   guards — JOINING.md § The script
+scripts/derive-ci.sh                     # the PURE derived artefacts (compiled stdlib, surface,
+                                         #   browser bundle, doc pages, …) regenerated ON A
+                                         #   RUNNER and committed back; ratchets stay local —
+                                         #   JOINING.md § Derived artefacts on a runner
 make view                                # branch-aware doc/code viewer; binds LOOPBACK,
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>
@@ -190,7 +194,9 @@ make view                                # branch-aware doc/code viewer; binds L
 shell's own command line contains the text it searches for (and `pkill -f` by name has killed a
 sibling checkout's run).  Wait on the recorded PID (`scripts/ci-run.sh status`, the pid
 `find_problems.sh --bg` prints) or on the output FILE (`[ -s <out> ]`, its mtime); a `[m]ake`
-bracket or `pgrep -x` only moves the failure.  Agents repeated this mistake many times after it was
+bracket or `pgrep -x` only moves the failure.  With neither pid nor file to hand,
+**`scripts/pgrep_others.sh <regex>`** (`--wait`, `--count`, `--here`) is `pgrep -f` that cannot
+match its own caller.  Agents repeated this mistake many times after it was
 documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
 
 **Bound ad-hoc runs** (loft is unbounded by default; tests already arm a 300s watchdog). Especially
@@ -202,7 +208,8 @@ and an unbounded ALLOCATION on the next — loft#796 reached 59.6 GiB in seconds
 killer took two unrelated agent sessions with it. Test runs (`--tests` / `loft test`) therefore
 carry a **2 GiB store-heap ceiling**; crossing it stops the run at that growth and names the TYPE
 that filled the heap, with a one-store-vs-many breakdown that tells a runaway length from a leak.
-`LOFT_MEMORY_LIMIT=<2G|512M|0>` overrides it; ordinary runs are never capped. When writing a
+`LOFT_MEMORY_LIMIT=<2G|512M|0>` overrides it; an ordinary run is capped only when it is set (the
+portable bound — macOS ignores an address-space `rlimit`). When writing a
 repeat-run harness for a corruption repro, cap the process too (`ulimit -v`) — the runaway is not
 necessarily the process the kernel kills. RUN_BOUNDS.md § Store-memory ceiling.
 
@@ -234,8 +241,10 @@ up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for q
 **A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): the sites that keep an entry of the register
 (DESIGN_DECISIONS.md indexes its subject files) — code, doc, and at least one guard under `tests/`
 — cite it, and `./scripts/idx decisions` shows which entries nothing verifies; a new entry takes
-the id `./scripts/idx next-decision` names.  A decision no site can keep is
-reopened, not documented.
+the id `./scripts/idx next-decision` names, and a line in the decision worklist
+(`python3 scripts/decisions.py sync`, then classify it).  **`make decisions`** lists what each
+entry still owes (an uncited site, a guard that does not exercise it); `./scripts/idx
+decision:C<n>` shows one.  A decision no site can keep is reopened, not documented.
 
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this
@@ -333,9 +342,14 @@ src/main.rs            CLI; loads default/ then user file
    local `git merge`).
 2. **Push proactively — it's a SAFETY rule.** Once a change settles (compiles / tests green), commit
    + push to the feature branch so it isn't lost. Separate from opening a PR.
-3. **Never create a branch, open, or merge a PR without an explicit user ask** ("create PR",
-   "merge", "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
+3. **Never create a branch or open a loft PR without an explicit user ask** ("create PR",
+   "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over. If a protected branch blocks a commit, surface it and ask — don't invent a branch.
+   ⚠ **A MERGE never waits for the owner:** once a PR is open, arm
+   `gh pr merge --auto --squash` — the required checks ARE the merge rule.  **A library PR
+   does not wait either:** every `loft-libs-*` `main` requires a PR (admins included), so a
+   library change is a branch + a PR + auto-merge, opened without asking; publish only from
+   the merged `main`.
    ⚠ **Nor is "the work looks finished" an ask.** A PR is opened when the work reaches a stable
    point — a closed arc, a clean endpoint — and **the owner is the one who determines that**, not
    the agent that judges its own branch ready. Keep committing and pushing to the branch; wait to
@@ -371,11 +385,11 @@ src/main.rs            CLI; loads default/ then user file
    too often. But NOT PRing serialises through joins, which is the cost above. So a PR is cheap
    exactly when it merges promptly and expensive when it sits — which makes "keep the PR
    mergeable and land it promptly" (rule 5) the load-bearing half, not an aside.
-4. With an **open PR**, hold non-blocking pushes for the user's consent (force-push/rebase/surprise
-   commits) — EXCEPT a push that unblocks a red required check (allowed; it can't merge while red).
-   ⚠ **An open PR stays what it was opened as: only a SIMPLE fix of its own red goes onto it.**
-   More work — a batch of fixes, a docs pass, a sibling's follow-up chain — is a NEW PR on a
-   branch stacked on it (rule 5), however ready or related.  Every push dilutes the PR's checks:
+4. **A running PR is never interrupted: nothing is pushed to it** — not a fix for its own red,
+   not even one that unblocks a red required check.  Every fix goes on the branch stacked on it
+   (`<host>-pr<N>-next`, rule 5), which the owner merges in time together with other work; do
+   not offer to push it onto the PR.  More work — a batch of fixes, a docs pass, a sibling's
+   follow-up chain — is likewise a NEW PR on that stacked branch, however ready or related.  Every push dilutes the PR's checks:
    the run that counts is the last one, and when it fails nobody can tell which added piece broke
    it, so the failure is never seen for what it is.
 5. **While a PR is unmerged, branch from the TIP of that in-flight work — NEVER fork a fresh
@@ -454,6 +468,11 @@ because leaving it in the way hides the full picture (such a plan is itself a la
 when the ordinary tools no longer work). In **stability work** the file-instead-of-fix escape
 hatches do NOT apply either: fix in the same session with a regression test. Record scope + root
 cause, never origin commit.
+
+**Claim before you fix, on the issue:** `scripts/claim.py take N` before starting any fix, and
+`scripts/claim.py file …` for a bug you find and fix at once — other streams, on other machines,
+see the claim only there (`make work` hides it; the commit-msg hook warns on a duplicate `Fixes`).
+[ISSUE_TRACKING.md § Claiming an issue](doc/claude/ISSUE_TRACKING.md).
 
 **File only when NOT fixing now:** it blocks the current task (bookmark + workaround), or it's
 genuinely M+/needs-design (route to its canonical home). When you file: a **GitHub Issue**
@@ -540,6 +559,8 @@ Lua, measured (reports, never gates — and run a generator probe inside a memor
 `store_load_key*`, no server-side code) · [LAZY_STORES.md](doc/claude/LAZY_STORES.md) a collection
 bound to an image or `sqlite:` fetches on a MISS, query derived from its own type ·
 [LIFETIME.md](doc/claude/LIFETIME.md) deps/freeing ·
+[APART_VALUES.md](doc/claude/APART_VALUES.md) a proposal: throwaway values held apart from the
+store model (stack arrays, tuples) and converted only at a boundary ·
 [OWNERSHIP_MODEL.md](doc/claude/OWNERSHIP_MODEL.md) the deps north-star (borrow system) ·
 [PLACEMENT.md](doc/claude/PLACEMENT.md) a library runs in this process, a worker, or another
 machine — one manifest line, consumers unchanged; **the four rules for writing one that can
@@ -569,7 +590,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 the bisect switches: [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) (`--native` rewrites) /
 [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) (lowering + runtime store) ·
 [PROFILING.md](doc/claude/PROFILING.md) which switch arms which profiler ·
-[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [KERNELS.md](doc/claude/KERNELS.md) the kernel register — every Rust stand-in for a loft loop, why it exists and its removal trigger (`make kernel-ratio`); a stop-gap, the loft version is preferred · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
+[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [INTERPRETER_PERFORMANCE.md](doc/claude/INTERPRETER_PERFORMANCE.md) how the interpreter executes and what made it fast · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [KERNELS.md](doc/claude/KERNELS.md) the kernel register — every Rust stand-in for a loft loop, why it exists and its removal trigger (`make kernel-ratio`); a stop-gap, the loft version is preferred · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·
@@ -641,7 +662,10 @@ start / what is the signature), the one-home rule that kills the drift already m
 between a library's guide and its copy in this repo, the REPL+debugger panel for the doc
 pages (`src/wasm_debug.rs` is built and the pages expose only ▶ Run), and the README's
 repositioning from one-game project to distribution ·
-[LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md).
+[LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md) ·
+**the owner's notes live OUTSIDE git** (`$LOFT_NOTES`, a folder on the owner's machine):
+his thoughts on what we build, blog subjects and ideas.  They can steer a feature or become a
+post, so read them when one is in question; never commit them, and never publish from them.
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
 `loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /

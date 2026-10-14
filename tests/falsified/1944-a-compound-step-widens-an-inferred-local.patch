@@ -1,0 +1,35 @@
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index 7a5a059ea..ae22bfe5d 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -2168,30 +2168,6 @@ impl Parser {
+         // becomes a backstop that this path can no longer trip, since the value reaching
+         // it is already in range — clamping is idempotent, and `set_byte`'s out-of-range
+         // return is discarded, so nothing is judged or reported twice.
+-        // `@FR-I-Join` — an INFERRED local's type is the join of EVERY write, a compound step
+-        // included: `m = x % 7; m += 1000` widened nothing, so the step took the narrow
+-        // range's default and answered 0, where `m = m + 1000` widened `m` and answered 1005
+-        // (loft#1944).  A DECLARED local stays its declaration (`(N-Decl)`, C127's guard).
+-        let widened;
+-        let f_type = if op != "="
+-            && let Value::Var(v) = to.unspan()
+-            && *v < self.vars.count()
+-            && !self.vars.is_annotated(*v)
+-            && !self.vars.is_argument(*v)
+-            && matches!(self.vars.tp(*v).base(), Type::Integer(_))
+-            && matches!(composed.base(), Type::Integer(_))
+-        {
+-            // `change_var_type` cannot do it: `is_equal` collapses every integer width.  The
+-            // `=` path widens with `widen_int` for the same reason (`parse_assign_op_inner`).
+-            let before = self.vars.tp(*v).clone();
+-            if Self::is_narrowing_int(&composed, &before) && !self.int_value_fits(&code, &before) {
+-                self.vars.widen_int(*v, &crate::data::I64);
+-            }
+-            widened = self.vars.tp(*v).clone();
+-            &widened
+-        } else {
+-            f_type
+-        };
+         if op != "=" && !self.first_pass {
+             // A compound step through a link steps the linked slot (loft#1604).
+             let f_type = crate::parser::expressions::linked_store_target(f_type, src_tp);

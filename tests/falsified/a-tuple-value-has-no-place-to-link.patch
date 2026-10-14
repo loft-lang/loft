@@ -1,0 +1,21 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..3533b4a7c 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -10278,15 +10278,7 @@
+     /// or a struct field.  A literal or a call result is a value that names no place; refused
+     /// at a `&` bind and at a `&(…)` argument alike, with the cure, never copied
+     /// (`(B-Ref-Reshape)`).
+-    pub(crate) fn refuse_tuple_value_link(&mut self) {
+-        diagnostic!(
+-            self.lexer,
+-            Level::Error,
+-            "a `&` to a tuple names a place — a tuple variable, a vector element or a struct \
+-             field; a literal or a call result of tuple type is a value with no place for the \
+-             link to name.  Bind it to a local and link that: `t = make(); c = &t;`"
+-        );
+-    }
++    pub(crate) fn refuse_tuple_value_link(&mut self) {}
+ 
+     /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
+     /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would

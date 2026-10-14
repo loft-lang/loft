@@ -59,6 +59,13 @@ fn f10(b: vector<u8>) -> integer {
   b += [9 as u8];
   return (b[0] ?? 0) + (b[4] ?? 0);   // past the length at entry: a stale header answers absent
 }
+// a slice OF the parameter only reads it: the header holds (a slice append writes its
+// destination, never its source)
+fn f11(b: const vector<u8>) -> integer {
+  t: vector<u8> = [];
+  t += b[1..3];
+  return (b[0] ?? 0) * 100 + (b[3] ?? 0) * 10 + len(t);
+}
 fn main() {
   b: vector<u8> = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
   c: vector<integer> = [10, 20];
@@ -83,6 +90,8 @@ fn main() {
   b10: vector<u8> = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
   println("f10 {f10(b10)} {len(b10)}");
   assert(f10(b10) == 10 && len(b10) == 6, "f10");
+  println("f11 {f11(b)} {f11(short)}");
+  assert(f11(b) == 142 && f11(short) == 900, "f11");     // 1*100 + 4*10 + 2 ; 9*100 + 0 + 0
   println("f8 {f8(4)} {f8(1)}");
   assert(f8(4) == 7 && f8(1) == 0, "f8");                 // 0+3+4 ; 0 + (-1) + 1
 }

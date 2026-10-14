@@ -116,7 +116,7 @@ provably-in-bounds index (`m[k*4+row]` with bounded `k`,`row`) stays non-null.
 - `tests/scripts/85-yield-resume.loft` — the mat4-multiply `ma.m[mul_k*4+mul_row] * mb.m[…]`: the
   computed index is now trusted non-null. Fix: `index_arith_trusted` in `src/parser/fields.rs`
   recurses through `+ - * / %` when every leaf is a constant or an **active loop var** (the
-  matrix-indexing contract — trusted like a bare loop var; a real OOB still faults → null, C80). It
+  matrix-indexing contract — trusted like a bare loop var; a real OOB still faults → null, @C80). It
   deliberately does **not** thread the `i < len(v)` guard through arithmetic (that proof is specific
   to `v[i]`, not `v[i*2]`).
 - `tests/scripts/81-iterator-protocol.loft` — a DIFFERENT root cause the original triage lumped in

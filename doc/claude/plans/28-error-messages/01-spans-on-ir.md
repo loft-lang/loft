@@ -44,7 +44,7 @@ their own `Position` via `diagnostic_at!` rather than relying on the
 
 And none of the five **faults at runtime**: the fault-prone ops that do
 (div, mod, index, field, call — 1.9-1.13) are already `Span`-wrapped and
-handled by phase 4's C66 log-and-continue (verified: `100/d` with `d==0`
+handled by phase 4's @C66 log-and-continue (verified: `100/d` with `d==0`
 → `null` + continue; `v[10]` → `null`).  A checked narrowing cast
 `as i32?` returns `null` by contract (no fault to locate); loft has no
 silent implicit narrow.

@@ -1,0 +1,179 @@
+diff --git b/src/data.rs a/src/data.rs
+index 52b6935d4..515f28de9 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7627,47 +7627,6 @@ impl Data {
+         main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+     }
+ 
+-    /// The source whose overload set `name` a call on `receiver` chooses among: the caller's
+-    /// scope (`u16::MAX`) when the set is there, else the source that declares the receiver's
+-    /// TYPE when that source has one.  `(Op-Left)` and `x.m(…)` choose among the members of
+-    /// the RECEIVER's method, and a library declares its type's overloads in its own source:
+-    /// through a qualified import (`use time;`, @C98) the set's bare name is not in the
+-    /// caller's scope, so `d.minus(span)` reached the first member alone and refused the
+-    /// `Duration` the second one takes, and `d - span` was refused outright.
+-    ///
+-    /// Asked for a RECEIVER only — the method spelling and the operator forms.  A free call
+-    /// keeps its own scope: a type's source is never a second place to find a free function
+-    /// (loft#853), and the stdlib's sets are in every scope already.
+-    #[must_use]
+-    pub fn receiver_overload_source(&self, name: &str, receiver: &Type) -> u16 {
+-        if self.has_overload_set(name) {
+-            return u16::MAX;
+-        }
+-        // `@FR-N-Shape` — a `τ?` or `&τ` receiver is the type it wraps.
+-        let tp = match receiver.base() {
+-            Type::RefVar(inner) => inner.base(),
+-            other => other,
+-        };
+-        let type_nr = self.type_def_nr(tp);
+-        if type_nr == u32::MAX {
+-            return u16::MAX;
+-        }
+-        let own = self.definitions[type_nr as usize].source;
+-        let set = self.source_nr(own, name);
+-        if own != STD_SOURCE && set != u32::MAX && self.def(set).def_type == DefType::Dynamic {
+-            own
+-        } else {
+-            u16::MAX
+-        }
+-    }
+-
+-    /// Is there an overload set named `name` in `source` (`u16::MAX`: the caller's scope)?
+-    #[must_use]
+-    pub fn has_overload_set_in(&self, source: u16, name: &str) -> bool {
+-        let main = self.source_nr(source, name);
+-        main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+-    }
+-
+     /// Does `d_nr` declare the visible parameters `params` — compared by type definition, at
+     /// every position whose wanted type is concrete (a type variable or an unknown there asks
+     /// nothing)?
+@@ -12422,23 +12381,6 @@ impl Data {
+         }
+     }
+ 
+-    /// `@FR-Op-Left` — every `use` of a library binds the `operator` definitions it publishes,
+-    /// whatever its spec: `use time;` brings in only the `time::` qualifier (@C98), and a value
+-    /// of `time::DateTime` must still answer `<`, `-`, `"{dt}"` and `for … in` with the
+-    /// operators its package declares, as `dt.year()` answers with its methods through the
+-    /// type's attribute table.  Bound privately — the importer does not pass them on — and
+-    /// under their mangled per-type keys, which `(Op-Home)` places in the type's own source,
+-    /// so they cannot take a name the importer could declare.  Each operator site asks by
+-    /// name (the forms, the overload set, `to_text`, `next`), and this is the one place the
+-    /// names arrive.
+-    pub fn import_operators(&mut self, lib_source: u16, into_source: u16) {
+-        for (name, def_nr) in self.exported_names(lib_source) {
+-            if self.definitions[def_nr as usize].operator_form {
+-                self.bind_import(&name, (into_source, lib_source), def_nr, false, true);
+-            }
+-        }
+-    }
+-
+     /// Everything `lib_source` passes on to an importer: its own public definitions and
+     /// what it `pub use`s — not what a plain `use` bound there for its own use (@C98).
+     fn exported_names(&self, lib_source: u16) -> Vec<(String, u32)> {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 776653c05..7a2cd45ee 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -20801,12 +20801,10 @@ impl Parser {
+                 with_receiver.push(dispatch.clone());
+                 with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+                 let routed = self.data.routed_types(&with_receiver);
+-                // A library type's set lives in its own source (`Data::receiver_overload_source`).
+-                let set_source = self.data.receiver_overload_source(name, dispatch);
+-                match self.select_overload(set_source, name, &routed) {
++                match self.select_overload(u16::MAX, name, &routed) {
+                     crate::parser::dispatch::Selection::One(d) => {
+                         return self
+-                            .dynamic_dispatcher(set_source, name, &routed, Some(d))
++                            .dynamic_dispatcher(u16::MAX, name, &routed, Some(d))
+                             .unwrap_or(d);
+                     }
+                     sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+@@ -20825,7 +20823,7 @@ impl Parser {
+                     // for `parse_method_selecting`, which ends the call there as the bare
+                     // spelling does rather than refusing the slot's routine on top of it.
+                     sel @ crate::parser::dispatch::Selection::NoneApplicable => {
+-                        if let Some(dd) = self.dynamic_dispatcher(set_source, name, &routed, None) {
++                        if let Some(dd) = self.dynamic_dispatcher(u16::MAX, name, &routed, None) {
+                             return dd;
+                         }
+                         // The slot holds the SET itself (a `self` set that dispatches past its
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 3045a838a..d01f0fb30 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -3660,7 +3660,6 @@ impl Parser {
+         // the now-registered real def in the library source.
+         let applied = std::mem::take(&mut self.applied_imports);
+         for pi in &applied {
+-            self.data.import_operators(pi.lib_source, pi.for_source);
+             match &pi.spec {
+                 ImportSpec::Wildcard => {
+                     self.data
+@@ -16183,8 +16182,7 @@ impl Parser {
+         if m == u32::MAX {
+             return Some(m);
+         }
+-        let set_source = self.data.receiver_overload_source(op_name, first);
+-        if !self.data.has_overload_set_in(set_source, op_name) {
++        if !self.data.has_overload_set(op_name) {
+             if Self::visible_arity(&self.data, m) != types.len() {
+                 m = self
+                     .data
+@@ -16194,7 +16192,7 @@ impl Parser {
+             return Some(m);
+         }
+         let routed = self.data.routed_types(types);
+-        match self.select_overload(set_source, op_name, &routed) {
++        match self.select_overload(u16::MAX, op_name, &routed) {
+             crate::parser::dispatch::Selection::One(d) => return Some(d),
+             sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                 if !self.first_pass {
+@@ -18173,9 +18171,7 @@ impl Parser {
+                         // `use foo as m;` (`m::`): names come in unqualified only through
+                         // an explicit `::*` or `::(…)` spec, so a library growing a name
+                         // can never collide with the program's own (@C98).
+-                        // …but a bare one still brings the library's operator definitions
+-                        // (`Data::import_operators`), so it queues an empty name list.
+-                        let import_spec = spec.or(Some(ImportSpec::Names(Vec::new())));
++                        let import_spec = spec;
+                         if let Some(import_spec) = import_spec {
+                             self.pending_imports.push(PendingImport {
+                                 for_source: self.data.source,
+@@ -18552,7 +18548,6 @@ impl Parser {
+             // with overwrite semantics after a cyclic `use` has finished
+             // registering the partner file's definitions.
+             self.applied_imports.push(pi.clone());
+-            self.data.import_operators(pi.lib_source, cur);
+             match pi.spec {
+                 ImportSpec::Wildcard => {
+                     self.data.import_all(pi.lib_source, cur, pi.public);
+@@ -19138,7 +19133,7 @@ impl Parser {
+             // Same rule as a bare `use`: only an explicit `::` spec brings names in
+             // unqualified; without one the module is reached through its qualifier
+             // (@C98).
+-            let import_spec = spec.or(Some(ImportSpec::Names(Vec::new())));
++            let import_spec = spec;
+             if let Some(import_spec) = import_spec {
+                 self.pending_imports.push(PendingImport {
+                     for_source: self.data.source,
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index fb604cada..b55dce595 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -1216,9 +1216,8 @@ impl Parser {
+             return None;
+         }
+         let routed = self.data.routed_types(types);
+-        let set_source = self.data.receiver_overload_source(form, &types[0]);
+-        let chosen = if self.data.has_overload_set_in(set_source, form) {
+-            match self.select_overload(set_source, form, &routed) {
++        let chosen = if self.data.has_overload_set(form) {
++            match self.select_overload(u16::MAX, form, &routed) {
+                 crate::parser::dispatch::Selection::One(d) => d,
+                 crate::parser::dispatch::Selection::Ambiguous(_) => return None,
+                 // The set is the NAME's, across receivers: none of its members applying says

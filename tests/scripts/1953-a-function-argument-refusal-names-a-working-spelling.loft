@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1953: a refusal of a non-function where a builtin takes a function names a spelling
+// that compiles — the function's bare name, or a lambda — and never `fn <name>`, which the
+// parser refuses in value position.  One cell per message: `map` (r1), `filter` (r2), the
+// shared predicate message of `count_if` (r3), `reduce` (r4) and `par_fold` (r5); and the
+// arity messages, which spell the function argument as a plain name: `map` (a1), `filter`
+// (a2), `count_if` (a3), `reduce` (a4), `par_fold` (a5).  `parallel_for`'s two messages are
+// pinned by tests/parse_errors.rs beside its other refusals.
+//
+// `1953b-the-spellings-a-function-argument-refusal-names-compile.loft` runs every spelling
+// these messages name, so a message cannot name one that is itself refused.
+//
+// @EXPECT_ERROR: map: second argument must be a function — pass its name, or a lambda `|x| { … }`
+// @EXPECT_ERROR: filter: second argument must be a function — pass its name, or a lambda `|x| { … }`
+// @EXPECT_ERROR: count_if: second argument must be a function — pass its name, or a lambda `|x| { … }`
+// @EXPECT_ERROR: reduce: third argument must be a function — pass its name, or a lambda `|acc, x| { … }`
+// @EXPECT_ERROR: par_fold: third argument must be a function — pass its name, or a lambda with typed parameters `fn(acc: integer, x: integer) -> integer { … }`
+// @EXPECT_ERROR: map requires 2 arguments: map(vector, f)
+// @EXPECT_ERROR: filter requires 2 arguments: filter(vector, pred)
+// @EXPECT_ERROR: count_if requires 2 arguments: count_if(vector, pred)
+// @EXPECT_ERROR: reduce requires 3 arguments: reduce(vector, init, f)
+// @EXPECT_ERROR: par_fold requires exactly 4 arguments: items, init, fold, threads
+// @falsified-at: d867b6ed5 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1953-a-function-argument-refusal-names-a-working-spelling.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — the control's messages name `fn <name>`, so none of the
+//   ten expected texts matches and the suite scores the file FAIL.
+//   WITNESS: on d867b6ed5 `map(v, 5)` says "(use fn <name>)".
+//   HOLDS: leak and panic are equal on both trees.
+fn add(a: integer, b: integer) -> integer { a + b }
+
+fn r1() { v = [1, 2]; w = map(v, 5); println("r1"); }
+fn r2() { v = [1, 2]; w = filter(v, 5); println("r2"); }
+fn r3() { v = [1, 2]; w = count_if(v, 5); println("r3"); }
+fn r4() { v = [1, 2]; w = reduce(v, 0, 5); println("r4"); }
+fn r5() { v = [1, 2]; w = par_fold(v, 0, 5, 2); println("r5"); }
+fn a1() { v = [1, 2]; w = map(v); println("a1"); }
+fn a2() { v = [1, 2]; w = filter(v); println("a2"); }
+fn a3() { v = [1, 2]; w = count_if(v); println("a3"); }
+fn a4() { v = [1, 2]; w = reduce(v, 0); println("a4"); }
+fn a5() { v = [1, 2]; w = par_fold(v, 0, add); println("a5"); }
+
+fn main() { r1(); r2(); r3(); r4(); r5(); a1(); a2(); a3(); a4(); a5(); }

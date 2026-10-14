@@ -14,7 +14,7 @@ behaviour is unchanged.  ONE rule states one fact, whichever phase applies it: t
 (parser and scope pass — both backends run the result), the NATIVE generator
 (`src/generation/`), or the INTERPRETER's bytecode generator and runtime (`src/state/`).
 `(R-Phase)` names the three and the oracle each has; a rule says which phase applies it when
-it is not the native generator, the default for the rules written before 2026-10-01.
+it is not the native generator, the default for the rules that name no phase.
 The runtime-side units of the same arc (the per-allocation and per-record
 bookkeeping, the append path) are not rewrites and are not here; the IR lowerings
 both backends share (the fused scalar append, append in place) belong to the
@@ -63,9 +63,9 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  condition shows as a DROP, named by rule and bench, in `make
                  rewrite-census` and on the PR — a loss no timing resolves.  A
                  deliberate decline lands with `make rewrite-census-bless` in its
-                 own commit.  Counted: every rewrite but two — (R-Prefill) admits per
-                 TYPE at its first mint and (R-Cold) is the runtime's own shape,
-                 neither an emission-time fact.  A parser or scope-pass rewrite
+                 own commit.  Counted: every rewrite but three — (R-Prefill) admits per
+                 TYPE at its first mint, and (R-Cold) and (R-FlatCopy) are the
+                 runtime's own shape, none an emission-time fact.  A parser or scope-pass rewrite
                  counts at its admission (the standard library's own admissions
                  included, one constant per program); a generator rewrite counts
                  where it emits.
@@ -76,8 +76,8 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  bytecode (`loft introspect`) is the census, since the generator's
                  admissions are not counted.  A TIMING of such a rewrite is read on
                  two builds that differ only in it with the layout pinned
-                 (PERFORMANCE.md § Measuring an interpreter change): two ordinary
-                 builds differ by 15 % at identical instruction counts.
+                 (INTERPRETER_PERFORMANCE.md § Measuring an interpreter change):
+                 two ordinary builds differ by 15 % at identical instruction counts.
   (R-Phase)      every rule is APPLIED BY one phase, and the phase decides its oracle:
                  the IR phase (both backends run the rewritten IR — the switch A/B is
                  the oracle, BOTH-BACKEND CLAUSE), the native generator (the interpreter
@@ -97,21 +97,24 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  handed to code outside it — keeps the representation the API
                  promises, and the boundary materialises whatever an internal rewrite
                  made of it; one that does not escape may be rewritten in any way its
-                 conditions allow.  (C122.)
+                 conditions allow.  (@C122.)
 ```
 
 **`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
 the conditions under which a program cannot tell the rewritten form from the written one,
 and the compiler validates those conditions or declines.  What it may never do is change
-a value, a fault or an effect (C120 is the same principle from the other side), or hand a
+a value, a fault or an effect (@C120 is the same principle from the other side), or hand a
 representation of its own choosing across a library's API, where the callers that would
-have to validate the conditions are not in the compilation.  `(R-ValueRecord)`'s bridge
+have to validate the conditions are not in the compilation.  The freedom rests on loft having
+no construct that observes representation — no address, no raw buffer, no `unsafe` (@C135);
+the two places representation IS observable, a package's native code and a store bound to a
+file, are boundaries every rule here respects.  `(R-ValueRecord)`'s bridge
 clause is the existing instance — a value tuple inside the library, the promised record
 at the boundary — and `(O-ViewField)` takes its scope from here.  A user PROGRAM is a
 closed unit (every use is in the compilation; a fn-ref call is a match over known
 definitions), so every condition is decidable in it and the only boundaries left are
 where a representation is turned back into the promised one: a call into a `use`d
-library, the live-reload arm, and a record's layout in a store (C122's corollary).
+library, the live-reload arm, and a record's layout in a store (@C122's corollary).
 And the UNIT is a build decision: a release copy of a program (`--native-release`)
 emits its `use`d loft libraries' reachable functions into the one program it compiles,
 so there a loft-to-loft library API is no boundary at all — a library is recompiled
@@ -172,9 +175,12 @@ frames), `Output::bind_view_header` (a view copies a held path's holder).
                  the gate admitted for that purpose, and that op refreshes the holder
                  at its own site before anything else can read it: a push bumps its
                  header's length and re-derives the whole header after a growth; a
-                 scalar hoist is evicted at analysis time by the (type, offset) its
-                 writes reach (R-Scalar).  An op that could change a held fact and
-                 does not refresh it blocks the loop.
+                 self-slice pop (OpKeepRange, KEEP-RANGE CLAUSE) sets its header's
+                 length to what the runtime wrote and re-derives the header when the
+                 runtime moved the record instead; a scalar hoist is evicted at
+                 analysis time by the (type, offset) its writes reach (R-Scalar).  An
+                 op that could change a held fact and does not refresh it blocks the
+                 loop.
 ```
 
 **In words.** This is why a push may be admitted and an `OpAppendVector`, a remove or a
@@ -183,6 +189,28 @@ it changes.  The refresh includes the RECORD, not only the local: the length is 
 back per push so a runtime reader inside the loop (an admitted callee's `len(v)`) sees every
 push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::WriteSet::evicts`
 (the scalar half).
+
+**The keep-range clause.**  `OpKeepRange(P, lo, hi, tp)` — `v = v[lo..hi]` over a scalar
+element kind — on a pure path P is admitted under the push tier: the runtime keeps the
+vector's record (the kept span copied within it, the length written) and answers whether it
+did, so the emitter sets the held length at the op's site — the runtime's two clamps over
+the length the holder carries — and, where the runtime took the copy form instead (a
+foreign or read-only store released and re-appended, or `LOFT_NO_KEEP_RANGE`), re-derives
+the whole push header as a push's growth step does.  The popped path holds a PUSH header
+(the mutable holder) and joins the pushes' aliasing decision (`R-Alias`): an owned root or
+the return buffer, else the loop declines; its root is a mover, so no element base is bound
+over its store in that extent (`R-Base`'s growth clause).  A push window excludes it on its
+own: the op names the pushed root, which the window's parts may not.  Without the clause
+the op declined the WHOLE loop, and three rewrites with it — the stacks' headers, the push
+header's appends and the callee's invariant inputs.  Sites: `hoist::keep_range_path` (the
+one shape, asked by the gate, the collector and the emitter), `KeepRangeEmitter`,
+`Stores::vector_keep_range` (the answer).  Switch `LOFT_NO_KEEP_RANGE_REFRESH` (the loop
+declines as before); under `LOFT_NO_KEEP_RANGE` the runtime's copy form takes the
+re-derive branch.  Falsifier `LOFT_HOIST_VERIFY=1` (`vector::verify_kept_header`: the
+refreshed header against one derived from the record after every pop).  Guard
+`tests/scripts/1014-keep-range-refresh.loft` (a stack popped while read, a `hi` past the
+length, a pop to empty then pushes, two stacks in one body, a pop from both ends under
+`len(v)`, a negative bound).
 
 ### Two paths may name one vector only where ownership cannot rule it out
 
@@ -200,6 +228,15 @@ push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::Writ
                  apart from every mover's (R-Base's growth clause — a `for` walk's
                  hidden vector over an owned local, a `&` view of one) cannot name a
                  pushed vector either, and is kept.
+                 VERSIONED: a loop whose movers grow the function's return buffer — or
+                 the result local that adopts it (R-RetAdopt), the buffer under another
+                 name — while it reads a PARAMETER runs a second copy under a run-time
+                 test that the buffer's store is not the parameter's; inside that copy the pair is
+                 apart, and so is every view rooted in the parameter (its element views
+                 included), so the parameter's headers and those views' record addresses
+                 (R-RecPtr) are kept.  The original loop runs when the test fails.  The
+                 copy is emitted only when it gains a header no enclosing frame holds or
+                 a record address the plain loop declines.
 ```
 
 **In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
@@ -207,7 +244,15 @@ witness, `is_argument`, `is_captured`, the hidden return-buffer attribute); this
 them and no rewrite re-derives them.  A rewrite that fails it declines the WHOLE loop — a
 mover left to its template would move a record a kept holder still describes.  Today only a
 push moves; the rule is written for the next mover too.  Sites: `hoist::owned_local`,
-`hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.
+`hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.  The
+versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` decide the copy,
+`StoreFacts::distinct` reads its assumed pairs at the roots of both sides — an adopted local
+and its `__vdb` witness among them, the witness assumed but never tested (the adoption leaves
+it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
+`tests/scripts/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
+(graphics' `polygon_crossings`: 8.1× → 5.4× of its twin) and
+`tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`
+(`mesh_to_floats`'s shape).
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
@@ -275,6 +320,18 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  — and a chain that forks or leaves the table answers nothing.
                  `LOFT_NO_DISTINCT_GROWTH` keeps every base off under any growth; the
                  verify form re-derives the base at every use as before.
+                 THE RESOLVE CLAUSE: a byte, boolean or character element read of a
+                 path whose header is held WITHOUT a base — the function clause of
+                 (R-Header), a loop that grows a store not proven apart — is the same
+                 range test and one load, the base taken from the store AT THE READ
+                 (`elem_base` of the header's record).  The header alone proves the
+                 vector's record and length, and the read takes the store's buffer as
+                 it is now, so a store that grew since answers its new buffer.  No
+                 condition beyond the header's.  `LOFT_NO_BYTE_RESOLVE` keeps the
+                 template where no base is held; the falsifier is `LOFT_POISON=1`,
+                 under which a store's growth moves its bytes and poisons the block it
+                 leaves, so an address held across a growth reads the poison where a
+                 `realloc` left the old bytes readable and equal.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -293,7 +350,7 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  R-BoundedNest) asks for the plain `[iterator, body]` shape
                  itself.  The
                  INTEGER CLOSURE — the result of `+`/`-`/`*` over non-sentinel
-                 operands counted non-sentinel — is deliberately NOT taken: C85 makes
+                 operands counted non-sentinel — is deliberately NOT taken: @C85 makes
                  an overflow's sentinel propagate onward as null on both backends,
                  and a native closure would answer a number there, a divergence after
                  a reported fault.  Its price is measured (§ V-aj), and it is the
@@ -337,7 +394,11 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  host, the adopted result's witness — is left to that rewrite.
 
   (R-PushFill)   a counted loop (`for … in lo..hi`, `lo..=hi`) whose body pushes k
-                 scalars to ONE pure path at its top level every iteration — nothing
+                 scalars to ONE pure path at its top level every iteration — or to
+                 SEVERAL paths with distinct roots, each judged on its own with the
+                 others' pushes read as plain statements, which reserves every path
+                 first and re-derives every header after (no fill; a window per path
+                 under THE WINDOW CLAUSE's several-paths form) — nothing
                  in the body can leave the loop early or loop again, no push to the
                  path stands under a branch, no other write reaches the path, the
                  range's end is a simple invariant — RESERVES k times its trip count
@@ -385,7 +446,30 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  held address.  The single exit is the counted loop's own
                  (no `break`, `return`, `continue` or inner loop), so the close runs
                  on every path out.  A body that fails any of these keeps the header
-                 push, which costs the window and never a value.  THE RECORD CLAUSE:
+                 push, which costs the window and never a value.  SEVERAL PATHS: a
+                 loop pushing to several paths with distinct roots opens a window on
+                 each when the loop holds every path's header (so every path was
+                 reserved before any header was re-derived) and the conditions above
+                 hold for the paths TOGETHER — every root exclusive, and the body
+                 outside the pushes of ANY path names no root and no variable that
+                 may view a root's store.  Two windows may address ONE store: every
+                 push is counted and unconditional and every path is reserved for its
+                 own count, so no push outgrows its window and no store reallocates
+                 while they are open.  DEEP: a loop whose fused pushes reach ONE
+                 path at ANY depth — under `if` arms, in loops nested inside — opens a
+                 window on the push header it holds with NO reservation; a push that
+                 does not fit takes the window's growth arm, the header push's own
+                 growth step, which answers a fresh window, so what else the loop holds
+                 is judged as it is for the header push.  The body outside those pushes
+                 meets the window's naming and no-write conditions, with a variable the
+                 store facts (R-Base's growth clause, a versioned copy's runtime test)
+                 prove apart from the root admitted; no `return` or `yield` stands in
+                 it and no `break` or `continue` leaves a loop enclosing it, so the
+                 close after the loop runs on every way out.  ONE path only: an
+                 unreserved growth moves every address into its store, a second
+                 window's too.  A loop nested in a windowed one pushes through the
+                 window — its own reservation or fill would move the record or write
+                 its length under it, and steps aside.  THE RECORD CLAUSE:
                  the pushed values may be RECORD MINT GROUPS — the parser's
                  reservation, mint, field sets on the fresh element and finish —
                  standing at the body's top level or under `if` arms, each over ONE
@@ -405,7 +489,16 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  address, the record's length untouched), the group's field sets and
                  the address (R-RecPtr)'s mint clause holds are that pointer, its
                  finish is the window's length bump, and the close writes the
-                 record's length once after every copy of the loop.
+                 record's length once after every copy of the loop.  THE RUN
+                 CLAUSE: a STRAIGHT-LINE run of k >= 2 byte appends to one vector
+                 path, `v += [a]; v += [b]; …` with only line markers between them,
+                 is one reservation of k and one window, closed after the last —
+                 the loop's window over a count known statically.  No pushed value
+                 may read v's root or any non-scalar local (a view could reach v's
+                 store and read the length the window has not written back), nor
+                 call anything but an operator; a path a loop already holds a push
+                 header or window for keeps its pushes, and a vector with no record
+                 runs the appends as they stand.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -591,6 +684,224 @@ emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped st
 `ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
 pins `tests/loop_record.rs`.
 
+### A return buffer refills the store a rebind released
+
+```
+  (R-RefillBuffer) on `--native`, the store `(H-SwapRebind)` releases — holding the
+                 rebound variable's previous value, a root of its own type that
+                 nothing references — is KEPT instead of freed (one at a time; a
+                 second release frees the first).  A function's hidden return buffer
+                 whose every mint is the buffer's null-check prologue or a bare
+                 `OpDatabase`, each heading a literal group that writes every field
+                 (`(R-CompleteWrite)`'s coverage) of a REFILLABLE type — every field
+                 owns no heap, or is a vector whose elements own none — mints with
+                 `OpDatabaseRefill`: a null buffer takes the kept store of the same
+                 type as it stands, and the group's zero of each vector field empties
+                 that vector in place (`clear_vector`) for the fill that follows.
+                 Every other mint is fresh and the empty is a no-op on it.  A text, a
+                 keyed collection, a nested record that owns heap, a mint the walk
+                 cannot see the group of, and a `par` worker's stores decline.
+                 THE IN-PLACE CLAUSE: an empty followed by a repeat literal of the
+                 same field (`n` copies of one scalar, `(R-PushFill)`'s form) is one
+                 overwrite when the kept vector holds exactly `n` elements of that
+                 width — every element written, the length already `n`, so the
+                 answer is the empty-and-fill's; any other length, a foreign or
+                 locked vector, empties and fills.
+```
+
+**In words.** The `(R-LoopRecord)` shape across a call.  A builder called in a loop,
+`c = mul(a, c)`, minted a store for its result every call, claimed its vector and filled
+it; the rebind then exchanged it into `c` and freed the store holding `c`'s old value.  The
+two stores now take turns: the one released is the next call's buffer.  It is exact because
+the literal is complete — every scalar is written again — and a refillable type's only heap
+is vectors the group empties and refills, so nothing of the old value survives and nothing
+old is left unreachable in the store.  A kept store is the runtime's, not a leak, and is
+skipped by the exit census.  Effect on mesh3d's `mat4_mul` loop: priced by hand at −52 %
+of the call.  Switch `LOFT_NO_REFILL_BUFFER=1`, read where the buffer is emitted and at run
+time.  The in-place clause skips the reset, the reserve and the two header derivations of a
+fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 %), switch
+`LOFT_NO_REFILL_IN_PLACE=1`, site `Stores::fill_exact`, guard
+`tests/scripts/a-refilled-repeat-literal-is-overwritten-in-place.loft`.  Sites: `hoist::refill_buffers`, `ops::misc_ops` (the mint), the block loop in
+`emit.rs` (the vector-field empty), `Stores::take_spare` / `park_spare`.  Guard
+`tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
+`tests/refill_buffer.rs`.
+
+### A pooled buffer's texts are refilled in their slots
+
+```
+  (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
+                 minted once per activation by a zero-filling OpDatabase and
+                 released before every later call by OpClear(b, tp) (the
+                 (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
+                 emitted, and the call goes to the callee's REFILL TWIN, whose
+                 text sets into its own return buffer refill the slot: the
+                 slot's block is written over when the new text fits its claim
+                 (len + 8 ≤ 8 × the block's header words), released and claimed
+                 anew when it does not, claimed when the slot is 0; a null text
+                 releases the slot's block.  Admitted where (a) tp's heap is
+                 TEXT ONLY — every heap slot of the type, nested inline records
+                 flattened, is a text (no collection, no reference, no enum
+                 payload that owns heap); (b) the callee builds its result as a
+                 record LITERAL into its own buffer on EVERY exit — `return b`,
+                 or a block whose value is b — the literal writing every text
+                 slot of tp exactly once, and nothing else in the callee names
+                 the buffer; and (c) b is named by nothing but its pool
+                 statement, this call's buffer argument and its releases, and
+                 the result bound from the call is only READ (a reading OpGet*,
+                 the source of a copy that keeps its source).  Where the site
+                 would call an `__inv` or `__rg` twin it releases first instead,
+                 in the pool statement's order.
+```
+
+**In words.**  A pooled buffer's release walk frees every text the previous result held, and
+the callee then claims a fresh block for every text of the new one: per call, one walk and
+one claim-and-free per text field, for blocks that are the same size each time more often
+than not.  Writing over the old block when the new text fits keeps the bytes where they are
+and drops both halves.  What makes it sound is ONE invariant, enforced at three points:
+**a text slot read by the refill holds 0 or a text block that slot owns.**
+
+- *The buffer's history* — (c): its mint zero-fills it (a slot is 0) and every later write
+  is the refill twin's literal (a slot owns its block).  A no-prefill mint
+  (`OpDatabaseNP`, `(R-CompleteWrite)`) or an element slot handed in as the buffer
+  (`(R-Place)`, `(R-ElemFirst)`) leaves BYTES there, which a refill would read as a block
+  number; neither is a pooled buffer, and neither can reach a refill twin, because the
+  decision is the SITE's, not the callee's.  A twin that mints its own buffer keeps the
+  zero-filling mint for the same reason.
+- *The callee* — (b): every exit is a literal writing every text slot, so after the call no
+  slot still holds the previous result's text (no stale value is visible, none leaks); a
+  forwarded exit (`return g(…)`), a copy into the buffer (`OpCopyRecord`, which claims fresh
+  blocks over the old ones) or an early exit that writes nothing declines.  The parser
+  writes every field of a literal, a defaulted text included, so what (b) protects is the
+  live-record count, not a value.
+- *The type* — (a): a refilled text slot is the only heap the walk would have freed; a
+  collection or a heap-owning enum payload would be left for the walk and is out of scope
+  until a clause of its own (vector-build.md's text-bearing elements).
+
+Why a TWIN and not the callee itself: the same callee is also called with buffers that do
+not keep the invariant (a fresh element slot, a no-prefill mint), and one emitted body cannot
+tell them apart; a twin, chosen where the buffer's history is known, can.  It is the shape
+`(R-Inputs)` (`__inv`) and `(R-RangedCall)` (`__rg`) emit.  A previous result read through a
+borrow after the next call is no new hazard: the release walk freed its block at the same
+point, and the scope pass never pools a site whose result a later text still depends on (it
+mints per call there instead).
+
+Native only; the interpreter keeps the walk and the fresh claims and is the oracle.  An
+armed release no call takes is an emission error, never a silent leak.  Effect on
+game_protocol `msg_ping` (x86-64): 18.0 → 4.89 ms, 7.55× → 2.05× Rust, hash unchanged.
+`flow_layout_full`, pluginabi `check_request` and cbor `decode` need the collection clause
+after it (vectors of text-bearing records).  Switch `LOFT_NO_REFILL_TEXT=1`; trace
+`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict.  Sites: `hoist::refill_text_sites`
+and `hoist::refill_text_callee` (the admission), `Stores::text_slots` (a), the block loop in
+`emit.rs` (the pool statement), `user_fn_call_body` (the call), `substitute_template_body`
+(the twin's text set), `Store::refill_str` (the write).  Guard
+`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` — value cells and a
+live-record census (`m1`), with three planted defects under `tests/falsified/` — and pin
+`tests/refill_text.rs`.
+
+```
+  (R-RefillText), the collection clause: a function whose hidden return buffer b is
+                 a (R-RefillBuffer) heap-element buffer — a one-field wrapper of
+                 vector<E>, E a record of scalars and texts — KEEPS b's elements
+                 where the mint keeps b (refill_keeps, the test OpDatabaseRefill
+                 asks): the entry sets the length to 0 and keeps K, the old length,
+                 in place of the releasing clear; a text set into an element the
+                 build appended refills the block its slot owns when the slot is
+                 under K and claims past it; and every exit releases the texts of
+                 the kept slots [len, K) the call did not reuse.  Admitted where the
+                 buffer is cleared once, at entry; every append mints its element
+                 with OpNewRecord, emitted without the prefill (R-CompleteWrite);
+                 and every other mention of b, its field views and its appended
+                 elements is a reservation, a length, an element read, an
+                 append's finish, an element's own set or read, the field's zero,
+                 a self-replace, a release or a return.
+```
+
+**In words.**  The same invariant, one level down: a text slot read by the refill holds 0 or
+a block that slot owns.  Slots under the length at entry are live elements, which own their
+texts; past the length a removal can leave a stale copy of a live element's handle, and fresh
+capacity holds whatever the store left there, so neither is trusted and K is the length, not
+the capacity.  The length stays true during the build — a read of the vector mid-build sees
+only what this call appended — which is why each kept slot still goes through the append (a
+form that overwrote kept elements in place under the old length priced −20 % against this
+form's −16.5 %, and answers a mid-build read with stale elements).  The vector grows only
+when its length reaches its capacity, which is at least K, so a slot past K is never one a
+growth copied.  A second clear inside the build would reset the store under the kept slots;
+a prefilling mint would write 0 over a kept text and strand its block; a removal, an insert
+or any use the whitelist does not name declines.  Effect on zttext `flow_layout_full`
+(x86-64): 26.0 → 22.7 ms, 14.15× → 12.35× Rust, hash unchanged.  Switch
+`LOFT_NO_REFILL_ELEMENTS=1`; `LOFT_TRACE_REFILL_TEXT=1` names each heap-element buffer's
+verdict.  Sites: `hoist::keep_elements` (the admission), `Stores::refill_keep_open` /
+`refill_keep_close` (entry and exit), `codegen_runtime::RefillKeepGuard` (the exit on every
+return), `clear_vector` in `text.rs` (the entry), `substitute_template_body` (the element's
+text set).  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`,
+with two planted defects under `tests/falsified/`; pin `tests/refill_text.rs`.
+
+```
+  (R-RefillText), the vector clause: at a pooled call site whose buffer b's type has
+                 for heap only vector fields of plain elements (no text, no
+                 collection, no linked group in an element; no other heap field —
+                 Stores::vector_slots), and whose callee (R-RefillBuffer) refills its
+                 buffer with elements that own no heap, the release is not emitted
+                 and the plain callee is called.  Admitted under (c) without its
+                 "only READ": the buffer named by nothing but its pool statement,
+                 the call's buffer argument and its releases, the result bound once.
+```
+
+**In words.**  The refilling callee keeps a live buffer (`refill_keeps`) and empties each
+vector field where it stands; the release before the call freed exactly the vectors it would
+have kept, and the callee's appends then claimed new ones.  The invariant the emptying reads
+is that a vector slot holds 0, the absent mark, or a vector that slot owns — and every write
+the language makes to a vector field keeps that, which is why the result may be written,
+grown or passed on between calls, unlike a text clause's refilled slot.  No twin is needed:
+an emission of the callee that does not refill mints over the live buffer, and that mint
+clears its store.  Native only; the interpreter keeps the release and is the oracle.  Effect
+on hex_recover `forms_upto` (x86-64): 2.00 → 1.02 ms, 12.96× → 6.62× Rust, hash unchanged.
+Switch `LOFT_NO_REFILL_VECTORS=1`; `LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)`.
+Sites: `hoist::refill_vector_callee`, the clause choice in `refill_text_site_declines`,
+`RefillTextSites::vectors`, `refill_text_call` in `calls.rs`.  Guard
+`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`; pin
+`tests/refill_text.rs` (the values pass either way, so the pin is the falsifier).
+
+### A rebind hands the displaced store to the call
+
+```
+  (R-RebindBuffer) on `--native`, the rebind `x = f(…)` of an owned local from a
+                 direct call that answers a FRESH store (`Own::Owned`) through a
+                 hidden buffer local `b` — a compiler local nothing but this call and
+                 its scope-exit free names — ADOPTS the result and hands `x`'s
+                 previous store to `b`, the buffer of the call's next execution,
+                 instead of exchanging the result into `x`'s store
+                 (`(H-SwapRebind)`).  Run-time conditions, each falling back to the
+                 exchange: the result has a store of its own (not null, not `x`'s),
+                 `x` held one, `b` is null or IS the result's store (so no live
+                 buffer is dropped), and `x`'s store is not the caller's entry buffer
+                 (a return-buffer local).  Static conditions: `x` is not an argument
+                 (the return-buffer attribute with its entry witness excepted), not
+                 captured, not never-free, not witnessed, not a coroutine field; the
+                 rebind sits inside a loop (the handed store is a buffer only if the
+                 call runs again); and no local borrowing `x`'s or `b`'s store is named
+                 at or after the top-level statement holding the rebind.  At its
+                 release `b` PARKS the store it holds where the exchange would have
+                 parked its released one (`(R-RefillBuffer)`'s spare), so the stores a
+                 function leaves behind for the next mint are the exchange's.
+```
+
+**In words.**  `c = mul(a, c)` in a loop built each result in a buffer, then exchanged the
+two stores' contents so that `c` kept its slot — a check of both stores' flags, the swap,
+the park of the released store and a take of it at the next mint, every iteration.  Nothing
+needs `c`'s SLOT to stay put when nothing else names it: the result is fresh, so `c` can
+simply take it, and the store `c` held — whose value the rebind ends — is exactly a buffer
+of the right type for the next call, which the refilling callee (`(R-RefillBuffer)`) writes
+in place.  The two stores take turns by name instead of by content.  The scope-exit free of
+`b` releases whichever one `c` does not hold.  Effect: mesh3d's `mat4_mul` loop 54 → 39 ns
+per product (−29 %, priced −29 %).  Switch `LOFT_NO_REBIND_BUFFER=1`, read where the rebind
+is emitted; trace `LOFT_TRACE_REBIND_BUFFER=1` names each decline.  Sites:
+`Output::rebind_buffer_for`, the call-return arm in `generation/dispatch.rs`, the body
+pre-pass that marks the buffers (`Output::rebind_handed`, so a release emitted before the
+rebind — an early `return` inside the loop — parks too), and `Stores::park_or_free`.  Guard
+`tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft`, pin
+`tests/rebind_buffer.rs`.
+
 ### An in-place scalar set disturbs no header
 
 ```
@@ -629,7 +940,8 @@ element's bytes lie in that span.  Past the end — where a walk's last read lan
 its length test breaks — is the null text without a call, as `get_vector` answers any
 non-negative index at or beyond the length (a null vector's length is 0); a NEGATIVE index
 counts from the end and takes the unfused path (`text_elem_cold`, outlined: folded in, the
-hot half lost its inline and the walk its registers).
+hot half lost its inline and the walk its registers — the exception (R-Cold)'s fold clause
+names).
 `LOFT_HOIST_VERIFY=1` re-derives header, base and span at every read.  A twin's input
 base carries no span, and such a read keeps the store-resolving form.  Switch
 `LOFT_NO_TEXT_BASE`; cells `tests/scripts/158-text-base.loft` b1–b8 (falsified by the
@@ -673,7 +985,7 @@ remainder may grow a store"*), and each of the ~20 field accesses per pass resol
 store.  The copy itself STAYS.  Eliding it
 statically would need more than the alias proof: on the path where `ents[i]?` discharged an
 absent element, `ents[i] = e` is an out-of-range store with a fault note of its own, and a
-rewrite does not decide what is reported after a fault (C120).  Two cells could not fail
+rewrite does not decide what is reported after a fault (@C120).  Two cells could not fail
 when first sabotaged and were replaced by ones that can: with the copy contributing nothing
 to the write set, a loop that also discharges with `?` stayed green — the discharge buffer
 is itself a whole-type write of the same type and evicted the scalars on the copy's behalf —
@@ -788,7 +1100,8 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  growth clause: r's store is the end of its dep chain, `pr` for
                  `e = pr.items[i]?`), frees no record before a later use of r, never
                  rebinds r — a `Set`, and a NATIVE op taking r as its first
-                 operand that is not a read (`OpGet…`) or an in-place scalar set
+                 operand that is not a read (`OpGet…`), a comparison of the
+                 reference (`r == null`, `r != s`) or an in-place scalar set
                  (R-InPlace; a kind the address does not serve keeps its store
                  write, to the same bytes): a mint into it, a copy into it, a
                  free — and reads, writes or hands r at least once.  A binding to null (a buffer's pre-init,
@@ -797,7 +1110,13 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  loop's end signal — is admitted as its inner record: the null
                  record keeps its sentinel, the address is null and every read
                  tests it.  An enum payload and a synthetic `__nullable<S>` are
-                 not plain records and are never bound.  THE BASE CLAUSE: where
+                 not plain records and are never bound.  THE PARAMETER CLAUSE: a
+                 plain-record PARAMETER is a view the caller fixed before the first
+                 statement, so the whole body is its remainder and takes the same
+                 verdict; a generator's parameters, which outlive a resumption, never
+                 do.  A TWIN (R-Inputs) runs the clause as its plain function does, over
+                 the accesses its inputs leave: a field read from an input is no use of
+                 the address.  THE BASE CLAUSE: where
                  the binding is the head of `for e in v` — `e = { idx = idx + 1;
                  v[idx] }` — over a path whose header AND element base the loop
                  holds (R-Base), the address is `base + idx * size` when `idx` is
@@ -830,7 +1149,18 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  enum payloads is (R-Scalar)'s: a hoisted scalar is keyed by (type,
                  offset), and two variants put different fields at one offset.  The
                  synthetic `__nullable<S>` stays out: its absence is a discriminant,
-                 not a null record.
+                 not a null record.  THE TUPLE CLAUSE: a record carried as a VALUE
+                 (R-ValueRecord) is read out of a store record — `return
+                 v[i]?` of a value-returning function — and written into one — a
+                 copy from a value local or a forward — through one address taken
+                 where the copy starts: the record evaluated once, its address and
+                 lock state once, then one load or store per field of a kind the
+                 address serves (a `boolean` keeps its own accessor, to the same
+                 bytes).  No block proof is needed: the copy's parts are tuple
+                 elements or loads, so nothing between the address and its last
+                 use grows, moves or frees a store.  A view part declines the
+                 write (its append may grow the store), and a view whose block
+                 already holds an address reads and writes through that one.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -846,8 +1176,11 @@ falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
-(the read and the write), `vector::rec_ptr` / `rec_get` / `rec_set`.  Cells
-`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  The `for e in v` loop
+(the read and the write), `Output::output_record_tuple` and
+`Output::write_tuple_through_address` (the tuple clause), `vector::rec_ptr` / `rec_get` /
+`rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
+`tests/scripts/a-value-record-is-copied-through-one-address.loft`, pins
+`tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
 the same gate admits it once the `Optional` is peeled — the loop body reads every field of
 `e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
@@ -857,6 +1190,13 @@ the same gate admits it once the `Optional` is peeled — the loop body reads ev
 element and then resolved the store a second time to turn that `DbRef` back into an address
 — per element, in a loop that already held the address of element 0.  An explicit index binding (`e = v[i]?`)
 is a JOIN — the element, or a discharge buffer in another store — and keeps `rec_ptr`.
+Inside the in-range test the address is NOT NULL, and the emitted code says so
+(`vector::held_elem_ptr`): a held base is null only for an absent vector, whose length is 0,
+so `index < len` proves it real.  Every field read through the address tests it for the null
+record; with the fact stated, those tests and the absent value they guard fold away for the
+loop body — and with them the cost the null-aware float compare showed (`mesh_aabb` 28.3 →
+17.0 µs, `entity_tick` −19 %).  Under `LOFT_HOIST_VERIFY=1` the fact is checked, not assumed:
+an address built without its range test panics at the first empty or absent vector (cell w16).
 Switch `LOFT_NO_BASE_RECPTR`; falsifier `LOFT_HOIST_VERIFY=1` (`rec_get`/`rec_set` compare
 the address with a fresh `rec_ptr` at every use — a sabotaged `index + 1` panics there, and
 answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
@@ -867,8 +1207,7 @@ answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
 *The path clause.*  Only a DIRECT field of a view counted as a
 fusable access, so a loop over records of records — `for v in m.verts { … v.pos.x … }` —
 bound no address at all, and each of its reads rebuilt a `DbRef` with two offset additions
-and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  What is left there is the null-aware float comparison, which is the language's
-semantics on operands no proof says are non-null.  **Emitter-local by design:** the fold
+and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  **Emitter-local by design:** the fold
 is sound for an ADDRESS, which loads the bytes where they are each time.  Done in the
 parser it would turn `v.pos.x` into `OpGetFloat(v, 8)`, a `(R-Scalar)` candidate typed
 `(Vertex, 8)` — and a write through a sub-record view (`p = v.pos; p.x = …`) is typed
@@ -979,9 +1318,12 @@ Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
                  fields p.f its own write set does not reach and the vector paths
                  p.g it views (R-View) or indexes (R-Header); for a vector p, its
                  own header when it indexes p (g empty).  A caller loop that holds,
-                 for the argument a it passes for p — a leaf variable c for a scalar
-                 input, a pure path (R-Header) for a header input — the value of
-                 (c, f) under (R-Scalar) and the header of a.g under (R-Header) —
+                 for the argument a it passes for p — a leaf variable c, or a path of
+                 INLINE sub-records over c, for a scalar input; a pure path (R-Header)
+                 for a header input — the value of (c, f) under (R-Scalar), keyed on
+                 the root and the field's SUMMED offset for a path and stale after a
+                 write at the root's type and that offset or at any sub-record's type
+                 and the offset within it, and the header of a.g under (R-Header) —
                  EVERY input of the callee — calls the callee's TWIN: the same body
                  emitted with those values as extra parameters, read in place of
                  the record — the caller's holders handed in (R-State: a path held
@@ -1215,8 +1557,9 @@ handles, so every one of its 1 272 mints per call paid the dispatch and a `set_d
 walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
 made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
 `LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
-store guard panic naming record `3735928559` — while the plain run (zero-on-claim) stays
-green, which is why that falsifier and not the plain run guards the clause.  Switch
+store guard panic naming the poisoned record — while a plain run can stay green on stale
+bytes that happen to read as an empty handle, which is why that falsifier and not the plain
+run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
 `tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
 `Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
@@ -1278,7 +1621,7 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  operation can fault, so the plain answer IS the checked template's.
                  A range implies non-sentinel: the sentinel is never inside one, and
                  a parameter or a record/element read is never ranged BY SHAPE
-                 (C80).  THE TYPE CLAUSE: a value whose STATIC TYPE is a fact carries
+                 (@C80).  THE TYPE CLAUSE: a value whose STATIC TYPE is a fact carries
                  that type's range as a leaf — a non-nullable `Integer[lo, hi]` whose
                  range fills its width (`u8`, `i8`, `u16`, `i16`, every user-written
                  `limit(lo, hi)`), whether it is a parameter, a local the compiler
@@ -1299,11 +1642,11 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  always right.
 ```
 
-**The type clause, in words.** The C129/C120 discussion with the `cbor` library as
+**The type clause, in words.** The @C129/@C120 discussion with the `cbor` library as
 the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
 SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
 was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a
-library that declared `major: integer limit(0, 7)` — C120's own stated route, *"a library opts
+library that declared `major: integer limit(0, 7)` — @C120's own stated route, *"a library opts
 in by declaring the bounded element types it already knows"* — got nothing for it.  Probed on
 four shapes: every op checked.  The clause could not be built until the declaration WAS a fact
 (loft#1593: a user `limit` accepted an out-of-range store and read a wrong in-range number —
@@ -1316,7 +1659,7 @@ checked (c7, measured, a refinement not a defect); a bare-variable `??` over a n
 parameter lowers to an `if` whose then arm is the parameter and stays checked (c5).  Cells
 `tests/scripts/157-range-arith.loft` c1–c8, pins `tests/range_arith.rs`.
 
-**In words.**  C120 declined the CLOSURE of the non-sentinel proof over
+**In words.**  @C120 declined the CLOSURE of the non-sentinel proof over
 arithmetic — an overflow's null must propagate on both backends — and named the admissible
 successor: *"a PROOF, not a policy: arithmetic whose operands carry ranges such that the
 result CANNOT overflow may emit the plain operator, because no fault can occur and no value
@@ -1346,17 +1689,22 @@ is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=
 naming the operator.
 **The accumulator clause** (@PLN158 round 4): a second self-stepping shape
 read off a loop, after the counters.  A local seeded ONCE by a ranged value (`n = 0`) and
-stepped only by LITERALS (`n += 1`, `n -= 2`), every step either straight-line after the
-seed in the seed's own block or inside ONE loop there that is a character walk `(R-CharWalk)`
-over a text the body never writes, is ranged: such a walk makes at most `size(T)` trips (a
-`u32` word), so per run of the block `n` moves by at most `Σ|c| · u32::MAX` over the walked
-steps plus `Σ|c|` over the straight ones, and the seed plus that bound is `n`'s range
-whenever it fits the type — the checked step cannot fault, so the processor's operator
-answers what the template would.  The seed's block may itself sit in a loop (each pass
-re-seeds); a step under a second loop, under a loop that is not such a walk (a counted loop:
-its trips are not a text's size; a walk over a text the body appends to), a step by a
-non-literal, a second seed, a write to `n` anywhere else, a parameter seed or `n` handed out
-by reference declines.  `LOFT_HOIST_VERIFY=1` compares every plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a11, pins
+stepped only by LITERALS (`n += 1`, `n -= 2`), every step straight-line after the seed in the
+seed's own block or under loops there whose TRIPS are bounded, is ranged.  A character walk
+`(R-CharWalk)` over a text the body never writes makes at most `size(T)` trips (a `u32`
+word); a counted loop makes at most `hi - lo + 1`, over the range `(R-Counter)`'s clause gave
+its stepped counter.  A step under nested bounded loops moves `n` by `|c|` times the PRODUCT
+of their bounds, so per run of the block `n` moves by at most the sum of those, and the seed
+plus that bound is `n`'s range whenever it fits the type — the checked step cannot fault,
+so the processor's operator answers what the template would.  An inner loop whose end is
+an outer counter (`for _ in 0..i`, the insertion sort's `j -= 1`) is bounded once that
+counter is ranged, so the clause is re-read where the fixpoint re-seeds counters.  The
+seed's block may itself sit in a loop (each pass re-seeds); a step under a loop with no
+bound (a `while`, a counted loop whose seed or end is unranged, a walk over a text the body
+appends to), a step by a non-literal, a second seed, a write to `n` anywhere else, a
+parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` compares every
+plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
+the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
@@ -1642,6 +1990,15 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  place; and no fn-ref call, parallel arm or yield runs.  A writer
                  that names no store, or takes an operand of any other kind,
                  declines.
+                 FORMAT CLAUSE: a text LOCAL whose each binding is a text literal
+                 or a format string `"…{x}…"` whose work text is that format's OWN
+                 — named nowhere else in the body but its declaration and its
+                 release among the function's outermost statements — BORROWS the
+                 work text, provided no such format reads the local it binds and
+                 no other variable is bound from the local; every other mention a
+                 text-value read, as above.  Only another run of the same format
+                 rewrites the work text, and that run rebinds the local.  No store
+                 condition: the work text is the frame's own `String`.
 ```
 
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
@@ -1692,6 +2049,20 @@ reads differently without the store condition); pins `tests/text_borrow.rs`.  Si
 `hoist::borrowed_store_texts`, `hoist::param_rooted`, `hoist::frame_minted_locals`,
 `hoist::mention_scope`, `hoist::foreign_store_writer`, the key arm of
 `hoist::text_escapes_with`, the local bind in `Output::output_set`.
+
+**The format clause.**  `char_str = "{c}"; out += char_str; i += char_str.size()` — the
+markdown inline renderer's per-character path — built the text in the format's work text and
+then copied it into a fresh `String` for the local: a `malloc` and a `free` per character, a
+third of `render_inline`'s time.  The work text is a frame-long `String` the format clears
+and refills, so the local can be a `&str` into it for as long as nothing refills it.  That
+is what the clause's conditions secure: the work text is the format's own, so only the
+format refills it, and each run of the format rebinds the local — the old borrow is dead by
+then, unless the format reads the local itself (refused) or another variable took the
+borrow over (refused).  rustc checks the same borrow, so a wrong admission is a refused
+compile rather than a wrong answer.  Cells
+`tests/scripts/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
+compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
+`hoist::borrowed_store_texts`.
 
 ### A character walk steps an ASCII byte in one move
 
@@ -1757,6 +2128,30 @@ guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and th
 `tests/format_append.rs`).
 The stdlib's own `char_slice` takes it too.
 
+### An emptied text keeps its buffer
+
+```
+  (R-TextClear)  `x = ""` where x is a declared text LOCAL whose native slot is a
+                 `String`, or a `&text` PARAMETER, empties x IN PLACE — the same empty
+                 text, the buffer's capacity kept — rather than binding a fresh empty
+                 `String`.  The value is the empty text either way; only the
+                 capacity differs, which no program can observe (R-Escape).  A first
+                 bind (the declaration), a text PARAMETER passed by value, a generator
+                 field and a narrow-encoded local keep the fresh `String`.
+```
+
+**In words.**  A work text — a call's text result buffer, a format's work text, an
+accumulator — is emptied once per use and refilled.  Bound to a fresh `String` each time,
+it dropped its allocation and claimed and regrew a new one on every pass: zttext's
+`materialise` paid that per piece, its callee emptying the caller's result buffer through
+the `&text` parameter.  Emptied in place the buffer is claimed once per activation.
+`materialise` 500 → 206 µs, `seg` 950 → 665 µs on arm64 macOS, hashes unchanged.
+Switch `LOFT_NO_TEXT_CLEAR`; census `R-TextClear`, one per emission.  Cells
+`tests/scripts/an-emptied-text-keeps-no-old-content.loft` (c1–c6: every cell refills a
+text that held MORE than it is refilled with; with the clear replaced by a no-op, c1
+reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
+`Output::output_set_inner`.
+
 ### A text copied byte by byte is one append
 
 ```
@@ -1770,6 +2165,17 @@ The stdlib's own `char_slice` takes it too.
                  and the loop pushes what it always pushed).  A second statement in the
                  body, a text that is a field or an element, a destination whose element
                  is not a raw byte, and a bound that is any other call keep the loop.
+                 THE VECTOR CLAUSE: `for i in lo..hi { buf += [v[off + i] ?? d] }` (or
+                 `v[i]`, `i + off`) over a byte vector VARIABLE `v` whose element is
+                 `buf`'s, `off` a literal or a variable, `d` a literal, `buf` EXCLUSIVE
+                 as `(R-VecCopy)` defines it (a record `(R-Place)` claimed for it counts
+                 as minted here) — is ONE slice append of `v[off + lo .. off + hi]`
+                 behind `0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off`.  A raw
+                 byte read in range is never null, so `?? d` never fires inside the
+                 guard; outside it the loop runs as written (a negative index counts
+                 from the end, one past the end reads null and pushes `d`).  An element
+                 of any other kind — `integer`, `float`, a narrow bias — can hold the
+                 null its `?? d` replaces, and keeps the loop.
 ```
 
 **In words.**  A binary encoder copies a text payload into its byte buffer one byte at a
@@ -1778,8 +2184,66 @@ push cost 4.3 ns a byte against a block copy.  The append grows the vector the w
 grows it (`vector::append_bytes`, one home with `vector_append`'s doubling), because a
 reservation to the exact length reallocated on every chunk.
 
+The vector clause is the decoder's half of the same copy: `bs += [bytes[pos + k] ?? 0]` is
+how a reader takes a byte string out of its frame, and the guard makes the slice exactly the
+bytes the loop pushes.
+
 **BUILT** (`src/byte_copy.rs` after the compaction pass, `LOFT_NO_BYTE_COPY`;
-guard `tests/scripts/a-byte-wise-text-copy-is-one-append.loft`, pin `tests/byte_copy.rs`).
+guards `tests/scripts/a-byte-wise-text-copy-is-one-append.loft` and
+`tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft`, pin
+`tests/byte_copy.rs`).
+
+### A run of one constant is one repeat fill
+
+```
+  (R-RepeatRun)  four or more consecutive pushes of the SAME literal into the SAME target —
+                 `[c, c, c, c, …]` spelled out, the target a local or a field path over one
+                 with literal operands, the element at least four bytes (`float`,
+                 `integer`, `single`, `i32`), the literal compared by its bits — are the
+                 repeat literal `[c; n]`: the reservation `OpPreAllocVector(target, n,
+                 size)` (which claims n elements for an ABSENT vector and leaves one that
+                 exists alone), one push of the template, and `OpAppendCopy(target, n, tp)`,
+                 which copies the vector's LAST element — the template — `n - 1` more
+                 times.  Elements appended before the run stay where they were.  A shorter
+                 run, a narrower element, a computed value or target keep the pushes.
+```
+
+**In words.**  A matrix or a buffer zeroed by its literal is spelled with every element, and
+each push paid a capacity test and a length bump, and a fresh vector grew partway.  The
+repeat literal already fills by doubling block copies; this gives the spelled-out form the
+same lowering.  **BUILT** (`src/repeat_run.rs`, scope pass, `LOFT_NO_REPEAT_RUN`; guard
+`tests/scripts/a-run-of-one-constant-is-one-repeat-fill.loft`, pin `tests/repeat_run.rs`).
+
+### A byte run read once as text is never built
+
+```
+  (R-TextRun)    `t: vector<u8> = []; for i in lo..hi { t += [v[off + i] ?? d] }; …;
+                 x = text_from_bytes(t)` — a byte vector declared empty immediately
+                 before a copy `(R-ByteCopy)`'s vector clause admits, and read once as
+                 text as the direct value of an assignment — is never built on the
+                 guard `g` of that copy: the declaration and the copy run only under
+                 `!g`, and the read is `if g { x = text_from_byte_range(v, off + lo,
+                 off + hi) } else { x = text_from_bytes(t) }`.  `g` is evaluated twice,
+                 so every statement between the copy and the read may only read, mint
+                 the frame's hidden return buffer or write a scalar field of it, and
+                 assign no variable `g` reads.  A second mention of `t`, a mention of its
+                 wrapper other than its declaration and its frees, a vector that is not
+                 empty before the copy, a read that is not an assignment's value, and a
+                 read under a loop keep the vector.
+```
+
+**In words.**  A decoder takes each text out of its frame by copying the bytes into a vector
+and converting it, so every text cost two objects — the vector's wrapper and its element
+record — claimed, filled and released only to be read once.  The range read decodes the same
+bytes with the same conversion (`String::from_utf8`, invalid bytes answering `""`), so on the
+guard's path the text is identical and neither object exists; the frees of the wrapper the
+path never claimed pass a null by.  The choice sits above the assignment, not inside it,
+because a text native assigned to its destination is lowered destination-passing and must be
+the assignment's direct value.
+
+**BUILT** (`src/text_run.rs`, called by `src/byte_copy.rs` on the copies it just guarded;
+`LOFT_NO_BYTE_COPY` turns both off; guard
+`tests/scripts/a-byte-run-read-once-as-text-is-read-in-place.loft`, pin `tests/text_run.rs`).
 
 ### A vector copied element by element is one append
 
@@ -1808,6 +2272,29 @@ exactly as the append copies them.  No guard is needed: the conditions are all s
 **BUILT** (`src/vec_copy.rs` after the byte-copy pass, `LOFT_NO_VEC_COPY`; guard
 `tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
 `tests/vec_copy.rs`).
+
+### A fixed-width integer read is typed at its site
+
+```
+  (R-TypedRead)  `OpReadFile(f, OpCreateStack(t), n, τ)` into an `integer` local t, where
+                 τ is a fixed-width integer and n its width — `integer` / `long` 8 signed,
+                 a byte or short type 1 or 2 with the sign its range gives, a 4-byte type
+                 signed — reads through the same format test, `#next` and handle as the
+                 generic read, decoding W = n bytes at sign S fixed at the site, the bytes
+                 taken by value.  A short read leaves t unchanged and advances `#next` by
+                 what arrived, as the generic read does.  `boolean`, `character`, text, a
+                 float, a collection, an n that is not τ's width and a slot that is not an
+                 `i64` local keep the generic read.  Native only; the interpreter's read is
+                 the reference the guard compares against.
+```
+
+**In words.**  The generic read asked, per call, whether τ is text and which width and sign
+it decodes, and copied the bytes through a slice on the stack — facts the site has at
+compile time, and a reload that stalled on the bytes just written.  The decode is the
+generic one's, arm for arm, so the answer cannot differ; what moved is when it is decided.
+
+**BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
+guard `tests/scripts/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
 ### A walk of a scalar literal builds no vector
 
@@ -1931,6 +2418,68 @@ across calls — and collapsing the delivery BLOCK whole drops its scope-exit fr
 `in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
 § V-j hook.
 
+### A returned local bound from a call is built in the return buffer
+
+```
+  (R-ForwardResult) a local L of a function value-returning a vector through its
+                 hidden return buffer rb, bound in a block from a call that delivers
+                 into its hidden buffer argument (a one-buffer return, never a borrowed
+                 view) — `buf = head(…, __ref_N)` — and delivered later in the SAME
+                 block by `OpClearVector(rb); OpAppendVector(rb, L)`, with nothing
+                 between the bind and the delivery naming rb and nothing after it
+                 naming L, hands the call rb instead: L is then rb, the delivery pair
+                 is the identity and goes, and `__ref_N` — named only at its null
+                 inits, its null guard, this call and its frees — is never minted.
+                 L is judged across all its sites (the arms of one `match` bind one
+                 `buf`): outside them it is named only at its null inits.  rb shares
+                 no store with a parameter (every road that hands a buffer in refuses
+                 one that does), and the callee's entry clear is the buffer's reuse
+                 contract (R-RetAdopt), which is why the delivery's clear can go.
+```
+
+**In words.** cbor's `encode` arms (`buf = head(2, len(value)); buf += value; buf`)
+minted a store per call, built the header and the payload in it, copied the whole vector
+into the caller's buffer and freed the store; the other arms of the same `match` already
+handed `head` the return buffer.  Switch `LOFT_NO_FORWARD_RESULT`;
+`LOFT_TRACE_FORWARD_RESULT=1` names each admission and decline.  Site:
+`forward_result::rewrite`, in the scope pass after `(R-ExitVector)`, so both backends
+read it.  Guard
+`tests/scripts/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.loft`.
+
+### A helper's arithmetic is plain where its caller bounded the arguments
+
+```
+  (R-RangedCall) a counted `For` block whose loop hoists integer record fields — each
+                 invariant over the loop by the hoist's write set, or read only in the
+                 block's prelude, which calls no user function — is emitted twice: under
+                 a run-time guard `|x| <= G` for each such field (G = 2^20) with those
+                 field reads RANGED `[-G, G]`, and as before.  Inside the guarded copy a
+                 local's derived range is kept only when every assignment of it in the
+                 whole function lies in the block and it never escapes by reference.  A
+                 call there — or inside a ranged variant — whose every integer argument
+                 and every twin scalar input is proven within `[-L, L]` (L = 2^30) calls
+                 the callee's RANGED VARIANT: the same body with its integer parameters
+                 (each one the body never assigns) and its scalar inputs ranged `[-L, L]`,
+                 where (R-Range) then decides every operator by interval arithmetic.  A
+                 longer callee's RESULT is ranged in context: its body analysed with the
+                 parameters carrying the arguments' ranges, the union of every exit's.  The
+                 copy runs only when it calls a variant of a callee doing checked integer
+                 arithmetic; a `yield`, a `par` or a fn-ref call declines it.
+```
+
+**In words.** The checked operators' null and overflow branches are what keep a chain of
+small grid helpers (`nb_q`, `eg_index`, `eg_dir_from`) from folding: hex_field's
+`edgeset_count` was 18× its Rust twin.  `(R-Range)` cannot range a parameter or a field by
+shape (@C80), so the bound comes from the caller, tested once per loop entry, and flows
+into the helpers through variants.  With the byte read of `(R-Base)` the chain is free of
+store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
+`LOFT_NO_RANGED_CALLS`; `LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline;
+`LOFT_HOIST_VERIFY=1` checks every plain operator.  Sites: `ranged_call.rs`
+(`range_guard_for`, `ranged_call`, `variant_ranges`), `range.rs` (`Ranges`, the seeded
+`range_vars`, `call_range`), the `For`-block arm in `emit.rs`, the variant loop in
+`output_functions`.  Guard
+`tests/scripts/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.loft`.
+
 ### A filling loop is one slice fill
 
 ```
@@ -2010,7 +2559,7 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  index or a computed start keeps the checked loop.
 ```
 
-**In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
+**In words.**  @PLN157's guarded plain nest, the admissible successor @C120 names: the
 integer closure is not taken (R-Counter) because an overflow's null must propagate on both
 backends, so the plain form is admitted only where a fact ESTABLISHED before the arithmetic
 runs says no overflow can occur — which is exactly what the guard checks, in the same
@@ -2047,7 +2596,7 @@ the result of.  Switch `LOFT_NO_BOUNDED_SUM` (and `LOFT_NO_VECTOR_BASE` /
 and each counted loop declined with why; falsifier `LOFT_HOIST_VERIFY=1` re-runs every
 admitted block through the checked add and panics on a disagreement — the proof itself,
 re-run, so unlike the join clause's verifier it has no blind spot here: sabotaged on the ROOM
-test, s5 answers `−9223372036854773861` for null (wrapped garbage, exactly what C85 forbids)
+test, s5 answers `−9223372036854773861` for null (wrapped garbage, exactly what @C85 forbids)
 and the verifier panics; sabotaged on the element BOUND, s2 answers `MAX` for null (the
 `MAX + 1` prefix overflow summed plain and cancelled) and the verifier panics.  Three of the
 cells' expectations were first written by hand and were wrong; every number stands as
@@ -2082,7 +2631,11 @@ cells `tests/scripts/a-reduction-loop-is-one-kernel-call.loft`.
                  release it and the next turn would write a record back in the pool.
                  Also required — the buffer is used ONCE and its result local is
                  assigned ONCE, since a second use has one guarded site and one this
-                 did not read, and a reassignment frees the store it displaces.
+                 did not read, and a reassignment frees the store it displaces.  The
+                 count is of the VARIABLE: a sibling scope's split copy of a name is
+                 one of its own and counts its own binds.  A local whose rebind
+                 releases nothing it displaces (O-Buffer's adoption veto) is not
+                 objected to, since the release is the whole objection.
                  A buffer whose callee MINTS the store its result adopts (O-Move at
                  a plain local's first bind, @PLN164 B1) is paired for the guarded
                  free alone and NOT allocated here: handed non-null to a callee that
@@ -2323,8 +2876,8 @@ line in `Output::output_function`'s prelude.
                  null sentinel of a nullable, `false`, the variant TAG — so where
                  the emitter proves coverage of every schema field position by the
                  group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
-                 `set_default_value`'s walk (or its all-zero `zero_range`, which
-                 duplicates the zero-on-claim) writes nothing that survives, and
+                 `set_default_value`'s walk (or its all-zero `zero_range`) writes
+                 nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /
                  `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
                  itself (`self.items += [p]`, `p` a value of the element type)
@@ -2390,6 +2943,23 @@ line in `Output::output_function`'s prelude.
                  argument condition — no other argument names `out`.  A value the
                  list does not declare keeps its copy into the early element.  The interpreter keeps the
                  temp-store build and is the oracle.
+                 THE COMPREHENSION CLAUSE: a row built by a comprehension and appended
+                 as a WHOLE element of a local vector of vectors (`[for y { [for x {
+                 … }] }]`) is the same build with a third declaration shape and a
+                 whole-element destination — the row's vector, declared through its
+                 `__vdb` buffer INSIDE the comprehension's block, is bound to the
+                 element (the element of a vector of vectors IS the inner vector's
+                 handle) and the `OpCopyRecord` into the element vanishes.  Gates: the
+                 block's value is read by the copy alone, the row's vector and its
+                 buffer are named only inside the block (the buffer also by its
+                 declaration and frees), the block names neither `out` nor a view of
+                 its elements and jumps nowhere outside itself, and the block LOOPS —
+                 a body that loops again holds no push window on `out` (R-PushFill),
+                 the one raw address into `out`'s store the row's growth could leave
+                 stale; everything else held on that store is refreshed or declined per
+                 pass already, because the element's own mint grows it.  The append
+                 group stands in the body of the LOOP that builds the outer vector, so
+                 a loop body's statements consult the same overrides a block's do.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalars (an `integer` only at its 8-byte width), an INLINE sub-record
@@ -2474,6 +3044,30 @@ line in `Output::output_function`'s prelude.
                  are this rule's admissions, and native finds only what the IR
                  declined.  Switch `LOFT_NO_IR_VALUE_RECORD=1`; guard
                  `a-small-record-returned-to-a-reader-is-a-tuple.loft`.
+                 NULLABLE CLAUSE (`--native`, `(N-Road)`, C144): a `-> S?` of a record
+                 this rule admits returns the tuple of `S`'s fields followed by a
+                 PRESENCE word, `(f₁, …, fₙ, bool)`.  An ABSENT tuple holds every
+                 field's null and `false`, so a field read is the same tuple index as
+                 on the dense tuple and answers what a read off the null record
+                 answers; `if x` and `x == null` read the presence word; a field write
+                 through an absent tuple is dropped and reported (`@FR-E-Report`), as
+                 the setter's `rec == 0` arm does.  The two layouts are two KEYS
+                 (the record type, and the record type with `NULLABLE_LAYOUT`), so a
+                 site, a leaf, a local and a parameter agree on a key or decline: a
+                 nullable tuple is never handed where a dense one is expected (a tuple
+                 parameter, a fn-ref hand-off, a copy into a record).  Leaves of a
+                 `-> S?` body: its own `Object` build (present), the bare `null`
+                 sentinel (absent), and a DENSE leaf of `S` — a `-> S` call or a tuple
+                 parameter returned whole — WIDENED by appending `true`; both arms of
+                 a value branch carry one key.  A `τ?` value local is declared absent
+                 and a bind of `null` makes it absent again.  Declined, costing the
+                 rewrite only: a nullable record that owns heap (a view leaf's null is
+                 a REPORTED one, which the absent tuple does not spell), a `??` with a
+                 record default, and the IR pass above (the interpreter keeps the
+                 record).  A cdylib bridge writes a present tuple into its destination
+                 and answers the null record for an absent one.  Switch
+                 `LOFT_NO_NULLABLE_VALUE_RECORD=1`; guard
+                 `a-nullable-record-returns-its-fields-in-registers.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
@@ -2490,6 +3084,22 @@ line in `Output::output_function`'s prelude.
                  that keeps the fast path's test a plain branch — without it LLVM
                  may turn that test into flag arithmetic paid on every element,
                  and which form it picks then moves with unrelated code nearby.
+                 FOLD CLAUSE: an off-fast-path answer computable from what the
+                 fast path already holds — no store resolution, no write, no
+                 report — is FOLDED IN, never outlined: an element read resolves
+                 every index with `vector::elem_index` (a negative index counts
+                 from the end, anything else outside answers the sentinel), the
+                 ONE definition `get_vector` uses too.  A call is opaque to LLVM
+                 even when it is cold and only reads, so two reads of one element
+                 stay two reads and the loop around them is too large to unswitch;
+                 folded, the read is pure and both merge.  `LOFT_HOIST_VERIFY=1`
+                 compares every folded answer with a fresh `get_vector` read
+                 (`verify_folded_read`).  A fold is a layout choice like the
+                 split, so it is kept only where the lanes show it pays: the
+                 TEXT element read keeps its negative-index half outlined,
+                 because folded in, in any arrangement, it slowed the text walk
+                 of the `join` row and a reader of distinct elements has no
+                 merge to gain.
 ```
 
 **In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the
@@ -2501,13 +3111,42 @@ a layout discipline, not a semantics rewrite, so (R-Switch) does not apply; the 
 are the two instruments: `scripts/native_call_census.py` (which fast-path symbols
 still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
 `#[inline]` functions rustc declined — an `#[inline]` function with an out-of-line
-symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
+symbol and self time is the candidate).  The fold clause's cells are
+`tests/scripts/fused-element-read-resolves-every-index.loft` e1–e7 (falsified by a fold
+that drops the from-the-end resolution: `--native` fails e1, the verifier names index −2),
+and `vector::elem_index`'s own unit tests.  Fold sites: `vector::get_elem_at`,
+`vector::get_elem_hoisted`.  Outlined sites: `vector::text_elem_cold`,
 `Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
 `Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
 `State::mark_stale_handles`, `Stores::watch_oob_text_report`, and `ops::text_character`
 (the ASCII byte is answered inline; the multi-byte snap-back and decode are
 `text_character_wide` — a `for c in text` walk paid a call per character, 580 per parse
 on the drawing bench).
+
+### A record that owns no heap is copied as its bytes
+
+```
+  (R-FlatCopy)   a record copy (`OpCopyRecord`) whose type is a struct or a struct-enum
+                 variant that owns no heap, and that keeps its source, is the BLOCK
+                 COPY alone: the release of the destination's claims and the walk of
+                 the source's claims both find nothing for such a type, so neither
+                 runs.  A copy that gives its source up (the exchange and the source
+                 release are its own), a traced copy (`LOFT_TRACE_COPY`) and a
+                 checked one (`LOFT_COPY_CHECK`) take the full path; the fn-ref
+                 hand-off flag the full path consumes is consumed here too.
+                 APPLIED BY the native runtime; the interpreter keeps the full path
+                 and is the oracle.
+```
+
+**In words.**  Copying a three-integer `Piece` into a vector ran ten tests before its 24
+bytes moved — the foreign-vector test, the trace switch, the exchange, the destination's
+release (answered from the type's heap slots), the source's claims walk (absent-collection
+test, then the type's heap facts), the copy-check switch — each one answering "nothing to
+do" for a type that owns no heap.  zttext's `insert_text` makes one such copy per piece per
+insert; the type's heap facts are cached, so the answer is one lookup.  `insert_text` 7.6–8.7
+→ 4.0–5.0 ms (≈ −40 %) and `invert` −20 to −30 % on arm64 macOS, hashes unchanged.  Like
+`(R-Cold)` it is the runtime's own shape and not counted by the census.  Switch
+`LOFT_NO_FLAT_COPY`.  Sites: `OpCopyRecord`, `Stores::flat_record_type`.
 
 ### A result is built where it will live, moved at its last use, and written over a place
 
@@ -2523,15 +3162,22 @@ on the drawing bench).
                  (asked recursively; a cycle declines) — a chain function's buffer is
                  the `__ref_N` the chain renamed it to.  When the
                  destination place EXISTS at the call and no argument of the call
-                 reaches it, the buffer IS the place and nothing moves.  Declines: a
+                 reaches it, the buffer IS the place and nothing moves — a field
+                 assigned (`h.v = f(…)`) and a field of the record a struct literal
+                 is building (`H { v: f(…) }`, which exists once the literal has
+                 written its empty handle; a `?` field keeps the replace that leaves
+                 it absent).  Declines: a
                  path that reads the result after a RELOCATING store (the destination
                  owns it then, and B-Copy would show — where the buffer IS the place, a
                  read of the result reads what was written and needs nothing); an
                  argument that reaches the destination's store (source and destination
                  alias); a callee that may hand back a store it did not mint (O-Opaque:
                  empty deps license nothing), and, where the buffer IS the place, a
-                 callee that MINTS into its buffer on some exit (a returned vector
-                 literal does), which would mint over the place it was handed; a callee
+                 callee that MINTS into its buffer on some exit (a projection chain
+                 `return g().inner.v` does), which would mint over the place it was
+                 handed — a returned collection LITERAL is not one: its wrapper mint
+                 on a place answers the place, the collection it held released, so it
+                 builds where it lives; a callee
                  that on some exit answers a store other than the buffer it was handed
                  (the destination would hold the writes of the exit not taken); a
                  `?`/`??` discharge on the result; a destination that does not
@@ -2594,8 +3240,9 @@ on the drawing bench).
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
                  other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
-  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, or its
-                 view-local spelling `v = p.a; return v` — is answered as the local's own
+  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, its
+                 view-local spelling `v = p.a; return v`, or the natural spelling
+                 `mk(…).a`, whose call the parser lifts into a local — is answered as the local's own
                  store at the field's position, instead of a store minted for the return
                  and the field deep-copied into it.  The parser's copy stands where a view
                  of a frame local would dangle once the frame's free ran; here the local is
@@ -2610,8 +3257,11 @@ on the drawing bench).
                  own free is dropped.  Admitted only where the returned record OWNS HEAP (a
                  scalar-only record is the native value form's to answer as a tuple, and its
                  copy is a few words), the exit block is the parser's materialised copy over
-                 the function's own buffer, and every statement between the copy and the
-                 return is a store or text free.  Declines keep the copy: a parameter's or a
+                 the function's own buffer, every statement between its mint and the copy
+                 is a bind or the mint-or-release guard of a hidden buffer the lifted call is
+                 handed (`@FR-O-LazyBuffer` — it names neither the function's buffer nor the
+                 root), and every statement between the copy and the return is a store or
+                 text free.  Declines keep the copy: a parameter's or a
                  view's field, an ELEMENT (`p.items[i]` — a slot inside a claimed block, not
                  a field of the root record), any other statement in the exit, a buffer that
                  is not the function's own.  A caller is not consulted: it binds what comes
@@ -2645,7 +3295,20 @@ on the drawing bench).
                  field of a FRESH record — an appended element or a construction
                  temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
                  that field the same way; nothing can read a fresh record while it
-                 is built, so it needs no staging of its own.
+                 is built, so it needs no staging of its own.  A `reference<T>` field
+                 is not such a place: its read is the record it points at, and an
+                 assignment re-points it (H-RefSet), so a literal assigned to one is
+                 built in a record of its own.  The KEYED clause:
+                 `h[k] = R { … }` with a FULL subscript of pure keys is written into
+                 the record the collection claims for it — the literal's values and
+                 the statements computing them run first, in program order (a value
+                 may read the record under `k`), then that record is removed (Col-
+                 Assign), a fresh one is claimed in the collection's store and
+                 written, and the SUBSCRIPT's key is written and the record linked;
+                 the plain form's order without its temporary store and its copy.
+                 A text field declines (a staged text may borrow the store the claim
+                 mutates), as does a partial subscript (its key is the literal's
+                 own) and a literal whose buffer is named outside it.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the
@@ -2885,7 +3548,7 @@ libraries-wide.md`) measured a second class those cannot reach, and it holds the
 furthest from Rust: bytes that ALREADY EXIST in a store the program still owns, copied
 whole into a second store because the language's plain bind copies (`(B-Copy)`).  The
 four rules here each name one shape in which the value's home is already there, so the
-copy has no work to do — C125's direction, *remove the temporary*, applied to a temporary
+copy has no work to do — @C125's direction, *remove the temporary*, applied to a temporary
 that is a copy rather than a mint.  Their common floor is `(H-CopySelf)`: a whole value
 delivered onto the place that holds it is a no-op the runtime decides by identity, which
 is what lets a rule hand a value's own home as its destination without a second answer
@@ -3138,8 +3801,9 @@ ceiling each is measured against.
 
 Applied by the interpreter's bytecode generator or runtime (`(R-Phase)`); native never sees
 them and is the oracle of every cell (`(R-Switch)`'s interpreter clause).  Each REMOVES ops
-or work; none merges ops into a new one (PERFORMANCE.md § Why the interpreter is optimised at
-all): an op merged per shape is fast for that shape only and grows the instruction set.
+or work; none merges ops into a new one (INTERPRETER_PERFORMANCE.md § Why the interpreter is
+optimised at all): an op merged per shape is fast for that shape only and grows the
+instruction set.
 
 ### An integer operator over locals and literals is one op
 
@@ -3276,12 +3940,12 @@ stack-trace cells (`1753-…`, `55-stack-trace`, `117-deep-stack`, `1806-…`) a
 **In words.** Applied by: interpreter runtime (`execute_argv`'s lean loop, `State::lean_stop`).
 The five events cannot start between two plain ops — each needs a native call, a raise, a join
 or a `&mut State` method — so testing each after every op paid for nothing, and it was 15–24 %
-of a loop's time.  What it could break is an event that no longer reaches the loop: a fault that
+of a loop's time.  What it could break is an event that does not reach the loop: a fault that
 does not halt.  Effect (pinned layout): the `12_drawing` hash loop −21 %, `record_walk` −20 %,
 `push` −17 %, `index_read` / `index_write` −13 %, recursive fibonacci −5 %.  No switch: the
 per-op tests are not a form to keep.  Guards `tests/dispatch_stop.rs` (a native and an op raise
 inside a loop halt at once; `runtime_error` is stored only by its setter), `dispatch_reentry`
-(the frame yield), `runtime_errors`' loft#1053 cases (a `par` worker's fault, a `parallel`
+(the frame yield), `runtime_errors`' worker-fault cases (a `par` worker's fault, a `parallel`
 block's).  Not taken beside it: reading the op byte unchecked (−1 to −3 %), which drops the
 operand bound's guarantee.  The flag is an `AtomicBool` (a relaxed load is the same instruction as a plain
 one): the timeout's watchdog sets it at the deadline through a pointer the running loop
@@ -3334,7 +3998,7 @@ which runs the checked stack path.  Guards `tests/scripts/a-stack-that-grows-mid
 
 **In words.** Applied by: interpreter runtime (`crash_report::current_ctx`).  Allowed because
 the position is already written per op for the allocator, and the bytecode the loop runs is a
-field of the `State` that does not move while it runs.  Effect (pinned layout, 2026-10-01):
+field of the `State` that does not move while it runs.  Effect (pinned layout):
 −4.6 to −6.4 % instructions and −2.4 to +1.2 % cycles — the write was retired by the store
 buffer beside the op chain, not on it, the same latency-bound picture as removing a third of
 the stack derivations.  Kept for the instructions it frees, not for time it bought.  Guard
@@ -3356,7 +4020,7 @@ positions), and the last op is named after the run.
 **In words.** Applied by: interpreter runtime.  Allowed because nothing else writes the bytecode
 (`tests/code_base.rs` checks it over the source) and the cache lives in `State`, not in a loop
 local, so code written while a loop runs (a REPL input, a live reload, a debugger `eval`) is read
-as written.  Effect (pinned layout, against the same tree without it, 2026-10-01): the opcode
+as written.  Effect (pinned layout, against the same tree without it): the opcode
 fetch went from four dependent loads to two and instructions fell 1–2 %; time moved by +0.9 %
 at the geomean, inside the noise — the fetch chain was not the serial path, because the
 indirect call is predicted and the core runs ahead of it.  Kept for the shorter code.  Guard
@@ -3433,6 +4097,30 @@ Guard `tests/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table
 planted defects named in its header; the fused hot operators' own guard is
 `tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft`.
 
+### A `par` worker runs on the lean loop
+
+```
+  (R-WorkerLean)  a `par` worker's frame (`State::run_to_return`) runs on the lean register
+                  loop whenever the main run's would (`State::worker_lean_ok`: no debugger,
+                  no per-op instrument armed), with `#hot` operators inline as there.  A
+                  worker's stop flag ends ITS loop only; a fault a worker raised is reported
+                  by the main loop, not taken over by another worker.  The definition a
+                  worker enters is found once per function position (`State::worker_d_nr`),
+                  not by scanning every definition for each element.
+```
+
+**In words.** Applied by the interpreter's worker entry.  Allowed because a worker frame
+executes the same bytecode as the main run, and the lean loop differs from the checked one only
+in the per-op instruments it leaves out — which `worker_lean_ok` requires to be off.  The stop
+path is the one place they differ: the main loop also takes over a fault some worker set, so the
+worker instantiation leaves that test out (`lean_stop(true)`).  The remembered definition is
+reset wherever `fn_positions` is rebuilt.  Effect on a one-thread `par` over a 1000-element
+vector: 306 → 175 ms, the same as the loop without `par`; four threads 92 → 49 ms.
+`LOFT_NO_WORKER_LEAN=1` runs a worker on the checked loop.  Guard
+`tests/scripts/a-par-worker-runs-on-the-lean-loop.loft`; the stop path is falsified by
+`runtime_errors::i1056_a_par_worker_fault_names_the_workers_own_frames` and the placement-parity
+library-fault cells (the receipt is in the guard's header).
+
 ### An operator's priority decides its opcode's width
 
 ```
@@ -3478,7 +4166,7 @@ the fast paths answer exactly what the full paths answer on the cases they take,
 the rest.  The short path is inlined whole: a helper that returns a `DbRef` (or an
 `Option<DbRef>`) through memory writes it as narrow fields, and the caller reads `rec` and
 `pos` back as one 8-byte load, which the store buffer cannot forward — a stall of a dozen
-cycles on every element (measured 2026-10-01: 22 M blocked loads in a 20 M-push loop, +8 %
+cycles on every element (measured: 22 M blocked loads in a 20 M-push loop, +8 %
 cycles, until both helpers were `#[inline(always)]` and the two append branches stopped
 meeting in one `Option`).  Effect (pinned layout, against R-CodeBase): matrix_mul −16 %,
 sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guard
@@ -3486,8 +4174,8 @@ sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guar
 
 ## A leaf's body in place of its call — four rules over one IR pass
 
-Built 2026-10-01 (`src/leaf_inline.rs`, after `(R-ValueRecord)` at the top of
-`byte_code_from`, so both backends see the result).  Found in the `12_drawing` hash loop, the
+Built in `src/leaf_inline.rs`, after `(R-ValueRecord)` at the top of
+`byte_code_from`, so both backends see the result.  Found in the `12_drawing` hash loop, the
 last routine above 100× its native time; each removes bytecode from the IR rather than cycles
 from an op.  The loop's body went from 45 ops an element to 25 (+2 for the loop): the
 inlined body, its literals folded, the second mask and the fallback gone, the last temporary
@@ -3519,7 +4207,7 @@ two operands a correct fold may not regroup (below).
 **In words.** Applies in: the IR phase, both backends (native already inlined through LLVM).
 **Regrouping is not exact**: every integer operator tests its result for the sentinel, so
 `(a ^ x) ^ b` and `(a ^ b) ^ x` disagree when an intermediate is `i64::MIN` — the fold takes
-`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  Coverage counts a function
+`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  Coverage counts a function <!-- doc-lint: ok -->
 entered by a call, so the test runner compiles with the calls kept — the value guards run the
 inlined form as programs, and `tests/function_coverage.rs` failed with the pass on before the
 flag existed.  The body's `Span` wrappers stay, and a fault's position comes from them, so a
@@ -3547,7 +4235,7 @@ each inlined call, each decline and each reduction below.
 **In words.** Applies in: the IR phase; the xor clause also widens native's plain operators.
 **A range inside `0 ..= m` is not enough for any `m`**: `5 & 6` is `4`, so only an all-ones
 mask is the identity on its range.  The fallback needs the NON-NULL proof, which a value built
-from a parameter never has (C80) — inside `seed_hash` alone it stays; after the inline, with
+from a parameter never has (@C80) — inside `seed_hash` alone it stays; after the inline, with
 literal or ranged arguments, it goes.  `LOFT_NO_MASK_RANGE=1`.
 
 ### A value read once, right after it is written, is not stored
@@ -3564,13 +4252,13 @@ read, so moving `e` crosses no effect; the fresh local is read nowhere outside t
 A result that reads the local twice keeps it (substituting one read would leave the other
 reading the value before).  `LOFT_NO_SINGLE_USE=1`.
 
-**The statement clause** (`single_use::rewrite_program`, built 2026-10-02): outside an inlined
+**The statement clause** (`single_use::rewrite_program`): outside an inlined
 body, a comprehension's element temporary `_comp_N` — assigned once, read once in the whole
 function, never captured — whose value is pure (operators over locals and literals,
 `same_read::pure`) is moved into the next statement's read when everything that statement
 evaluates before the read is pure too.  A store and a load per element go.  The purity clause is
 load-bearing: dropped, an element computed by a function that appends to a log moved as well —
-the pin caught it (2026-10-02).  `LOFT_TRACE_SINGLE_USE=1`.  Guards
+the pin caught it.  `LOFT_TRACE_SINGLE_USE=1`.  Guards
 `tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft`,
 `tests/single_use.rs`.
 
@@ -3601,8 +4289,8 @@ sentinel; the scale fold's conditions).
 
 ## Proposed — the next eliminations, by reach
 
-Found 2026-10-01 measuring what still keeps six routines near 100× native; ordered by how
-many programs they reach, not by those six (owner, 2026-10-01: *improve all loft scripts as
+Found measuring what still keeps six routines near 100× native; ordered by how
+many programs they reach, not by those six (the owner: *improve all loft scripts as
 much as possible*).  Each carries **PROPOSED** until a site implements it; the two runtime
 rules are priced before they are built.
 
@@ -3622,7 +4310,7 @@ rules are priced before they are built.
 emits `OPERATORS` and `OPERATORS_FAST`, both `static`) and `State::op_table`, which the lean
 dispatch loop asks once.  Other loops dispatch `OPERATORS`, whose accessors decide at run time
 and are valid in every mode; ops that are `State` methods keep the runtime test.  Built
-2026-10-01: −4.7 % instructions, −5.2 % cycles at the geomean over 17 benches (pinned layout);
+Measured: −4.7 % instructions, −5.2 % cycles at the geomean over 17 benches (pinned layout);
 the bound measured by deleting the test was −8.2 %, the rest is the doubled operator code —
 `07_string_build` moved +4.9 % in cycles with −0.3 % in instructions.  Guards
 `tests/fast_table.rs` (under the stack census the operators still write through `put_stack`:
@@ -3684,7 +4372,7 @@ its own work buffer).  Native's held-base record address (`@FR-R-RecPtr`'s base 
 only the walk's own iterator, so it learned the counted form too (`hoist::element_binding`:
 the element binding at any index local — the clause checks the index against the held length
 itself); without it `entity_tick` ran +52 % and `record_walk` +28 % on native.  Built
-2026-10-02: the record walk −11 % instructions and −7.5 % cycles interpreted; on native
+Measured: the record walk −11 % instructions and −7.5 % cycles interpreted; on native
 `record_walk` −12.7 %, −2.0 % at the geomean over benches 14 and 16 (the routines that moved
 up hold no rewritten walk — emitted code placement).  `LOFT_NO_FORWARD_WALK=1`, `LOFT_TRACE_FORWARD_WALK=1`.  Guards
 `tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft` (counted walks and the
@@ -3700,40 +4388,82 @@ rewritten, read off the trace; the cells with the rewrite off).
                  alone: an in-range element of a vector of records is a record, so the read
                  never answers null and the fallback is never minted.  Not for a scalar
                  element: a scalar's `?` also discharges an element whose VALUE is null
-                 (C80), which no loop bound rules out.
+                 (@C80), which no loop bound rules out.
 ```
 
 **In words.** Applied by: `in_range::rewrite_program`, in the IR phase (both backends).  Both
 conditions are load-bearing, each falsified with a silent `null`: reading another vector at the
 same index (`another_vector` read null for 15), and dropping the body check (`v.clear()` part-way
-read null for 10, 2026-10-02).  The record-only clause is enforced twice: by the read's shape (a
+read null for 10).  The record-only clause is enforced twice: by the read's shape (a
 scalar's read is a value read over the element, never the bare element read) and by the
 conversion test — the second is defensive, its plant passes.  Measured on `record_update` by
 the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RANGE=1`.  Guards
 `tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft` and
 `tests/in_range.rs`.
 
-### A computed range start is one counter, stepped at the bottom
+### A computed range start is one counter, stepped at the test
 
 ```
-  (R-StartStep)  PROPOSED.  A range `s..e` whose start is not a literal (bound once to
-                 `_range_start`, `@FR-I-Range`) lowers to one counter, `i#index =
-                 _range_start; loop { if e <= i#index break; body; i#index += 1 }`, a
-                 `continue` jumping to the step.  Today's form keeps two counters (`_next`
-                 and `i#index`) that hold the same value wherever `i#index` is read, plus a
-                 copy into the loop variable each round, because the literal form's
-                 `start - 1` folds only for a literal.
+  (R-StartStep)  A range `s..e` whose start is not a literal (bound once to
+                 `_range_start`, `@FR-I-Range`) iterates with two counters, `next` one
+                 ahead of `i#index`: `{if e <= next break; i#index = next; next += 1;
+                 i#index}`.  Where the loop rotates (`(R-Rotate)`) and nothing after the
+                 iterator names `next` — nor `i#index`, unless `i` shares its slot
+                 (`(R-LoopSlot)`) — the interpreter seeds `i#index = next` before the
+                 loop, steps `i#index` at the test, and enters PAST the step: the first
+                 round tests the start itself.  A `continue` jumps to the step.
 ```
 
-**In words.** Applies in: the IR phase, both backends; every range with a computed start.  It
-merges two locals that are equal wherever one is read, so every comparison sees the values it
-sees today, a null start included.  Measured on `dot_product` by the hand-written form: −11 %.
-The guard owes a `continue`, a body writing the loop variable, a null start, a start past the
-end, and a start at `i64::MIN + 1`.  **Deferred (2026-10-02):** the cheap form — the literal
-range's `index = start - 1` — is not exact, because `start - 1` of `i64::MIN + 1` is the null
-sentinel, which the step then propagates; the exact form (the step after the body, a `continue`
-re-pointed to it) costs nearly the two ops it saves, and native gains nothing (the hand-written
-pair ran equal).  Taken up after the rules of wider reach.
+**In words.** Applies in: the interpreter's bytecode generator (`start_step`,
+`gen_rotated_loop`); the IR keeps both counters, so `--native` and every IR rewrite that reads
+a range's shape see the form they always saw.  Allowed because after every round `next` equals
+`i#index + 1`, and before the first it equals the start, so the test reads the same value it
+read through `next`.  The step cannot overflow, since the round ran because `i#index < e`, and
+a null start stays null under both steps.  An inclusive, reverse or filtered range keeps the two
+counters.  What it removes is the copy from `next` into the index each round: `dot_product` 16
+→ 14 operators a round, −15 % on the interpreter, with the same result.  The seeding is what an
+IR form could not do: there, `start - 1` is the null sentinel for a start at `i64::MIN + 1`, and
+a step at the bottom costs the jump it saves.  `LOFT_NO_START_STEP=1` keeps the copy;
+`LOFT_TRACE_START_STEP=1` names each loop taken or declined.  Guard
+`tests/scripts/a-computed-range-start-steps-one-counter.loft` (its planted defects named in its
+header), pin `tests/start_step.rs`.
+
+### An effect-free call made twice is made once
+
+```
+  (R-PureReuse)  A function is EFFECT-FREE when its result is its only effect: every
+                 operator in its body reads, computes, or writes into a store the
+                 function itself made (a write whose target is rooted at a parameter,
+                 the function's own return buffer excepted, declines it); every function
+                 it calls is effect-free (a fixed point over the call graph); and it
+                 calls no function value, yields nothing and names no native outside a
+                 short list of known value-only ones.  A PROJECTION WRAPPER is a function
+                 whose body is one call of an effect-free function on its parameters
+                 followed by a read of the result: `d = f(…); return d.k`,
+                 `d = f(…); v = d.k; return v`, or the natural spelling, the read
+                 written on the call (`f(…).k`, returned or as the body's value — a
+                 record field through its materialised copy).  In one block, two calls of projection
+                 wrappers of the same `f` on the same argument variables — the first in a
+                 position its statement always evaluates (the statement, an `if`'s test,
+                 an assignment's value, a call's arguments), nothing between them
+                 writing a store, calling a function with effects or rebinding an
+                 argument — are `f` called once into a fresh local before the first
+                 statement, and each wrapper call is its read of that local.
+```
+
+**In words.** Applies in: the IR phase, at the start of the scope pass, both backends, so the
+local it binds is owned and freed as any local the author wrote.  Allowed because an
+effect-free call on unchanged arguments answers the same value each time and its only effect
+is that value: the second call is the first call's value, read the second way.  The
+wrapper's own copy of the field it handed back becomes a read of the local in place, which is
+what the copy was of.  What it removes is the second call and everything it builds: a request
+check that asked `pa_decode_ok(frame)` and then `pa_decode(frame)` decoded the frame twice.
+The list of value-only natives is short on purpose — the `#impure` annotations do not mark every
+effect (`print`, `file` and `env_variable` carry none) — so an unknown operator declines, which
+costs the reuse and never an effect.  Effect, per `check_request` on the library as written,
+native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  Switch
+`LOFT_NO_PURE_REUSE=1`, trace `LOFT_TRACE_PURE_REUSE=1`.  Site: `pure_reuse.rs`.  Guard
+`tests/scripts/a-pure-call-made-twice-is-computed-once.loft`, pin `tests/pure_reuse.rs`.
 
 ### Two equal reads in one statement are one read
 
@@ -3748,18 +4478,32 @@ pair ran equal).  Taken up after the rules of wider reach.
                  (arithmetic, comparison, conversion, a read), so nothing assigns a local or
                  writes a store between the reads; a read inside an `if` arm is not
                  collected.  A discharged read raises no fault, so the faults reported are
-                 the faults reported today.
+                 the faults reported today.  THE GUARD CLAUSE: an `if` whose arm LEAVES
+                 (its last statement a `return`, `break` or `continue`) and that has no
+                 `else`, followed directly by an assignment, shares with it every pure
+                 computation its condition evaluates outside a short circuit and the
+                 assignment's value repeats — `if a < cum + c { return … }; cum += c`.
+                 On the path that reaches the assignment nothing ran since the
+                 condition, so the computation is bound once before the `if`, the
+                 largest the two share; a variable with a literal (a counter's step,
+                 which the counter rewrites read by its spelling) is not.  Checked
+                 arithmetic is admitted: an overflow is still reported, once where the
+                 program spelled it twice — a fault is owed a report, not a count
+                 (owner, 2026-10-11).  A defended site's silent operator is another
+                 operator than the reporting one and is never the same computation.
 ```
 
 **In words.** Applied by: `same_read::rewrite_program`, in the IR phase (both backends; native
 gains nothing measurable, LLVM already merged the reads).  Each `v[i]?` is the read plus a
 five-op discharge.  Both clauses are load-bearing, each falsified with a silent wrong answer:
 the default ignored made `(v[i] ?? 1) * 10 + (v[i] ?? 2)` read 11 for 12, and a user call
-taken as pure made `v[0]? + set_first(v) + v[0]?` read 198 for 103 (2026-10-02).  The first
+taken as pure made `v[0]? + set_first(v) + v[0]?` read 198 for 103.  The first
 version compared reads exactly and bound nothing: the two spellings carry different source
 positions.  Measured on `index_read` by the hand-written form: −31 % interpreted.
 `LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
-`tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft` and `tests/same_read.rs`
+`tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft`,
+`tests/scripts/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft`
+(the guard clause; zttext `locate`'s shape) and `tests/same_read.rs`
 (which statements bind; the cells with the rewrite off).
 
 ### `(R-InlineLeaf)` takes a tuple result
@@ -3774,10 +4518,35 @@ positions.  Measured on `index_read` by the hand-written form: −31 % interpret
 literal).  A tuple holding text or a record is not a tuple type to this check: the language
 makes it a record with a result buffer (`__tuple<integer,text>`), which the scalar-result check
 declines — so the all-scalars condition on a `Type::Tuple` is defensive, and the plant that
-admits any tuple passes (2026-10-02).  Built 2026-10-02: `bfs_flow`'s `nbr` inlined, −12.8 %
+admits any tuple passes.  Built: `bfs_flow`'s `nbr` inlined, −12.8 %
 instructions and −10.6 % cycles interpreted.  Guard cells in the leaf-inline file: an `if`-chain
 tuple read in both elements and in a loop, and a text-holding tuple that stays a call; the pin
 counts four inlined calls and the decline.
+
+### `(R-InlineLeaf)` takes an appender
+
+```
+  (R-InlineLeaf) + A void leaf whose body is scalar assignments and appends of one scalar
+                 element to a vector field of a record parameter (`r.f += [e]`, the fused
+                 `OpPush…(OpGetField(r, …), …)`), reading each record parameter for nothing
+                 but those appends, is admitted.  At a call whose record arguments are plain
+                 variables holding the record and whose arguments call no user code, it is
+                 replaced by its body with each record read in place; any other call stays.
+```
+
+**In words.** Applied by: `leaf_inline::admit` (the appender branch, `push`, `record_uses`),
+`appender_site` (the call) and `expand` (the record in place, no result).  Why it pays: a call
+per element hides the appends from the caller's loop, so every append resolved the record's
+field and its vector from the store again; inlined, the loop's push windows hold them.  Why the
+call site is restricted: the call read the record variable before its arguments ran, and the
+inlined body reads it after them — the same record only when no argument can rebind the
+variable (no user call) and the variable IS the record (not a `&` link).  A parser temporary
+the fused push leaves unread (`_elm_1`) is not copied into the caller.  Plain `--native`
+ships a live tier and runs no IR rewrite, so its script corpus keeps the call; the release
+build is checked by `tests/leaf_inline.rs`.  Built: gridmesh `emit_segment` 17.5 → 7.2 ms
+(8.25× → 3.40× its Rust twin, native), the probe of four parallel appends 15 → 6 ms.
+`LOFT_NO_INLINE_APPENDER=1` keeps every appender's calls.  Guard:
+`tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft`.
 
 ### A text discharge that assigns a local is read straight into it
 
@@ -3800,7 +4569,7 @@ whose right-hand side names its target is lowered through a work buffer (`__work
 never reaches this shape, so the two cells that name `w` in the read and in the default stay
 green with each clause planted away, as does the single-use clause.  The rewrite itself is
 caught: the null test inverted reads `[]` for `[yy]`, the default dropped reads `[null]` for
-`[]` — both silent (2026-10-02).  Measured (pinned layout, one tree): `word_count` 88.5 →
+`[]` — both silent.  Measured (pinned layout, one tree): `word_count` 88.5 →
 64.3 ms together with `(R-KeyList)`, of which this rule −19 %; hashes unchanged.
 `LOFT_NO_DISCHARGE_INTO=1`, `LOFT_TRACE_DISCHARGE_INTO=1`.  Guards
 `tests/scripts/a-text-discharge-reads-straight-into-its-local.loft`, `tests/discharge_into.rs`.
@@ -3827,9 +4596,421 @@ type's key fields through `key_field` / `key_contents_for_field` and allocated t
 `hash_find` −20 %, `hash_update` −22 %, `hash_text_keys` −15 %, `hash_remove` −10 %, every hash
 unchanged.  The falsifier is **`LOFT_KEY_LIST_VERIFY=1`**: each cached read is re-derived from
 the type's parts and a disagreement stops the run naming the type.  Swept over all 2020
-`tests/scripts` and bench programs, eager and lazy: none (2026-10-02).  Planted a stale cache (every key cached
+`tests/scripts` and bench programs, eager and lazy: none.  Planted a stale cache (every key cached
 as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
 first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
+
+### A text predicate over a case fold is answered without building the fold
+
+```
+  (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
+                 one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
+                 to_uppercase }, where the fold's value has that ONE mention (a
+                 synthesised temporary, or a local whose every binding is such a
+                 fold or `fold + literal` and whose every other mention is a text
+                 VALUE read as an operand of such a P), is answered WITHOUT
+                 building the folded text: over the span P inspects, F is applied
+                 byte by byte while every byte of that span and of the other
+                 operand is ASCII; the FIRST non-ASCII byte met in either operand
+                 takes the written form (the fold built, P applied) for that
+                 evaluation.  A `+ literal` on the folded operand is compared as
+                 the fold followed by the literal.  The other operand is read as
+                 written.  Any other mention of the fold — a bind read elsewhere,
+                 a return, a link, a capture, a non-text-value op — declines.
+```
+
+**In words.** `h.to_lowercase().starts_with(prefix)` is a question, not a text: the fold
+exists only to be compared.  Unicode case is not byte-local (U+212A KELVIN SIGN lowercases
+to ASCII `k`, `İ` lowercases to two scalars, `ß` uppercases to `SS`), so the byte-wise form
+is sound only while both operands' inspected bytes are ASCII — one `is_ascii()` over the
+span — and the fallback is the program as written, so no answer can change.  Reach: every
+case-insensitive lookup in the text-scan class.  Priced on server `header`
+(`bench/portal/analysis/over-9x.md`): with the walked line borrowed, 9.43 → 3.52 M ns/op.
+Generation time, `--native` first (`src/generation/ops/text_ops.rs`, beside the
+`starts_with` emitter; the folding helper beside `lazy_split` in `src/codegen_runtime.rs`);
+the IR phase only on broad evidence (`(Perf-Order)`).  Switch `LOFT_NO_FOLD_COMPARE`; trace
+`LOFT_TRACE_FOLD_COMPARE` names each admitted predicate and each declined fold.  Falsifier:
+hand-computed cells on both backends — ASCII hit and miss, a prefix longer than the line,
+the Kelvin sign in the line against an ASCII prefix (must match), `İ` within the span (two-
+scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty operand, a
+fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
+`(R-TextBorrow)`'s pins with this rule off.
+
+**BUILT** for a fold that is a synthesised temporary (`codegen_runtime::fold_compare`; the
+emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` ask ONE
+predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
+fold's block is neither lifted nor built; guard
+`tests/scripts/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
+the operand clause below.
+
+```
+  (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
+                 that is never built, when ALL of:
+                 (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
+                     fold, l a text LITERAL, s a text PARAMETER or LOCAL;
+                 (2) every other mention of x is an operand of an admitted P, or x's
+                     own release;
+                 (3) s holds at every such P the value it held at the binding: no
+                     path from the binding to a P writes s — no assignment, no
+                     append, no `&s` hand-off, no call handed s's work buffer;
+                 (4) the binding and every P that reads x lie in one activation
+                     of one function, and that function is not a generator.
+                 Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
+                 on the fast path the ASCII test spans the inspected bytes of
+                 s and of l as well as the fold's own operand.  The written form,
+                 taken from the first non-ASCII byte, builds F'(s) + l at most
+                 ONCE per binding of x (a frame slot filled on first use), so no
+                 run builds it more often than the program as written.
+                 Declines, keeping x built: a second binding; any other mention —
+                 a return, a format, a store, an append, `len`/`size`, an index, a
+                 call argument, a capture, a link `&x`; an s that is a field or an
+                 element (a store write between binding and P could change it); a
+                 non-literal l; a generator.
+```
+
+**In words.**  `prefix = name.to_lowercase() + ":"` exists only to be compared, like the fold
+the rule already removes; reading it as the pair it was built from removes the text and
+both of its allocations.  (3) is what makes deferring the fold sound: F' is pure, so F'(s)
+at the P equals F'(s) at the binding exactly when s did not change in between, and a local
+or parameter can be checked for that by its writes, where a field cannot.  The once-per-
+binding slot keeps a non-ASCII run from rebuilding x on every P.  Priced on server
+`header` (`bench/portal/analysis/over-9x.md`, lever D): −14 %.  Switch and trace are the
+rule's own.  Falsifier: hand-computed cells on both backends — the `header` shape; s written
+between binding and P (declines); x formatted once besides the compare (declines); x bound
+on two branches (declines); s non-ASCII with the P in a loop (the written form, built
+once — `LOFT_ALLOC_SITES` counts one build).
+
+### A text local built in its work buffer is a view of it
+
+```
+  (R-WorkView)   a text LOCAL x whose every binding is the value of a text BUILD
+                 into one work buffer w — the parser's `Add text` or `Formatted
+                 string` block, which clears w, appends to it and answers w — is a
+                 VIEW of w (`&str` into w), not a copy of it, when ALL of:
+                 (1) every binding of x builds into the SAME w, and w is a
+                     `__work_*` text local of this function (not a parameter, not
+                     a text-return buffer, not a `par` worker's buffer);
+                 (2) on every path from a binding of x to a read of x, w is not
+                     written: no other build into w, no clear, append, assignment
+                     or format into it, no call handed w as a work buffer, no
+                     release of w;
+                 (3) x is read only as a text VALUE — an operand of an op or a
+                     call at a `text` position, the source of a bind or a format
+                     into ANOTHER slot — and never written (`x += …` would write
+                     w), linked (`&x`), returned, stored, captured or yielded;
+                 (4) a binding inside a loop reaches only reads in the same
+                     iteration: a read that a later iteration's build into w can
+                     reach declines;
+                 (5) the function is not a generator.
+                 w keeps its capacity across calls and iterations ((R-WorkBuffer)'s
+                 text clause), so after the first build no binding of x allocates.
+                 Declines, keeping the copy: any of (1)-(5) unproved.  The analysis
+                 is a path question over the body; a branch or a loop it cannot
+                 resolve declines.
+```
+
+**In words.**  Today the build fills w and then copies w into x (`.to_string()`), which is
+one allocation for w and one for x on every binding.  A view drops the second, and the pooled
+w drops the first after the first call.  The rule rests on ONE invariant, condition (2):
+nothing writes w while x is live.  That is what separates it from `(R-FoldCompare)`'s
+operand clause, whose condition is local to x's own mentions.  Here the condition ranges over
+every site that can write w, and the parser shares one work buffer between expressions of a
+function, so a missed writer leaves x reading another expression's text with no diagnostic.
+Native only; the interpreter's text locals own their bytes and are the reference.  Reach:
+every text local built by `+` or a format string (the text-build class: `map_json`,
+`render_inline`, `format_iso`), unpriced.  Switch `LOFT_NO_WORK_VIEW`; trace
+`LOFT_TRACE_WORK_VIEW` names each admitted local and the condition each decline failed.
+Falsifier: `LOFT_HOIST_VERIFY=1` re-reads x as an owned copy at every read and compares;
+cells on both backends — two locals built into one w with the first read after the second
+build (declines, both values right); a build into w inside a callee handed w; x read in the
+next iteration of a loop that rebuilds w; `x += "!"` after the binding (declines); and a
+planted defect that admits a local with a later build into w must read the wrong text under
+the verify switch.
+
+### A call result appended to a vector is built in it
+
+```
+  (R-AppendTwin) `X += f(args)`, f returning a vector through its hidden buffer B, is
+                 f's APPEND TWIN called with X as B: f's body with none of B's clears,
+                 B minted only when null, and every call that hands B (or a view of it)
+                 to a callee AS that callee's buffer calling the callee's own twin.
+                 Admission asks the CALLEE, over its IR: every mention of B or of a
+                 view of B (a local whose dependencies reach it, an alias the body
+                 binds of it) is a clear, mint or length reset before the body's first
+                 write to B; an append into it (OpAppendVector, OpAppendTextBytes,
+                 OpPreAllocVector, an OpPush kind) whose values do not read it; the
+                 self-replace of B by its own view; a call handing it on to an
+                 admitted callee as that callee's buffer; or its value flowing out as
+                 the result.  Anything else — a length read, an index, a walk, B as an
+                 ordinary argument, a free, an insert at an index — observes what B
+                 held on entry, and declines; so do a fn-ref call, a `par` and a
+                 yield.  Admission is a fixpoint over the call graph: a recursive
+                 builder calls its own twin.  The CALLER asks that X's root be a local
+                 or the frame's own buffer and that no argument name that root or a
+                 local whose dependencies reach it: a caller never hands a buffer one
+                 of its other arguments reaches (loft#1895).  A twin emits the IR's
+                 own semantics — no adoption of B by a result local (R-RetAdopt) and
+                 no refill — so what admission read is what runs.
+```
+
+**In words.**  A builder clears the buffer it is handed and writes its result into it, and a
+caller that appends that result then copies it.  The twin starts writing after the
+caller's elements instead, so the copy is gone — but only a body that never looks at what
+the buffer held may run that way, which is what admission checks, mention by mention.
+Native only; the interpreter copies and is the reference.
+
+**BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
+`emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
+`tests/scripts/a-call-result-appended-is-built-in-the-destination.loft`).
+
+### A call whose result is moved whole into an element builds it there
+
+```
+  (R-Destination) a call whose result record r the caller consumes ONLY by moving
+                 its one heap field r.v (OpMoveField) into a fresh element e of a
+                 container the caller owns, and by reading r's remaining fields as
+                 scalars, is emitted as the callee's DESTINATION TWIN f__d: the twin
+                 is f's body with its return buffer BOUND TO e's slot — r.v must sit
+                 at offset 0 of r, so every write the body makes to r.v (its
+                 sub-records, its placements in the buffer's store) lands at e as it
+                 stands — and its scalar fields, which would land past e, written to
+                 locals the twin answers as a tuple.  The caller mints e BEFORE the
+                 call without its move (the twin's writes cover r.v whole), finishes
+                 it (OpFinishRecord) only on the path where the plain form moved, and
+                 on the failing path releases what the twin placed in e.  Admission
+                 asks the CALLEE: every mention of its buffer is its mint guard, a
+                 write or sub-record INSIDE r.v, a write to a scalar field by that
+                 field's own setter, a placement in the buffer's store, a free
+                 compared against it, or its `return` — counted mention by mention,
+                 so a use no form accounts for declines.  It asks the CALLER: r is
+                 read only by the `ok` test, the one move and scalar reads, every
+                 mention of r lies in the window, the element is minted in the `ok`
+                 arm, and no argument of the call reaches the container (the element
+                 waits unfinished across the call).  THE CHAIN CLAUSE: calls whose
+                 results fill ONE element together — a map entry's key and value,
+                 each call guarded by the one before — are a chain of such windows:
+                 each level's `ok` arm holds the next, the last holds the mint and one
+                 move per result (straight, or through an alias local `kv = kd.v`),
+                 each into its own field of e.  The mint is hoisted above the first
+                 call, a later call reads an earlier result's scalars from its tuple,
+                 and a failing level releases EVERY destination filled so far.
+```
+
+**In words.** `sub = read_value(…); if sub.ok { items += [sub.value]; p = sub.next }` builds
+`value` in a pooled buffer, reads `ok`, mints an element, moves `value` in and reads `next`,
+where the twin does one `push`: this is `(R-Place)` one call deeper — the child built where it
+will live.  The ok-false path is the ownership question, and the answer is the one
+`(R-PushRec)` already gives a minted element: an element minted but not finished is NOT a
+member of the container (`vector_finish` is the one visibility step), and whatever heap the
+failed child placed is released by the CALLER, the release walk freeing the discarded result
+runs; a failure is then identical to the plain form's in every value, member and live record,
+and only spare capacity differs, which is representation (@C122).  The offset-0 condition is
+what binding the buffer to the element costs: a moved field anywhere else would be written
+that far past the element.  The chain clause's release is visible only in LIVE RECORDS — a
+key built into an element whose value then failed stays in the store the kept results live in,
+and neither a value nor the store-level leak check sees it.  The live-reload arm hands the
+parked interpreter call its own buffer (the element would be overrun by a whole record),
+relocates the field into e and reads the scalars back.
+
+**BUILT** (`src/generation/destination.rs` — `shape` for the callee, `site` for the chain;
+the twin's hooks in `emit.rs`, its call name in `calls.rs`, its emission and live arm in
+`mod.rs`; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
+`tests/scripts/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
+Native only; the interpreter moves as before and is the reference.
+
+### A fn-ref whose every target answers a value record answers the tuple
+
+```
+  (R-FnRefValue) a call through a fn-ref of type `fn(…) -> R`, R a record that
+                 (R-ValueRecord) admits, answers R's tuple when EVERY function of
+                 that signature in the program — the arms of the dispatch `match`
+                 the emitter writes — is (R-ValueRecord)-admitted; the `_ =>` arm
+                 answers the null record's fields.  Its parameter i of a record type
+                 is passed as a tuple when every arm receives parameter i as one
+                 (R-ValueLocal).  Decided per dispatch over the whole program inside
+                 (R-ValueRecord)'s fixpoint: the arms are one GROUP, so one arm the
+                 fixpoint declines — its body, a site consuming its record — takes
+                 the whole group back to the buffer road, and a group's result
+                 consumed as a record at a fn-ref call site (an argument the callee
+                 keeps as a record, a field it is not read through) declines it as a
+                 direct call's would.  A capturing arm, an optional result, a `par`
+                 worker, a `&text` argument that picks a store instance, and a fn-ref
+                 target no listed dispatch reaches keep the record outright.  An arm
+                 is a function whose RECORD matches the signature's, not only its
+                 Rust ABI: the type checker refuses any other in that slot.  The
+                 interpreter is untouched: the tuple is native's representation of
+                 the same record (@C122), so the IR pass leaves every arm's signature.
+```
+
+**In words.** `resolve(r.style)` minted a store, wrote four fields, adopted and freed it per
+call, to hand back a record `default_style` had already answered in registers (the fn-ref
+result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
+in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admission
+`(R-ValueRecord)` proves per function lifts to the signature.  Sound where every arm is
+admitted; a null fn-ref answers the null tuple exactly as the buffer road answers a null
+record.  The parameter half is what makes the result half reach `flow_layout_full`: its
+`measure(r.str, resolve(r.style))` hands the resolved record straight to a second dispatch,
+which consumed it as a record while `measure`'s arms kept theirs.
+
+**BUILT** (`hoist::value_records` — the site map `FnRefSites`, `close_fnref_groups`,
+`fnref_value` / `fnref_param` read by `value_shape`, `site_walk` and `local_uses_ok`; the
+dispatch's tuple mode in `emit.rs`; `fnref::dispatch_arms` narrowed to the record;
+`value_record::rewrite_program` leaves the arms; `LOFT_NO_FNREF_VALUE`, `LOFT_TRACE_VALUEREC`;
+guard `tests/scripts/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; measured in
+`bench/portal/analysis/over-9x.md` § zttext).
+
+### A lookup's found entry is answered as a view the caller reads in place
+
+```
+  (R-ViewReturn) a function F whose result at some exit is a VIEW V of a sub-record
+                 that the parser materialises (a buffer minted, V deep-copied into it
+                 — `return e.value` for `e` an element of a parameter's vector) is
+                 given a TWIN that answers (address, owned): a materialised exit
+                 answers V's address and `false`, every other exit the store it
+                 built and `true`.  A call takes the twin, and its caller mints no
+                 buffer and frees the result only when owned, when ALL of:
+                 (1) F writes no store but those it minted itself, calls no user
+                     function, and names its buffer only in its materialised exits;
+                 (2) the call's arguments are variables or reads — the stores V
+                     lies in are held by the caller across the call's statement;
+                 (3) the WINDOW — the statements after the call in its block —
+                     writes no store and calls no user function, and reads the
+                     result only through getters that copy (a tag, a scalar, a
+                     text);
+                 (4) the result's variable is bound once and named only in the
+                     window; the buffer only in its prep, the call and its frees.
+                 Every exit keeps the ownership it had, so a built result (a
+                 not-found literal) is freed as before.
+```
+
+**In words.**  `(R-ReturnField)` answers a field of an OWNED local as its store at a position
+and declines a parameter, because a view of a parameter's record dangles the moment the
+caller frees or grows that record.  Here the referent is the caller's own argument and the
+result is read only in the statements right after the call, which change nothing, so the
+dangling window is empty by construction.  The twin decides per call site, so a caller that
+holds the result longer, or writes in between (the guard's `text_then_clear`), keeps the
+copy.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy and
+its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
+ownership question it raised is settled by @C122 and @C139: a representation is the
+compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
+`LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
+`src/generation/view_return.rs`; guard `tests/scripts/a-found-entry-is-read-where-it-lies.loft`.
+
+### A decoded text or byte string is a view into the frame
+
+```
+  (R-DecodeView) (@C141) a `text` or `vector<u8>` FIELD f of a record R whose value
+                 at R's construction is a span B[a..b] of a byte vector B — read by
+                 (R-TextRun), copied by (R-ByteCopy)'s vector clause, or a slice —
+                 holds the SPAN (B's
+                 store, a, b - a) instead of an owned copy, when ALL of:
+                 (1) B is not written from the construction of R to the last read
+                     of f through any holder: no append, assignment, clear, element
+                     write or `&` hand-off of B, and no release of B;
+                 (2) R is CONFINED to frames that hold B: every holder of R — the
+                     local it is bound to, a record or collection it is stored in,
+                     each return that hands it up — lives in a frame whose activation
+                     B outlives.  A return hands R to a caller only where that call
+                     passed B (or a value B is reached from) as an argument, and the
+                     condition is decided over EVERY call site in the unit (R-Escape);
+                     one site that cannot be shown confined declines the function, and
+                     every site keeps owned fields;
+                 (3) no holder lets R cross a boundary: a return out of the frame that
+                     owns B, a store into a collection or field that outlives B, a
+                     native or bridge call, a `par` worker, a placed library, a yield,
+                     a closure capture, a persisted or file-backed store (@C135);
+                 (4) f is read only as a VALUE: an equality or ordering test, a
+                     prefix or search test, a length, a per-character or per-byte
+                     read or walk, a format, a copy into an owned slot (which builds
+                     the owned value there).  An assignment to f, an append to it, a
+                     `&f` link or an element write declines;
+                 (5) for a `text` field, the span's bytes ARE the text the owned form
+                     holds: text_from_bytes leaves them unchanged (valid UTF-8, tested
+                     once at construction).  A span that would be converted builds the
+                     owned text, so every read answers what the program as written
+                     answers.
+                 The representation is decided at COMPILE time.  R's type T is given a
+                 twin layout in which each admitted field is a span, and every function
+                 of the confined region that touches T is emitted as a twin over that
+                 layout — the way (R-Callee) emits a twin over its inputs.  No code
+                 outside the region ever sees the twin layout, so no other read of a
+                 `text` or vector field pays a test.  R's release frees no bytes for a
+                 span field; B is released by its owner as before.
+                 Declines, keeping owned fields: any of (1)-(5) unproved; a recursive
+                 type whose twin cannot be closed over the region; a generator.
+```
+
+**In words.**  The Rust reference decodes into `&str` and `&[u8]` slices of the frame; loft
+copies four texts and two byte strings out of it per request to read one key.  @C139 permits
+the slice form wherever the results are kept.  Its one invariant is that a span answers what
+the owned copy would, which holds exactly when B outlives the span and does not change under
+it: (1) and (2) are those two facts, (3) lists the places the compiler cannot follow, and (4)
+keeps every use one that reads.  (5) is the one way a span and a copy can differ in content.
+A run-time tag in the field ("owned or span?") was the other representation.  It is
+declined here because every `text` field read in every program would test it (@C125).
+
+The ceiling, measured on pluginabi `check_request` (over-9x.md): building no text or byte
+string at all takes the row from 3.95 to 2.54 ms (−36 %); the spans' own bookkeeping comes
+out of that.  Reach: every decoder of a frame read once (cbor's `decode`, the web stack's
+request handlers).  Switch `LOFT_NO_DECODE_VIEW`; trace `LOFT_TRACE_DECODE_VIEW` names the
+holder or site that declined.  Falsifier: `LOFT_HOIST_VERIFY=1` re-reads each span as the
+owned text and compares; cells on both backends with hand-computed values — the
+`check_request` shape; B appended to after decode and before the lookup (declines, value
+right); R stored into a vector that outlives B (declines); invalid UTF-8 in a text span (the
+converted owned text); a decoded value returned from the function that owns B (declines); and
+a planted defect that admits a site writing B must read the wrong bytes under the verify
+switch.
+
+### Proposed clauses on existing rules
+
+Each extends a rule above with one admission the measured rows need; the rule's own switch,
+trace and falsifiers apply, plus the cells named here.  Priced in
+`bench/portal/analysis/over-9x.md`.
+
+- **The split-table verdict, for `(R-TextBorrow)`.**  A `Set(t, split(…))` whose `t` is a
+  split table `(R-SplitTable)` lowered is not a store write, and neither is the mint or a
+  free of the buffer the table leaves dead.  **BUILT** for the walk: `borrowed_text_walks`
+  reads each statement of the loop as emitted (`as_emitted_by_tables`, `src/generation/
+  hoist.rs`), every other statement judged unchanged; guard
+  `tests/scripts/a-walked-text-borrows-beside-a-split-table.loft`, whose element-replacing
+  cell is the one a dangling borrow fails.  Still PROPOSED: `(R-Header)`'s loop clause
+  admitting by the same verdict.
+- **The match-binding clause, for `(R-TextBorrow)`.**  A text bound by a match pattern that
+  the arm reads only as a text VALUE — an operand, a `text` argument the callee does not
+  store, the source of a format into another slot, `size`, a comparison, a `Str` result —
+  never writes, links, captures or stores it, and the arm writes no store of the subject's,
+  is a borrow of the field (`&str` from `get_str`): no `String` is built.  The walk clause
+  borrows an element for an iteration; this borrows a field for an arm under the same
+  value-only reading.  Cells: an arm that appends to the subject's vector after reading the
+  binding (declines); one that stores the binding into another record (copies).
+- **The pooled clause, for `(R-RefillText)`'s collection clause.**  A return buffer whose
+  elements the callee keeps is only kept across calls the CALLER's buffer survives: a
+  caller that mints it per activation and is itself called per token (zttext's
+  `token_width`) hands a fresh store each time.  Lifting that work-ref into the caller's
+  caller, as `(R-WorkBuffer)`'s transitive clause lifts a work buffer, is the next unit:
+  priced −8 % alone and −31 % with the collection clause on `flow_layout_full`.
+  `check_request` and `decode` build their vectors by other operations than appends and are
+  not admitted.
+- **Text-bearing elements and the work text, for `(R-WorkBuffer)`.**  `vector<τ>` with τ a
+  record of scalars and texts is admitted under the mention test unchanged PROVIDED the
+  callee refills it under the text clause (otherwise the per-call release is what the pool
+  was meant to remove); and a function's `__work_*` text local is the same buffer one level
+  down, pooled per frame, with an assignment of the empty literal to it emitted as `clear()`.
+- **The function clause takes a base, for `(R-Base)`.**  Beside the function-clause header
+  `(R-Header)` emits (`src/generation/mod.rs`), `vec_base` is emitted under the base's own
+  condition — no growth of that vector anywhere in the function — and the `?? default`
+  element read outside a loop takes it as the in-loop read does.  Cells: a read past the end
+  (the default answers); a function that appends to the vector it reads (declines).  cbor
+  `decode`: 36 byte-read sites, 6.49 → 5.15 M on the ladder.
+- **A field MOVE covers, for `(R-CompleteWrite)`.**  `group_covers_type` counts an
+  `OpMoveField` whose destination is the whole element (offset 0, the element's own type) as
+  covering every field, so the mint is the no-prefill form.  Cell: `LOFT_POISON_CLAIM=1` over
+  the `(R-MoveLast)` corpus — a prefill skipped wrongly shows as poison.
+- **A push window across an admitted recursive call, for `(R-Push)`.**  `(R-Callee)` answers
+  `None` to every question on a recursive edge (`hoist.rs`: a callee met while its own
+  verdict is open), which denies a recursive builder every call-crossing hoist at once; one
+  fixpoint over the callee's own write set admits them together, and `items += [sub.value]`
+  keeps its push header across `read_value`'s call to itself.  cbor `decode`: 5.15 → 4.06 M.
 
 ## Validating the emitted routines against their assumptions
 

@@ -1,6 +1,6 @@
 // loft#675 — the sub-module that actually owns the returned struct.  A consumer sees
 // it only through `r675_geo`'s re-export, which is what defers the name's resolution
 // past the consumer's signature parse.
-pub struct P675 { x: integer }
+pub struct P675 { pub x: integer }
 
 pub fn mk675(v: integer) -> P675 { return P675 { x: v }; }

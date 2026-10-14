@@ -72,8 +72,8 @@ fn churn1304(n: integer) -> integer {
 fn sub1304(self: Money1304, other: Money1304) -> Money1304 {
   Money1304 { cents: self.cents - other.cents }
 }
-fn OpMin(self: Money1304) -> Money1304 { Money1304 { cents: -self.cents } }
-fn OpAdd(self: Money1304, other: Money1304) -> Money1304 {
+operator negate(self: Money1304) -> Money1304 { Money1304 { cents: 0 - self.cents } }
+operator plus(self: Money1304, other: Money1304) -> Money1304 {
   Money1304 { cents: self.cents + other.cents }
 }
 fn bump1304(self: Money1304) -> Money1304 { Money1304 { cents: self.cents + 1 } }

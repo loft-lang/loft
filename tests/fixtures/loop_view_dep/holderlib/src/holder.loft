@@ -1,10 +1,10 @@
 // `Holder` names `vector<Item>` BEFORE `Item` exists — the forward reference is
 // the whole fixture: it is what leaves pass 1 without the field's dep.
 pub struct Holder {
-  hd_name:  text,
-  hd_items: vector<Item>,
+  pub hd_name:  text,
+  pub hd_items: vector<Item>,
 }
-pub struct Item { it_x: float }
+pub struct Item { pub it_x: float }
 pub struct Shelf { sh_all: hash<Holder[hd_name]> }
 
 pub fn holder_new(name: text) -> Holder { Holder { hd_name: name, hd_items: [] } }

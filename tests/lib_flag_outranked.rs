@@ -11,8 +11,8 @@
 //! Hermetic: every cell builds its own tree under the temp dir; `LOFT_NO_CACHE` keeps the
 //! whole-program cache from answering for a previous cell.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -20,16 +20,16 @@ fn loft_bin() -> PathBuf {
 
 fn write(path: &Path, body: &str) {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).expect("mkdir");
+        fa::create_dir_all(parent).expect("mkdir");
     }
-    std::fs::write(path, body).expect("write");
+    fa::write(path, body).expect("write");
 }
 
 /// A project directory with `lib/who.loft`, a bare directory with the same `main.loft`, and
 /// an override directory whose `who.loft` cannot parse.
 fn tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
     let base = std::env::temp_dir().join(format!("loft_1352_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let proj = base.join("proj");
     let bare = base.join("bare");
     let over = base.join("override");
@@ -48,7 +48,7 @@ fn tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
 }
 
 fn run(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")

@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1958: the `par_fold` folds a parallel worker can be — named at the call — run on both
+// backends against hand-computed values, beside the refusal of the rest
+// (`1958-a-par-fold-worker-is-named-at-the-call.loft`): a function's name (n1), a lambda that
+// captures nothing (n2), each over one and over four threads, and the cure the refusal names
+// for folding with context, a fused `par` loop forwarding the captured value (n3).
+// @falsified-at: none — it guards what must keep running beside a new refusal; every build
+//   before the refusal ran it with these values.
+fn add(a: integer, b: integer) -> integer { a + b }
+fn addk(x: integer, k: integer) -> integer { x + k }
+
+fn main() {
+  v = [1, 2, 3, 4, 5];
+  assert(par_fold(v, 0, add, 1) == 15, "n1 one thread");
+  assert(par_fold(v, 0, add, 4) == 15, "n1 four threads");
+  assert(par_fold(v, 0, fn(a: integer, b: integer) -> integer { a + b }, 1) == 15, "n2 one");
+  assert(par_fold(v, 0, fn(a: integer, b: integer) -> integer { a + b }, 4) == 15, "n2 four");
+  k = 10;
+  t = 0;
+  for x in v par(b = addk(x, k), 2) { t += b; }
+  assert(t == 65, "n3 {t}");
+  println("ok");
+}

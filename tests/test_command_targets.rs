@@ -17,8 +17,8 @@
 //! that refused an argument after any flag would break `--lib <dir>`, whose value is
 //! also a bare token.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -27,19 +27,19 @@ fn loft_bin() -> PathBuf {
 /// A package with one passing and one failing test file.
 fn fixture(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("loft_916_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("tests")).expect("mkdir tests");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("tests")).expect("mkdir tests");
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"t916\"\nversion = \"0.1.0\"\n",
     )
     .expect("manifest");
-    std::fs::write(
+    fa::write(
         root.join("tests/good.loft"),
         "fn test_one() { assert(1 + 2 == 3, \"add\"); }\n",
     )
     .expect("good");
-    std::fs::write(
+    fa::write(
         root.join("tests/alsogood.loft"),
         "fn test_two() { assert(2 + 2 == 5, \"THIS TEST FAILS ON PURPOSE\"); }\n",
     )
@@ -48,7 +48,7 @@ fn fixture(tag: &str) -> PathBuf {
 }
 
 fn run(root: &PathBuf, args: &[&str]) -> (i32, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(root)
         .args(args)
         .env("LOFT_TIMEOUT", "180")
@@ -85,7 +85,7 @@ fn a_second_target_is_refused_not_dropped() {
         !out.contains("test result: ok."),
         "no green may be printed for a run that did not happen:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// The order-swapped form from the report: it is the SECOND POSITION that was
@@ -100,7 +100,7 @@ fn the_refusal_does_not_depend_on_which_file_fails() {
         out.contains("one target per run"),
         "the swapped order must be refused for the same reason:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// The control that makes the refusal meaningful: with NO target both files run, and
@@ -119,7 +119,7 @@ fn no_target_still_runs_every_file() {
         out.contains("THIS TEST FAILS ON PURPOSE"),
         "the failing assertion must be reported:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// One target still works, in each spelling — a bare file, a file with a `::`
@@ -143,7 +143,7 @@ fn one_target_still_works_in_every_spelling() {
     let (code, out) = run(&root, &["test", "good.loft", "--no-warnings"]);
     assert_eq!(code, 0, "a trailing flag is not a second target:\n{out}");
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// loft#925 — a target written AFTER a flag is the target, not a dropped argument.
@@ -181,7 +181,7 @@ fn a_target_after_a_flag_is_the_target() {
     // token, so a rule that adopted any trailing positional would swallow it and
     // treat the directory as the test target.
     let src = root.join("src");
-    std::fs::create_dir_all(&src).expect("mkdir src");
+    fa::create_dir_all(&src).expect("mkdir src");
     let (code, out) = run(
         &root,
         &["test", "--lib", src.to_str().unwrap(), "good.loft"],
@@ -195,7 +195,7 @@ fn a_target_after_a_flag_is_the_target() {
         "and the target after it still scopes the run:\n{out}"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Two targets split by a flag are two targets. The leading-positional check could
@@ -222,7 +222,7 @@ fn two_targets_separated_by_a_flag_are_refused() {
         !out.contains("test result: ok."),
         "no green may be printed for a run that did not happen:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// The `--tests` FLAG spelling of loft#925: it skips only the flags it knows
@@ -253,7 +253,7 @@ fn the_tests_flag_keeps_its_target_after_any_flag() {
     }
     // A flag that takes a VALUE between them: the value must not be taken as the target.
     let src = root.join("src");
-    std::fs::create_dir_all(&src).expect("mkdir src");
+    fa::create_dir_all(&src).expect("mkdir src");
     let (code, out) = run(
         &root,
         &["--tests", "--lib", src.to_str().unwrap(), "tests/good.loft"],
@@ -266,5 +266,5 @@ fn the_tests_flag_keeps_its_target_after_any_flag() {
         out.contains("1 file"),
         "and the target after it scopes the run:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

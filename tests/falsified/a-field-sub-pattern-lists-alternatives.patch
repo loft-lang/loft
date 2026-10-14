@@ -1,0 +1,12 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index b62b4dbb1..6dbb051b6 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -10389,6 +10389,7 @@ impl Parser {
+         // names borrow what the value borrows (`match_borrow_source`, a tuple member's own
+         // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.
+         if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
++            && false
+             && self.sub_pattern_lists_alternatives()
+         {
+             let src = self.match_borrow_source(&field_val);

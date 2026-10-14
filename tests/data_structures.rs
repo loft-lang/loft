@@ -8,7 +8,7 @@ use loft::hash;
 #[cfg(feature = "random")]
 use loft::keys;
 use loft::keys::{Content, DbRef, Str};
-use loft::{tree, vector};
+use loft::{btree, vector};
 #[cfg(feature = "random")]
 use rand_core::{RngCore, SeedableRng};
 #[cfg(feature = "random")]
@@ -29,7 +29,8 @@ pub fn record() {
     stores.field(s, "percentage", stores.name("single"));
     stores.field(s, "calc", stores.name("long"));
     stores.finish();
-    assert_eq!(stores.size(stores.name("Data")), 33);
+    // 8 + 8 + 8 + 4 + 4 + 1 = 33 bytes, padded to 40 (`@FR-L-Align`, @C138).
+    assert_eq!(stores.size(stores.name("Data")), 40);
     assert_eq!(stores.enum_val(e, 2), "Hourly");
     assert_eq!(stores.position(s, "size"), 0);
     assert_eq!(stores.position(s, "amount"), 8);
@@ -69,10 +70,10 @@ pub fn record() {
     // tolerates extra keys.  The defaults are visible (loft#870), and `name` joined
     // them with loft#875: a plain `text` the document omits is the EMPTY string, which
     // is a value `show` prints, not the null it used to hold and skip.  `category` is
-    // an enum, whose absent value genuinely is nothing, so it stays unprinted.
+    // an enum, whose absent value is null, and a null field is shown as `null` (@C143).
     assert_eq!(
         stores.parse_message("{blame:\"nothing\"}", s),
-        "{name:\"\",size:0,amount:0,percentage:0,calc:0}"
+        "{name:\"\",category:null,size:0,amount:0,percentage:0,calc:0}"
     );
     assert_eq!("/", stores.path(&result, s));
     assert_eq!(
@@ -540,7 +541,7 @@ pub fn array_record() {
     stores.finish();
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[12/8]: parents [Main 10]{n:text[8], c:integer[0]}"
+        "Elm[16/8]: parents [Main 10]{n:text[8], c:integer[0]}"
     );
     // `other [65535, 0]`: the leading 65535 marks `search` as a VIEW of records
     // `list` also holds; the `0` is the back-link to `list` itself. Both
@@ -582,7 +583,7 @@ pub fn ordered_record() {
     stores.finish();
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[12/8]: parents [Main 10]{n:text[8], c:integer[0]}"
+        "Elm[16/8]: parents [Main 10]{n:text[8], c:integer[0]}"
     );
     // `other [65535, 0]`: the leading 65535 marks `search` as a VIEW of records
     // `list` also holds; the `0` is the back-link to `list` itself. Both
@@ -627,13 +628,11 @@ pub fn index() {
     let m = stores.structure("Main", 0);
     stores.field(m, "index", v);
     stores.finish();
-    // P191: bookkeeping fields are 4-byte int<0,false> (was 8-byte
-    // integer) so tree::add's hardcoded RB_LEFT=0/RB_RIGHT=4/RB_FLAG=8
-    // offsets line up with the actual field positions.  Saves 8 bytes
-    // per indexed record.
+    // The index adds nothing to its element (@PLN190: the B+tree keeps its nodes apart):
+    // c (8 bytes) at 0, n (a 4-byte text handle) at 8, 12 bytes padded to 16.
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[21/8]: parents [Main 10]{n:text[8], c:integer[0], #left_1:int<0,false>[12], #right_1:int<0,false>[16], #color_1:boolean[20]}"
+        "Elm[16/8]: parents [Main 9]{n:text[8], c:integer[0]}"
     );
     assert_eq!(
         stores.dump_type("Main"),
@@ -660,14 +659,7 @@ pub fn index() {
     let key = [Content::Str(Str::new("four"))];
     let rec = DbRef {
         store_nr: into.store_nr,
-        rec: tree::find(
-            &into,
-            true,
-            stores.fields(v),
-            &stores.allocations,
-            stores.keys(v),
-            &key,
-        ),
+        rec: btree::find_record(&into, true, &stores.allocations, stores.keys(v), &key),
         pos: 8,
     };
     stores.show(&mut check, &rec, s, false);
@@ -685,11 +677,10 @@ pub fn index_deletions() {
     let m = stores.structure("Main", 0);
     stores.field(m, "index", v);
     stores.finish();
-    // P191: bookkeeping shrunk to 4-byte int<0,false> (was 8-byte
-    // integer); record size 33→25 user bytes.
+    // Two integers and nothing the index adds (@PLN190).
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[25/8]: parents [Main 10]{k:integer[0], c:integer[8], #left_1:int<0,false>[16], #right_1:int<0,false>[20], #color_1:boolean[24]}"
+        "Elm[16/8]: parents [Main 9]{k:integer[0], c:integer[8]}"
     );
     let db = stores.database(2);
     let into = DbRef {
@@ -702,32 +693,42 @@ pub fn index_deletions() {
     let mut rng = Pcg64Mcg::seed_from_u64(42);
     let keys = stores.keys(v).to_vec();
     let elms = 100;
-    // Post-2c Elm layout: k:integer[0] c:integer[8] #left[16] #right[24] #color[32].
-    // User data starts at rec.pos=8; tree pointers at absolute byte rec.pos+16=24.
-    // Record needs 33 user bytes + 8 header = 41 bytes = 6 words.
+    // k at byte 8, c at 16: 16 user bytes + the 8-byte header = 3 words.
     for i in 0..elms {
-        let rec = stores.claim(&db, 6);
+        let rec = stores.claim(&db, 3);
         let s = keys::mut_store(&rec, &mut stores.allocations);
         let key = rng.next_u32();
         // Write k at rec.pos+0=8 (8 bytes), c at rec.pos+8=16 (8 bytes).
         s.set_int(rec.rec, 8, i64::from(key));
         s.set_int(rec.rec, 16, i64::from(i));
-        tree::add(&into, &rec, 24, &mut stores.allocations, &keys);
-        tree::validate(&into, 24, &stores.allocations, &keys);
+        assert_eq!(
+            btree::add(&into, rec.rec, &mut stores.allocations, &keys),
+            0
+        );
+        btree::validate(&into, &stores.allocations, &keys);
         recs.push(rec);
     }
     for d in 0..500 {
         let i = rng.next_u64() % recs.len() as u64;
         let rec = recs[i as usize];
-        tree::remove(&into, &rec, 24, &mut stores.allocations, &keys);
-        tree::validate(&into, 24, &stores.allocations, &keys);
+        assert!(btree::remove(
+            &into,
+            rec.rec,
+            &mut stores.allocations,
+            &keys
+        ));
+        btree::validate(&into, &stores.allocations, &keys);
         let s = keys::mut_store(&rec, &mut stores.allocations);
         let key = rng.next_u32();
         s.set_int(rec.rec, 8, i64::from(key));
         s.set_int(rec.rec, 16, i64::from(100 + d));
-        tree::add(&into, &rec, 24, &mut stores.allocations, &keys);
-        tree::validate(&into, 24, &stores.allocations, &keys);
+        assert_eq!(
+            btree::add(&into, rec.rec, &mut stores.allocations, &keys),
+            0
+        );
+        btree::validate(&into, &stores.allocations, &keys);
     }
+    assert_eq!(btree::count(&into, &stores.allocations), elms);
 }
 
 #[test]
@@ -739,10 +740,11 @@ pub fn index_find() {
     stores.field(s, "value", stores.name("float"));
     let v = stores.index(s, &[("cat".to_string(), true), ("name".to_string(), true)]);
     stores.finish();
-    // P191: bookkeeping shrunk to 4-byte int<0,false>.
+    // cat and value (8 bytes each) first, the 4-byte text handle at 16: 20 bytes padded
+    // to 24, nothing added by the index (@PLN190).
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[29/8]:{cat:integer[0], name:text[16], value:float[8], #left_1:int<0,false>[20], #right_1:int<0,false>[24], #color_1:boolean[28]}"
+        "Elm[24/8]:{cat:integer[0], name:text[16], value:float[8]}"
     );
     let db = stores.database(8);
     let into = DbRef {
@@ -814,10 +816,9 @@ pub fn hash_load_factor_threshold() {
 fn find_rec(key: u8, before: bool, s: u16, v: u16, data: &DbRef, stores: &Stores) -> String {
     let rec = DbRef {
         store_nr: data.store_nr,
-        rec: tree::find(
+        rec: btree::find_record(
             data,
             before,
-            stores.fields(v),
             &stores.allocations,
             stores.keys(v),
             &[Content::Long(key as i64)],

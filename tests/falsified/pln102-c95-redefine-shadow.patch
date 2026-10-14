@@ -1,12 +1,13 @@
 diff --git a/src/data.rs b/src/data.rs
+index 3adce95b5..b12856642 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -8789,7 +8789,7 @@
-         // This used to be refused only when the name also had a bare-name definition — which a
-         // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
-         // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+@@ -9309,7 +9309,7 @@ impl Data {
+                 Type::optional(tp.clone())
+             }
+         };
 -        let shadowed_method = if is_both || is_self {
 +        let shadowed_method = if true || is_both || is_self {
              None
          } else {
-             arguments
+             arguments.first().and_then(|a| {

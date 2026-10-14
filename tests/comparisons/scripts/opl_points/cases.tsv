@@ -1,0 +1,4 @@
+# orig: scripts/opl_points.py
+# port: scripts/opl_points
+# case	twin options	arguments
+sample	--stdin tests/comparisons/scripts/opl_points/sample.opl	

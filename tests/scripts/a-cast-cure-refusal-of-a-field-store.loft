@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The field-ASSIGNMENT cell of `a-cast-cure-refusals-name-the-written-type.loft`, apart because
+// beside the other cells it was not reported.  `s.a = f` into a `u8?` field is refused once, at
+// loft#893's chokepoint, naming `as u8?` — it was refused twice at one position, both times
+// naming `as integer(0, 255)?`, which does not parse.
+//
+// @falsified-at: 726b9665e — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1
+//   -> 1/1.
+// @falsified-by: tests/falsified/a-cast-cure-refusal-of-a-field-store.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   726b9665e is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+fn main() {
+  println("{field(2.5)}");
+}
+
+struct S { a: u8?, b: integer }
+
+// @EXPECT_ERROR: Cannot assign float to a field of type u8? — use 'as u8?' to cast explicitly
+fn field(f: float) -> integer {
+  s = S { b: 1 };
+  s.a = f;
+  s.b
+}

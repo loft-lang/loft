@@ -66,6 +66,8 @@
 //! `fn main() { test(); }`.  loft does not allow nested fn
 //! definitions, so helpers must live alongside `fn test`.
 
+use loft::file_access as fa;
+
 mod common;
 
 // ── Phase 00 — harness smoke ────────────────────────────────────────────────
@@ -810,14 +812,16 @@ fn main() {{
     // (peak, allocs) for one round count.
     let measure = |rounds: usize| -> (usize, usize) {
         let script = std::env::temp_dir().join(format!("loft_coro_frame_reclaim_{rounds}.loft"));
-        std::fs::write(&script, source(rounds)).expect("write temp script");
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--interpret")
-            .arg(&script)
-            .env("LOFT_ALLOC_REPORT", "1")
-            .output()
-            .expect("failed to invoke loft binary");
-        let _ = std::fs::remove_file(&script);
+        fa::write(&script, source(rounds)).expect("write temp script");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg("--interpret")
+        .arg(&script)
+        .env("LOFT_ALLOC_REPORT", "1")
+        .output()
+        .expect("failed to invoke loft binary");
+        let _ = fa::remove_file(&script);
         let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
 

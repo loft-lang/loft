@@ -45,8 +45,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   test:
+    # @windows-exempt: a library's platform matrix is its own repository's choice (the caller's matrix)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false                       # one broken package must not hide the others
@@ -58,7 +63,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install mold (loft's pinned linker)
-        run: sudo apt-get update -y && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Checkout loft (loft-lang/loft — the current org URL)
         uses: actions/checkout@v4
@@ -66,6 +71,9 @@ jobs:
           repository: loft-lang/loft          # was `jjstwerff/loft` in the drifted copies
           ref: ${{ inputs.loft-ref }}
           path: loft-src
+          # The release tags, so the loft built here answers `<last release>.<yyyymmdd>` and a
+          # library floored on the day a feature landed (`loft = ">=2026.10.20261005"`) passes.
+          fetch-tags: true
 
       # ⚠⚠ THE KEY MUST CARRY LOFT'S COMMIT, NOT ITS BRANCH NAME.
       #
@@ -137,7 +145,7 @@ jobs:
                   } | tr ',' '\n' | tr -d ' ' | sed '/^$/d' | sort -u | tr '\n' ' ') || true
           if [ -n "$deps" ]; then
             echo "installing build-deps: $deps"
-            sudo apt-get install -y $deps
+            timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y $deps
           else
             echo "no build-deps declared by this package or its deps"
           fi
@@ -540,6 +548,7 @@ jobs:
   # how a step gets ignored.  What it cannot read — a `gh` call that fails, an
   # unreachable index — it reports and never counts as clean.
   unreleased:
+    # @windows-exempt: platform-free — compares library refs
     runs-on: ubuntu-latest
     name: unreleased work
     steps:

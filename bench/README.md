@@ -35,7 +35,16 @@ python3 bench/stats.py --only 01,08          # some of them
 python3 bench/stats.py --lanes native,rust,interp,python
 python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the next one
 python3 bench/stats.py --show-samples        # every sample under its row
+python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
 ```
+
+`--routine` takes `name` or `bench/name` (the qualified form for a name several programs
+use, such as `hash`).  On its own it builds only the programs `portal/routines.tsv` places
+those routines in, library benches included, and reports only their rows; `portal.py measure`
+and `scripts/perf_check.py` pass it through.  A program still runs ALL its routines, because
+the twins take no filter: `--n` is calibrated on the picked ones, and `--max-run-ms` (10 s)
+caps one whole run, so a fast pick beside a slow neighbour is timed over less than
+`--target-ms` and can come back `(coarse)`.
 
 ```
 bench           routine          native ns/op    ±%      rust ns/op    ±%  nat/rust         range  verdict
@@ -129,7 +138,7 @@ make perf-portal-render                                           # render from 
 | `portal/census.tsv` | library and consumer routines worth a row and not measured yet, each with its workload and its twin |
 | `portal/gaps.tsv` | features the consumer programs lean on that no measured row exercises |
 | `portal/libs.tsv` + `portal/checkout_libs.sh` | the library repositories the pass measures from, and the script that checks them out |
-| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings |
+| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings.  `<host>` is the node name, which follows the network a laptop is on — `LOFT_PERF_HOST=<name>` pins it so one machine keeps one history |
 
 A CLASS names the mechanism a routine's cost is made of — the per-call frame, a checked
 integer operator, a record appended to a vector, a hash probe — so a slow class points at one
@@ -141,6 +150,15 @@ which libraries have a lane and which surveyed routines are waiting.
 four rules below), confirm the hashes agree (`python3 bench/stats.py --only <lane>`), and
 give it a line in `routines.tsv`; a routine a lane prints and the registry lacks is reported
 on the page as UNCLASSIFIED.  If it came off the census, delete its census line.
+
+**What a row measures: the structures, not the links between them.**  A row times a data
+structure doing its own work — a vector filled and walked, a hash probed, records built,
+fields read and written in place.  A link between structures (a `&` to a stored tuple or
+record, a reference parameter handed one element at a time) is allowed in the language and
+must stay correct, but it is not a performance target: it always trails what rustc makes of
+a `&mut`, and a program keeps related data together in one structure rather than linking
+separate ones.  So no row is built around such links, and a gap that only a link shows is not
+worked on.
 
 **Lanes.**  `01`–`12` are ENGINE programs (informational).  `13_stdlib_text`,
 `14_stdlib_vector` and `15_stdlib_keyed` are the STANDARD LIBRARY as a program calls it, one
@@ -210,10 +228,26 @@ A bench whose routines run on more than one thread says how many in a header com
 it alone.  Undeclared is one thread, pinned to one core: `19_stdlib_par`'s four threads ran on
 a single core until it declared them.
 
+## Which host's numbers count
+
+A ratio is read on one machine and compared on that machine only: the Rust lane moves between
+hosts (the arm64 Mac and the lima VM on the same box disagree by 30–75 % on it) while loft's
+native lane stays level.  So there is no single reference host.  An agent works against the
+results of the host it runs on (`bench/portal/results/<host>.tsv`, `LOFT_PERF_HOST` naming
+it): that file picks the rows, files the outliers and judges a fix.  A bar is MET only when
+every host's latest run agrees — a routine under 3× on one host and over it on another is
+still over the bar (owner).
+
 Four rules keep a row LIKE-FOR-LIKE, and a bench that breaks one measures something else:
 
 1. **The same algorithm in every lane, and the hash proves it.**  The suite once compared a
-   loft insertion sort with a Rust bubble sort; no timer fixes that.
+   loft insertion sort with a Rust bubble sort; no timer fixes that.  For a library routine
+   the algorithm is the LIBRARY AS WRITTEN, in its most natural spelling: the twin follows
+   it, redundant calls included, and does not take a shortcut the library did not.  Where
+   loft can run a routine faster only through a less natural spelling, that is loft's issue
+   to solve, never a spelling to teach the programmer (owner).  The library itself changes
+   only where it is less efficient by accident, or where it still works around a defect
+   loft has since fixed — then it goes back to the natural form, and the twin with it.
 2. **Each repetition's input differs in VALUE, never in the amount of work** (`r & 1` added
    to a start, a salt, an origin).  A pure kernel on a constant input can be hoisted out of
    the repetition loop or folded to a constant, and then the row times nothing.

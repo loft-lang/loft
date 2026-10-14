@@ -8,9 +8,9 @@
 //! the same number.  This pins the EMISSION per helper — which bindings earn a header — and
 //! the switch (`LOFT_NO_VIEW_HOIST=1`), which is what makes it red on the build before the
 //! unit and on one that lost it.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-n-view-def-header-cells.loft";
@@ -37,7 +37,8 @@ const EXPECTED: &[(&str, usize)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -47,12 +48,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: how many view headers its blocks bind.
@@ -91,7 +92,7 @@ fn each_binding_earns_exactly_the_header_predicted() {
             "{name}: view headers — the prediction vs the emission"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -102,5 +103,5 @@ fn the_switch_restores_the_runtime_reads() {
         !rust.contains("V-n view header"),
         "LOFT_NO_VIEW_HOIST=1 must bind no view header"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

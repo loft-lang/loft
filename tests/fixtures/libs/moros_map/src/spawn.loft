@@ -7,31 +7,31 @@ use types::*;
 // A creature or NPC spawn location.
 // sp_condition: "ALWAYS", "NIGHT_ONLY", "DAY_ONLY", "TRIGGER", "RANDOM".
 pub struct SpawnPoint {
-  sp_hex:       HexAddress,
-  sp_kind:      text,
-  sp_creature:  integer not null,
-  sp_npc_id:    integer not null,
-  sp_count:     integer not null,
-  sp_facing:    integer not null,
-  sp_condition: text,
+  pub sp_hex:       HexAddress,
+  pub sp_kind:      text,
+  pub sp_creature:  integer not null,
+  pub sp_npc_id:    integer not null,
+  pub sp_count:     integer not null,
+  pub sp_facing:    integer not null,
+  pub sp_condition: text,
 }
 
 // A single waypoint in an NPC's daily routine.
 // wp_activity: "STAND", "SIT", "SLEEP", "WORK", "EAT", "PATROL",
 //              "WANDER", "TALK", "GUARD", "REQUISITION".
 pub struct NpcWaypoint {
-  wp_hex:        HexAddress,
-  wp_activity:   text,
-  wp_time_start: integer not null,
-  wp_time_end:   integer not null,
-  wp_facing:     integer not null,
-  wp_note:       text,
+  pub wp_hex:        HexAddress,
+  pub wp_activity:   text,
+  pub wp_time_start: integer not null,
+  pub wp_time_end:   integer not null,
+  pub wp_facing:     integer not null,
+  pub wp_note:       text,
 }
 
 // An NPC's complete daily routine: name, creature template, waypoints.
 pub struct NpcRoutine {
-  nr_npc_id:    integer not null,
-  nr_name:      text,
-  nr_creature:  integer not null,
-  nr_waypoints: vector<NpcWaypoint>,
+  pub nr_npc_id:    integer not null,
+  pub nr_name:      text,
+  pub nr_creature:  integer not null,
+  pub nr_waypoints: vector<NpcWaypoint>,
 }

@@ -6,7 +6,6 @@
 //! decline (`tests/fixtures/rebind-view-across-call.loft`).  A wrong admission changes no
 //! value in the cells that exercise it, so only this pin sees it drift.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft";
 const VIEW: &str = "tests/fixtures/rebind-view-across-call.loft";
@@ -14,7 +13,8 @@ const VIEW: &str = "tests/fixtures/rebind-view-across-call.loft";
 /// `(fn, callee, verdict)` for the local `d`, as `LOFT_TRACE_REBIND=1` prints them.
 fn verdicts(file: &str, env: &[(&str, &str)]) -> Vec<(String, String, String)> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

@@ -7,10 +7,10 @@ diff --git a/src/database/search.rs b/src/database/search.rs
          let existing = self.find(coll, db, &key);
 -        if existing.rec != 0 {
 +        if false && existing.rec != 0 {
-             // dedup: free the old record's nested heap, then unlink it.
-             self.remove_claims(&existing, content_tp);
-             self.remove(coll, &existing, db);
-@@ -871,6 +871,9 @@
+             // `(Col-Assign)`: a record already under the key is REPLACED, which is a removal
+             // (@FR-Col-Remove) — so it takes the one removal home, which unlinks and releases
+             // in the order each kind needs.  Its own copy released the record's claims before
+@@ -858,6 +858,9 @@
          content_tp: u16,
          secondary: bool,
      ) {

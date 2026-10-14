@@ -153,7 +153,7 @@ with them standing:
 - **A boxed value type** collapsing the per-kind `hole_*` methods into one needs
   a GENERIC METHOD (`fn hole<T>(self: Self, v: T)`) — not @PLN125 arc A as first
   recorded; arc A shipped associated types and they do not reach this. It was
-  filed as @PLN137 and is now **DECLINED** (C110): a generic method accepts every
+  filed as @PLN137 and is now **DECLINED** (@C110): a generic method accepts every
   type by construction, which deletes the per-kind opt-in that makes this plan's
   own refusal auditable. The per-kind form was chosen first because it could be
   collapsed later; the evaluation found that collapsing it would cost the safety

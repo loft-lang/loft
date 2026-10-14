@@ -208,7 +208,7 @@ with the counter's *null state meaning "not started"*
 `op_conv_bool_from_int` + sentinel `op_add_int`.
 
 **The trap this design must own:** "typed non-null" ≠ "cannot hold the
-sentinel".  The C80 escape (an overrun `v[i]` typed non-null reads null) means
+sentinel".  The @C80 escape (an overrun `v[i]` typed non-null reads null) means
 a non-`Optional` value can dynamically be `i64::MIN`/NaN.  Emitting plain `+`
 or `<` there is **native-only silent-wrong** — the worst class in the repo's
 own taxonomy.  So the rewrite keys on a *provably non-sentinel* proof, not on
@@ -225,7 +225,7 @@ literals; results of ops already in the rewritten set (closure); loop induction
 variables with proven bounds (`is_active_loop_var` is already a trusted leaf at
 `src/parser/fields.rs:1292`); `sqrt`-family results the Sign lattice already
 peels.  **Explicitly NOT trusted:** parameters, vector element reads, record
-field reads — each can carry the C80 escape.  Widen only with a measured
+field reads — each can carry the @C80 escape.  Widen only with a measured
 reason.
 
 **Three sub-steps, measured apart:**
@@ -294,7 +294,7 @@ reaches ~1.2–2×.
   predicate now serves both families; the integer closure adds literals, the
   int discharge shape, negation, `& non-neg-literal` (result ∈ [0, lit]),
   and `>> lit(1..64)`.  **A SELF-STEP induction (`v = v ± proven`, argued
-  from C85) was built and then RETRACTED the same day** — the corpus
+  from @C85) was built and then RETRACTED the same day** — the corpus
   falsified it: `1246-a-nullable-narrow-slot-answers-null.loft` pins that a
   plain integer driven past `i64::MAX` reads null AND that `??` fires on
   it, so the overflow sentinel is an observable value contract; marking a
@@ -318,7 +318,7 @@ reaches ~1.2–2×.
 - **Open in P3 (the coverage frontier):** interprocedural parameter facts —
   a param is proven when every call site passes a proven argument (whole-
   program conjunction at emit time; `hash01` unlocks only through it), and
-  store-rooted reads stay blocked on C80 by design.  Weigh against P4's
+  store-rooted reads stay blocked on @C80 by design.  Weigh against P4's
   ~90 % share before investing.
 
 **The rustc-first probe protocol (owner, 2026-09-07 — use it before EVERY
@@ -1148,7 +1148,7 @@ that floor already; every row at 8–19× is there for a reason in the closable 
 
 ## The out-of-line calls — the census and the split (2026-09-08)
 
-**The steer.**  After C129 declined machine-dependent arithmetic, the owner's next
+**The steer.**  After @C129 declined machine-dependent arithmetic, the owner's next
 sentence: *"that doesn't mean we cannot do some trickery here (the llvm code will
 probably use flags on the registers to indicate overflow)"* — keep the semantics, make
 the checks near-free.  Checked in the disassembly of the shipped `n_seed_hash` before
@@ -4042,15 +4042,15 @@ it into a multiply-and-shift.  Probe 139 → 130 ms; `LOFT_NN_VERIFY=1` clean.
 **The rule NOT taken, with its price.**  The integer closure — the result of `+`/`-`/`*`
 over proven operands counted proven, which is what would carry `_nn` through the index
 chain and the accumulator — is what `non_sentinel.rs` already declines on purpose:
-`formal/types.md` C85 makes an overflow's sentinel propagate onward as null on both
+`formal/types.md` @C85 makes an overflow's sentinel propagate onward as null on both
 backends ("yields null and keeps running"), so a native closure would answer a NUMBER
 after a reported overflow where the interpreter answers null — a divergence after a
 fault.  Measured on the final emission of this unit and § V-ak: the closure as the checked
 `_nn` family is worth −17 % on the resample (109 → 89–93 ms) and as plain wrapping
-operators −50 % (→ 55 ms).  That is the price of the C85 line on this row, and moving the
+operators −50 % (→ 55 ms).  That is the price of the @C85 line on this row, and moving the
 line is the owner's call, not a rewrite's.
 
-**Ruled 2026-09-15 (DESIGN_DECISIONS.md C120): declined, both forms.**  *"We keep today's
+**Ruled 2026-09-15 (DESIGN_DECISIONS.md @C120): declined, both forms.**  *"We keep today's
 implementation; I do not want random behaviour.  We only optimise situations we know can
 be optimised."*  Three programs measured under each closure show what the ruling keeps
 out: `b = MAX + 1; c = b + 5` reads `-9223372036854775803` for null under the checked
@@ -4085,9 +4085,9 @@ whose every step branches cannot be vectorised; the reference's 4.4 cycles per t
 four-wide multiply-accumulate.  The two loop constructs asked about: `for a in 55..66`
 already carries no test (§ V-aj, `@FR-R-Counter`; the asm shows a bare `inc`), and one
 instruction more is provable there — the `jo` after it, since a counter bounded by its
-range cannot overflow.  `for b in v` is not: C85 lets an overflowed value, the sentinel,
+range cannot overflow.  `for b in v` is not: @C85 lets an overflowed value, the sentinel,
 be STORED into a `vector<integer>`, so an element is not a value we know exists, and its
-test stays under C120; the library's `v[i]?` states the fact instead and the multiply
+test stays under @C120; the library's `v[i]?` states the fact instead and the multiply
 already runs in the checked-only form because of it.
 
 **The two sound units this leaves, both situations we know.**  *Invariant arithmetic
@@ -4100,7 +4100,7 @@ per nest over the plane and the kernel bounds their magnitudes, and when
 `max × max × taps` fits in 63 bits no overflow can occur inside the nest, so the plain
 loop — which LLVM vectorises — computes exactly what the checked one would; the checked
 loop is the fallback, as the fill's per-element loop is the fill's.  That is the unit that
-reaches the reference's shape, and it is admissible under C120 because the fact is
+reaches the reference's shape, and it is admissible under @C120 because the fact is
 established by a check before the arithmetic runs, not assumed.
 
 ## V-ak — a growth-free loop reads and writes through the element base (2026-09-14)
@@ -4442,7 +4442,7 @@ __ia_N }`.  The first-use evaluation is exactly the per-use one — the same val
 path, and the overflow note (`ops::note_integer_overflow`, the soft-halt line) fired at the
 point the first evaluation stands: once where the per-use form notes once per use, never for
 a zero-trip loop, and on the second iteration when a `continue` takes the first.  That is
-what makes it a rewrite of a SITUATION WE KNOW under C120 and not a policy: nothing is
+what makes it a rewrite of a SITUATION WE KNOW under @C120 and not a policy: nothing is
 assumed about the values, the memo only skips re-computing what the leaves cannot change.
 A shift, a division and a remainder are not chain ops — their templates raise through
 `stores`, and the memo's evaluation stands inside expressions that already borrow it

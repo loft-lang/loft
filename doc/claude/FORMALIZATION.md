@@ -41,11 +41,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 | Layer | Verdict (when written) | Now |
 |---|---|---|
-| 1. Grammar | describable, in flux | **written** — [formal/grammar.md](formal/grammar.md), 0 open: the 12-level precedence ladder + associativity are pinned; the non-CFG surface + `&` overload are decided edges (C81/C82) |
+| 1. Grammar | describable, in flux | **written** — [formal/grammar.md](formal/grammar.md), 0 open: the 12-level precedence ladder + associativity are pinned; the non-CFG surface + `&` overload are decided edges (@C81/@C82) |
 | 2. Type system | describable, in flux | **written** — [formal/types.md](formal/types.md), 0 open: the bidirectional `⇒`/`⇐` judgment + range-containment conversion relation ([TYPING_RELATION.md](TYPING_RELATION.md) R1–R3 DONE); interfaces/generics in [formal/interfaces.md](formal/interfaces.md) |
 | 3. Dynamic semantics | not ready (encoding sub-layer ready) | **written** — [formal/operational.md](formal/operational.md) scalar core + the sibling family (heap/iteration/coroutines/concurrency/calls/matching/tuples/closures/formatting/interfaces); conformance is the differential oracle (D-op-1), not "the interpreter is the spec" |
 | 4. Ownership / `deps` | not ready | **written + closed** — [formal/ownership.md](formal/ownership.md), 0 open: D-own-1…5 all closed (@PLN85/@PLN90); the one total `deps` fact. [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md)'s invariants became the soundness rules heap.md's free discipline rests on |
-| 5. Inconsistencies | specifiable now | **decided edges** — the register is [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) (C80–C86) + [INCONSISTENCIES.md](INCONSISTENCIES.md) |
+| 5. Inconsistencies | specifiable now | **decided edges** — the register is [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) (@C80–@C86) + [INCONSISTENCIES.md](INCONSISTENCIES.md) |
 | 6. Stability | not ready (ownership) / ready (rest) | store-lifetime class **retired** — @PLN85 merged to main; the ownership deviations are closed |
 
 ## The rough spots, ranked by leverage
@@ -98,14 +98,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
    but unwritten: reasoning about precedence today means reading the parser.
    **→ CLOSED:** [formal/grammar.md](formal/grammar.md), 0 open — the 12-level precedence ladder
    is written (also lifted into [LOFT.md § Operators](LOFT.md)); the non-CFG surface and the
-   prefix/infix `&` overload are accepted as decided edges (C82/C81).
+   prefix/infix `&` overload are accepted as decided edges (@C82/@C81).
 
 5. **Local irregularities.** `Enum(u32, bool, Deps)` overloads a bool for
    value-vs-reference; narrow-int nullability shrinks the value range to steal a
    sentinel; `const` silently does not apply to struct fields (the one genuinely open
    design gap, [INCONSISTENCIES.md](INCONSISTENCIES.md)).
    **→ MOSTLY DECIDED:** the sentinel/encoding choices are recorded as decided edges
-   ([DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) C80–C86, [formal/operational.md](formal/operational.md)
+   ([DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) @C80–@C86, [formal/operational.md](formal/operational.md)
    E-Null); const-on-struct-fields remains the one open design gap in
    [INCONSISTENCIES.md](INCONSISTENCIES.md).
 
@@ -131,7 +131,7 @@ held: ownership closed first (the blocker), then the layers it had been blocking
   [formal/operational.md](formal/operational.md) + the sibling family. Conformance is the
   differential oracle (@PLN89, D-op-1); a shared *executable* semantics is the later switch.
 - ~~**Pin the grammar with precedence**~~ **DONE** (spot 4) —
-  [formal/grammar.md](formal/grammar.md), 0 open (12-level ladder; non-CFG accepted, C82).
+  [formal/grammar.md](formal/grammar.md), 0 open (12-level ladder; non-CFG accepted, @C82).
 - ~~**Defer the ownership-model formalization**~~ **now DONE** (spot 1) — @PLN85 / @PLN87
   closed, so [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md)'s invariants became the soundness rules
   in [formal/ownership.md](formal/ownership.md) (0 open) that heap.md's free discipline rests on.

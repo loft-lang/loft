@@ -1,0 +1,19 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..1eb473295 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -10260,13 +10260,11 @@
+             _ => None,
+         };
+         let elem = elem.unwrap_or(Type::Unknown(0));
+-        let by_value = matches!(self.vars.tp(t).base(), Type::Tuple(_));
+         // A TEXT member is the tuple's own text where the tuple owns it (`@FR-T-Record`,
+         // `Function::tuple_owns_text`): a link names that `String` as `&s` names a text local.
+         let owned_text = matches!(elem.base(), Type::Text(_)) && self.vars.tuple_owns_text(t);
+         if owned_text
+-            || (crate::data::is_scalar(&elem)
+-                && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none()))
++            || (crate::data::is_scalar(&elem) && crate::data::NarrowSlot::of_type(&elem).is_none())
+         {
+             Ok(elem)
+         } else {

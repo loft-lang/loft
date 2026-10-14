@@ -1,2 +1,2 @@
-// finding 009 — still holds while this is refused.
+// finding 009 — held while this was refused; it exits 2 now, on both backends.
 fn main() { exit(2); }

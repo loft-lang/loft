@@ -1,0 +1,297 @@
+diff --git a/src/compiled_stdlib_gen.rs b/src/compiled_stdlib_gen.rs
+index d2a426ed..5698c580 100644
+--- a/src/compiled_stdlib_gen.rs
++++ b/src/compiled_stdlib_gen.rs
+@@ -604,7 +604,7 @@ fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mu
+   // loft:default/02_files.loft:166
+   OpGetFileText(cell, var_self, &mut var_txt);
+   // loft:default/02_files.loft:167
+-  ops::append_text(&mut (*var_result), &*(&var_txt));
++  (*var_result) += &*(&var_txt);
+   // loft:default/02_files.loft:172
+   if ((if ((((t_4text_size(cell, &*var_result)) as i64) == ((0_i64) as i64)) as u8) == 1 {({((0_i64) as i64) < (({{let db = (var_self); if db.rec == 0 { i64::MIN } else { stores.store(&db).get_int(db.rec, db.pos + (0_i64) as u32)} }}) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 { //block_4: never
+     ;
+@@ -866,7 +866,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+       var___work_p2_1.clear();
+       let _pre_4 = t_4text_size(cell, &*var_t);
+       let _pre_3 = OpGetTextSub(&*var_t, 2_i64, _pre_4);
+-      ops::append_text(&mut var___work_p2_1, &*(_pre_3));
++      var___work_p2_1 += &*(_pre_3);
+       *var_t = (&var___work_p2_1).to_string();
+       } /*block_4: void*/;
+     } /*while_2*/;
+@@ -904,7 +904,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+       // loft:default/02_files.loft:1346
+       if ((var_walked) as u8) == 1 { //block_12: void
+         var___work_1.clear();
+-        ops::append_text(&mut var___work_1, &*(OpGetTextSub(&var_base, 0_i64, var_cut)));
++        var___work_1 += &*(OpGetTextSub(&var_base, 0_i64, var_cut));
+         var_base = var___work_1.clone();
+         } /*block_12: void*/ else { //block_13: void
+         var_base.clear();
+@@ -913,7 +913,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+       var___work_p2_2.clear();
+       let _pre_4 = t_4text_size(cell, &*var_t);
+       let _pre_3 = OpGetTextSub(&*var_t, 3_i64, _pre_4);
+-      ops::append_text(&mut var___work_p2_2, &*(_pre_3));
++      var___work_p2_2 += &*(_pre_3);
+       *var_t = (&var___work_p2_2).to_string();
+       } /*block_7: void*/;
+     } /*while_5*/;
+@@ -929,7 +929,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+   { //Formatted string_15: text["__work_2"]
+     var___work_2.clear();
+     ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
+-    ops::append_text(&mut (*var___work_2), &*("/"));
++    (*var___work_2) += &*("/");
+     ops::format_text(&mut var___work_2, &*var_t, 0_i64, 2, 32);
+     ;
+     ;
+@@ -1367,10 +1367,10 @@ fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut
+       { //block_7: void
+         // loft:default/03_text.loft:213
+         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
+-          ops::append_text(&mut (*var_result), &*(var_sep));
++          (*var_result) += &*(var_sep);
+           } /*block_8: void*/ else {()};
+         // loft:default/03_text.loft:214
+-        ops::append_text(&mut (*var_result), &*(var_p));
++        (*var_result) += &*(var_p);
+         } /*block_7: void*/;
+       var_p__count = ops::op_add_int((var_p__count), (1_i64));
+       ;
+@@ -1409,10 +1409,10 @@ fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef
+       { //block_7: void
+         // loft:default/03_text.loft:213
+         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
+-          ops::append_text(&mut (*var_result), &*(var_sep));
++          (*var_result) += &*(var_sep);
+           } /*block_8: void*/ else {()};
+         // loft:default/03_text.loft:214
+-        ops::append_text(&mut (*var_result), &*(var_p));
++        (*var_result) += &*(var_p);
+         } /*block_7: void*/;
+       var_p__count = ops::op_add_int((var_p__count), (1_i64));
+       ;
+diff --git a/src/generation/text.rs b/src/generation/text.rs
+index dbad8e51..f2652ace 100644
+--- a/src/generation/text.rs
++++ b/src/generation/text.rs
+@@ -305,19 +305,38 @@ impl Output<'_> {
+             // raises E0502 — mutable and immutable borrows of the same
+             // place.  Hoist the RHS through a fresh `String` so the
+             // self-borrow never overlaps the `+=` target.
+-            // `@FR-E-NullArg` — one append step for both backends (`ops::append_text`, the
+-            // interpreter's `append_text` calls it too): a null dest stays null and a null
+-            // source turns the dest null.  A bare `+=` pushed the sentinel's NUL byte, so
+-            // `"a" + t` with a null `t` answered the present two-byte `"a\0"` (loft#1924), and
+-            // a non-`Optional` dest holding null took `"\0x"`.
++            // @PLN25 slice (c): a nullable dest (`text?` local, an owned `String`) skips the
++            // append when it holds the null sentinel — `s += x` on a null `s` stays null
++            // (propagate). Gated on `Optional` so plain-text / `&mut String` work-buffer
++            // appends (never null, and not always owned Strings) keep the bare emission.
++            // A `&text?` parameter's nullability sits inside the reference.
++            let dest_nullable = match self.data.def(self.def_nr).variables().tp(*nr) {
++                Type::Optional(_) => true,
++                Type::RefVar(pointee) => matches!(pointee.as_ref(), Type::Optional(_)),
++                _ => false,
++            };
+             if val.reads_var(*nr) {
++                if dest_nullable {
++                    write!(
++                        w,
++                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += &__p222_tmp; }} }}"
++                    )?;
++                } else {
++                    write!(
++                        w,
++                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); {s_nr} += &__p222_tmp; }}"
++                    )?;
++                }
++                return Ok(());
++            }
++            if dest_nullable {
+                 write!(
+                     w,
+-                    "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); ops::append_text(&mut {s_nr}, &__p222_tmp); }}"
++                    "{{ let __app_tmp: &str = &*({val_expr}); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += __app_tmp; }} }}"
+                 )?;
+-                return Ok(());
++            } else {
++                write!(w, "{s_nr} += &*({val_expr})")?;
+             }
+-            write!(w, "ops::append_text(&mut {s_nr}, &*({val_expr}))")?;
+             return Ok(());
+         }
+         panic!("Could not parse {vals:?}");
+diff --git a/src/ops.rs b/src/ops.rs
+index 0370f45d..351ec3d0 100644
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -777,52 +777,17 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
+ /// doesn't exist — even though `==` works via the cross-type `PartialEq`.
+ /// Routing `OpLtText` / `OpLeText` through these helpers unifies both
+ /// provenances.  @P347.
+-///
+-/// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
+-/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
+-/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
+-/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
+-/// home both backends call, rather than at each operator site.
+ #[inline]
+ #[must_use]
+ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
+-    let (a, b) = (a.as_ref(), b.as_ref());
+-    let a_null = a == crate::state::STRING_NULL;
+-    let b_null = b == crate::state::STRING_NULL;
+-    if a_null || b_null {
+-        return a_null && !b_null;
+-    }
+-    a < b
++    a.as_ref() < b.as_ref()
+ }
+ 
+-/// Text ordering compare `<=` — see [`op_lt_text`], whose null order it shares: a null left
+-/// operand is `<=` everything, and nothing non-null is `<=` a null.
++/// Text ordering compare `<=` — see [`op_lt_text`].  @P347.
+ #[inline]
+ #[must_use]
+ pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
+-    let (a, b) = (a.as_ref(), b.as_ref());
+-    let a_null = a == crate::state::STRING_NULL;
+-    if a_null || b == crate::state::STRING_NULL {
+-        return a_null;
+-    }
+-    a <= b
+-}
+-
+-/// Text concatenation's append step, `dst += src`, on both backends — `@FR-E-NullArg`: a null
+-/// operand makes the concatenation null.  A null `dst` (an accumulator that already met a null)
+-/// stays null, and a null `src` turns `dst` null — appending the sentinel's NUL byte made
+-/// `"a" + t` the two-byte `"a\0"`, a present text no null test sees (loft#1924).
+-#[inline]
+-pub fn append_text(dst: &mut String, src: &str) {
+-    if dst.as_str() == crate::state::STRING_NULL {
+-        return;
+-    }
+-    if src == crate::state::STRING_NULL {
+-        dst.clear();
+-        dst.push_str(crate::state::STRING_NULL);
+-        return;
+-    }
+-    dst.push_str(src);
++    a.as_ref() <= b.as_ref()
+ }
+ 
+ /// Text equality — the `==` twin of [`op_lt_text`], and for the same reason.
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 08117f9a..b06ae69c 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -2206,14 +2206,9 @@ impl Parser {
+                             // not a bare `Value::Null` — for a buffer-backed return the bare null
+                             // leaves the return buffer empty and interp reads "" back instead of
+                             // null (the normal `else { null }` flow converts it the same way).
+-                            // ADMITTING: this null is the compiler's propagate arm, typed
+-                            // `text?` by the `Type::optional` below, not a store the author
+-                            // wrote — asked through the store face, @FR-N-Store warned
+-                            // *"`null` is stored into a slot of the non-null scalar type
+-                            // `text`"* on every `t? + "a"`.
+                             let null_arm = |this: &mut Self| {
+                                 let mut n = Value::Null;
+-                                this.convert_admitting(&mut n, &Type::Null, &base_text);
++                                this.convert(&mut n, &Type::Null, &base_text);
+                                 n
+                             };
+                             if matches!(code.unspan(), Value::Var(_)) {
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 92472cde..1addd16a 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -353,7 +353,55 @@ impl Parser {
+             orig_var
+         };
+         for (val, tp) in parts {
+-            self.append_concat_operand(&mut ls, var_nr, val, tp);
++            // Unwrap `RefVar(inner)` for the type-dispatch check below.
++            // A `&text` argument (parameter passed by reference) appears
++            // as `Type::RefVar(Type::Text(_))` here but the OpAppend* ops
++            // accept it directly via the same code path as plain `Text`.
++            let dispatch_tp: &Type = if let Type::RefVar(inner) = tp {
++                inner.as_ref()
++            } else {
++                tp
++            };
++            if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
++                if *dispatch_tp == Type::Character {
++                    ls.push(self.cl("OpAppendStackCharacter", &[Value::Var(var_nr), val.clone()]));
++                } else if matches!(dispatch_tp, Type::Text(_)) {
++                    ls.push(self.cl("OpAppendStackText", &[Value::Var(var_nr), val.clone()]));
++                } else {
++                    // @P274 — non-text/non-character parts (integer / float /
++                    // bool / vector / reference / enum / …) need a format-
++                    // dispatch step before append.  `OpAppendStackText`
++                    // assumes its argument already evaluates to text on the
++                    // stack; passing a raw `i64` from `headers.len()` is what
++                    // tripped native E0614 (`type i64 cannot be dereferenced`)
++                    // and SIGSEGV in interp.  Route through `append_data`,
++                    // which is the same dispatch path used by `"…{x}…"`
++                    // format-string interpolation and handles every formattable
++                    // type via the matching `OpFormat*` op.
++                    self.append_data(
++                        dispatch_tp.clone(),
++                        &mut ls,
++                        var_nr,
++                        u16::MAX,
++                        val,
++                        super::OUTPUT_DEFAULT,
++                    );
++                }
++            } else if *dispatch_tp == Type::Character {
++                ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), val.clone()]));
++            } else if matches!(dispatch_tp, Type::Text(_)) {
++                ls.push(self.cl("OpAppendText", &[Value::Var(var_nr), val.clone()]));
++            } else {
++                // @P274 — see RefVar branch above.
++                self.append_data(
++                    dispatch_tp.clone(),
++                    &mut ls,
++                    var_nr,
++                    u16::MAX,
++                    val,
++                    super::OUTPUT_DEFAULT,
++                );
++            }
+         }
+         let tp = Type::Text(Deps::frame1(var_nr));
+         if orig_var == u16::MAX || var_nr != orig_var {
+diff --git a/src/state/text.rs b/src/state/text.rs
+index 036e4837..f8fc483d 100644
+--- a/src/state/text.rs
++++ b/src/state/text.rs
+@@ -310,8 +310,10 @@ impl State {
+         let v1 = self.string_mut(off);
+         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
+         let before = (v1.as_ptr() as usize, v1.capacity());
+-        // `@FR-E-NullArg` — a null SOURCE makes the concatenation null (loft#1924).
+-        ops::append_text(v1, owned.as_deref().unwrap_or(text.str()));
++        match &owned {
++            Some(o) => v1.push_str(o),
++            None => v1.push_str(text.str()),
++        }
+         if let Some(fn_nr) = tl_fn {
+             text_tl_grow(
+                 fn_nr,
+@@ -425,8 +427,10 @@ impl State {
+         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
+         let v1 = self.string_ref_mut(off);
+         let before = (v1.as_ptr() as usize, v1.capacity());
+-        // `@FR-E-NullArg` — a null SOURCE makes the concatenation null (loft#1924).
+-        ops::append_text(v1, owned.as_deref().unwrap_or(text.str()));
++        match &owned {
++            Some(o) => v1.push_str(o),
++            None => v1.push_str(text.str()),
++        }
+         if let Some(fn_nr) = tl_fn {
+             text_tl_grow(
+                 fn_nr,

@@ -824,3 +824,168 @@ advice on `return p.b` beside a second exit (r6) goes silent with the copy.
 
 What remains, in order: the arena buffer (item 3), the placed buffer's prefill (item 4), the
 match copies in `pa_get`/`pa_text` (item 5), text payloads as spans (item 6).
+
+## Built (2026-09-30) — the lazy-free phase (item 3) and the walk's enum arm
+
+Item 3 of the list, as a runtime policy of every store rather than a buffer kind: a store
+starts in a LAZY phase (`(H-LazyFree)`, `LOFT_NO_LAZY_FREE=1`) in which a delete of a small
+block (at most 64 words: a record, a text) merges with its neighbours as ever and leaves the
+result out of the tree (a block ending the store becomes the wilderness; a larger block — a
+rung, a table — is tracked as ever), and a claim takes the tail; the first claim once the untracked words reach 256 and a
+fifth of the extent written sweeps once (`coalesce_free` + `fl_rebuild`) and ends the phase.
+A store bound to a file never enters it: the first run's six reds were the layout guards of
+persisted and paged stores (a reclaim that trimmed nothing because claims had landed on the
+tail, a keyed lookup five bytes over its page budget, a read-repeat census that differed by the
+scratch blocks) — the phase is for the store that is built and released, not the one that is
+kept.  And the perf-check's one SLOWER row set the trigger: with the sweep gated on the
+wilderness running out, `mesh_emit` (a pooled buffer reset per round, a vector ladder per
+round) placed every rung tail-first in a wilderness that always held it — +24 %, the process
+at 10 MB against 5.9 — so the sweep now fires at the claim's entry on the dead-words bound
+alone, and the row reads −2 %.
+The decoder's store — nine placed buffers and the vector rungs freed per decode, the store
+released whole — never sweeps, so its claims never leave the tail and its deletes cost one
+header write.  Beside it,
+`holds_no_heap` learned the struct-enum field: a `Decoded` whose value moved out answered "may
+hold heap" and walked (allocating a `Vec` per record) to find nothing.
+
+**Measured** (this box, `--native-release`, the check driver's 40 rounds, three runs each,
+same binary, the switch as the OFF arm):
+
+| build | check_request, 40 rounds | what moved |
+|---|---:|---|
+| before (1c010450) | 0.318 s | — |
+| the enum arm | 0.30 s (−6 %) | `remove_claims_mode` 4.0 → 2.3 %, `owned_walk` 3.3 → 1.6 %; the walks left are real teardowns (a truncated frame's partial map) |
+| + the phase | 0.286 s (−6 %, −10 % in all) | `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node`, `delete`'s merge: 27 % of the samples → the tree ops gone, `claim_block` + `set_free_header` stay |
+
+**What the profile reads now** (share of the row): `read_value`'s own code 20 %, the placed
+buffer's claim and prefill (`claim_block`, `set_free_header`, `place_record_prefilled`,
+`set_default_value_nullable`, `prefill_from_image`, `enum_parent_size`) 12 %, the remaining
+walks 11 %, `store_mut` 4 %, the vector header and push path 6 %, the text payload copy 3 %.
+
+**Side-findings, each a codegen matter and not this unit's:**
+- A UNIT variant written into an enum field (`Decoded { value: CNull, … }`) mints a store
+  (`OpDatabaseNP`), writes one tag byte into it, deep-copies it into the field (`OpCopyRecord`)
+  and frees the store — on every `ok: false` exit of `read_value`.  A tag write in place is the
+  whole job.
+- `decode`'s `d = read_value(bytes, 0); …; return d` beside a literal exit orphans the
+  caller's buffer every call (`free #5 name=__shared_dest_orphan`): two store cycles per
+  check that place nothing.  The bind could take the caller's buffer as its own `__ref` when
+  the literal exit's fields read from `d` before the write and `d`'s heap is released first.
+- `owned_walk` still builds a child per FIELD, scalars included, into a `Vec` per record; the
+  enum arm removed most of its callers on this row, not the allocation.
+
+What remains of the list: the placed buffer's prefill (item 4), the match copies in
+`pa_get`/`pa_text` (item 5), text payloads as spans (item 6).
+
+**Order from here (owner, 2026-09-30): prevent objects before making them cheaper.**  The
+lazy phase and the enum arm stay; they make a store's lifecycle cheaper, and that work comes
+back later.  But for a record the program never needed, a cheaper free only speeds up what
+the compiler should not have made.  So the next units remove objects, in this order:
+
+1. **A heap-owning record crossing a call as a value** (`(R-ValueRecord)` extended to records
+   with one heap field): `Decoded { value, next, ok }` answered as a tuple whose payload is a
+   handle, so a decode claims once for the tree and not once per node.  This is the "item 1" of
+   the six structural problems and the only lever the ledger prices at 3×.
+2. **A unit variant written into an enum field in place**: one tag byte, where today each
+   `ok: false` exit mints a store, copies it into the field and frees it.
+3. **`decode`'s orphaned caller buffer**: two store cycles per check that place nothing.
+4. **The match copies in `pa_get` / `pa_text`**: a read-only arm binds a view.
+
+Store efficiency (the placed buffer's prefill, `owned_walk`'s per-field `Vec`) resumes once
+these stop producing the objects it would speed up.
+
+## Built (2026-10-02) — a decoder's texts are no objects, its byte strings one copy
+
+Measured first on cbor as written (the per-check store census, `LOFT_STORE_CENSUS` on an
+`op-census` build): 4 stores, 46 claims and 26 deletes a check, no deep copies left.  Priced by
+hand on a scratch copy before anything was built (`loft-optimize` step 4): reading each text
+off the frame with `text_from_byte_range` instead of through a `tb` vector 3 558 → 2 525 ns a
+check (−29 %); the byte strings as one slice on top, 2 349 ns.  A `Decoded` returned as a tuple
+was SLOWER (7 812 ns) — so item 1 of the order above is a design, not a respelling.
+
+Both forms are now the compiler's, on the library as written: `(R-ByteCopy)`'s vector clause
+(a byte run copied one at a time is one guarded slice append) and `(R-TextRun)` (a byte run
+read once as text is never built), and the function header of `bytes` kept beside the slice
+(`(R-Header)`'s function clause had read the slice as a write).  `check_request` 3.62 →
+2.26 µs (−38 %, interleaved on one core), past the hand-written forms' 2.35.  Reach outside cbor: the vector clause fires wherever a
+byte vector variable is copied by index (pluginabi's bench); `(R-TextRun)` is cbor's alone in
+the bench body today.  An `integer` or `float` run (`members[st + m] ?? 0` in Moros,
+`?? 0.0` in hex_fit) keeps its loop: its elements can hold the null the `??` replaces, so it
+needs an append that substitutes the default — the next clause, priced on those rows first.
+
+## `mat4_mul` and `check_request` re-profiled (2026-10-02) — what is left is store traffic
+
+**`mat4_mul`** (mesh3d, 23.0× Rust after `(H-SwapIn)` and `(R-RepeatRun)`).  A probe running
+only `mo_c = mat4_mul(mo_a, mo_c)` 10⁶ times: 213 ns a call, `n_mat4_mul`'s own code 33 % —
+the other two thirds is store work done on every call.  The caller hands the call a NULL
+return buffer each round (`__ref_5` is never assigned), so the callee creates a store, claims
+a 16-element vector, fills it; the caller then resets `mo_c`'s store (`OpDatabase`), exchanges
+the two, and frees the released one.  Priced by hand-editing the emitted Rust (same output,
+`taskset`, three interleaved runs each):
+
+| form | time | |
+|---|--:|---|
+| as emitted | 0.19 s | |
+| A: exchange without resetting `mo_c` first, free the released store | 0.15 s | −21 % |
+| C: keep the released store as the next round's buffer, reset it | 0.14 s | −26 % |
+| B: keep it, and the callee refills the vector the buffer already holds | **0.07 s** | **−63 %** |
+
+So the prize is B, double-buffering: no store created or freed per round, and the literal
+`Mat4 { m: [16 × 0.0] }` written into a buffer of the same type refilling its existing vector
+in place instead of zeroing the field (which orphans the old vector) and claiming a new one.
+Both halves are needed: C shows the store reuse alone buys a third of it.
+
+**`check_request`** (pluginabi, 22.6×).  87 % of a check is cbor's `read_value`, called twice
+per frame (`pa_decode_ok` reads only `.ok`, `pa_decode` the value).  By leaf, under
+`check_request`: the record allocator (claim, best fit, free list, prefill, delete) ~28 %; a
+heap `String` made and freed for every decoded text (`malloc`/`free`, `from_utf8`,
+`text_from_bytes_range`) ~11 %; store lookups (`store_mut`) 6.5 %; `holds_no_heap` 4.6 %
+(already the fast path that skips the release walk); the decoder's own code ~15 %.  The levers,
+largest first: the first decode builds a whole tree only to read `.ok` (about half the work,
+a demand-driven specialisation, not priced); the per-text `String` round trip (write the text
+into the store from the byte range directly, runtime, both backends); then the per-record claims.
+
+## `check_request` after `(R-PureReuse)` and `(M-Match)` (2026-10-02) — where data moves, objects are made and freed
+
+`pa_decode_ok` and `pa_decode` decoded the same frame twice; `(R-PureReuse)` computes it once,
+and `(M-Match)` stops `match pa_get(m, k) { … }` from calling its subject once per arm.  Per
+check, native: 4 stores / 30 claims / 10 deletes → 2 / 16 / 5; `check_request` 22.7× → 12.4×
+Rust (`make worst`, one quiet run).  The other worst rows did not move with this step beyond
+noise — the census agrees: `(R-PureReuse)` fires only in pluginabi's bench, the match fix only
+where a subject is a call.  Ratios swing ±30–40 % run to run where the Rust lane moves
+(`build_vis` 12.7× → 19.3× with its native time flat), so read under 15 % as no change.
+
+**One decode, by frame** (`LOFT_STORE_CENSUS`, `op-census` build, native):
+
+| frame | stores | claims | deletes | grows | bytes moved |
+|---|--:|--:|--:|--:|--:|
+| empty map | 1 | 2 | 1 | 0 | 0 |
+| one text → text entry | 1 | 7 | 3 | 0 | 32 |
+| one text → bytes(64) entry | 1 | 8 | 4 | 1 | 32 |
+| the request (3 entries) | 1 | 13 | 5 | 1 | 96 |
+
+Attributed to `read_value`'s IR: the base is the result `Decoded` and the entries vector; the
+first entry adds the two `Decoded` temporaries of the key and value sub-calls (placed once,
+reused after), the key text, the value payload and the entry; every 32 bytes moved is a
+`CborValue` moved out of a temporary into the entry.  `pa_get` adds a store and 3 claims: a
+copy of the matched value that `pa_text` reads once.
+
+| per check | count | needed? |
+|---|---|---|
+| the decoded tree's store, root, entries vector, three entries | 1 store, 5 claims | yes |
+| six payloads copied out of the frame | 6 claims, ~100 bytes | yes, unless a text shares the frame's bytes |
+| `kd` / `vd` temporaries | 2 claims, 5 deletes, 96 bytes moved | no — the value can be built in the entry's slot |
+| `pa_get`'s copy of the found value | 1 store, 3 claims | no if the caller only reads it while the map lives (an ownership question, the owner's call) |
+
+**Next, in order:** (1) destination-passing — `read_value` writes a sub-value straight into the
+place its caller names (the entry's `key` / `value` field), no temporary and no move; it is in
+cbor, so `decode` (13.4×) and `encode_bytes` (22.1×, now the worst row) are in its reach;
+(2) `pa_get` read in place; (3) the per-claim cost (`set_default_value_nullable`,
+`holds_no_heap` ~5–6 % each) where a literal writes every field.  Estimated 1+2 → ~0.7 µs a
+check (~7×); under 3× (~300 ns) also needs the payload copies gone.  Price each by hand on
+the emitted Rust before building it.
+
+**Side-finding:** `make rewrite-census` is red on `main` on the aarch64 box — `R-ExitVector`
+and `R-Header` read 1–3 lower than `bench/portal/rewrite_census.tsv` in cbor and every hex_*
+program, with the library commits equal to the baseline's.  Same on this branch, so not its
+change; not yet explained.

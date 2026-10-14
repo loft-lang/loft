@@ -18,8 +18,13 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   report:
+    # @windows-exempt: platform-free — lists library branches
     name: Unmerged branches across loft-libs-*
     runs-on: ubuntu-latest
     steps:

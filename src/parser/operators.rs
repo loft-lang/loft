@@ -93,6 +93,10 @@ impl Parser {
         if self.first_pass || nr == u16::MAX {
             return false;
         }
+        // The declaration's own initialising bind (`x: const T = …`) sets the value.
+        if op == "=" && nr == self.declaring_const {
+            return false;
+        }
         let binding = self.vars.is_const_binding(nr);
         let value = self.vars.is_value_const(nr);
         if !binding && !value {
@@ -104,11 +108,9 @@ impl Parser {
         // A `&`-reference binding writes THROUGH to its referent, so a value-const `&`
         // param (`& const T`) has no local rebind either — every write mutates the
         // referent — and is likewise fully blocked.
-        let tp = self.vars.var_type(nr).base();
-        let collapses = matches!(
-            tp,
-            Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
-        ) || matches!(self.vars.var_type(nr), Type::RefVar(_));
+        // `is_scalar` is the one home for which types collapse — the plain enum among them.
+        let collapses = crate::data::is_scalar(self.vars.var_type(nr))
+            || matches!(self.vars.var_type(nr).base(), Type::RefVar(_));
         // binding-const rejects a rebind (`=`); value-const rejects contents mutation
         // (`+=`) while allowing a `=` rebind that re-points the slot.  Under collapse both
         // reject everything.
@@ -148,6 +150,18 @@ impl Parser {
             );
             return;
         }
+        // `@FR-Const-Foreign` — a binding of foreign data: the author wrote no `const`.
+        if self.foreign_bound.contains(&(self.context, nr)) {
+            let name = self.vars.name(nr).to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{name}': it holds read-only data the program does not own (a \
+                 mapped file or a library's buffer) — copy it first (`w = {name}`, a bind copies) \
+                 and write the copy"
+            );
+            return;
+        }
         // `const_report_var` — see loft#1250: a const text argument is promoted to a
         // `__tp_` local, and the promoted local is not marked an argument, so reporting
         // against it demotes "const parameter" to "const variable".
@@ -161,6 +175,23 @@ impl Parser {
         );
     }
 
+    /// The appends a text compound `place += code` makes on its work text `var_nr` — the
+    /// one spelling the getter place and the deferred field place share.
+    fn text_append_ops(&mut self, code: &Value, tp: &Type, var_nr: u16) -> Vec<Value> {
+        if let Value::Insert(cd) = code {
+            cd.clone()
+        } else if Self::appends_rendering(tp) {
+            match self.append_rendering(var_nr, tp, code) {
+                Value::Insert(parts) => parts,
+                _ => Vec::new(),
+            }
+        } else if *tp == Type::Character {
+            vec![self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()])]
+        } else {
+            vec![self.cl("OpAppendText", &[Value::Var(var_nr), code.clone()])]
+        }
+    }
+
     pub(crate) fn assign_text(
         &mut self,
         code: &mut Value,
@@ -170,30 +201,48 @@ impl Parser {
         var_nr: u16,
     ) {
         // The const guard is `parse_assign_op_inner`'s, run before it routed here.
+        // A text field of a generic struct (`Parser::TV_FIELD`, deferred to each monomorph)
+        // is a place too: its compound reads into the work text and writes it back through
+        // the deferred field write, as a plain field's does through `OpSetText`.  Without it
+        // the append ran on a work text nothing had read or would write back — a panic on the
+        // interpreter and E0425 on `--native` for `b.name += "x"` in a `Bag<T>` template.
+        if op != "="
+            && let Value::Block(bl) = to.unspan()
+            && bl.name == Self::TV_FIELD
+            && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+        {
+            let (open, f_nr, receiver) = (*open, *f_nr, receiver.clone());
+            let mut ls = vec![v_set(var_nr, to.clone())];
+            ls.extend(self.text_append_ops(code, tp, var_nr));
+            ls.push(v_block(
+                vec![
+                    Value::Int(open),
+                    Value::Int(f_nr),
+                    Value::Text("=".to_string()),
+                    receiver,
+                    v_block(
+                        vec![Value::Var(var_nr)],
+                        self.vars.tp(var_nr).clone(),
+                        Self::TV_SELECT_ARG,
+                    ),
+                ],
+                Type::Void,
+                Self::TV_FIELD_SET,
+            ));
+            *code = Value::Insert(ls);
+            return;
+        }
         if let Value::Call(_, parms) = to.unspan().clone() {
             if op == "=" {
                 let mut p = parms.clone();
                 p.push(code.clone());
-                *code = self.cl("OpSetText", &p);
+                *code = self.cl("OpSetTextReplace", &p);
             } else {
-                let mut ls = Vec::new();
-                ls.push(v_set(var_nr, to.clone()));
-                if let Value::Insert(cd) = code {
-                    for c in cd {
-                        ls.push(c.clone());
-                    }
-                } else if Self::appends_rendering(tp) {
-                    if let Value::Insert(parts) = self.append_rendering(var_nr, tp, code) {
-                        ls.extend(parts);
-                    }
-                } else if *tp == Type::Character {
-                    ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]));
-                } else {
-                    ls.push(self.cl("OpAppendText", &[Value::Var(var_nr), code.clone()]));
-                }
+                let mut ls = vec![v_set(var_nr, to.clone())];
+                ls.extend(self.text_append_ops(code, tp, var_nr));
                 let mut p = parms.clone();
                 p.push(Value::Var(var_nr));
-                ls.push(self.cl("OpSetText", &p));
+                ls.push(self.cl("OpSetTextReplace", &p));
                 *code = Value::Insert(ls);
             }
         } else if let Value::Insert(ls) = code {
@@ -702,7 +751,15 @@ impl Parser {
                 Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
                 _ => None,
             })
-            .unwrap_or_else(|| self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer));
+            .unwrap_or_else(|| {
+                // loft#1872 — the work-ref is written by the call before its one read, so it
+                // is an inline ref: its null-init is a sentinel, not a store.  An eager store
+                // is a COLLECTION's default, and on the path where the join hands back its
+                // other arm nothing names it — one leaked vector per call.
+                let w = self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer);
+                self.vars.mark_inline_ref(w);
+                w
+            });
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),
@@ -1157,10 +1214,363 @@ impl Parser {
             };
         #[cfg(feature = "wasm")]
         let tp_val = i32::from(tp);
-        self.cl(
-            "OpCopyRecord",
-            &[code.clone(), to.clone(), Value::Int(tp_val)],
-        )
+        // loft#1877 — the closure records the overwrite displaces release what they adopted,
+        // between the right-hand side (argument one) and the copy.
+        let place = self.release_displaced_closures(to, f_type);
+        self.cl("OpCopyRecord", &[code.clone(), place, Value::Int(tp_val)])
+    }
+
+    /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
+    /// written with, and the stdlib-operator name a type may still answer it through.
+    const OPERATOR_FORMS: &'static [(&'static str, &'static str, &'static str)] = &[
+        ("compare", "<", "OpLt"),
+        ("plus", "+", "OpAdd"),
+        ("minus", "-", "OpMin"),
+        ("times", "*", "OpMul"),
+        ("divided_by", "/", "OpDiv"),
+        ("remainder", "%", "OpRem"),
+    ];
+
+    /// The `operator compare` an order form on these operand types reaches
+    /// ([`Self::operator_member`]).
+    pub(crate) fn operator_compare(&mut self, types: &[Type]) -> Option<u32> {
+        self.operator_member("compare", types)
+    }
+
+    /// `@FR-Op-Back` (@PLN182) — the `operator <form>` a binary form on these operand types
+    /// reaches: the LEFT operand's member of that name, chosen among its overloads by the
+    /// right operand's type exactly as the method call `a.<form>(b)` would.  A plain `fn` of
+    /// the name is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type
+    /// has one and no other way to answer the form, the refusal names it and the answer is
+    /// `Some(u32::MAX)`, so the caller does not add a second, vaguer one.
+    pub(crate) fn operator_member(&mut self, form: &str, types: &[Type]) -> Option<u32> {
+        // `@FR-Op-Std` — the stdlib's own bodies reach the stdlib's operator definitions, never
+        // a user's: nothing to look up while `default/` is parsed (each lookup builds a key).
+        if self.default || types.len() != 2 || types.iter().any(Type::is_unknown) {
+            return None;
+        }
+        // Only a program's struct or enum on the left has operator methods: asked first,
+        // without allocating, since every `<` and `+` in a program comes through here.
+        // A struct literal's type carries the `Rewritten` marker (built in place); the operand
+        // is the type under it, or `M { c: 5 } < b` misses `M`'s method.
+        if !matches!(
+            types[0].peel_rewritten().base(),
+            Type::Reference(_, _) | Type::Enum(_, _, _)
+        ) {
+            return None;
+        }
+        let peeled: Vec<Type> = types.iter().map(Type::unrewritten).collect();
+        let types = &peeled[..];
+        let (Type::Reference(left, _) | Type::Enum(left, _, _)) = types[0].base() else {
+            return None;
+        };
+        let left = *left;
+        // The left type's own key (`t_<len><T>_<form>`): its one definition, or — a type with
+        // several of the name — the overload set under the bare name, chosen among by
+        // `@FR-Disp-Select` as `a.<form>(b)` would choose.
+        let key = self.data.find_op_method(u16::MAX, form, &types[0]);
+        if key == u32::MAX {
+            return None;
+        }
+        let routed = self.data.routed_types(types);
+        let set_source = self.data.receiver_overload_source(form, &types[0]);
+        let chosen = if self.data.has_overload_set_in(set_source, form) {
+            match self.select_overload(set_source, form, &routed) {
+                crate::parser::dispatch::Selection::One(d) => d,
+                crate::parser::dispatch::Selection::Ambiguous(_) => return None,
+                // The set is the NAME's, across receivers: none of its members applying says
+                // nothing about this receiver's own definition, which is asked below.
+                crate::parser::dispatch::Selection::NoneApplicable
+                | crate::parser::dispatch::Selection::NotDecidable => key,
+            }
+        } else {
+            key
+        };
+        // The LEFT operand's own method (`@FR-Op-Left`), not a member some conversion reached.
+        let own = self.data.visible_params(chosen).first().is_some_and(
+            |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == left),
+        );
+        if !own || self.data.visible_params(chosen).len() != 2 {
+            return None;
+        }
+        if self.data.def(chosen).operator_form() {
+            // A member that cannot take the operands is no match: the operator is refused
+            // naming both types, as with no member at all, never as a bad argument of the call.
+            // A template is judged by its instance (`operator_instance`).
+            if self.data.def_type(chosen) != crate::data::DefType::Generic
+                && self.definition_ranks(chosen, &routed).is_none()
+            {
+                return None;
+            }
+            return Some(chosen);
+        }
+        let (_, symbol, old) = Self::OPERATOR_FORMS.iter().find(|(f, _, _)| *f == form)?;
+        if self
+            .user_op_method(old, types)
+            .is_none_or(|d| d == u32::MAX)
+        {
+            // Said on the pass that meets it: the operator search below refuses on pass 1 too.
+            let t = types[0].base().source_name(&self.data);
+            let r = types[1].base().source_name(&self.data);
+            // The unmarked method's own result when it takes these operands: the declaration
+            // to write is that one, marked.  One that takes other operands says nothing about
+            // what `a ⊕ b` should answer.
+            let answers = if self.data.params_fit(chosen, types) {
+                self.data.def(chosen).returned().source_name(&self.data)
+            } else {
+                "…".to_string()
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{t}` has a method `{form}`, but `{symbol}` reaches only one written with \
+                 `operator`: declare it `operator {form}(self: {t}, other: {r}) -> {answers}`"
+            );
+            return Some(u32::MAX);
+        }
+        None
+    }
+
+    /// `@FR-Op-Back` for a UNARY form (`-x` is `x.negate()`): the operand's own `operator` method
+    /// of that name taking `self` alone, `Some(u32::MAX)` when only a plain method of the name
+    /// exists (`@FR-Op-Mark`, said here), `None` when the type has neither.
+    pub(crate) fn operator_unary(&mut self, form: &str, symbol: &str, tp: &Type) -> Option<u32> {
+        if self.default || tp.is_unknown() {
+            return None;
+        }
+        let operand = tp.peel_rewritten();
+        let (Type::Reference(own, _) | Type::Enum(own, _, _)) = operand.base() else {
+            return None;
+        };
+        let own = *own;
+        let operand = operand.unrewritten();
+        let m = self.data.find_op_method(u16::MAX, form, &operand);
+        if m == u32::MAX {
+            return None;
+        }
+        let takes = self.data.visible_params(m);
+        let mine = takes.first().is_some_and(
+            |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == own),
+        );
+        if !mine || takes.len() != 1 {
+            return None;
+        }
+        if self.data.def(m).operator_form() {
+            return Some(m);
+        }
+        let t = operand.base().source_name(&self.data);
+        let answers = self.data.def(m).returned().source_name(&self.data);
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{t}` has a method `{form}`, but `{symbol}x` reaches only one written with \
+             `operator`: declare it `operator {form}(self: {t}) -> {answers}`"
+        );
+        Some(u32::MAX)
+    }
+
+    /// The call a unary `operator` form lowers to, `x.negate()`; the form's type is the
+    /// method's (`@FR-Op-Result`).
+    pub(crate) fn unary_through_operator(
+        &mut self,
+        code: &mut Value,
+        form: &str,
+        member: u32,
+        operand_tp: Type,
+    ) -> Type {
+        if member == u32::MAX {
+            return Type::Unknown(0); // refused, named by `operator_unary`
+        }
+        let member = match self.operator_instance(member, form, std::slice::from_ref(&operand_tp)) {
+            Ok(m) => m,
+            Err(predicted) => {
+                *code = Value::Null;
+                return predicted;
+            }
+        };
+        let mut call = Value::Null;
+        let operand = code.clone();
+        let tp = self.call_nr(
+            &mut call,
+            member,
+            &[operand],
+            &[operand_tp],
+            true,
+            &[],
+            None,
+        );
+        *code = call;
+        tp
+    }
+
+    /// `@FR-Op-Conv` (@PLN182) — `x as T` is ONE call of `x.to_<t>()` when the source type has
+    /// an `operator to_<t>` answering exactly `T`; `x as text` calls `operator to_text`, with an
+    /// empty spec when the type defines only the spec form.  Answers `Some(true)` when it
+    /// built the call, `Some(false)` when an unmarked `fn to_<t>` exists (`@FR-Op-Mark`: the
+    /// caller names it if nothing else converts), `None` otherwise.
+    pub(crate) fn operator_conversion(
+        &mut self,
+        code: &mut Value,
+        from: &Type,
+        to: &Type,
+    ) -> Option<bool> {
+        if self.default || !self.data.user_operator_conversions {
+            return None;
+        }
+        let from = &from.unrewritten();
+        let name = self.data.conversion_name(to.base())?;
+        let form = format!("to_{name}");
+        let m = self.data.find_op_method(u16::MAX, &form, from.base());
+        if m == u32::MAX {
+            return None;
+        }
+        if !self.data.def(m).operator_form() {
+            return Some(false);
+        }
+        if !self.data.def(m).returned().base().is_same(to.base()) {
+            return None;
+        }
+        let src = code.clone();
+        let (args, types) = if self.data.visible_params(m).len() == 2 {
+            (
+                vec![src, Value::Text(String::new())],
+                vec![from.clone(), Type::Text(crate::data::Deps::none())],
+            )
+        } else {
+            (vec![src], vec![from.clone()])
+        };
+        let tp = self.call_nr(code, m, &args, &types, true, &[], None);
+        if tp == Type::Null {
+            return Some(false);
+        }
+        // The form is the call (`@FR-Op-Result`): its result owns what `x.to_t()` would own,
+        // so the `as` site takes the call's type instead of grafting the source's deps — a
+        // struct the conversion built is the destination's, not a view of `x`.
+        self.conv_owned_result = Some(tp);
+        Some(true)
+    }
+
+    /// The `operator` form an arithmetic symbol backs, for the forms built so far.
+    fn arith_form(op: &str) -> Option<&'static str> {
+        match op {
+            "+" => Some("plus"),
+            "-" => Some("minus"),
+            "*" => Some("times"),
+            "/" => Some("divided_by"),
+            "%" => Some("remainder"),
+            _ => None,
+        }
+    }
+
+    /// `@FR-Op-Back` — `a + b`, `a - b`, `a * b` on a user type is ONE call of the left
+    /// operand's `plus` / `minus` / `times`, its type and value the method's (`@FR-Op-Result`).
+    pub(crate) fn arith_through_operator(
+        &mut self,
+        code: &mut Value,
+        form: &str,
+        member: u32,
+        right: Value,
+        right_tp: Type,
+        left_tp: Type,
+    ) -> Type {
+        if member == u32::MAX {
+            return Type::Unknown(0); // refused, named by `operator_member`
+        }
+        let member =
+            match self.operator_instance(member, form, &[left_tp.clone(), right_tp.clone()]) {
+                Ok(m) => m,
+                Err(predicted) => {
+                    *code = Value::Null;
+                    return predicted;
+                }
+            };
+        let mut call = Value::Null;
+        let left = code.clone();
+        let tp = self.call_nr(
+            &mut call,
+            member,
+            &[left, right],
+            &[left_tp, right_tp],
+            true,
+            &[],
+            None,
+        );
+        *code = call;
+        tp
+    }
+
+    /// `@FR-F-Recv` — a TEMPLATE `operator` member (`operator plus<U>(self: W, o: U)`) is reached
+    /// the way the call `a.plus(b)` reaches it: instantiated at the operand types (loft#1826).
+    /// `Err(predicted)` on the first pass, where the prediction is the whole answer.
+    pub(crate) fn operator_instance(
+        &mut self,
+        m: u32,
+        form: &str,
+        types: &[Type],
+    ) -> Result<u32, Type> {
+        if m == u32::MAX || self.data.def_type(m) != crate::data::DefType::Generic {
+            return Ok(m);
+        }
+        if self.first_pass {
+            let predicted = self.predict_template_return(m, form, types);
+            return if predicted.is_unknown() {
+                Ok(u32::MAX)
+            } else {
+                Err(predicted)
+            };
+        }
+        Ok(self.instantiate_template(m, form, types))
+    }
+
+    /// `@FR-Op-Order` — `a ⊕ b` for an order form ⊕ is ONE call of `a.compare(b)`, read against
+    /// the `Ordering` it answers: `<` is `Less`, `>` is `Greater`, `<=` is not `Greater`, `>=`
+    /// is not `Less`.
+    pub(crate) fn order_through_compare(
+        &mut self,
+        code: &mut Value,
+        operator: &str,
+        cmp: u32,
+        right: Value,
+        right_tp: Type,
+        left_tp: Type,
+    ) -> Type {
+        if cmp == u32::MAX {
+            return Type::Boolean; // refused, named by `operator_compare`
+        }
+        let Ok(cmp) = self.operator_instance(cmp, "compare", &[left_tp.clone(), right_tp.clone()])
+        else {
+            *code = Value::Null;
+            return Type::Boolean;
+        };
+        let mut call = Value::Null;
+        let left = code.clone();
+        // Reported, as the call spelling is (`@FR-Op-Result`): a nullable operand into a dense
+        // parameter warns here exactly as it does in `a.compare(b)`.
+        let tp = self.call_nr(
+            &mut call,
+            cmp,
+            &[left, right],
+            &[left_tp, right_tp],
+            true,
+            &[],
+            None,
+        );
+        if tp == Type::Null {
+            return Type::Null;
+        }
+        let (equal, variant) = match operator {
+            "<" => (true, "Less"),
+            ">" => (true, "Greater"),
+            "<=" => (false, "Greater"),
+            _ => (false, "Less"),
+        };
+        let disc = self.data.ordering_discriminant(variant);
+        let read = self.cl("OpConvIntFromEnum", &[call]);
+        *code = self.cl(
+            if equal { "OpEqInt" } else { "OpNeInt" },
+            &[read, Value::Int(disc)],
+        );
+        Type::Boolean
     }
 
     /** Mutate current code when it reads a value into writing it. This is needed for assignments.
@@ -1184,6 +1594,22 @@ impl Parser {
     ) -> (Value, Type) {
         if op == "=" {
             return (val.clone(), src_tp.clone());
+        }
+        // `@FR-Op-Compound` — `a ⊕= b` is `a = a.m(b)` for ⊕'s `operator` method m; the place
+        // is read once here and written by the caller.
+        if let Some(form) = Self::arith_form(op)
+            && let Some(m) = self.operator_member(form, &[f_type.clone(), src_tp.clone()])
+        {
+            let mut code = to.clone();
+            let tp = self.arith_through_operator(
+                &mut code,
+                form,
+                m,
+                val.clone(),
+                src_tp.clone(),
+                f_type.clone(),
+            );
+            return (code, tp);
         }
         let (name, operands, types) = if op == ">" {
             (
@@ -1323,32 +1749,11 @@ impl Parser {
             }
             _ => {
                 if !self.first_pass {
-                    // @PLN125 arc C — `x[i]` on a library type lowers to that type's
-                    // `OpIndex`, so a WRITE lands here with the read's method name and no
-                    // way to reach a setter.  Reading it back as an attribute assignment
-                    // names an internal symbol the author never wrote; say what actually
-                    // happened and what to write instead.  A writing counterpart is a
-                    // separate decision (it needs its own method, and a decision about
-                    // whether `x[i] += 1` may then read-modify-write), so this is a
-                    // refusal, not a gap left silent.
-                    if let Some(tp) = crate::data::Data::split_key(name)
-                        .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
-                        .map(|k| k.spelling)
-                    {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`{tp}` defines `OpIndex`, which READS — `x[i] = …` has nothing \
-                             to write through; give the type a method that sets \
-                             (`x.set(i, …)`)"
-                        );
-                    } else {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Cannot assign to attribute on type '{name}'"
-                        );
-                    }
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot assign to attribute on type '{name}'"
+                    );
                 }
                 Value::Null
             }
@@ -1370,8 +1775,30 @@ impl Parser {
             || self.lexer.peek().has == crate::lexer::LexItem::None
     }
 
-    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`, by one
+    /// lookup on the token's text.  Matches exactly what `has_token` matches (a
+    /// `LexItem::Token`, keywords included).
+    pub(crate) fn peek_binary_operator(&self) -> Option<(usize, &'static str)> {
+        let crate::lexer::LexItem::Token(t) = &self.lexer.peek().has else {
+            return None;
+        };
+        OPERATORS.iter().enumerate().find_map(|(level, ops)| {
+            ops.iter()
+                .find(|op| **op == t.as_str())
+                .map(|op| (level, *op))
+        })
+    }
+
+    /// The binary operators of one expression (`formal/grammar.md` `(G-Prec)` / `(G-Assoc)`),
+    /// starting at level `precedence`: everything looser than that is left to the caller.
+    ///
+    /// Precedence climbing (@PLN188): the operand first, then a RUN per level an operator
+    /// stands at — [`Self::level_run`] consumes every consecutive operator of its level (each
+    /// right operand parsed one level tighter, or at its own level for the right-associative
+    /// `**` and `??`), so when it returns the next operator is LOOSER, a tighter one having gone
+    /// to a right operand.  The levels therefore strictly descend: a run is entered only below
+    /// the last one, and never below `precedence`.  Every run reads the expression's entry
+    /// `orig_var` and `operand_pos`.  An operand costs one call here, not one per level.
     pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
@@ -1379,152 +1806,240 @@ impl Parser {
         parent_tp: &mut Type,
         precedence: usize,
     ) -> Type {
-        let mut ls = Vec::new();
         if precedence >= OPERATORS.len() {
-            // @PLN87 B-Ref-AnnotationOnly — the FIRST primary of a binding RHS (or of a
-            // statement) consumes the head marker; every operand after it sees `false`.
-            // Taken before the `&` test so a non-`&` head (`1` in `1 + &a`, the `(` in
-            // `(&a)`, a call receiver) consumes it too — that is what makes the `&`
-            // arriving later a sub-expression use rather than the whole RHS.
-            let at_head = std::mem::take(&mut self.amp_head);
-            // @PLN87 — a PREFIX `&<lvalue>` is a reference-to, distinct from the binary
-            // `&` (bitwise-and "Land"). The binary form only ever sits BETWEEN operands,
-            // so a `&` seen here at an operand START is the prefix: it flags the `&`-ness
-            // via `amp_pending` so `parse_assign_op` can lower a scalar reference to
-            // `OpCreateStack`. (`&&` is its own token, so this never mis-fires on
-            // logical-and.)
-            let amp_start = {
-                let p = self.lexer.peek_pos();
-                (p.line, p.pos)
-            };
-            if self.lexer.has_token("&") {
-                self.amp_pending = true;
-                let t = self.parse_part(var_tp, code, parent_tp);
-                // `@FR-E-Eq`, @C91 — `&a == &b` asks whether two names are ONE record.  A `&`
-                // just before a `==` / `!=`, or opening the right operand of one, is recorded
-                // rather than refused; the comparison claims it only when it is that whole
-                // operand, and refuses it otherwise (`handle_operator`).
-                if self.lexer.peek_token("==")
-                    || self.lexer.peek_token("!=")
-                    || self.eq_rhs_at == Some(amp_start)
-                {
-                    self.amp_pending = false;
-                    let end = {
-                        let p = self.lexer.peek_pos();
-                        (p.line, p.pos)
-                    };
-                    self.amp_identity = Some(super::AmpIdentity {
-                        start: amp_start,
-                        end,
-                        place: Self::is_amp_place(code, &self.data),
-                    });
-                    return t;
-                }
-                // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
-                // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
-                // since loft statements are `;`-terminated — is always followed by `;`
-                // (a block-final reference `{ … &x }` by `}`).  `parse_part` has consumed
-                // the whole lvalue, so the NEXT token classifies the use:
-                //   `=`/`+=`/…  → `&` on the assignment TARGET (`&var = …`)   [error]
-                //   not `;`/`}` → `&` as a sub-expression / argument          [error]
-                //   `;`/`}`     → a valid binding RHS → check the operand is a PLACE (#1)
-                // (Local peek; avoids the global `amp_pending` flag which leaks.)
-                if !self.first_pass {
-                    let next_assign = self.lexer.peek_token("=")
-                        || self.lexer.peek_token("+=")
-                        || self.lexer.peek_token("-=")
-                        || self.lexer.peek_token("*=")
-                        || self.lexer.peek_token("%=")
-                        || self.lexer.peek_token("/=");
-                    // What ENDS the operand depends on the position the head opened in.
-                    // A statement ends at `;` (a block-final one at `}`); a struct-literal
-                    // field value ends at the `,` before the next field just as well.
-                    // `@FR-B-Ref-StoredRef` admits the `&` on the strength of the FIELD'S
-                    // TYPE and conditions it on nothing else, so a `reference<τ>` field
-                    // that is not the LAST field in the literal is the same legal position
-                    // — `TrailNN { l: &pool[0], n: 4 }`.  Reading only `;`/`}` refused it,
-                    // which made the rule's one admitted position depend on field order.
-                    let next_terminates = self.lexer.peek_token(";")
-                        || self.lexer.peek_token("}")
-                        || (at_head == AmpHead::StoredRefField && self.lexer.peek_token(","));
-                    // An invalid `&` must not stay "pending": clear the flag in each
-                    // error branch so it cannot leak into `parse_assign_op`'s
-                    // reference-lowering (1160) or the D-bind-7 bare-statement guard
-                    // in `parse_assign` (which would then double-report).  Only the
-                    // accepted case (terminates AND is a place) keeps `amp_pending`
-                    // true, to be consumed by the binding that follows.
-                    if next_assign {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` cannot appear on the left of an assignment — it marks a \
-                             binding as a link to its source at the binding site (`x = &src`), \
-                             not an assignment target; drop the `&` (the binding is already linked)"
-                        );
-                        self.amp_pending = false;
-                    } else if !next_terminates || at_head == AmpHead::No {
-                        // `next_terminates` alone accepts the LAST operand of any
-                        // expression (`b = 1 + &a;`, `b += &a;`, `S { x: &a }`, a
-                        // block-final `{ 1 + &a }`) — it only proves nothing FOLLOWS
-                        // the `&`, not that nothing PRECEDED it.  `at_head` supplies
-                        // the other half, so the pair is total.
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` is not a general operator — it binds a reference only as the \
-                             whole right-hand side of an assignment (`a = &b`). Pass a `&` \
-                             parameter WITHOUT `&` (`f(x)`, the reference comes from the \
-                             parameter type); do not use `&` in an argument or sub-expression"
-                        );
-                        self.amp_pending = false;
-                    } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
-                        // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
-                        // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
-                        // ONE τ and has no conversion for a different one.  Unenforced, the link
-                        // read and wrote the target's slot at the ANNOTATION's width and bias and
-                        // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
-                        // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
-                        // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
-                        //
-                        // `u8` was the one shape that read correctly, because its bias is zero and
-                        // its encoding is the identity — the covered spelling is the one that
-                        // cannot fail, which is why this survived.
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "a `&` link takes its target's type, so the annotation `&{want}` cannot \
-                             re-type a link to a `{got}` — they are different ranges, and the link \
-                             would read the stored bytes at the wrong width. Drop the annotation \
-                             (`p = &x` takes the target's type), or write `&{got}`"
-                        );
-                        self.amp_pending = false;
-                    } else if !Self::is_amp_place(code, &self.data) {
-                        // #1 — a valid binding RHS still needs a PLACE operand.
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` requires an addressable operand — a variable, struct field, \
-                             or vector element — not a temporary (a literal, computed value, \
-                             or call result)"
-                        );
-                        self.amp_pending = false;
-                    }
-                }
-                return t;
-            }
-            let t = self.parse_part(var_tp, code, parent_tp);
-            return t;
+            return self.parse_primary(var_tp, code, parent_tp);
         }
         let orig_var = if let Value::Var(nr) = code {
             *nr
         } else {
             u16::MAX
         };
-        // Start of the left operand — `known_var_or_type` below must point an
-        // "Unknown variable" caret here, not at the cursor that has drifted to
-        // the operator / statement terminator while the operand was parsed.
-        let operand_pos = self.lexer.peek_pos().clone();
-        let mut current_type = self.parse_operators(var_tp, code, parent_tp, precedence + 1);
+        let operand_pos = *self.lexer.peek_pos();
+        let mut current_type = self.parse_primary(var_tp, code, parent_tp);
+        let mut ceiling = OPERATORS.len();
+        loop {
+            // `is` stands at the comparison level: `level_run` reads it there when no
+            // comparison operator follows.
+            let next = self
+                .peek_binary_operator()
+                .or_else(|| self.lexer.peek_token("is").then_some((3, "is")));
+            let Some((level, _)) = next else {
+                return current_type;
+            };
+            // A void left operand followed by an operator that can begin the next statement
+            // needs no case here: its run returns without reading it, and the same level is
+            // then not entered again, so the operator is left for what follows.
+            if level < precedence || level >= ceiling {
+                return current_type;
+            }
+            current_type = self.level_run(
+                var_tp,
+                code,
+                parent_tp,
+                level,
+                current_type,
+                orig_var,
+                operand_pos,
+            );
+            ceiling = level;
+        }
+    }
+
+    /// The operand of an expression: a prefix `&<place>` or whatever [`Self::parse_part`]
+    /// reads: what every binary operator stands between.
+    fn parse_primary(&mut self, var_tp: &Type, code: &mut Value, parent_tp: &mut Type) -> Type {
+        // @C81 — `&` stays one token; its position decides reference or bitwise-and.
+        // @PLN87 B-Ref-AnnotationOnly — the FIRST primary of a binding RHS (or of a
+        // statement) consumes the head marker; every operand after it sees `false`.
+        // Taken before the `&` test so a non-`&` head (`1` in `1 + &a`, the `(` in
+        // `(&a)`, a call receiver) consumes it too — that is what makes the `&`
+        // arriving later a sub-expression use rather than the whole RHS.
+        let at_head = std::mem::take(&mut self.amp_head);
+        // @PLN87 — a PREFIX `&<lvalue>` is a reference-to, distinct from the binary
+        // `&` (bitwise-and "Land"). The binary form only ever sits BETWEEN operands,
+        // so a `&` seen here at an operand START is the prefix: it flags the `&`-ness
+        // via `amp_pending` so `parse_assign_op` can lower a scalar reference to
+        // `OpCreateStack`. (`&&` is its own token, so this never mis-fires on
+        // logical-and.)
+        let amp_start = {
+            let p = self.lexer.peek_pos();
+            (p.line, p.pos)
+        };
+        if self.lexer.has_token("&") {
+            self.amp_pending = true;
+            let t = self.parse_part(var_tp, code, parent_tp);
+            // `@FR-E-Eq`, @C91 — `&a == &b` asks whether two names are ONE record.  A `&`
+            // just before a `==` / `!=`, or opening the right operand of one, is recorded
+            // rather than refused; the comparison claims it only when it is that whole
+            // operand, and refuses it otherwise (`handle_operator`).
+            if self.lexer.peek_token("==")
+                || self.lexer.peek_token("!=")
+                || self.eq_rhs_at == Some(amp_start)
+            {
+                self.amp_pending = false;
+                let end = {
+                    let p = self.lexer.peek_pos();
+                    (p.line, p.pos)
+                };
+                self.amp_identity = Some(super::AmpIdentity {
+                    start: amp_start,
+                    end,
+                    place: Self::is_amp_place(code, &self.data),
+                });
+                return t;
+            }
+            // @C77 — `&` binds a live reference, and only as a bind's whole right-hand side.
+            // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
+            // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
+            // since loft statements are `;`-terminated — is always followed by `;`
+            // (a block-final reference `{ … &x }` by `}`).  `parse_part` has consumed
+            // the whole lvalue, so the NEXT token classifies the use:
+            //   `=`/`+=`/…  → `&` on the assignment TARGET (`&var = …`)   [error]
+            //   not `;`/`}` → `&` as a sub-expression / argument          [error]
+            //   `;`/`}`     → a valid binding RHS → check the operand is a PLACE (#1)
+            // (Local peek; avoids the global `amp_pending` flag which leaks.)
+            if !self.first_pass {
+                let next_assign = self.lexer.peek_token("=")
+                    || self.lexer.peek_token("+=")
+                    || self.lexer.peek_token("-=")
+                    || self.lexer.peek_token("*=")
+                    || self.lexer.peek_token("%=")
+                    || self.lexer.peek_token("/=");
+                // What ENDS the operand depends on the position the head opened in.
+                // A statement ends at `;` (a block-final one at `}`); a struct-literal
+                // field value ends at the `,` before the next field just as well.
+                // `@FR-B-Ref-StoredRef` admits the `&` on the strength of the FIELD'S
+                // TYPE and conditions it on nothing else, so a `reference<τ>` field
+                // that is not the LAST field in the literal is the same legal position
+                // — `TrailNN { l: &pool[0], n: 4 }`.  Reading only `;`/`}` refused it,
+                // which made the rule's one admitted position depend on field order.
+                let next_terminates = self.lexer.peek_token(";")
+                    || self.lexer.peek_token("}")
+                    || (at_head == AmpHead::StoredRefField && self.lexer.peek_token(","));
+                // An invalid `&` must not stay "pending": clear the flag in each
+                // error branch so it cannot leak into `parse_assign_op`'s
+                // reference-lowering (1160) or the D-bind-7 bare-statement guard
+                // in `parse_assign` (which would then double-report).  Only the
+                // accepted case (terminates AND is a place) keeps `amp_pending`
+                // true, to be consumed by the binding that follows.
+                if next_assign {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` cannot appear on the left of an assignment — it marks a \
+                             binding as a link to its source at the binding site (`x = &src`), \
+                             not an assignment target; drop the `&` (the binding is already linked)"
+                    );
+                    self.amp_pending = false;
+                } else if !next_terminates || at_head == AmpHead::No {
+                    // `next_terminates` alone accepts the LAST operand of any
+                    // expression (`b = 1 + &a;`, `b += &a;`, `S { x: &a }`, a
+                    // block-final `{ 1 + &a }`) — it only proves nothing FOLLOWS
+                    // the `&`, not that nothing PRECEDED it.  `at_head` supplies
+                    // the other half, so the pair is total.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` is not a general operator — it binds a reference only as the \
+                             whole right-hand side of an assignment (`a = &b`). Pass a `&` \
+                             parameter WITHOUT `&` (`f(x)`, the reference comes from the \
+                             parameter type); do not use `&` in an argument or sub-expression"
+                    );
+                    self.amp_pending = false;
+                } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
+                    // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
+                    // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
+                    // ONE τ and has no conversion for a different one.  Unenforced, the link
+                    // read and wrote the target's slot at the ANNOTATION's width and bias and
+                    // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
+                    // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
+                    // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
+                    //
+                    // `u8` was the one shape that read correctly, because its bias is zero and
+                    // its encoding is the identity — the covered spelling is the one that
+                    // cannot fail, which is why this survived.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a `&` link takes its target's type, so the annotation `&{want}` cannot \
+                             re-type a link to a `{got}` — they are different ranges, and the link \
+                             would read the stored bytes at the wrong width. Drop the annotation \
+                             (`p = &x` takes the target's type), or write `&{got}`"
+                    );
+                    self.amp_pending = false;
+                } else if !Self::is_amp_place(code, &self.data)
+                    && matches!(t.base(), Type::Tuple(_))
+                {
+                    self.refuse_tuple_value_link();
+                    self.amp_pending = false;
+                } else if !Self::is_amp_place(code, &self.data) {
+                    // #1 — a valid binding RHS still needs a PLACE operand.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` requires an addressable operand — a variable, struct field, \
+                             or vector element — not a temporary (a literal, computed value, \
+                             or call result)"
+                    );
+                    self.amp_pending = false;
+                }
+            }
+            return t;
+        }
+        self.parse_part(var_tp, code, parent_tp)
+    }
+
+    /// [`Self::level_run_inner`], with the depth its chained operators took given back.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one level's run state, passed whole"
+    )]
+    fn level_run(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        precedence: usize,
+        current_type: Type,
+        orig_var: u16,
+        operand_pos: Position,
+    ) -> Type {
+        // The levels the run's operators took (`enter_depth`) end with the run.
+        let depth = self.parse_depth;
+        let t = self.level_run_inner(
+            var_tp,
+            code,
+            parent_tp,
+            precedence,
+            current_type,
+            orig_var,
+            operand_pos,
+        );
+        self.parse_depth = depth;
+        t
+    }
+
+    /// One level's operators of an expression whose left operand is already in `code`: every
+    /// consecutive operator of level `precedence`, with the state that lives for one such run —
+    /// the `+` chain of text / vector operands lowered once, the comparison that may not chain,
+    /// `is` at the comparison level.  Returns when the next token is no operator of this level.
+    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one level's run state, passed whole"
+    )]
+    fn level_run_inner(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        precedence: usize,
+        mut current_type: Type,
+        orig_var: u16,
+        operand_pos: Position,
+    ) -> Type {
+        let mut ls = Vec::new();
         // @PLN102 pre-freeze — comparison operators are NON-ASSOCIATIVE.  A chain like
         // `a == b == c` (or `a < b < c`) parses as `(a == b) == c`, silently comparing a
         // BOOLEAN to the third operand — a classic footgun.  Reject the second comparison at
@@ -1544,11 +2059,11 @@ impl Parser {
             // and three errors after it, and never that `f(v)` has no value.  Name it, and
             // read the right-hand side so the parse stays aligned.
             if matches!(current_type, Type::Void) {
-                let at = self.lexer.peek_pos().clone();
-                let Some(op) = OPERATORS[precedence]
-                    .iter()
-                    .copied()
-                    .find(|op| VOID_LEFT_OPERATORS.contains(op) && self.lexer.peek_token(op))
+                let at = *self.lexer.peek_pos();
+                let Some(op) = self
+                    .peek_binary_operator()
+                    .filter(|(level, op)| *level == precedence && VOID_LEFT_OPERATORS.contains(op))
+                    .map(|(_, op)| op)
                 else {
                     return current_type;
                 };
@@ -1577,17 +2092,17 @@ impl Parser {
             // threaded into `handle_operator` so the resulting Value::Span
             // points at the operator token (e.g. the `/`), not at whatever
             // the lexer drifted to while parsing the RHS.
-            let op_pos = self.lexer.pos().clone();
+            let op_pos = *self.lexer.pos();
             let op_start = {
                 let p = self.lexer.peek_pos();
                 (p.line, p.pos)
             };
             let mut operator = "";
-            for op in OPERATORS[precedence] {
-                if self.lexer.has_token(op) {
-                    operator = op;
-                    break;
-                }
+            if let Some((level, op)) = self.peek_binary_operator()
+                && level == precedence
+            {
+                self.lexer.has_token(op);
+                operator = op;
             }
             // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
             // the right operand is missing; left to run on, the operator's call was built with
@@ -1642,7 +2157,9 @@ impl Parser {
                         current_type.base().clone()
                     };
                     if matches!(effective_type, Type::Text(_) | Type::Character) {
-                        if current_type == Type::Character {
+                        // Peeled: a `character?` left operand is a character too (loft#1945) —
+                        // unpeeled it took the text path and appended a code point as a text.
+                        if effective_type == Type::Character {
                             // a Character variable cannot serve as an OpAppendText
                             // destination.  Prepend it to the parts list and use an empty
                             // text literal as the first operand so parse_append_text
@@ -1689,9 +2206,14 @@ impl Parser {
                             // not a bare `Value::Null` — for a buffer-backed return the bare null
                             // leaves the return buffer empty and interp reads "" back instead of
                             // null (the normal `else { null }` flow converts it the same way).
+                            // ADMITTING: this null is the compiler's propagate arm, typed
+                            // `text?` by the `Type::optional` below, not a store the author
+                            // wrote — asked through the store face, @FR-N-Store warned
+                            // *"`null` is stored into a slot of the non-null scalar type
+                            // `text`"* on every `t? + "a"`.
                             let null_arm = |this: &mut Self| {
                                 let mut n = Value::Null;
-                                this.convert(&mut n, &Type::Null, &base_text);
+                                this.convert_admitting(&mut n, &Type::Null, &base_text);
                                 n
                             };
                             if matches!(code.unspan(), Value::Var(_)) {
@@ -1756,6 +2278,8 @@ impl Parser {
                 }
                 return current_type;
             }
+            // @PLN187 — the left operand's abstract alias; checked against the right's below.
+            let left_fact = std::mem::take(&mut self.operand_fact);
             // `@FR-E-Eq` — a recorded `&<operand>` is the LEFT side of `&a == &b` only when it
             // spans this whole operand, from `operand_pos` to the operator.
             if let Some(amp) = self.amp_identity.take() {
@@ -1811,31 +2335,66 @@ impl Parser {
                     Type::Text(_) | Type::Character | Type::Vector(_, _)
                 )
             {
+                // Each chained operator is one level of depth for the rest of the run
+                // (`crate::limits`); `level_run` gives the levels back when the run ends.
+                if !self.enter_depth() {
+                    *code = Value::Null;
+                    return Type::Unknown(0);
+                }
                 let mut second_code = Value::Null;
                 let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
                 ls.push((second_code, tp));
-            } else if let Some(value) = self.handle_operator(
-                var_tp,
-                code,
-                parent_tp,
-                precedence,
-                &mut current_type,
-                operator,
-                &op_pos,
-            ) {
-                return value;
+                let right_fact = std::mem::take(&mut self.operand_fact);
+                self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
+            } else {
+                // Each chained operator is one level of depth for the rest of the run
+                // (`crate::limits`); `level_run` gives the levels back when the run ends.  A
+                // right-associative operator (`**`, `??`) parses its right operand at its own
+                // level inside this call, so its chain counts through the nested runs.
+                if !self.enter_depth() {
+                    *code = Value::Null;
+                    return Type::Unknown(0);
+                }
+                let handled = self.handle_operator(
+                    var_tp,
+                    code,
+                    parent_tp,
+                    precedence,
+                    &mut current_type,
+                    operator,
+                    &op_pos,
+                );
+                let right_fact = std::mem::take(&mut self.operand_fact);
+                self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
+                if let Some(value) = handled {
+                    return value;
+                }
             }
         }
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_part(
         &mut self,
         var_tp: &Type,
         code: &mut Value,
         parent_tp: &mut Type,
     ) -> Type {
+        // Each postfix step (`.field`, `.method()`, `[i]`, `?`) is one level of depth
+        // (`crate::limits`) for the rest of the operand; given back when the operand ends.
+        let depth = self.parse_depth;
+        let t = self.parse_part_inner(var_tp, code, parent_tp);
+        self.parse_depth = depth;
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_part_inner(&mut self, var_tp: &Type, code: &mut Value, parent_tp: &mut Type) -> Type {
+        // @PLN187 — the operand's abstract alias, settled after its primary and each postfix
+        // step (`parser::abstract_alias`).
+        self.operand_fact = crate::data::AliasFact::Plain;
+        self.produced = None;
         let mut t = self.parse_single(var_tp, code, parent_tp);
+        self.settle_operand(code);
         // --show-types --trace: log the type after the initial
         // `parse_single` (variable, literal, parenthesised expr).
         self.record_type_trace(&t);
@@ -1855,6 +2414,43 @@ impl Parser {
             || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
         {
+            if !self.enter_depth() {
+                *code = Value::Null;
+                return Type::Unknown(0);
+            }
+            let recv = std::mem::take(&mut self.operand_fact);
+            self.produced = None;
+            self.postfix_member.clear();
+            self.method_checked = false;
+            if self.abstract_on() {
+                self.method_receiver = recv.clone();
+            }
+            // a slice answers the receiver's own type; an element of `vector<vector<…>>` does not
+            let recv_tp = if self.abstract_on() {
+                t.without_deps()
+            } else {
+                Type::Null
+            };
+            let step = if self.lexer.peek_token("[") {
+                crate::parser::abstract_alias::Step::Index
+            } else if self.lexer.peek_token("?") {
+                crate::parser::abstract_alias::Step::Fallback
+            } else {
+                crate::parser::abstract_alias::Step::Member
+            };
+            // @PLN187 — the member a `.` step names, read ahead: `.0` picks a tuple member's fact.
+            if self.abstract_on() && self.lexer.peek_token(".") {
+                let saved = self.lexer.link();
+                self.lexer.cont();
+                self.postfix_member = match &self.lexer.peek().has {
+                    crate::lexer::LexItem::Integer(i, _) => i.to_string(),
+                    crate::lexer::LexItem::Long(i) => i.to_string(),
+                    crate::lexer::LexItem::Identifier(n) => n.clone(),
+                    _ => String::new(),
+                };
+                self.lexer.revert(saved);
+            }
+            self.last_called = u32::MAX;
             // @PLN116 — postfix default-fallback `x?`.  Handled first (a default-
             // fallback never faults, so it skips the `.`/`[]` span-wrapping below),
             // then re-enter the loop so a following `.`/`[]` chains onto the
@@ -1862,6 +2458,7 @@ impl Parser {
             // two-char match means `??` never reaches here as two `?` tokens.
             if self.lexer.has_token("?") {
                 self.handle_default_fallback(var_tp, code, parent_tp, &mut t);
+                self.check_postfix(&recv, step, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
             }
@@ -1871,7 +2468,7 @@ impl Parser {
             // (`.` field/method or `[` index — both can deref null or
             // out-of-bounds at runtime).  The `(` chained-call branch
             // is wrapped under step 1.13.
-            let chain_pos = self.lexer.pos().clone();
+            let chain_pos = *self.lexer.pos();
             let mut wrap_chain = false;
             if !self.first_pass
                 && t.is_unknown()
@@ -1983,6 +2580,12 @@ impl Parser {
                                     *code = Value::Null;
                                 }
                             } else if let Some(place) =
+                                self.open_tuple_member_place(&unspanned, idx)
+                            {
+                                // loft#1868 — the member of an element of a tuple of a type
+                                // variable: its record's field, deferred to each monomorph.
+                                *code = place;
+                            } else if let Some(place) =
                                 self.stored_tuple_member_place(&unspanned, idx)
                             {
                                 // loft#1698 — a stored tuple's member is its record's field.
@@ -2053,21 +2656,6 @@ impl Parser {
                         if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
                         } else {
-                            // Stored-tuple field offset goes through the
-                            // synthetic struct's post-finish layout — same
-                            // offsets `OpGetInt` uses for an ordinary
-                            // struct field.
-                            let elem_offset = if let Some(v) =
-                                crate::data::stored_tuple_offsets_for_def(
-                                    &self.data,
-                                    &self.database,
-                                    d_nr,
-                                    elems.len(),
-                                ) {
-                                u32::from(v[idx])
-                            } else {
-                                crate::data::element_stack_offsets(&elems)[idx] as u32
-                            };
                             let elem_tp = elems[idx].clone();
                             // Carry the BASE's lifetime into the element, exactly as the
                             // plain-tuple site above (P197) and the struct-field read in
@@ -2084,8 +2672,7 @@ impl Parser {
                                 Value::Var(nr) => Some(*nr),
                                 _ => None,
                             };
-                            *code =
-                                self.get_val(&elem_tp, false, elem_offset, code.clone(), u32::MAX);
+                            *code = self.stored_tuple_member_read(d_nr, idx, &elems, code.clone());
                             t = elem_tp;
                             // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
                             // base is a VARIABLE that variable IS the base, so it alone is the
@@ -2179,7 +2766,7 @@ impl Parser {
                         // consumption site (bind / argument / return / loop) on
                         // BOTH backends; the depth-1 `materialized_view_return`
                         // path was already copy-then-free and is the spec this
-                        // mirrors (the C86 escape rule: a view outliving its
+                        // mirrors (the @C86 escape rule: a view outliving its
                         // dying temporary materialises).  A direct CALL result
                         // (not a projection) still binds raw — `w` genuinely
                         // adopts that fresh store.
@@ -2375,6 +2962,9 @@ impl Parser {
                 let inner = std::mem::replace(code, Value::Null);
                 *code = Value::with_span(chain_pos, inner);
             }
+            self.settle_operand(code);
+            let is_slice = self.abstract_on() && t.without_deps() == recv_tp;
+            self.check_postfix(&recv, step, is_slice, code);
             // --show-types --trace: log the resulting type after
             // each chaining step (`.field`, `.tuple_idx`, `[idx]`,
             // `(args)`).  Combined with the post-`parse_single`
@@ -2726,105 +3316,11 @@ impl Parser {
     /// `Value` tree and swaps every fault-prone call to its Nullable
     /// peer.  Used in format-string contexts (`"{expr}"` interpolation)
     /// where the interpolated expression may contain arbitrarily nested
-    /// fault-prone ops (`"{a + v[i] / b}"`).  Per C66 +
-    /// `DESIGN_DECISIONS.md` 2026-05-11: format strings are the user's
-    /// observability surface and must NEVER halt, log, or warn — so
-    /// every interpolated fault site routes through its silent peer.
-    ///
-    /// Phase 4e.3 — also returns the OUTERMOST fault kind id (as
-    /// recognised by the swap table) so the caller (the format-
-    /// string emitter in `parser/objects.rs::parse_format`) can
-    /// prepend an `OpTagFault(kind_id)` sibling statement.  When
-    /// the next format-conversion op (`OpFormatInt` /
-    /// `OpAppendCharacter`) sees the type's null sentinel AND the
-    /// tag is set, it renders `null(<reason>)` instead of bare
-    /// `null`.  Returns `None` for non-fault outer calls (the
-    /// expression may still contain inner faults that get swapped,
-    /// but only the outermost one tags — inner faults have no
-    /// renderer to feed the tag to).
-    pub(crate) fn rewrite_subtree_to_nullable_kind(
-        code: &mut Value,
-        data: &crate::data::Data,
-    ) -> Option<u8> {
-        // Determine the kind BEFORE the swap.  For integer-vector
-        // indexing the IR shape is `OpGetInt(OpGetVector(v, 4, i), 0)`
-        // — the outer is `GetInt`, the fault-prone op is the inner
-        // `GetVector`.  Mirror the recurse-one-level case from
-        // `rewrite_outer_arith_to_nullable` so the kind id matches
-        // the inner op when wrapped.
-        fn classify(name: &str) -> Option<u8> {
-            match name {
-                "DivInt" | "DivFloat" | "DivSingle" => Some(1),
-                "RemInt" | "RemFloat" | "RemSingle" => Some(2),
-                "GetVector" | "VectorRef" | "TextCharacter" => Some(3),
-                _ => None,
-            }
-        }
-        // The OUTERMOST classifiable node ANYWHERE in the hole, not just at the top.
-        //
-        // Arming used to require the top node itself to be fault-prone, on the reasoning that
-        // *"inner faults have no renderer to feed the tag to"*.  That conflates the outermost
-        // OP with the HOLE: the hole always has a renderer, and an inner fault's null
-        // propagates to it.  So `{v[9] / 2}` reported `null(oob)` while `{v[9] + 1}` reported
-        // bare `null` — the same overrun, the same null, and a cause only when the arithmetic
-        // around it happened to be divisive.  Measured on both backends for `+`, `-`, `*`, a
-        // fault on the RIGHT operand, and two faults in one hole; `@FR-F-FaultSafe` says the
-        // render is *"'null' annotated with the fault cause"* without qualifying it by what
-        // encloses the fault.
-        //
-        // The KIND this returns is only the initial value: `note_format_fault` is a SET, so
-        // whichever op actually faults overwrites it, and a peer that did not fault leaves it
-        // alone.  That is why `{v[9] / z}` answers `oob` and not `/0` — the overrun is what
-        // produced the null.  Arming at all is the load-bearing half; the kind is a fallback.
-        fn outermost_kind(code: &Value, data: &crate::data::Data) -> Option<u8> {
-            fn classify_call(def_nr: u32, args: &[Value], data: &crate::data::Data) -> Option<u8> {
-                let name = data.def(def_nr).original_name();
-                if let Some(k) = classify(&name) {
-                    return Some(k);
-                }
-                // For an integer-vector read the IR is `OpGetInt(OpGetVector(v, 4, i), 0)`:
-                // the outer is the width accessor and the fault-prone op is the inner read.
-                if matches!(
-                    name.as_str(),
-                    "GetInt" | "GetInt4" | "GetByte" | "GetShortRaw"
-                ) && let Some(Value::Call(inner_nr, _)) = args.first().map(Value::unspan)
-                {
-                    return classify(&data.def(*inner_nr).original_name());
-                }
-                None
-            }
-            match code.unspan() {
-                Value::Call(def_nr, args) => classify_call(*def_nr, args, data)
-                    .or_else(|| args.iter().find_map(|a| outermost_kind(a, data))),
-                Value::CallRef(_, args)
-                | Value::Tuple(args)
-                | Value::Insert(args)
-                | Value::Parallel(args) => args.iter().find_map(|a| outermost_kind(a, data)),
-                Value::Block(b) | Value::Loop(b) => {
-                    b.operators.iter().find_map(|c| outermost_kind(c, data))
-                }
-                Value::If(cond, then_b, else_b) => outermost_kind(cond, data)
-                    .or_else(|| outermost_kind(then_b, data))
-                    .or_else(|| outermost_kind(else_b, data)),
-                Value::Set(_, src)
-                | Value::Return(src)
-                | Value::Drop(src)
-                | Value::Yield(src)
-                | Value::TuplePut(_, _, src) => outermost_kind(src, data),
-                Value::Iter(_, init, step, body) => outermost_kind(init, data)
-                    .or_else(|| outermost_kind(step, data))
-                    .or_else(|| outermost_kind(body, data)),
-                // Every other variant carries no nested fault-prone call — the same set
-                // `rewrite_subtree_to_nullable` below treats as leaves, so the two walks
-                // cover the same tree and a shape one reaches cannot be missed by the other.
-                _ => None,
-            }
-        }
-        let outer_kind = outermost_kind(code, data);
-        Self::rewrite_subtree_to_nullable(code, data);
-        outer_kind
-    }
-
+    /// fault-prone ops (`"{a + v[i] / b}"`).  Per @C66: format strings
+    /// are the user's observability surface and must NEVER halt, log,
+    /// or warn — so every interpolated fault site routes through its
+    /// silent peer, and the hole renders the null it yields as a plain
+    /// `null` (`@FR-F-FaultSafe`, @C142).
     pub(crate) fn rewrite_subtree_to_nullable(code: &mut Value, data: &crate::data::Data) {
         // Helper mirrors the swap table in
         // `rewrite_outer_arith_to_nullable`; kept inline (no shared
@@ -2862,23 +3358,6 @@ impl Parser {
                 for arg in args {
                     Self::rewrite_subtree_to_nullable(arg, data);
                 }
-                // Phase 4e.3 (slice 2 — deferred): the design adds a
-                // sibling `OpTagFault(kind)` immediately before each
-                // swapped Nullable peer in format-string scope so the
-                // format-conversion op renders `null(<reason>)`
-                // instead of bare `null`.  The runtime infrastructure
-                // (`Stores::set_format_fault` /
-                // `Stores::take_format_fault` / `format_fault_tag`
-                // field / `OpTagFault` opcode) is in place; the
-                // Block-wrapping insertion proved fragile when run
-                // through the format-string emitter (the Block's
-                // result type isn't filled in time for `append_data`
-                // to pick the right `OpAppend*` op, producing wrong-
-                // type bytecode and SIGSEGV).  Wiring slice 2 needs
-                // a different emit shape — likely new dedicated
-                // `Op*Fmt` peers (one per fault kind) that fold the
-                // tag into the Nullable peer's body instead of
-                // sequencing.  Tracked in plan-07 phase 4e.3 row.
             }
             Value::CallRef(_, args) => {
                 for arg in args {
@@ -2932,30 +3411,6 @@ impl Parser {
     fn call_declares_nullable(&self, code: &Value) -> bool {
         matches!(code.unspan(), Value::Call(d, _)
             if matches!(self.data.def(*d).returned(), Type::Optional(_)))
-    }
-
-    /// `return` is the one control word `??` takes (@F2): a `continue` or `break` after it
-    /// was read as a missing default and reported only as "Expect token ;", which names
-    /// neither the rule nor the spelling that works.  Refuses it by name, with the cure, and
-    /// consumes the keyword so the statement ends where the author ended it.  Answers
-    /// whether it refused.
-    fn refuse_coalesce_loop_control(&mut self) -> bool {
-        let Some(kw) = ["continue", "break"]
-            .into_iter()
-            .find(|kw| self.lexer.peek_token(kw))
-        else {
-            return false;
-        };
-        self.lexer.has_token(kw);
-        if !self.first_pass {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
-                 {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
-            );
-        }
-        true
     }
 
     /// Desugar `lhs ?? ...` — both the plain-default form and the
@@ -3114,8 +3569,14 @@ impl Parser {
         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
         if self.lexer.has_token("return") {
             self.build_null_coalesce_return(code, ctp, &lhs_type);
-        } else if self.refuse_coalesce_loop_control() {
-            // the operand stands as written; the refusal is reported
+        } else if self.lexer.peek_token("break") || self.lexer.peek_token("continue") {
+            // `?? break` / `?? continue` leave the loop on a null exactly as `?? return` leaves
+            // the function: the word is parsed as the expression it is anywhere else, which
+            // checks it stands in a loop and answers `Never` (@FR-N-Coal's `d ⇐ τ` through
+            // @FR-C-Never).
+            let mut exit = Value::Null;
+            self.expression(&mut exit);
+            self.null_coalesce_exit(code, ctp, &lhs_type, exit);
         } else {
             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
         }
@@ -3207,7 +3668,7 @@ impl Parser {
                 // answers the FALLBACK for a PRESENT element, losing the scalar half with
                 // it, on `--interpret` only.  A `Reference` member hides it: that one does
                 // have a generic path.  Recursion is also what keeps the answers from
-                // drifting, which is the same reason `ref_tuple_element_ok` is one list.
+                // drifting, which is the same reason `data::is_scalar` is one list.
                 //
                 // A member that is ITSELF a tuple cannot be reached by recursing on the
                 // value: `TupleGet` addresses a VAR and an index, so `x.0.0` has no
@@ -3294,8 +3755,9 @@ impl Parser {
                 // PEELED for the reason the stack arm peels: the arms below match some types
                 // in their bare spelling only, so a `boolean?` member would miss its arm and
                 // fall to the generic truthiness convert, where `false` reads as absent.
+                let nullable = matches!(elem_tp, Type::Optional(_));
                 let elem_tp = elem_tp.base();
-                let member = self.get_val(elem_tp, false, off, src.clone(), u32::MAX);
+                let member = self.get_val(elem_tp, nullable, off, src.clone(), u32::MAX);
                 // A member that is itself a tuple is bound first, for the reason the stack
                 // arm binds one: the tuple arms address members through a VAR, and a member
                 // read is a call.
@@ -3406,8 +3868,8 @@ impl Parser {
         // produces the typed null sentinel.
         let mut ret_val = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
-        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
-            let ret_pos = self.lexer.peek_pos().clone();
+        if self.control_value_follows() {
+            let ret_pos = *self.lexer.peek_pos();
             let t = self.expression(&mut ret_val);
             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
             // slot — the store face asks; a bare `null` return takes the sentinel path below
@@ -3425,8 +3887,21 @@ impl Parser {
             ret_val = self.null_value(&r_type);
         }
         let ret_stmt = Value::Return(Box::new(ret_val));
+        self.null_coalesce_exit(code, ctp, lhs_type, ret_stmt);
+    }
 
-        // { tmp = lhs; if (tmp == null) { return ret_expr; }; tmp }
+    /// `lhs ?? <exit>` — the block that leaves by `exit` (a `return`, `break` or `continue`)
+    /// when `lhs` is null and otherwise evaluates to `lhs`.  The exit is a `Never`, so the
+    /// block's type is `lhs`'s present type whatever the exit is (@FR-C-Never, @FR-N-Coal).
+    fn null_coalesce_exit(
+        &mut self,
+        code: &mut Value,
+        ctp: &mut Type,
+        lhs_type: &Type,
+        exit: Value,
+    ) {
+        let ret_stmt = exit;
+        // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
         let is_null = if self.is_type_var_operand(lhs_type) {
@@ -3549,7 +4024,7 @@ impl Parser {
         lhs_type: &Type,
     ) {
         let mut rhs = Value::Null;
-        let rhs_pos = self.lexer.peek_pos().clone();
+        let rhs_pos = *self.lexer.peek_pos();
         // Thread the LHS BASE type as the default's hint when the context gives
         // none (`var_tp` unknown/null — e.g. a RETURN-TAIL `v[i] ?? []`, where
         // parse_return's `[`-led vector hint cannot fire).  Without it an EMPTY
@@ -3622,6 +4097,18 @@ impl Parser {
             };
             self.parse_operators(rhs_hint, &mut rhs, parent_tp, rhs_precedence)
         };
+        // A default that never returns — `?? exit(1)`, `?? panic("…")` — is the absent case
+        // stopping the program, the way `?? return` leaves the function and `?? break` the
+        // loop (`(C-Never)`, @FR-N-Coal's `d ⇐ τ`): the value is the subject's, and there is
+        // no default type to match (@PLN179 finding 019).  The halting builtins by name, as
+        // `sandbox::ABORT_OPS` lists them; `assert` returns and is not one.
+        if let Value::Call(d, _) = rhs.unspan()
+            && matches!(self.data.def(*d).name(), "n_exit" | "n_panic")
+        {
+            let halt = std::mem::replace(&mut rhs, Value::Null);
+            self.null_coalesce_exit(code, ctp, lhs_type, halt);
+            return;
+        }
         // loft#1003 — the default's END, for the `redundant-coalesce` deletion span.
         // Taken HERE and not at the caller's tail: by then the cursor has moved past the
         // statement terminator, and a span that swallows the `;` is a rewrite that
@@ -4018,6 +4505,12 @@ impl Parser {
                 || (matches!(lhs_type, Type::Vector(_, _)) && !owned_vector)
             {
                 self.vars.set_skip_free(tmp);
+            } else {
+                // The hoist is the same variable on both passes, and pass 1 may not have
+                // resolved the subject yet — a closure call reads as `Null` there — so the
+                // never-free mark it left would outlive the call that is owned.  The pass that
+                // sees the subject decides: one record per `??` was held to frame exit.
+                self.vars.clear_skip_free(tmp);
             }
             // An OWNED Vector subject OWNS the value `code` produced (typically
             // `mkv()`'s returned store) and MUST be freed at scope exit —
@@ -4172,7 +4665,7 @@ impl Parser {
     /// redundant-`?` warning (mirrors the redundant-`??` lint).  When `T` has no
     /// well-defined default (a bare reference, or a record with an un-defaulted
     /// non-null field) it is a COMPILE error — a static well-definedness check, fully
-    /// consistent with "no runtime errors ever" (C80).
+    /// consistent with "no runtime errors ever" (@C80).
     pub(crate) fn handle_default_fallback(
         &mut self,
         var_tp: &Type,
@@ -4221,7 +4714,7 @@ impl Parser {
         // The single well-definedness check (the home `S{}` shares): a bare reference,
         // or a record with an un-defaulted non-null field or a bare enum field with no
         // explicit choice, has no default.  `x?` needing one there is a COMPILE error —
-        // a static check, consistent with "no runtime errors ever" (C80).  `x?` is new
+        // a static check, consistent with "no runtime errors ever" (@C80).  `x?` is new
         // syntax (no program relies on it), so this always fires when the base lacks a
         // default; the message names the culprit and the remedy.
         if let Err(reason) = self.data.has_default(&base) {
@@ -4239,7 +4732,7 @@ impl Parser {
         }
         // Redundant-`?` warning — the SAME authority as the redundant-`??` lint: a
         // provably not-null operand (`expr_not_null`) whose type is not `Optional` and is
-        // not a declared-nullable call.  A C80-nullable index / field read has
+        // not a declared-nullable call.  A @C80-nullable index / field read has
         // `expr_not_null == false`, so it is correctly NOT flagged — its default is live
         // (an out-of-bounds / missing read yields null).  Like `??`, the coalesce is
         // still emitted even when redundant (the default is simply never taken).
@@ -4773,7 +5266,7 @@ impl Parser {
                     // fits; a constant the developer can see does not fit is a bug,
                     // not a null. The checked forms (`as τ?`, `?? d`) stay the
                     // sanctioned escape — they yield the null sentinel / fallback —
-                    // so gate on neither being present. Dynamic floats stay C80-null
+                    // so gate on neither being present. Dynamic floats stay @C80-null
                     // at runtime, unchanged. The range mirrors `cast_int_from_single`
                     // /`cast_int_from_float` in fill.rs: NaN or outside [-2^63, 2^63).
                     if !self.first_pass
@@ -4840,7 +5333,7 @@ impl Parser {
                     // set it iff it dispatches an allocating user conversion (`fn OpConvTFromS`).
                     self.conv_owned_result = None;
                     // @PLN102 — a nullable SCALAR source (`float?`/`single?`/`integer?`) casts by its
-                    // BASE: the null rides in-band (NaN is the float null, C90; the reserved sentinel
+                    // BASE: the null rides in-band (NaN is the float null, @C90; the reserved sentinel
                     // for integers) and the cast op propagates it (`NaN as integer` = null), so the
                     // per-type `OpCast` is keyed on the base, not the `Optional`. Peel it here so the
                     // checked `float? as integer?` resolves instead of reporting "Unknown cast"; the
@@ -4866,8 +5359,21 @@ impl Parser {
                         Value::Text(s) => Some(s.clone()),
                         _ => None,
                     };
-                    let converted =
-                        self.convert(code, cast_src, &tp) || self.cast(code, cast_src, &tp);
+                    let by_operator = self.operator_conversion(code, cast_src, &tp);
+                    let converted = by_operator == Some(true)
+                        || self.convert(code, cast_src, &tp)
+                        || self.cast(code, cast_src, &tp);
+                    if !converted && by_operator == Some(false) && !self.first_pass {
+                        let t = tp.base().source_name(&self.data);
+                        let f = cast_src.base().source_name(&self.data);
+                        let name = self.data.conversion_name(tp.base()).unwrap_or_default();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{f}` has a method `to_{name}`, but `as {t}` reaches only one written \
+                             with `operator`: declare it `operator to_{name}(self: {f}) -> {t}`"
+                        );
+                    }
                     self.in_explicit_cast = outer_cast;
                     if !converted {
                         // `@C131` — two variants of one enum: the value is known to be the first,
@@ -4890,7 +5396,9 @@ impl Parser {
                                  variant, so the cast cannot succeed",
                                 &ctp.source_name(&self.data),
                             );
-                        } else {
+                        } else if by_operator != Some(false) {
+                            // An unmarked `to_<t>` was named above (`@FR-Op-Mark`); this is the
+                            // refusal for a type with nothing to convert by.
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
@@ -4920,7 +5428,7 @@ impl Parser {
                     rt = Type::optional(rt.base().clone());
                 }
                 // A text→numeric PARSE is fit-failing: unparseable input yields the null sentinel
-                // at runtime (C80, no trap). Two regimes:
+                // at runtime (@C80, no trap). Two regimes:
                 //  · @PLN25 DN3 (default / OFF): the result auto-TYPES `τ?` (`s as integer` is
                 //    `integer?`; discharge with `?? d` or a `τ?` slot).
                 //  · @FR-N-Cast — a bare `as τ` ASSERTS the value fits; a parse cannot be
@@ -5218,7 +5726,7 @@ impl Parser {
                 Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
                 _ => ctp.clone(),
             };
-            let second_pos = self.lexer.peek_pos().clone();
+            let second_pos = *self.lexer.peek_pos();
             let is_eq = operator == "==" || operator == "!=";
             let left_amp = self.eq_amp_left.take();
             let outer_rhs = std::mem::replace(
@@ -5265,8 +5773,8 @@ impl Parser {
                         "Redundant null check — '{lhs_not_null_name}' is 'not null', so this is {always} unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read)",
                     );
                     // CONDITIONAL, not mechanical.  A non-null slot CAN observably hold null:
-                    // `formal/types.md` C85 writes the reserved sentinel there on an integer
-                    // overflow (and names a `float` holding `NaN` as the parallel), and C80
+                    // `formal/types.md` @C85 writes the reserved sentinel there on an integer
+                    // overflow (and names a `float` holding `NaN` as the parallel), and @C80
                     // answers an out-of-range read with null while the index expression stays
                     // typed non-null.  So `s.a == null` on a non-null `integer` field is TRUE
                     // after `s.a = big * big`, and deleting it removes the one test that
@@ -5505,6 +6013,20 @@ impl Parser {
                     }
                 }
                 *ctp = Type::Boolean;
+            } else if matches!(operator, "<" | "<=" | ">" | ">=")
+                && let Some(cmp) = self.operator_compare(&[ctp.clone(), second_type.clone()])
+            {
+                // `@FR-Op-Order` — before the swap below: `a > b` is `a.compare(b) == Greater`,
+                // the LEFT operand's method with both operands in source order (`@FR-Op-Left`),
+                // never `b.compare(a)`.
+                *ctp = self.order_through_compare(
+                    code,
+                    operator,
+                    cmp,
+                    second_code,
+                    second_type,
+                    ctp.clone(),
+                );
             } else if operator == ">" {
                 // loft#1151 — the SWAP is a resolution detail; the refusal must still name the
                 // operator the author wrote.
@@ -5535,7 +6057,7 @@ impl Parser {
         } else {
             self.expr_not_null = false;
             let mut second_code = Value::Null;
-            let second_pos = self.lexer.peek_pos().clone();
+            let second_pos = *self.lexer.peek_pos();
             // Enforces @FR-G-Assoc — this is the ONE place associativity is decided, since
             // the level table (`parser/mod.rs::OPERATORS`) carries precedence only.
             //
@@ -5585,6 +6107,30 @@ impl Parser {
             // call_op consumes them, so the result range of `&`/`%` can be narrowed
             // (a masked/modded value becomes provably-fit for a later narrowing
             // cast, removing DN4's `(x & 255) as u8` friction).
+            // `@FR-N-Arith` for `+ - *` — the operands' RANGES, read before `call_op` consumes
+            // them: a constant operand is the one value it is, a declared or inferred range is
+            // its bounds, and a plain `integer` is unbounded (no range is derived from it).
+            let arith_ranges = if matches!(operator, "+" | "-" | "*") {
+                let range = |p: &Self, tp: &Type, c: &Value| -> Option<(i64, i64)> {
+                    if let Some(k) = p.const_int(c) {
+                        return Some((k, k));
+                    }
+                    // A plain `integer` is unbounded whichever template spells it — the
+                    // 32-bit one (`i32::MIN + 1 ..= i32::MAX`) or the wide one — so only a
+                    // range strictly inside that window is a range to compute with.
+                    match tp.base() {
+                        Type::Integer(sp)
+                            if sp.min > i32::MIN + 1 || sp.max < i64::from(i32::MAX) =>
+                        {
+                            Some((i64::from(sp.min), sp.max))
+                        }
+                        _ => None,
+                    }
+                };
+                range(self, ctp, code).zip(range(self, &second_type, &second_code))
+            } else {
+                None
+            };
             let (and_bound, mod_const, lhs_nonneg) = if matches!(operator, "&" | "%") {
                 let and_bound = [
                     self.nonneg_bound(ctp, code),
@@ -5598,7 +6144,7 @@ impl Parser {
             } else {
                 (None, None, false)
             };
-            // @PLN25 DN3: integer `/` and `%` PRODUCE null at runtime on a zero divisor (the C80
+            // @PLN25 DN3: integer `/` and `%` PRODUCE null at runtime on a zero divisor (the @C80
             // sentinel), so the RESULT types `τ?` UNLESS the divisor is provably non-zero — a
             // constant non-zero literal (`a / 2`) or a var proven non-zero by an `if v != 0` guard
             // (the `divisor_nonzero` narrowing stack). Captured HERE, before `call_op` consumes
@@ -5618,23 +6164,69 @@ impl Parser {
             // the operand types. A nullable operand PROPAGATES through a value-preserving scalar
             // op: the runtime already carries the null sentinel / NaN through (`n+5`, `5-n`,
             // `abs(n)` on a null n all stay null). Gated on LOFT_NULLFLOW; the result is wrapped
-            // `τ?` below (beside the div wrap). C85 stays the complement — non-null operands are
+            // `τ?` below (beside the div wrap). @C85 stays the complement — non-null operands are
             // untouched here, so overflow of two non-null values still types non-null.
             // @FR-N-Prop: a nullable operand makes the result nullable — null PROPAGATES
             // through a value-preserving scalar op rather than being laundered by it.
-            let operand_nullable = crate::keys::nprop_enabled()
+            // `@FR-Op-Back` — on a user type, `a ⊕ b` is the left operand's `operator` method
+            // (`@FR-Op-Left`), and the form's type is the method's own (`@FR-Op-Result`): no
+            // propagation wrap is added to it.
+            let user_member = Self::arith_form(operator)
+                .and_then(|form| self.operator_member(form, &[ctp.clone(), second_type.clone()]));
+            let operand_nullable = user_member.is_none()
+                && crate::keys::nprop_enabled()
                 && (matches!(*ctp, Type::Optional(_)) || matches!(second_type, Type::Optional(_)));
-            *ctp = self.call_op(
-                code,
-                operator,
-                &[code.clone(), second_code],
-                &[ctp.clone(), second_type],
-            );
+            *ctp = if let Some(m) = user_member {
+                let form = Self::arith_form(operator).unwrap_or_default();
+                self.arith_through_operator(code, form, m, second_code, second_type, ctp.clone())
+            } else {
+                self.call_op(
+                    code,
+                    operator,
+                    &[code.clone(), second_code],
+                    &[ctp.clone(), second_type],
+                )
+            };
             // Tighten the result range — sound + conservative (never narrower than
             // the operation guarantees), and only ever a tightening of call_op's
             // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or
             // [0, |c|-1] when `a` is non-negative.
-            if let Type::Integer(s) = &*ctp {
+            if let Type::Integer(s) = ctp.clone() {
+                let s = &s;
+                // `@FR-N-Arith` — `a op b` over bounded integers is typed `Integer[r]`, r the
+                // interval arithmetic of the operand ranges (loft#1933: `u8 + u8` typed the full
+                // `integer`, so it could not be stored into a `u16`).  A range the spec cannot
+                // name stays the full `integer`.
+                if let Some(((al, ah), (bl, bh))) = arith_ranges {
+                    let (lo, hi) = match operator {
+                        "+" => (al.saturating_add(bl), ah.saturating_add(bh)),
+                        "-" => (al.saturating_sub(bh), ah.saturating_sub(bl)),
+                        _ => {
+                            let p = [
+                                al.saturating_mul(bl),
+                                al.saturating_mul(bh),
+                                ah.saturating_mul(bl),
+                                ah.saturating_mul(bh),
+                            ];
+                            (*p.iter().min().unwrap_or(&0), *p.iter().max().unwrap_or(&0))
+                        }
+                    };
+                    let both_constant = al == ah && bl == bh;
+                    if !both_constant
+                        && lo > i64::from(i32::MIN)
+                        // `u32::MAX` is the wide template's marker for "wider than 32 bits"
+                        // (`IntegerSpec::wide`), so a range must stay strictly below it.
+                        && hi < i64::from(u32::MAX)
+                        && (lo > i64::from(s.min) || hi < s.max)
+                    {
+                        *ctp = Type::Integer(IntegerSpec {
+                            min: i32::try_from(lo).unwrap_or(s.min),
+                            max: hi,
+                            forced_size: None,
+                            ..*s
+                        });
+                    }
+                }
                 let narrowed = match operator {
                     "&" => and_bound.map(|m| (0i32, m)),
                     "%" => mod_const.filter(|c| *c != 0).map(|c| {
@@ -5689,14 +6281,14 @@ impl Parser {
             // parser/mod.rs::substitute_type_in_value, generation/*).
             // @PLN102 arc-E E2 (B) — a shift by a STATICALLY-KNOWN amount
             // outside [0,63] is a compile error.  A runtime null is the
-            // FALLBACK for a *dynamic* out-of-range shift (C80); it is not a
+            // FALLBACK for a *dynamic* out-of-range shift (@C80); it is not a
             // cover for a constant the developer can see is wrong.  Dynamic
             // shift amounts still read null at runtime, unchanged.
             // A bare `<<`/`>>` with a statically-out-of-range amount ASSERTS a
             // defined result; there is none, so it is a compile error. The `?? d`
             // fallback (there is no checked-shift form) stays the sanctioned escape
             // — mirroring the cast rule below — so skip the check when a `??`
-            // follows. A *dynamic* out-of-range amount still reads null (C80/C85).
+            // follows. A *dynamic* out-of-range amount still reads null (@C80/@C85).
             if !self.first_pass && matches!(operator, "<<" | ">>") && !self.lexer.peek_token("??") {
                 // Fold the shift amount: `const_int` catches `-1` (a `neg(1)`
                 // node), `2+3`, a named constant — not just a bare `Int` literal.
@@ -5742,7 +6334,7 @@ impl Parser {
             }
             if !self.first_pass && matches!(operator, "+" | "-" | "*" | "/" | "%" | "<<" | ">>") {
                 let inner = std::mem::replace(code, Value::Null);
-                *code = Value::with_span(op_pos.clone(), inner);
+                *code = Value::with_span(*op_pos, inner);
             }
             // The result of a binary arithmetic op is a *computed value*, not
             // a `not null` field read — `/` and `%` can yield null on
@@ -5761,7 +6353,7 @@ impl Parser {
     /// A `&<operand>` recorded as a possible side of `&a == &b` that turned out to be part of
     /// a wider operand (`x + &a == y`, `&a + 1 == y`): the sub-expression `&` the binding rule
     /// refuses.
-    fn refuse_amp_operand(&mut self) {
+    pub(crate) fn refuse_amp_operand(&mut self) {
         if !self.first_pass {
             diagnostic!(
                 self.lexer,
@@ -5997,9 +6589,7 @@ impl Parser {
         // legitimate fallback) instead of leaking to the lexer's
         // current cursor — which is *past* the just-parsed body and
         // would otherwise point at the next function's start.
-        let fn_pos = self.data.definitions[self.context as usize]
-            .position
-            .clone();
+        let fn_pos = self.data.definitions[self.context as usize].position;
         ctx.last_pos = Some(fn_pos);
         let body = &self.data.definitions[self.context as usize].code;
         Self::walk_for_warnings(&self.data, &mut self.lexer, body, &mut ctx);
@@ -6129,8 +6719,8 @@ impl Parser {
     ) {
         match code {
             Value::Span(boxed) => {
-                let saved = ctx.last_pos.clone();
-                ctx.last_pos = Some(boxed.0.clone());
+                let saved = ctx.last_pos;
+                ctx.last_pos = Some(boxed.0);
                 Self::walk_for_warnings(data, lexer, &boxed.1, ctx);
                 ctx.last_pos = saved;
             }

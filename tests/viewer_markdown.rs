@@ -22,10 +22,11 @@
 //!     `<blockquote>`; blank `> ` line separates blockquotes
 //!   - UTF-8 em-dash `—` (3 bytes) NOT widened to `———` (P272)
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -73,7 +74,7 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Arc<Mutex<String>> {
 /// in-tree failure still runs (and fails) the smoke.  Self-healing after the
 /// republish.
 fn registry_predates_dn1() -> bool {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--dump")
         .arg("--lib")
         .arg(project_root().join("lib"))
@@ -110,7 +111,7 @@ struct ViewerGuard {
 
 impl ViewerGuard {
     fn spawn() -> Self {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(project_root().join("lib"))
@@ -206,7 +207,7 @@ fn markdown_renderer_pins_high_impact_features() {
     }
     // Skip when the binary isn't built (e.g. fresh clone).  The
     // dev workflow `cargo test --release` builds the bin first.
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: {} not built", loft_bin().display());
         return;
     }

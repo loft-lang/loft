@@ -54,8 +54,8 @@ The bridge crate depends on `loft` via a path dep (so it sees the
 same `Stores` / `DbRef` types).  Running `cargo build` from
 `lib/<X>/wasm/` would compile its OWN copy of `loft` into
 `lib/<X>/wasm/target/`, with a different `StableCrateId` than the
-top-level `target/wasm32-unknown-unknown/release/libloft.rlib` that
-the standalone-binary link uses as `--extern loft=…`.  Two copies of
+`--html` runtime rlib (`target/loft/html/wasm32-unknown-unknown/release/libloft.rlib`)
+that the standalone-binary link uses as `--extern loft=…`.  Two copies of
 the same crate → rustc fails: "expected DbRef, found DbRef".
 
 Workaround: the `--html` driver bypasses cargo and invokes `rustc`

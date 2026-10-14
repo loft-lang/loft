@@ -1,0 +1,197 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-Rec` — a call to the same, or a mutually recursive, function gets its own fresh frame:
+// its parameters, its locals and its temporaries are its own, and recursion is bounded only by
+// the stack.  The cells cross recursion with what a frame holds: a scalar, a text, a struct
+// local, a vector it builds and returns, a struct it returns, a heap parameter mutated through
+// at every depth, mutual recursion that grows a shared vector, a generic at three instance
+// types, a call through a fn-ref, a method, and 2000 frames deep.
+//
+// One cell carried a defect: a record parameter REBOUND in each frame and handed down
+// (`p = S { … }; r(p, n - 1)`).  Each frame's rebound store is either the value the call
+// returns (the deepest frame hands its parameter back) or not, and only the run knows which;
+// the frame kept every one it might return, so `r(s, 3)` leaked two records.  The exit now
+// releases it unless it is the store being returned (`(F-ParamRebind)`, loft#1871).
+//
+// @falsified-at: 1acb209e8 — interpret leaked kt=96 S×2 -> clean, native leaked kt=96 S×2 ->
+//   clean (the two intermediate frames of `passdown(s, 3)`).
+// @falsified-by: tests/falsified/a-recursive-call-gets-its-own-frame.patch — the same channels.
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>` once 1acb209e8 is out
+//   of reach.
+// ARMED: `LOFT_NATIVE_LEAK_CHECK=1`, which `scripts/falsify.sh` arms on every run of its own
+//   accord; the interpreter's store census prints at exit unasked.
+// HOLDS: exit, asserts and panic are unmoved on both trees; every other cell is a control.
+
+struct S { x: integer, u: integer }
+
+struct N { v: integer, kids: vector<N> }
+
+fn fact(n: integer) -> integer {
+  if n <= 1 { 1 } else { n * fact(n - 1) }
+}
+
+fn fib(n: integer) -> integer {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn own(n: integer) -> integer {
+  loc = n;
+  if n > 1 {
+    loc += own(n - 1);
+  }
+  loc
+}
+
+fn even(n: integer) -> boolean {
+  if n == 0 { true } else { odd(n - 1) }
+}
+
+fn odd(n: integer) -> boolean {
+  if n == 0 { false } else { even(n - 1) }
+}
+
+fn down(n: integer) -> vector<integer> {
+  v: vector<integer> = [n];
+  if n > 1 {
+    v += down(n - 1);
+  }
+  v
+}
+
+fn rev(s: text) -> text {
+  if len(s) <= 1 { s } else { rev(s[1..]) + s[0..1] }
+}
+
+fn sumto(n: integer) -> integer {
+  if n == 0 { 0 } else { n + sumto(n - 1) }
+}
+
+fn depth(n: integer) -> integer {
+  s = S { x: n, u: 0 };
+  if n > 0 {
+    s.x += depth(n - 1);
+  }
+  s.x
+}
+
+fn pick<T>(n: integer, a: T, b: T) -> T {
+  if n == 0 { a } else { pick(n - 1, b, a) }
+}
+
+fn tri(n: integer) -> integer {
+  if n == 0 {
+    0
+  } else {
+    m = n;
+    n = n - 1;
+    m + tri(n)
+  }
+}
+
+fn bump(s: S, n: integer) {
+  if n > 0 {
+    s.x += 1;
+    bump(s, n - 1);
+  }
+}
+
+fn fill(v: vector<integer>, n: integer) {
+  if n > 0 {
+    v += [n];
+    fill(v, n - 1);
+  }
+}
+
+fn acc(n: integer) -> S {
+  if n == 0 {
+    S { x: 0, u: 0 }
+  } else {
+    r = acc(n - 1);
+    S { x: r.x + n, u: r.u + 1 }
+  }
+}
+
+fn mk(d: integer) -> N {
+  n = N { v: 1, kids: [] };
+  if d > 0 {
+    n.kids += [mk(d - 1), mk(d - 1)];
+  }
+  n
+}
+
+fn count(n: N) -> integer {
+  c = n.v;
+  for k in n.kids {
+    c += count(k);
+  }
+  c
+}
+
+fn ping(v: vector<integer>, n: integer) {
+  if n <= 4 {
+    v += [n];
+    pong(v, n + 1);
+  }
+}
+
+fn pong(v: vector<integer>, n: integer) {
+  if n <= 4 {
+    v += [n];
+    ping(v, n + 1);
+  }
+}
+
+fn grow(self: integer) -> integer {
+  if self == 0 { 0 } else { self + (self - 1).grow() }
+}
+
+fn lbl(n: integer) -> text {
+  c = "abcde"[n..n + 1];
+  if n == 0 { c } else { "{c}-{lbl(n - 1)}" }
+}
+
+fn passdown(p: S, n: integer) -> S {
+  if n == 0 {
+    p
+  } else {
+    p = S { x: p.x + 1, u: 0 };
+    passdown(p, n - 1)
+  }
+}
+
+fn main() {
+  assert(fact(10) == 3628800, "fact: got {fact(10)}");
+  assert(fib(10) == 55, "fib: got {fib(10)}");
+  assert(own(4) == 10 && own(1) == 1, "a local per frame");
+  assert(even(10) && !even(7), "mutual recursion");
+  assert("{down(3)}" == "[3,2,1]", "a vector built per frame: got {down(3)}");
+  assert(rev("abc") == "cba", "text per frame: got {rev("abc")}");
+  assert(sumto(2000) == 2001000, "2000 frames deep");
+  assert(depth(3) == 6, "a struct local per frame: got {depth(3)}");
+  assert(pick(3, 1, 2) == 2, "a generic at integer");
+  assert(pick(3, "a", "b") == "b", "a generic at text");
+  ps = pick(1, S { x: 1, u: 0 }, S { x: 9, u: 0 });
+  assert(ps.x == 9, "a generic at a struct");
+  x = 5;
+  assert(tri(x) == 15 && x == 5, "a scalar parameter reassigned per frame");
+  s = S { x: 1, u: 0 };
+  bump(s, 9);
+  assert(s.x == 10, "a heap parameter mutated through at every depth: got {s.x}");
+  v: vector<integer> = [];
+  fill(v, 4);
+  assert("{v}" == "[4,3,2,1]", "a vector grown at every depth: got {v}");
+  r = acc(4);
+  assert(r.x == 10 && r.u == 4, "a struct returned up the frames");
+  assert(count(mk(2)) == 7, "a tree built and walked recursively");
+  f: fn(integer) -> integer = fact;
+  assert(f(5) == 120, "recursion entered through a fn-ref");
+  w: vector<integer> = [];
+  ping(w, 1);
+  assert("{w}" == "[1,2,3,4]", "mutual recursion growing one vector: got {w}");
+  assert(x.grow() == 15, "a recursive method");
+  assert(lbl(4) == "e-d-c-b-a", "a text built per frame: got {lbl(4)}");
+  t = passdown(s, 3);
+  assert(t.x == 13 && s.x == 10, "a rebound parameter handed down: got {t.x} {s.x}");
+  assert(passdown(s, 0).x == 10 && passdown(s, 1).x == 11, "the shallow passdowns");
+}

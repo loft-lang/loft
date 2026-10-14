@@ -20,8 +20,8 @@
 //! defect the interpreter prints `RELEASE` before the arm and again at the `return` —
 //! a use-after-free — and native panics on the 65535 freed-record marker.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -53,12 +53,12 @@ fn main() { d992(); println(\"done\"); }\n";
 
 fn write_probe(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_992_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
 fn run(backend: &str, file: &PathBuf) -> (bool, String, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -76,7 +76,7 @@ fn run(backend: &str, file: &PathBuf) -> (bool, String, String) {
 fn assert_released_once_after_the_arm(tag: &str, src: &str, backend: &str) {
     let probe = write_probe(&format!("{tag}_{}", backend.trim_start_matches('-')), src);
     let (ok, stdout, stderr) = run(backend, &probe);
-    let _ = std::fs::remove_file(&probe);
+    let _ = fa::remove_file(&probe);
     assert!(
         ok,
         "[{tag}/{backend}] the program must run to completion — a second release of the \

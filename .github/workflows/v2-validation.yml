@@ -20,6 +20,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
@@ -46,7 +48,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold + ALSA + headless GL (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
       - name: Cache cargo registry and build
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -97,6 +99,7 @@ jobs:
   # misalignment corpus-wide.  Under nextest each test is its own process, so a
   # guard fire fails exactly that test and names the site.
   v2-guard:
+    # @windows-exempt: a platform-independent invariant sweep (stack alignment); the corpus runs on windows-latest daily
     name: V2 stack_align_guard sweep (ubuntu)
     runs-on: ubuntu-latest
     steps:
@@ -104,7 +107,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold + ALSA + headless GL
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
       - name: Cache cargo registry and build
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -150,6 +153,7 @@ jobs:
   # UAF / uninit / leak), not the store layer's intentional aliasing.  Grow the
   # curated list as more shapes are validated clean.
   v2-miri:
+    # @windows-exempt: a Linux-only tool-class interpreter (Miri)
     name: V2 Miri hard-UB (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:

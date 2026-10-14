@@ -101,9 +101,9 @@ Each opens its own sub-phase only when prioritised
 - **Auto-widening type system** (`i32 + i32 → i64` Python-style).
   C54.A is the capped instance; wider type-level widening is a
   separate conversation.
-- **C54.D Rust-style literal suffixes** (`42i32`).  Closed-by-
+- **@C54.D Rust-style literal suffixes** (`42i32`).  Closed-by-
   decision in [`../../DESIGN_DECISIONS.md`](../../../DESIGN_DECISIONS.md)
-  § C54.D.
+  § @C54.D.
 
 ## Provenance
 
@@ -124,7 +124,7 @@ Each opens its own sub-phase only when prioritised
   caveats
 - [`../../QUALITY.md`](../../../QUALITY.md) § C54 — design history
 - [`../../DESIGN_DECISIONS.md`](../../../DESIGN_DECISIONS.md) §
-  C54.D — closed-by-decision (no Rust-style literal suffixes)
+  @C54.D — closed-by-decision (no Rust-style literal suffixes)
 - [`../../CHANGELOG_TECHNICAL.md`](../../../CHANGELOG_TECHNICAL.md)
   — per-phase shipped manifest
 - [`../02-narrow-collection-elements/`](../02-narrow-collection-elements)

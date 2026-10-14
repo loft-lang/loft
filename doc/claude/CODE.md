@@ -13,6 +13,7 @@ Rules for all Rust and loft code in this project.
 - [Clippy and Formatting](#clippy-and-formatting)
 - [Null Sentinels](#null-sentinels)
 - [Hot-path conventions](#hot-path-conventions)
+- [File access](#file-access)
 
 ---
 
@@ -22,7 +23,7 @@ Rules for all Rust and loft code in this project.
 - User functions in loft are stored with an `n_` prefix: `data.def_nr("n_foo")`, not `data.def_nr("foo")`.
 - Native stdlib functions follow the scheme `n_<func>` (global) or `t_<LEN><Type>_<method>` (method, LEN = type name length). Example: `t_4text_trim` for `text.trim()`.
 - A free member of an overload set is `f_<LEN><τ₁#τ₂…>_<name>`; an INSTANCE of a generic is `i_<LEN><bound types>_<template key>` (`i_7integer_n_idf`, @PLN165 `D-Key`).  All three length-counted forms are read back by the one decoder, `Data::split_key`; a key keeps its readable characters and the native emitter flattens it (`rust_fn_ident`), refusing two keys that flatten to one identifier.
-- Internal-only functions use an `i_` prefix (e.g. `i_parse_errors`). Registered in `Parser::new()`, not in `default/*.loft`. Invisible to user code — no namespace collision.
+- A function only the compiler lowers to is a non-`pub` declaration in `default/*.loft` (`parse_errors_of`, `hash_sorted`, `yield_frame`), resolved by `data.def_nr("n_<name>")`.
 - Operators use `OpCamelCase` in loft source → bare `snake_case` in Rust (`fill.rs`), without any prefix. Exception: `OpReturn` → `op_return`, because `return` is a Rust keyword.
 
 **Adding an `fn Op*` to `default/*.loft` means `make fill` — and the symptom of
@@ -84,7 +85,7 @@ correctly on the same file.
   limit(0,255)?` have a spare code outside their range and give up nothing.
   `IntegerSpec::usable_min` / `usable_max` is the one home that answers which spec spends
   what.
-- **A spare code is not a null (C127).** A DECLARED range that leaves codes unused inside its
+- **A spare code is not a null (@C127).** A DECLARED range that leaves codes unused inside its
   width — `limit(-100, 100) size(1)`, 201 values in 256 — has no null in its non-nullable
   form: a value that does not fit takes the type's DEFAULT, like one whose range fills the
   width. Only the plain `integer` and `i32` TEMPLATES keep a sentinel, because theirs lies
@@ -152,6 +153,54 @@ And one shape to recognise: a scan over `definitions` or `def_names` inside a lo
 (`children_of` walked every definition per call, `has_private_type` every name) is a
 quadratic waiting for a large program.  Derive an index and keep it at the ONE writer of
 the field it derives from (`Data::set_parent`), or scan the cheapest field first.
+
+## File access
+
+The compiler (`src/`) reaches the file system ONLY through `src/file_access/`: it never
+opens, lists, creates, removes or inspects a file or directory from a string or a bare
+`Path`.  Build a `PathText` (`PathText::host(text)`, `PathText::from_os(path)`) and call
+`file_access::read_to_string` / `write` / `read_dir` / `exists` / `canonical` / …; compare
+paths with `==`, `starts_with`, `ends_with` and `has_component`, never as text.
+
+- **Why:** every Windows defect the compiler has had was a decision on path text — a mixed
+  `D:\a\loft/default\x` missing a `"/default/"` pattern, a verbatim `\\?\D:\…`
+  never equal to its plain twin, `dir/` not equal to `dir`, `pkg` claiming `pkg2/x`.
+- **Tested on any host:** `file_access::path` parses under an explicit `Flavor`, so the
+  Windows rules are unit tests on Linux; an operation's error names its path, and a
+  listing is sorted.
+- **Guarded:** `file_access::guard` counts each file's direct accesses (`std::fs`,
+  `File::open`, `Path::exists()`, `canonicalize`, a separator handled by hand) against
+  `src/file_access/direct.baseline`.  A count that rises fails; one that falls fails until
+  you lock it in with `LOFT_BLESS_FILE_ACCESS=1 cargo test --lib file_access::guard`.
+- **Refused by Clippy:** `clippy.toml` lists every path-taking entry point (`std::fs`,
+  the disk-touching and name-reading `Path` methods, `set_current_dir`, `libloading`, the
+  mmap store), denied in the lib and the `loft-lsp` / `loft-dap` binaries.  A file not yet
+  migrated carries one marked `#![allow(clippy::disallowed_methods, …)]` and is listed in
+  `src/file_access/clippy_allow.baseline`, which only shrinks.  Store persistence keeps its
+  allow, because the daily windows-latest run proves those OS calls.  Clippy cannot see code
+  compiled out on Linux (`cfg(windows)`), so the text ratchet above stays for that.
+- **Platform gates:** a `cfg(unix)` / `cfg(windows)` / `target_os` gate belongs in
+  `src/platform.rs` or here, never at a call site.  `src/platform_census.rs` counts the rest
+  per file in `src/` and `tests/` against `src/platform_census.baseline`, which only falls
+  (`LOFT_BLESS_PLATFORM_CENSUS=1 cargo test --lib platform_census`).
+- **A Windows run on Linux:** `LOFT_POISON_HOST=windows` puts a program on an emulated Windows
+  host ([BOTH_BACKEND_SWITCHES.md § Falsifier: the emulated Windows host](BOTH_BACKEND_SWITCHES.md#falsifier-the-emulated-windows-host)).
+
+## Processes
+
+loft starts a process ONLY through `platform::process` (`src/platform_process.rs`; its module
+docs are the contract): `Spawn::new(Program::search("cargo"))…`, then `.run(b"")` where `std`
+had `.output()`, `.status()` for `.status()`, `.start()` for `.spawn()`.
+
+- **Pick the tree:** `Tree::Owned` (the default) for a child loft drives — a stop and loft's
+  end reach everything it started.  `Tree::Foreground` for a child handed the terminal (the
+  program a run is, a script that may prompt): an owned child in a group of its own that reads
+  the terminal is stopped by `SIGTTIN`.  `Tree::Detached` only for a child meant to outlive loft.
+- **Refused by Clippy:** `std::process::Command::new` is in `clippy.toml`.  A test harness that
+  must hold the raw process takes `platform::process::harness_command`, which nothing in `src/`
+  calls.  `src/platform_process_guard.rs` counts the files that still spell `Command::new`
+  (each with a marked `#![allow]`) against `src/platform_process_clippy_allow.baseline`, which
+  only shrinks (`LOFT_BLESS_PLATFORM_PROCESS=1 cargo test --lib platform::process::guard`).
 
 ## Dependencies
 
@@ -294,6 +343,14 @@ Four shapes that read as correct and are not, each measured in this repo's own s
   reports "finished" the whole time. Reaching for `-x` after being burned by `-f` is reaching
   for the next pattern instead of stopping using patterns, which is the actual lesson: use the
   recorded pid.
+
+  **When there is no pid and no artefact, use `scripts/pgrep_others.sh <regex>`** (`--wait
+  [--timeout S]`, `--count`, `--here` for this checkout only).  It excludes by process TREE —
+  itself, every ancestor, its own children — so no pattern spelling can make it match the
+  shell that called it.  The trap is platform-dependent, which is why it hides: BSD `pgrep`
+  (macOS) leaves out its ancestors by default, `procps` `pgrep` (Linux, CI) matches them — a
+  loop that exits on a Mac spins forever on the box it is written for.  The script answers
+  the same on both.
 
 - ⚠ **`git merge-base --is-ancestor <sha> HEAD` is not the test for "do I have this CHANGE".**
   It answers about COMMITS, and the moment any checkout cherry-picks, the same change exists

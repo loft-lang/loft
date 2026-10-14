@@ -23,12 +23,15 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
 
 jobs:
   quick-suite:
+    # @windows-exempt: a Linux subset of the Test job; the full suite runs on windows-latest daily (ci.yml test)
     name: quick suite (wrap + issues, ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -39,7 +42,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F).
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
@@ -67,7 +70,7 @@ jobs:
       # omits (same exclusion as the stack_align guard job, same rationale).
       - name: Quick suite (wrap + issues)
         run: >
-          cargo nextest run --profile ci --test wrap --test issues --test doc_hygiene
+          cargo nextest run --profile ci --no-fail-fast --test wrap --test issues --test doc_hygiene
           -E 'not test(library_suite)'
 
       - name: Surface flaky tests (passed only on retry)

@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `==` on a `value struct` compares its fields (`@FR-E-Eq`), whatever methods the type has.
+// A struct's methods are members of it (`Routine` attributes, beside its fields), and the
+// value-struct comparison walked every member: one method on the type — `fn label(self: V)`,
+// an `operator compare` — and `a == b` was refused with "Field access not supported on type fn
+// t_1V_label" on both backends.  Methods are skipped, as `api_surface` already skips them.
+// Cells: equal and unequal on each field, `!=`, a nested value struct with a method of its own,
+// a struct holding one, a copy then written, a vector of them, formatting, and the methods
+// still called.
+//
+// @falsified-by: tests/falsified/a-value-struct-with-methods-compares-by-its-fields.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every `==` on `V` and `In`.
+//   ARMED: nothing.
+//   WITNESS: "Field access not supported on type fn t_1V_sum".
+//   HOLDS: every asserted value on this tree, both backends.
+value struct In { k: integer }
+fn twice(self: In) -> integer { self.k * 2 }
+value struct V { a: integer, b: text, i: In }
+fn sum(self: V, other: V) -> integer { self.a + other.a }
+fn label(self: V) -> text { "{self.a}{self.b}" }
+struct Holder { v: V, n: integer }
+
+fn main() {
+  x = V { a: 1, b: "p", i: In { k: 3 } };
+  y = V { a: 1, b: "p", i: In { k: 3 } };
+  z = V { a: 1, b: "p", i: In { k: 4 } };
+  w = V { a: 1, b: "q", i: In { k: 3 } };
+  assert(x == y && !(x != y), "equal fields");
+  assert(!(x == z) && x != z, "a nested field differs");
+  assert(!(x == w), "a text field differs");
+  assert(x.i == In { k: 3 } && !(x.i == z.i), "the nested value struct, which has a method");
+  h1 = Holder { v: x, n: 1 }; h2 = Holder { v: y, n: 1 }; h3 = Holder { v: z, n: 1 };
+  assert(h1 == h2 && !(h1 == h3), "a struct holding one");
+  c = x;
+  c.a = 9;
+  assert(x.a == 1 && c.a == 9 && !(x == c), "a copy, then written");
+  assert([x, z] == [y, z] && !([x] == [z]), "a vector of them");
+  assert("{x}" == "{{a:1,b:\"p\",i:{{k:3}}}}", "formatting: {x}");
+  assert(x.sum(y) == 2 && x.label() == "1p" && x.i.twice() == 6, "the methods");
+  println("ok");
+}

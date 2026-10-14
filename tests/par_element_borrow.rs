@@ -24,8 +24,8 @@
 //! assertion in the same shape does not fail the run, then "the script printed OK"
 //! measures nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -43,7 +43,7 @@ fn probe() -> PathBuf {
 /// walk its whole corpus instead of the file named, which is 178 s of somebody else's
 /// probes and a core dump from one of them.
 fn run(backend: Option<&str>, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--tests");
     if let Some(b) = backend {
         cmd.arg(b);
@@ -99,9 +99,9 @@ fn harness_can_fail() {
                \x20 assert((s[0].v ?? -1) == 999, \"CONTROL: this must fail\");\n\
                }\n";
     let path = std::env::temp_dir().join(format!("loft_1044_control_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write control probe");
+    fa::write(&path, src).expect("write control probe");
     let (ok, stdout, stderr) = run(None, &path, &[("LOFT_POISON", "1")]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !ok,
         "the harness must fail a false assertion in this exact shape, or a green run \

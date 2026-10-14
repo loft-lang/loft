@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1917, `@FR-C-Det` / `@FR-C-Par` — a pure `par` worker answers what the sequential loop
+// answers, for every N, including a worker that only READS a top-level vector constant.  On the
+// interpreter a worker started with an empty constant table and indexed it ("the len is 0 but
+// the index is 825"); `--native` was right.  The table now travels with every worker program.
+//
+// Axes it MOVES: the constant's element type (integer, text, struct), the worker's result type
+// (integer, text, struct — each a different worker path), the thread count (1, 3, 8), and the
+// source (a range, a vector).  Each cell compares against the sequential loop AND a hand-written
+// expected string, so a shared wrong answer cannot pass.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1917-a-par-worker-reads-a-vector-constant.patch — interpret exit 101 -> 0, interpret panicked -> clean; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   CHANNEL: the PANIC, on the interpreter alone — `--native` was right before the fix, so its
+//   row cannot move.
+//   WITNESS: the interpreter control exits `101`, panicked at src/state/mod.rs (an empty
+//   constant table indexed by the worker).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct P1917 { x: integer, name: text }
+
+TABLE1917 = [10, 20, 30, 40, 50];
+WORDS1917 = ["aa", "bbb", "c"];
+PTS1917 = [P1917 { x: 7, name: "p" }, P1917 { x: 9, name: "q" }];
+
+fn num1917(i: integer) -> integer { TABLE1917[i % 5] ?? 0 }
+fn word1917(i: integer) -> text { WORDS1917[i % 3] ?? "" }
+fn len1917(i: integer) -> integer { len(TABLE1917) + i }
+fn pt1917(i: integer) -> P1917 { p = PTS1917[i % 2] ?? P1917 { x: 0, name: "" }; P1917 { x: p.x + i, name: p.name } }
+
+fn test_an_integer_result_from_an_integer_constant() {
+  for n in [1, 3, 8] {
+    a = ""; b = "";
+    for i in 0..7 { a += "{num1917(i)};"; }
+    for i in 0..7 par(r = num1917(i), n) { b += "{r};"; }
+    assert(a == b && b == "10;20;30;40;50;10;20;", "N={n}: {b}");
+  }
+}
+
+fn test_a_text_result_from_a_text_constant() {
+  b = "";
+  for i in [0, 1, 2, 3] par(r = word1917(i), 3) { b += "{r},"; }
+  assert(b == "aa,bbb,c,aa,", "text: {b}");
+}
+
+fn test_a_struct_result_from_a_struct_constant() {
+  b = "";
+  for i in 0..4 par(r = pt1917(i), 2) { b += "{r.name}{r.x} "; }
+  assert(b == "p7 q10 p9 q12 ", "struct: {b}");
+}
+
+fn test_the_length_of_a_constant() {
+  s = 0;
+  for i in [0, 1, 2, 3] par(r = len1917(i), 1) { s += r; }
+  assert(s == 26, "len: {s}");
+}
+
+fn main() {
+  test_an_integer_result_from_an_integer_constant();
+  test_a_text_result_from_a_text_constant();
+  test_a_struct_result_from_a_struct_constant();
+  test_the_length_of_a_constant();
+}

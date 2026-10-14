@@ -145,7 +145,7 @@ after the fix, which is the case that started @PLN176.  Guards:
 ## 2026-09-30 — moved from LOFT.md's type sections
 
 - **Overflow and division by zero.**  0.9.0's C54.G-hybrid made overflow / div0 **trap** (a
-  halt, with a `??`-only discharge).  C80 (the spreadsheet model) reversed that to
+  halt, with a `??`-only discharge).  @C80 (the spreadsheet model) reversed that to
   null-and-continue everywhere, so `??` is a plain fallback, not a trap mode.
 - **Binary writes.**  Before the 64-bit `integer` (step 2c), `f += <integer>` on a binary
   file wrote 4 bytes; it writes 8 since, and the stdlib's GLB / PNG writers were given

@@ -334,6 +334,9 @@ pub struct Manifest {
     pub fonts: Vec<FontDecl>,
     /// @PLN146 F4 — the `[[embed]]` declarations, in file order.
     pub embeds: Vec<EmbedDecl>,
+    /// What the lexer could not read, each a value this manifest does not hold.  Also
+    /// handed to [`take_manifest_errors`] by [`read_manifest`].
+    pub errors: Vec<ManifestError>,
 }
 
 impl Manifest {
@@ -358,8 +361,18 @@ impl Manifest {
 /// Returns `None` when the file does not exist or cannot be read.
 #[must_use]
 pub fn read_manifest(path: &str) -> Option<Manifest> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::file_access::read_to_string(path).ok()?;
     let mut m = parse_manifest(&content, path);
+    if !m.errors.is_empty() {
+        MANIFEST_ERRORS.with(|sink| {
+            let mut sink = sink.borrow_mut();
+            for e in &m.errors {
+                if !sink.contains(e) {
+                    sink.push(e.clone());
+                }
+            }
+        });
+    }
     // @PLN146 F4 — an `[[embed]] source` is relative to the file that declares it,
     // and only the reader knows which file that was.  Recording it here rather than
     // at each call site keeps that fact in one home: a library's declaration and an
@@ -372,6 +385,32 @@ pub fn read_manifest(path: &str) -> Option<Manifest> {
         e.root.clone_from(&root);
     }
     Some(m)
+}
+
+thread_local! {
+    /// The errors of every manifest [`read_manifest`] read on this thread since the last
+    /// [`take_manifest_errors`], each once.  A manifest is read from some seventy places, most
+    /// of which can only skip what they cannot use; the parser drains this into its
+    /// diagnostics once the dependencies are resolved, so a malformed `loft.toml` is reported
+    /// as itself rather than as whatever it failed to declare (a type of the dependency whose
+    /// path it garbled reading as "Undefined type").
+    static MANIFEST_ERRORS: std::cell::RefCell<Vec<ManifestError>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The manifest errors read on this thread since the last call, oldest first.
+#[must_use]
+pub fn take_manifest_errors() -> Vec<ManifestError> {
+    MANIFEST_ERRORS.with(|sink| std::mem::take(&mut *sink.borrow_mut()))
+}
+
+/// One error in a `loft.toml`, at the position the lexer reported it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestError {
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
+    pub message: String,
 }
 
 /// A parsed manifest value: a `Scalar` (string / bool / bareword) or an array
@@ -429,6 +468,34 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
             // guaranteeing forward progress.
             _ => lex.cont(),
         }
+    }
+    // A string the lexer could not read is a value the manifest does not hold: kept, it is
+    // a path with `?` where the author's characters were.
+    for e in lex.diagnostics().entries() {
+        if e.level < crate::diagnostics::Level::Error {
+            continue;
+        }
+        let message = if e.message.starts_with("Unknown escape sequence") {
+            "a backslash in a loft.toml string starts an escape, and this one is not an \
+             escape; write a path with `/` (Windows accepts it), or double the backslash"
+                .to_string()
+        } else {
+            e.message.clone()
+        };
+        // One per line and message: a Windows path holds a backslash per directory, and the
+        // author fixes the string once.
+        if m.errors
+            .iter()
+            .any(|o| o.line == e.line && o.message == message)
+        {
+            continue;
+        }
+        m.errors.push(ManifestError {
+            file: e.file.clone(),
+            line: e.line,
+            col: e.col,
+            message,
+        });
     }
     m
 }
@@ -742,6 +809,14 @@ impl Predicate {
     }
 }
 
+/// The version this loft answers to (`build.rs` `effective_version`): a release's own version,
+/// or `<last release's YYYY.M>.<yyyymmdd>` for a daily or development build, which orders
+/// after the release it builds on and before the next one.  A package's `loft = ">=…"` floor,
+/// the resolver's choice of a package version and `loft --version` all read this, so a
+/// library that needs what landed on `main` names the day (`>=2026.10.20261005`) instead of
+/// waiting for the next monthly release.
+pub const LOFT_RUNNING_VERSION: &str = env!("LOFT_EFFECTIVE_VERSION");
+
 /// Check whether the `required` version constraint is satisfied by `current`.
 ///
 /// Supported syntax: comparison predicates `>=`, `<=`, `>`, `<`, `=` over
@@ -761,7 +836,7 @@ pub fn check_version(required: &str, current: &str) -> VersionCheck {
         return VersionCheck::Satisfied;
     }
     let Some(cur) = parse_version(current) else {
-        // `current` is `env!("CARGO_PKG_VERSION")` at the real call site, so
+        // `current` is `LOFT_RUNNING_VERSION` at the real call site, so
         // this is defensive; a bad build version is itself a hard error.
         return VersionCheck::Malformed(format!(
             "interpreter version '{current}' is not a valid version"
@@ -882,7 +957,7 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
 // The RELEASE tag stays calendar-versioned (`CARGO_PKG_VERSION`, checked by
 // `check_version` above).  The COMPATIBILITY contract is a separate monotone
 // integer that increments iff loft makes a *silent* breaking change — old code
-// that still compiles and runs, but now produces a different result (the C86
+// that still compiles and runs, but now produces a different result (the @C86
 // plain-bind-copy class that broke `hex_terrain`).  Additive and loud-failing
 // changes (a missing symbol errors at compile) do NOT bump it, so a library's
 // declared contract stays valid exactly as long as loft's silent contract is
@@ -1074,7 +1149,7 @@ fn inline_field<'a>(value: &'a str, field: &str) -> Option<&'a str> {
 /// Answers whether it wrote: `false` when `name` is already declared (in any form,
 /// including a path dependency) or the file cannot be read.
 pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = crate::file_access::read_to_string(path) else {
         return false;
     };
     let lines: Vec<&str> = text.lines().collect();
@@ -1114,7 +1189,7 @@ pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
     }
     let mut body = out.join("\n");
     body.push('\n');
-    std::fs::write(path, body).is_ok()
+    crate::file_access::write(path, body).is_ok()
 }
 
 /// Move an EXISTING `[dependencies]` declaration of `name` to `requirement` — the half of
@@ -1123,7 +1198,7 @@ pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
 /// Answers whether the file changed: `false` when `name` is not declared, or is declared in a
 /// shape with no version to move (a path dependency), so the caller can say what it did.
 pub fn replace_dependency(path: &str, name: &str, requirement: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = crate::file_access::read_to_string(path) else {
         return false;
     };
     let mut in_deps = false;
@@ -1166,7 +1241,7 @@ pub fn replace_dependency(path: &str, name: &str, requirement: &str) -> bool {
     }
     let mut body = out.join("\n");
     body.push('\n');
-    std::fs::write(path, body).is_ok()
+    crate::file_access::write(path, body).is_ok()
 }
 
 /// `{ version = "…", … }` with its `version` value replaced, or `None` when it has none.
@@ -1195,9 +1270,69 @@ mod tests {
             name,
             std::process::id()
         ));
-        let mut f = std::fs::File::create(&path).unwrap();
+        let mut f = crate::file_access::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         path
+    }
+
+    /// A daily or development build answers `<last release's YYYY.M>.<yyyymmdd>` (`build.rs`
+    /// `effective_version`), so a library can floor on the day a feature landed on `main`.
+    /// The scheme stands on this ordering: a daily outranks the release it builds on and any
+    /// point release of it, a later daily outranks an earlier one, and the next monthly
+    /// release outranks every daily before it.
+    #[test]
+    fn a_dated_daily_version_orders_between_its_release_and_the_next() {
+        use VersionCheck::{Satisfied, Unsatisfied};
+        let floor = ">=2026.10.20261005";
+        assert_eq!(
+            check_version(floor, "2026.10.20261005"),
+            Satisfied,
+            "the day itself"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.20261012"),
+            Satisfied,
+            "a later daily"
+        );
+        assert_eq!(
+            check_version(floor, "2026.11.0"),
+            Satisfied,
+            "the next release"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.20261004"),
+            Unsatisfied,
+            "an earlier daily"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.0"),
+            Unsatisfied,
+            "the release it builds on"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.1"),
+            Unsatisfied,
+            "a point release of it"
+        );
+        assert_eq!(check_version(">=2026.10.0", "2026.10.20261005"), Satisfied);
+        assert_eq!(check_version("<2026.11.0", "2026.10.20261005"), Satisfied);
+    }
+
+    /// The running build's own version is one the floor check reads: a release (`YYYY.M.P`)
+    /// or a dated daily (`YYYY.M.yyyymmdd`), and it satisfies a floor at its own month.
+    #[test]
+    fn the_running_version_is_a_release_or_a_dated_daily() {
+        let v = LOFT_RUNNING_VERSION;
+        let parts: Vec<&str> = v.split('.').collect();
+        assert_eq!(parts.len(), 3, "{v}");
+        assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{v}");
+        let patch = parts[2];
+        assert!(
+            patch.len() < 4 || (patch.len() == 8 && patch.starts_with(parts[0])),
+            "the patch is a point release or the yyyymmdd of a daily in the release's year or later: {v}"
+        );
+        let floor = format!(">={}.{}.0", parts[0], parts[1]);
+        assert_eq!(check_version(&floor, v), VersionCheck::Satisfied, "{v}");
     }
 
     #[test]
@@ -1271,6 +1406,25 @@ mod tests {
         let p2 = write_temp("nodeps", "[native]\ncrate = \"loft-random\"\n");
         let m2 = read_manifest(p2.to_str().unwrap()).unwrap();
         assert!(m2.runtime_libs.is_empty() && m2.build_deps.is_empty());
+    }
+
+    /// A Windows path in a TOML string: doubled backslashes are one each and no error; an
+    /// undoubled one is an escape that is not one, recorded once per line (not once per
+    /// backslash) and handed to the parser's sink.
+    #[test]
+    fn a_backslash_in_a_string_is_an_escape() {
+        let _ = take_manifest_errors();
+        let p = write_temp(
+            "bslash",
+            "[dependencies]\nok = { path = \"D:\\\\a\\\\lib\" }\nbad = { path = \"D:\\a\\lib\" }\n",
+        );
+        let m = read_manifest(p.to_str().unwrap()).unwrap();
+        assert_eq!(extract_path_dep(&m.dependencies[0].1), Some("D:\\a\\lib"));
+        assert_eq!(m.errors.len(), 1, "{:?}", m.errors);
+        assert_eq!(m.errors[0].line, 3);
+        assert!(m.errors[0].message.contains("backslash"));
+        assert_eq!(take_manifest_errors(), m.errors);
+        assert_eq!(take_manifest_errors(), Vec::<ManifestError>::new());
     }
 
     #[test]
@@ -1739,7 +1893,7 @@ n_demo_fn_b = "demo_fn_b"
             std::process::id(),
             tag.len()
         ));
-        std::fs::write(&p, body).expect("write manifest");
+        crate::file_access::write(&p, body).expect("write manifest");
         p
     }
 
@@ -1749,12 +1903,12 @@ n_demo_fn_b = "demo_fn_b"
     fn record_dependency_opens_a_section_and_keeps_the_rest() {
         let p = temp_manifest("new", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n");
         assert!(record_dependency(p.to_str().unwrap(), "cbor", "^0.1.3"));
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = crate::file_access::read_to_string(&p).unwrap();
         assert!(text.contains("[dependencies]"), "{text}");
         assert!(text.contains("cbor = \"^0.1.3\""), "{text}");
         // Everything that was there is still there, unreordered.
         assert!(text.starts_with("[package]\nname = \"app\""), "{text}");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     /// Into an existing section, at the end of its declarations — a hand-written manifest
@@ -1766,7 +1920,7 @@ n_demo_fn_b = "demo_fn_b"
             "[package]\nname = \"app\"\n\n[dependencies]\n# what we depend on\n             glb = \"^0.1\"\n\n[library]\nentry = \"src/app.loft\"\n",
         );
         assert!(record_dependency(p.to_str().unwrap(), "cbor", "0.1.2"));
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = crate::file_access::read_to_string(&p).unwrap();
         let deps_at = text.find("[dependencies]").expect("section");
         let lib_at = text.find("[library]").expect("library section");
         let cbor_at = text.find("cbor = \"0.1.2\"").expect("the new entry");
@@ -1776,7 +1930,7 @@ n_demo_fn_b = "demo_fn_b"
         );
         assert!(text.contains("# what we depend on"), "comment kept\n{text}");
         assert!(text.contains("glb = \"^0.1\""), "sibling kept\n{text}");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     /// Idempotent, and blind to the shape a declaration takes: a path dependency IS a
@@ -1788,9 +1942,9 @@ n_demo_fn_b = "demo_fn_b"
             "[package]\nname = \"app\"\n\n[dependencies]\ncbor = { path = \"../cbor\" }\n",
         );
         assert!(!record_dependency(p.to_str().unwrap(), "cbor", "^0.1.3"));
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = crate::file_access::read_to_string(&p).unwrap();
         assert!(text.contains("path = \"../cbor\""), "{text}");
         assert!(!text.contains("^0.1.3"), "{text}");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 }

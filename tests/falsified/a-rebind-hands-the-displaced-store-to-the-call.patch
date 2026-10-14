@@ -1,0 +1,13 @@
+diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
+index 1dd38cb1d..2a6b180ab 100644
+--- a/src/generation/dispatch.rs
++++ b/src/generation/dispatch.rs
+@@ -444,7 +444,7 @@ impl Output<'_> {
+                 let handed = std::mem::take(&mut self.rebind_buffer_used)
+                     .then_some(rebind_buf)
+                     .flatten()
+-                    .map(|(_, buf)| format!("if __rbb_{name} {{ var_{buf} = _old_{name}; }} else "))
++                    .map(|(_, buf)| format!("if __rbb_{name} {{ var_{buf} = _old_{name}; }} "))
+                     .unwrap_or_default();
+                 write!(
+                     w,

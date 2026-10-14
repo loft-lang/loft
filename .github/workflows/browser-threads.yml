@@ -70,6 +70,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_NET_RETRY: "10"
@@ -78,6 +80,7 @@ env:
 
 jobs:
   gates:
+    # @windows-exempt: platform-free — runs in a headless browser, which is the platform under test
     name: par on Web Workers
     runs-on: ubuntu-latest
     # Two std rebuilds with atomics (the wasm-bindgen bundle, then the --html
@@ -111,6 +114,10 @@ jobs:
     # hardware can promise, and the per-rep value check is what catches a race.
     # UI_WORK/UI_WINDOW — the dev-box sizing produced 4 frames against 3, too
     # small to be a ratio, so CI samples lighter work over a longer window.
+    # SCALING_WORK and UI_WORK are sized in INTERPRETER time, so they follow its speed: a
+    # leg must stay seconds (scaling) or a ~300 ms frame (UI, on the runner) of compute, or the
+    # runner's fixed worker cost decides the ratio instead of `par` — a faster
+    # interpreter is a reason to raise them, never to lower a floor.
     # WAIT_SCALE stretches every wait for the page's report line (gates exit as
     # soon as it lands, so a generous cap costs nothing when things are healthy).
     env:
@@ -121,7 +128,8 @@ jobs:
       CONCURRENCY_STAT: "max"
       THREADS: "4"
       MIN_BLOCK_RATIO_X10: "13"
-      UI_WORK: "15000"
+      SCALING_WORK: "2000000"
+      UI_WORK: "120000"
       UI_WINDOW: "9000"
 
     steps:
@@ -146,7 +154,7 @@ jobs:
       # mold: .cargo/config.toml links x86_64 Linux with it.
       # binaryen: `loft --html` needs wasm-opt to inject asyncify.
       - name: Install mold + binaryen
-        run: sudo apt-get update && sudo apt-get install -y mold binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
 
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
@@ -160,7 +168,7 @@ jobs:
             echo "browser present"
           else
             wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-            sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+            timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y ./google-chrome-stable_current_amd64.deb
           fi
           "$(command -v google-chrome || command -v chromium || command -v chromium-browser)" --version
 

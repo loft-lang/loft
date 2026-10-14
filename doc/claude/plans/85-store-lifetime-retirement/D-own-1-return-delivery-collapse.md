@@ -239,12 +239,12 @@ through `dispatch_vector_delivery`, every REFERENCE mechanism through
 `dispatch_reference_delivery`. Remaining thicket: the TEXT sub-story (the
 `text_return` work-buffer promotion + the cross-phase B5-L3/`__ret_text` family —
 per-var rules, not a tail-shape selector; a different collapse shape), the
-`return_buffer`/`nrvo` plumbing helpers, and the C86 bind-site derivation residual
+`return_buffer`/`nrvo` plumbing helpers, and the @C86 bind-site derivation residual
 (**DONE 2026-07-03** — `classify_vec_bind`/`VecBind` in parser/expressions.rs: the
 whole-value vector-bind verdict as a pure selector (SelfAssign / CopyVar /
-CopyOwnedField / NotABind), C86 contract + p379 borrowed-base view + #426
+CopyOwnedField / NotABind), @C86 contract + p379 borrowed-base view + #426
 routed-forward exclusions on the variants; byte-identical over the NEW
-`C86-bind-corpus.loft` (b1-b8, one fn per verdict face) + the four prior corpora;
+`@C86-bind-corpus.loft` (b1-b8, one fn per verdict face) + the four prior corpora;
 oracle agreement witnessed via `LOFT_MATERIALIZE_DUMP` — every Copy verdict shows a
 `MAT verdict=Copy` row, view binds none; the elide half was already post-parse
 `elide_borrows`)

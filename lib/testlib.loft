@@ -14,15 +14,15 @@ pub enum Status {
 
 // A plain two-field value, for exercising a consumer against the simplest struct shape.
 pub struct Point {
-  x: float,
-  y: float
+  pub x: float,
+  pub y: float
 }
 
 // A struct with a heap field, for exercising a consumer against a nested type.
 pub struct Bag {
-  label: text,
-  count: i32,
-  items: vector < Point >
+  pub label: text,
+  pub count: i32,
+  pub items: vector < Point >
 }
 // --- Free functions ---
 
@@ -50,8 +50,8 @@ pub fn bump(self: Bag) {
 }
 
 // --- Internal (non-pub) definitions ---
-// These are NOT importable via `use testlib::*` but ARE accessible
-// via `testlib::internal_add` prefix.
+// These are this library's own: reachable from no other file, by either
+// `use testlib::*` or the `testlib::` prefix (@FR-F-Surface).
 INTERNAL_LIMIT = 42;
 
 fn internal_add(a: i32, b: i32) -> i32 {

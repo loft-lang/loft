@@ -18,7 +18,7 @@
 //! `tests/runtime_warnings.rs`.  `LOFT_NO_CACHE` forces a cold parse, without which a warm
 //! run skips the pass that emits them.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 const ADVICE: &str = "upper-case-local";
 
@@ -29,15 +29,15 @@ fn loft_bin() -> std::path::PathBuf {
 /// Compile+run `source` under `--interpret`, returning `(stdout, stderr)`.
 fn run(name: &str, source: &str) -> (String, String) {
     let script = std::env::temp_dir().join(format!("loft_921_{name}_{}.loft", std::process::id()));
-    std::fs::write(&script, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    fa::write(&script, source).expect("write temp script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),

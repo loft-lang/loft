@@ -341,9 +341,12 @@ evidence someone looked, not as proof the rule is defended.
 
 ### The loop
 
-1. **Pick a rule, not a site.** Rank by `rule_tags.py dups` (most scattered first) or by which
-   rule sits under a class the bug review says is rising. Both were true of `@FR-L-Null`: 13
-   sites across 8 files, and 14 of that cycle's 27 bugs named null.
+1. **Pick a rule, not a site.** `make rule-worklist` orders the rules no test names by the
+   defects a walk is expected to find — the chapter's yield so far times how exposed the rule
+   is — so the queue is computed, never written down.  Rank also by `rule_tags.py dups` (most
+   scattered first) or by which rule sits under a class the bug review says is rising. Both
+   were true of `@FR-L-Null`: 13 sites across 8 files, and 14 of that cycle's 27 bugs named
+   null.
 2. **Split the rule into the QUESTIONS its sites actually ask.** A rule with a dozen citations
    is rarely one question. `@FR-L-Null`'s thirteen were two — *"is this the same storage?"*
    (the peel) and *"what value means absent in it?"* (the sentinel). Merging those would have
@@ -521,7 +524,7 @@ do not reach for one as the way in.
 
 - [GOALS.md](GOALS.md) Goal E — the destination this method walks toward;
   § "Stability trumps features" governs what to do when a sweep finding is
-  better closed by rejection than by consolidation (→ C74/C75 precedents).
+  better closed by rejection than by consolidation (→ @C74/@C75 precedents).
 - The **engineering-rigor skill** — supplies the per-finding instruments
   (boundary matrix, usage sentinel, falsification probes).
 - [DESIGN_PROTOCOL.md](DESIGN_PROTOCOL.md) — pass 2's moves are designs;

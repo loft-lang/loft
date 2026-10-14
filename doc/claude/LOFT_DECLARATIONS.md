@@ -14,7 +14,29 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 }
 ```
 
-- `pub` prefix makes a definition publicly visible (applies to functions, structs, and enums).
+- `pub` prefix makes a definition publicly visible (applies to functions, structs, enums and
+  constants).  A library's surface is its `pub` items and nothing else, by either spelling:
+  `use lib::*` brings in only those, and a qualified `lib::name` reaches only those — not an
+  item `lib` declares without `pub`, and not a name `lib` only imports for its own use (@C98),
+  which the error then names with its owner's qualifier
+  (`tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`).
+- **Everything a file declares is private to it; `pub` is consent** (@C140, `formal/calls.md`
+  `(F-Visible)`).  Outside its file a type is *invisible* (not `pub`, named by no `pub`
+  signature), *name only* (not `pub`, but named by a `pub` fn's signature or a `pub` field's type:
+  it can be named, passed and stored, never built) or `pub` (built too — a struct literal when
+  every field is `pub`, an enum's variants).  A struct or variant FIELD is private to its file;
+  `pub` on the field shows it:
+
+  <!-- from tests/reference/private-by-default.loft -->
+  ```loft
+  struct Unit { pub name: text, hp: integer }      // name only: reachable through spawn()
+  pub enum Shape { Circle { pub r: float }, Blob { seed: integer } }
+  pub fn spawn(name: text) -> Unit { Unit { name: name, hp: 100 } }
+  ```
+
+  A caller of `spawn` may write `fn show(u: units::Unit)` and read `u.name`; `u.hp`, a
+  `units::Unit { … }` literal and a `Blob { seed }` pattern are refused, each naming its cure
+  (`tests/pub_visibility.rs`).
 - Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
   `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
   standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the
@@ -48,7 +70,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
     it. Passing it to a `const` parameter is always allowed.
   - Passing it to a plain **record or collection parameter** is reported unless that parameter is
     declared `const` — decided by the signature, not by whether the callee happens to write
-    (DESIGN_DECISIONS.md C124): the error `const-to-plain-parameter`. A read-only helper says so:
+    (DESIGN_DECISIONS.md @C124): the error `const-to-plain-parameter`. A read-only helper says so:
     `fn total(v: const vector<T>)`. The
     standard library's readers (`len`, `sum`, `join`, the `JsonValue` accessors, …) declare their
     parameters `const`; its writers (`clear`, `seek`, the `store_load*` targets) do not. `text`
@@ -83,7 +105,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 - A function body ending in an expression (without `;`) returns that value.
 
 A standard-library function implemented in Rust is declared without a body, followed by
-`#rust "..."` — in `default/` only; a library binds Rust with `#native` (C87):
+`#rust "..."` — in `default/` only; a library binds Rust with `#native` (@C87):
 ```
 pub fn starts_with(self: text, value: text) -> boolean;
 #rust "@self.starts_with(@value)"
@@ -132,7 +154,9 @@ with `a = &b` or `a: &T = b`. A `&` reference cannot outlive its source.
 > **Status (2026-06, @PLN87):** every `&`-reference is live read- and write-through on both backends —
 > a scalar local (`a = &b`, `a: &T = b`), a **struct field** (`b = &s.x`), a **vector element**
 > (`c = &v[0]`), a **heap whole-value** (`p = &o`, aliases the struct — `p = o` without `&` still
-> copies), and a `&` **function parameter** (`fn f(b: &integer)`, called `f(a)`). The addressable-operand
+> copies), a **stored tuple** (`q = &rows[1]`, `p = &h.pair`, or `rows[1]` passed to a `&(…)`
+> parameter — it links like a struct), and a `&` **function parameter** (`fn f(b: &integer)`,
+> called `f(a)`). The addressable-operand
 > check and the general-operator ban (`&` only as a binding RHS; `&`-params called without `&`) are in
 > place. The edges are characterized too: a reference-to-reference works; a reference can't escape its
 > source (no `&T` return type, no `&` in a collection literal, no `&T` struct field). The ladder is
@@ -206,8 +230,11 @@ type Handler = fn(Request) -> Response;
 type Pair = (integer, text);
 ```
 
-Type aliases are purely compile-time substitutions — `Handler` and
-`fn(Request) -> Response` are the same type.  Aliases for `fn(...)` types
+Type aliases are compile-time substitutions — `Handler` and
+`fn(Request) -> Response` are the same type.  Outside its file, a non-`pub` alias that a
+`pub` function names is ABSTRACT: a caller holds, passes back, stores, compares (`==`) and
+prints its values, and never reads what is inside (an operator, a member, destructuring).
+`pub type` keeps it transparent everywhere (@C140, `formal/calls.md` `(F-Visible)`).  Aliases for `fn(...)` types
 and tuple types are supported (C55).
 
 In library/default files, `size(n)` specifies the storage size in bytes:
@@ -238,7 +265,7 @@ A qualified `lib::fn()` auto-loads the library, so an explicit `use` is optional
 qualified access.
 
 **Multiple names from one library must be parenthesised.** `use lib::a, b;` (a flat
-comma list) is a compile error; write `use lib::(a, b);`.
+comma list) is a compile error; write `use lib::(a, b);` (@C76).
 
 #### What an import brings in, and what it passes on (@C98)
 
@@ -279,7 +306,7 @@ declaring one of them yourself is a redefinition and is refused.  A selective
 `use lib::(a, b);` brings in only what it names, and a bare `use lib;` brings in none, so
 every OTHER name in that library stays free for you to declare** — and the two live side
 by side, reached unambiguously in each source that did not import the other (the module
-scoping of @PLN102 C97).
+scoping of @PLN102 @C97).
 
 ```
 use hex_body::*;                     struct Frame { … }   // refused: `Frame` came in bare
@@ -368,7 +395,10 @@ falls back to the imported-library and standard-library *prelude*:
 - **A local may carry a function's name** — values and functions are separate
   namespaces, and the parentheses pick between them. `chr = 65` binds a local while
   `chr(65)` in the same scope still reaches the stdlib function; a bare `chr` reads
-  the local once one is bound. This holds for every binding form — assignment, the
+  the local once one is bound.  To pass the function itself as a value there, name it
+  `std::chr` (a library's as `lib::name`), or wrap one of your own in a lambda:
+  `|x| { chr(x) }`.  Passing the bare name where a function is expected is refused with a
+  message that names the local hiding the function and these cures. This holds for every binding form — assignment, the
   typed local `chr: integer = 65`, a tuple-destructuring element, a parameter, a
   `for` variable, a struct field.
 
@@ -443,7 +473,7 @@ Guard: `tests/scripts/88-imports.loft` (a `use` after a declaration is refused).
 
 Used only in the standard library (`default/`) to bind loft declarations to Rust
 implementations; anywhere else they are refused, and a library binds Rust with `#native` and a
-native crate instead ([PACKAGES.md § Function binding model](PACKAGES.md#function-binding-model), C87):
+native crate instead ([PACKAGES.md § Function binding model](PACKAGES.md#function-binding-model), @C87):
 
 <!-- from default/03_text.loft -->
 ```loft

@@ -24,9 +24,9 @@
 <h1>Optional C libraries</h1>
 <article>
 <div class="item">
-<pre><code>pub fn c_library_available(soname: text) -&gt; boolean env#read</code></pre>
-<p>Returns whether the C library soname is usable right now: it loads, and every `#c` binding declared against it resolves in it.</p>
-<p>Ask this before calling into a library declared with `[c] optional-libs`, which is not installed on every machine and is loaded only when a binding needs it. Both halves of the answer matter — a library of the wrong version loads and then exports only some of the symbols, so &quot;the file is there&quot; would say yes where the call still fails.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-optional-c-libraries.html">c_library_available</a></span>(soname: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> env#read</code></pre>
+<p>Returns whether the C library soname is usable right now: it loads, and every <code>#c</code> binding declared against it resolves in it.</p>
+<p>Ask this before calling into a library declared with <code>[c] optional-libs</code>, which is not installed on every machine and is loaded only when a binding needs it. Both halves of the answer matter — a library of the wrong version loads and then exports only some of the symbols, so &quot;the file is there&quot; would say yes where the call still fails.</p>
 <p>A library the program never declared answers false.</p>
 </div>
 

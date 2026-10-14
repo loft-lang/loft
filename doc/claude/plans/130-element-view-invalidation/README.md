@@ -22,8 +22,8 @@ Tracker: [@PLN130](https://github.com/loft-lang/plans/issues/130) · opened from
 | what shipped | its home |
 |---|---|
 | the view-invalidation contract (reshape / re-key / reassign → materialise + advice) | [OWNERSHIP_MODEL.md § A view lasts as long as the thing it names](../../OWNERSHIP_MODEL.md#a-view-lasts-as-long-as-the-thing-it-names--and-loft-says-when-it-does-not) · user-facing in [LOFT.md](../../LOFT.md) |
-| the copy/view boundary it extends | [DESIGN_DECISIONS.md § C86](../../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) |
-| the `&` rule — a disturbance under a live reference is refused | [formal/binding.md § B-Ref-Reshape / B-Disturb](../../formal/binding.md) · the C79 principle behind it in [DESIGN_DECISIONS.md § C79](../../DESIGN_DECISIONS.md) |
+| the copy/view boundary it extends | [DESIGN_DECISIONS.md § @C86](../../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) |
+| the `&` rule — a disturbance under a live reference is refused | [formal/binding.md § B-Ref-Reshape / B-Disturb](../../formal/binding.md) · the @C79 principle behind it in [DESIGN_DECISIONS.md § @C79](../../DESIGN_DECISIONS.md) |
 | the copy-diagnostic model (the owner's five decisions, the three copy kinds) | [COPY_DIAGNOSTICS.md § The decided model](../../COPY_DIAGNOSTICS.md) |
 | removal renumbers a vector, and a vector stays DENSE | [formal/collections.md § Col-Remove](../../formal/collections.md) |
 | the METHOD (build the instrument before the fix) | [CODEGEN_METHOD.md](../../CODEGEN_METHOD.md) — the worked example stays below |
@@ -42,7 +42,7 @@ in `probes/` as landmarks:
 | F2 — and ONLY where it is live across one (F9 step 1) | 39 | `tests/scripts/148-view-liveness-across-reshape.loft` |
 | F4 — a key-field write through a view | 28 | `tests/scripts/146-keyed-rekey-through-view.loft` |
 | F3 — a `vector` stays DENSE | 01, 02 | `tests/scripts/200-vector-stays-dense.loft` |
-| F7 — the C86 copy/view boundary, 30 cells | 09–14 | `tests/scripts/201-bind-copies-projection-views.loft` |
+| F7 — the @C86 copy/view boundary, 30 cells | 09–14 | `tests/scripts/201-bind-copies-projection-views.loft` |
 | F8 — a view live across a container REASSIGNMENT | 35, 36, 37 | `tests/scripts/774-view-outlives-reassigned-container.loft` |
 | the producer × invalidator boundary — which binds VIEW vs COPY, what invalidates | 25, 27, 29, 31, 32, 33, 34 | `tests/scripts/147-view-producer-invalidator-boundary.loft` |
 | F8 — the `par` / coroutine paths (measured at closure) | 37 cells E1/E2 | `tests/scripts/776-generator-heap-locals.loft` |
@@ -81,7 +81,7 @@ copies may not.
 | F4 | re-keying a keyed element through a view makes it unreachable | **FIXED** — a key-field write is a reshape, reusing F2 |
 | F5 | copies no diagnostic accounts for — the `exists()` family | **CORRECTED + STATED** — default-on advice naming the lever; measured 27/585 scripts |
 | F6 | `LOFT.md` claimed a match capture is a view "whatever the field's type"; scalars copy | **CORRECTED** |
-| F7 | claimed `c = v[i]` aliasing was a defect and every bind must copy | **RETRACTED** — all 30 cells conform to C86. The DOC was wrong; see § F7 |
+| F7 | claimed `c = v[i]` aliasing was a defect and every bind must copy | **RETRACTED** — all 30 cells conform to @C86. The DOC was wrong; see § F7 |
 | F8 | a view whose CONTAINER is reassigned reads the replacement — a genuine use-after-free on `--native` | **FIXED**, both backends |
 | F9 | disturbing a container while a `&` reference into it is live | **FIXED** — refused at compile time, all three disturbances |
 
@@ -100,7 +100,7 @@ it marks CONFORMANT.**
 ### F7 — the retraction, kept because the mistake is instructive
 
 F7 proposed deleting B-View outright, on a one-cell reading. A 30-cell sweep showed every cell
-already conforming to [C86](../../DESIGN_DECISIONS.md). The code was right; the DOC was wrong.
+already conforming to [@C86](../../DESIGN_DECISIONS.md). The code was right; the DOC was wrong.
 What stops the next one is `tests/scripts/201-bind-copies-projection-views.loft`, which pins the
 whole boundary — and the habit of grepping the decision register before reversing documented
 behaviour.

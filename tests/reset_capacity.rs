@@ -16,13 +16,12 @@
 //! function both call, and `tests/scripts/157-reset-capacity.loft` runs on both through
 //! the corpus.
 use std::path::PathBuf;
-use std::process::Command;
 
 const SHAPE: &str = "tests/scripts/157-reset-capacity.loft";
 const MINIMUM: u32 = 11;
 
 fn run(unit_off: bool) -> String {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("--interpret")
         .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(SHAPE))
         .env("LOFT_TRACE_CLEAR", "1")

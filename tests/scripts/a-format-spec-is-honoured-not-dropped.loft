@@ -88,8 +88,8 @@ fn main() {
   b = 0;
   g1 = "{a / b:<12}";
   g2 = "{a / b:>12}";
-  assert(g1 == "null(/0)    ", "tagged null left: {g1}");
-  assert(g2 == "    null(/0)", "tagged null right: {g2}");
+  assert(g1 == "null        ", "faulted null left (@C142: no cause shown): {g1}");
+  assert(g2 == "        null", "faulted null right: {g2}");
 
   // ---- the four radixes an integer renders ----------------------------------------------
   h = 255;

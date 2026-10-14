@@ -10,7 +10,7 @@
 //! the new `LOFT_NULLFLOW` behaviour. The guard's correctness matters most for integer `max`/`abs`,
 //! whose raw body would NOT propagate the sentinel (`max(null,5)` would wrongly give 5).
 
-use std::process::Command;
+use loft::file_access as fa;
 
 mod common;
 
@@ -26,8 +26,8 @@ fn workspace_root() -> std::path::PathBuf {
 fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, usize) {
     let name = format!("loft_nf5_{}_{tag}.loft", std::process::id());
     let script = std::env::temp_dir().join(&name);
-    std::fs::write(&script, body).expect("write script");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&script, body).expect("write script");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -39,7 +39,7 @@ fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, u
         cmd.env("LOFT_NO_NULLFLOW", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     let stderr = String::from_utf8_lossy(&out.stderr);
     (
         out.status.success(),

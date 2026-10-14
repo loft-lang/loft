@@ -20,7 +20,7 @@
 //   assertion channel is the only one that moves.
 
 struct Money { c: integer }
-fn to_text(self: Money) -> text { "${self.c}" }
+operator to_text(self: Money) -> text { "${self.c}" }
 
 fn zp<T: Printable>(x: T) -> text { "{x:05}" }
 fn w5<T: Printable>(x: T) -> text { "{x:5}" }

@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-Col-Key (loft#1845) — a key field of hash / sorted / index has an immutable VALUE type,
+// and every other type is refused at the declaration, naming the field: "structs are mutable
+// and keys are not" (owner).  Before the rule each of these declarations was accepted and the
+// first lookup crashed the interpreter or failed the native build; now none of them compiles.
+// The admitted half is a-key-field-is-an-immutable-value.loft.
+//
+// @falsified-at: 0cc8419d8 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-struct-key-field-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — on the control every declaration is accepted, so no pin meets
+//   its refusal (and the first lookup of such a key crashes or fails the native build).
+//   WITNESS: `struct HS { h: hash<ES[k]> }` with `k: Dt` compiles there.
+//   ARMED: nothing.
+//   HOLDS: every cell is a refusal on this tree, so leak, panic and value cannot move; only
+//   which message each pin meets does.
+
+enum Sh { Dot { r: integer }, Box { w: integer } }
+struct Dt { ms: integer }
+value struct Vt { ms: integer }
+
+struct ES { k: Dt, n: integer }
+// @EXPECT_ERROR: the key field `k` of `hash<ES[…]>` is `Dt`, and a key must be an immutable value
+struct HS { h: hash<ES[k]> }
+
+struct EV { k: Vt, n: integer }
+// @EXPECT_ERROR: the key field `k` of `sorted<EV[…]>` is `Vt`, and a key must be an immutable value
+struct SV { h: sorted<EV[k]> }
+
+struct EP { k: Sh, n: integer }
+// @EXPECT_ERROR: the key field `k` of `index<EP[…]>` is `Sh`, and a key must be an immutable value
+struct IP { h: index<EP[k]> }
+
+struct EVec { k: vector<integer>, n: integer }
+// @EXPECT_ERROR: the key field `k` of `hash<EVec[…]>` is `vector<integer>`, and a key must be an immutable value
+struct HVec { h: hash<EVec[k]> }
+
+struct ENul { k: Dt?, n: integer }
+// @EXPECT_ERROR: the key field `k` of `sorted<ENul[…]>` is `Dt?`, and a key must be an immutable value
+struct SNul { h: sorted<ENul[k]> }
+
+struct ETup { k: (integer, Dt), n: integer }
+// @EXPECT_ERROR: the key field `k` of `sorted<ETup[…]>` is `(integer, Dt)` (its `Dt` part), and a key must be an immutable value
+struct STup { h: sorted<ETup[k]> }
+
+struct EMul { a: integer, k: Dt, n: integer }
+// @EXPECT_ERROR: the key field `k` of `index<EMul[…]>` is `Dt`, and a key must be an immutable value
+struct IMul { h: index<EMul[a, k]> }

@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 907376984..626601af9 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -1054,7 +1054,7 @@ impl StoreFacts<'_> {
+         };
+         // A run-time test proved the two ROOTS apart: a view of a parameter's element lives
+         // in that parameter's store, so it is apart from whatever the parameter is apart from.
+-        if assumed(ta, tb) {
++        if ta != tb {
+             return true;
+         }
+         ta != tb && (self.fresh(ta) || self.fresh(tb))

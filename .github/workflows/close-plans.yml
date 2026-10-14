@@ -20,8 +20,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   close-plans:
+    # @windows-exempt: platform-free — closes plan issues
     if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:

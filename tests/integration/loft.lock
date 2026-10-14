@@ -4,30 +4,30 @@ schema_version = 1
 
 [[package]]
 name = "web"
-version = "0.3.0"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.3.0/web-0.3.0.tar.gz"
-sha256 = "d8f09ebe9d831ee180a29123fef401d8402ac3829415cb4941cccf7a54a13c7f"
+version = "0.4.5"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.5/web-0.4.5.tar.gz"
+sha256 = "11beaa8103bb9fcbb8f9616ff0e4d9acbf58979a735fe9f9535489d881046944"
 source = "registry"
 
 [[package]]
 name = "server"
-version = "0.3.1"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.3.1/server-0.3.1.tar.gz"
-sha256 = "bed2e9b00b8034bde442bc4c7f71acb72761bbf6abdf4ed8c641bd39a2543d99"
+version = "0.7.4"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.4/server-0.7.4.tar.gz"
+sha256 = "bd162acac31dc18a153ea4c136aadbc39291516efbc023cbc228dbb4023f6d23"
 source = "registry"
 deps = ["web"]
 
 [[package]]
 name = "game_protocol"
-version = "0.1.2"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/game_protocol-v0.1.2/game_protocol-0.1.2.tar.gz"
-sha256 = "de63087a7cda78e3121e9a8c08e94b2a3c92ca8d0edc11e88d6719cfc16bef56"
+version = "0.1.7"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/game_protocol-v0.1.7/game_protocol-0.1.7.tar.gz"
+sha256 = "b7b754fdd883530a254cb0d627183dd394b1c43b031db4ee026fa39fcf2bd5f6"
 source = "registry"
 deps = ["server", "web"]
 
 [[package]]
 name = "hex_world"
-version = "0.1.2"
-url = "https://github.com/loft-lang/loft-libs-world/releases/download/hex_world-v0.1.2/hex_world-0.1.2.tar.gz"
-sha256 = "894bae52ac73c404e5efdbc0501ace7fe16b4a793cceccf948b9223b448201a1"
+version = "0.2.3"
+url = "https://github.com/loft-lang/loft-libs-world/releases/download/hex_world-v0.2.3/hex_world-0.2.3.tar.gz"
+sha256 = "7474ba843669a4b9910464ca0a37a33da328255a3fa2474235274289b3a862a0"
 source = "registry"

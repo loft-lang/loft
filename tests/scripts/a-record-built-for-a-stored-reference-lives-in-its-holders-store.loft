@@ -1,0 +1,290 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @observes: LOFT_NO_LITERAL_EXIT_BUFFER — the switch stops a callee building its literal into the record it is offered, so a call result is no longer placed in its holder's store and the call-result cells are refused instead.
+//
+// `@FR-H-RefHome`, `@C145` — a record a stored `reference<T>` names lives as long as the store
+// of its holder (@PLN189).  Where no variable of the frame can own the record, it is built in
+// the holder's store, so it lasts as long as the holder does.  After each cell a three-element
+// vector is built, so a freed store reused for it would show up as 777, 778 or 779.
+//
+// - A LITERAL written straight into a holder that outlives it: built in a loop into an outer
+//   collection (10 11 12), assigned into its elements (20 21), into a `vector` local's (40 41),
+//   into a keyed element (50 51), into a parameter's elements (70 71), into a parameter (5), a
+//   returned holder (6), one holder re-pointed a thousand times (999), three holders of one
+//   loop (1 100 101 201), a literal holding a nested record and a text (60 61 q0 q1) or a
+//   vector ([1,2,10] …), a float, an enum and a boolean (1.5 2.5 Red Blue), under an `if` arm
+//   (100 102), beside a literal of the same function that needs no placement (1 80
+//   81), and a write a callee makes on one call only (-1 9).
+// - A CALL RESULT from a callee that builds a literal into the record it is offered: assigned
+//   in a loop (30 31), from a callee with two literal exits (30 31 320), built in (10 11 12),
+//   into a parameter (8) and a returned holder (9), and a record holding a nested record and a
+//   text (60 61 q0 q1).
+// - A REFILLED LOCAL'S OWN RECORD (`for … { p = P {…}; h.r = p }`), built in the holder's store:
+//   the last pass's (1), a second holder of the same block set in the first pass (1 0), and
+//   a holder declared in the loop (0 1 2).
+// - A PARAMETER'S RECORD copied out of its home before the home is freed: a `vector` local's
+//   element (2), with a write through the local after the link showing through the parameter
+//   in and after the call (9 9), the local's own record (55), a `hash`, `sorted` and `index`
+//   local's (41 31 45), a home of a loop pass or an `if` (12 77), a returned holder (1), one
+//   copied into a returned record (5) or by `h = t` (6), two fields of one parameter naming
+//   one record share one copy (70 70), and nothing is copied for a holder re-pointed to the
+//   caller's record (90) or to null (-1).
+//
+// @falsified-at: 87f132c87 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — the control refuses every shape above as outliving its record, so the
+//   program does not compile.
+//   WITNESS: with the analysis withheld on this build (`LOFT_NO_REF_HOME=1`) 24 cells fail on
+//   the interpreter and 25 natively: a loop's holders all read the last pass's record (12 12 12,
+//   21 21, 51 51), and a parameter's or returned holder reads a freed store (777, -1, or a
+//   garbage integer).
+//   HOLDS: leak, panic and expectations are equal on both trees; only the exit moves.
+
+struct P { k: integer }
+struct H { r: reference<P>? }
+struct Bag { items: vector<P>, hs: vector<H> }
+struct HK { k: integer, r: reference<P>? }
+struct Q { k: integer, p: P, name: text }
+struct HQ { r: reference<Q>? }
+struct V { xs: vector<integer> }
+struct HV { r: reference<V>? }
+enum Color { Red, Green, Blue }
+struct F { x: float, c: Color, on: boolean }
+struct HF { r: reference<F>? }
+struct K { k: integer, v: integer }
+struct HKV { r: reference<K>? }
+struct H2 { a: reference<P>?, b: reference<P>? }
+struct Out { h: H }
+fn mk(k: integer) -> P { P { k: k } }
+fn mk_two(k: integer) -> P { if k > 31 { return P { k: k * 10 }; } P { k: k } }
+fn mq(i: integer) -> Q { Q { k: i, p: P { k: 60 + i }, name: "q{i}" } }
+fn noise() -> integer { t: vector<P> = [P { k: 777 }, P { k: 778 }, P { k: 779 }]; t[0].k + t[1].k }
+fn rk(h: H) -> integer { if h.r == null { -1 } else { h.r.k } }
+
+fn a_literal_built_in_a_loop() {
+  b = Bag { items: [], hs: [] };
+  for i in 0..3 { b.hs += [H { r: P { k: 10 + i } }]; }
+  assert(noise() == 1555 && len(b.hs) == 3, "built: {len(b.hs)}");
+  assert(rk(b.hs[0]) == 10 && rk(b.hs[1]) == 11 && rk(b.hs[2]) == 12, "built: {rk(b.hs[0])} {rk(b.hs[1])} {rk(b.hs[2])}");
+}
+
+fn a_literal_assigned_in_a_loop() {
+  b = Bag { items: [], hs: [H {}, H {}] };
+  for i in 0..2 { b.hs[i].r = P { k: 20 + i }; }
+  assert(noise() == 1555 && len(b.hs) == 2 && rk(b.hs[0]) == 20 && rk(b.hs[1]) == 21, "assigned: {rk(b.hs[0])} {rk(b.hs[1])}");
+}
+
+fn a_vector_local_holder() {
+  v: vector<H> = [H {}, H {}];
+  for i in 0..2 { v[i].r = P { k: 40 + i }; }
+  assert(noise() == 1555 && len(v) == 2 && rk(v[0]) == 40 && rk(v[1]) == 41, "vector: {rk(v[0])} {rk(v[1])}");
+}
+
+fn a_keyed_element_holder() {
+  m: hash<HK[k]> = [HK { k: 1 }, HK { k: 2 }];
+  for i in 0..2 { m[i + 1].r = P { k: 50 + i }; }
+  assert(noise() == 1555 && m[1].r.k == 50 && m[2].r.k == 51, "keyed: {m[1].r.k} {m[2].r.k}");
+}
+
+fn fill_elements(b: Bag) { for i in 0..2 { b.hs[i].r = P { k: 70 + i }; } }
+
+fn a_parameters_elements() {
+  b = Bag { items: [], hs: [H {}, H {}] };
+  fill_elements(b);
+  assert(noise() == 1555 && len(b.hs) == 2 && rk(b.hs[0]) == 70 && rk(b.hs[1]) == 71, "parameter elements: {rk(b.hs[0])} {rk(b.hs[1])}");
+}
+
+fn fill(h: H) { h.r = P { k: 5 }; }
+
+fn a_parameter_holder() {
+  h = H {};
+  fill(h);
+  assert(noise() == 1555 && rk(h) == 5, "parameter: {rk(h)}");
+}
+
+fn make() -> H { H { r: P { k: 6 } } }
+
+fn a_returned_holder() {
+  h = make();
+  assert(noise() == 1555 && rk(h) == 6, "returned: {rk(h)}");
+}
+
+fn re_pointed_a_thousand_times() {
+  h = H {};
+  for i in 0..1000 { h.r = P { k: i }; }
+  assert(noise() == 1555 && rk(h) == 999, "re-pointed: {rk(h)}");
+}
+
+fn three_holders_of_one_loop() {
+  h = H {};
+  g = H {};
+  hs: vector<H> = [H {}, H {}];
+  for i in 0..2 { h.r = P { k: i }; hs[i].r = P { k: i + 100 }; g.r = P { k: i + 200 }; }
+  assert(noise() == 1555 && rk(h) == 1 && rk(hs[0]) == 100 && rk(hs[1]) == 101 && rk(g) == 201, "three: {rk(h)} {rk(hs[0])} {rk(hs[1])} {rk(g)}");
+}
+
+fn a_nested_record_and_a_text() {
+  hs: vector<HQ> = [HQ {}, HQ {}];
+  for i in 0..2 { hs[i].r = Q { k: i, p: P { k: 60 + i }, name: "q{i}" }; }
+  assert(noise() == 1555 && hs[0].r.p.k == 60 && hs[1].r.p.k == 61, "nested: {hs[0].r.p.k} {hs[1].r.p.k}");
+  assert(hs[0].r.name == "q0" && hs[1].r.name == "q1", "text: {hs[0].r.name} {hs[1].r.name}");
+}
+
+fn a_vector_inside_the_record() {
+  hs: vector<HV> = [HV {}, HV {}, HV {}];
+  for i in 0..3 { hs[i].r = V { xs: [1, 2, 10 + i] }; }
+  assert(noise() == 1555 && "{hs[0].r.xs} {hs[1].r.xs} {hs[2].r.xs}" == "[1,2,10] [1,2,11] [1,2,12]", "vector inside: {hs[0].r.xs} {hs[2].r.xs}");
+}
+
+fn beside_a_literal_that_stays() {
+  x = H { r: P { k: 1 } };
+  b = Bag { items: [], hs: [] };
+  for i in 0..2 { b.hs += [H { r: P { k: 80 + i } }]; }
+  assert(noise() == 1555 && rk(x) == 1 && len(b.hs) == 2 && rk(b.hs[0]) == 80 && rk(b.hs[1]) == 81, "beside: {rk(x)} {rk(b.hs[0])} {rk(b.hs[1])}");
+}
+
+fn fill_when(h: H, k: integer) { if k > 0 { h.r = P { k: k }; } }
+
+fn a_write_on_one_call_only() {
+  h = H {};
+  fill_when(h, 0);
+  a = rk(h);
+  fill_when(h, 9);
+  assert(noise() == 1555 && a == -1 && rk(h) == 9, "one call: {a} {rk(h)}");
+}
+
+fn a_call_result_assigned_in_a_loop() {
+  b = Bag { items: [], hs: [H {}, H {}] };
+  for i in 0..2 { b.hs[i].r = mk(30 + i); }
+  assert(noise() == 1555 && len(b.hs) == 2 && rk(b.hs[0]) == 30 && rk(b.hs[1]) == 31, "call: {rk(b.hs[0])} {rk(b.hs[1])}");
+}
+
+fn a_callee_with_two_exits() {
+  b = Bag { items: [], hs: [H {}, H {}, H {}] };
+  for i in 0..3 { b.hs[i].r = mk_two(30 + i); }
+  assert(noise() == 1555 && rk(b.hs[0]) == 30 && rk(b.hs[1]) == 31 && rk(b.hs[2]) == 320, "two exits: {rk(b.hs[0])} {rk(b.hs[1])} {rk(b.hs[2])}");
+}
+
+fn a_call_result_built_in() {
+  b = Bag { items: [], hs: [] };
+  for i in 0..3 { b.hs += [H { r: mk(10 + i) }]; }
+  assert(noise() == 1555 && len(b.hs) == 3, "call built: {len(b.hs)}");
+  assert(rk(b.hs[0]) == 10 && rk(b.hs[1]) == 11 && rk(b.hs[2]) == 12, "call built: {rk(b.hs[0])} {rk(b.hs[1])} {rk(b.hs[2])}");
+}
+
+fn fill_call(h: H) { h.r = mk(8); }
+fn make_call() -> H { H { r: mk(9) } }
+
+fn a_call_result_into_a_parameter_and_a_returned_holder() {
+  h = H {};
+  fill_call(h);
+  x = make_call();
+  assert(noise() == 1555 && rk(h) == 8 && rk(x) == 9, "call holders: {rk(h)} {rk(x)}");
+}
+
+fn a_call_result_with_a_nested_record_and_a_text() {
+  hs: vector<HQ> = [HQ {}, HQ {}];
+  for i in 0..2 { hs[i].r = mq(i); }
+  assert(noise() == 1555 && hs[0].r.p.k == 60 && hs[1].r.p.k == 61, "call nested: {hs[0].r.p.k} {hs[1].r.p.k}");
+  assert(hs[0].r.name == "q0" && hs[1].r.name == "q1", "call text: {hs[0].r.name} {hs[1].r.name}");
+}
+
+fn own_record_of_a_loop_pass() {
+  h = H {};
+  for i in 0..2 { p = P { k: i }; h.r = p; }
+  assert(noise() == 1555 && rk(h) == 1, "own: {rk(h)}");
+}
+
+fn own_record_with_a_second_holder() {
+  h = H {};
+  g = H {};
+  for i in 0..2 { p = P { k: i }; h.r = p; if i == 0 { g.r = p; } }
+  assert(noise() == 1555 && rk(h) == 1 && rk(g) == 0, "own second: {rk(h)} {rk(g)}");
+}
+
+fn own_record_with_the_holder_in_the_loop() {
+  s = "";
+  for i in 0..3 { h = H {}; p = P { k: i }; h.r = p; s += "{rk(h)} "; }
+  assert(noise() == 1555 && s == "0 1 2 ", "own in loop: {s}");
+}
+
+fn copy_out_element(h: H) { items: vector<P> = [P { k: 1 }, P { k: 2 }]; h.r = items[1]; }
+fn copy_out_after_a_write(h: H) -> integer {
+  items: vector<P> = [P { k: 1 }, P { k: 2 }];
+  h.r = items[1];
+  items[1].k = 9;
+  rk(h)
+}
+fn copy_out_own(h: H) { p = P { k: 55 }; h.r = p; }
+fn copy_out_hash(h: HKV) { s: hash<K[k]> = [K { k: 1, v: 41 }]; h.r = s[1]; }
+fn copy_out_sorted(h: HKV) { s: sorted<K[k]> = [K { k: 1, v: 31 }]; h.r = s[1]; }
+fn copy_out_index(h: HKV) { s: index<K[k]> = [K { k: 1, v: 45 }]; h.r = s[1]; }
+fn copy_out_per_pass(h: H) { for i in 0..3 { items: vector<P> = [P { k: 10 + i }]; h.r = items[0]; } }
+fn copy_out_of_an_if(h: H) { if h.r == null { items: vector<P> = [P { k: 77 }]; h.r = items[0]; } }
+fn copy_out_returned() -> H { items: vector<P> = [P { k: 1 }]; H { r: items[0] } }
+fn copy_out_into_a_returned_record() -> Out { items: vector<P> = [P { k: 5 }]; h = H { r: items[0] }; Out { h: h } }
+fn copy_out_assigned() -> H { items: vector<P> = [P { k: 6 }]; t = H { r: items[0] }; h = t; h }
+fn copy_out_two_fields(h: H2) { items: vector<P> = [P { k: 7 }]; h.a = items[0]; h.b = items[0]; }
+fn copy_out_re_pointed(h: H, q: Bag) { items: vector<P> = [P { k: 1 }]; h.r = items[0]; h.r = q.items[0]; }
+fn copy_out_cleared(h: H) { items: vector<P> = [P { k: 1 }]; h.r = items[0]; h.r = null; }
+fn rv(h: HKV) -> integer { if h.r == null { -1 } else { h.r.v } }
+
+fn a_parameters_record_copied_out() {
+  a = H {};
+  copy_out_element(a);
+  b = H {};
+  w = copy_out_after_a_write(b);
+  c = H {};
+  copy_out_own(c);
+  assert(noise() == 1555 && rk(a) == 2 && w == 9 && rk(b) == 9 && rk(c) == 55, "copied: {rk(a)} {w} {rk(b)} {rk(c)}");
+}
+
+fn a_keyed_home_copied_out() {
+  a = HKV {};
+  b = HKV {};
+  c = HKV {};
+  copy_out_hash(a);
+  copy_out_sorted(b);
+  copy_out_index(c);
+  assert(noise() == 1555 && rv(a) == 41 && rv(b) == 31 && rv(c) == 45, "keyed: {rv(a)} {rv(b)} {rv(c)}");
+}
+
+fn a_home_of_a_loop_or_an_if_copied_out() {
+  a = H {};
+  b = H {};
+  copy_out_per_pass(a);
+  copy_out_of_an_if(b);
+  assert(noise() == 1555 && rk(a) == 12 && rk(b) == 77, "loop/if: {rk(a)} {rk(b)}");
+}
+
+fn a_returned_holder_copied_out() {
+  a = copy_out_returned();
+  o = copy_out_into_a_returned_record();
+  b = copy_out_assigned();
+  assert(noise() == 1555 && rk(a) == 1 && rk(o.h) == 5 && rk(b) == 6, "returned: {rk(a)} {rk(o.h)} {rk(b)}");
+}
+
+fn two_fields_share_one_copy() {
+  h = H2 {};
+  copy_out_two_fields(h);
+  h.a.k = 70;
+  assert(noise() == 1555 && h.a.k == 70 && h.b.k == 70, "shared: {h.a.k} {h.b.k}");
+}
+
+fn nothing_copied_for_another_record() {
+  h = H {};
+  q = Bag { items: [P { k: 90 }], hs: [] };
+  copy_out_re_pointed(h, q);
+  g = H {};
+  copy_out_cleared(g);
+  q.items[0].k = 91;
+  assert(noise() == 1555 && rk(h) == 91 && rk(g) == -1, "not copied: {rk(h)} {rk(g)}");
+}
+
+fn a_float_an_enum_and_a_boolean_under_an_if() {
+  b = Bag { items: [], hs: [H {}, H {}] };
+  for i in 0..4 { if i % 2 == 0 { b.hs[i / 2].r = P { k: 100 + i }; } }
+  hf: vector<HF> = [HF {}, HF {}];
+  for i in 0..2 { hf[i].r = F { x: 1.5 + i, c: if i == 0 { Color.Red } else { Color.Blue }, on: i == 1 }; }
+  assert(noise() == 1555 && rk(b.hs[0]) == 100 && rk(b.hs[1]) == 102, "if arm: {rk(b.hs[0])} {rk(b.hs[1])}");
+  assert("{hf[0].r.x} {hf[1].r.x} {hf[0].r.c} {hf[1].r.c} {hf[0].r.on} {hf[1].r.on}" == "1.5 2.5 Red Blue false true", "kinds: {hf[0].r.x} {hf[1].r.c}");
+}

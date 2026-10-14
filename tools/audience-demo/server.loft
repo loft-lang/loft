@@ -167,7 +167,7 @@ fn main() {
   println("audience server: holds world state + broadcasts every change");
 
   srv = server::listen(port);
-  if srv.handle < 0 {
+  if !srv.bound() {
     println("audience server: FAILED to listen on port {port}");
     return;
   }

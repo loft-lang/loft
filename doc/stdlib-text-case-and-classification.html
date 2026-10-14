@@ -24,71 +24,71 @@
 <h1>Text: case and classification</h1>
 <article>
 <div class="item">
-<pre><code>pub fn to_lowercase(self: text) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_lowercase</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Returns a lowercase copy. Use for case-insensitive comparisons.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_uppercase(self: text) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_uppercase</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Returns an uppercase copy.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_lowercase(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_lowercase</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are lowercase letters.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_lowercase(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_lowercase</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is a lowercase letter.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_uppercase(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_uppercase</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are uppercase letters.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_uppercase(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_uppercase</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is an uppercase letter.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_numeric(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_numeric</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are numeric digits (Unicode numeric, not just ASCII 0–9).</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_numeric(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_numeric</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is a numeric digit.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_alphanumeric(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_alphanumeric</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are letters or digits. Use to validate identifiers or tokens.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_alphanumeric(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_alphanumeric</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is a letter or digit.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_alphabetic(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_alphabetic</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are alphabetic.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_alphabetic(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_alphabetic</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is alphabetic.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_whitespace(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_whitespace</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are whitespace. Use to detect blank lines.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_whitespace(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_whitespace</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is whitespace.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_control(self: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_control</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the text is non-empty and all characters are control characters.</p>
 </div>
 <div class="item">
-<pre><code>pub fn is_control(self: character) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-case-and-classification.html">is_control</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>True if the character is a control character.</p>
 </div>
 <div class="item">
-<pre><code>pub fn join(self: const vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">join</a></span>(self: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;, sep: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Joins parts with sep between each consecutive pair. Returns &quot;&quot; for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.</p>
 </div>
 

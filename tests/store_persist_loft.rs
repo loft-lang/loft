@@ -16,11 +16,10 @@
 
 #![cfg(feature = "mmap")]
 
-use std::fs;
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::thread;
 
 /// Serve `bytes` over a minimal HTTP/1.1 server that honours `Range: bytes=a-b`
@@ -150,7 +149,7 @@ fn sorted_script() -> PathBuf {
 /// of `run_smoke`, parameterised by the script so the hash and sorted cases
 /// share one driver.
 fn run_mode(script: &Path, path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -171,13 +170,13 @@ fn scratch(test_name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-store-persist-loft").join(test_name);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
 fn run_smoke(path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(smoke_script())
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -196,7 +195,7 @@ fn run_smoke(path: &Path, mode: &str) -> (String, i32) {
 
 /// Run an arbitrary persist script on a chosen backend with the scratch path.
 fn run_script(script: &Path, backend: &str, path: &Path) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -258,7 +257,7 @@ fn compaction_on_load_returns_both_backends() {
             backend.trim_start_matches('-')
         ));
         let path = dir.join("pack.store");
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -313,15 +312,15 @@ fn fresh_then_reload_round_trip() {
 
     // Pass 1 — path does not exist; the script populates a hash and
     // binds it to disk.
-    assert!(!path.exists(), "scratch should start clean");
+    assert!(!fa::exists(&path), "scratch should start clean");
     let (out1, code1) = run_smoke(&path, "fresh");
     assert_eq!(code1, 0, "fresh exit: stdout={out1:?}");
     assert!(
         out1.contains("fresh keys=7,13,42"),
         "fresh keys missing: {out1:?}"
     );
-    assert!(path.exists(), "bind should have created the file");
-    let meta = fs::metadata(&path).unwrap();
+    assert!(fa::exists(&path), "bind should have created the file");
+    let meta = fa::metadata(&path).unwrap();
     assert!(
         meta.len() >= 8192,
         "file should be padded to ≥1024 words: got {} bytes",
@@ -396,14 +395,14 @@ fn sorted_fresh_then_reload_round_trip() {
     let dir = scratch("sorted_fresh_then_reload_round_trip");
     let path = dir.join("sorted.store");
 
-    assert!(!path.exists(), "scratch should start clean");
+    assert!(!fa::exists(&path), "scratch should start clean");
     let (out1, code1) = run_mode(&sorted_script(), &path, "fresh");
     assert_eq!(code1, 0, "fresh exit: stdout={out1:?}");
     assert!(
         out1.contains("fresh keys=7,13,42"),
         "fresh sorted keys must be ascending 7,13,42: {out1:?}"
     );
-    assert!(path.exists(), "bind should have created the file");
+    assert!(fa::exists(&path), "bind should have created the file");
 
     // Reload in a SEPARATE process: both iteration and lookup must survive.
     let (out2, code2) = run_mode(&sorted_script(), &path, "reload");
@@ -444,7 +443,7 @@ fn trie_persist_lays_out_and_keeps_every_answer() {
     const KERK: &str = "kerk=kerk,kerkdijk,kerkhof,kerklaan,kerkpad,kerkplein,\
                         kerksloot,kerkstraat,kerkweg";
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -467,7 +466,7 @@ fn trie_persist_lays_out_and_keeps_every_answer() {
     );
     assert!(fresh.contains("fresh lookup=3"), "fresh: {fresh:?}");
     assert!(fresh.contains("fresh absent=null"), "fresh: {fresh:?}");
-    assert!(path.exists(), "bind should have created the file");
+    assert!(fa::exists(&path), "bind should have created the file");
 
     // A SEPARATE process, reading only the laid-out image.
     let (reload, code) = run_mode(&script, &path, "reload");
@@ -528,11 +527,23 @@ fn vectext_refuse_script() -> PathBuf {
 /// `run_mode` fixed to `--interpret`, parameterised by backend so the heap
 /// `store_load` path can be exercised on the native backend too.
 fn run_mode_backend(backend: &str, script: &Path, path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    run_mode_backend_env(backend, script, path, mode, &[])
+}
+
+/// `run_mode_backend` with extra environment for the child.
+fn run_mode_backend_env(
+    backend: &str,
+    script: &Path,
+    path: &Path,
+    mode: &str,
+    env: &[(&str, &str)],
+) -> (String, i32) {
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
         .env("LOFT_PERSIST_TEST_MODE", mode)
+        .envs(env.iter().copied())
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
@@ -561,7 +572,7 @@ fn store_load_reads_persisted_image_both_backends() {
         out_w.contains("write keys=7,13,42"),
         "write keys: {out_w:?}"
     );
-    assert!(path.exists(), "bind should create the file");
+    assert!(fa::exists(&path), "bind should create the file");
 
     // load it back via the heap path on both backends — same keys + lookup
     for backend in ["--interpret", "--native"] {
@@ -584,7 +595,7 @@ fn store_load_reads_persisted_image_both_backends() {
 fn store_load_rejects_garbage_file() {
     let dir = scratch("store_load_reject");
     let path = dir.join("garbage.store");
-    fs::write(
+    fa::write(
         &path,
         b"this is not a loft store image, only junk bytes here!!",
     )
@@ -689,9 +700,19 @@ fn a_rebound_store_sheds_the_slack_its_vectors_grew_to() {
     };
 
     for backend in ["--interpret", "--native"] {
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_file(path.with_extension("store.dschema"));
-        let (w, cw) = run_mode_backend(backend, &script, &path, "write");
+        let _ = fa::remove_file(&path);
+        let _ = fa::remove_file(fa::with_extension(&path, "store.dschema"));
+        // The fixture MANUFACTURES slack through in-place vector growth, which the exact
+        // free tree gives it: the default lazy phase (`@FR-H-LazyFree`) writes the same data
+        // into a file a third smaller (1.37× content against 2.07×), below the slack floor
+        // this test needs to measure the shedding at all.  The shedding step is not pinned.
+        let (w, cw) = run_mode_backend_env(
+            backend,
+            &script,
+            &path,
+            "write",
+            &[("LOFT_NO_LAZY_FREE", "1")],
+        );
         assert_eq!(cw, 0, "{backend} write exit: {w:?}");
         let (r, cr) = run_mode_backend(backend, &script, &path, "rebind");
         assert_eq!(cr, 0, "{backend} rebind exit: {r:?}");
@@ -751,11 +772,21 @@ fn a_loaded_working_set_does_not_inherit_the_source_growth_slack() {
         // (loft#730), so a second backend writing over the first backend's file
         // would measure an already-dense store and the slack precondition below
         // would fail for a reason that has nothing to do with the loader.
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_file(path.with_extension("store.dschema"));
-        let _ = fs::remove_file(format!("{}.loaded", path.display()));
-        let _ = fs::remove_file(format!("{}.loaded.dschema", path.display()));
-        let (w, cw) = run_mode_backend(backend, &script, &path, "write");
+        let _ = fa::remove_file(&path);
+        let _ = fa::remove_file(fa::with_extension(&path, "store.dschema"));
+        let _ = fa::remove_file(format!("{}.loaded", path.display()));
+        let _ = fa::remove_file(format!("{}.loaded.dschema", path.display()));
+        // The fixture MANUFACTURES slack through in-place vector growth, which the exact
+        // free tree gives it: the default lazy phase (`@FR-H-LazyFree`) writes the same data
+        // into a file a third smaller (1.37× content against 2.07×), below the slack floor
+        // this test needs to measure the shedding at all.  The shedding step is not pinned.
+        let (w, cw) = run_mode_backend_env(
+            backend,
+            &script,
+            &path,
+            "write",
+            &[("LOFT_NO_LAZY_FREE", "1")],
+        );
         assert_eq!(cw, 0, "{backend} write exit: {w:?}");
         let (l, cl) = run_mode_backend(backend, &script, &path, "load");
         assert_eq!(cl, 0, "{backend} load exit: {l:?}");
@@ -807,7 +838,7 @@ fn a_bulk_record_read_loads_exactly_what_the_word_at_a_time_read_did() {
         let (bulk, c1) = run_mode_backend(backend, &vecstruct_script(), &path, "loadkey");
         assert_eq!(c1, 0, "{backend} bulk exit: {bulk:?}");
         let wordwise = {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(vecstruct_script())
                 .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1016,8 +1047,8 @@ fn store_load_key_over_http_range() {
     assert!(out_w.contains("write keys=7,13,42"), "{out_w:?}");
     // Serve the real `.dschema` beside the store so the 3b.5 layout gate does a
     // genuine remote Match (not a fall-through to the absent-sidecar path).
-    let sidecar = fs::read(format!("{}.dschema", path.display())).ok();
-    let url = serve_ranges(fs::read(&path).unwrap(), sidecar);
+    let sidecar = fa::read(format!("{}.dschema", path.display())).ok();
+    let url = serve_ranges(fa::read(&path).unwrap(), sidecar);
 
     for backend in ["--interpret", "--native"] {
         let (out, code) = run_mode_backend(backend, &load_script(), Path::new(&url), "loadkey");
@@ -1225,7 +1256,7 @@ fn layout_gate_rejects_changed_struct_both_backends() {
     assert_eq!(code_w, 0, "write: {out_w:?}");
     assert!(out_w.contains("write ok"), "{out_w:?}");
     assert!(
-        Path::new(&format!("{}.dschema", path.display())).exists(),
+        fa::exists(Path::new(&format!("{}.dschema", path.display()))),
         "persist must write a .dschema sidecar beside the store"
     );
 
@@ -1317,7 +1348,7 @@ fn store_persist_bind_refuses_a_changed_layout_both_backends() {
     assert_eq!(code_w, 0, "write: {out_w:?}");
 
     for backend in ["--interpret", "--native"] {
-        let before = (fs::read(&path).unwrap(), fs::read(&sidecar).unwrap());
+        let before = (fa::read(&path).unwrap(), fa::read(&sidecar).unwrap());
 
         // CHANGED layout (extra field) — refused, and the collection stays usable.
         let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "bind");
@@ -1335,7 +1366,7 @@ fn store_persist_bind_refuses_a_changed_layout_both_backends() {
             "{backend}: a refused bind leaves the collection usable: {out:?}"
         );
         assert!(
-            before == (fs::read(&path).unwrap(), fs::read(&sidecar).unwrap()),
+            before == (fa::read(&path).unwrap(), fa::read(&sidecar).unwrap()),
             "{backend}: a refused bind must not write the store or relabel its sidecar"
         );
 
@@ -1377,14 +1408,14 @@ fn store_load_url_refuses_a_changed_layout_both_backends() {
 
     let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
     assert_eq!(code_w, 0, "write: {out_w:?}");
-    let bytes = fs::read(&path).unwrap();
-    let sidecar = fs::read(format!("{}.dschema", path.display())).unwrap();
+    let bytes = fa::read(&path).unwrap();
+    let sidecar = fa::read(format!("{}.dschema", path.display())).unwrap();
     let sha = loft::integrity::sha256_hex(&bytes);
     let file_url = format!("file://{}", path.display());
     let http_url = serve_ranges(bytes, Some(sidecar));
 
     let run = |backend: &str, script: &Path, url: &str, pin: &str| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1433,9 +1464,9 @@ fn layout_gate_over_http_rejects_changed_struct() {
 
     let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
     assert_eq!(code_w, 0, "write: {out_w:?}");
-    let sidecar = fs::read(format!("{}.dschema", path.display())).ok();
+    let sidecar = fa::read(format!("{}.dschema", path.display())).ok();
     assert!(sidecar.is_some(), "persist must write a .dschema sidecar");
-    let url = serve_ranges(fs::read(&path).unwrap(), sidecar);
+    let url = serve_ranges(fa::read(&path).unwrap(), sidecar);
 
     for backend in ["--interpret", "--native"] {
         // MATCHING layout over http — the remote gate does a real Match.
@@ -1479,7 +1510,7 @@ fn store_load_url_verifies_sha_before_adopting_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write keys=7,13,42"), "write: {out_w:?}");
 
-    let bytes = fs::read(&path).unwrap();
+    let bytes = fa::read(&path).unwrap();
     let sha = {
         let mut h = Sha256::new();
         h.update(&bytes);
@@ -1493,7 +1524,7 @@ fn store_load_url_verifies_sha_before_adopting_both_backends() {
     let wrong = "0".repeat(64);
 
     let run = |backend: &str, sha_arg: &str| -> (String, i32) {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(load_script())
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1582,7 +1613,7 @@ fn store_load_untrusted_validates_before_adopting_both_backends() {
 
     // A garbage file must reject cleanly (false), not hang or misread.
     let garbage = dir.join("garbage.store");
-    fs::write(
+    fa::write(
         &garbage,
         b"not a loft store image, just junk bytes right here!!",
     )
@@ -1608,10 +1639,10 @@ fn store_load_url_trusted_fetches_over_http_both_backends() {
     assert!(out_w.contains("write keys=7,13,42"), "write: {out_w:?}");
 
     // Serve the store over HTTP (a plain GET → 200 whole file).
-    let url = serve_ranges(fs::read(&path).unwrap(), None);
+    let url = serve_ranges(fa::read(&path).unwrap(), None);
 
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(load_script())
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1649,7 +1680,10 @@ fn fresh_returns_true_and_file_appears() {
     let (out, code) = run_smoke(&path, "fresh");
     assert_eq!(code, 0, "{out:?}");
     assert!(!out.contains("FAIL"), "fresh should not fail; got: {out:?}");
-    assert!(path.exists(), "bind should create the file on first call");
+    assert!(
+        fa::exists(&path),
+        "bind should create the file on first call"
+    );
 }
 
 #[test]
@@ -1661,7 +1695,7 @@ fn reload_on_missing_file_returns_true_with_empty_view() {
     // invocation.
     let dir = scratch("reload_on_missing_file");
     let path = dir.join("never_existed.store");
-    assert!(!path.exists());
+    assert!(!fa::exists(&path));
 
     let (out, code) = run_smoke(&path, "reload");
     assert_eq!(code, 0, "{out:?}");
@@ -1669,7 +1703,7 @@ fn reload_on_missing_file_returns_true_with_empty_view() {
         !out.contains("FAIL"),
         "reload on missing path should still bind: {out:?}"
     );
-    assert!(path.exists(), "bind should create the file");
+    assert!(fa::exists(&path), "bind should create the file");
 }
 
 fn handoff_residency_script() -> PathBuf {
@@ -1722,7 +1756,7 @@ fn handoff_text_residency_survives_a_separate_process() {
     assert_eq!(w_code, 0, "{w_out:?}");
     assert!(w_out.contains("write ok"), "write failed: {w_out:?}");
     assert!(
-        path.exists(),
+        fa::exists(&path),
         "the handoff file must exist after the write task"
     );
 
@@ -1760,7 +1794,7 @@ fn handoff_text_residency_reads_on_native_backend() {
 /// `run_mode` that also hands back stderr — the refusal channel the paged
 /// loaders warn on.
 fn run_mode_with_stderr(script: &Path, path: &Path, mode: &str) -> (String, String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -1851,7 +1885,7 @@ fn persist_size(test: &str, n: u32, per: u32, mode: &str, seed: Option<&str>) ->
 fn persist_size_at(path: &Path, n: u32, per: u32, mode: &str, seed: Option<&str>) -> (u64, String) {
     let path = path.to_path_buf();
     let script = workspace_root().join("tests/scripts/store_persist_size_710.loft");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1872,7 +1906,7 @@ fn persist_size_at(path: &Path, n: u32, per: u32, mode: &str, seed: Option<&str>
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(stdout.contains("persist true"), "{mode}: {stdout:?}");
-    let bytes = fs::metadata(&path).expect("store file").len();
+    let bytes = fa::metadata(&path).expect("store file").len();
     (bytes, stdout.trim().to_string())
 }
 
@@ -2012,7 +2046,7 @@ fn store_reclaim_shrinks_a_bound_file_both_backends() {
              a reclaim that misreports is worse than one that does nothing: {out}"
         );
         assert_eq!(
-            fs::metadata(&path).expect("store file").len() as i64,
+            fa::metadata(&path).expect("store file").len() as i64,
             field(&out, "second", "size"),
             "{backend}: the file on disk is the size the program saw"
         );
@@ -2114,6 +2148,7 @@ fn store_release_keeps_every_record_and_reference_both_backends() {
         // The no-op is PINNED rather than skipped: `false` is the contract off unix, so a
         // platform that silently started releasing would be a change worth seeing.  Every
         // other assertion here is platform-independent and stays unconditional.
+        // approved exemption: needs a release-resident query in platform; both branches already assert, so the test runs on Windows
         if cfg!(all(feature = "mmap", unix)) {
             assert_eq!(
                 line(&out, "released_positive"),
@@ -2191,7 +2226,7 @@ fn b0_run(
     seed: Option<&str>,
 ) -> B0 {
     let script = workspace_root().join("tests/scripts/store_digest_b0.loft");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -2314,7 +2349,7 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
                      moved with the layout would report arc B's rebuild as data loss"
                 ),
             }
-            images.push(fs::read(dir.join(file)).expect("store file"));
+            images.push(fa::read(dir.join(file)).expect("store file"));
         }
         let base = base.expect("five representations");
 
@@ -2409,7 +2444,7 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
     let mut per_backend: Vec<Vec<Row>> = Vec::new();
     for backend in ["--interpret", "--native"] {
         let dir = scratch(&format!("b1_{}", backend.trim_start_matches('-')));
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("m"))
@@ -2536,7 +2571,7 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
 fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
     let script = workspace_root().join("tests/scripts/store_compact_b2.loft");
     let run = |backend: &str, dir: &Path, shape: &str, compact: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("c"))
@@ -2654,7 +2689,7 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
 fn store_compact_b3_shrinks_a_bound_file_across_runs() {
     let script = workspace_root().join("tests/scripts/store_compact_bound_b3.loft");
     let run = |backend: &str, path: &Path, mode: &str, compact: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", path)
@@ -2796,7 +2831,7 @@ fn store_compact_b3_shrinks_a_bound_file_across_runs() {
 fn persisted_image_keeps_its_slack_after_store_reclaim() {
     let script = workspace_root().join("tests/scripts/store_bind_slack.loft");
     let run = |backend: &str, dir: &Path, reclaim: bool| -> (i64, i64) {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("s.store"))
@@ -2871,7 +2906,7 @@ fn persisted_image_keeps_its_slack_after_store_reclaim() {
 fn reclaim_and_compaction_refuse_a_sealed_store_and_a_floor_sized_one() {
     let script = workspace_root().join("tests/scripts/store_reclaim_refusals.loft");
     let run_grow = |backend: &str, dir: &Path, mode: &str, seal: bool, n: &str, grow: bool| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("r.store"))
@@ -3021,7 +3056,7 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
         ("spatial", "compacted"),
     ];
     let run = |backend: &str, dir: &Path, kind: &str, reload: bool| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("k.store"))
@@ -3090,7 +3125,7 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
 fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
     let read = |dir: &str, seed: Option<&str>| {
         persist_size(dir, 120, 30, "interleaved", seed);
-        fs::read(scratch_existing(dir).join("size.store")).expect("store file")
+        fa::read(scratch_existing(dir).join("size.store")).expect("store file")
     };
     let a = read("seed710_a", Some("12345"));
     let b = read("seed710_b", Some("12345"));
@@ -3161,7 +3196,7 @@ fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
 fn reading_a_collection_leaks_nothing_into_its_store() {
     let script = workspace_root().join("tests/scripts/store_iter_scratch.loft");
     let run = |backend: &str, dir: &Path, mode: &str, reclaim: bool| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("s.store"))
@@ -3297,7 +3332,7 @@ fn bound_store_file_is_content_sized_when_the_binding_is_released() {
     let script = workspace_root().join("tests/scripts/store_bind_release_size.loft");
     let run = |backend: &str, dir: &Path, n: u32, reclaim: bool| -> (u64, String) {
         let path = dir.join(format!("s{n}_{}.store", u8::from(reclaim)));
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -3328,7 +3363,7 @@ fn bound_store_file_is_content_sized_when_the_binding_is_released() {
             .expect("report shape")
             .1
             .to_string();
-        let size = fs::metadata(&path)
+        let size = fa::metadata(&path)
             .unwrap_or_else(|e| panic!("stat {}: {e}", path.display()))
             .len();
         (size, content)
@@ -3657,7 +3692,7 @@ fn a_refused_lazy_binding_is_visible_to_the_program_both_backends() {
 /// `run_mode_backend`'s sibling for the @PLN129 script, which reads its mode
 /// from `LOFT_LAZY_MODE` so it cannot be confused with the persist scripts'.
 fn run_lazy(backend: &str, script: &Path, path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -3747,7 +3782,7 @@ fn run_graph(
     companies: &Path,
     mode: &str,
 ) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_GRAPH_PERSONS", persons)
@@ -3792,7 +3827,7 @@ fn a_pointer_bearing_element_relocates_in_bulk() {
     let path = dir.join("p");
 
     let run = |mode: &str, wordwise: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -3914,7 +3949,7 @@ fn a_prefetched_page_is_resident_when_it_is_read() {
     let path = dir.join("p");
 
     let run = |mode: &str, cap: Option<&str>| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -4021,11 +4056,11 @@ fn store_load_keys_round_trip_depth_is_measurable() {
     let (out_w, code_w) = run_mode(&load_script(), &path, "write");
     assert_eq!(code_w, 0, "write: {out_w:?}");
 
-    let sidecar = fs::read(format!("{}.dschema", path.display())).ok();
+    let sidecar = fa::read(format!("{}.dschema", path.display())).ok();
     let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let delay_ms = 20;
     let (url, served) = serve_ranges_tuned(
-        fs::read(&path).unwrap(),
+        fa::read(&path).unwrap(),
         sidecar,
         delay_ms,
         Some(std::sync::Arc::clone(&hits)),
@@ -4035,7 +4070,7 @@ fn store_load_keys_round_trip_depth_is_measurable() {
     // and `depth=`, the number this test exists for — go to stderr, which that helper
     // discards.
     let started = std::time::Instant::now();
-    let raw = Command::new(loft_bin())
+    let raw = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(load_script())
         .env("LOFT_PERSIST_TEST_PATH", &url)
@@ -4114,7 +4149,7 @@ fn store_load_keys_round_trip_depth_is_measurable() {
 fn store_verify_reads_a_field_collection_as_itself_both_backends() {
     let script = workspace_root().join("tests/scripts/790-verify-field-collection.loft");
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .current_dir(workspace_root())
@@ -4180,7 +4215,7 @@ fn a_spatial_survives_the_rebuild_and_comes_out_in_morton_order() {
         let copied = dir.join("copied.store");
 
         let run = |s: &Path, mode: &str, img: &Path| -> String {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(s)
                 .env("LOFT_PERSIST_TEST_PATH", &bound)
@@ -4292,7 +4327,7 @@ fn a_trie_survives_the_rebuild_and_comes_out_in_key_order() {
         let copied = dir.join("copied.store");
 
         let run = |s: &Path, mode: &str, img: &Path| -> String {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(s)
                 .env("LOFT_PERSIST_TEST_PATH", &bound)
@@ -4400,7 +4435,7 @@ fn store_load_keys_text_batches_what_the_loop_repeats() {
     let path = dir.join("pack");
 
     let run = |backend: &str, mode: &str| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -4502,8 +4537,8 @@ fn store_load_keys_text_serves_a_trie() {
     let path = dir.join("pack");
 
     for backend in ["--interpret", "--native"] {
-        let _ = std::fs::remove_file(dir.join("pack.trie"));
-        let out = Command::new(loft_bin())
+        let _ = fa::remove_file(dir.join("pack.trie"));
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -4522,6 +4557,55 @@ fn store_load_keys_text_serves_a_trie() {
             all.contains("trie loaded=2 len=2 got=kerkweg:five lonneker:seven verify=true"),
             "{backend}: the two present keys load in key order, `kerks` stays absent, \
              and the trie the loader BUILT is sound: {all}"
+        );
+    }
+}
+
+/// `@FR-Col-Bucket` (@C146) — a hash table's bucket count is a power of two, and the home
+/// bucket stays `digest mod count` on every table, so a store written under either sizing
+/// reads and grows under both.  Each of the four runs writes 2000 entries, reads them back
+/// and binds the file again to grow it to 4000; `LOFT_NO_POW2_BUCKETS=1` writes (or reads)
+/// with the old sizes, a count that is not a power of two.  A reader that took the mask for
+/// such a table would look in the wrong bucket and find fewer than it wrote.
+#[test]
+fn a_hash_written_under_either_bucket_sizing_reads_under_both() {
+    let script =
+        workspace_root().join("tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft");
+    for (old_write, old_read) in [(false, false), (false, true), (true, false), (true, true)] {
+        let dir = scratch(&format!("pow2_buckets_{old_write}_{old_read}"));
+        let path = dir.join("t.store");
+        let run = |mode: &str, old: bool| -> String {
+            let mut cmd = loft::platform::process::harness_command(loft_bin());
+            cmd.arg("--interpret")
+                .arg(&script)
+                .env("LOFT_PERSIST_TEST_PATH", &path)
+                .env("P_BUCKET_MODE", mode)
+                .env("LOFT_TIMEOUT", "240")
+                .env_remove("LOFT_NO_POW2_BUCKETS")
+                .current_dir(workspace_root());
+            if old {
+                cmd.env("LOFT_NO_POW2_BUCKETS", "1");
+            }
+            let out = cmd.output().expect("failed to invoke loft binary");
+            let all = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert!(
+                out.status.success(),
+                "{mode} old={old}: {all}{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            all.trim().to_string()
+        };
+        let cell = format!("written old={old_write}, read old={old_read}");
+        assert_eq!(run("write", old_write), "wrote=2000", "{cell}");
+        assert_eq!(
+            run("read", old_read),
+            "found=2000 sum=1999000 len=2000",
+            "{cell}"
+        );
+        assert_eq!(
+            run("grow", old_read),
+            "found=4000 sum=7998000 len=4000",
+            "{cell}"
         );
     }
 }

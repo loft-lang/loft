@@ -13,7 +13,7 @@ owns it is [README.md](README.md).
 ## What exists already
 
 The dual mode is not a design to make, it is the language's steady state
-([C71](../../DESIGN_DECISIONS.md)): one source, three tiers, and a cache that picks.
+([@C71](../../DESIGN_DECISIONS.md)): one source, three tiers, and a cache that picks.
 
 | tier | flag | what it is | start-up, installed binary (PERFORMANCE.md § N6) |
 |---|---|---|---|
@@ -176,7 +176,7 @@ entries stay what `--native` puts there today.
 The default backend for a program invocation is native today (`src/main.rs`, `native_mode =
 true`); under the rule it becomes: the cached release binary if this hash has one, else the
 interpreter — and the policy above decides when a binary comes to exist.  `--interpret`,
-`--native` and `--native-release` keep overriding.  This is C71's steady state ("scripts
+`--native` and `--native-release` keep overriding.  This is @C71's steady state ("scripts
 interpret, libraries compile") with the promotion the owner asked for on top; the games
 under `engine_host` get it for free.  Items for the plan: the run record in the cache entry,
 the git-age query, the detached build, `loft build --aged`, the three test guards

@@ -73,6 +73,11 @@ record removed by key before the walk reaches it is not visited.  The SOURCE is 
                                         (`break`, `return`).  It stops after yielding the type's
                                         MAXIMUM, as `a..=MAX` does, so the counter never
                                         overflows.  The `{` after `..` is the body, never a bound.
+  (I-RangeNull) a range bound that is `null` makes the range EMPTY in every form above (`a..b`,
+                                        `a..=b`, `a..`, and each reversed): the body runs zero
+                                        times.  A bound WRITTEN as `null` is refused at compile
+                                        time — that loop can never run; a bound only known at
+                                        run time is tested once, before the first round.
   (I-Text)     for c in t { body }      binds c : character to each Unicode CODEPOINT of t, left
                                         to right — one iteration PER CODEPOINT, NOT per grapheme
                                         cluster.  The cursor is a BYTE position advanced by the
@@ -84,7 +89,9 @@ record removed by key before the walk reaches it is not visited.  The SOURCE is 
 **In words.** A range `a..b` yields the half-open integer sequence (never includes `b`); an
 empty range (`a ≥ b`) runs the body zero times. `a..=b` is the same sequence with `b` included,
 and empty when `a > b`.  `a..` counts up until the body breaks out, as Rust's `for i in 0..`
-does.
+does.  A `null` bound yields nothing (`I-RangeNull`) rather than following the order: under
+`(E-NullArg)` `null` sorts below every value and `null + 1` stays `null`, so a null start would
+neither advance nor reach its end.
 
 > **Why the inclusive form states WHERE it stops, and not only what it yields.** Until
 > 2026-09-13 it had no rule at all, and its implementation ended the loop with the same

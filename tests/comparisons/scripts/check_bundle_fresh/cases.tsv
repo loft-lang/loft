@@ -1,0 +1,7 @@
+# orig: scripts/check_bundle_fresh.sh
+# port: scripts/check_bundle_fresh
+# case	twin options	arguments
+unrelated	--replay tests/comparisons/scripts/check_bundle_fresh/replay/unrelated	base
+source-only	--replay tests/comparisons/scripts/check_bundle_fresh/replay/source-only	base
+both	--replay tests/comparisons/scripts/check_bundle_fresh/replay/both	base
+no-base	--replay tests/comparisons/scripts/check_bundle_fresh/replay/no-base	nope

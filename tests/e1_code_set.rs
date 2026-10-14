@@ -13,9 +13,9 @@
 //      here is red (a reviewed diff; a code is add-with-ceremony, never a silent change,
 //      and post-flip a rename/removal is a contract break per COMPATIBILITY.md).
 
+use loft::file_access as fa;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// THE GOLDEN: the frozen E1 code set + a minimal program that triggers each. Adding /
@@ -102,6 +102,11 @@ const CODES: &[(&str, &str)] = &[
     (
         "local-out-of-scope",
         "fn main() { if true { w = 5; } print(\"{w}\"); }",
+    ),
+    // loft#1955 — a local read on the right-hand side of its own first binding (`(B-Scope)`).
+    (
+        "read-in-own-binding",
+        "fn main() { x: integer = x + 1; print(\"{x}\"); }",
     ),
     // loft#1619 — the body writes the variable the range end read; the loop took it once.
     (
@@ -405,6 +410,27 @@ const CODES: &[(&str, &str)] = &[
         "shadowed-by-method",
         "fn main() { print(\"needs the same fn in a LIBRARY — in main this is the C95 error\"); }",
     ),
+    // C132 (@PLN182) — a program's `fn OpLt` is an ordinary function: said where it is
+    // written, naming the `operator` to write.
+    (
+        "retired-operator-function",
+        "value struct D { ms: integer }\nfn OpLt(self: D, other: D) -> boolean { self.ms < other.ms }\n\
+         fn main() { a = D { ms: 1 }; print(\"{OpLt(a, a)}\"); }",
+    ),
+    // `Disp-Ambiguous` — two definitions take the call and neither is more specific: an
+    // integer converts into either `float` or `single` (loft#1925).
+    (
+        "ambiguous-call",
+        "fn f(a: float) -> text { \"F {a}\" }\nfn f(a: single) -> text { \"S {a}\" }\n\
+         fn main() { i = 3; print(f(i)); }",
+    ),
+    // `Disp-Hint` — a name with several definitions types no lambda (loft#1926).
+    (
+        "untyped-lambda-at-overload-set",
+        "fn ap(f: fn(integer) -> integer) -> integer { f(2) }\n\
+         fn ap(f: fn(text) -> text) -> text { f(\"a\") }\n\
+         fn main() { print(\"{ap(|x| { x })}\"); }",
+    ),
 ];
 
 /// @PLN131 — codes with no MINIMAL trigger, each with why.
@@ -570,8 +596,8 @@ const EDIT_BLOCKED: &[(&str, &str)] = &[
 /// its stable `[code]` tag), returning stdout+stderr.
 fn compact_output(prog: &str) -> String {
     let path = std::env::temp_dir().join(format!("loft_e1_{}.loft", std::process::id()));
-    std::fs::write(&path, prog).unwrap();
-    let out = Command::new(loft_bin())
+    fa::write(&path, prog).unwrap();
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_ERRORS", "compact")
@@ -585,7 +611,7 @@ fn compact_output(prog: &str) -> String {
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -604,15 +630,15 @@ fn fix_output(prog: &str) -> String {
         std::process::id(),
         NEXT_FIX.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, prog).unwrap();
-    let out = Command::new(loft_bin())
+    fa::write(&path, prog).unwrap();
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("fix")
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_LINT_STRICT_INDEX", "1")
         .output()
         .expect("run loft fix");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -632,8 +658,8 @@ fn explain_output(prog: &str) -> String {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, prog).unwrap();
-    let out = Command::new(loft_bin())
+    fa::write(&path, prog).unwrap();
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check", "--explain"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
@@ -641,7 +667,7 @@ fn explain_output(prog: &str) -> String {
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -775,8 +801,8 @@ fn main() {\n\
 \x20 println(\"{p}{q}\");\n\
 }\n";
     let path = std::env::temp_dir().join(format!("loft_e1_fix1003_{}.loft", std::process::id()));
-    std::fs::write(&path, TWO).unwrap();
-    let out = Command::new(loft_bin())
+    fa::write(&path, TWO).unwrap();
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("fix")
         .arg("--apply")
         .arg(&path)
@@ -793,19 +819,19 @@ fn main() {\n\
         2,
         "both instances must apply — they used to mask each other, said:\n{report}"
     );
-    let rewritten = std::fs::read_to_string(&path).unwrap();
+    let rewritten = fa::read_to_string(&path).unwrap();
     assert!(
         !rewritten.contains("??"),
         "both defaults must be gone, got:\n{rewritten}"
     );
-    let run = Command::new(loft_bin())
+    let run = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");
     let ran = String::from_utf8_lossy(&run.stdout).into_owned();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         ran.contains("45"),
         "the rewritten program must still answer `45`, said:\n{ran}"
@@ -851,7 +877,7 @@ fn every_pinned_code_offers_a_fix() {
 #[test]
 fn every_offered_door_resolves_to_a_catalogue_entry() {
     let snapshot =
-        std::fs::read_to_string(root().join("index/features.json")).expect("features snapshot");
+        fa::read_to_string(root().join("index/features.json")).expect("features snapshot");
     for (code, prog) in CODES {
         // A code with no minimal trigger renders nothing, so there is nothing to read a
         // fix or a door out of. Skipped by NAME, listed with its reason.
@@ -920,7 +946,7 @@ fn scan_source_codes() -> BTreeSet<String> {
     collect_rs(&root().join("src"), &mut files);
     let mut out = BTreeSet::new();
     for f in files {
-        let s = std::fs::read_to_string(&f).unwrap_or_default();
+        let s = fa::read_to_string(&f).unwrap_or_default();
         // form 1 — `code = "X"`
         for at in match_positions(&s, "code = \"") {
             if let Some(lit) = read_to_quote(&s[at..])
@@ -941,14 +967,14 @@ fn scan_source_codes() -> BTreeSet<String> {
 }
 
 fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    let Ok(rd) = fa::read_dir(dir) else {
         return;
     };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
+    for e in rd {
+        let p = e.os_spelling();
+        if fa::is_dir(&p) {
             collect_rs(&p, out);
-        } else if p.extension().is_some_and(|x| x == "rs") {
+        } else if fa::has_extension(&p, "rs") {
             out.push(p);
         }
     }
@@ -1005,7 +1031,7 @@ fn is_kebab_code(s: &str) -> bool {
 /// second scan of `src/` that can disagree with the first.
 #[test]
 fn every_pinned_code_is_documented() {
-    let index = std::fs::read_to_string(root().join("doc/claude/DIAGNOSTICS.md"))
+    let index = fa::read_to_string(root().join("doc/claude/DIAGNOSTICS.md"))
         .expect("doc/claude/DIAGNOSTICS.md");
     let missing: Vec<&str> = CODES
         .iter()

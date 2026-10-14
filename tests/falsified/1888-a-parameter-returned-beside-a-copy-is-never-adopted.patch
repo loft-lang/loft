@@ -1,0 +1,14 @@
+diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+index ae7f5c557..04b418f99 100644
+--- a/src/use_analysis.rs
++++ b/src/use_analysis.rs
+@@ -3829,6 +3829,9 @@ pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
+ /// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).
+ #[must_use]
+ pub fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
++    if fn_nr != u32::MAX - 7 {
++        return false;
++    }
+     let (Own::Borrowed { base } | Own::Join { base }) = return_ownership(data, fn_nr) else {
+         return false;
+     };

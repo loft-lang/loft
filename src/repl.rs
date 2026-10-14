@@ -400,6 +400,57 @@ fn expr_idents(expr: &str) -> std::collections::HashSet<&str> {
     out
 }
 
+/// Can `input` change a variable it names?  An assignment operator (`=`, `+=`, `<<=`, … but
+/// not `==`, `!=`, `<=` or `>=`) or a call — a `&` parameter and a method's `self` write
+/// through.  Over-inclusive is harmless: an input that changed nothing re-binds nothing
+/// (loft#1853).
+fn may_write(input: &str) -> bool {
+    let b = input.as_bytes();
+    (0..b.len()).any(|i| match b[i] {
+        b'(' => true,
+        b'=' => {
+            let prev = if i > 0 { b[i - 1] } else { b' ' };
+            let shift = i > 1 && matches!((b[i - 2], prev), (b'<', b'<') | (b'>', b'>'));
+            b.get(i + 1) != Some(&b'=') && (shift || !matches!(prev, b'=' | b'!' | b'<' | b'>'))
+        }
+        _ => false,
+    })
+}
+
+/// Does `input` visibly write `var`: an assignment to it (`v = …`, `v += …`), a method call
+/// on it (`v.clear()`), or a write into it (`v[k] = …`, `v.f = …`)?  The fallback test for a
+/// value with no literal form, where the before and after cannot be compared (loft#1853).
+fn writes_var(input: &str, var: &str) -> bool {
+    let b = input.as_bytes();
+    let mut from = 0;
+    while let Some(off) = input[from..].find(var) {
+        let at = from + off;
+        from = at + var.len();
+        let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        if (at > 0 && (ident(b[at - 1]) || b[at - 1] == b'.'))
+            || b.get(from).is_some_and(|&c| ident(c))
+        {
+            continue;
+        }
+        let rest = input[from..].trim_start();
+        if rest.starts_with('.') || rest.starts_with('[') || may_write_head(rest) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Does `rest` begin with an assignment operator (`=`, `+=`, `<<=`, …, not `==`)?
+fn may_write_head(rest: &str) -> bool {
+    let op = rest.split_once('=').map_or("", |(head, _)| head);
+    !rest.starts_with("==")
+        && rest.contains('=')
+        && op.len() <= 2
+        && op.chars().all(|c| "+-*/%&|^<>".contains(c))
+        && !matches!(op, "<" | ">" | "!")
+        && rest.as_bytes().get(op.len() + 1) != Some(&b'=')
+}
+
 /// True when `method` is a member a user can call as `recv.method(...)`: a plain
 /// identifier that is neither a compiler-internal (`__…`) nor an operator
 /// overload — operator methods register as `Op<Name>` (`Op` + an uppercase
@@ -435,10 +486,57 @@ fn methods_for_type(data: &crate::data::Data, type_name: &str) -> Vec<String> {
     out
 }
 
+/// The registry index already on this machine, verified — never fetched (@PLN183).
+#[cfg(feature = "registry")]
+fn cached_index() -> Result<crate::registry_index::RegistryIndex, String> {
+    crate::install::cached_index()
+}
+
+/// What `:libs` and `:api` say in a loft built without the package registry.
+#[cfg(not(feature = "registry"))]
+const NO_REGISTRY: &str = "this loft is built without the package registry";
+
+/// `:doc <entry> run` (@PLN183) — run a catalogue entry's example in a SCRATCH session: the
+/// example defines its own `struct`s and `fn`s, which would collide with the user's names in
+/// theirs.  The example is the one `tests/docs/features/<tag>.loft` runs, so it is known to.
+fn run_example<W: Write>(
+    ctx: &ResolutionContext,
+    query: &str,
+    chrome: &mut W,
+) -> std::io::Result<()> {
+    let entries = crate::repl_doc::find_entries(query);
+    let [entry] = entries.as_slice() else {
+        writeln!(
+            chrome,
+            "`{query}` names {} catalogue entries — name one by its tag (`:doc @F2 run`)",
+            entries.len()
+        )?;
+        return Ok(());
+    };
+    let Some(example) = entry.example() else {
+        writeln!(chrome, "@{} has no example to run", entry.tag)?;
+        return Ok(());
+    };
+    let mut scratch = ReplSession::open(ctx)?;
+    if let Err(diags) = scratch.load_program_str(&example, &format!("@{}", entry.tag)) {
+        for d in diags {
+            writeln!(chrome, "{}", d.to_string_compact())?;
+        }
+        return Ok(());
+    }
+    if let Eval::Error(diags) = scratch.eval("main()") {
+        for d in diags {
+            writeln!(chrome, "{}", d.to_string_compact())?;
+        }
+    }
+    Ok(())
+}
+
 /// The `:`-commands Tab completion offers when the line starts with `:`.
 #[cfg(not(target_arch = "wasm32"))]
-const REPL_COMMANDS: [&str; 10] = [
+const REPL_COMMANDS: [&str; 15] = [
     "quit", "help", "reset", "fns", "vars", "type", "break", "bytecode", "rust", "slots",
+    "features", "libs", "api", "ops", "doc",
 ];
 
 /// The completion model the live completer matches against, rebuilt by the
@@ -707,8 +805,61 @@ fn process_line<W: Write>(
                 chrome,
                 "commands: :quit  :help  :reset  :fns  :vars  :type <expr>  \
                  :break <fn>[:<line>] [if <cond>]  :trace <fn> <expr>,…  \
-                 :bytecode [fn]  :rust [fn]  :slots [fn]"
+                 :bytecode [fn]  :rust [fn]  :slots [fn]\n\
+                 what there is: :features [word]  :libs  :api <library> [word]  :ops <Type>  \
+                 :doc <name> [run]"
             )?,
+            // @PLN183 — the overview, then the lookups.
+            "features" => print!(
+                "{}",
+                crate::repl_doc::features(&filter.join(" "), crate::repl_doc::WIDTH)
+            ),
+            #[cfg(not(feature = "registry"))]
+            "libs" | "api" => writeln!(chrome, "{NO_REGISTRY}")?,
+            #[cfg(feature = "registry")]
+            "libs" => {
+                let index = cached_index();
+                let installed: Vec<(String, String)> = crate::registry_index::installed_packages()
+                    .into_iter()
+                    .map(|(n, v, _)| (n, v))
+                    .collect();
+                print!(
+                    "{}",
+                    crate::repl_doc::libs(
+                        index.as_ref().map_err(String::as_str),
+                        &installed,
+                        crate::repl_doc::WIDTH
+                    )
+                );
+            }
+            #[cfg(feature = "registry")]
+            "api" => {
+                let index = cached_index();
+                let lib = filter.first().map_or("", String::as_str);
+                let word = filter.get(1).map_or("", String::as_str);
+                print!(
+                    "{}",
+                    crate::repl_doc::api_for(
+                        index.as_ref().map_err(String::as_str),
+                        lib,
+                        word,
+                        crate::repl_doc::WIDTH,
+                        std::env::current_dir()
+                            .ok()
+                            .and_then(|d| crate::doc_site::locked_version(lib, &d))
+                            .as_deref(),
+                    )
+                );
+            }
+            "ops" => print!(
+                "{}",
+                session.ops_text(filter.first().map_or("", String::as_str))
+            ),
+            "doc" if filter.last().is_some_and(|w| w == "run") && filter.len() > 1 => {
+                let query = filter[..filter.len() - 1].join(" ");
+                run_example(ctx, &query, chrome)?;
+            }
+            "doc" => print!("{}", session.doc_text(&filter.join(" "), &ctx.stdlib_dir)),
             "reset" => {
                 // Re-open with the SAME resolution inputs.  Rebuilding from
                 // `stdlib_dir` alone silently un-libbed a session that was working —
@@ -1223,7 +1374,7 @@ fn render_capture(
                 format!("{v}f")
             })
         }
-        // @PLN17 C73's three-state boolean: 0 and 1 are the values and every other
+        // @PLN17 @C73's three-state boolean: 0 and 1 are the values and every other
         // byte is the absence, which is the same split `Stores::is_null` makes (`> 1`)
         // rather than the narrower `== 255` — one home for the two to agree on.
         Type::Boolean => {
@@ -1740,7 +1891,7 @@ enum SessionShape {
 /// stdout/stderr are pumped by detached threads into one shared buffer (a pipe left
 /// undrained would fill and stall the game at its next print).
 struct GameProc {
-    child: std::process::Child,
+    child: crate::platform::process::Running,
     output: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
@@ -2096,7 +2247,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be read.
     pub fn load_program(&mut self, path: &str) -> std::io::Result<Result<(), Vec<DiagEntry>>> {
-        let src = std::fs::read_to_string(path)?;
+        let src = crate::file_access::read_to_string(path)?;
         // Reset to a pristine stdlib (+ the session's `--lib` dirs) parser before loading, so
         // a **re-launch is idempotent**: `load_program_str` is additive, and re-parsing a
         // `use`-program over an already-loaded one re-loads its libraries → "Cannot redefine".
@@ -2121,7 +2272,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be read.
     pub fn compile(&mut self, path: &str) -> std::io::Result<Vec<DiagEntry>> {
-        let src = std::fs::read_to_string(path)?;
+        let src = crate::file_access::read_to_string(path)?;
         let sp = self.savepoint();
         let pre_diag = self.parser.diagnostics.entries().len();
         self.parser.parse_str(&src, path, false);
@@ -2161,8 +2312,8 @@ impl ReplSession {
         // does not run a bare test function (every native call faults "Unknown definition").
         // Parse the file **by path** (`parse`, not `parse_str`): that sets up the source dir +
         // `use` context a bare-function call needs.  Read it first for a clean io error.
-        let _ = std::fs::read_to_string(path)?;
-        let abs = crate::portable_path::plain_canonical_str(path);
+        let _ = crate::file_access::read_to_string(path)?;
+        let abs = crate::file_access::plain_canonical_str(path);
         let mut parser = Parser::new();
         // Parsed against again after compiling: no whole-program signature rewrite.
         parser.data.open_world = true;
@@ -2223,8 +2374,8 @@ impl ReplSession {
             if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                 continue;
             }
-            if crate::portable_path::is_stdlib_source(&def.position.file)
-                || !in_file(&def.position.file)
+            if crate::file_access::is_stdlib_source(def.position.file.as_str())
+                || !in_file(def.position.file.as_str())
             {
                 continue;
             }
@@ -2295,14 +2446,14 @@ impl ReplSession {
     pub fn run_suite(&mut self, start: &str) -> std::io::Result<Vec<(String, Vec<TestRun>)>> {
         use std::io::{Error, ErrorKind};
         // Find the package root: the nearest ancestor of `start` holding a loft.toml.
-        let abs = crate::portable_path::plain_canonical(std::path::Path::new(start));
-        let mut root = if abs.is_dir() {
+        let abs = crate::file_access::plain_canonical(std::path::Path::new(start));
+        let mut root = if crate::file_access::is_dir(&abs) {
             Some(abs.as_path())
         } else {
             abs.parent()
         };
         while let Some(dir) = root {
-            if dir.join("loft.toml").exists() {
+            if crate::file_access::exists(dir.join("loft.toml")) {
                 break;
             }
             root = dir.parent();
@@ -2329,27 +2480,24 @@ impl ReplSession {
         }
         // Every tests/*.loft, in name order (stable output for the panel).
         let tests_dir = root.join("tests");
-        if !tests_dir.is_dir() {
+        if !crate::file_access::is_dir(&tests_dir) {
             return Err(Error::new(
                 ErrorKind::NotFound,
                 format!("package {} has no tests/ directory", root.display()),
             ));
         }
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&tests_dir)?
-            .flatten()
-            .map(|e| e.path())
+        let mut files: Vec<std::path::PathBuf> = crate::file_access::read_dir(&tests_dir)?
+            .iter()
+            .map(crate::file_access::PathText::os_spelling)
             .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+                crate::file_access::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft"))
             })
             .collect();
         files.sort();
         let mut out = Vec::with_capacity(files.len());
         for f in files {
-            let name = f.file_name().map_or_else(
-                || f.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let name = crate::file_access::file_name(&f)
+                .unwrap_or_else(|| f.to_string_lossy().into_owned());
             let results = self.run_file_tests_with(&f.to_string_lossy(), &lib_dirs)?;
             out.push((name, results));
         }
@@ -2360,7 +2508,7 @@ impl ReplSession {
     /// back to (the `--serve` target), stored canonical.  An unreadable path leaves the
     /// sandbox `None`, so every [`write_file`](Self::write_file) is then refused.
     pub fn set_workspace_file(&mut self, path: &str) {
-        self.workspace_file = crate::portable_path::try_plain_canonical(std::path::Path::new(path));
+        self.workspace_file = crate::file_access::try_plain_canonical(std::path::Path::new(path));
     }
 
     /// @PLN16 M5e slice 3 — save the editor's `content` to `path`, **only** if `path`
@@ -2378,10 +2526,9 @@ impl ReplSession {
         // Canonicalise the request against the sandbox: the file exists (we are overwriting
         // it), so a path that resolves anywhere else — `..`, a symlink, an absolute escape —
         // fails this equality and is refused.
-        match crate::portable_path::try_plain_canonical(std::path::Path::new(path)) {
-            Some(p) if &p == allowed => {
-                std::fs::write(allowed, content).map_err(|e| format!("write failed: {e}"))
-            }
+        match crate::file_access::try_plain_canonical(std::path::Path::new(path)) {
+            Some(p) if &p == allowed => crate::file_access::write(allowed, content)
+                .map_err(|e| format!("write failed: {e}")),
             _ => Err("path is outside the editable file".to_string()),
         }
     }
@@ -2398,7 +2545,7 @@ impl ReplSession {
     /// A message when a game is already running or the spawn fails.
     pub fn launch_game(&mut self, file: &str) -> Result<(), String> {
         if let Some(g) = &mut self.game
-            && matches!(g.child.try_wait(), Ok(None))
+            && g.child.alive()
         {
             return Err("a game is already running — stop it first".to_string());
         }
@@ -2406,41 +2553,39 @@ impl ReplSession {
             || std::env::current_exe().map_err(|e| format!("cannot locate loft binary: {e}")),
             |b| Ok(std::path::PathBuf::from(b)),
         )?;
-        let mut cmd = std::process::Command::new(bin);
-        cmd.arg(file);
+        use crate::platform::process::{Program, Spawn};
+        let mut spawn = Spawn::new(Program::os(bin)).arg(file);
         for d in &self.parser.lib_dirs {
-            cmd.arg("--lib").arg(d);
+            spawn = spawn.arg("--lib").arg(d);
         }
         // @PLN18 02 (the 6b wire-up): an IDE-launched game is live-editable
         // by default — the child's file watcher reacts to every IDE save and
         // hot-swaps the edited fn (tier 0); its `live-reload:` stderr lines
         // are the structured feedback.  LOFT_LIVE_RELOAD=0 opts out.
         if std::env::var_os("LOFT_LIVE_RELOAD").is_none() {
-            cmd.env("LOFT_LIVE_RELOAD", "1");
+            spawn = spawn.env("LOFT_LIVE_RELOAD", "1");
         }
         // @PLN18 08-S7 editor support — an IDE-launched game is DEBUGGABLE by
         // default: the D!: control channel answers on the game's port
         // (loopback-only) and a compiled game keeps the parked interpreter
         // for breakpoint flips.  Opt out with =0 (the LIVE_RELOAD pattern).
         if std::env::var_os("LOFT_DEBUG_CONTROL").is_none() {
-            cmd.env("LOFT_DEBUG_CONTROL", "1");
+            spawn = spawn.env("LOFT_DEBUG_CONTROL", "1");
         }
         if std::env::var_os("LOFT_LIVE_FLIP").is_none() {
-            cmd.env("LOFT_LIVE_FLIP", "1");
+            spawn = spawn.env("LOFT_LIVE_FLIP", "1");
         }
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
         // A `--native` game serves from a GRANDCHILD of this child (the S1
-        // process-model finding) — own group so stop_game can reach it all.
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        let mut child = cmd
-            .spawn()
+        // process-model finding): the tree is owned, so stop_game reaches it all.
+        let mut child = spawn
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .start()
             .map_err(|e| format!("cannot launch game: {e}"))?;
         let output = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        drain_pipe(child.stdout.take(), &output);
-        drain_pipe(child.stderr.take(), &output);
+        drain_pipe(child.take_stdout(), &output);
+        drain_pipe(child.take_stderr(), &output);
         self.game = Some(GameProc { child, output });
         Ok(())
     }
@@ -2456,17 +2601,12 @@ impl ReplSession {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
-        match g.child.try_wait() {
-            Ok(None) => Some((true, chunk, None)),
-            Ok(Some(status)) => {
-                self.game = None;
-                Some((false, chunk, status.code()))
-            }
-            Err(_) => {
-                self.game = None;
-                Some((false, chunk, None))
-            }
+        if g.child.alive() {
+            return Some((true, chunk, None));
         }
+        let code = g.child.finish().ok().and_then(|s| s.code());
+        self.game = None;
+        Some((false, chunk, code))
     }
 
     /// Stop the running game (kill the child this session spawned — never any other
@@ -2476,29 +2616,9 @@ impl ReplSession {
         let mut g = self.game.take()?;
         // Stop the whole TREE this session created, not just the handle it holds: a
         // `--native` game's real server is a GRANDCHILD (driver → compiled binary), so
-        // reaping the child alone leaves the server running and holding its port.
-        //
-        // Unix reaches the tree through the process group the launch put the child in.
-        // Windows has no process group, so it walks the tree by parent link instead —
-        // and the ordering is the whole of it: `taskkill /T` needs the child ALIVE to
-        // walk from, so it must run BEFORE the kill below, not after.  Measured on
-        // `windows-latest`: the grandchild survives a bare `child.kill()` and still
-        // holds its port, and `taskkill /T /F` terminates it ("the process with PID N
-        // (child process of PID M) has been terminated") — see WINDOWS.md § Known gaps.
-        #[cfg(unix)]
-        unsafe {
-            libc::killpg(g.child.id() as i32, libc::SIGKILL);
-        }
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &g.child.id().to_string()])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
-        let _ = g.child.kill();
-        let _ = g.child.wait();
+        // reaping the child alone would leave the server running and holding its port.
+        // The launch owns the tree (`platform::process`), which stops it on every platform.
+        let _ = g.child.stop_tree();
         Some(std::mem::take(
             &mut *g
                 .output
@@ -3515,12 +3635,10 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be opened for appending.
     pub fn enable_persistence(&mut self, path: &Path) -> std::io::Result<()> {
-        self.record = Some(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)?,
-        );
+        self.record = Some(crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().create(true).append(true),
+        )?);
         Ok(())
     }
 
@@ -3550,7 +3668,7 @@ impl ReplSession {
     /// is an empty session.  Returns how many entries were restored vs skipped.
     pub fn resume_from(&mut self, path: &Path) -> ResumeStats {
         let mut stats = ResumeStats::default();
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(bytes) = crate::file_access::read(path) else {
             return stats; // no prior session
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -3574,7 +3692,7 @@ impl ReplSession {
     /// Discard the saved session at `path` (the `:reset` command and the
     /// `--fresh` flag) so the next launch starts clean.  Best-effort.
     pub fn clear_session(path: &Path) {
-        let _ = std::fs::remove_file(path);
+        let _ = crate::file_access::remove_file(path);
     }
 
     /// Evaluate one input line/statement against the session.
@@ -3621,31 +3739,24 @@ impl ReplSession {
             self.record_input(input); // a def changes session state — persist it
             return Eval::Ran;
         }
-        if let Some(var) = Self::binding_name(input) {
+        if let Some((var, declared)) = Self::binding_parts(input) {
             // REPL.X value-snapshot — run the RHS once, capture the value, and
             // store the binding as a literal (`name = 42`) so re-running `body`
             // on every later observe does NOT repeat a side effect.
             let rhs = input.split_once('=').map_or("", |(_, r)| r.trim());
+            // A declared type is the RHS's type: the capture runs it as that type.
+            let captured = declared.as_ref().map_or_else(
+                || rhs.to_string(),
+                |ty| format!("{{\n__typed: {ty} = {rhs};\n__typed\n}}"),
+            );
             if !rhs.is_empty() {
-                match self.capture_binding(rhs, false) {
+                match self.capture_binding(&captured, false) {
                     Capture::Done(lit) => {
-                        let snap = format!("{var} = {lit}");
-                        let bound = format!("{}{snap};\n", self.body);
-                        if self.compile_generation(&bound, false, false).is_ok() {
-                            self.body = bound;
-                            // @PLN14 arc A — file the shadow env entry under the
-                            // bound name.  A re-bind (`n = n + 1`) replaces it; the
-                            // old record is orphaned in the session store until
-                            // arc G collects it.
-                            if let Some(v) = self.pending_materialized.take() {
-                                // arc G — a re-bind orphans the old record; release
-                                // it so a long session does not grow per re-bind.
-                                if let Some(old) = self.env.remove(&var) {
-                                    self.free_session_value(&old);
-                                }
-                                self.env.insert(var.clone(), v);
-                            }
-                            self.record_input(&snap); // persist the snapshot, not the RHS
+                        let materialized = self.pending_materialized.take();
+                        let var_typed = declared
+                            .as_ref()
+                            .map_or_else(|| var.clone(), |ty| format!("{var}: {ty}"));
+                        if self.commit_snapshot_as(&var, &var_typed, &lit, materialized) {
                             return Eval::Ran;
                         }
                         // (rare) the rendered literal didn't recompile — fall through.
@@ -3693,6 +3804,23 @@ impl ReplSession {
         {
             println!("{shown}");
             return Eval::Ran;
+        }
+        // loft#1853 — an input that may change a session variable in place.
+        if let Some(done) = self.eval_mutation(input) {
+            return match done {
+                Err(diags) => Eval::Error(diags),
+                Ok(Some(lit)) => {
+                    // The input's value, shown as the observing path shows one: a pure
+                    // run, since the body now holds every variable as a literal.
+                    let show = format!(
+                        "{}__replval = {lit};\nprintln(\"{{__replval}}\");\n",
+                        self.body
+                    );
+                    let _ = self.compile_generation(&show, true, false);
+                    Eval::Ran
+                }
+                Ok(None) => Eval::Ran,
+            };
         }
         let shown = format!(
             "{}__replval = {input};\nprintln(\"{{__replval}}\");\n",
@@ -3833,6 +3961,231 @@ impl ReplSession {
             self.rewind(sp);
         }
         Ok(())
+    }
+
+    /// Store `var`'s snapshot `lit` as the binding `var = lit`: appended to `body`, filed in the
+    /// session store as `materialized` (the record it replaces is released, so a long session
+    /// does not grow per re-bind), and persisted as the snapshot, not the source
+    /// that produced it.  `false` when the literal does not recompile; the caller falls back.
+    fn commit_snapshot(
+        &mut self,
+        var: &str,
+        lit: &str,
+        materialized: Option<SessionValue>,
+    ) -> bool {
+        self.commit_snapshot_as(var, var, lit, materialized)
+    }
+
+    /// [`commit_snapshot`](Self::commit_snapshot) with the binding's left side spelled
+    /// `head` — `x`, or `x: float` for a typed binding's first snapshot.
+    fn commit_snapshot_as(
+        &mut self,
+        var: &str,
+        head: &str,
+        lit: &str,
+        materialized: Option<SessionValue>,
+    ) -> bool {
+        let snap = format!("{head} = {lit}");
+        let bound = format!("{}{snap};\n", self.body);
+        if self.compile_generation(&bound, false, false).is_err() {
+            if let Some(v) = materialized {
+                self.free_session_value(&v);
+            }
+            return false;
+        }
+        self.body = bound;
+        if let Some(v) = materialized {
+            if let Some(old) = self.env.remove(var) {
+                self.free_session_value(&old);
+            }
+            self.env.insert(var.to_string(), v);
+        }
+        self.record_input(&snap);
+        true
+    }
+
+    /// The literal `var` was last bound to in `body`, when its latest binding is a snapshot.
+    fn current_snapshot(&self, var: &str) -> Option<&str> {
+        self.body
+            .lines()
+            .rev()
+            .find(|l| Self::binding_name(l).as_deref() == Some(var))
+            .and_then(|l| l.split_once(" = "))
+            .map(|(_, r)| r.strip_suffix(';').unwrap_or(r))
+    }
+
+    /// Keep `input` in the session as SOURCE: appended to `body`, replayed by every later
+    /// generation, persisted.  `execute` runs it now as well (it has not run yet); a side
+    /// effect in it then repeats on a later replay, which is the trade the binding path makes
+    /// for a value it cannot snapshot.  The session store then holds no current value for the
+    /// variables it `names`, so their records go and a read of them replays.
+    fn keep_as_source(
+        &mut self,
+        input: &str,
+        execute: bool,
+        names: &[String],
+    ) -> Result<Option<String>, Vec<DiagEntry>> {
+        let bound = format!("{}{input};\n", self.body);
+        match self.compile_generation(&bound, execute, execute) {
+            Ok(()) => {
+                self.body = bound;
+                for n in names {
+                    if let Some(old) = self.env.remove(n) {
+                        self.free_session_value(&old);
+                    }
+                }
+                self.record_input(input);
+                Ok(None)
+            }
+            Err(diags) => Err(self.map_input_lines(diags)),
+        }
+    }
+
+    /// Re-bind each variable whose captured literal moved — as a binding is — and release the
+    /// record of each that did not (an input that only read it).
+    fn rebind_moved(&mut self, snaps: Vec<(String, String, Option<SessionValue>)>) {
+        for (n, lit, materialized) in snaps {
+            if self.current_snapshot(&n) == Some(lit.as_str()) {
+                if let Some(v) = materialized {
+                    self.free_session_value(&v);
+                }
+                continue;
+            }
+            self.commit_snapshot(&n, &lit, materialized);
+        }
+    }
+
+    /// The input names a variable no capture can carry (a bare `hash` has no literal form) and
+    /// has not run: kept as source when it visibly writes one of `names` ([`writes_var`]),
+    /// otherwise left to the observing path (`None`), which shows its value and records
+    /// nothing.
+    fn unsnapshotable(
+        &mut self,
+        input: &str,
+        names: &[String],
+    ) -> Option<Result<Option<String>, Vec<DiagEntry>>> {
+        names
+            .iter()
+            .any(|n| writes_var(input, n))
+            .then(|| self.keep_as_source(input, true, names))
+    }
+
+    /// loft#1853 — an input that may change session variables IN PLACE (`x += 1`, `s.a = 9`,
+    /// `w.sort()`, `bump(x)` through a `&` parameter).  Only definitions and `name = …`
+    /// bindings reach `body`, so any other input ran once and its effect on a variable was
+    /// gone by the next input.  Here the input runs ONCE, inside a capture that hands back
+    /// every bound variable it names — and its own value, when it has one — as one record of
+    /// a throwaway struct; each variable whose literal moved is then re-bound to its new
+    /// value exactly as a binding is (a snapshot, so no later replay repeats a side effect).
+    ///
+    /// `None` leaves the input to the observing path: it cannot write ([`may_write`]), names
+    /// no bound variable, a variable's type does not resolve, or a breakpoint is armed — a
+    /// capture run does not stop at one, and the observing run must.
+    fn eval_mutation(&mut self, input: &str) -> Option<Result<Option<String>, Vec<DiagEntry>>> {
+        if self.paused.is_some() || !self.breakpoints.is_empty() || !may_write(input) {
+            return None;
+        }
+        let idents = expr_idents(input);
+        let names: Vec<String> = self
+            .bound_var_names()
+            .into_iter()
+            .filter(|n| idents.contains(n.as_str()))
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        let mut fields = Vec::with_capacity(names.len() + 1);
+        for (i, n) in names.iter().enumerate() {
+            let Some(tp) = self.infer_type(n) else {
+                return self.unsnapshotable(input, &names);
+            };
+            fields.push(format!("f{i}: {}", base_type_name(&tp)));
+        }
+        let value_tp = self
+            .infer_type(input)
+            .map(|t| base_type_name(&t))
+            .filter(|t| !t.is_empty() && t != "void");
+        if let Some(t) = &value_tp {
+            fields.push(format!("v: {t}"));
+        }
+        let sp = self.savepoint();
+        let pre_diag = self.parser.diagnostics.entries().len();
+        let def = format!("struct __ReplCap {{ {} }}\n", fields.join(", "));
+        self.parser.parse_str(&def, "<repl>", false);
+        if self.parser.diagnostics.entries()[pre_diag..]
+            .iter()
+            .any(|e| e.level >= Level::Error)
+        {
+            self.rewind(sp);
+            return self.unsnapshotable(input, &names);
+        }
+        let build: Vec<String> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| format!("f{i}: {n}"))
+            .collect();
+        let run = if value_tp.is_some() {
+            format!(
+                "{{\n__replval = {input};\n__ReplCap {{ {}, v: __replval }}\n}}",
+                build.join(", ")
+            )
+        } else {
+            format!("{{\n{input};\n__ReplCap {{ {} }}\n}}", build.join(", "))
+        };
+        let record = match self.capture_typed(&run, "__ReplCap", false) {
+            Capture::Done(lit) => lit,
+            Capture::Failed(diags) => {
+                self.rewind(sp);
+                return Some(Err(self.map_input_lines(diags)));
+            }
+            Capture::Skip => {
+                self.rewind(sp);
+                return self.unsnapshotable(input, &names);
+            }
+        };
+        if let Some(v) = self.pending_materialized.take() {
+            self.free_session_value(&v);
+        }
+        // Each field is captured against a body holding the record as a literal, so these
+        // runs repeat no part of the input.
+        let saved = std::mem::take(&mut self.body);
+        self.body = format!("{saved}__repl_cap = {record};\n");
+        let mut snaps = Vec::with_capacity(names.len());
+        let mut unsnapped = Vec::new();
+        for (i, n) in names.iter().enumerate() {
+            if let Capture::Done(lit) = self.capture_binding(&format!("__repl_cap.f{i}"), false) {
+                snaps.push((n.clone(), lit, self.pending_materialized.take()));
+            } else {
+                unsnapped.push(n.as_str());
+            }
+        }
+        let value = if value_tp.is_some()
+            && let Capture::Done(lit) = self.capture_binding("__repl_cap.v", false)
+        {
+            if let Some(v) = self.pending_materialized.take() {
+                self.free_session_value(&v);
+            }
+            Some(lit)
+        } else {
+            None
+        };
+        self.body = saved;
+        self.rewind(sp);
+        if unsnapped.iter().any(|n| writes_var(input, n)) {
+            // A variable with no literal form (a bare `hash`) that the input writes: it
+            // already ran, so it is kept as SOURCE, replayed by every later generation — the
+            // binding path's own fallback.  No snapshot is committed, or the replay would
+            // apply it twice.  An input that only reads such a variable (`len(h)`) is an
+            // observe and records nothing.
+            for (_, _, materialized) in snaps {
+                if let Some(v) = materialized {
+                    self.free_session_value(&v);
+                }
+            }
+            return Some(self.keep_as_source(input, false, &names).map(|_| value));
+        }
+        self.rebind_moved(snaps);
+        Some(Ok(value))
     }
 
     /// REPL.X value-snapshot — run a binding's RHS **once**, capture its value,
@@ -4638,7 +4991,7 @@ impl ReplSession {
         let bytes = store.raw_bytes();
         out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(bytes);
-        std::fs::write(path, &out)?;
+        crate::file_access::write(path, &out)?;
         Ok(true)
     }
 
@@ -4655,7 +5008,7 @@ impl ReplSession {
     /// layout key is computed against the current schema, so an image referencing
     /// a struct this session has not defined is correctly refused.
     pub fn load_session_image(&mut self, path: &Path) -> ImageLoad {
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(bytes) = crate::file_access::read(path) else {
             return ImageLoad::Missing;
         };
         let Some((env, store_bytes, key)) = Self::decode_session_image(&bytes) else {
@@ -4766,6 +5119,10 @@ impl ReplSession {
                 _ => Ok(None),
             };
         }
+        // loft#1853 — an input that may change a session variable in place.
+        if let Some(done) = self.eval_mutation(input) {
+            return done;
+        }
         // Otherwise it is an expression: render it.
         Ok(self.value_of(input))
     }
@@ -4789,11 +5146,40 @@ impl ReplSession {
         names
     }
 
-    /// If `input` is a simple binding `<name> = <expr>` (not `==`/`+=`/…),
-    /// return the bound name.  The caller echoes it as a trailing read so the
-    /// variable keeps a stack slot in this and every later generation (an
-    /// unused binding would otherwise have its slot elided).
+    /// If `input` is a simple binding `<name> = <expr>` or `<name>: <type> = <expr>` (not
+    /// `==`/`+=`/…), return the bound name.  The caller echoes it as a trailing read so the
+    /// variable keeps a stack slot in this and every later generation (an unused binding
+    /// would otherwise have its slot elided).
     fn binding_name(input: &str) -> Option<String> {
+        Self::binding_parts(input).map(|(name, _)| name)
+    }
+
+    /// The bound name of a binding, and the type it declares when it is written
+    /// `<name>: <type> = <expr>`.  A typed binding keeps its type in the snapshot, so
+    /// `x: float = 1` stays a `float` rather than becoming the `1` its literal reads as.
+    fn binding_parts(input: &str) -> Option<(String, Option<String>)> {
+        let t = input.trim_start();
+        let name: String = t
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let rest = t[name.len()..].trim_start();
+        if let Some(after) = rest.strip_prefix(':')
+            && !after.starts_with(':')
+            && let Some((ty, rhs)) = after.split_once('=')
+            && !rhs.starts_with('=')
+            && !ty.trim().is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return Some((name, Some(ty.trim().to_string())));
+        }
+        Self::untyped_binding_name(input).map(|n| (n, None))
+    }
+
+    fn untyped_binding_name(input: &str) -> Option<String> {
         let t = input.trim_start();
         let name: String = t
             .chars()
@@ -4830,6 +5216,100 @@ impl ReplSession {
         let _ = crate::introspect::emit_all(&mut self.parser.data, &mut state, end_def, &opts);
     }
 
+    /// `:ops <Type>` (@PLN183) — what a type can be written with: each operator and the
+    /// definition behind it (@PLN182's `operator` methods, the stdlib's own for a built-in
+    /// type), the `[ ]` forms it supports, and the interfaces it meets.  Text, for the REPL.
+    #[must_use]
+    pub fn ops_text(&self, ty: &str) -> String {
+        crate::doc_site::type_capabilities(&self.parser, ty).map_or_else(
+            || {
+                format!(
+                    "no type `{ty}` in scope — `:ops integer`, `:ops text`, `:ops <YourType>`\n"
+                )
+            },
+            |c| crate::doc_site::caps_text(&c),
+        )
+    }
+
+    /// `:doc <name>` (@PLN183) — a feature (`@F2`, `??`, `match`), then a function, type or
+    /// method in scope (its signature and doc, read where it is defined — the hover's own
+    /// route), then a library function (`time::now`) or a library from the registry index
+    /// already on this machine.
+    #[must_use]
+    pub fn doc_text(&self, query: &str, stdlib_dir: &str) -> String {
+        use std::fmt::Write as _;
+        let width = crate::repl_doc::WIDTH;
+        let entries = crate::repl_doc::find_entries(query);
+        if !entries.is_empty() {
+            return entries
+                .iter()
+                .map(|e| crate::repl_doc::entry_text(e, width))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        let (lib, name) = query.split_once("::").map_or(("", query), |(l, n)| (l, n));
+        if lib.is_empty() {
+            let hovers = crate::lsp::lookup_in(&self.parser.data, name, "", "<repl>", stdlib_dir);
+            if !hovers.is_empty() {
+                let mut out = String::new();
+                for h in hovers {
+                    out.push_str(&crate::doc_render::item_text(
+                        &crate::doc_render::Item {
+                            sig: &h.signature,
+                            doc: &h.doc.join("\n"),
+                        },
+                        width,
+                    ));
+                    let _ = writeln!(out, "  — {}:{}\n", h.def_file, h.def_line);
+                }
+                return out;
+            }
+        }
+        #[cfg(feature = "registry")]
+        if let Ok(idx) = cached_index() {
+            let idx = &idx;
+            if !lib.is_empty() {
+                let probe = format!("fn {name}(");
+                if let Some(v) = idx
+                    .packages
+                    .get(lib)
+                    .and_then(|p| crate::registry_index::find_best_version(p, "*", false))
+                {
+                    let hits: Vec<_> = v.api.iter().filter(|i| i.sig.contains(&probe)).collect();
+                    if !hits.is_empty() {
+                        return hits
+                            .iter()
+                            .map(|i| {
+                                crate::doc_render::item_text(
+                                    &crate::doc_render::Item {
+                                        sig: &i.sig,
+                                        doc: &i.doc,
+                                    },
+                                    width,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                    }
+                }
+            } else if let Some(pkg) = idx.packages.get(name)
+                && let Some(v) = crate::registry_index::find_best_version(pkg, "*", false)
+            {
+                let mut out = format!("{name} {} — library\n", v.semver);
+                if let Some(desc) = pkg.description.as_deref() {
+                    out.push_str(&crate::doc_render::wrap(desc, width, "  "));
+                }
+                let _ = writeln!(
+                    out,
+                    "  {} public item(s) · `:api {name}` lists them · `loft install {name}` fetches it",
+                    v.api.len()
+                );
+                return out;
+            }
+        }
+        format!("nothing named `{query}` — `:features` and `:libs` list what there is\n")
+    }
+
     /// Print the user-defined functions entered this session (name + return
     /// type), to stdout — the `:fns` command.  Synthetic generation wrappers
     /// (`repl_*` / `replmain_*`) and stdlib functions are excluded.
@@ -4840,7 +5320,7 @@ impl ReplSession {
             if def.def_type != DefType::Function
                 || !def.name.starts_with("n_")
                 || def.name.starts_with("n_repl")
-                || &*def.position.file != "<repl>"
+                || def.position.file != "<repl>"
             {
                 continue;
             }

@@ -5,14 +5,16 @@
 // bundle from a current one.  The loft twin of scripts/wasm_bundle_stamp.sh (@PLN179
 // strand 3): the same bytes in the same order, the same digest.  Paths are relative to
 // this script's own directory.
-use crypto;
+use crypto::(sha256);
 
 fn main() {
   parts = ["../src/engine_host.rs", "../src/wasm.rs", "../src/native.rs", "../src/compile.rs",
            "../lib/engine_host/src/engine_host.loft",
            "../doc/kernel-differential.html", "../doc/kernel-swap.html", "../doc/loft-rt.js"];
   for name in list_dir("../default") ?? [] {
-    if name.ends_with(".loft") { parts += ["../default/{name}"]; }
+    // A dot-name is no stdlib file (a `.loft/` cache directory is one): the shell twin's
+    // `default/*.loft` glob skips them too.
+    if name.ends_with(".loft") && !name.starts_with(".") { parts += ["../default/{name}"]; }
   }
   data = "";
   for p in parts {

@@ -25,8 +25,8 @@
 //! `39_import_circular/`) treat `<dir>/main.loft` as the entry point and
 //! pass `--lib <dir>` so sibling files resolve.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -54,24 +54,25 @@ struct Case {
 
 fn collect_cases() -> Vec<Case> {
     let mut out = Vec::new();
-    let mut entries: Vec<_> = std::fs::read_dir(cases_dir())
+    let mut entries: Vec<_> = fa::read_dir(cases_dir())
         .expect("read cases dir")
-        .filter_map(|e| e.ok())
+        .into_iter()
+        .filter_map(|e| e.os_name())
         .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let path = e.path();
-        let file_name = e.file_name().to_string_lossy().into_owned();
-        if path.is_file() && file_name.ends_with(".loft") {
+    entries.sort();
+    for name in entries {
+        let path = cases_dir().join(&name);
+        let file_name = name.to_string_lossy().into_owned();
+        if fa::is_file(&path) && file_name.ends_with(".loft") {
             let name = file_name.trim_end_matches(".loft").to_string();
             out.push(Case {
                 name,
                 entry: path,
                 lib_dir: None,
             });
-        } else if path.is_dir() {
+        } else if fa::is_dir(&path) {
             let entry = path.join("main.loft");
-            if entry.exists() {
+            if fa::exists(&entry) {
                 out.push(Case {
                     name: file_name,
                     entry,
@@ -283,7 +284,7 @@ fn scrub_thread_pid(s: &str) -> String {
 }
 
 fn run_case(case: &Case) -> String {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     if let Some(dir) = &case.lib_dir {
         cmd.arg("--lib").arg(dir);
@@ -321,15 +322,15 @@ fn baselines_are_locked_in() {
     );
     let mut diffs: Vec<String> = Vec::new();
     let baseline = baseline_dir();
-    std::fs::create_dir_all(&baseline).expect("create baseline dir");
+    fa::create_dir_all(&baseline).expect("create baseline dir");
     for case in &cases {
         let actual = run_case(case);
         let expect_path = baseline.join(format!("{}.expect", case.name));
         if update {
-            std::fs::write(&expect_path, &actual).expect("write golden");
+            fa::write(&expect_path, &actual).expect("write golden");
             continue;
         }
-        let expected = std::fs::read_to_string(&expect_path).unwrap_or_default();
+        let expected = fa::read_to_string(&expect_path).unwrap_or_default();
         if expected != actual {
             diffs.push(format!(
                 "--- {} ---\nexpected:\n{}\nactual:\n{}\n",
@@ -357,7 +358,7 @@ fn every_case_terminates_cleanly() {
         // is itself the no-infinite-loop assertion.  We additionally
         // require that no case crashes via SIGSEGV / SIGABRT (signal
         // exit), which would mask a regression.
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret");
         if let Some(dir) = &case.lib_dir {
             cmd.arg("--lib").arg(dir);

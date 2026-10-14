@@ -1,0 +1,13 @@
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 9533a95c1..6efb3102f 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -1422,7 +1422,7 @@ impl Parser {
+         }
+         let (equal, variant) = match operator {
+             "<" => (true, "Less"),
+-            ">" => (true, "Greater"),
++            ">" => (true, "Less"),
+             "<=" => (false, "Greater"),
+             _ => (false, "Less"),
+         };

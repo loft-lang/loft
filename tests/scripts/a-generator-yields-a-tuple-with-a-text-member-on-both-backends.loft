@@ -1,0 +1,40 @@
+// @FR-G-Next — a generator yields any `T`, and a tuple with a `text` member is one: `--native`
+// carries the text in its `next_into` buffer as an owned `String` handed over once
+// (`coroutine_layout::YieldSlot::Text`), at any position, beside a record, through `yield from`,
+// from a loop, and when the consumer leaves the loop early.  The eager loop-body buffer (a
+// `yield` inside an expression) still refuses one: it could not release strings left
+// undrained.
+// @falsified-at: ec3f52c8c — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generator-yields-a-tuple-with-a-text-member-on-both-backends.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: the interpreter answers every cell on both trees; leak and panic are clean.
+// CHANNEL: the native exit — the control refuses the tuple's text member.
+
+struct P { k: integer }
+
+fn g1() -> iterator<(integer, text)> { yield (5, "p"); yield (6, "qq"); }
+fn g2(n: integer) -> iterator<(integer, text)> { for i in 0..n { yield (i, "t{i}x"); } }
+fn g3() -> iterator<(text, integer, text)> { yield ("ab", 1, "c"); yield ("", 2, "defg"); }
+fn g4() -> iterator<(text, P)> { yield ("hi", P { k: 7 }); yield ("yo!", P { k: 8 }); }
+fn g5() -> iterator<(integer, text)> { yield from g2(2); yield (9, "nine"); }
+fn g6() -> iterator<(integer, text)> { for i in 0..3 { yield (i, "{i}" + "abcdefghijklmnopqrstuvwxyz0123456789"); } }
+
+fn main() {
+  s1 = 0; for (a1, b1) in g1() { s1 += a1 * 10 + len(b1) }
+  assert(s1 == 113, "straight-line yields: {s1}");
+  s2 = ""; for (a2, b2) in g2(3) { s2 += "{a2}{b2};" }
+  assert(s2 == "0t0x;1t1x;2t2x;", "from a loop: {s2}");
+  s3 = ""; for (a3, b3, c3) in g3() { s3 += "{a3}|{b3}|{c3};" }
+  assert(s3 == "ab|1|c;|2|defg;", "text first and last, one empty: {s3}");
+  s4 = 0; for (t4, p4) in g4() { s4 += len(t4) * 10 + p4.k }
+  assert(s4 == 65, "beside a record: {s4}");
+  s5 = ""; for (a5, b5) in g5() { s5 += "{a5}{b5};" }
+  assert(s5 == "0t0x;1t1x;9nine;", "through yield from: {s5}");
+  s6 = ""; for (a6, b6) in g2(10) { if a6 == 2 { break }; s6 += b6 }
+  assert(s6 == "t0xt1x", "left early: {s6}");
+  it = g1(); x = next(it); y = next(it);
+  assert("{x.0}{x.1} {y.0}{y.1}" == "5p 6qq", "by next(): {x.0}{x.1} {y.0}{y.1}");
+  s8 = 0; for (a8, b8) in g6() { s8 += len(b8) }
+  assert(s8 == 111, "longer texts: {s8}");
+}

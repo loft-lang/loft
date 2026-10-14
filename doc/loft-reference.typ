@@ -1346,7 +1346,7 @@ Written with the '?' on purpose: it keeps compiling whatever numbers a reader pu
 
 === Division by zero — produces null and keeps running
 
-Most languages crash on division by zero.  Loft does NOT: a divide (or modulo) by zero is uncomputable, so it produces null and execution CONTINUES — the spreadsheet model, where one bad cell shows an error but the rest still recalculate.  This holds the same everywhere (development, test, and production) — one bad calculation never halts the run. Where the divisor is a literal zero in your source, loft can see it before the program runs and warns (next section). Where it is only zero at RUN time there is no warning — you get null, and when loft knows the reason it prints it, so a bare '{12 / a}' shows 'null(/0)' rather than a bare 'null'. Recover with '??', or test the result for null: nothing else tells you, so a divide whose divisor could be zero is one you handle rather than one you are reminded about.
+Most languages crash on division by zero.  Loft does NOT: a divide (or modulo) by zero is uncomputable, so it produces null and execution CONTINUES — the spreadsheet model, where one bad cell shows an error but the rest still recalculate.  This holds the same everywhere (development, test, and production) — one bad calculation never halts the run. Where the divisor is a literal zero in your source, loft can see it before the program runs and warns (next section). Where it is only zero at RUN time there is no warning — you get null, and '{12 / a}' prints 'null'. Recover with '??', or test the result for null: nothing else tells you, so a divide whose divisor could be zero is one you handle rather than one you are reminded about.
 
 ```rust
   a = 2 * 2;
@@ -1477,13 +1477,13 @@ if !result { ... handle missing value ... }
 
 Even without `?? null`, a bare divide never halts: it yields null and execution continues, the same everywhere — development, test, and production.
 
-The `?? null` is not what makes that safe, and it silences nothing. loft warns about a divisor that is a literal 0 in your source, while READING your code, and it warns whether or not you wrote `?? null`; a divisor that is only zero at RUN time is not warned about at all. What `?? null` changes is the VALUE: loft prints the reason it knows, so an undefended result formats as 'null(/0)', and coalescing it to a plain null throws that reason away. Reach for `?? null` when you want the bare null, and for `?? \<value\>` when you want a number — not to quiet a warning.
+The `?? null` is not what makes that safe, and it silences nothing. loft warns about a divisor that is a literal 0 in your source, while READING your code, and it warns whether or not you wrote `?? null`; a divisor that is only zero at RUN time is not warned about at all. Either way the result is null, and a null prints as 'null'. Reach for `?? \<value\>` when you want a number — not to quiet a warning.
 
 ```rust
   zero = 0;
   assert(!(12 / zero ?? null), "null from division-by-zero is false-like when defended");
-  assert("{12 / zero}" == "null(/0)", "an undefended result carries its reason");
-  assert("{12 / zero ?? null}" == "null", "…and `?? null` trades the reason for a plain null");
+  assert("{12 / zero}" == "null", "an undefended result prints as null");
+  assert("{12 / zero ?? null}" == "null", "…and so does a defended one");
   assert(12 > 0, "positive integer is true");
 ```
 
@@ -2462,14 +2462,14 @@ Write '&' to get a live link where a bind would otherwise copy.
 
 === sizeof
 
-'sizeof(Type)' returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
+'sizeof(Type)' returns the byte size used when the type is stored as a struct field or vector element: fields packed largest first, then padded so the size is a multiple of the largest field's alignment. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
 
 ```rust
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
   assert(sizeof(u8) == 1, "u8: 1 byte (packed)");
   assert(sizeof(u16) == 2, "u16: 2 bytes (packed)");
   assert(sizeof(Colour) == 3, "Colour: 3 × u8 = 3 bytes");
-  assert(sizeof(Area) == 5, "Area: u16 + 3 × u8 = 5 bytes");
+  assert(sizeof(Area) == 6, "Area: u16 + 3 × u8 = 5 bytes, padded to 6");
 }
 ```
 
@@ -3843,11 +3843,10 @@ Free functions: a `pub` one answers to either spelling.
   assert(add(0, -5) == -5, "the same free function, written bare");
 ```
 
-A definition the library did NOT mark `pub` is reachable only through the prefix — `internal\_add(3, 4)` on its own is an unknown function here.
+A definition the library did NOT mark `pub` is not reachable from outside at all — neither `internal\_add(3, 4)` nor `testlib::internal\_add(3, 4)` compiles here; the second answers "`internal\_add` is not `pub` in `testlib`".  A library's surface is its `pub` items, by either spelling.  The library's own `pub` functions still use them:
 
 ```rust
-  assert(testlib::internal_add(3, 4) == 7, "non-pub free function via the prefix");
-  assert(testlib::INTERNAL_LIMIT == 42, "non-pub constant via the prefix");
+  assert(testlib::add(3, 4) == 7, "the pub surface answers");
 ```
 
 Library types work as function parameter types when written with their full namespace prefix in the function signature. A struct with a vector field can be initialised via a struct literal, including elements that are themselves library structs.
@@ -5014,11 +5013,10 @@ Both parse forms report. 'json\_errors()' holds the LAST parse's diagnostics and
 if json_errors() != "" { log_warn(json_errors()); }
 ```
 
-'record\#errors' is the same answer scoped to one parsed value, and the READ clears it:
+'record\#errors' answers for the 'Type.parse(text)' that built that record, as a vector\<text\> with one entry per error. Each parsed record keeps its own:
 
 ```
-errs = user#errors;
-if errs != "" { log_warn(errs); }
+for e in user#errors { log_warn(e); }
 ```
 
 The two parse spellings differ in WHICH HALF of the answer they give, and that is the reason to choose between them:
@@ -5191,9 +5189,8 @@ Four encodings a reader interoperating with another system needs, none of which 
 * a plain enum variant is an OBJECT keyed by the variant name — `Green`
   is `{{"Green":{{}}}}`, not the string `"Green"`;
 * a tuple is an object with `_0`, `_1` … keys, not a JSON array;
-* an absent field is normally LEFT OUT rather than written `null`, and an
-  absent `vector<T>?` is left out too — it is not `[]`, which is the
-  present-but-empty collection and a different value;
+* an absent field is written `null`, an absent `vector<T>?` too — it is
+  not `[]`, which is the present-but-empty collection and a different value;
 * a keyed member of a linked collection group is left out as well, because
   it is an INDEX on the same rows rather than data of its own — and parsing
   the document back rebuilds it from them.
@@ -5205,7 +5202,7 @@ Four encodings a reader interoperating with another system needs, none of which 
   pair = Pair { p: (7, "seven") };
   assert("{pair:j}" == `{{"p":{{"_0":7,"_1":"seven"}}}}`, "a tuple: {pair:j}");
   nothing = Holder { n: 1, rows: null };
-  assert("{nothing:j}" == `{{"n":1}}`, "an absent collection is left out: {nothing:j}");
+  assert("{nothing:j}" == `{{"n":1,"rows":null}}`, "an absent collection is written null: {nothing:j}");
   something = Holder { n: 1, rows: [] };
   assert("{something:j}" == `{{"n":1,"rows":[]}}`, "an empty one is not: {something:j}");
   assert(Holder.parse("{nothing:j}").rows == null, "absent comes back absent");
@@ -5374,38 +5371,31 @@ fn test_combined_bounds() {
 
 === Your own types under a bound
 
-The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does. The names are the operators' own, not the symbols:
+The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does.  An operator is an `operator` method — written with the keyword `operator` where a function has `fn` — named for what it does:
 
 ```
-Ordered    fn OpLt(self: T, other: T) -> boolean      (`<`)
-Equatable  fn OpEq(self: T, other: T) -> boolean      (`==`)
-Addable    fn OpAdd(self: T, other: T) -> T           (`+`)
-Numeric    fn OpMul(self: T, other: T) -> T           (`*`)
-           fn OpMin(self: T) -> T                     (unary `-`)
-Subtractable fn OpMin(self: T, other: T) -> T        (binary `-`)
-Scalable   fn scale(self: T, factor: integer) -> integer
-Printable  fn to_text(self: T) -> text
-Walkable   fn children(self: T) -> vector<T>
+Ordered      operator compare(self: T, other: T) -> Ordering   (`<` `<=` `>` `>=`)
+Addable      operator plus(self: T, other: T) -> T            (`+`)
+Subtractable operator minus(self: T, other: T) -> T           (binary `-`)
+Numeric      operator times(self: T, other: T) -> T           (`*`)
+             operator negate(self: T) -> T                    (unary `-`)
+Scalable     fn scale(self: T, factor: integer) -> integer
+Printable    operator to_text(self: T) -> text
+Walkable     fn children(self: T) -> vector<T>
 ```
 
-`Equatable` is the exception: every type satisfies it, because `==` compares what two values hold — a struct field by field.  Define `OpEq` only when equality should mean something else.
+`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type, because `==` compares what two values hold — a struct field by field — unless the type defines `operator equals`.
 
-The same definition serves the bare operator: once `Money` has `OpLt`, both `a \< b` and `\<T: Ordered\>` work on it. Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL site, because that is where the concrete type is known.
+The same definition serves the bare operator: once `Money` has `compare`, both `a \< b` and `\<T: Ordered\>` work on it.  Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing `operator compare(self: Money, other: Money) -\> Ordering`" — at the CALL site, because that is where the concrete type is known.
 
 ```rust
 struct Money { cents: integer }
-fn OpLt(self: Money, other: Money) -> boolean { self.cents < other.cents }
-fn OpEq(self: Money, other: Money) -> boolean { self.cents == other.cents }
-fn OpAdd(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
-fn to_text(self: Money) -> text { "{self.cents}c" }
-```
-
-Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
-
-```rust
-fn OpMin(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
-fn OpMin(self: Money) -> Money { Money { cents: 0 - self.cents } }
-fn OpMul(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
+operator compare(self: Money, other: Money) -> Ordering { self.cents.compare(other.cents) }
+operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
+operator minus(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+operator negate(self: Money) -> Money { Money { cents: 0 - self.cents } }
+operator times(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
+operator to_text(self: Money) -> text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -5413,7 +5403,7 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap < dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
-  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no operator");
   assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
@@ -5463,7 +5453,7 @@ A generic may declare several variables, and one no argument binds may be bound 
 
 ```rust
 struct Tile { height: integer, name: text }
-fn to_text(self: Tile) -> text { self.name }
+operator to_text(self: Tile) -> text { self.name }
 struct Grid<T> { w: integer, cells: vector<T> }
 fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
   out: vector<U> = [];
@@ -6431,6 +6421,16 @@ Combine patterns with `|` to share the same arm body.
   assert(axis == "vertical", "multi-pattern: {axis}");
 ```
 
+`|` joins variant NAMES.  To bind fields in several variants with one arm, list the whole patterns separated by `,` instead: each pattern binds from its own variant, and the arm body runs for whichever one matched.  A name every pattern binds must have the same type in each; a name only some patterns bind is nullable in the body, `null` when a pattern without it matched.
+
+```rust
+  long_side = match Rect { w: 3, h: 8 } {
+    Circle { radius }, Rect { h: radius } => radius,
+    _ => 0,
+  };
+  assert(long_side == 8, "a field bound from either variant: {long_side}");
+```
+
 === Tuple patterns
 
 A tuple subject matches element by element.  Write `\_` for an element you do not care about.
@@ -6760,12 +6760,12 @@ A zero pad is for numbers, and `null` is not one, so it pads with spaces.
   assert("{absent:08}" == "    null", "`null` is never zero-padded");
 ```
 
-An operation inside a hole that cannot produce a value yields null rather than stopping the program, and the text says which fault it was.  Building a message — a log line, an error report — can therefore never itself fail.
+An operation inside a hole that cannot produce a value yields null rather than stopping the program, and the null prints as `null`.  Building a message — a log line, an error report — can therefore never itself fail.
 
 ```rust
   top = 5;
   bottom = 0;
-  assert("{top / bottom}" == "null(/0)", "a division by zero names its cause");
+  assert("{top / bottom}" == "null", "a division by zero prints null");
 ```
 
 === Character format
@@ -6978,7 +6978,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 72 of the 88 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 77 of the 91 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -7015,7 +7015,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F29\*\* — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness
 - \*\*\@F30\*\* — `is` variant check (+ field capture)
 - \*\*\@F31\*\* — `break` / `continue` + labelled forms
-- \*\*\@F32\*\* — Custom iterators via `fn next(self) -\> T?`
+- \*\*\@F32\*\* — Custom iterators via `operator next(self) -\> T?`
 - \*\*\@F33\*\* — `par(...)` parallel for-loop
 - \*\*\@F34\*\* — Coroutines / generators — `yield`, `yield from`
 - \*\*\@F35\*\* — String literals — `{expr}` interpolation + backtick multiline
@@ -7064,14 +7064,17 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F111\*\* — `for f in s\#fields` — a compile-time loop over a struct's scalar fields
 - \*\*\@F112\*\* — `store\_release()` — say a record is finished, and stop holding it in memory
 - \*\*\@F113\*\* — Associated types — an interface names a companion type
-- \*\*\@F114\*\* — `x\[i\]` on a library type — `OpIndex` dispatch
+- \*\*\@F114\*\* — A library type reads an element through a named method — `\[…\]` is the built-in collections'
 - \*\*\@F115\*\* — `OpDrop` — a type runs code when its scope lets it die
 - \*\*\@F118\*\* — Time (now / ticks)
 - \*\*\@F119\*\* — Store locks (\#lock)
-- \*\*\@F120\*\* — Lexer library (lib/lexer)
-- \*\*\@F121\*\* — Parser library (lib/parser)
+- \*\*\@F120\*\* — Lexer in loft (lib/lexer.loft) — part of the loft-in-loft front end, not a user library yet
+- \*\*\@F121\*\* — Parser in loft (lib/parser.loft) — part of the loft-in-loft front end, not a user library yet
 - \*\*\@F122\*\* — Multiple dispatch — one name, a definition per combination of parameter types
 - \*\*\@F123\*\* — Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view
+- \*\*\@F124\*\* — Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided\_by`, `remainder`, `to\_\<type\>`
+- \*\*\@F125\*\* — Text slicing — `s\[a..b\]`, `s\[a..\]`, `s\[..b\]`, `s\[i\]` (byte offsets; `char\_slice` for characters)
+- \*\*\@F126\*\* — A store's failure arm — `place = value else { … }` runs when the write did not land
 
 === Tooling and infrastructure
 
@@ -7857,53 +7860,62 @@ pub type u32 = integer limit(0, 4294967294) size(4)
 
 4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain `integer` holds the whole 0..2^32-1 range and more.
 
+```rust
+pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}
+```
+
+Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.
+
 == Interfaces
 
 ```rust
 pub interface Ordered {
-  op < (self: Self, other: Self) -> boolean
+  operator compare(self: Self, other: Self) -> Ordering
 }
 ```
 
-Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.
+Standard interfaces for bounded generic functions. A type satisfies an interface by defining the `operator` method or the method it names — a built-in type by the stdlib's own, a program's type by its own (`formal/operators.md`). Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.
 `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false \< true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) \< (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.
-ONE method is all a type has to define: inside a generic bounded by this, `\>`, `\<=` and `\>=` all derive from `\<` — `a \> b` is `b \< a`, `a \<= b` is `!(b \< a)`, `a \>= b` is `!(a \< b)`.  Each evaluates its operands exactly once.
+ONE method is all a type has to define: inside a generic bounded by this, `\<`, `\<=`, `\>` and `\>=` all read it, each evaluating its operands exactly once.
 
 ```rust
 pub interface Equatable {
-  op == (self: Self, other: Self) -> boolean
 }
 ```
 
-Types that support the `==` equality operator: every type (\@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.
-`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
+Types that support the `==` equality operator: every type, compared by content at every depth (\@C91).  `==` is always structural and no type redefines it, so this declares nothing; a deep comparison of a type's own is a named method.  A tuple compares element by element, as its concrete `==` does.
+`!=` derives from it (`a != b` is `!(a == b)`).
 
 ```rust
 pub interface Addable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 ```
 
-Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.
+Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and any type defining `operator plus`.
 
 ```rust
 pub interface Numeric {
-  op * (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator times(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 ```
 
-Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.
-Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.
+Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and any type defining `operator times` and `operator negate`.
+Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every type that meets it, which a compatible release may not do.
 
 ```rust
 pub interface Subtractable {
-  op - (self: Self, other: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
 }
 ```
 
-Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
+Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining `operator minus`.
+A bound of its own rather than a third requirement on `Numeric`, so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces.  The built-in number types satisfy both.
 
 ```rust
 pub interface Scalable {
@@ -7911,15 +7923,15 @@ pub interface Scalable {
 }
 ```
 
-Types that support integer scaling via a `scale` method. Uses a method (not `op \*`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `op \* (self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
+Types that support integer scaling via a `scale` method. Uses a method (not `operator times`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `operator times(self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
 
 ```rust
 pub interface Printable {
-  fn to_text(self: Self) -> text
+  operator to_text(self: Self) -> text
 }
 ```
 
-Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `fn to\_text(self: T) -\> text`.
+Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `operator to\_text(self: T) -\> text`.
 
 == Math
 
@@ -8224,6 +8236,138 @@ pub fn clamp(self: float, lo: float, hi: float) -> float
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
+pub fn then(self: Ordering, next: Ordering) -> Ordering
+```
+
+This answer, or `next` when this one is `Equal`: compares by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`.
+
+```rust
+pub operator compare(self: integer, other: integer) -> Ordering
+```
+
+Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `\<` uses.
+
+```rust
+pub operator compare(self: single, other: single) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
+pub operator compare(self: float, other: float) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
+pub operator plus(self: integer, other: integer) -> integer
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: integer, other: integer) -> integer
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: integer, other: integer) -> integer
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: integer) -> integer
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: integer, other: integer) -> integer?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: integer, other: integer) -> integer?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
+pub operator plus(self: single, other: single) -> single
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: single, other: single) -> single
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: single, other: single) -> single
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: single) -> single
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: single, other: single) -> single?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: single, other: single) -> single?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
+pub operator plus(self: float, other: float) -> float
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: float, other: float) -> float
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: float, other: float) -> float
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: float) -> float
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: float, other: float) -> float?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: float, other: float) -> float?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
 pub fn approx(self: float, b: float, eps: float) -> boolean
 ```
 
@@ -8256,6 +8400,18 @@ pub fn len(self: character) -> integer
 ```
 
 Byte length of the character's UTF-8 encoding (1–4).
+
+```rust
+pub operator compare(self: text, other: text) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses: by bytes, as `\<` compares text.
+
+```rust
+pub operator compare(self: character, other: character) -> Ordering
+```
+
+Where `self` stands against `other`, by code point, in the order `\<` uses.
 
 ```rust
 pub fn split(self: text, separator: character) -> vector<text>
@@ -8361,6 +8517,12 @@ pub fn size(self: const hash) -> integer
 
 The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 
+```rust
+pub fn size(self: const index) -> integer
+```
+
+The byte footprint of an index: its B+tree's node arena, room included. Allocation-local, as `size` of a hash: the element records live in separate allocations and are not counted.  Grows in steps as the arena doubles.  0 for an empty (unallocated) index.
+
 == Output and Diagnostics
 
 ```rust
@@ -8374,6 +8536,12 @@ pub fn panic(message: text, file: text, line: integer)
 ```
 
 Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry and execution continues. The file and line are injected by the compiler; do not pass them manually.
+
+```rust
+pub fn exit(code: integer)
+```
+
+Ends the program at once with exit status `code`, as a shell's `exit` does: what was printed is flushed, nothing more is printed, and no diagnostic names the line — a script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a message).  Under `loft test` it ends the test instead, as a failure that names the code.
 
 ```rust
 pub fn log_info(message: text, file: text, line: integer)
@@ -8430,12 +8598,30 @@ pub fn len(self: const spatial) -> integer
 Number of elements in a spatial (radix / Morton tree) collection.
 
 ```rust
+pub fn size(self: const spatial) -> integer
+```
+
+The byte footprint of a spatial index: its tree's node array, room included. Allocation-local, as `size` of a hash: the element records are not counted.  0 for an empty (unallocated) one.
+
+```rust
 pub fn len(self: const trie) -> integer
 ```
 
 Number of elements in the trie.
 
+```rust
+pub fn size(self: const trie) -> integer
+```
+
+The byte footprint of a trie: its tree's node array, room included. Allocation-local, as `size` of a hash: the element records are not counted.  0 for an empty (unallocated) one.
+
 == Vector aggregates
+
+```rust
+pub fn contains < T: Equatable > (self: const vector<T>, value: T) -> boolean
+```
+
+Does the vector hold `value`?  Compared by content, as `==` compares every type; the empty vector holds nothing.  The membership test a script asks of a list of names — `changed.contains(path)` — beside `text`'s own `contains`.
 
 ```rust
 pub fn min_of < T: Ordered > (v: const vector<T>) -> T?
@@ -8478,6 +8664,30 @@ pub fn sort < T: Ordered > (self: vector<T>)
 ```
 
 Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
+
+```rust
+pub fn sort_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K)
+```
+
+Sort a vector in place by a key, ascending: `v.sort\_by(fn(d: Date) -\> integer { d.ms })`. The key is any `Ordered` value — a number or a `text` — so this is how a struct sorts (C132).  Stable, like `sort`: elements with equal keys keep their order.  `key` is called once per element.
+
+```rust
+pub fn min_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T?
+```
+
+The element with the smallest key, or null when the vector is empty: `v.min\_by(fn(d: Date) -\> integer { d.ms })`.  Of several with that key, the FIRST.
+
+```rust
+pub fn max_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T?
+```
+
+The element with the largest key, or null when the vector is empty: `v.max\_by(fn(d: Date) -\> integer { d.ms })`.  Of several with that key, the FIRST.
+
+```rust
+pub fn sum_by < T, K: Addable > (self: vector<T>, key: fn(T) -> K, init: K? = null) -> K
+```
+
+The sum of a key over the elements: `v.sum\_by(fn(o: Order) -\> float { o.price })`.  The key is any `Addable` value; `init` is the identity to start from, and left out it is the key type's own zero (0, 0.0), so an empty vector sums to it.
 
 ```rust
 pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T>
@@ -8553,8 +8763,8 @@ Wraps a field value in a type-discriminated enum for compile-time field iteratio
 
 ```rust
 pub struct StructField {
-  name: text,
-  value: FieldValue,
+  pub name: text,
+  pub value: FieldValue,
   // Was the field DECLARED nullable (`text?` rather than `text`)?
   //
   // The payload variants above are typed non-null, and `τ?` shares `τ`'s
@@ -8565,44 +8775,44 @@ pub struct StructField {
   //
   // Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:
   // the two field lists describe the same declaration and must agree.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 ```
 
 Represents a single struct field during compile-time iteration.
 
 ```rust
-pub fn to_text(self: integer) -> text
+pub operator to_text(self: integer) -> text
 ```
 
 Converts an integer to its decimal text. Built-in types define `to\_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).
 
 ```rust
-pub fn to_text(self: float) -> text
+pub operator to_text(self: float) -> text
 ```
 
 Converts a float to its text representation.
 
 ```rust
-pub fn to_text(self: single) -> text
+pub operator to_text(self: single) -> text
 ```
 
 Converts a single-precision float to its text representation.
 
 ```rust
-pub fn to_text(self: boolean) -> text
+pub operator to_text(self: boolean) -> text
 ```
 
 Converts a boolean to "true" or "false".
 
 ```rust
-pub fn to_text(self: character) -> text
+pub operator to_text(self: character) -> text
 ```
 
 Converts a character to a one-character text.
 
 ```rust
-pub fn to_text(self: text) -> text
+pub operator to_text(self: text) -> text
 ```
 
 Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.
@@ -8613,8 +8823,8 @@ Types and functions for reading and writing files. A File value is obtained via 
 
 ```rust
 pub struct EnvVariable {
-  name: text,
-  value: text,
+  pub name: text,
+  pub value: text,
 }
 ```
 
@@ -8653,14 +8863,14 @@ True when the result is `FileResult.Ok`. Use to test a file op for success.
 
 ```rust
 pub struct File {
-  path: text,
+  pub path: text,
 
-  size: integer,
+  pub size: integer,
 
   // A fresh File reads as `NotExists` until `file()` has determined the real format for
   // the path, so this default is a placeholder rather than a claim about the path — it is
   // overwritten before any read.
-  format: Format = NotExists,
+  pub format: Format = NotExists,
 
   ref: i32?,
 
@@ -8690,13 +8900,13 @@ Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Wi
 pub fn path_sep() -> character
 ```
 
-Returns the platform path separator character: '\\' on Windows, '/' elsewhere. Detected once at startup from the runtime filesystem, and fixed for the lifetime of the process.
+The separator of a loft path: '/' on every platform.  A path a program hands loft may also use '\\' (it reads as '/'), and every path loft hands back uses '/'.
 
 ```rust
 pub fn file(path: text) -> File fs#read
 ```
 
-Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.
+Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way. A path means the same on every platform: `/` and `\\` both separate; a name no platform could hold (`a:b`, `q?`, `aux.txt`, a trailing dot or space) is refused everywhere; a name means its exact spelling, so `B.txt` beside `b.txt` is refused. A refused path answers like a missing one, and is logged once.
 
 ```rust
 pub fn exists(path: text) -> boolean fs#read
@@ -8774,7 +8984,7 @@ Returns the entries inside a directory, sorted by path — the same order as `li
 pub fn write(self: File, v: text) -> FileResult fs#update
 ```
 
-Writes v as UTF-8 text to the file, overwriting existing content.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (`f.write(s)` as a statement) are unaffected; check with `f.write(s).ok()` or match the result.
+Writes v as UTF-8 text at the file's position: the first write through a File replaces the file's content, later ones follow it.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (`f.write(s)` as a statement) are unaffected; check with `f.write(s).ok()` or match the result.
 
 == Binary file I/O
 
@@ -8785,10 +8995,10 @@ pub fn read_bytes(path: text) -> vector<u8> ?fs#read
 Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `\[\]`); discharge with `?? \[\]` to keep the old shape.  Binary-exact (round-trips with write\_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.
 
 ```rust
-pub fn file_map(path: text) -> vector<u8> ?fs#read
+pub fn file_map(path: text) -> const vector<u8> ?fs#read
 ```
 
-Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. A WRITE, to it or a slice, is refused at run time: copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
+Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. The vector is `const`: a WRITE, to it or a slice, is refused when the program is compiled — copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
 
 ```rust
 pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update
@@ -9316,12 +9526,12 @@ Build a one-character text from a Unicode CODE POINT — the inverse of the `ch 
 pub enum ArgValue {
   NullVal,
   BoolVal { b: boolean },
-  IntVal { n: integer },
-  LongVal { n: integer },
+  IntVal { pub n: integer },
+  LongVal { pub n: integer },
   FloatVal { f: float },
   SingleVal { f: single },
   CharVal { c: character },
-  TextVal { t: text },
+  TextVal { pub t: text },
   RefVal { store: integer, rec: integer, pos: integer },
   FnVal { d_nr: integer },
   OtherVal { description: text },
@@ -9332,9 +9542,9 @@ Typed union of inspectable argument/variable values. Each variant wraps one prim
 
 ```rust
 pub struct ArgInfo {
-  name: text,
-  type_name: text,
-  value: ArgValue,
+  pub name: text,
+  pub type_name: text,
+  pub value: ArgValue,
 }
 ```
 
@@ -9342,9 +9552,9 @@ One function argument in a stack frame.
 
 ```rust
 pub struct VarInfo {
-  name: text,
+  pub name: text,
   type_name: text,
-  value: ArgValue,
+  pub value: ArgValue,
 }
 ```
 
@@ -9352,11 +9562,11 @@ One local variable or parameter in a stack frame (see `stack\_trace`).
 
 ```rust
 pub struct StackFrame {
-  function: text,
+  pub function: text,
   file: text,
-  line: integer,
-  arguments: vector<ArgInfo>,
-  variables: vector<VarInfo>,
+  pub line: integer,
+  pub arguments: vector<ArgInfo>,
+  pub variables: vector<VarInfo>,
 }
 ```
 
@@ -9390,8 +9600,8 @@ pub enum JsonValue {
   JBool { value: boolean },
   JNumber { value: float },
   JString { value: text },
-  JArray { items: vector<JsonValue> },
-  JObject { fields: vector<JsonField> },
+  JArray { pub items: vector<JsonValue> },
+  JObject { pub fields: vector<JsonField> },
   JInteger { value: integer },
 }
 ```
@@ -9401,8 +9611,8 @@ Typed union of JSON values.  The discriminant (1..7) picks the active variant; v
 
 ```rust
 pub struct JsonField {
-  name: text,
-  value: JsonValue,
+  pub name: text,
+  pub value: JsonValue,
 }
 ```
 
@@ -9598,19 +9808,19 @@ These are STORAGE kinds, because storage is what the descriptor records. A narro
 
 ```rust
 pub struct FieldInfo {
-  name: text,
+  pub name: text,
   /// The field type's name, as the store records it.
-  type_name: text,
+  pub type_name: text,
   /// Byte offset of the field within its record.
-  position: integer,
-  kind: TypeKind,
+  pub position: integer,
+  pub kind: TypeKind,
   /// Was the field DECLARED nullable (`text?` rather than `text`)?
   ///
   /// Not a layout fact — a nullable field occupies the same bytes and spells an
   /// absent value with a sentinel — so nothing in the stored bytes implies it,
   /// and it reaches you only because the compiler records it. It is what a
   /// generated `CREATE TABLE` needs for `NOT NULL`.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 ```
 
@@ -9635,19 +9845,19 @@ WHICH keyed collection a type is — the shape of its lookup.
 
 ```rust
 pub struct KeyInfo {
-  name: text,
+  pub name: text,
   /// Byte offset of this field within the ELEMENT record — the same number the
   /// element type's `FieldInfo.position` carries, so a caller joins the two by
   /// VALUE rather than by matching names. A name is a display fact; the
   /// position is what the collection actually keys on.
-  position: integer,
+  pub position: integer,
   /// Does the collection order this key ascending?
   ///
   /// `true` for a kind that has no order of its own (`hash`, `radix`), and for a
   /// `trie`, whose single key IS ordered ascending by byte. Only a kind that can
   /// be declared descending ever answers `false`. Match `collection` first where the
   /// difference between "ascending" and "unordered" matters.
-  ascending: boolean,
+  pub ascending: boolean,
 }
 ```
 
@@ -9655,9 +9865,9 @@ One key field of a keyed collection.
 
 ```rust
 pub struct VariantInfo {
-  name: text,
+  pub name: text,
   /// The discriminant this variant is stored as. Never 0 — 0 means absent.
-  tag: integer,
+  pub tag: integer,
 }
 ```
 
@@ -9665,16 +9875,16 @@ One variant of an enum.
 
 ```rust
 pub struct TypeInfo {
-  name: text,
-  kind: TypeKind,
+  pub name: text,
+  pub kind: TypeKind,
   /// Bytes one record of this type occupies; 0 for a type with no record.
-  size: integer,
-  const fields: vector<FieldInfo>,
-  const variants: vector<VariantInfo>,
+  pub size: integer,
+  pub const fields: vector<FieldInfo>,
+  pub const variants: vector<VariantInfo>,
   /// For a vector or a keyed collection, the element type's name.
-  element: text,
+  pub element: text,
   /// For a keyed collection, which of the six it is; `NotKeyed` otherwise.
-  collection: CollectionKind,
+  pub collection: CollectionKind,
   /// The key fields of a keyed collection, in KEY ORDER — the order a composite
   /// lookup binds them in, which is why it is a vector and not a set.
   ///
@@ -9683,7 +9893,7 @@ pub struct TypeInfo {
   /// keys through its `Some` payload. Empty rather than partial is deliberate —
   /// a query built from half a composite key is a WRONG query, not a narrower
   /// one, so a key list is delivered whole or not at all.
-  const keys: vector<KeyInfo>,
+  pub const keys: vector<KeyInfo>,
 }
 ```
 
@@ -9715,7 +9925,7 @@ Unlike `type\_of`, no parser intercept: the name is a RUNTIME value, so the look
 pub struct ValueInfo {
   /// What the type's own descriptor says lives at that position — never what
   /// the caller expected to find there.
-  kind: TypeKind,
+  pub kind: TypeKind,
   /// The SCALAR at that position holds loft's NULL.
   ///
   /// Separate from the payload because a null is not a value a payload can
@@ -9726,10 +9936,10 @@ pub struct ValueInfo {
   /// `false` for a `kind` that has no scalar reading and for `OtherKind` — a
   /// field that was never read is not a field that read as null, and those are
   /// three answers rather than two.
-  is_null: boolean,
-  i: integer,
-  f: float,
-  t: text,
+  pub is_null: boolean,
+  pub i: integer,
+  pub f: float,
+  pub t: text,
 }
 ```
 

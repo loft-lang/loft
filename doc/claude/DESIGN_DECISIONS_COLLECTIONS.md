@@ -13,8 +13,10 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 
 ## C68 — Keyed collections dedup on insert (`+=` AND `coll[key]=value`)
 
-**Decision.** On a `hash`, `sorted` or `index`, both `coll += [entry]` and `coll[key] = value`
-replace an existing entry with the same key — the latest insert wins, and `len` counts keys.
+**Decision.** On a `hash`, `sorted`, `index` or `trie`, both `coll += [entry]` and
+`coll[key] = value` replace an existing entry with the same key — the latest insert wins, and
+`len` counts keys.  A `spatial` is the exception: its key is a POINT, two records may share one,
+and a box query answers both (formal/collections.md `(Col-Insert)`).
 **Why.** A keyed collection promises key uniqueness; the world-chunk index needs an insert at an
 occupied coordinate to replace, not stack a shadowed duplicate.
 
@@ -67,10 +69,10 @@ table's width changes for another reason.  Decided 2026-08-10 — [record](DESIG
 **Decision.** A second `index` field with the same element type and key in one struct (or enum
 variant) is a compile error at the declaration (`Parser::reject_duplicate_index`), naming the cures:
 another kind (`hash` or `sorted`) over the same records, or another key; a different key, struct or
-kind stays legal.  **Why.** An index keeps its tree links in the element record, allocated per index
-TYPE, so two same-key fields are one tree through two roots and the first removal corrupts it.
-Separate storage needs a schema id per field across four layers, and buys nothing: a second same-key
-index answers what the first does.
+kind stays legal.  **Why.** Two keyed fields over one element type in one struct are two routes to ONE
+record set (`(Col-Group)`), so a second `index` on the same key answers exactly what the first does
+and costs a second tree to keep in step.  (Each index now keeps its tree in its own arena, @C147, so
+the refusal no longer guards storage; it stands on this ground alone.)
 
 **Revisit when.** A consumer needs two same-key indexes with genuinely different behaviour; a
 filtered index would arrive as its own kind.  Decided 2026-08-14 — [record](DESIGN_DECISIONS-history.md#c113--two-index-collections-over-one-element-type-and-key-are-refused-not-made-to-work).
@@ -112,3 +114,47 @@ question is which store the record joins, and an absent collection has one sensi
 `advice` note, not an error.  Decided 2026-09-07 (loft#1434) — [record](DESIGN_DECISIONS-history.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined).
 Holds at `(Col-Insert-Absent)`, [formal/collections.md](formal/collections.md).
 **Catalogue:** @F1 (null model), @F38.
+
+## C146 — A hash table's bucket count is a power of two
+
+**Decision.** Every hash table loft sizes has a power-of-two bucket count: it starts at 16,
+grows by doubling, and a `reserve` rounds up to the next power of two past the load trigger.
+The home bucket stays `digest mod count`, and for a power of two it is computed as a mask.
+**Why.** The count is chosen by loft, so it can be chosen cheap to divide — the division was
+7–10 % of a lookup, on its critical path.  The placement formula does not change, so a store
+written before keeps loading: its non-power-of-two tables take the division, are re-sized to a
+power of two at their next growth, and no `placement::HASH` bump refuses them.  A
+multiply-shift reduction and a per-table reciprocal were the alternatives; both move every
+stored entry.  The price is memory: a reserved table rounds up as a grown one does, so its
+bucket array (4 bytes a slot) can be up to twice what an exact reserve took.
+**Revisit when.** A placement change is made for another reason (`placement::HASH` bumped):
+then the division's fallback for older tables can go with it.  Decided 2026-10-11 (owner) —
+[record](DESIGN_DECISIONS-history.md#c146--a-hash-tables-bucket-count-is-a-power-of-two).
+**Holds at:** `@C146` — `hash::home_bucket` and `hash::room_for_buckets` (`src/hash.rs`), the
+paged reader's two placements (`src/paged_reader.rs`), `formal/collections.md` `(Col-Bucket)`,
+guard `tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft`.
+**Catalogue:** BOTH_BACKEND_SWITCHES.md `LOFT_NO_POW2_BUCKETS`.
+
+## C147 — An `index` is a B+tree of key parts and record numbers, kept apart from the records
+
+**Decision.** `index<T[k…]>` is a B+tree in an arena record of its own (`src/btree.rs`).  A node
+holds 16 slots, each an 8-byte KEY PART (the first key field as an order-preserving integer: the
+integer, a float's total-order bits, a text's leading bytes) beside a record number; a part tie
+reads the record.  A text index's node whose parts commonly tie keeps its keys' shared prefix (up
+to 24 bytes) and takes its parts past it.  The element record carries nothing for the index.
+**Why.** The owner's point: the records are already there with their keys, so the tree needs only
+enough of each key to steer — and a node of parts is a few cache lines a descent scans, where a
+tree threaded through the records reads a different record per level.  It made fill and lookup
+2–3.6× faster than the red-black tree it replaced (integer keys within 1.1–1.8× of Rust's
+`BTreeMap`; text keys sharing long prefixes at or below it), `len` O(1), and every indexed record
+9 bytes smaller.  A copy of the whole key in the node was priced and gave no gain over the part;
+a walk that holds a slot position instead of a record was declined (a loop body may remove other
+records by key mid-walk, which moves slots): it holds the record and takes a verified per-thread
+hint, at the red-black tree's walk speed.
+**Revisit when.** A walk costs a routine more than its lookups (the position cursor, guarded by a
+structural version, is the alternative), or text keys share more than 24 bytes in bulk.  Decided
+2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c147--an-index-is-a-btree-of-key-parts-and-record-numbers-kept-apart-from-the-records).
+**Holds at:** `@C147` — `src/btree.rs` (`record_part`, `fit_text`, `step_record`),
+`placement::INDEX` = 2 (`src/placement.rs`), `formal/collections.md` `(Col-Index)`, guard
+`tests/btree.rs` (the tree against a sorted model; a walk under removals).
+**Catalogue:** @F9 (`index<T[keys]>`) · @PLN190.

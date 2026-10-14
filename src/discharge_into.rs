@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! `@FR-R-DischargeInto` — a text discharge that assigns a local is read straight into that
 //! local, decided in the IR phase for both backends.

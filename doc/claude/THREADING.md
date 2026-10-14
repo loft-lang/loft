@@ -3,7 +3,7 @@
 
 ## Contents
 - [Current State](#current-state)
-- [`fn` Expression](#fn-expression)
+- [Function References](#function-references)
 - [`parallel_for` Call Rewriting](#parallel_for-call-rewriting)
 - [Runtime](#runtime)
 - [Compiler Validation Summary](#compiler-validation-summary)
@@ -15,7 +15,7 @@
 
 The public API for parallel execution is the `par(...)` for-loop clause.  The internal functions `parallel_for_int`, `parallel_for`, and `parallel_get_*` are declared without `pub` in `default/01_code.loft` and must not be called directly from user code.
 
-Function references (`fn <name>`) are now fully first-class (T1-1 complete): they can be stored in variables of type `fn(T) -> R`, passed as parameters, and called directly via `f(args)`. See the [`fn` Expression](#fn-expression) section for details.
+A function is passed as a value by its bare name (`double_score`), or written in place as a lambda (`|x| { … }`, or `fn(x: T) -> R { … }` where the parameter types cannot be inferred). Such a value can be stored in a variable of type `fn(T) -> R`, passed as a parameter, and called directly via `f(args)`. See [Function References](#function-references).
 
 ### `par(...)` Parallel For-Loop (public API)
 
@@ -45,12 +45,12 @@ Worker rules: see `par(...)` Parallel For-Loop Syntax below.
 
 ---
 
-## `fn` Expression
+## Function References
 
-A `fn <name>` expression in value position produces a `Type::Function(args, ret)` value.  The runtime representation is the definition number (`d_nr`) stored as an `i32`.
+A function's bare name in value position produces a `Type::Function(args, ret)` value. Writing `fn <name>` there is refused (*"Use the function name directly, without 'fn' prefix"*).  The runtime representation is the definition number (`d_nr`) stored as an `i32`.
 
 ```loft
-f = fn double_score;   // type: fn(const Score) -> integer
+f = double_score;      // type: fn(const Score) -> integer
                        // runtime value: d_nr of double_score
 ```
 
@@ -79,7 +79,7 @@ fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
 
 The parser special-cases calls to `parallel_for` in `parse_call` (similar to `assert`).  After collecting the argument list, it calls `parse_parallel_for` which:
 
-1. Verifies `types[0]` is `Type::Function(args, ret)` (produced by `fn <name>`).
+1. Verifies `types[0]` is `Type::Function(args, ret)` (a function's bare name).
 2. Verifies `types[1]` is `Type::Vector(T, _)`.
 3. Checks worker return type is a supported primitive.
 4. Validates extra arg count == worker's extra param count.
@@ -241,9 +241,9 @@ the threads would still have to come from the host — which is what @PLN117 alr
 
 | Check | Location | Error |
 |---|---|---|
-| `fn <name>` names an existing function | `parse_fn_ref` | `"Unknown function '{name}'"` |
-| `fn <name>` resolves to a `DefType::Function` | `parse_fn_ref` | `"'{name}' is not a function"` |
-| First `parallel_for` arg is `Type::Function` | `parse_parallel_for` | `"first argument must be a function reference (use fn <name>)"` |
+| A function reference names an existing function | `parse_fn_ref` | `"Unknown function '{name}'"` |
+| A function reference resolves to a `DefType::Function` | `parse_fn_ref` | `"'{name}' is not a function"` |
+| First `parallel_for` arg is `Type::Function` | `parse_parallel_for` | `"first argument must be a function — pass its name"` |
 | Second arg is `Type::Vector` | `parse_parallel_for` | `"second argument must be a vector"` |
 | Extra arg count matches worker | `parse_parallel_for` | `"wrong number of extra arguments"` |
 | Every captured argument but the element is a scalar | `parse_parallel_worker_fn` | `"captured argument '<c>' is a reference (<T>)…"` |
@@ -325,8 +325,12 @@ for b#index in 0..par_len {
 
 ### Supported return types
 
-`integer`, `float`, `single`, `boolean`, inline `enum`, `text`, and `struct`/reference types.
-Extra context arguments are forwarded to workers: `par(b = scale(a, mult), N)` — here `mult`
+`integer`, `float`, `single`, `boolean`, inline `enum`, `text`, `struct`/reference types,
+`vector<T>`, the keyed collections (`hash`, `sorted`, `index`, `spatial`, `trie`), and the
+nullable form `τ?` of each: a `τ?` worker rides τ's result lane, a `null` it answers
+reaches the body as `null`, and the loop variable keeps the declared `?` (`@FR-N-Shape`; one
+exception to "τ's lane" — a nullable NARROW integer such as `i32?` rides the wide lane, whose
+row carries the stack value's `null`).  Extra context arguments are forwarded to workers: `par(b = scale(a, mult), N)` — here `mult`
 is an extra argument beyond the element `a`.  **An extra context argument must be a SCALAR**
 (`integer` / `float` / `single` / `boolean` / `character` / inline `enum`) — this is load-bearing:
 each extra is pushed to the worker as a raw `i64` (`state/mod.rs` `run_parallel_*`, "Push each
@@ -350,9 +354,9 @@ Element size is computed from `self.database.size(element_type.known_type)` — 
 
 ### Multi-threading Safety
 
-A worker does **not** get a semantically-independent copy of everything to mutate. Captured parent state is **read-only** (@PLN102 C93 — a `ParentWrite` from inside a worker is a compile error, `scopes.rs`), so it is logically **shared**, not owned per-worker; only the worker-mutated stores (the element buffer, the return buffer) need to be per-worker. `Stores::clone_for_light_worker()` implements that: because captured state is *provably unwritten*, a worker **reads the captured stores directly** rather than slicing a large read-only structure into every job. Freed store slots (`.free == true`) are replaced with fresh unlocked `Store::new(100)` instances so that `State::new_worker → Stores::database` can safely re-initialise them without hitting the "Write to locked store" debug assert.
+A worker does **not** get a semantically-independent copy of everything to mutate. Captured parent state is **read-only** (@PLN102 @C93 — a `ParentWrite` from inside a worker is a compile error, `scopes.rs`), so it is logically **shared**, not owned per-worker; only the worker-mutated stores (the element buffer, the return buffer) need to be per-worker. `Stores::clone_for_light_worker()` implements that: because captured state is *provably unwritten*, a worker **reads the captured stores directly** rather than slicing a large read-only structure into every job. Freed store slots (`.free == true`) are replaced with fresh unlocked `Store::new(100)` instances so that `State::new_worker → Stores::database` can safely re-initialise them without hitting the "Write to locked store" debug assert.
 
-**Read-only sharing (@PLN108, shipped 2026-07-17 — interpreter).** The per-worker byte-copy above is pure conservatism: a worker's captured parent state is read-only (@PLN102 C93 — a `ParentWrite` from a worker is a compile error), so every parent store is provably unwritten for the par's lifetime, and the dispatcher joins all workers before the borrowed parent drops. So `run_parallel_discard` / `run_parallel_queue` now **BORROW** the parent stores read-only (`clone_for_light_worker`: shares each store's `ptr`, `read_only:true`, `borrowed:true` ⇒ `Drop` skips dealloc) instead of copying — a copy-elision, no semantic change. There is **exactly ONE clone path** — always the read-only borrow. The original design auto-selected it by heap size (`par_share_for`, a 2 MB threshold, `LOFT_PAR_SHARE=0`/`=1`); the redesign retired both, so no data-dependent switch decides how a `par` shares (`src/parallel.rs`: *"no byte-copy, no size heuristic, no second `thread::scope` dispatcher"*). Net: a par over a large read-only structure no longer pays a copy of the whole session heap per worker (measured flat vs 53× growth). Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) + `read_only` runtime write-panic, and it is **ASan + TSan clean** (a positive-control race fires, so the clean run is non-vacuous). `--native` par is no longer separate: `src/codegen_runtime.rs`'s dispatchers call the same `parallel::parallel_workers` template, so both backends share the borrow.
+**Read-only sharing (@PLN108, shipped 2026-07-17 — interpreter).** The per-worker byte-copy above is pure conservatism: a worker's captured parent state is read-only (@PLN102 @C93 — a `ParentWrite` from a worker is a compile error), so every parent store is provably unwritten for the par's lifetime, and the dispatcher joins all workers before the borrowed parent drops. So `run_parallel_discard` / `run_parallel_queue` now **BORROW** the parent stores read-only (`clone_for_light_worker`: shares each store's `ptr`, `read_only:true`, `borrowed:true` ⇒ `Drop` skips dealloc) instead of copying — a copy-elision, no semantic change. There is **exactly ONE clone path** — always the read-only borrow. The original design auto-selected it by heap size (`par_share_for`, a 2 MB threshold, `LOFT_PAR_SHARE=0`/`=1`); the redesign retired both, so no data-dependent switch decides how a `par` shares (`src/parallel.rs`: *"no byte-copy, no size heuristic, no second `thread::scope` dispatcher"*). Net: a par over a large read-only structure no longer pays a copy of the whole session heap per worker (measured flat vs 53× growth). Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) + `read_only` runtime write-panic, and it is **ASan + TSan clean** (a positive-control race fires, so the clean run is non-vacuous). `--native` par is no longer separate: `src/codegen_runtime.rs`'s dispatchers call the same `parallel::parallel_workers` template, so both backends share the borrow.
 
 ### Example
 
@@ -422,8 +426,16 @@ element folds into a scalar accumulator with no per-iteration
 state):
 
 ```loft
-total = par_fold(items, 0, |acc, e| acc + e.value, 4)
+fn add(acc: integer, x: integer) -> integer { acc + x }
+total = par_fold(items, 0, add, 4)   // items: vector<integer>
 ```
+
+The items are a `vector<integer>`, the initial value an `integer`, and the fold a
+`fn(integer, integer) -> integer` named at the call: its name, or a lambda that captures
+nothing (`fn(acc: integer, x: integer) -> integer { acc + x }`).  A fold held in a variable,
+parameter or field, or a lambda that captures, is refused at compile time: a parallel worker
+is checked where it is named (@C93).  To fold with context, forward it through the fused loop:
+`for x in items par(b = f(x, k), 4) { total += b; }`.
 
 The parser lowers it to the builtin `n_parallel_fold`
 (`Parser::parse_par_fold`, `src/parser/builtins.rs`), which both backends
@@ -466,7 +478,7 @@ a `vector<vector<T>>` stores a 4-byte record index per row whatever `T` is.
 `par_elem_size` reached it through `type_elm`, which resolves a
 `vector<integer>` element to `integer` and answered 8 — so the worker
 strode twice per row, saw rows 0 and 2, and then read past the end, where
-C80 hands back the element's default rather than faulting. `vector<text>`
+@C80 hands back the element's default rather than faulting. `vector<text>`
 was the one inner type that worked, because `text`'s db size is 4 by
 coincidence. A wrong stride here is silent by construction: the runtime has
 no row identity to check the fetch against (loft#1033).  The parser enforces this at

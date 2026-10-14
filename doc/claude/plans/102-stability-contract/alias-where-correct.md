@@ -5,10 +5,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Alias where an alias is correct — a safe refinement of C86 (copy-by-default)
 
-> **Status: design (2026-07-16).** Keeps [C86](../../DESIGN_DECISIONS.md) (whole-value heap binds
+> **Status: design (2026-07-16).** Keeps [@C86](../../DESIGN_DECISIONS.md) (whole-value heap binds
 > COPY; `&` is explicit write-through) as the *contract*, and adds the compiler intelligence to
 > **alias instead of copy in the cases where an alias is correct** — safely, so the memory-model bug
-> that drove the copy (#415's aliasing UAF) never returns. This is exactly C86's own "revisit when:
+> that drove the copy (#415's aliasing UAF) never returns. This is exactly @C86's own "revisit when:
 > widen `ElidePlan`". Written before the code (design-protocol § "write the doc before the code").
 
 ## The request, made precise
@@ -34,7 +34,7 @@ This settles the design cleanly — there is no fork. Two consequences:
 
 So the design is: **transparent links (widen `ElidePlan`) + explicit `&` + a lint that points at
 `&`.** (An earlier draft floated auto-aliasing the dead store; the principle rejects it — an
-observable link the programmer didn't write is exactly the spooky action C86 forbids. Kept below as
+observable link the programmer didn't write is exactly the spooky action @C86 forbids. Kept below as
 § Rejected, for the record.)
 
 ## The one invariant (design-protocol step 1)
@@ -63,7 +63,7 @@ only when it is *safe*, and safety is precisely the store-lifetime fact loft alr
   **not escape** past `base` (the dead-store lint's existing *non-escaping* check, `warn_dead_stores`
   S4a) and `base` is not freed while the local is live (the `deps` / `reclaim_safe` fact).
 
-Only inside this safe set does the design ever prefer an alias. Outside it, C86's copy stands
+Only inside this safe set does the design ever prefer an alias. Outside it, @C86's copy stands
 unchanged. The gate is one fact read at one place (below), not a per-site re-derivation.
 
 ## Transparent links — the design's payload (always-on, invisible)
@@ -75,7 +75,7 @@ copy AND safe. Sufficient sound conditions:
   mutation through the local reaches no observed read of the source.
 - **Both source and local read-only after the bind** — with no mutation on either side, shared vs
   independent storage is unobservable. This is the **widening** (most binds are read-only), the
-  concrete cash-out of C86's "widen `ElidePlan`".
+  concrete cash-out of @C86's "widen `ElidePlan`".
 
 This is a pure optimization: **the observable result is byte-identical to copy-everywhere**, so it is
 "everything the same" with no contract question and no contract-key. It does **not** touch hex_terrain
@@ -99,7 +99,7 @@ programmer writes `&`; it is never inferred.
 An earlier draft floated turning the detected dead store *into* a link (silently, or with a steer) so
 hex_terrain would "just work" without `&`. **The principle rejects it:** that link is observable (the
 field changes), so making it behind the programmer's back is exactly the spooky, non-local semantics
-C86 forbids — the bind's meaning would depend on whether the local is read later, and a dead store
+@C86 forbids — the bind's meaning would depend on whether the local is read later, and a dead store
 that was really a *missing read-back* bug would be silently converted into a source mutation instead
 of surfaced. The options and why the middle/loud ones still lose:
 
@@ -115,7 +115,7 @@ The copy-vs-link choice is made in **one place** — `use_analysis`'s verdict fe
 `scopes::elide_borrows` (the `ElidePlan`). The widening extends that single computation; codegen keeps
 *reading* the plan, never re-deriving it. The safety gate is one fact (`Ownership::Borrowed { base }`
 + non-escape), the observability gate one fact (the read/write access classification). There is no
-per-bind-site spray: one analysis, one plan, one codegen consumer — exactly the shape C86 already
+per-bind-site spray: one analysis, one plan, one codegen consumer — exactly the shape @C86 already
 ships, widened. The lint is a second, independent single pass (`warn_dead_stores`, already shipped).
 
 ## Falsification — how it breaks (design-protocol steps 3–4)
@@ -156,7 +156,7 @@ byte-value-identity.
 | 1 | **Safety oracle, exposed + matrixed.** Surface `link_is_safe(local)` = `Ownership::Borrowed { base }` present AND local non-escaping AND `base` outlives the local (reuse `dead_store_accesses` non-escape + `reclaim_safe`). No codegen change — it only *reports*. | the #415 store-lifetime matrix: every "base freed/reassigned/escapes while local live" cell → `unsafe` (would copy); a plain field-read-then-read → `safe`. Both backends. Positive control: an injected unsafe shape reads `unsafe`. | M |
 | 2 | **Observability oracle.** Surface `link_is_unobservable(local)` = neither source nor local is mutated after the bind (or the source is dead — the shipped last-use case). Reuses the read/write access classification (`dead_store_accesses` + the elision's last-use). Reports only. | a read-only-both bind → `unobservable`; a mutate-source-then-read-local (and the reverse) → `observable`. Positive control: an injected observable shape reads `observable`. | S |
 | 3 | **Widen `ElidePlan` to link the safe + unobservable set (GATED, default off).** In the elision verdict, additionally realize a bind as a link when `link_is_safe && link_is_unobservable` (the read-only-both case, on top of the shipped last-use). Behind `LOFT_LINK_WIDEN` (opt-in). | byte-identical corpus (loft-codegen Mode B) with the flag OFF; ON → those binds emit a borrow not a copy (introspect diff) and the **observable result is unchanged** on the full suite both backends; `--report-copies` shows the copy-count drop; leak-clean. | M |
-| 4 | **⏸ Default-on DEFERRED — win measured ≈ 0.** The flip was implemented + the suite proved observably-identical (byte-value-identical + leak/UAF-clean, both backends), so the mechanism is correct. But the copy-count measurement (the cheap disproving probe) is a **stop signal**: the read-only-both field-bind pattern is essentially absent in real loft code — **0 copies eliminated** across the vector-heavy scripts AND the ~2000-line `viewer/main.loft`. C86's revisit trigger (a profiler showing bind-copies dominating a real consumer) is not met, so it **stays opt-in** (`LOFT_LINK_WIDEN`), ready if a consumer ever demonstrates the win. The premise "more links, copies drop" did not survive contact with real code — the correctness holds, the value does not (yet). | ✅ correctness proven; ✅ win ≈ 0 → deferred | S |
+| 4 | **⏸ Default-on DEFERRED — win measured ≈ 0.** The flip was implemented + the suite proved observably-identical (byte-value-identical + leak/UAF-clean, both backends), so the mechanism is correct. But the copy-count measurement (the cheap disproving probe) is a **stop signal**: the read-only-both field-bind pattern is essentially absent in real loft code — **0 copies eliminated** across the vector-heavy scripts AND the ~2000-line `viewer/main.loft`. @C86's revisit trigger (a profiler showing bind-copies dominating a real consumer) is not met, so it **stays opt-in** (`LOFT_LINK_WIDEN`), ready if a consumer ever demonstrates the win. The premise "more links, copies drop" did not survive contact with real code — the correctness holds, the value does not (yet). | ✅ correctness proven; ✅ win ≈ 0 → deferred | S |
 | 5 | **Point the dead-store lint at `&` (the write-through-intent case).** Upgrade `warn_dead_stores`'s message on an `Owned` non-escaping `reads==0 & write_targets>0` local to the arc-C recommended-idiom steer: *"the write to `x` lands in a copy and is lost — write `x = &<src>` for write-through, or read `x` back if a copy was intended."* No behaviour change (still a copy); a clearer nudge to the explicit form. | a hex_terrain-shaped fixture: the lint now names `&<src>` as the fix; the value is unchanged (still a copy — write-through is the programmer's `&`); the escaping-local control does not fire | S |
 
 **Shape:** steps 1–4 are the unconditional win — link more, observe nothing new; the safety oracle
@@ -167,9 +167,9 @@ principle chose it.
 
 ## Relation to C86, arc C, and the freeze
 
-- **C86 stays the contract, verbatim.** This is its *"revisit when: widen `ElidePlan`"* clause cashed
+- **@C86 stays the contract, verbatim.** This is its *"revisit when: widen `ElidePlan`"* clause cashed
   out — the semantic (every variable is its own value) is unchanged; the compiler just realizes the
-  link in more of the safe + unobservable set. No C86 change; no dead-store corner refinement.
+  link in more of the safe + unobservable set. No @C86 change; no dead-store corner refinement.
 - **Arc C is the lint's delivery** — the "use `&`" nudge (step 5) is a recommended-idiom steer on
   owned source (the [arc-C channel](recommended-idiom-channel.md)); the write-through itself is always
   the programmer's explicit `&`, never inferred.
@@ -178,7 +178,7 @@ principle chose it.
 
 ## See also
 
-- [DESIGN_DECISIONS.md § C86](../../DESIGN_DECISIONS.md) — the copy-by-default contract this refines
+- [DESIGN_DECISIONS.md § @C86](../../DESIGN_DECISIONS.md) — the copy-by-default contract this refines
   (+ its "revisit when: widen `ElidePlan`").
 - [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) — the bind law + `#415` (why the alias became a copy:
   the UAF the safety gate now prevents).

@@ -1,0 +1,4 @@
+# orig: scripts/wasm_bundle_stamp.sh
+# port: scripts/wasm_bundle_stamp
+# case	twin options	arguments
+tree		

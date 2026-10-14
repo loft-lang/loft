@@ -7,8 +7,8 @@
 //! neither; `LOFT_NO_PUSH_FILL=1` restores the per-push form everywhere.  The cell corpus
 //! (`bytecode-comparisons/V-am-push-fill-cells.loft`) says the VALUES hold on both
 //! backends; this pins what is emitted.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-am-push-fill-cells.loft";
@@ -16,7 +16,8 @@ const CELLS: &str =
 fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = std::env::temp_dir().join(format!("loft_push_fill_{}_{tag}.rs", std::process::id()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -28,13 +29,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 
@@ -72,7 +73,16 @@ fn one_push_of_an_invariant_is_one_fill_with_the_loop_as_its_fallback() {
 #[test]
 fn computed_pushes_reserve_their_trip_count_before_the_loop() {
     let rust = emit("reserve", &[]);
-    for name in ["n_p4", "n_p7", "n_p10"] {
+    // p10's counted loop is NESTED in another that pushes nothing else: the outer loop holds
+    // one deep window, and the inner loop pushes through it — its reservation steps aside, as
+    // it would move the record under the window.
+    let p10 = body(&rust, "n_p10");
+    assert!(
+        p10.contains("//@FR-R-PushFill push window, deep")
+            && !p10.contains("vector::reserve_more(&(var_v)"),
+        "p10: the outer loop's deep window serves the nested counted loop"
+    );
+    for name in ["n_p4", "n_p7"] {
         let b = body(&rust, name);
         assert!(
             b.contains("vector::reserve_more(&(var_v), _pn.saturating_mul("),

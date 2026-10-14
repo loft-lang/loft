@@ -1,0 +1,29 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 0d773c8da..68614e7db 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -1453,11 +1453,10 @@ impl Output<'_> {
+             // right: the pair is then built inside EACH branch.
+             let is_fn_arg =
+                 i < param_types.len() && matches!(param_types[i].base(), Type::Function(..));
+-            // Set either way: an argument takes its OWN parameter's context, never the
+-            // caller's — a call whose RESULT is a fn-ref is emitted in that context, and an
+-            // integer argument inheriting it was spelled `(3_i32 as u32, DbRef::NULL)`.
+             let prev_fn_ref_ctx = self.fn_ref_context;
+-            self.fn_ref_context = is_fn_arg;
++            if is_fn_arg {
++                self.fn_ref_context = true;
++            }
+             let expr = self.generate_expr_buf(arg)?;
+             self.fn_ref_context = prev_fn_ref_ctx;
+             // P265: when the fn-ref's parameter at this index is text,
+@@ -2012,9 +2011,6 @@ impl Output<'_> {
+             // `from_u32_unchecked`, for which `0x8000_0000` is undefined
+             // behaviour (loft#1014).
+             Type::Character => write!(w, "0"),
+-            // The absent fn-ref (`@FR-L-FnAbsent`): no definition, no environment — the spelling
+-            // `default_native_value` gives a function slot.
+-            Type::Function(..) => write!(w, "(0_u32, DbRef::NULL)"),
+             Type::Integer(_) => write!(w, "i64::MIN"),
+             Type::Float => write!(w, "f64::NAN"),
+             Type::Single => write!(w, "f32::NAN"),

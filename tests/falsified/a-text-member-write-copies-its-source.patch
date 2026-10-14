@@ -1,0 +1,51 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index fa43a7b78..7c675212f 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -707,29 +707,28 @@ impl Output<'_> {
+                 if elem_is_fn {
+                     self.fn_ref_context = true;
+                 }
+-                let var_src = matches!(node.tupleput_inner().kind(), ValueType::Var);
+-                if elem_is_text && var_src {
+-                    write!(w, "(")?;
+-                }
+                 let r = self.output_code_node(w, node.tupleput_inner());
+                 self.fn_ref_context = prev_fn_ref_ctx;
+                 self.tuple_text_to_string = prev;
+                 // The same conversion the `Tuple` element loop applies, for the same
+                 // reason: this position knows the slot is an owned `String` and the
+-                // value emitted into it does not.  A `Var` source is wrapped whole —
+-                // `(<source>).to_string()` — because a text variable reads in several
+-                // spellings: an owned local's bare name, a borrowed one's `&str`, a `&text`
+-                // parameter's or a caller's work buffer's `&*var_x`, a generator field's
+-                // `&self.var_x`.  A bare owned `String` is a MOVE, so a loop that reuses
+-                // the variable — a compiler work text included — or any later read did not
+-                // compile (E0382), and a suffix on a prefixed spelling binds inside it
+-                // (`&*var_x.clone()` is a `&str`, E0308) (loft#1901).  A text PARAMETER
+-                // arrives borrowed (`&str`), which is why `p.1 = s` on
+-                // `fn f(p: (integer, text), s: text)` needs the conversion too (loft#1278).
+-                // The member gets its own text either way (`@FR-T-Record`).
+-                if elem_is_text && var_src {
+-                    write!(w, ").to_string()")?;
+-                } else if elem_is_text {
++                // value emitted into it does not.  A `TupleGet`/`Var` source naming an
++                // owned text LOCAL already emitted un-borrowed (the flag above), so for
++                // that one this would only add a copy.
++                //
++                // A text ARGUMENT is the exception, and the carve-out did not know it: a
++                // text parameter arrives BORROWED (`&str`), so the same bare spelling is a
++                // type error at an owned slot — `p.1 = s` on
++                // `fn f(p: (integer, text), s: text)` was rustc E0308 *"expected `String`,
++                // found `&str`"* while the literal `p.1 = "x"` beside it compiled
++                // (loft#1278).  The tuple LITERAL arm has always converted a `Var` here;
++                // only this arm carved it out, so the two spellings of the same write
++                // disagreed about the same source.
++                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var)
++                    && self.text_borrowed(node.tupleput_inner().var_nr());
++                if elem_is_text
++                    && (!matches!(node.tupleput_inner().kind(), ValueType::Var) || borrowed_var_src)
++                {
+                     write!(w, ".to_string()")?;
+                 }
+                 if let Some(cast) = bool_cast {

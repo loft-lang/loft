@@ -81,6 +81,9 @@ pub struct ParallelCtx {
     pub stack_trace_lib_nr: u16,
     /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
     pub frame_headroom: Arc<Vec<u32>>,
+    /// The running program's constant table (`State::const_refs`), handed to every worker
+    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+    pub const_refs: Arc<Vec<DbRef>>,
 }
 
 impl ParallelCtx {
@@ -251,13 +254,13 @@ pub enum Parts {
     // this encoding's absence (`u32::MAX`) as the value -1.  Which of the two a slot uses
     // is `IntegerSpec::unsigned_wide()`, asked once in `NarrowIntKind::of`.
     IntRaw(i32, bool),
-    Vector(u16),                       // The records are part of the vector
-    Array(u16),                        // The array holds references for each record
-    Sorted(u16, Vec<(u16, bool)>),     // Sorted vector on fields with an ascending flag
-    Ordered(u16, Vec<(u16, bool)>),    // Sorted array on fields with an ascending flag
-    Hash(u16, Vec<u16>), // A hash table, listing the field numbers that define its key
-    Index(u16, Vec<(u16, bool)>, u16), // An index to a table, listing the key fields and the left field-nr
-    Radix(u16, Vec<u16>),              // A spatial index with the listed coordinate fields as a key
+    Vector(u16),                    // The records are part of the vector
+    Array(u16),                     // The array holds references for each record
+    Sorted(u16, Vec<(u16, bool)>),  // Sorted vector on fields with an ascending flag
+    Ordered(u16, Vec<(u16, bool)>), // Sorted array on fields with an ascending flag
+    Hash(u16, Vec<u16>),            // A hash table, listing the field numbers that define its key
+    Index(u16, Vec<(u16, bool)>), // An index to a table (a B+tree, `btree.rs`), listing the key fields
+    Radix(u16, Vec<u16>),         // A spatial index with the listed coordinate fields as a key
     // A trie: a radix tree over ONE `text` key field, answering exact lookup, key
     // order and prefix.  Shares `radix_tree` with `Radix` and nothing above it —
     // `Radix` is geometric (Morton interleave, boxes, near/within/nearest) and none
@@ -416,7 +419,7 @@ pub struct Stores {
     /// @PLN129 arc C — why a fetch for this collection could not reach its
     /// source. Absent means healthy.
     ///
-    /// A lookup cannot report this: C80 says a value read never raises, and
+    /// A lookup cannot report this: @C80 says a value read never raises, and
     /// answering `null` would make "no such person" and "the database is
     /// unreachable" the same answer — and an UNSTABLE one, since it changes with
     /// the network. So the failure lives on a channel the value cannot carry,
@@ -457,6 +460,11 @@ pub struct Stores {
     /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
     /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
     pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
+    /// `@FR-H-RefHome` — the copies [`Stores::evacuate`] made while a store is about to be
+    /// freed: `((the record copied, the store it was copied into), the copy)`, so two holders
+    /// in one store that named one record name one copy.  Forgotten when the copied record's
+    /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
+    pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
     /// `None` when none is.
     ///
@@ -523,8 +531,6 @@ pub struct Stores {
     /// `src/generation/calls.rs`) resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
-    /// Errors from the last `Type.parse()` call, read via `s#errors`.
-    pub last_parse_errors: Vec<String>,
     /// errors from the last `json_parse()` call, read via
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
@@ -639,6 +645,15 @@ pub struct Stores {
     /// `arm_profiler`).  A cache, never the truth: the loop's cold path re-derives it from the
     /// events themselves, so a nested loop never clears one its caller still needs.
     pub dispatch_stop: std::sync::atomic::AtomicBool,
+    /// `@FR-H-SwapIn` — per type number, whether its tree keeps every pointer as a record
+    /// number inside its own store: `0` not asked yet, `1` yes, `2` no.  The schema does not
+    /// change once a program runs, so the answer is computed once per type.
+    pub(crate) swap_safe_types: Vec<u8>,
+    /// `@FR-R-RefillBuffer` — a store an exchange released, kept instead of freed: it holds
+    /// the previous value of the rebound variable, a root of its own `known_type` at `1@8`,
+    /// and nothing references it.  The next buffer of that type minted for a refilling callee
+    /// takes it (`take_spare`); a second release frees the one kept before.
+    pub(crate) spare_store: Option<u16>,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -749,6 +764,7 @@ impl Clone for Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            evacuated: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: self.max,
@@ -759,7 +775,6 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -772,6 +787,8 @@ impl Clone for Stores {
             had_fatal: false,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
+            swap_safe_types: Vec::new(),
+            spare_store: None,
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1519,6 +1536,7 @@ impl Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            evacuated: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: 0,
@@ -1529,7 +1547,6 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1542,6 +1559,8 @@ impl Stores {
             had_fatal: false,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
+            swap_safe_types: Vec::new(),
+            spare_store: None,
             source_dir: String::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"
@@ -1605,19 +1624,47 @@ impl Stores {
     /// sandbox — admission is decided at load time and carries no runtime
     /// checks (`SANDBOX.md`) — so the resolved path is the whole answer and the
     /// filesystem gives it.
+    ///
+    /// It is also where a loft path MEANS the same on every platform (`formal/paths.md`):
+    /// `\` separates as `/` does (`@FR-Path-Sep`), a name no platform could hold is refused
+    /// (`@FR-Path-Name`), and a name that is another entry's spelling with a different case is
+    /// refused (`@FR-Path-Case`).  `None` is the refusal: the caller answers its operation's
+    /// own failure, and the one log line is written here (`@FR-Path-Refuse`).
     #[must_use]
-    pub fn resolve_path(&self, raw: &str) -> String {
-        if !self.program_relative || self.source_dir.is_empty() {
-            return raw.to_string();
+    pub fn resolve_path(&self, raw: &str) -> Option<String> {
+        let anchored = self.program_relative && !self.source_dir.is_empty();
+        if raw.is_empty() {
+            // No name to judge: the anchor itself, or nothing.
+            return Some(if anchored {
+                crate::file_access::at(&self.source_dir)
+                    .for_program()
+                    .native()
+            } else {
+                String::new()
+            });
         }
-        let p = std::path::Path::new(raw);
-        if p.is_absolute() {
-            return raw.to_string();
+        let norm = match crate::file_access::PathText::program(raw) {
+            Ok(norm) => norm,
+            Err(why) => {
+                crate::file_access::log_refusal_once(raw, &why);
+                return None;
+            }
+        };
+        // `norm` is in the spelling of the program's host (@PLN184 Track W), and so is the
+        // anchor it joins.
+        let full = if !anchored || norm.is_absolute() {
+            norm.native()
+        } else {
+            crate::file_access::at(&self.source_dir)
+                .for_program()
+                .join(&norm.native())
+                .native()
+        };
+        if let Err(why) = crate::file_access::case_clash(&full) {
+            crate::file_access::log_refusal_once(raw, &why);
+            return None;
         }
-        std::path::Path::new(&self.source_dir)
-            .join(p)
-            .to_string_lossy()
-            .into_owned()
+        Some(full)
     }
 
     /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`.
@@ -1642,7 +1689,7 @@ impl Stores {
     /// rustc compile error from the s.raise call.
     ///
     /// Production-vs-development split mirrors `State::raise` per
-    /// `DESIGN_DECISIONS.md § C66`:
+    /// @C66`:
     /// - production logger attached → log via `log_runtime_kind` +
     ///   set `had_fatal` + return without populating `runtime_error`
     /// - development (no logger or non-production logger) → populate
@@ -1727,36 +1774,27 @@ impl Stores {
         finish: u32,
         reverse: bool,
     ) -> Option<u32> {
-        let fields = self.fields(tp);
+        let keys = self.keys(tp).to_vec();
+        let n_after = if reverse {
+            crate::btree::previous_record(data, &self.allocations, &keys, cur)
+        } else {
+            crate::btree::next_record(data, &self.allocations, &keys, cur)
+        };
+        // Read before the removal: `cur` is about to stop being in the tree.
+        let removed_the_last = cur == finish;
         let cur_ref = crate::keys::DbRef {
             store_nr: data.store_nr,
             rec: cur,
-            pos: u32::from(fields),
+            pos: 8,
         };
-        let n_after = {
-            let store = crate::keys::store(data, &self.allocations);
-            if reverse {
-                crate::tree::previous(store, &cur_ref)
-            } else {
-                crate::tree::next(store, &cur_ref)
-            }
-        };
-        // Read before the removal: `cur` is about to stop being a node.
-        let removed_the_last = cur == finish;
         self.remove_owned(data, &cur_ref, tp);
         if n_after == 0 || removed_the_last {
             return None;
         }
-        let n_ref = crate::keys::DbRef {
-            store_nr: data.store_nr,
-            rec: n_after,
-            pos: u32::from(fields),
-        };
-        let store = crate::keys::store(data, &self.allocations);
         Some(if reverse {
-            crate::tree::next(store, &n_ref)
+            crate::btree::next_record(data, &self.allocations, &keys, n_after)
         } else {
-            crate::tree::previous(store, &n_ref)
+            crate::btree::previous_record(data, &self.allocations, &keys, n_after)
         })
     }
 
@@ -1788,7 +1826,10 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            lg.log_runtime_kind(&kind, None);
+            lg.log_runtime_kind(
+                &kind,
+                crate::codegen_runtime::running_frame_position().as_ref(),
+            );
         }
     }
 
@@ -1869,32 +1910,6 @@ impl Stores {
         }
     }
 
-    /// The format-fault cause lives in [`crate::ops`], per thread, rather than on `Stores` —
-    /// a codegen constraint as much as a design one. The native emitter inlines an op's
-    /// `#rust` body into whatever expression contains it, so a body that writes through
-    /// `stores` lands inside another `stores.` call's arguments and rustc rejects it with
-    /// E0502 (loft#1169). Free functions over thread-local state borrow nothing and compose in
-    /// any position. These are thin delegates so existing call sites read the same.
-    pub fn set_format_fault(&mut self, kind_id: u8) {
-        crate::ops::note_format_fault(kind_id, true);
-    }
-
-    /// See [`crate::ops::note_format_fault`].
-    pub fn note_format_fault(&mut self, kind_id: u8, faulted: bool) {
-        crate::ops::note_format_fault(kind_id, faulted);
-    }
-
-    /// See [`crate::ops::arm_format_fault`].
-    pub fn arm_format_fault(&mut self) {
-        crate::ops::arm_format_fault();
-    }
-
-    /// See [`crate::ops::take_format_fault`].
-    #[must_use]
-    pub fn take_format_fault(&mut self) -> Option<&'static str> {
-        crate::ops::take_format_fault()
-    }
-
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_get_or_raise`.  Same body, calls
     /// `self.raise_runtime(...)` on OOB.  Native template rewriter
@@ -1925,13 +1940,13 @@ impl Stores {
             });
             // `nullref`, the one value spelling of absence (`DbRef::or_null`,
             // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         if normalized >= i64::from(len) {
             self.raise_recoverable_runtime(
                 crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds { idx: index, len },
             );
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         crate::vector::get_vector(db, size, index, &self.allocations)
     }
@@ -1986,10 +2001,12 @@ impl Stores {
         fld: u32,
         val: T,
     ) {
-        if index >= 0
-            && index < i64::from(h.len)
-            && (!h.locked || self.allocations[h.store_nr as usize].write_allowed(h.rec, 8))
-        {
+        // `@FR-H-WriteLocked` — a locked store has no writable element: the bound the
+        // fast path tests is 0 for it, so the write takes the cold path, whose setter
+        // refuses it.  One compare answers range and lock together, and the element write
+        // carries no call.
+        let writable = if h.locked { 0 } else { h.len };
+        if index >= 0 && index < i64::from(writable) {
             if VERIFY {
                 assert_eq!(
                     *h,
@@ -2260,6 +2277,36 @@ impl Stores {
         store.fill::<T>(h.rec, crate::vector::checked_vec_pos(len, size), n, val);
         store.write::<u32>(h.rec, 4, total);
         *p = crate::vector::push_header(db, &self.allocations);
+        true
+    }
+
+    /// `@FR-R-RefillBuffer`'s in-place clause — make the vector at `db` hold exactly `count`
+    /// copies of `val` by overwriting it where it stands, when it ALREADY holds `count`
+    /// elements of width `size`: the answer `clear_vector` + [`Stores::push_fill`] gives,
+    /// without the reset, the reserve and the two header derivations.  `false` (nothing
+    /// written) for any other length, a null, foreign or locked vector, or a width that is
+    /// not `T`'s — the caller then empties and fills as before.  Scalars only, so the
+    /// elements it overwrites own nothing.
+    #[inline]
+    pub fn fill_exact<T: crate::vector::HoistScalar>(
+        &mut self,
+        db: &crate::keys::DbRef,
+        size: u32,
+        count: i64,
+        val: T,
+    ) -> bool {
+        if size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let h = crate::vector::vec_header(db, &self.allocations);
+        if h.rec == 0 || h.locked || i64::from(h.len) != count {
+            return false;
+        }
+        let store = &mut self.allocations[h.store_nr as usize];
+        if store.is_foreign() {
+            return false;
+        }
+        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(0, size), h.len, val);
         true
     }
 
@@ -2748,6 +2795,10 @@ impl Stores {
                 // walk's delete per element.
                 let elem_size = u32::from(self.size(elem));
                 let words = 1 + u32::from(self.size(kt)).div_ceil(8);
+                // The reset skips the element walk, and with it each element's death: a
+                // `File` among them releases its handle here (`@FR-H-Handle`).
+                #[cfg(not(host_fs))]
+                self.release_file_leases(db);
                 // @PLN157 § V-ai — the capacity the previous fill reached, read off the
                 // record the reset is about to drop.  The buffer is reused across calls
                 // (`@FR-R-Reuse`) and the store already holds this extent

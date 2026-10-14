@@ -550,6 +550,19 @@ mod tests {
         assert!(!is_script("struct P { x: integer }\nenum E { A, B }\n"));
     }
     #[test]
+    fn operator_definitions_are_not_a_script() {
+        // C132 (@PLN182) — `operator` begins a definition as `fn` does.  A file of definitions
+        // with no `main` (a library, a `pub fn test()` corpus case) read as a script and was
+        // desugared around its operators once `operator` became a keyword.
+        assert!(!is_script(
+            "struct M { v: integer }\noperator plus(self: M, o: M) -> M { M { v: self.v + o.v } }\n\
+             pub fn test() { }\n"
+        ));
+        assert!(!is_script(
+            "pub operator to_text(self: integer, spec: text) -> text { \"\" }\n"
+        ));
+    }
+    #[test]
     fn explicit_main_is_not_a_script() {
         // even mixed with a loose-looking line, an explicit main opts out.
         assert!(!is_script("fn main() { print(\"hi\") }\n"));
@@ -847,21 +860,21 @@ mod tests {
         for dir in ["default", "tests"] {
             let mut stack = vec![root.join(dir)];
             while let Some(d) = stack.pop() {
-                let Ok(entries) = std::fs::read_dir(&d) else {
+                let Ok(entries) = crate::file_access::read_dir(&d) else {
                     continue;
                 };
-                for e in entries.flatten() {
-                    let p = e.path();
-                    if p.is_dir() {
+                for e in entries {
+                    let p = e.os_spelling();
+                    if crate::file_access::is_dir(&p) {
                         stack.push(p);
-                    } else if p.extension().is_some_and(|x| x == "loft") {
+                    } else if crate::file_access::extension(&p).is_some_and(|x| x == "loft") {
                         // The invariant is about files the compiler ACCEPTS. Skip the
                         // deliberately-invalid fixtures: the error-message corpus and
                         // any `@EXPECT_ERROR` / `@EXPECT_FAIL` test.
                         if p.components().any(|c| c.as_os_str() == "error_messages") {
                             continue;
                         }
-                        if let Ok(src) = std::fs::read_to_string(&p) {
+                        if let Ok(src) = crate::file_access::read_to_string(&p) {
                             // `@EXPECT_ERROR`/`@EXPECT_FAIL` = deliberately invalid;
                             // `@SCRIPT` = an intentional `--script`-only fixture (not
                             // accepted by the plain compiler, so outside the invariant).

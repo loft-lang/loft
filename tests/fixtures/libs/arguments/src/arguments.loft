@@ -15,9 +15,9 @@ struct Arg {
 }
 
 struct Args {
-  name: text,
-  version: text,
-  description: text,
+  pub name: text,
+  pub version: text,
+  pub description: text,
   // `not null` on the vector fields silences the field-level
   // "is read N times and never defended" warning under
   // LOFT_DENY_WARNINGS=1.  Safe: `create` initialises each to `[]`
@@ -25,7 +25,7 @@ struct Args {
   // neither path produces null.
   options: vector<Arg> not null,
   results: vector<text> not null,
-  positionals: vector<text> not null,
+  pub positionals: vector<text> not null,
   err: text
 }
 

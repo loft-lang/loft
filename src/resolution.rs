@@ -40,6 +40,6 @@ pub enum Resolution {
     Field { type_def: u32, attr: u16 },
     /// A method call `expr.method(…)` on a receiver type.
     Method { recv_type: u32, method_def: u32 },
-    /// A name that bound to nothing (a typo, or C80 value-undefinedness).
+    /// A name that bound to nothing (a typo, or @C80 value-undefinedness).
     Unresolved,
 }

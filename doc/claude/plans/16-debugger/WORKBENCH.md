@@ -49,7 +49,7 @@ investigation of the tree:
 | **`src/rpc.rs` `handle()`** | "one message ⇄ one engine method", transport-agnostic — already runs over stdio-NDJSON (`--rpc`) *and* WebSocket (`--serve`) | **The protocol spine.** The verb/event envelope every plane rides. | **Landed** |
 | **`loft-lsp` / `loft-dap`** (@PLN63, shipped this session) | native LSP + DAP for `.loft` (hover/def/refs/rename/format/completion/diagnostics; breakpoints/step/variables **VE**/stack **SF**/data-bp **DB**/reverse **RX**) | **The loft intelligence + debug adapters.** Ready today — this *unblocks* @PLN66 phase 03. | **Shipped** |
 | **The viewer** (`tools/viewer/`, plan-35) | router on `req.path`; file-tree (`/tree`), breadcrumbs, page chrome; **Markdown render** (`markdown::render`); **git-aware** routes (`/commit/<sha>`, `/diff/<path>`, `/raw/`) backed by a git bridge (`refresh.sh` → `state/*.json`) | **The browse/tree half + Markdown preview + git surface**, grafted onto serve.rs's edit half. | **Runs** (`make view`) |
-| **@PLN16 M5e slice 6** (`launchGame`/`reload`) + [`58-graphics`](../../lib_plans/58-graphics/README.md) + C71/N9 | launch a program in a **native OpenGL window**; hot-swap one function into the *running* game over the shared store | **The live-authoring plane** (§ 9): run the game, edit scripts on the fly. | 6a landed; 6b/6c gated on C71/N9 |
+| **@PLN16 M5e slice 6** (`launchGame`/`reload`) + [`58-graphics`](../../lib_plans/58-graphics/README.md) + @C71/N9 | launch a program in a **native OpenGL window**; hot-swap one function into the *running* game over the shared store | **The live-authoring plane** (§ 9): run the game, edit scripts on the fly. | 6a landed; 6b/6c gated on @C71/N9 |
 | [`65-scriptable-scenes`](../../lib_plans/65-scriptable-scenes/README.md) + [`64-game-client`](../../lib_plans/64-game-client/README.md) | visual scene/world definition + the game client runtime | **The world editor** (§ 9). | Design |
 | **`loft-lsp-bridge`** (@PLN66, designed) | multi-LSP fan-in (rust-analyzer + loft-lsp + jdtls) over 3 IPC layers; bridge "intelligence" (warm pool, multiplex, cache, debounce, crash-recovery, extension routing, tracing) | **The multi-language INTELLIGENCE plane** (Layers A/B/C). Absorbed as a sidecar. | **Design only** |
 | **`62-web-ide`** (@PLN62, designed) | serverless in-browser WASM loft interpreter; CodeMirror 6 editor; loft Lezer grammar; in-WASM `get_symbols` | **NOT this product** — the offline sibling. Donates only the **CM6 editor + loft grammar**. | **Design only** |
@@ -215,12 +215,12 @@ usable IDE. Tests follow the shipped shape: drive the messages over a socket and
 | **WB6 · C** | Open `.c`/`.h` → clangd intelligence; **Build/Run** via gcc; breakpoint + step via lldb-dap/gdb-DAP. | WB5's DAP bridge; @PLN66 Layer-C slot | The C trio + `gcc`/`clang` invocation |
 | **WB7 · bridge intelligence + hardening** | @PLN66 acceptance metrics: cold-start ≤ 2 s, hover ≤ 50 ms P95, crash-recovery < 1 s; multi-tab share; async gateway; security review. | @PLN66 ph.02 wholesale | Warm pool / multiplex / cache / debounce / crash-recovery / tracing; per-connection async (seam 4) |
 | **WB8 · workspace surface (Markdown + Git/GitHub)** | Click a `.md` → **rendered preview** beside the source; a **Source Control** panel shows changed files + diffs; stage/commit/push; open a PR. | viewer `markdown::render` + `/diff`,`/commit` routes + `refresh.sh` git bridge (§ 10) | Read→write git verbs; `gh` for PRs; a Markdown-preview pane |
-| **WB9 · live-authoring plane (run the game, edit on the fly) + world editor** | **Game ▶** runs a full native game; edit a script + **Reload** hot-swaps it into the *running* game; a visual **world/scene editor** places entities that scripts drive. | M5e slice 6 (`launchGame`/`reload`); [`58-graphics`](../../lib_plans/58-graphics/README.md); [`65-scriptable-scenes`](../../lib_plans/65-scriptable-scenes/README.md) | The hot-swap loop needs **C71/N9**; the world editor is @PLN65 (§ 9) |
+| **WB9 · live-authoring plane (run the game, edit on the fly) + world editor** | **Game ▶** runs a full native game; edit a script + **Reload** hot-swaps it into the *running* game; a visual **world/scene editor** places entities that scripts drive. | M5e slice 6 (`launchGame`/`reload`); [`58-graphics`](../../lib_plans/58-graphics/README.md); [`65-scriptable-scenes`](../../lib_plans/65-scriptable-scenes/README.md) | The hot-swap loop needs **@C71/N9**; the world editor is @PLN65 (§ 9) |
 
 WB0–WB3 already deliver a materially better **loft** IDE (shippable on its own). WB4 is the
 pivot; WB5–WB6 the multi-language payoff; WB7 the "done right" bar @PLN66 sets. **WB8** (docs +
 git) reuses the viewer almost wholesale and can land early — it depends on nothing above WB3.
-**WB9** is the lavition payoff and the one phase with a *hard* external dependency (C71/N9 for
+**WB9** is the lavition payoff and the one phase with a *hard* external dependency (@C71/N9 for
 true hot-swap; the world editor is its own plan). WB8/WB9 are ordered last only because WB0–WB7
 establish the multi-language spine; WB8 in particular could be pulled forward.
 
@@ -240,10 +240,10 @@ onto the same server with no new model — a live game is just the execution pla
 - **Edit scripts on the fly.** With the game running, edit a function and **Reload**
   hot-swaps *just that function* into the live game over the **one shared store**
   (per-function interpret on the compiled baseline). This is the *edit → see it in the running
-  game → breakpoint it* loop. **Dependency:** the real hot-swap (6b/6c) needs the **C71/N9**
+  game → breakpoint it* loop. **Dependency:** the real hot-swap (6b/6c) needs the **@C71/N9**
   execution model — a *design, not yet a build*; faking it via full-restart would ship the
   workaround as the feature, so it waits for that build. Until then WB9 delivers 6a (run +
-  observe + restart-to-apply), and true in-place hot-swap lands when C71/N9 does.
+  observe + restart-to-apply), and true in-place hot-swap lands when @C71/N9 does.
 - **Debug the running game.** A breakpoint in frame logic pauses the game and drops the *same*
   variables/watch/stack panels (VE/SF/DB/RX) — debugging *is* "run with breakpoints", including
   in a live game.
@@ -327,7 +327,7 @@ place to *review and land* a branch (the viewer's original purpose) as well as a
 
 - **`loft-lsp` / `loft-dap`** — **SHIPPED** (@PLN63, this session). The loft leg is *ready*;
   this **unblocks @PLN66 phase 03** (which was gated on LSP.1).
-- **serve.rs slices 1–5** — **LANDED**. Slice 6 (game hot-swap) waits on C71/N9 and is **not**
+- **serve.rs slices 1–5** — **LANDED**. Slice 6 (game hot-swap) waits on @C71/N9 and is **not**
   on the Workbench's critical path.
 - **`loft-lsp-bridge`** (@PLN66) — designed, unbuilt; WB1/WB5/WB6 build phases 00–02.
 - **Viewer generalisation** ([@PLN70](../../lib_plans/70-viewer-generalisation/README.md), if

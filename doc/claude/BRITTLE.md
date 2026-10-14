@@ -33,17 +33,16 @@ red-black free-block tree lives *inside* the free blocks themselves
 (fields FL_LEFT / FL_RIGHT / FL_COLOR are u32 offsets into unrelated
 free blocks).
 
-⚠ **The buffer is PACKED, so nothing may take a reference into it
-without proving alignment.**  The allocation is
-`Layout::from_size_align(size * 8, 8)` and an address is
-`base + rec * 8 + fld`, so for any alignment up to eight the address's
-alignment IS `fld`'s — and `fld` is a byte offset the type layout
-assigns with no padding.  Measured over the corpus, `i64` fields occur
-at all seven non-zero `fld % 8`.  `read` / `write` therefore use
-`read_unaligned` / `write_unaligned`, which lower to the same single
-`mov` here; `addr` / `addr_mut` still hand out `&T` / `&mut T` for the
-values that cannot be copied (a `String` in a slot owns a heap buffer)
-and **assert the alignment they need**.  loft#1481.
+⚠ **Every scalar in the buffer is aligned, and the compiler checks it.**
+The allocation is `Layout::from_size_align(size * 8, 8)` and an address
+is `base + rec * 8 + fld`, so for any alignment up to eight the
+address's alignment IS `fld`'s, and the layout makes every `fld` a
+multiple of its scalar's alignment (`(L-Align)`, @C138), which
+`Stores::validate_all_layouts` checks once at compile time.  `read` /
+`write` claim no alignment and test none — defined at any offset, so a
+layout defect answers a wrong value, never UB; `addr` / `addr_mut`
+hand out `&T` / `&mut T` for the values that cannot be copied (a
+`String` in a slot owns a heap buffer) and assert alignment per call.
 
 **Signal:**
 - `Allocating a used store` panic

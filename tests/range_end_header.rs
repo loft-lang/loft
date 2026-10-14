@@ -5,8 +5,8 @@
 //! per function, how many loop tests still compare against the prelude's `_range_end` local.
 //! The cells answer the same on either form, so only this pin sees the admission move — above
 //! all a growing loop taking the substitution, which is the one wrong answer it could give.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-length-bound-reads-the-held-header.loft";
 
@@ -28,7 +28,8 @@ fn emit(off: bool) -> String {
         std::process::id(),
         u8::from(off)
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -41,8 +42,8 @@ fn emit(off: bool) -> String {
         cmd.env("LOFT_NO_RANGE_END_HEADER", "1");
     }
     let status = cmd.output().expect("spawn loft --native-emit");
-    let text = std::fs::read_to_string(&out).unwrap_or_default();
-    let _ = std::fs::remove_file(&out);
+    let text = fa::read_to_string(&out).unwrap_or_default();
+    let _ = fa::remove_file(&out);
     assert!(
         text.contains("fn n_update("),
         "no Rust emitted (exit {:?}): {}",

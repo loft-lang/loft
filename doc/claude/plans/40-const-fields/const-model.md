@@ -78,12 +78,12 @@ re-annotated to match.  No new keyword.
     `…-leaves-its-copies-writable.loft` (the copies, whole-value binds and `const` hand-offs that
     must stay legal).  Known over-approximation: the mark follows the BIND, not the flow, so a
     view local rebound to a fresh value is still refused.
-  - **Built 2026-09-15 — the plain-parameter half, by SIGNATURE (owner, DESIGN_DECISIONS.md C124),
-    landing as the warning `const-to-plain-parameter` until the 17 library helpers C124 § Rollout
+  - **Built 2026-09-15 — the plain-parameter half, by SIGNATURE (owner, DESIGN_DECISIONS.md @C124),
+    landing as the warning `const-to-plain-parameter` until the 17 library helpers @C124 § Rollout
     lists declare `const` — an error since 2026-09-28, when every shipped library had.**
     A value-const value reaches a record or collection parameter only when that parameter is
-    declared `const`; the body is never read (C121), and a proof that a callee does not write stays
-    an optimisation's (C122).  The parameter's `const` is carried on the definition's attribute
+    declared `const`; the body is never read (@C121), and a proof that a callee does not write stays
+    an optimisation's (@C122).  The parameter's `const` is carried on the definition's attribute
     (`Attribute.value_const`, serialised in the IR store — the Phase 2b deferral this needed) and
     kept by every copy of a signature: generic instances, interface and bound-method stubs,
     default-value functions, overload dispatchers.  The stdlib's read-only heap parameters are

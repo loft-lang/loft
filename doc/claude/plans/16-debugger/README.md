@@ -120,7 +120,7 @@ session over a pipe). **The `--serve` browser IDE (M5b/M5e) landed 2026-06-10** 
 Run/Test/Suite/Game buttons, the debugger inside, dual console + REPL panel, all over the
 same protocol (slices 1–5 + 6a; see the M5e status below). **Next on this plan**: the
 slice-6 remainder — verify the registry GL path (`loft install graphics` → a windowed
-`launchGame`), then hot-swap `reload` + breakpoint-in-game once the C71/N9 shared-store
+`launchGame`), then hot-swap `reload` + breakpoint-in-game once the @C71/N9 shared-store
 execution model gets its build plan (design exploration recorded in
 [ENGINE_HOST.md](../18-engine-host/ENGINE_HOST.md) — tier model, main-loop IO contract, in-house prior art).
 

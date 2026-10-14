@@ -30,6 +30,17 @@ to what they say.
   unless the owner reopens the entry.  Gate (`tests/index_hygiene.rs`): every `@C<n>` names an entry, no id is
   defined twice, the index lists exactly the entries, and every entry has its guard — a new one
   lands with it.
+- **Each entry has a worklist line** in [DESIGN_DECISIONS_WORKLIST.tsv](DESIGN_DECISIONS_WORKLIST.tsv):
+  its kind (`code` — code implements or refuses it, at the `site` the line names; `decline` —
+  nothing implements it, the note says what keeps it; `library`; `pending`), whether its guard
+  exercises it, and the work it still owes (`cite`, `locate`, `guard`, `entry`, `miscite`,
+  `build`).  `make decisions` lists the open lines, `./scripts/idx decision:C<n>` shows one
+  with its sites and its bare `C<n>` mentions, and `python3 scripts/decisions.py sync` adds
+  a line for a new entry.  Gate (`make decisions-check`, run by `tests/index_hygiene.rs`):
+  every entry has a classified line, every named site still contains its text, a site
+  without `@C<n>` is listed as `cite` work, a `cite` the tree has done fails too, and every
+  entry is cited by a working doc that states it (not the register, a `-history.md`, a changelog,
+  a plan or a release record).
 - **A decision about a library is guarded in that library** — a test under its `tests/` citing
   `@C<n>`, run by its own CI where the library is edited.  `make guards-fetch` reads every
   `loft-libs-*` repo at `origin/main` into `index/library_guards.json` (committed), which

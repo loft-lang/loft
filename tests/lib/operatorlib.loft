@@ -1,0 +1,23 @@
+// A library type with operator definitions — an overloaded form, `to_text` and `next` — for
+// tests/scripts/a-library-type-answers-its-operators-through-a-bare-use.loft.
+
+pub struct Span { n: integer }
+pub struct Mark { at: integer }
+pub struct Walk { at: integer, end: integer }
+
+pub fn mark(at: integer) -> Mark { Mark { at: at } }
+pub fn span(n: integer) -> Span { Span { n: n } }
+pub fn walk(from: integer, to: integer) -> Walk { Walk { at: from, end: to } }
+
+pub operator compare(self: Mark, other: Mark) -> Ordering { self.at.compare(other.at) }
+// Two members of one form: the right operand's type chooses (`Disp-Select`).
+pub operator minus(self: Mark, other: Mark) -> Span { Span { n: self.at - other.at } }
+pub operator minus(self: Mark, by: Span) -> Mark { Mark { at: self.at - by.n } }
+pub operator plus(self: Mark, by: Span) -> Mark { Mark { at: self.at + by.n } }
+pub operator to_text(self: Mark, _spec: text) -> text { "@{self.at}" }
+pub operator to_text(self: Span, _spec: text) -> text { "{self.n}s" }
+pub operator next(self: Walk) -> integer? {
+  if self.at >= self.end { return null; }
+  self.at += 1;
+  self.at - 1
+}

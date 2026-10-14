@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A file may hold its declarations in any order (LOFT_DECLARATIONS.md § File structure).  A
+// `match` STATEMENT whose subject's enum is declared LOWER in the file is unresolved on the
+// first pass, and the statement after its `}` needs no `;` — on that pass its arms lower to
+// nothing, which must still read as a brace statement.  Block arms, an expression arm and a
+// plain-enum subject.
+// @falsified-at: 7ee8bfeda — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-match-statement-on-an-enum-declared-below-needs-no-semicolon.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees; only
+//   the exit moved, as the receipt above records.
+fn radius() -> integer {
+  match get() { Disc { r } => { return r; }, _ => {} }
+  0
+}
+
+fn area() -> integer {
+  total = 0;
+  match get() { Disc { r } => { total = r * r; }, Dot => { total = 1; } }
+  total
+}
+
+fn tint() -> integer {
+  t = 0;
+  match hue() { Red => { t = 10; }, Blue => { t = 20; } }
+  t
+}
+
+fn get() -> Shape { Disc { r: 4 } }
+fn hue() -> Colour { Blue }
+
+enum Shape { Disc { r: integer }, Dot }
+enum Colour { Red, Blue }
+
+fn main() {
+  assert(radius() == 4, "radius {radius()}");
+  assert(area() == 16, "area {area()}");
+  assert(tint() == 20, "tint {tint()}");
+  println("ok");
+}

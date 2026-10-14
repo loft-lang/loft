@@ -173,7 +173,7 @@ hex_terrain	terrain_fbm	float-kernel	library:hex_terrain	per octave four integer
 17_consumer_moros_dryopea	reload_and_record	keyed	consumer:dryopea	a two-way hash diff with u8 fields: walk A probing B, walk B probing A
 17_consumer_moros_dryopea	mapfile_to_painted	text-scan	consumer:dryopea	per entry a linear palette scan comparing a text field, then a composite-key insert
 17_consumer_moros_dryopea	truncate_to	vector-build	consumer:dryopea	a timeline of records with inner vectors rebuilt element by element to drop a prefix
-18_consumer_crawler	build_walls	keyed	consumer:crawler	a text key formatted per wall face probing a hash, a record appended on a miss
+18_consumer_crawler	build_walls	keyed	consumer:crawler	a corner rounded to two integers per wall face probing a hash, a record appended on a miss
 18_consumer_crawler	build_vis	vector-build	consumer:crawler	per frame a 101x101 push loop, two indexed reads and a small call per pixel
 18_consumer_crawler	hydro_pitfill	vector-write	consumer:crawler	a priority flood on a min-heap of two parallel integer vectors
 18_consumer_crawler	talus_relax	vector-write	consumer:crawler	a 4-neighbour relaxation over const and & float vectors, 120 sweeps

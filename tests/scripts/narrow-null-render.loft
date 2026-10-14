@@ -13,10 +13,10 @@
 struct S { a: u8?, b: u16?, c: i16?, d: integer limit(10,255)?, e: integer?, f: integer }
 
 fn main() {
-  // A null FIELD is omitted from the render — the omission test and the value render are
-  // the same question, so they have to agree.
+  // A null FIELD renders `null` at every width (@C143) — the null test and the value render
+  // are the same question, so they have to agree.
   s = S { a: null, b: null, c: null, d: null, e: null, f: 7 };
-  assert("{s}" == "{{f:7}}", "null fields are omitted, the present one is not");
+  assert("{s}" == "{{a:null,b:null,c:null,d:null,e:null,f:7}}", "null fields render null, the present one its value");
 
   // A null ELEMENT renders as `null` at every width.
   v1: vector<u8?> = [12, null];
@@ -59,8 +59,8 @@ fn main() {
   // width being added to the write side and forgotten on the read side.
   f = F { i0: null, b1: null, s1: null, tag: "t" };
   assert(f.i0 == null && f.b1 == null && f.s1 == null, "the reads say null");
-  assert("{f}" == "{{tag:\"t\"}}", "and every width is OMITTED from the render");
-  assert(f.to_json() == "{{\"tag\":\"t\"}}", "no plausible number on the wire");
+  assert("{f}" == "{{i0:null,b1:null,s1:null,tag:\"t\"}}", "and every width renders null");
+  assert(f.to_json() == "{{\"i0\":null,\"b1\":null,\"s1\":null,\"tag\":\"t\"}}", "no plausible number on the wire");
 
   // A non-zero `min` is the axis: `Byte`/`Short` encode `value - min + 1`, so a
   // sentinel test that compares a DECODED value only holds at `min == 0`.

@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § A store that did not take — `place = value else { … }` runs its block
+// exactly when the write did not land, with the place spelled once (@C130, @FR-H-Write-Else).
+
+struct Score { name: text, points: integer }
+struct Player { name: text }
+struct Board { by_name: hash<Score[name]> }
+
+fn test_an_element_or_a_key_that_is_not_there() {
+  scores = [10, 20, 30];
+  board = Board { by_name: [Score { name: "ann", points: 3 }] };
+  missed = 0;
+  scores[1] = 25 else { missed += 1 };
+  scores[7] = 70 else { missed += 1 };
+  board.by_name["ann"].points += 1 else { missed += 1 };
+  board.by_name["bob"].points += 1 else { missed += 1 };
+  assert("{scores}" == "[10,25,30]", "the element that exists took the write: {scores}");
+  assert(board.by_name["ann"].points == 4, "the key that exists took the write");
+  assert(len(board.by_name) == 1, "a missed key is not added");
+  assert(missed == 2, "the arm ran for the two places that were not there: {missed}");
+}
+
+fn test_a_null_view_and_a_narrow_slot() {
+  owner: Player? = null;
+  note = "";
+  owner.name = "zoe" else { note += "nobody to name; " };
+  health: u8 = 250;
+  health += 10 else { note += "the boost did not fit"; };
+  assert(note == "nobody to name; the boost did not fit", note);
+  assert(health == 0, "the slot still took the type's default");
+}
+
+fn test_the_arm_can_leave_the_loop() {
+  slots = [0, 0, 0];
+  filled = 0;
+  for i in 0..10 {
+    slots[i] = i + 1 else { break };
+    filled += 1;
+  }
+  assert("{slots}" == "[1,2,3]" && filled == 3, "{slots} {filled}");
+}
+
+fn main() {
+  test_an_element_or_a_key_that_is_not_there();
+  test_a_null_view_and_a_narrow_slot();
+  test_the_arm_can_leave_the_loop();
+}

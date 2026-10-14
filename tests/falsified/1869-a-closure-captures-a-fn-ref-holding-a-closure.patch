@@ -1,0 +1,11 @@
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -3211,7 +3211,7 @@
+                 // loft#1869, `@FR-L-CapHeap` — a captured fn-ref that holds a closure keeps its
+                 // d_nr in the attribute and its closure RECORD beside it, a shared heap capture
+                 // like any struct: `<name>__clos`, adopted or borrowed as `(L-CapOwn)` says.
+-                if let Some(&inner) = self.capture_fn_lambda.get(name) {
++                if let Some(&inner) = self.capture_fn_lambda.get(name).filter(|_| false) {
+                     let rec = if inner == u32::MAX {
+                         self.fn_record_def()
+                     } else {

@@ -86,7 +86,7 @@ the click becomes unsafe.
 
 2. **The concept has no door.** `[move]` should link to the capability, but the feature
    catalogue has 105 entries and **none** covering move/copy/ownership semantics, and
-   `LOFT.md` has no copy-vs-move section (one passing `C86` mention). The plan's own rule says
+   `LOFT.md` has no copy-vs-move section (one passing `@C86` mention). The plan's own rule says
    a door onto nothing is worse than no door — so either a catalogue entry is written first,
    or the handle ships without a link and the teaching half of @PLN131 does not happen yet.
 

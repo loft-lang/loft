@@ -118,7 +118,7 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
     // SOURCE: it is global, and nothing a consumer can name.
     let in_lib = |d: u32| {
         d < data.definitions()
-            && &*data.def(d).position.file == lib_file
+            && data.def(d).position.file == lib_file
             && data.def(d).source != crate::data::STD_SOURCE
     };
 
@@ -156,7 +156,7 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
             tier,
             signature,
         });
-        for r in referenced_defs_of(data, d) {
+        for r in referenced_defs_of(data, d, false) {
             if in_lib(r)
                 && classify(data, r).is_some()
                 && !is_receiver_alias(data, r)
@@ -180,12 +180,12 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
 ///   carrying the name a consumer writes — `pick`, `scale`. Recording it is REQUIRED; the real
 ///   overloads live under mangled keys (`f_15integer#integer_pick`) nobody can call.
 /// * a **`both` receiver** targets the method (`t_<LEN><Type>_<name>`) it is a second spelling
-///   of. C123 measured `self` and `both` identical across every call spelling — import lists
+///   of. @C123 measured `self` and `both` identical across every call spelling — import lists
 ///   included, once methods were brought in by name — so this alias is not an independent
-///   member, and recording it makes the C123 migration it prescribes read as `removed fn`.
+///   member, and recording it makes the @C123 migration it prescribes read as `removed fn`.
 ///
 /// That is the whole defect: `regex`'s published surface carried `matches · fn · (text: fn) ->
-/// unknown` beside `text.matches`, so renaming its receiver — the migration C123 names this
+/// unknown` beside `text.matches`, so renaming its receiver — the migration @C123 names this
 /// library for — reported an API BREAK against a caller-invisible phantom.
 ///
 /// Filtered HERE and not in [`classify`], which is the canonical def→(kind, name) mapper the LSP
@@ -315,6 +315,9 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
     // `api_diff::members_of` splitting on `:`, and a value after one would read as part of
     // the type. The value itself is deliberately not rendered — see the note on
     // `api_diff::signature_break`.
+    // A FIELD (`sort`: a struct's or a variant's member) carries `pub ` when it is `pub`
+    // (@C140): losing it breaks every reader outside the file, and `api_diff::split_pub` keeps
+    // the marker out of the shape comparison.
     let render = |atts: &[crate::data::Attribute], sort: bool, defaults: bool| -> Vec<String> {
         let mut v: Vec<(&str, String)> = atts
             .iter()
@@ -329,9 +332,10 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
                 } else {
                     ""
                 };
+                let vis = if sort && a.pub_field { "pub " } else { "" };
                 (
                     a.name.as_str(),
-                    format!("{}: {}{}", a.name, ty(&a.typedef), opt),
+                    format!("{vis}{}: {}{}", a.name, ty(&a.typedef), opt),
                 )
             })
             .collect();
@@ -376,28 +380,91 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
     }
 }
 
-/// Every library def referenced through `d`'s SIGNATURE — the observable edges: a fn's
-/// return + params, a struct's field types, an enum's variant field types, a typedef's
-/// target. The body is never followed (it is not observable).
-fn referenced_defs_of(data: &Data, d: u32) -> Vec<u32> {
+/// Every library def referenced through `d`'s SIGNATURE: a fn's return + params, a typedef's
+/// target, and a struct's or a variant's field types.  The body is never followed.  With
+/// `pub_fields_only`, a private field is not followed either — outside its file it cannot be
+/// read, so its type is not NAMEABLE through it (C140, [`name_only_defs`]).  The API surface
+/// follows every field: it lists every field, so that a field gaining `pub` reads as no change
+/// to a release's surface rather than as a field added.
+fn referenced_defs_of(data: &Data, d: u32, pub_fields_only: bool) -> Vec<u32> {
     let def = data.def(d);
     let mut out = Vec::new();
     collect_type_defs(&def.returned, &mut out); // return / typedef target
+    // @PLN187 — the `type` alias a result, a parameter or a field was declared WITH: the type
+    // above is the alias's target, and the alias itself is what the signature names.
+    // `vector<Handle>` records the alias with its high bit set (`parser::abstract_alias::ELEM`).
+    // @PLN187 — every `type` alias a declared result, parameter or field names, by position
+    // (`AliasFact`): the type above is the alias's target; the alias is what the signature
+    // names.
+    let mut aliases = Vec::new();
+    def.returned_fact.aliases(&mut aliases);
+    let record = matches!(def.def_type, DefType::Struct | DefType::EnumValue);
     for a in def.attributes() {
-        if !a.hidden {
-            collect_type_defs(&a.typedef, &mut out); // fields / parameters
+        if !a.hidden && (!record || !pub_fields_only || a.pub_field) {
+            collect_type_defs(&a.typedef, &mut out); // `pub` fields / parameters
+            a.fact.aliases(&mut aliases);
         }
     }
-    // An enum's variants are child defs; their fields are part of the enum's shape.
+    out.extend(
+        aliases
+            .into_iter()
+            .filter(|&a| a < data.definitions() && data.def(a).def_type == DefType::Type),
+    );
+    // An enum's variants are child defs; their `pub` fields are part of the enum's shape.
     if def.def_type == DefType::Enum {
         for v in 0..data.definitions() {
             let vd = data.def(v);
             if vd.parent == d && vd.def_type == DefType::EnumValue {
                 for a in vd.attributes() {
-                    if !a.hidden {
+                    if !a.hidden && (!pub_fields_only || a.pub_field) {
                         collect_type_defs(&a.typedef, &mut out);
                     }
                 }
+            }
+        }
+    }
+    out
+}
+
+/// @PLN187 (@C140, @FR-F-Visible) — every type that is NAME ONLY: not `pub`, but named by a `pub` item's
+/// signature in its own file, or by a `pub` field of a type visible there — transitively,
+/// through type arguments.  Outside its file such a type can be named, passed and stored,
+/// never built; it is the `Sealed` tier of [`surface`], computed for every file at once.
+/// A signature names only its own file's types into this set: a `pub fn` cannot make
+/// another file's private type visible, since it cannot name it.
+#[must_use]
+pub(crate) fn name_only_defs(data: &Data) -> HashSet<u32> {
+    let same_file = |a: u32, b: u32| data.def(a).position.file == data.def(b).position.file;
+    let mut out: HashSet<u32> = HashSet::new();
+    let mut work: Vec<u32> = (0..data.definitions())
+        .filter(|&d| data.def(d).pub_visible && classify(data, d).is_some())
+        .collect();
+    let mut seen: HashSet<u32> = work.iter().copied().collect();
+    while let Some(d) = work.pop() {
+        // An instance stands for its template and for its type arguments: `-> Box<Secret>`
+        // names `Box` and `Secret`.
+        let mut refs = referenced_defs_of(data, d, true);
+        let mut i = 0;
+        while i < refs.len() {
+            if refs[i] < data.definitions() && data.def(refs[i]).instance_of != u32::MAX {
+                let def = data.def(refs[i]);
+                for a in &def.instance_args {
+                    collect_type_defs(a, &mut refs);
+                }
+                refs[i] = def.instance_of;
+            }
+            i += 1;
+        }
+        for r in refs {
+            if r < data.definitions()
+                && same_file(d, r)
+                && classify(data, r).is_some()
+                && seen.insert(r)
+            {
+                if !data.def(r).pub_visible {
+                    out.insert(r);
+                }
+                work.push(r);
             }
         }
     }

@@ -1,0 +1,14 @@
+diff --git a/src/scopes/stored_refs.rs b/src/scopes/stored_refs.rs
+index 886a91035..ca039b7a8 100644
+--- a/src/scopes/stored_refs.rs
++++ b/src/scopes/stored_refs.rs
+@@ -1327,6 +1327,9 @@ impl Walk<'_> {
+     /// in a loop between the two removes records the reference may still name, which reads
+     /// null — except the home's own record, whose position the refill claims again.
+     fn hoist(&mut self, p: &[u32], hold: &Hold) -> bool {
++        if !p.is_empty() {
++            return false;
++        }
+         if self.hidden(hold.home) || p.is_empty() || !self.path.starts_with(p) {
+             return false;
+         }

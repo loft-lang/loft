@@ -95,7 +95,7 @@ A five-cell refusal probe, with a control that must compile:
 
 Every fault that types `τ?` is stopped by `(N-Store)`/`(N-Cast)` before it can reach a slot
 that cannot represent its answer. **Overflow is the only one that gets through, and it gets
-through precisely because C85 types it non-null.** So C85's exception is not merely an
+through precisely because @C85 types it non-null.** So @C85's exception is not merely an
 inconsistency in the rule set — it is the single reason the unrepresentable case is
 reachable at all. That is the sharpest argument for this plan, and it was not known before
 this phase.
@@ -127,7 +127,7 @@ answer `null` and *added the spare-code table to the rules*. So:
   re-verified.
 
 **So the bug-fixing case for this plan is largely already banked by other work.** What
-survives untouched is the structural case: three encodings of one question, C85's exception
+survives untouched is the structural case: three encodings of one question, @C85's exception
 as the single reachability door, the 14 `Op*Nullable` duplicates, the `_nn` lattice this
 makes unnecessary, the silent narrow-width default, and provenance. That is still worth the
 work — but it is a *consolidation* argument now, not a defect-count argument, and the issue
@@ -294,7 +294,7 @@ fn plain(v: integer, d: integer) -> integer { v + d }
 | call | answer |
 |---|---|
 | `bump(i64::MAX, 1)` | **42** — the author's fallback on a real overflow |
-| `plain(i64::MAX, 1)` | `null` — C85's default |
+| `plain(i64::MAX, 1)` | `null` — @C85's default |
 | `bump(2, 3)` | `5` — the ordinary path is untouched |
 
 No `redundant-coalesce`, no static range knowledge needed. So for `integer` and `i32` the

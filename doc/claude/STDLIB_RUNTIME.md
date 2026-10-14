@@ -193,8 +193,7 @@ for f in t.fields {
 
 - **The position is CHECKED against the descriptor, never trusted.**  Only a
   field the type says BEGINS there is read.  A hand-made offset, a stale one, one
-  belonging to a different type, the interior of a wider field, or an `index`
-  element's `#left_1` bookkeeping all answer `OtherKind` with no read at all — so
+  belonging to a different type, or the interior of a wider field all answer `OtherKind` with no read at all — so
   no argument reads bytes the layout did not name.
 - **`kind` is the descriptor's answer, not yours.**  Passing the position of an
   `integer` field does not make the reading an integer; it makes it whatever that
@@ -294,6 +293,12 @@ Functions for interacting with the host operating system.
 | `directory(v: &text = "") -> text` | Returns the current working directory, optionally with `v` appended as a subpath. Use to construct absolute paths relative to where the program was launched. |
 | `user_directory(v: &text = "") -> text` | Returns the current user's home directory, optionally with `v` appended. |
 | `program_directory(v: &text = "") -> text` | Returns the directory containing the running executable, optionally with `v` appended. |
+
+### Ending the program
+
+| Function | Description |
+|----------|-------------|
+| `exit(code: integer)` | Ends the program at once with `code` as its exit status, as a shell's `exit` does: what was printed is flushed, nothing more is printed, and no diagnostic names the line — on both backends.  A script's verdict is its own (`2` for a usage error, `1` for a failed gate), where `assert` and `panic` answer loft's: status 1 and a message on stderr.  The status is one byte, so `exit(300)` is seen as 44, as `exit 300` is in a shell.  Under `loft test` it ends the TEST, as a failure that names the code (`exit(2)`), and the run goes on to the next test.  In a sandboxed script it is refused at admission with `assert` and `panic`: ending the host's program is not the script's to do. |
 
 ### Memory diagnostics
 

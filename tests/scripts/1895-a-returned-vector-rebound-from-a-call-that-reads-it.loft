@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1895 — a vector local the function RETURNS, rebound from a call that reads that same
+// local, answers the value the call computed from its own argument.
+//
+// The returned local is renamed onto the function's hidden return buffer, and a straight-line
+// rebind `acc = g(acc)` hands the call that buffer as ITS return buffer: the callee empties
+// the buffer it was handed, which is the argument it is about to read.  So the rename is
+// refused for a local rebound from a call whose arguments read it, and the local keeps a
+// store of its own (`Parser::var_rebound_reading_itself`).
+//
+// Each cell names a different reader of the argument: a `for` walk, a copy-then-append, a
+// read inside a nested expression, and the loop that rebinds three times.  The two controls
+// keep the shapes the rename is still right for: a local that is not returned, and a returned
+// local bound from a call that does not read it.
+//
+// @falsified-at: 2186bf09e — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
+// @falsified-by: tests/falsified/1895-a-returned-vector-rebound-from-a-call-that-reads-it.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
+//   CHANNEL: value — the four defect cells assert the wrong vector.
+//   WITNESS: on the control `rebind_once(3)` answers `[]` where the file says `[6]`.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees (leak none
+//   under `LOFT_STRICT_STORES=1`), and both controls pass on both trees.
+
+fn twice(v: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in v { out += [x * 2]; }
+  out
+}
+
+fn plus_zero(v: vector<integer>) -> vector<integer> {
+  r = v;
+  r += [0];
+  r
+}
+
+fn shifted(base: integer, v: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in v { out += [x + base]; }
+  out
+}
+
+fn rebind_once(n: integer) -> vector<integer> {
+  acc: vector<integer> = [];
+  acc += [n];
+  acc = twice(acc);
+  acc
+}
+
+fn rebind_copying_callee(n: integer) -> vector<integer> {
+  acc: vector<integer> = [];
+  acc += [n];
+  acc = plus_zero(acc);
+  acc
+}
+
+fn rebind_read_in_an_expression(n: integer) -> vector<integer> {
+  acc: vector<integer> = [];
+  acc += [n];
+  acc += [n + 1];
+  acc = shifted(len(acc), acc);
+  acc
+}
+
+fn rebind_in_a_loop(n: integer) -> vector<integer> {
+  acc: vector<integer> = [];
+  acc += [n];
+  for _ in 0..3 { acc = twice(acc); }
+  acc
+}
+
+// Control: `acc` is not returned, so it was never the buffer.
+fn not_returned(n: integer) -> integer {
+  acc: vector<integer> = [];
+  acc += [n];
+  acc = twice(acc);
+  acc[0] ?? -1
+}
+
+// Control: the returned local is bound from a call that does not read it — still renamed.
+fn returned_from_an_unrelated_call(n: integer) -> vector<integer> {
+  src: vector<integer> = [n, n];
+  acc = twice(src);
+  acc
+}
+
+fn test_a_walking_callee_reads_the_value_it_was_handed() {
+  r = rebind_once(3);
+  assert(len(r) == 1, "length: got {len(r)}, want 1");
+  assert("{r}" == "[6]", "value: got {r}, want [6]");
+}
+
+fn test_a_copying_callee_keeps_the_argument_it_copied() {
+  r = rebind_copying_callee(3);
+  assert(len(r) == 2, "length: got {len(r)}, want 2");
+  assert("{r}" == "[3,0]", "value: got {r}, want [3,0]");
+}
+
+fn test_the_argument_read_inside_an_expression() {
+  // acc = [4, 5]; shifted(2, [4, 5]) = [6, 7]
+  r = rebind_read_in_an_expression(4);
+  assert(len(r) == 2, "length: got {len(r)}, want 2");
+  assert("{r}" == "[6,7]", "value: got {r}, want [6,7]");
+}
+
+fn test_three_rebinds_in_a_loop() {
+  // 3 -> 6 -> 12 -> 24
+  r = rebind_in_a_loop(3);
+  assert(len(r) == 1, "length: got {len(r)}, want 1");
+  assert("{r}" == "[24]", "value: got {r}, want [24]");
+}
+
+fn test_control_a_local_that_is_not_returned() {
+  assert(not_returned(3) == 6, "got {not_returned(3)}, want 6");
+}
+
+fn test_control_a_returned_local_from_an_unrelated_call() {
+  r = returned_from_an_unrelated_call(5);
+  assert("{r}" == "[10,10]", "value: got {r}, want [10,10]");
+}

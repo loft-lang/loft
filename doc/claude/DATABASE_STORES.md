@@ -77,10 +77,10 @@ names each capture and each use.  The all-zero fast path (`zero_range`) stays in
 | `Short(i32, bool)` | 16-bit integer; `bool` = signed |
 | `Vector(u16)` | Dynamic by-value array of element type `u16` |
 | `Array(u16)` | Dynamic by-reference array of element type `u16` |
-| `Sorted(u16, Vec<(u16,bool)>)` | Red-black tree ordered by key fields; `bool` = ascending |
+| `Sorted(u16, Vec<(u16,bool)>)` | By-value vector ordered by key fields; `bool` = ascending |
 | `Ordered(u16, Vec<(u16,bool)>)` | Ordered array (binary search) by key fields |
 | `Hash(u16, Vec<u16>)` | Open-addressing hash table; field indices as hash keys |
-| `Index(u16, Vec<(u16,bool)>, u16)` | Combo: sorted tree + hash table for a single collection |
+| `Index(u16, Vec<(u16,bool)>)` | B+tree over the element records (content type nr, key fields); the nodes are one arena record in the collection's store |
 | `Radix(u16, Vec<u16>)` | Spatial index for `spatial<T[x,y]>` / `spatial<T[x,y,z]>` — Morton/Z-order radix tree, 1–3 coordinate axes (renamed from `Spatial`) |
 | `Trie(u16, u16)` | Text index for `trie<T[k]>` — the SAME radix tree over ONE text key; content type nr + the key field index |
 
@@ -138,14 +138,17 @@ asymmetry stays recorded.
 
 ### Storing a scalar: `Store::write`, never a reference into the slot
 
-An element's offset is `index * stride + fld`, so any stride the scalar's alignment does not
-divide puts that slot at a misaligned address — `Lay`'s element 1 puts an `i64` at 34, and
-`34 % 8 != 0`. A **reference** to a misaligned address is undefined behaviour even if it is never
-read through, which is why storing a scalar goes through `Store::write` (a `write_unaligned`) and
-not through `&mut *ptr.cast::<T>()` (loft#1481). `Store::addr_mut` exists for the values `write`
-cannot store by value — a `String` or a `Str` whose heap buffer the caller mutates in place — and
-it asserts the alignment rather than assuming it, with a plain `assert!` under no `cfg`, so a
-wrong call panics in a release build too.
+Every field and element offset is a multiple of its scalar's alignment (`(L-Align)`, @C138), and a
+record starts on an 8-byte word. The compiler checks that once (`Stores::validate_all_layouts`);
+`Store::read` / `Store::write` re-test nothing at run time and claim no alignment
+(`read_unaligned` / `write_unaligned`, one `mov` on x86-64), so they are defined at any offset — the
+layout's own bytes, a foreign store's (a producer's buffer) and the interpreter's stack frames alike.
+Store a scalar through `Store::write` rather than
+`&mut *ptr.cast::<T>()` all the same — the write is where the lock refusal, the bounds check and the
+shadow hook live. `Store::addr_mut` exists
+for the values `write` cannot store by value — a `String` or a `Str` whose heap buffer the caller
+mutates in place — and it asserts the alignment rather than assuming it, with a plain `assert!`
+under no `cfg`.
 
 ⚠ **If you are resolving a MERGE or a REBASE and this line is the conflict, the `addr_mut` side is
 the unsound one.** The note is here because every other note about this rule — the comment at

@@ -355,6 +355,9 @@ pub struct DbRef {
     pub pos: u32,
 }
 
+/// The `pos` bit that marks a null as already reported ([`DbRef::NULL_REPORTED`]).
+pub const REPORTED_BIT: u32 = 0x8000_0000;
+
 impl DbRef {
     /// The canonical null-reference sentinel (`store_nr == u16::MAX`).  Store
     /// allocation asserts `slot != u16::MAX`, so this is distinct from every
@@ -366,6 +369,27 @@ impl DbRef {
         rec: 0,
         pos: 0,
     };
+
+    /// A null whose absence is already ACCOUNTED for: the access that found the place absent
+    /// reported it (an out-of-range index, `@FR-H-Index`), or a store's `else` arm owns it
+    /// (`@FR-H-Write-Else`).  A write that lands nowhere through it says nothing more; a write
+    /// through any other null reports `write_dropped` (`@FR-E-Report`).  The mark is the top
+    /// bit of `pos`, a word a null never reads — every null test asks `rec` or `store_nr` —
+    /// and `pos + field` keeps the bit, so a field written under a reported element is
+    /// accounted for too.  No real record's position reaches it: a store is far below 2^31
+    /// words.
+    pub const NULL_REPORTED: DbRef = DbRef {
+        store_nr: u16::MAX,
+        rec: 0,
+        pos: REPORTED_BIT,
+    };
+
+    /// True for a write target that names no record and whose absence nothing has reported
+    /// yet — the one question a dropped write asks before it reports (`@FR-E-Report`).
+    #[must_use]
+    pub const fn absence_unreported(&self) -> bool {
+        self.rec == 0 && self.pos & REPORTED_BIT == 0
+    }
 
     /// True when this reference is the null sentinel (absent value).  The
     /// single home for the null test: every store accessor consults it before
@@ -492,6 +516,26 @@ pub fn uaf_any_enabled() -> bool {
 pub fn poison_enabled() -> bool {
     static POISON: OnceLock<bool> = OnceLock::new();
     *POISON.get_or_init(|| env_set("LOFT_POISON"))
+}
+
+/// `LOFT_POISON_HOST=windows` (@PLN184 Track W) — a loft PROGRAM runs as if on Windows, on
+/// Linux and macOS: its paths are read under Windows' rules and the file system answers by
+/// them (`file_access`'s emulated host).  Same family as `LOFT_POISON`: a run-mode switch that
+/// makes a defect invisible on a normal run show, real code in every build.  `None` when
+/// unset; an unknown value says so once and is off.  On Windows it changes nothing.
+#[must_use]
+pub fn poison_host() -> Option<crate::file_access::Flavor> {
+    static HOST: OnceLock<Option<crate::file_access::Flavor>> = OnceLock::new();
+    *HOST.get_or_init(|| match env_value("LOFT_POISON_HOST").as_deref() {
+        None | Some("" | "0") => None,
+        Some(v) if v.eq_ignore_ascii_case("windows") => Some(crate::file_access::Flavor::Windows),
+        Some(v) => {
+            crate::loft_eprintln!(
+                "loft: LOFT_POISON_HOST={v} is not a host loft emulates (windows); ignored"
+            );
+            None
+        }
+    })
 }
 
 /// `LOFT_COPY_DUMP=1` (@PLN90 phase 1) — print one line per executed deep STRUCTURE copy
@@ -813,9 +857,9 @@ pub fn group_apart_lint_enabled() -> bool {
 /// declares `f(both: τ, …)` / `f(self: τ, …)` — from a consumer that imported it, from the
 /// library's own other modules, and from the declaring file itself.
 ///
-/// The DEFINITION stays legal, which is @PLN102 C97: a library's names are module-scoped, so
+/// The DEFINITION stays legal, which is @PLN102 @C97: a library's names are module-scoped, so
 /// `mylib::f` still reaches it and the stdlib can grow without breaking a shipped library.
-/// What C97 left silent is that the bare name then belongs to the stdlib — the author writes
+/// What @C97 left silent is that the bare name then belongs to the stdlib — the author writes
 /// a function, every unqualified call goes somewhere else, and nothing says so.
 ///
 /// `warning` rather than `advice` by the tier rule: ignoring it produces a WRONG RESULT, not
@@ -834,8 +878,9 @@ pub fn shadowed_by_method_lint_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_SHADOWED_BY_METHOD"))
 }
 
-/// A NULLABLE COLLECTION return gets the same hidden `__retbuf` the non-nullable one gets —
-/// **DEFAULT ON** (loft#938). Opt OUT with `LOFT_NO_NULLABLE_RETBUF`.
+/// A NULLABLE return gets the same hidden `__retbuf` its non-nullable twin gets — a collection
+/// (loft#938) and a record or record enum (loft#1934, `@FR-N-Road`) — **DEFAULT ON**. Opt OUT
+/// with `LOFT_NO_NULLABLE_RETBUF`, which restores the buffer-less `τ?` for all three.
 ///
 /// # What it is for
 ///
@@ -870,15 +915,17 @@ pub fn shadowed_by_method_lint_enabled() -> bool {
 ///
 /// # For whoever changes this
 ///
-/// The peel is deliberately narrow — `Optional(Vector)` only. Widening it to
-/// `Optional(Reference(S))` leaks one record per call, because a nullable STRUCT return is
-/// loft#896's synthetic `__nullable<S>` enum with its own delivery
-/// (`882-keyed-element-read-borrows-its-container.loft` catches it). The `?` is transparent
-/// only where the storage under it is.
+/// The peel covers every shape that takes the buffer, through one predicate
+/// (`Type::ret_promo_base`).  A `null` answer is a value the caller reads, so a delivery that
+/// copies a tail into the buffer copies PER ARM and leaves a `null` arm null, and copies a
+/// nullable local only where it is present — `materialize_vector_arms_into` for a collection,
+/// `materialize_return_into` for a record.  Copying a whole nullable tail into the buffer is the
+/// mistake every site on this path has to avoid: it answers the buffer on the null path too.
 ///
-/// A delivery that COPIES the tail into the buffer and answers the buffer cannot be reached
-/// from a nullable return: it would turn a `null` answer into an empty collection. That is why
-/// the `Bind` leg in `ref_return` deliberately does NOT peel.
+/// Widening the peel to records (loft#1934) found the sites that had assumed a dense return; the
+/// register entry, `formal/types.md` D-types-32, lists them.  The bind that receives a nullable
+/// record is the dense arm's (`use_analysis::first_bind_shape`), so the loft#1200 `__lbo_` flag
+/// stands down while this is on.
 ///
 /// Reach for [`trace_ret_promotion`] first — it prints an ENTER line per `ref_return` call and
 /// a verdict line per candidate, and the difference between "no verdict" and "no ENTER" tells
@@ -965,7 +1012,7 @@ pub fn no_fnref_borrowed_return() -> bool {
 /// validated (steps 1–4) but NOT defaulted on: step 5's copy-count measurement found the win is ~0
 /// in practice (the read-only-both field-bind pattern it targets is essentially absent in real loft
 /// code — even the ~2000-line viewer eliminates 0 copies), while defaulting on adds per-bind analysis
-/// cost (an O(n) alias scan). C86's revisit trigger ("a profiler shows bind-copies dominating a real
+/// cost (an O(n) alias scan). @C86's revisit trigger ("a profiler shows bind-copies dominating a real
 /// consumer") is NOT met, so the mechanism stays opt-in, ready for when a consumer demonstrates the
 /// win. When set, `analyze_fn` → `ElidePlan` links a copy-fill bind `a = s.v` where it is provably
 /// SAFE (`link_is_safe`) AND UNOBSERVABLE (`link_is_unobservable`, alias-aware) — the observable
@@ -1272,6 +1319,88 @@ pub fn loop_rotate_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_ROTATE"))
 }
 
+/// A struct rebind from a fresh call result exchanges stores WITHOUT resetting the
+/// destination first on `--native` (`@FR-H-SwapRebind`, `codegen_runtime::OpRebindRecord`):
+/// the old value leaves with the released store — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_SWAP_REBIND` (read at run time): every such rebind resets the destination and
+/// copies or exchanges as before, the before-half of the A/B and the first bisect step for a
+/// wrong record after such a rebind on `--native`.
+#[must_use]
+pub fn swap_rebind_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SWAP_REBIND"))
+}
+
+/// A callee whose return buffer is built by a literal that writes every field, of a type whose
+/// heap is only vectors of no-heap elements, refills the store a rebind exchange released
+/// instead of minting a new one on `--native` (`@FR-R-RefillBuffer`) — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_REFILL_BUFFER` (read where the buffer is emitted and at run time): the
+/// released store is freed and every buffer is minted, the before-half of the A/B and the
+/// first bisect step for a wrong record built into a return buffer on `--native`.
+#[must_use]
+pub fn refill_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
+}
+
+/// The store a rebind `x = f(…)` displaces becomes the hidden buffer of that call's next
+/// execution, and the fresh result is adopted (`@FR-R-RebindBuffer`) — **DEFAULT ON**.  Opt
+/// OUT with `LOFT_NO_REBIND_BUFFER` (read where the rebind is emitted): the result is
+/// exchanged into `x`'s store (`@FR-H-SwapRebind`) as before, the before-half of the A/B and
+/// the first bisect step for a wrong value after a rebind in a loop on `--native`.
+#[must_use]
+pub fn rebind_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_BUFFER"))
+}
+
+/// A refilled return buffer's repeat literal overwrites the kept vector where it stands when
+/// it already holds that many elements (`@FR-R-RefillBuffer`'s in-place clause,
+/// `Stores::fill_exact`) — **DEFAULT ON**.  Opt OUT with `LOFT_NO_REFILL_IN_PLACE` (read where
+/// the literal is emitted): the vector is emptied and filled again, the before-half of the
+/// A/B and the first bisect step for a wrong element in a refilled vector on `--native`.
+#[must_use]
+pub fn refill_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_IN_PLACE"))
+}
+
+/// A call of an effect-free function made twice in one body on arguments nothing writes in
+/// between is computed once, on both backends (`@FR-R-PureReuse`, `pure_reuse`) — **DEFAULT
+/// ON**.  Opt OUT with `LOFT_NO_PURE_REUSE` (read at the scope pass): every call is made, the
+/// before-half of the A/B and the first bisect step for a wrong value read from such a call.
+#[must_use]
+pub fn pure_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PURE_REUSE"))
+}
+
+/// `LOFT_TRACE_PURE_REUSE=1` — name each call `pure_reuse` computes once.
+#[must_use]
+pub fn trace_pure_reuse() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_PURE_REUSE"))
+}
+
+/// A counted range whose start is not a literal steps ONE counter on the interpreter: the
+/// index is seeded from the start and the rotated loop enters past its step, so the copy
+/// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT
+/// with `LOFT_NO_START_STEP` (read at bytecode generation): the before-half of the A/B and
+/// the first bisect step for a wrong value out of such a loop on the interpreter.
+#[must_use]
+pub fn start_step_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_START_STEP"))
+}
+
+/// `LOFT_TRACE_START_STEP=1` — name each counted loop with a computed start that steps one
+/// counter on the interpreter, and each one declined.
+#[must_use]
+pub fn trace_start_step() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_START_STEP"))
+}
+
 /// `LOFT_TRACE_LOOP_VAR_ALIAS=1` — name each counted loop whose variable shares its range
 /// index's slot, and each one declined with the reason.
 #[must_use]
@@ -1518,12 +1647,68 @@ pub fn rebind_own_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_OWN_BUFFER"))
 }
 
+/// `LOFT_NO_APPEND_TWIN=1` — `X += f(args)` builds f's result in a buffer of its own and
+/// copies it into X again (`@FR-R-AppendTwin` off): the first bisect step for a wrong or
+/// doubled vector after an append of a call result.
+pub fn append_twin_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_TWIN"))
+}
+
+/// `LOFT_NO_PUSH_RUN=1` — a straight-line run of byte appends pushes each through the
+/// runtime again (`@FR-R-PushFill`'s run clause off): the first bisect step for a wrong byte
+/// or length after `v += [a]; v += [b]; …`.
+pub fn push_run_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_RUN"))
+}
+
+/// `LOFT_NO_TYPED_READ=1` — every native `f#read` goes through the generic `OpReadFile`
+/// (`@FR-R-TypedRead` off): the first bisect step for a wrong value or a wrong `#next` out of
+/// a fixed-width integer read.
+pub fn typed_read_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TYPED_READ"))
+}
+
 /// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop
 /// (`@FR-R-VecCopy` off): the first bisect step for a wrong, missing or extra element out of
 /// such a copy.
 pub fn vec_copy_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_VEC_COPY"))
+}
+
+/// `@FR-R-RepeatRun` — four or more equal constant pushes into one target are one repeat fill
+/// — **DEFAULT ON**.  `LOFT_NO_REPEAT_RUN` keeps every push: the first bisect step for a wrong
+/// element out of a literal that spells one constant many times.
+#[must_use]
+pub fn repeat_run_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REPEAT_RUN"))
+}
+
+/// `LOFT_TRACE_REPEAT_RUN=1` — name each run `@FR-R-RepeatRun` turns into one fill.
+#[must_use]
+pub fn trace_repeat_run() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_REPEAT_RUN"))
+}
+
+/// `@FR-H-SwapIn` — the rebind copy of a callee's minted result into a just-reset root is an
+/// exchange of the two stores' contents — **DEFAULT ON**.  `LOFT_NO_STORE_SWAP` keeps the deep
+/// copy: the first bisect step for a wrong record after `x = f(…, x, …)` on either backend.
+#[must_use]
+pub fn store_swap_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STORE_SWAP"))
+}
+
+/// `LOFT_TRACE_STORE_SWAP=1` — name each store exchange `@FR-H-SwapIn` makes.
+#[must_use]
+pub fn trace_store_swap() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_STORE_SWAP"))
 }
 
 /// `LOFT_TRACE_VEC_COPY=1` — name each element-wise vector copy made one append and each kept.
@@ -1575,6 +1760,21 @@ pub fn format_append_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
 }
 
+/// `LOFT_NO_TEXT_CLEAR=1` — empty a text with a fresh `String` again (`@FR-R-TextClear` off):
+/// the first bisect step for a text that reads leftover content after `s = ""` on `--native`.
+pub fn text_clear_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_CLEAR"))
+}
+
+/// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk
+/// path again (`@FR-R-FlatCopy` off): the first bisect step for a wrong value or a leak after
+/// a record copy on `--native`.
+pub fn flat_copy_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FLAT_COPY"))
+}
+
 /// `LOFT_TRACE_FORMAT_APPEND=1` — name each format append written into its destination and
 /// each that keeps its buffer, with the reason.
 pub fn trace_format_append() -> bool {
@@ -1598,6 +1798,20 @@ pub fn api_advice_enabled() -> bool {
 /// exit literal keeps its wrapper store and the literal keeps deep-copying it — the
 /// before-half of `(R-ExitVector)`'s A/B, and the first bisect step for a wrong or empty
 /// vector field out of a callee that built it in a local.
+/// `LOFT_NO_LITERAL_APPEND=1` — `(R-LiteralAppend)` off: a bound record literal is minted in
+/// its own store and copied into the element it is appended as.
+pub fn literal_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_APPEND"))
+}
+
+/// `LOFT_NO_FORWARD_RESULT=1` — `(R-ForwardResult)` off: a returned local bound from a call
+/// keeps its own buffer and the copy into the return buffer.
+pub fn forward_result_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FORWARD_RESULT"))
+}
+
 pub fn exit_vector_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
@@ -1677,6 +1891,15 @@ pub fn null_buffer_hoist_enabled() -> bool {
 pub fn vector_base_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_VECTOR_BASE"))
+}
+
+/// `@FR-O-Owner` — a literal buffer whose store a local OWNER takes over is detached from it
+/// (`scopes::buffer_detach`) — **DEFAULT ON**, both backends.  Opt OUT with
+/// `LOFT_NO_BUFFER_DETACH`: the buffer keeps naming the store, the bisect step for a store
+/// released twice, or cleared under another owner, out of a value branch's literal arm.
+pub fn buffer_detach_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_DETACH"))
 }
 
 /// @PLN157 § V-al (`@FR-R-LoopBuffer`): a per-site vector buffer minted INSIDE a loop keeps
@@ -2026,7 +2249,7 @@ pub fn complexity_lint_enabled() -> bool {
 /// `LOFT_LINT_STRICT_INDEX=1` (@PLN102 case D audit) — opt-in, DEFAULT OFF. The index-trust
 /// model types `v[i]` non-null for a for-loop iter var (like a constant index), trusting the
 /// loop bounds the vector. That trust is unchecked, so `for i in 0..len(v) { w[i] }` (or a
-/// mid-loop resize) types non-null yet reads C80-null on overrun. When set, this warns where a
+/// mid-loop resize) types non-null yet reads @C80-null on overrun. When set, this warns where a
 /// loop-var index is bounded by `len(<one vector>)` but indexes a DIFFERENT vector — the
 /// mismatched-vector index that is the silent-null hazard. Advisory only: the type is unchanged
 /// (tightening the trust to a proof would break the ubiquitous `for i in 0..n { v[i] }` idiom).
@@ -2188,6 +2411,16 @@ pub fn nested_in_place_enabled() -> bool {
 pub fn callee_disturb_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_CALLEE_DISTURB"))
+}
+
+/// `@FR-H-RefHome` — `LOFT_NO_REF_HOME=1` withholds the analysis of a stored reference whose
+/// holder outlives the record it names (`scopes::stored_reference_homes`): no refusal, no move
+/// of the home's store, no placement in the holder's store, no copy-out.  The bisect step when a program
+/// that compiled before is refused now, or reads a stored reference differently.
+#[must_use]
+pub fn ref_home_disabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_REF_HOME"))
 }
 
 /// @PLN155 phase 2b — which readers DECLINE on `Own::Unknown` instead of keeping the answer
@@ -3025,21 +3258,6 @@ impl FastKey<'_> {
             FastKey::Str(pos, v) => (*v).cmp(s.get_str(s.get_u32_raw(rec, base + pos))),
         }
     }
-
-    /// The same key with nothing borrowed, or `None` for a text key — for a walk that
-    /// MUTATES the stores it compares against (`tree::put` rebalances as it unwinds), where
-    /// a `&str` out of a store cannot be held.
-    #[must_use]
-    pub fn detached(&self) -> Option<FastKey<'static>> {
-        Some(match *self {
-            FastKey::Int(p, v) => FastKey::Int(p, v),
-            FastKey::Long(p, v) => FastKey::Long(p, v),
-            FastKey::I32(p, v) => FastKey::I32(p, v),
-            FastKey::U32(p, v) => FastKey::U32(p, v),
-            FastKey::ShortRaw(p, st, v) => FastKey::ShortRaw(p, st, v),
-            FastKey::Str(..) => return None,
-        })
-    }
 }
 
 /// A one-field key whose ORDER test is pre-resolved: [`FastKey`] plus the key's declared
@@ -3080,6 +3298,44 @@ pub fn fast_order_enabled() -> bool {
 pub fn one_probe_insert_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_ONE_PROBE_INSERT"))
+}
+
+/// `LOFT_NO_KEYED_REPLACE=1` — the first bisect step for a lost or doubled entry, or a
+/// leak, after a `hash` insert of a key already present: the insert unlinks the displaced
+/// entry and files the new one with a second walk again, instead of overwriting the
+/// displaced entry's bucket (`hash::replace_at`).
+#[must_use]
+pub fn keyed_replace_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEYED_REPLACE"))
+}
+
+/// `LOFT_NO_SLICE_WRITE=1` — the first bisect step for wrong bytes in a file written from
+/// a vector: every element is written through `Stores::read_data` one by one again,
+/// instead of the payload going out as one copy when its stored bytes are its file bytes.
+#[must_use]
+pub fn slice_write_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SLICE_WRITE"))
+}
+
+/// `LOFT_NO_KEEP_RANGE=1` — the first bisect step for a wrong element or length after
+/// `v = v[lo..hi]`: the vector keeps the range by the copy form again (span copied out,
+/// vector cleared, span appended) instead of moving it to the front of its own record.
+#[must_use]
+pub fn keep_range_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE"))
+}
+
+/// `LOFT_NO_KEEP_RANGE_REFRESH=1` — `(R-Refresh)`'s keep-range clause off: `OpKeepRange`
+/// on a held path blocks the loop's hoist as every other length change does, instead of
+/// refreshing the held header at its own site.  The A/B of the clause; the first bisect
+/// step for a wrong read after a self-slice pop inside a hoisted loop.
+#[must_use]
+pub fn keep_range_refresh_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE_REFRESH"))
 }
 
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
@@ -3155,17 +3411,6 @@ impl FastOrder<'_> {
         let c = self.key.order(s, rec, base);
         if self.descending { c.reverse() } else { c }
     }
-
-    /// The same comparator with nothing borrowed, or `None` for a text key
-    /// ([`FastKey::detached`]).
-    #[must_use]
-    pub fn detached(&self) -> Option<FastOrder<'static>> {
-        Some(FastOrder {
-            key: self.key.detached()?,
-            descending: self.descending,
-            verify: self.verify,
-        })
-    }
 }
 
 /// Order `recs` as `sort_by(`[`compare`]`)` would — DECORATED: with one key of a width
@@ -3174,7 +3419,9 @@ impl FastOrder<'_> {
 /// on the key's kind per comparison — 54 % of a `for e in hash` walk, whose order is built
 /// per pass (`bench/portal/analysis/keyed.md` L8).  The index is the tie-break, so equal keys
 /// keep their input order exactly as the stable sort kept it (a hash has none: its keys are
-/// unique).  A compound key, a float key, a partial or a 1-byte key take the comparator.
+/// unique).  A COMPOUND key of two to four integer parts is decorated the same way, its parts
+/// read into one array per record ([`compound_order`]).  A float or text part, a single 1-byte
+/// key and a longer key take the comparator.
 ///
 /// `LOFT_NO_FAST_ORDER=1` takes the comparator for every key; `LOFT_KEYED_VERIFY=1` checks
 /// the decorated order against [`compare`] pair by pair.
@@ -3183,10 +3430,18 @@ impl FastOrder<'_> {
 /// Under `LOFT_KEYED_VERIFY=1`, when the decorated order disagrees with [`compare`] — the
 /// falsifier, naming both records.
 pub fn sort_records(recs: &mut Vec<DbRef>, stores: &[Store], keys: &[Key]) {
-    if fast_order_enabled()
-        && let [k] = keys
-        && let Some(order) = decorated_order(recs, stores, k)
-    {
+    let order = if fast_order_enabled() {
+        match keys {
+            [k] => decorated_order(recs, stores, k),
+            [_, _] => compound_order::<2>(recs, stores, keys),
+            [_, _, _] => compound_order::<3>(recs, stores, keys),
+            [_, _, _, _] => compound_order::<4>(recs, stores, keys),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if let Some(order) = order {
         let sorted: Vec<DbRef> = order.iter().map(|&i| recs[i as usize]).collect();
         if keyed_verify() {
             for w in sorted.windows(2) {
@@ -3207,6 +3462,53 @@ pub fn sort_records(recs: &mut Vec<DbRef>, stores: &[Store], keys: &[Key]) {
 
 /// The order of `recs` under the one key `k`, as indices into `recs`, or `None` for a key
 /// width [`fast_key_of`] does not read.
+/// One part of a compound key as an `i64` that orders the way [`compare_ref`] orders the
+/// part — the same read, widened — with a descending part as `!v`, which reverses the order
+/// of every `i64` without overflow (the null sentinel `i64::MIN` lands last, where the
+/// reversed comparison puts it).  `None` for a kind not read as an integer.
+fn int_key_part(s: &Store, rec: &DbRef, k: &Key) -> Option<i64> {
+    let at = rec.pos + u32::from(k.position);
+    let v = match k.type_nr.abs() {
+        1 => s.get_int(rec.rec, at),
+        2 => s.get_long(rec.rec, at),
+        8 => i64::from(s.get_i32_raw(rec.rec, at)),
+        12 => i64::from(s.get_u32_raw(rec.rec, at)),
+        9 => i64::from(s.get_short(rec.rec, at, k.start)),
+        10 => i64::from(s.get_byte(rec.rec, at, k.start)),
+        11 => i64::from(s.get_short_full(rec.rec, at, k.start)),
+        _ => return None,
+    };
+    Some(if k.type_nr < 0 { !v } else { v })
+}
+
+/// [`decorated_order`] for a compound key of `N` integer parts: each record's parts read once
+/// into `([i64; N], index)`, the arrays sorted lexicographically — [`compare`]'s order, part by
+/// part, each in its own direction — with the index as the tie-break.  `None` when a part is
+/// not an integer kind, decided before any record is read.
+fn compound_order<const N: usize>(
+    recs: &[DbRef],
+    stores: &[Store],
+    keys: &[Key],
+) -> Option<Vec<u32>> {
+    if !keys
+        .iter()
+        .all(|k| matches!(k.type_nr.abs(), 1 | 2 | 8 | 9 | 10 | 11 | 12))
+    {
+        return None;
+    }
+    let mut pairs: Vec<([i64; N], u32)> = Vec::with_capacity(recs.len());
+    for (i, r) in recs.iter().enumerate() {
+        let s = store(r, stores);
+        let mut key = [0_i64; N];
+        for (part, k) in key.iter_mut().zip(keys) {
+            *part = int_key_part(s, r, k)?;
+        }
+        pairs.push((key, i as u32));
+    }
+    pairs.sort_unstable();
+    Some(pairs.into_iter().map(|(_, i)| i).collect())
+}
+
 fn decorated_order(recs: &[DbRef], stores: &[Store], k: &Key) -> Option<Vec<u32>> {
     let keys = std::slice::from_ref(k);
     let descending = k.type_nr < 0;

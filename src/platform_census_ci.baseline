@@ -1,0 +1,2 @@
+# CI jobs per workflow with no Windows leg and no exemption (@PLN184 E1).  Only
+# shrinks: see src/platform_census.rs.  Format: <jobs> <workflow>

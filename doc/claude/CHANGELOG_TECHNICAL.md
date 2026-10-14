@@ -10,6 +10,319 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
+
+- **loft#1987** — `Scopes::scan_args` records where each argument's hoisted operations start
+  and `keep_operand_order` takes every earlier argument that reads state or calls a function
+  into a `__lift_N` scalar or text temp ahead of them (`@FR-E-Left`, `@FR-F-Args`).  A value
+  operand — a constant, a local the hoisted operations do not write, a `&` reference, an
+  operator over such values — stays in the call.
+- **loft#1985** — `Parser::parse_vector_parse` emits the `OpCastVectorFromText` call as the
+  value instead of field 0 of it, so the binder owns the minted store (`@FR-H-View`), and
+  types the elements as the named type's own values.
+- **loft#1986** — `Parser::parse_type_parse` answers `Type::Enum(d, true)` for a struct-enum,
+  and `emit_forward_copy_ref_409` rebuilds the delivered return type on the declared base,
+  keeping the enum kind and the `?`.
+- `heap_null_test` reads a struct-enum handle's null test (`if OpRefIsNull(v) true else <first
+  word is 0>`), and `narrowing_from_condition` asks it before requiring a call node, so the
+  `== null` form narrows on its else side.
+
+### `record#errors` is a `vector<text>` held by the parsed value's store (C148, 2026-10-12)
+
+The accessor read one register (`Stores::last_parse_errors`) through `i_parse_errors`, as one
+newline-joined text the read cleared.  The register is gone.  The errors are CONTENT of the
+store a parse builds — `Store::parse_errors` and `Store::parse_type`, beside `known_type` —
+set by `db_from_text` on both backends, emptied by `Store::init`, exchanged by
+`Store::swap_contents`, and brought along by a write of a store's whole root
+(`Stores::deliver_parse_errors` after a declined `try_swap_in` in both record copies;
+`deliver_vector_parse_errors` in `vector_replace`, `vector_adopt` and `vector_add`).
+`x#errors` lowers to the stdlib's `parse_errors_of(x)` (`default/06_json.loft`, a
+`const reference` like `store_verify`), which answers `Stores::parse_errors_vector(&x)`, a
+fresh `vector<text>` from the builder `arguments()` uses.  `i_parse_errors` and
+`i_parse_error_push`, the two definitions `Parser::new` registered, are removed with their
+natives and generator cases, so no `i_`-prefixed definition remains and every definition
+number is two lower.
+
+### Binary operators parsed by precedence climbing (@PLN188, 2026-10-09)
+
+`parse_operators` (`src/parser/operators.rs`) reads the operand first (`parse_primary`) and
+then runs each level an operator actually stands at (`level_run`, the per-level body
+unchanged), levels strictly descending, where it used to descend one frame per level of
+`OPERATORS` before every operand.  The emitted IR, bytecode, native Rust and every
+diagnostic are byte-identical over the corpus (`scripts/introspect_diff.sh`, 2406 files),
+pinned by `tests/scripts/operator-levels-group-as-the-grammar-says.loft`.  Stack per nesting
+level in the parser 17.2 KB → 11.6 KB; front-end time 3–5 % lower on the measured scripts.
+The nesting bound stays 256: the scope pass (`scopes/scan.rs`, scan depth 1000) is now the
+first to fail on deeper input.  `introspect_diff.sh` refuses a run in which no file produced
+any introspection (a `--root` without `default/` read as IDENTICAL).
+
+### `exit(code)`, a subprocess run answered from a recording, and the first script over `run` (2026-10-08)
+
+**`exit(code)`** (`default/01_code.loft`): the program ends with `code` as its status, in
+silence, what was printed flushed.  Interpreted it is a `RuntimeErrorKind::Exit` halt the
+dispatch loop stops on and `main.rs` turns into the status without rendering; on `--native`
+the `#rust` body is `runtime_error::exit_program`, a flush and `process::exit` at the call
+site (the generated code has no loop to halt).  Under `loft test` it fails the test by name;
+sandbox admission refuses it with the abort ops.  Guard: `tests/panic_halts_both_backends.rs`.
+**Recording and replay inside `run`** (`src/process_run.rs` § recording, @PLN179 4c):
+`LOFT_RUN_RECORD=<dir>` / `LOFT_RUN_REPLAY=<dir>`, plain files per call, repeats walked in
+order, a missing entry answered -1 with a message; `tests/comparisons/scripts/replay_tool.sh`
+is the original's shim and `script_twin.sh --replay` arms both.  **`scripts/loft.toml`** makes
+`scripts/` one package with `lib/process` as a path dependency, so a bare script runs from
+any working directory.  `scripts/check_bundle_fresh` is the first port over `run`.
+`scripts/script_recheck.sh` writes through a temp file: GNU `sed -i` edited nothing on macOS.
+**The type half of the trigger surface** (`libscan::scan_type_refs`, the parser's
+`auto_use_type_map` + `type_method`): `triggers.rs` derived type triggers and nothing read
+them.  The auto-use scan now collects type positions; a trigger-enabled dependency resolves
+through `lib_path` when it is not a sibling package; a fired type is imported by name on the
+file's second visit (as `use pkg::(T);` is); and the `lit` / `hole_*` / `to_text` hooks look a
+type's methods up in the type's own source, where `def_nr`'s current-source scope lost them.
+Local map only — a type name never reaches the registry catalog.
+**Declared twin cases** (`tests/comparisons/scripts/<port>/cases.tsv`, `scripts/script_twins.sh`,
+`make script-twins`, the twin cell of tests/lib_process.rs): every port's twin invocations are one file
+beside its fixtures and run on every PR, both backends; the census reads `twinned (n)` from
+them.  The first full run caught `scripts/wasm_bundle_stamp` broken under the bare-`use`
+rule (@C98) and two harness portability slips (macOS `wc` padding, a `read` collapsing an
+empty tab column).  The type-trigger scan skips names the file itself declares.
+**`lines()` / `err_lines()`** (`src/process_run.rs` § cursor): a native-backed cursor over one
+stream of a running program — a reader thread per pipe from the start, a 256-line channel for
+the chosen one, the other collected for `done()`; `stop()` ends the tree.  Its `next` is an
+`operator`, which is what `for` reaches — LOFT_CONTROL.md § Custom iterators said `fn`.
+
+### `check_request` makes half the stores: `(R-PureReuse)`, and a `match` evaluates its subject once (2026-10-02)
+
+**`(R-PureReuse)`** (`src/pure_reuse.rs`, the start of the scope pass, both backends): a
+call of an effect-free function made twice in one block on arguments nothing writes in
+between is made once into a fresh local, and each use reads it.  Effect-free is a fixed point
+over the call graph: reads, arithmetic, writes into stores the function made (never a
+parameter's), calls of effect-free functions, and a short list of value-only natives — the
+`#impure` annotations miss `print`, `file` and `env_variable`, so an unknown operator declines.
+It sees the calls through PROJECTION WRAPPERS (`d = f(b); return d.k`), which is how
+pluginabi's `check_request` asked the same frame twice (`pa_decode_ok`, then `pa_decode`).
+`LOFT_NO_PURE_REUSE=1`, `LOFT_TRACE_PURE_REUSE=1`.
+
+**`(M-Match)`, deviation D-match-16** (`Parser::parse_match_inner`): a struct-enum or struct
+subject that is not a place was spliced into every arm test and field binding, so a call ran
+once for the variant and once per field read.  `match next(lx) { Num { v } => … }` tested one
+token and read the next one's payload — silently, on both backends and on main.  The subject is
+now bound once unless it is a variable or a field or element of one.  The binding had been held
+back for a strict free order that `(H-FreeAny)` lifted.
+
+Per `check_request` on the library as written, native, census: 4 stores, 30 claims, 10 deletes →
+**2, 16, 5**, and 46.9 → 24.5 ms for 20 000 checks (−48 %).  The remaining stores are the decoded
+tree and `pa_get`'s copy of the value it finds, which is the return's ownership, not a
+duplicate.  Guards: the reuse cells p1–p7 and the match cells c1–c10, both backends, plants and
+the falsify receipt named in their headers; pin `tests/pure_reuse.rs`.
+
+### `(R-RefillBuffer)` — a return buffer refills the store a rebind released (2026-10-02)
+
+A builder called in a loop, `c = mul(a, c)`, minted its result's store every call, claimed
+its vector and filled it, and the rebind then freed the store holding `c`'s old value.  On
+`--native` that store is now kept (one at a time, never by a `par` worker), and a callee whose
+return buffer is built by a literal that writes every field, of a type whose heap is only
+vectors of no-heap elements, takes it: `OpDatabaseRefill`, with each vector field's zero
+emptying the vector in place.  Every other callee still mints.  `LOFT_NO_REFILL_BUFFER=1`.
+
+Measured on mesh3d's `mat4_mul` loop (`opt-level=3`, one core, three interleaved runs):
+0.16 → 0.10 s for 10⁶ multiplies (−37 %), same result and peak memory; with `(H-SwapRebind)`
+the loop is 0.19 → 0.10 s.  Guard f1–f7 on both backends, both switch arms and every store
+falsifier; plants named in its header.
+
+### A cached image opens without writing its shared mapping (2026-10-02)
+
+Concurrent `loft` processes crashed each other on a warm cache: eight starts of a program that
+only prints died eight times out of eight (`fl_rebuild` out of bounds, or a segfault), one
+start alone never did, and `LOFT_NO_CACHE=1` hid it.  Opening an image rebuilds its free-block
+tree, and the tree's links live INSIDE the free blocks, in a mapping every process opening the
+file shares: one start's rebuild was read by another mid-way as a record number.  The cached
+stdlib and program images are read surfaces, which claim and free nothing, so they now open
+through `Store::open_read_surface`, which leaves the tree and the footers unbuilt and writes
+nothing; a writable file store rebuilds them as before.  Guard
+`tests/concurrent_warm_start.rs` (three rounds of eight starts); with the rebuild planted back
+it fails in round 0.
+
+### `(H-SwapRebind)` — a native record rebind exchanges the result's store without resetting the destination (2026-10-02)
+
+The rebind `x = f(…)` from a fresh call result reset `x`'s store (`OpDatabase`) and then
+copied, or exchanged, the result into it.  On `--native` the copy arm is now one call,
+`OpRebindRecord`, which exchanges the result's store into `x` as it stands: `x`'s old tree
+leaves with the released store and is freed with it.  Where an exchange condition fails
+(a witnessed destination, a borrowed or non-root result, a type whose stores name each other)
+it resets and copies as before.  `LOFT_NO_SWAP_REBIND=1`.
+
+Measured on mesh3d's `mat4_mul` loop (`opt-level=3`, one core, three interleaved runs):
+0.19 → 0.16 s for 10⁶ multiplies, same result and peak memory.  Guard r1–r8 identical
+under both arms, `LOFT_NO_STORE_SWAP`, `LOFT_STRICT_STORES` and both poison switches; plants
+named in its header.  The front-end store census of `tests/adopt_first_bind.rs` counts
+`OpDatabase` lines, so both native arms drop by the ten rebinds (85/127 → 75/117).
+
+Beside it, `tests/adopt_first_bind.rs` and `tests/adopt_buffer_reuse.rs` turn the program
+cache off: their tests run in parallel over one source file with different switch arms, the
+cache does not key on the switches, and an `introspect` intermittently listed a truncated
+program (it failed with the rule off too).  Their copy-arm text checks now recognise both
+spellings, so an absence check cannot pass by the rename.
+
+### A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off (2026-10-01, loft#1762, @C133)
+
+`cache_decision` kept the whole-program cache off under Cargo (`CARGO_MANIFEST_DIR`) and for a
+binary in a `target/{debug,release}` tree, so every dev run and every test that spawns `loft`
+paid the cold stdlib parse.  Both behaviour classes that held it back were closed (the `plib`
+manifest list; loft#1129's diagnostic fixes), and both cache keys fold in
+`binary_signature_tag`, so a rebuild invalidates.  The policy is now the kill switch alone;
+`running_a_dev_build` and the `LOFT_PROGRAM_CACHE` force-on are gone (the variable stays in
+`INERT_ENV`, so a script still exporting it costs no warm start).  Tests that spawned the
+binary for a cold reference by REMOVING `LOFT_PROGRAM_CACHE` now set `LOFT_NO_CACHE=1`; a warm
+run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off switch is in
+`loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
+`arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
+### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(R-StartStep)` — a computed range start steps one counter on the interpreter (2026-10-02)
+
+`for i in a..b` with `a` not a literal iterates with two counters, `next` one ahead of the
+index, so a start at `i64::MIN + 1` never needs `a - 1` (the null sentinel).  The bytecode
+generator now seeds the index from `next` before the rotated loop, steps the index at the test
+and enters past the step, where nothing after the iterator names `next` and the index is the
+loop variable's own slot or is not named.  The IR keeps both counters, so `--native` and every
+IR rewrite are unchanged.  `LOFT_NO_START_STEP=1`, `LOFT_TRACE_START_STEP=1`.
+
+Measured on `09_matrix_mul/dot_product` (`--interpret`, release, one core): 16 → 14 operators
+a round, 128–135 → 109–118 ms an op (−15 %), same hash.  Guard s1–s12 identical under the
+switch, `LOFT_NO_LOOP_ROTATE` and `LOFT_NO_LOOP_VAR_ALIAS`, and on `--native`; plants: the entry
+on the step (s1), `continue` past the step (s2 never ends), the seed dropped (s1 never ends).
+
+Recorded beside it: `(Perf-Order)` in formal/performance.md, the owner's ruling that the IR
+work comes before new interpreter operators, which are designed from broad evidence, with the
+scripts written in loft weighed above the bench routines.
+
+### `(R-WorkerLean)` — a `par` worker runs on the lean loop (2026-10-02)
+
+A `par` worker's frame (`State::run_to_return`) ran the checked loop and found the function it
+entered by scanning every definition, for each element: `par(…, 1)` cost 1.9× the same loop
+without `par`.  It now runs the lean register loop whenever the main run would, with `#hot`
+operators inline, and remembers the definition per function position (reset wherever
+`fn_positions` is rebuilt).  The worker's stop path leaves out the main loop's takeover of
+another worker's fault.  `LOFT_NO_WORKER_LEAN=1` keeps the checked loop.
+
+Measured on a 1000-element `par` (`--interpret`, release): one thread 306 → 175 ms (the loop
+without `par`), four threads 92 → 49 ms.  Guard w1–w5 identical under both switch arms;
+sabotage: the worker ignoring its stop flag fails `runtime_errors::i1056…` and placement_parity's
+two library-fault cells.  A sabotage of the remembered lookup is inert: each `par` loop builds
+fresh worker States.  The runtime subject passes 1432/1432 under both arms.
+
+### `(H-SwapIn)` and `(R-RepeatRun)` — a rebind exchanges stores instead of copying, and a spelled-out run of one constant is one fill (2026-10-02)
+
+**`(H-SwapIn)`** (`Stores::try_swap_in`, called by both backends' `OpCopyRecord`): the rebind
+`x = f(…, x, …)` from a callee that minted its result reset x's store, deep-copied the result's
+tree into it and freed the callee's store.  Where both records are their store's root — at
+`1@8` AND of the store's own root type, because a record's first field shares that address —
+the destination holds nothing else, the type keeps its pointers inside its store, and neither
+store is pinned to its slot, the two stores' contents are exchanged and the released slot
+freed.  The first form keyed on the address alone and replaced a whole `Hold` when its first
+field `h.p` was rebound on the interpreter (`1647-a-moved-call-result…` M7, `a-small-record-is-
+forwarded…`); the root-type test closes it and cell s13 falsifies it.  A free protection
+refuses only the released side (the interpreter brackets the destination during the call).
+The interpreter reports no copy for an exchange.  `LOFT_NO_STORE_SWAP=1`, read at run time.
+
+**`(R-RepeatRun)`** (`src/repeat_run.rs`, scope pass): four or more pushes of one literal into
+one target are `OpPreAllocVector` + one template push + `OpAppendCopy`, the lowering `[c; n]`
+already had.  `LOFT_NO_REPEAT_RUN=1`.  Fires in mesh3d, drawing, text2d, graphics, stage, glb
+and hex_body (the census).  The front-end allocation pin is unchanged with it on and off.
+
+Beside them, `tests/native.rs` compiles each corpus script on an 8 MiB thread, the CLI's own
+stack: a 100-term nested sum's front-end recursion overflows a 2 MiB test thread on aarch64.
+
+Measured on mesh3d's `mat4_mul` (`--native-release`, one core, interleaved): the exchange
+29.7 → 26.9 ms an op (−9.5 %, one binary, the switch as the OFF arm), the repeat fill 27.3 →
+23.1 ms (−15 %); same result hash throughout.  Guards s1–s13 and r1–r11, both backends, both
+switches, every store falsifier; sabotages: the released slot kept (s12 exhausts the store
+table), the root-type test struck (s13 loses the second field on `--interpret`), the fill
+handed `count - 1` (r1 reads 15 elements).  Subjects store, runtime, scopes and codegen green
+(the codegen shards and 15 store tests first failed on a full disk and on rlibs `make
+disk-headroom` swept, green rerun after `cargo test --release --no-run`).
+
+### `(R-ByteCopy)`'s vector clause and `(R-TextRun)` — a decoder's byte strings are one copy, its texts no object at all (2026-10-02)
+
+**The vector clause** (`src/byte_copy.rs`): `for k in lo..hi { buf += [v[off + k] ?? d] }` —
+a raw byte vector variable `v`, `off` a literal or a variable, `d` a literal, `buf` exclusive —
+is `if 0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off { OpSliceVector(buf, v, off +
+lo, off + hi, tp) } else { the loop }`.  A raw byte read in range is never null, so the `??`
+never fires inside the guard; an `integer` or `float` element can hold the null its `??`
+replaces and keeps the loop.  The destination test is `(R-VecCopy)`'s, now one predicate
+(`vec_copy::exclusive_vector`) that also reads a record `(R-Place)` claimed for the vector as
+minted here, and a hoisted null declaration as no binding — cbor's `bs` and `tb` are both.
+
+**`(R-TextRun)`** (`src/text_run.rs`, run by `byte_copy::rewrite` on the copies it just
+guarded): a byte vector declared empty right before such a copy and read once by `x =
+text_from_bytes(t)` is never built on the guard's path — its declaration and copy move under
+`!g`, leaving their variables' null initialisers in place (the native generator declares at
+the first assignment), and the read becomes `if g { x = text_from_byte_range(v, …) } else { x
+= text_from_bytes(t) }`, the choice above the assignment because a text native assigned to its
+destination is lowered destination-passing.  The guard is evaluated twice, so the statements
+between may only read, mint the frame's return buffer and write its scalar fields.
+`LOFT_NO_BYTE_COPY=1` turns both off.
+
+Guards `a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v1–v17) and
+`a-byte-run-read-once-as-text-is-read-in-place.loft` (t1–t12), both backends, rewrite on and
+off with the program cache off, under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STORES=warn` and `LOFT_NATIVE_LEAK_CHECK`; each sabotaged once (the slice guard's upper
+test: v5 reads 3 bytes for 5; the protected-variable test: t6 reads "world" for "hello").  Pins
+`tests/byte_copy.rs` and `tests/text_run.rs`.
+
+**The function header survives a slice** (`hoist::call_leaves_param`): an `OpSliceVector`
+reads its source as `OpAppendVector` does, so `(R-Header)`'s function clause no longer declines
+a parameter a slice is taken from — cbor's `read_value` keeps the header of `bytes`, and so does
+any hand-written `t += p[lo..hi]` over a parameter (cell f11 of the function-clause guard).
+
+Measured on pluginabi's `check_request` over cbor as written (`--native-release`, 200 000
+checks, one core, five interleaved runs): 3.62 → 2.26 µs a check (−38 %); the hand-written
+`text_from_byte_range` and slice forms measured 3.56 → 2.35 before the header fix; the vector
+clause alone 3.55 → 3.46, equal to the hand-written slice.
+
+### `(H-LazyFree)`: a store's small deletes merge but stay out of the free tree until one sweep, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+
+Item 3 of `bench/portal/analysis/records.md` § check_request on the library as written, and
+the claims-walk half of item 3 of its six.  **The lazy phase** (`Store::lazy`, `dead_words`,
+`lazy_free`): `delete` of a block of at most `LAZY_MAX_WORDS` (64) takes `lazy_delete` — it
+merges forward by header and backward by a footer confirmed by `lazy_free` or the tree, as the
+exact delete does, and records the merged block in `lazy_free` instead of the tree (a block
+ending the store becomes the wilderness).  A larger block (a vector rung, a hash table) takes
+the exact path: the tree's insert is nothing beside the block's own copy, and leaving it dead
+moved a persisted hash's layout (the paged lookup's 512 KB budget, five bytes over).  `claim`
+sweeps (`coalesce_free`, then `fl_rebuild`) and ends the phase at its entry once `sweep_due` —
+the untracked words reach `LAZY_FLOOR_WORDS` (256) and a fifth of `claimed_end` — whatever the
+wilderness holds: gated on the wilderness running out, a pooled buffer reset each round placed
+its vector ladder tail-first every round and doubled `mesh_emit`'s working set (+24 % on the
+lane, 10 MB against 5.9).  `dead_words` counts what is untracked NOW: `forget_free`, the lazy
+arm of `fl_remove` and `claim_scan`'s untracked pick take a consumed block off, and
+`fl_rebuild` clears `lazy_free` whole — without that, a scratch the chain walk reused was
+counted again at each free, and without the merge a scratch pair freed per round fragmented the
+read-repeat census's store.  `reclaim_tail` ends the phase too; `init` re-arms it; the `open`
+and `load` constructors (a store bound to a file, read, reclaimed and paged by its layout) never
+enter it.  Every block keeps its header, so `usage`, an image and the open walk are unchanged.
+`LOFT_NO_LAZY_FREE=1` restores the per-delete tracking (read per store at construction).
+Pinned by seven seeded unit tests in `src/store.rs` (the merged pair out of the tree, the tail
+claim and the wilderness fold; growth below the floor; the one sweep at the bound and the exact
+phase after it; an untracked block claimed at its position beside a non-empty tree; a block
+above the cap tracked in the phase; the backward merge confirmed by `lazy_free`; the forged
+footer refused by both deletes); the tests pinning the exact allocator's layout build exact
+stores, and the two slack fixtures of `store_persist_loft` write under `LOFT_NO_LAZY_FREE=1`,
+because the phase writes their data into a file a third smaller than the slack they exist to
+shed (1.37× content against 2.07×).
+
+**`holds_no_heap`'s enum arm** (`allocation.rs`): a `Parts::Enum` field or record answers by
+its LIVE variant the way `owned_walk` reads it — a null or absent tag, a payload-less variant,
+or a payload that holds no heap — where it answered "may hold heap" and forced the walk.  A
+decoder's per-node wrapper (`Decoded { value: CborValue, … }`) is released after its value
+moved out, and walked every time.
+
+Measured on pluginabi's check driver (`--native-release`, 40 rounds of 2 048 checks, three
+runs each on a quiet box): 0.318 s → 0.30 s with the enum arm (−6 %; `remove_claims_mode`
+4.0 → 2.3 % of the samples, `owned_walk` 3.3 → 1.6 %), → 0.286 s with the phase (−6 % more,
+−10 % in all; `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node` and `delete`'s
+merge were 27 % of the row's samples); `mesh_emit` level, cbor `decode` −30 % on the
+perf-check.  Hash unchanged; `LOFT_NO_LAZY_FREE=1` on the same
+binary is the OFF arm.
+
 ### `(R-ReturnField)` and the lifted bind that adopts — pluginabi's `check_request` copies nothing (2026-09-30)
 
 Items 1 and 2 of `bench/portal/analysis/records.md` § check_request on the library as
@@ -637,8 +950,8 @@ to silent.  The formal rules had said otherwise all along — `(N-Reserve)`'s *"
 sit in a non-null narrow slot"* and `(E-Uncomp-NN)`'s *"the next best thing is τ's
 DEFAULT"* — so the encodings were an unrecorded deviation from both.
 
-Scope is the DECLARATION.  The plain `integer` and `i32` templates keep C85's sentinel, and
-that is a PRAGMATIC exemption the owner allowed rather than a line the rule draws: C127
+Scope is the DECLARATION.  The plain `integer` and `i32` templates keep @C85's sentinel, and
+that is a PRAGMATIC exemption the owner allowed rather than a line the rule draws: @C127
 reaches `i32`, and it is exempted because reserving `i32::MIN` costs one value in 2^32 and
 buys the only narrow type whose overflow is detectable.  `u32` reserves a code too and takes
 the default, which is the standing proof that the split is not a principle — so this is the
@@ -667,7 +980,7 @@ DID fuse (`@FR-E-Uncomp-Seen`) is silent.  Census: 16 of 1 653 corpus files, all
 tests about narrow overflow, and no reach into a program from the stdlib.
 
 Guards: `1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value` (renamed,
-with a `templates()` row drawing C127's line and element controls at 33/44 rather than 0, so
+with a `templates()` row drawing @C127's line and element controls at 33/44 rather than 0, so
 a control cannot hold its cell's own value) and
 `1634-a-narrow-types-default-is-the-same-at-every-frame-boundary` (renamed, with a
 `limit(1000, 1100)` row whose default is its minimum, so a cure writing zero fails there
@@ -863,7 +1176,7 @@ language's own facts (a literal; `a & lit` over a NON-SENTINEL `a`, since `null 
 merge; a counted range's counters from ranged ends; a local whose every assignment is ranged and
 never a self-step; a one-expression callee over its arguments' facts, three deep), per-function
 fixpoint beside the non-sentinel proof, which gains a callee RETURN summary
-(`callee_returns_non_sentinel`).  A parameter or a record/element read is never ranged (C80).
+(`callee_returns_non_sentinel`).  A parameter or a record/element read is never ranged (@C80).
 Measured honestly: `composite` converts 24 of 36 checked operators and does NOT move — the twelve
 left (`j * lw + i`, `x0 + i`, `y0 + j`, the accessors' `by * width + bx`) have record-scalar or
 parameter operands and carry the whole ceiling (class split by hand patch: those six −35 %, the
@@ -1129,7 +1442,7 @@ nest's own prelude (measured: with the header placement instead, the vertical pa
 `rl_mid` 4 096 times per render and the row read 29× SLOWER).  `hoist::bounded_nest` is the
 matcher (`Value::Line` markers are not statements), `int_arith::nest_form` the plain
 operators, `ops::nest_verify` the `LOFT_HOIST_VERIFY=1` form that compares each plain answer
-with the checked template's at the operator.  This is the C120 successor the plan named —
+with the checked template's at the operator.  This is the @C120 successor the plan named —
 the fact is established before the arithmetic runs.
 
 Measured on the drawing lane (arm64, `compare.py`, 14/14 hashes): `render_marks` 6.11× → 2.69×
@@ -1712,7 +2025,7 @@ governing fact was already written in `Type::peel_optional`'s doc block and had 
 citation and no gate, so every batch re-derived it.  It is now `(N-Shape)` in
 [formal/types.md](formal/types.md): a question about a type's SHAPE answers identically for `τ`
 and `τ?`, and only a NULLABILITY question may tell them apart — spelled by READING the marker,
-never by a missing match arm.  It follows from C90, where `Optional(τ)` shares `τ`'s storage.
+never by a missing match arm.  It follows from @C90, where `Optional(τ)` shares `τ`'s storage.
 
 `Optional` is a `Type` VARIANT so that an omission is a compile error, but that fires for an
 EXHAUSTIVE `match Type` and for nothing else.  `scripts/ir_walker_audit.py optional` counts what
@@ -2213,7 +2526,7 @@ the closure is called through another function (`x: integer?` reads 1 where `x: 
 7), an interleaved write answers the closure's private copy (`11 21 100` against the dense
 twin's `11 110 110`), sharing one mutable capture between two closures is refused for a dense
 local and silently wrong for a nullable one, `const` on a nullable parameter is silently not
-enforced, and C115's `&`-from-closure refusal is never asked.  Same for `text?`.
+enforced, and @C115's `&`-from-closure refusal is never asked.  Same for `text?`.
 
 `(L-CapScalar)` is not what was wrong: a capture is by value at creation, so a closure reading
 the creation-time value is correct and both spellings agree on it.  The rules were silent on
@@ -2224,7 +2537,7 @@ its two enforcing sites.
 Cured by the peel at seven sites of one family: the boxable set, the cell name and its `value`
 type (a nullable takes a cell of its OWN, `__cell_opt_<T>`, because the `value` field has to
 declare the nullability or `(N-Store)` is violated at the cell), the read and write ops (chosen
-from `.base()`, since `Optional(τ)` shares `τ`'s storage in-band under C90, while the declared
+from `.base()`, since `Optional(τ)` shares `τ`'s storage in-band under @C90, while the declared
 type keeps its `?` so ordinary discharge still applies), the type-flip preservation guard, and
 the boxed-text LHS test — that last one found by the guard rather than by reading: spelled bare
 it sent a boxed `text?` down the text-special branch and emitted `Set(65535, …)`, loft#1206's
@@ -2923,7 +3236,7 @@ worse than the zero it replaces.  So the declaration is declined where the group
 (`Parser::refuse_mixed_nullability_group`, in the parser before either membership derivation
 runs, leaving the B7x agreement census untouched), with a message naming both cures.
 `(Col-Group)` now states the layout condition, and the declined alternative — the group
-adopting the tagged layout with tag-aware dense reads — is C117 in DESIGN_DECISIONS.md.
+adopting the tagged layout with tag-aware dense reads — is @C117 in DESIGN_DECISIONS.md.
 
 Fires in all four declaration orders.  Guards: the `@EXPECT_ERROR` cell and a controls twin
 whose four shapes each differ from the refused one by exactly one thing — no keyed member (so
@@ -3233,7 +3546,7 @@ where their native twins (`codegen_runtime::OpIterate` / `OpStep`) test the hold
 first; the two had drifted, and a `for` over a collection FIELD of a holder reached through
 `nullref` (`for t in tokens[i].subs` past the end) read the store's header word as the
 collection record before and indexed `allocations[u16::MAX]` after.  Both now test the record
-first and iterate nothing, which is what C80 asks of a read through null; the six iteration
+first and iterate nothing, which is what @C80 asks of a read through null; the six iteration
 scratch builders (`build_hash_sorted_vec` and its unsorted, radix, index, trie-prefix and
 radix-range siblings) answer `nullref` for an absent holder for the same reason, since a
 `for` over a `hash` field collects its records into a scratch before the iterate.  Beside it, both
@@ -4088,7 +4401,7 @@ a projection, and by the literal for a STRUCT member (loft#1361, `tuples.md` D-t
 The struct-enum copy exposed a second family: a whole-value copy of a DROPPABLE released it
 once per record (`h2 = h`, `t = s`, `t: S? = s`, a struct-enum arm now that it copies, and
 `t = s; return t` — three times, two of them before the caller read its copy).
-`scopes::copy_moves_drop_from` is the one home for the move C111 chose for containers,
+`scopes::copy_moves_drop_from` is the one home for the move @C111 chose for containers,
 extended to the plain copy: read by `collect_drop_transferred` (the parser's `Set(v,
 Var(src))` and the `OpCopyRecord` into a `__ref*` buffer — a materialised branch arm or a
 return buffer), by `lift_join_arm_tails` for its `__lift_N = a` (built after the collector
@@ -4117,7 +4430,7 @@ generator's TAIL — it had dropped every statement after the last yield, which 
 persistent heap local of an eager generator and lost a `print` after the loop.  The
 `yield from` desugar binds `__yf_item` as a borrow of `__yf_sub` (the loft#481 dep), so an
 enclosing `if` arm no longer frees the sub-generator's frame through it (BUG #306 on the
-interpreter).  loft#1358: closed as C116 — one refusal home
+interpreter).  loft#1358: closed as @C116 — one refusal home
 (`Parser::refuse_capturing_closure_in_collection`), the canary converted to its guard.
 `tests/ignored_tests.baseline` shrinks to 33 and `doc_hygiene::every_ignore_reason_says_how_it_runs`
 requires each reason to name the run it rides (`--ignored` by hand, a nightly job, a platform);
@@ -4982,7 +5295,7 @@ conversion at all, and `OpNot` inverted the raw handle.
 **And the fallback asked whether the item was FALSY.**  That coincides with "is it null" only
 where the type's null is its only falsy value.  An `integer`'s conversion is `!= i64::MIN` and a
 `text`'s null is out-of-band, so `0` and `""` elements correctly kept iterating; a `boolean`'s
-conversion is the IDENTITY and its null is the three-state `255` (C73), so a `boolean?` iterator
+conversion is the IDENTITY and its null is the three-state `255` (@C73), so a `boolean?` iterator
 ended on its first `false`.  The fallback is now `null_test`'s own documented one — compare
 against the TYPED null — so the loop asks `item == null` and nothing else.
 
@@ -7640,10 +7953,10 @@ a.n            // 7 — that is Anon's `k`, handed back as Named's `n`
 a.label = "x"  // stored in the Anon record, which goes on calling itself an Anon
 ```
 
-Direct payload access STAYS — C89 decided permanently that enum payloads are named fields
+Direct payload access STAYS — @C89 decided permanently that enum payloads are named fields
 you read straight, with matching for DISPATCH and never for extraction, so refusing
 `c.field` (issue option 1) is the outcome that decision exists to prevent, and option 3
-restricts it the same way. C80/C85/C90 then fix what the check must ANSWER: a read that
+restricts it the same way. @C80/@C85/@C90 then fix what the check must ANSWER: a read that
 cannot be computed yields the type's null sentinel and the program keeps running, like a
 hash miss or an out-of-range index. So the access TYPE is unchanged, `a.n` on an `Anon`
 answers null, and a write to a field the value does not have is suppressed.
@@ -7779,7 +8092,7 @@ yields null was chosen, so the idiom every numeric library uses to defend a divi
 nothing (`mesh3d::normalize3` was sound only because a zero-length vector zeroes the
 numerator too, making it a genuine `0.0 / 0.0`).
 
-`OpDiv/RemFloat` + `OpDiv/RemSingle` keep the C80/E-Report Warn on an unguarded zero
+`OpDiv/RemFloat` + `OpDiv/RemSingle` keep the @C80/E-Report Warn on an unguarded zero
 divisor and return the IEEE result. The TYPE is untouched — `/` still types `float?`,
 because `0.0 / 0.0` still yields null — so `(N-Store)` still fires and
 `float_div_var_on_is_nullable` still counts its warning. The `*Nullable` peers are now
@@ -7991,10 +8304,10 @@ layout gives a shared name+type ONE slot — so the read is right for the varian
 declare it and reads another variant's bytes for the rest. `match` afterwards still
 reports the original variant, because nothing changed the tag. Both backends, exit 0.
 
-**Direct payload access stays.** [C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
+**Direct payload access stays.** [@C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
 enum payloads are named fields you read straight, with matching for *dispatch* and never
 for *extraction* — refusing a bare `c.field` would force a matcher on every read, which
-is the thing C89 exists to prevent. And the common-prefix case is already correct:
+is the thing @C89 exists to prevent. And the common-prefix case is already correct:
 measured on variants whose preceding fields differ in width, a field every variant
 declares reads right from each of them. The **silence** on the partial case was the
 defect, and `variant-field-unchecked` closes it: `warning` tier by the two-tier rule,
@@ -8011,9 +8324,9 @@ regression test, and every one on a value that IS the declaring variant. Partial
 rare precisely because `match` is the idiom.
 
 **What is still open** is the semantics, and it now has one answer rather than three. The
-issue offered refuse-at-compile-time (contrary to C89), a runtime tag check, or a
-common-prefix-only rule (restricts direct access the same way C89 rejects). The fault
-model picks the middle one's shape: C80/C85/C90 say an uncomputable read answers the
+issue offered refuse-at-compile-time (contrary to @C89), a runtime tag check, or a
+common-prefix-only rule (restricts direct access the same way @C89 rejects). The fault
+model picks the middle one's shape: @C80/@C85/@C90 say an uncomputable read answers the
 type's null SENTINEL and the program keeps running — the same answer a hash miss, an
 out-of-range index and an overflow already give — which leaves the access type unchanged,
 so it breaks nothing. The read lowers with existing IR (`OpGetEnum` → `OpConvIntFromEnum`
@@ -9596,7 +9909,7 @@ nobody's data — the `_`-prefix test tells them apart, the same convention
 Both exclusions were found by sweeping all 2188 `.loft` files with the lint as a probe
 before letting it speak: the first cut had two hits, both the builder idiom, and the final
 one has zero. Runs from `main` beside `warn_dead_stores` / `warn_double_move`, reusing the
-`lost-write` code rather than minting one (same fact about the same C86 copy);
+`lost-write` code rather than minting one (same fact about the same @C86 copy);
 `LOFT_NO_LOST_TEMP_WRITE` opts out.
 
 Deliberately an under-approximation, per the two-tier rule: binding the result to a local
@@ -10641,7 +10954,7 @@ a cursor left pointing at a moved allocation shows up as wrong values rather tha
 
 
 Storing `x / g` back into a non-null `g` is refused correctly — a variable divisor can be
-zero, so the quotient is `τ?` (C80). But the message offered `as` and a new variable name,
+zero, so the quotient is `τ?` (@C80). But the message offered `as` and a new variable name,
 and on this shape **both fail**: the cast checker refuses `as τ` for the very reason the
 store was refused, `as τ?` lands back on this same error — a closed loop between two
 diagnostics — and a fresh name still has to store the value somewhere. The cures that
@@ -10768,7 +11081,7 @@ A library's public function occupied the CONSUMER's variable namespace: with
 `use engine_host;` in scope, `turn = 0` was a compile error anywhere in the consuming
 program. So one public verb added to a library broke every consumer already using that
 word as a local — crawler's gate went red across 109 rows, on a commit crawler did not
-make. [C97](DESIGN_DECISIONS.md)/[C98](DESIGN_DECISIONS.md) make this impossible for
+make. [@C97](DESIGN_DECISIONS.md)/[@C98](DESIGN_DECISIONS.md) make this impossible for
 the *stdlib*; this is the same hazard one level up, where nothing weighs each new name
 and nothing announces which words a release claims.
 
@@ -10798,14 +11111,14 @@ still answers — the mis-parse it exists for fails it either way.
 parameter / loop / field cells as CONTROLS so a change that frees the three refusing
 forms by breaking the three that already worked fails there, and
 `pln102_c98_a_local_may_shadow_a_library_function` (`tests/imports.rs`) for the library
-half on both backends. Register entry: [C112](DESIGN_DECISIONS.md).
+half on both backends. Register entry: [@C112](DESIGN_DECISIONS.md).
 
 **Residual, unchanged by this:** a bare `use lib;` still wildcard-imports every public
 name into the unqualified namespace (`src/parser/mod.rs`,
 `None => Some(ImportSpec::Wildcard)`), so `turn(3)` is callable unqualified after
-`use mylib;`. C98 rules it must bind only the `lib` handle. That is a breaking
+`use mylib;`. @C98 rules it must bind only the `lib` handle. That is a breaking
 resolution change needing a pre-freeze migration (`use lib;` → `use lib::*;`), so it is
-owner-timed rather than folded in here — and C112 is forward-compatible with it.
+owner-timed rather than folded in here — and @C112 is forward-compatible with it.
 
 ### `--html` binds a filesystem, over raw `loft_io` imports (loft#851) (2026-08-11)
 
@@ -12084,7 +12397,7 @@ reference filed it under Environment.
 `text_from_bytes`, not a new `#rust` native: the mechanism is already proven on
 both backends, and loft covering it is exactly when not to add a dependency.
 
-The refusal set is `""`, never a crash (C80): a surrogate, past `U+10FFFF`, a
+The refusal set is `""`, never a crash (@C80): a surrogate, past `U+10FFFF`, a
 negative number — and `0`, which is the one that needed deciding. `character`
 uses 0 as its null, and text ITERATION STOPS at an embedded NUL (measured: a
 3-byte `"A\0B"` reports `len` 3 and slices at 3, and yields ONE character to
@@ -12615,7 +12928,7 @@ five cases produce NO output there (execution falls past the asserts) and pass h
 ### @PLN108 "Share read-only parent stores across par workers" — interpreter core (2026-07-17)
 
 
-- A par worker whose captured parent state is read-only (@PLN102 C93) now **BORROWS** the parent
+- A par worker whose captured parent state is read-only (@PLN102 @C93) now **BORROWS** the parent
   stores read-only instead of `clone_for_worker`'s per-worker byte-copy, for `run_parallel_discard`
   and `run_parallel_queue`. Copy-elision, no semantic change.
 - **Auto-selected by heap size:** the borrow engages only when the copy it would save is ≥ 2 MB
@@ -12624,7 +12937,7 @@ five cases produce NO output there (execution falls past the asserts) and pass h
   heap per worker (measured ~53× on a 122 MB shape). `LOFT_PAR_SHARE=0`/`=1` force off/on.
 - Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) +
   the `read_only` write-panic; **ASan + TSan clean** on the flag-ON path (positive control fires).
-  `--native` par still copies (a native analogue is deferred). Decision recorded as C99.
+  `--native` par still copies (a native analogue is deferred). Decision recorded as @C99.
 
 ### `loft fmt` — parser-driven formatter, written in loft
 
@@ -12665,7 +12978,7 @@ Commits `a77afaec` (P5+P6), `6e9b6c5f` (P1 resolution), `<this>` (P7).
   lit / narrow-cast) unnecessary — their diagnostics already capture positions
   via `diagnostic_at!` and none faults at runtime, so wrapping would attach a
   position no consumer reads while risking `unspan()` churn. Status → done.
-- **P7 closeout**: COMPILER.md § Diagnostics rewritten (spans → runtime C66 →
+- **P7 closeout**: COMPILER.md § Diagnostics rewritten (spans → runtime @C66 →
   renderers); user-facing CHANGELOG entry; CLAUDE.md `LOFT_ERRORS` + diagnostic
   toggles; CAVEATS native-no-source-map entry. No opcode changes; no runtime
   path touched (bench flat).
@@ -12774,7 +13087,7 @@ chokepoint-first and verified on both backends.
 - **P3 — `use … as …` aliasing** for libraries (`use lib as m`), types
   (`use lib::Type as T`), and functions (`use lib::fn as f`).
 - **P4 — grouped selective imports** `use lib::(a as x, b, c)`; the flat comma
-  list `use lib::a, b` is dropped (hard error). Design decision C76.
+  list `use lib::a, b` is dropped (hard error). Design decision @C76.
 - **Reserved-keyword hardening (commit `c383a25c`).** `struct iterator` was
   silently adopted (the struct adopt-branch swallowed the `type iterator;`
   forward-decl); `enum hash` / `type sorted` panicked in `complete_definition`.
@@ -13515,7 +13828,7 @@ loft-script binary against the host loft binary as a frozen pair.
   consumer walked the path — `lib/web` + `lib/server` integration,
   text-returning fn inline calls, fn-ref dispatcher work-buffers,
   cross-crate native fn routing, JSON parser UTF-8, JSON natives
-  todo-stubs.  Closed via DESIGN_DECISIONS.md § C67 ("fail at startup,
+  todo-stubs.  Closed via DESIGN_DECISIONS.md § @C67 ("fail at startup,
   not at runtime — internal-bug runtime panics caught at compile time").
 - P54 (JsonValue ecosystem) native side completed via @P268 + the
   16-fn follow-up wiring all 23 JSON natives in
@@ -13850,7 +14163,7 @@ text, E3 nested, E4 closure, E5 struct reference) and 3
 destinations (D1 local, D2 direct stack, D3 struct field), all
 cross-mode-validated under `tests/tuple_matrix.rs`'s
 interp/native byte-identical assertion.  Plus E6 (struct value)
-folded into E5 by C65 design decision and E7 (collections in
+folded into E5 by @C65 design decision and E7 (collections in
 tuples) closed-by-non-goal.
 
 **Phases shipped (00, 01, 02, 03, 04, 05, 07):**
@@ -13867,7 +14180,7 @@ tuples) closed-by-non-goal.
   (20-byte fn-ref layout extended into 6 tuple codegen sites +
   `__fn_ref_tmp` postfix-call temp marked skip_free).
 - 04: 6 E5 cells (struct references).  Decision: MOVE
-  semantics (recorded as C64).  Loop-iteration aliasing bug
+  semantics (recorded as @C64).  Loop-iteration aliasing bug
   parked as @P250.
 - 05: 6 D3 cells (tuples in struct fields).  Decision: LIFT
   was already shipped by Plan-06 phase 4d; phase 05 was a
@@ -13890,8 +14203,8 @@ tuples) closed-by-non-goal.
 - @P251 — open: native projection for fn-ref-tuple-in-struct-field.
 
 **Design decisions recorded in DESIGN_DECISIONS.md:**
-- C64: Tuple struct-ref elements use MOVE semantics.
-- C65: E6 (struct value) folded into E5 — no inline value-struct
+- @C64: Tuple struct-ref elements use MOVE semantics.
+- @C65: E6 (struct value) folded into E5 — no inline value-struct
   type in current loft.
 
 Reference content moved to TUPLES.md (Known limitations + Non-

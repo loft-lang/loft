@@ -9,9 +9,9 @@
 //! VALUES hold.  This pins the EMISSION: how many headers each cell's function derives, that a
 //! heap-owning record still derives none, and the switch (`LOFT_NO_NULL_BUFFER_HOIST=1`),
 //! which is what makes it red on the build before the unit and on one that lost it.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ad-null-buffer-cells.loft";
@@ -65,7 +65,8 @@ const BLOCKED_OFF: &[(&str, usize, usize)] = &[
 
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(&src)
@@ -75,12 +76,12 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(vector headers, push headers)` BOUND in its body — the
@@ -122,7 +123,7 @@ fn a_discharge_buffer_leaves_the_loops_headers_in_place() {
             "{name}: (vector headers, push headers)"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -139,5 +140,5 @@ fn the_switch_blocks_every_discharging_loop_again() {
             "{name} under LOFT_NO_NULL_BUFFER_HOIST=1: (vector headers, push headers)"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

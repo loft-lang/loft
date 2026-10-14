@@ -9,6 +9,7 @@
 //! pool enrolls the adopting buffers, a bind after an `if` pre-init adopts, a body wrapped
 //! around a hoisted result still takes the pool, a value-record scanner keeps its registers,
 //! and `LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1 — and the store census the change buys.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,8 +21,12 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    // The tests run in parallel on one source file, and its program cache is shared: an
+    // `introspect` that read another process's half-written entry listed a truncated program.
     cmd.env("LOFT_TIMEOUT", "120")
+        .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_NO_ADOPT_BUFFER_REUSE")
         .env_remove("LOFT_NO_ADOPT_FIRST_BIND");
     cmd
@@ -39,12 +44,12 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     with_env(&mut cmd, env);
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 fn introspect(env: &[(&str, &str)]) -> String {
@@ -176,7 +181,8 @@ fn a_bind_after_an_if_pre_init_adopts() {
         "r28 native: the plain assignment"
     );
     assert!(
-        !r28.contains("OpCopyRecord(cell,_src, var_mf"),
+        !r28.contains("OpCopyRecord(cell,_src, var_mf")
+            && !r28.contains("var_mf = OpRebindRecord(cell,"),
         "r28 native: no copy into `mf`"
     );
     // r22: bound inside the `if` alone — the arm's own local (`@FR-B-Scope`, loft#1600), so the
@@ -187,7 +193,8 @@ fn a_bind_after_an_if_pre_init_adopts() {
         "r22 native: the plain assignment, declared in the arm"
     );
     assert!(
-        !r22.contains("OpCopyRecord(cell,_src, var_mf"),
+        !r22.contains("OpCopyRecord(cell,_src, var_mf")
+            && !r22.contains("var_mf = OpRebindRecord(cell,"),
         "r22 native: no copy into `mf`"
     );
     // A value-record scanner keeps its result in registers beside the entry witness.
@@ -197,7 +204,7 @@ fn a_bind_after_an_if_pre_init_adopts() {
         ),
         "find_at: still a value record"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     let ir = introspect(&[]);
     assert!(
         !section(&ir, "n_r22").contains("CopyRefOrNull"),
@@ -257,17 +264,17 @@ fn a_chain_of_chains_adopts_its_callees_answer() {
     cmd.arg("--native-emit").arg(&out).arg(&guard);
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     assert!(
         section(&rust, "n_outer")
             .contains("var___ret_1 = n_scan(cell, var_n, var_hit, var___ref_1);"),
         "outer: the chain's answer is adopted"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     for mode in ["--interpret", "--native"] {
         let mut cmd = loft();
         cmd.arg(mode)
@@ -314,7 +321,11 @@ fn the_store_census_drops() {
         // 2026-09-30: a LIFTED call result adopts the callee's minted store as a named bind
         // does (`Scopes::lift_set`, `tests/lift_adopt.rs`): the copy's store per lifted
         // minted call goes — seven fewer pooled and four fewer unpooled, on each backend.
-        (183, 295, 159, 261),
+        // 2026-10-02: on native a rebind exchanges the result's store in without a reset
+        // (`@FR-H-SwapRebind`) and a complete-literal callee refills the store it released
+        // (`@FR-R-RefillBuffer`): 159/261 → 104/210 on native, the interpreter unchanged;
+        // `LOFT_NO_REFILL_BUFFER=1` gives back the old pair.
+        (183, 295, 104, 210),
         "mints (interpret on, off, native on, off)"
     );
 }

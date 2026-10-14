@@ -100,7 +100,7 @@ def main():
     # Receipts this census has no grammar for, held APART from `rows` so that `--check` — the
     # gate's input — is unchanged by construction.  Counting them is the whole point: see below.
     optouts, unclassified = [], []
-    for f in sorted(Path("tests/scripts").glob("*.loft")):
+    for f in sorted(p for p in Path("tests/scripts").glob("*.loft") if p.is_file()):
         if not f.is_file():
             continue          # `.loft/` is a cache DIRECTORY and matches this glob
         block = receipt_of(f)

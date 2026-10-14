@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A `par` worker may return a keyed collection — hash, sorted, index, spatial, trie, and a
+// nullable one — and the loop body reads it whole: its length, a key lookup, its order.  The
+// collection is a reference to a record of its own database type, delivered on the reference
+// lane as a record result is (loft#1951: `--native` cast it as an integer, E0605).  Every
+// value by hand.
+// @falsified-at: 7a4970dd7 — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1951-a-par-worker-may-return-a-keyed-collection.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   ARMED: none — the control fails at rustc, no switch is involved.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees;
+//   only the native exit moved.
+
+struct E { k: integer, name: text }
+struct P { px: integer, py: integer, pv: integer }
+struct W { w: text, n: integer }
+
+fn wh(x: integer) -> hash<E[k]> { h: hash<E[k]> = []; for i in 0..x { h += [E { k: i, name: "h{i}x{x}" }]; } h }
+fn ws(x: integer) -> sorted<E[-k]> { s: sorted<E[-k]> = []; for i in 0..x { s += [E { k: i, name: "s{i}x{x}" }]; } s }
+fn wi(x: integer) -> index<E[k]> { s: index<E[k]> = []; for i in 0..x { s += [E { k: i, name: "i{i}x{x}" }]; } s }
+fn wp(x: integer) -> spatial<P[px, py]> { s: spatial<P[px, py]> = []; for i in 0..x { s += [P { px: i, py: i * 2, pv: i * 100 + x }]; } s }
+fn wt(x: integer) -> trie<W[w]> { t: trie<W[w]> = []; for i in 0..x { t += [W { w: "w{i}/{x}", n: i + x }]; } t }
+fn wn(x: integer) -> hash<E[k]>? { if x == 2 { return null; } wh(x) }
+
+fn test_hash_length_and_lookup() {
+  out = "";
+  for e in [1, 2, 3] par(r = wh(e), 2) { out += "{len(r)}:{r[e - 1].name},"; }
+  assert(out == "1:h0x1,2:h1x2,3:h2x3,", "hash: {out}");
+}
+
+fn test_sorted_keeps_its_order() {
+  out = "";
+  for e in [1, 2, 3] par(r = ws(e), 2) { first = ""; for q in r { first = q.name; break; } out += "{len(r)}:{first},"; }
+  assert(out == "1:s0x1,2:s1x2,3:s2x3,", "sorted, descending: {out}");
+}
+
+fn test_index_lookup() {
+  out = "";
+  for e in [1, 2, 3] par(r = wi(e), 2) { out += "{len(r)}:{r[0].name},"; }
+  assert(out == "1:i0x1,2:i0x2,3:i0x3,", "index: {out}");
+}
+
+fn test_spatial_and_trie_contents() {
+  sp = "";
+  for e in [1, 2, 3] par(r = wp(e), 2) { s = 0; for q in r { s += q.pv; } sp += "{s},"; }
+  assert(sp == "1,104,309,", "spatial: {sp}");
+  tr = "";
+  for e in [1, 2, 3] par(r = wt(e), 2) { s = 0; for q in r { s += q.n; } tr += "{s},"; }
+  assert(tr == "1,5,12,", "trie: {tr}");
+}
+
+fn test_a_nullable_keyed_result() {
+  out = "";
+  for e in [1, 2, 3] par(r = wn(e), 3) { if r == null { out += "null,"; } else { out += "{len(r)},"; } }
+  assert(out == "1,null,3,", "hash?: {out}");
+}

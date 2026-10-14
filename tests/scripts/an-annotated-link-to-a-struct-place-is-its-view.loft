@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Ref-Lvalue` — `b: &P = v[1]` IS `b = &v[1]`: an annotated link to a heap PLACE (a
+// vector element, a struct field) is that place's record VIEW, as the `&` spelling is, and a
+// write through it lands in the container.  The annotated spelling kept the annotation's
+// double-indirect `RefVar` over the place's bare address: on the interpreter the element write
+// was lost and the field write panicked, and `--native` did not compile either.  A local `&P`
+// link forwarded to a `&P` parameter is the second cell: native handed the callee a reference
+// to the link's raw pointer, which did not compile (loft#1883).
+//
+// @falsified-at: cca31ba0f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0.
+// @falsified-by: tests/falsified/an-annotated-link-to-a-struct-place-is-its-view.patch — the same channels.
+// HOLDS: leak and refusals are clean on both trees and both backends.
+
+struct Pt { a: integer, b: integer }
+struct Holder { tag: integer, rec: Pt }
+fn set_b(p: &Pt) { p.b = 77; }
+
+fn test_an_annotated_link_to_an_element() {
+  recs: vector<Pt> = [Pt { a: 1, b: 2 }, Pt { a: 3, b: 4 }];
+  e: &Pt = recs[1];
+  e.b = 70;
+  assert(recs[1].b == 70 && recs[0].b == 2 && recs[1].a == 3, "element: {recs[1].b} {recs[0].b} {recs[1].a}");
+}
+
+fn test_an_annotated_link_to_a_field() {
+  h = Holder { tag: 9, rec: Pt { a: 5, b: 6 } };
+  f: &Pt = h.rec;
+  f.b = 71;
+  assert(h.rec.b == 71 && h.rec.a == 5 && h.tag == 9, "field: {h.rec.b} {h.rec.a} {h.tag}");
+}
+
+fn test_a_local_link_forwarded_to_a_parameter() {
+  p = Pt { a: 1, b: 2 };
+  l: &Pt = p;
+  set_b(l);
+  assert(p.b == 77 && p.a == 1, "forwarded: {p.b} {p.a}");
+}

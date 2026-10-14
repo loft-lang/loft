@@ -61,7 +61,7 @@ impl Drop for Arena {
         // Unmap before unlinking, so the file is gone only once nothing holds it.
         self.store = None;
         if self.owner {
-            let _ = std::fs::remove_file(&self.path);
+            let _ = crate::file_access::remove_file(&self.path);
         }
     }
 }
@@ -72,7 +72,7 @@ impl Arena {
     /// # Errors
     /// Any failure to create or map the file.
     pub fn create(path: &Path) -> io::Result<Arena> {
-        let _ = std::fs::remove_file(path);
+        let _ = crate::file_access::remove_file(path);
         let store = open_store(path)?;
         Ok(Arena {
             path: path.to_path_buf(),
@@ -86,7 +86,7 @@ impl Arena {
     /// # Errors
     /// A missing, unmappable, or non-store file.
     pub fn attach(path: &Path) -> io::Result<Arena> {
-        if !path.exists() {
+        if !crate::file_access::exists(path) {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("no call arena at {}", path.display()),

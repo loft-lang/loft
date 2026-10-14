@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// @FR-F-Surface (loft#1848) — the other side of a-qualified-name-reaches-only-what-a-library-publishes.loft:
+// what a library publishes stays reachable through its qualifier — its `pub` items, a variant
+// of its `pub` enum, a type in a parameter position, a name a facade passes on with
+// `pub use` — and the library's own code still reaches its private half.
+//
+// @falsified-by: tests/falsified/a-qualified-name-reaches-what-a-library-publishes.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the OVER-WIDE refusal — every item the library defines refused through its
+//   qualifier, `pub` or not — so this guard holds the half of loft#1848 that must not move.
+//   CHANNEL: the exit — on the control `privlib::PUB_C` and every other published reach is
+//   refused, so nothing compiles.
+//   WITNESS: "`PUB_C` is not `pub` in `privlib`" for a constant declared `pub`.
+//   ARMED: nothing.
+//   HOLDS: on this tree every assertion passes on both backends, with no leak and no panic.
+use privlib;
+use c98_facade;
+use c98_math;
+
+fn takes(s: privlib::PubS) -> integer { s.a }
+
+fn test_published_items_answer() {
+  assert(privlib::PUB_C == 11 && privlib::pub_f() == 33, "a pub constant and function");
+  assert(takes(privlib::PubS { a: 5 }) == 5, "a pub struct, built and named as a type");
+  assert("{privlib::PubE.Pb}" == "Pb" && "{privlib::Pb}" == "Pb", "a pub enum and its variant");
+  assert(c98_facade::c98_len(c98_math::C98Vec { cx: 1, cy: 2, cz: 4 }) == 7, "a facade's pub use");
+}
+
+fn test_the_library_still_reaches_its_private_half() {
+  // hid_f 44 + HID_C 22 + HidS.b 1 + c98_len(1, 1, 1) 3.
+  assert(privlib::pub_total() == 70, "the private items, used from inside");
+}

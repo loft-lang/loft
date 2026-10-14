@@ -10,5 +10,7 @@ version = "0.0.0"
 loft    = ">=2026.10.0"
 
 [dependencies]
-web    = ">=0.4.2"
-server = ">=0.7.1"
+# Floors at the first releases that carry `pub` on what this reads: a field is private
+# to its file without it (C140).
+web    = ">=0.4.5"
+server = ">=0.7.4"

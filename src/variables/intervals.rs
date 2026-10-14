@@ -74,7 +74,7 @@ pub fn compute_intervals(
     depth: usize,
 ) {
     assert!(
-        depth <= 1000,
+        depth <= crate::limits::TREE_DEPTH,
         "expression nesting limit exceeded at depth {depth}"
     );
     match val {

@@ -5,7 +5,7 @@
 // find-references.  Lexes the `.loft` tree, so comments/strings are excluded; the
 // overlay reflects unsaved buffers.
 
-use std::fs;
+use loft::file_access as fa;
 use std::path::PathBuf;
 
 use loft::lsp::{WorkspaceIndex, identifier_at};
@@ -13,14 +13,14 @@ use loft::lsp::{WorkspaceIndex, identifier_at};
 fn temp_ws(name: &str) -> PathBuf {
     // A unique dir per test — the tests run in parallel and must not share files.
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
-    fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     // `area` in a comment must NOT be counted; the def + the call must be.
-    fs::write(
+    fa::write(
         dir.join("a.loft"),
         "fn area(w: integer) -> integer {\n  // area is w times w\n  w * w\n}\n",
     )
     .unwrap();
-    fs::write(dir.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
+    fa::write(dir.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
     dir
 }
 

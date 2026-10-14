@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic's parameter of type `T` reassigned in the body, instantiated at `text`: the
+// interpreter returned the ARGUMENT, silently (`g("a", "b")` answered `a`, then an empty
+// string), and `--native` did not build (E0070/E0308): the write went to the borrowed argument.
+// The template lowered `p = …` while `p` was still `T`, whose placeholder is spelled as a
+// record, so every instance carried the HEAP-parameter rebind (an entry witness, a guarded
+// release) — and a `text` instance missed the owned shadow a text parameter needs.  Now a
+// type variable takes no heap rebind, and an instance's assigned `text` parameter is promoted
+// as a plain function's is (`@FR-F-ParamScalar`, `@FR-G-Mono`: the instance takes the twin's
+// answer).  The sibling files hold the other instance types apart, because each failed on a
+// different channel and one channel stops a file before the next is read.
+//
+// @falsified-at: 5cb1b4b39 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0 (the
+//   instance answered the argument, silently), native exit 1 -> 0 (the crate did not build).
+// @falsified-by: tests/falsified/a-generic-text-parameter-reassigns-like-its-twin.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   5cb1b4b39 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+fn setg<T>(p: T, q: T) -> T {
+  p = q;
+  p
+}
+
+fn in_loop<T>(p: T, q: T) -> T {
+  for i in 0..2 {
+    p = q;
+  }
+  p
+}
+
+fn main() {
+  s = "a";
+  r = setg(s, "b");
+  assert(r == "b", "text instance: got {r}");
+  assert(s == "a", "the caller's argument is untouched: got {s}");
+  assert(in_loop("a", "b") == "b", "reassigned in a loop: got {in_loop("a", "b")}");
+  assert("{setg("x", "y")} {in_loop("p", "q")}" == "y q", "a second call of each instance");
+}

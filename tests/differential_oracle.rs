@@ -30,8 +30,8 @@
 //! actually fail — a green sweep is only evidence once the detector is known to
 //! fire (engineering-rigor: a silent sentinel needs a positive control).
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -52,7 +52,7 @@ struct ModeRun {
 /// `LOFT_TIMEOUT` bounds the native `rustc` compile so a runaway can't hang the
 /// suite (the native path can otherwise block indefinitely).
 fn run_mode(mode_flag: &str, path: &Path, env: &[(&str, &str)]) -> ModeRun {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(mode_flag)
         .arg(path)
         .current_dir(workspace_root())
@@ -200,12 +200,12 @@ fn driver_agreement(dump: &ModeRun, interp: &ModeRun, native: &ModeRun) -> Vec<S
 /// oracle; a wasm-capable runner (the nightly gate) exercises it. This leans on the
 /// @PLN100 build phase, which auto-builds the wasip2 loft-runtime rlib on first use.
 fn wasm_toolchain_present() -> bool {
-    let target = Command::new("rustup")
+    let target = loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-wasip2"))
         .unwrap_or(false);
-    let wasmtime = Command::new("wasmtime")
+    let wasmtime = loft::platform::process::harness_command("wasmtime")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -227,13 +227,9 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
     if !wasm_toolchain_present() {
         return None;
     }
-    let stem = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
+    let stem = fa::file_stem(path).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("loft_oracle_{stem}_{}.wasm", std::process::id()));
-    let compile = Command::new(loft_bin())
+    let compile = loft::platform::process::harness_command(loft_bin())
         .arg("--native-wasm")
         .arg(&out)
         .arg(path)
@@ -241,18 +237,18 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
         .env("LOFT_TIMEOUT", "180")
         .output()
         .unwrap_or_else(|e| panic!("failed to spawn loft --native-wasm: {e}"));
-    if compile.status.code() != Some(0) || !out.exists() {
+    if compile.status.code() != Some(0) || !fa::exists(&out) {
         return Some(ModeRun {
             stdout: String::from_utf8_lossy(&compile.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&compile.stderr).into_owned(),
             exit_code: compile.status.code(),
         });
     }
-    let run = Command::new("wasmtime")
+    let run = loft::platform::process::harness_command("wasmtime")
         .arg(&out)
         .output()
         .unwrap_or_else(|e| panic!("failed to run wasmtime: {e}"));
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     Some(ModeRun {
         stdout: String::from_utf8_lossy(&run.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&run.stderr).into_owned(),
@@ -312,11 +308,11 @@ fn twin_of(path: &Path) -> Option<String> {
 /// The corpus: every `.loft` under `tests/oracle/`, in alphabetical order.
 fn corpus() -> Vec<PathBuf> {
     let dir = workspace_root().join("tests/oracle");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut files: Vec<PathBuf> = fa::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     files.sort();
     assert!(
@@ -345,7 +341,7 @@ fn wasm_opt_out(path: &Path) -> Option<String> {
 /// what counts as the header.  A marker must sit in the leading comment block: an opt-out
 /// buried beside the code it excuses is one a reader of the file will not see.
 fn marker(path: &Path, tag: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = fa::read_to_string(path).ok()?;
     text.lines()
         .take_while(|l| l.trim_start().starts_with("//") || l.trim().is_empty())
         .find_map(|l| l.split_once(tag).map(|(_, why)| why.trim().to_string()))
@@ -387,7 +383,7 @@ fn halt_opt_out(path: &Path) -> Option<String> {
 fn oracle_corpus_agrees_across_backends() {
     let mut report = Vec::new();
     for path in corpus() {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let name = fa::file_name(&path).unwrap();
         let dump = run_mode("--dump", &path, &[]);
         let interp = run_mode("--interpret", &path, &[]);
         let native = run_mode("--native", &path, &[("LOFT_NATIVE_LEAK_CHECK", "1")]);
@@ -425,7 +421,7 @@ fn oracle_corpus_agrees_across_backends() {
         // ever report agreement.  A statically-rejected program is exempt because it
         // never runs; nothing else is.
         if static_reject_opt_out(&path).is_none()
-            && !std::fs::read_to_string(&path).is_ok_and(|t| t.contains("assert("))
+            && !fa::read_to_string(&path).is_ok_and(|t| t.contains("assert("))
         {
             d.push(
                 "has no `assert` — it can only report that the backends AGREE, which two \
@@ -462,9 +458,9 @@ fn oracle_corpus_agrees_across_backends() {
         // run must print what this program printed.  The twin is a corpus program itself, so
         // its own backends are held to each other by its own turn of this loop.
         if let Some(twin) = twin_of(&path) {
-            let twin_path = path.with_file_name(&twin);
+            let twin_path = fa::parent(&path).unwrap_or_default().join(&twin);
             assert!(
-                twin_path.exists(),
+                fa::exists(&twin_path),
                 "{name} declares `@ORACLE_TWIN: {twin}`, which is not in tests/oracle/"
             );
             let t = run_mode("--interpret", &twin_path, &[]);

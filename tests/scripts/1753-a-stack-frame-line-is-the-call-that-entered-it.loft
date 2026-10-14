@@ -95,9 +95,9 @@ fn main() {
 // @falsified-at: e44a8368c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1753-a-stack-frame-line-is-the-call-that-entered-it.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: the assertion channel on both backends; the first cell stops the run.
-//   WITNESS: on the control the statement-final cell reads `main:71 tail:71 chain:23` on the
-//   interpreter (the next statement's line, given to the entry frame as well) and
-//   `main:68 tail:22 chain:16` on native (each function's declaration line), where the file
-//   says `main:0 tail:70 chain:23`.
+//   WITNESS: on the control the statement-final cell reads `main:0 tail:71 chain:23` on the
+//   interpreter (the next statement's line) and `main:68 tail:22 chain:16` on native (each
+//   function's declaration line), where the file says `main:0 tail:70 chain:23`.  Re-derived
+//   at 653383a5a; the interpreter's entry frame no longer takes the line too (`main:71` before).
 //   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
 //   requires HERE to be clean, so all four are clean on both.

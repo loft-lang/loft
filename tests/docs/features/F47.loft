@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F47 — GENERATED from loft-lang/features#47 by tools/features/gen.loft — DO NOT EDIT.
+// Every standard-library name is also reachable by its qualified form, `std::<name>` — the
+// same `library::name` path that `use` gives a library's names (`time::date`).  It is the
+// way to reach the stdlib's own function when a library you `use` defines one by that name.
+fn main() {
+    a = now();
+    b = std::now();                  // the same function, by its qualified name
+    println("{b >= a}");             // true
+    println("{std::max(3, 7)}");     // 7
+    println("{std::len(\"loft\")}"); // 4
+}

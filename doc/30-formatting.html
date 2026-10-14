@@ -154,10 +154,10 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{absent:&gt;8}"</span> == <span class="st">"    null"</span>, <span class="st">"and takes the field it was given"</span>);</code></pre>
 <p>A zero pad is for numbers, and <code>null</code> is not one, so it pads with spaces.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{absent:08}"</span> == <span class="st">"    null"</span>, <span class="st">"`null` is never zero-padded"</span>);</code></pre>
-<p>An operation inside a hole that cannot produce a value yields null rather than stopping the program, and the text says which fault it was.  Building a message — a log line, an error report — can therefore never itself fail.</p>
+<p>An operation inside a hole that cannot produce a value yields null rather than stopping the program, and the null prints as <code>null</code>.  Building a message — a log line, an error report — can therefore never itself fail.</p>
 <pre><code>  top = <span class="nm">5</span>;
   bottom = <span class="nm">0</span>;
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{top / bottom}"</span> == <span class="st">"null(/0)"</span>, <span class="st">"a division by zero names its cause"</span>);</code></pre>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{top / bottom}"</span> == <span class="st">"null"</span>, <span class="st">"a division by zero prints null"</span>);</code></pre>
 <h2 id="character-format">Character format</h2>
 <pre><code>  c = <span class="ch">'A'</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{c}"</span> == <span class="st">"A"</span>, <span class="st">"character default"</span>);
@@ -372,11 +372,11 @@ fn main() {
   // A zero pad is for numbers, and `null` is not one, so it pads with spaces.
   assert("{absent:08}" == "    null", "`null` is never zero-padded");
   // An operation inside a hole that cannot produce a value yields null rather
-  // than stopping the program, and the text says which fault it was.  Building
-  // a message — a log line, an error report — can therefore never itself fail.
+  // than stopping the program, and the null prints as `null`.  Building a
+  // message — a log line, an error report — can therefore never itself fail.
   top = 5;
   bottom = 0;
-  assert("{top / bottom}" == "null(/0)", "a division by zero names its cause");
+  assert("{top / bottom}" == "null", "a division by zero prints null");
   // ## Character format
   c = 'A';
   assert("{c}" == "A", "character default");

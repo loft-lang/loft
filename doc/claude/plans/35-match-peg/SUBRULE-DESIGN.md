@@ -8,7 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > **The keystone.** The core PEG operators ([IMPLEMENTATION.md](IMPLEMENTATION.md) P1–P7) make a
 > `match` recognize a *fixed* shape. This layer lets a pattern element **invoke a named sub-rule**
 > — a user function that parses a sub-structure and advances the cursor — which turns the matcher
-> into a real recursive-descent grammar. It is governed by [C89](../../DESIGN_DECISIONS.md) (reads
+> into a real recursive-descent grammar. It is governed by [@C89](../../DESIGN_DECISIONS.md) (reads
 > like grammar, never forced) and adds one new invariant, **INV-Static** (every parser/grammar
 > error is a compile-time diagnostic; a compiling grammar cannot fault at runtime).
 >
@@ -92,7 +92,7 @@ At a pattern position, `name: rule` where `rule` resolves to a function of type
 ```
 
 `name` binds at type `R` (the sub-rule's success type), directly usable in the arm body — no
-`Some`/`Ok` wrapper to unwrap (the anti-`Ok(a)`, [C89](../../DESIGN_DECISIONS.md)). A bare `rule`
+`Some`/`Ok` wrapper to unwrap (the anti-`Ok(a)`, [@C89](../../DESIGN_DECISIONS.md)). A bare `rule`
 (no capture) is allowed when you only need it to advance the cursor. This composes with the P-*
 operators: `rule*` (repeat a sub-rule), `( rule )?` (optional sub-rule), `a: ruleA | b: ruleB`
 (choose a sub-rule).

@@ -9,13 +9,15 @@ Tracker: [@PLN180](https://github.com/loft-lang/plans/issues/180).
 
 ## Status
 
-Active on `laptop-superinstructions` (`src/value_record.rs`).  **Built:** slice 1 (tuple
-return), slice 3 (tuple parameters), slice 4 (one tuple-returning function serves every
-caller: forwards, tuple TWINS for the sites that owe a record, a tuple copied into a place)
-and slice 5 (nested layouts).  `resolve_move` returns and receives tuples on both backends.
-**Open:** slice 2 (a written tuple local, `TuplePut`).
+**Finished (2026-10-06).  All five slices are built.**  Slice 2, the last: a carrier local
+written field-wise stays a tuple — the write is a `TuplePut` — as `(R-ValueLocal)` already
+stated (guard `a-small-record-local-written-field-wise-is-a-tuple.loft`).  How the pass works
+now is in [BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md) (the small-record paragraph,
+its two switches) and [formal/rewrites.md](../formal/rewrites.md) `(R-ValueRecord)` /
+`(R-ValueLocal)`.  The push family and `R-TextBorrow` moving to the IR phase are separate plans.
+What follows is the record.
 
-The bar the interpreter work answers to is in PERFORMANCE.md § Why the interpreter is
+The bar the interpreter work answers to is in INTERPRETER_PERFORMANCE.md § Why the interpreter is
 optimised at all: native is the target, a cliff is about 100× (optimised interpreter against
 optimised native, real time), and no change may make native or any routine's ratio worse.
 
@@ -90,7 +92,7 @@ original on every run; Python is the original):
 | `tests/dump_ignored_tests` (584k lines through `lines()`) | 0.22 s | 3.67 s | 0.62 s | — |
 | `scripts/opl_points` (200k OPL lines through `split`) | 0.31 s | 4.13 s | 1.79 s | the per-field loop in `main` (62 %, `x = field[1..]` its top line) and the hand-written `%hex%` unescape (30 %) |
 
-The kernels' exit is the standard library compiled like any other library (C71): an
+The kernels' exit is the standard library compiled like any other library (@C71): an
 interpreted script runs a looping stdlib function's compiled loft body
 ([@PLN181](181-compiled-stdlib.md)), and `split` and `lines` were retired that way
 ([KERNELS.md § Removed](../KERNELS.md#removed)).  Next, in that order: the interpreter's per-character text
@@ -173,7 +175,7 @@ native tuple is lost: it compares the native signatures with the pass on and off
 | # | Shape | Status |
 |---|---|---|
 | 1 | Tuple RETURN: the callee is not `pub`, loft calls it, its record is flat (two or more fields: 8-byte integer, float, single, boolean) and its result positions are object literals.  Buffers straight-line or loop-hoisted. | built |
-| 2 | Tuple LOCALS written to: a field write becomes `TuplePut`. | open |
+| 2 | Tuple LOCALS written to: a field write becomes `TuplePut`. | built |
 | 3 | Tuple PARAMETERS: a by-value parameter native's write gate admits; a carrier is handed on whole, a plain record local is read into a tuple at the call. | built |
 | 4 | One function serves every caller: forwards (three spellings), twins for the sites that owe a record, a tuple copied into a place. | built |
 | 5 | NESTED layouts: a record with inline sub-records is one flat tuple (`MoveResult { mr_pos: Vec3, … }`, two levels deep too). | built |
@@ -225,5 +227,5 @@ Probed, clean on both backends:
 ## See also
 
 [formal/rewrites.md](../formal/rewrites.md) R-ValueRecord / R-ValueLocal ·
-[PERFORMANCE.md § How the interpreter executes](../PERFORMANCE.md) (store work) ·
+[INTERPRETER_PERFORMANCE.md](../INTERPRETER_PERFORMANCE.md) (store work) ·
 [NATIVE_SWITCHES.md](../NATIVE_SWITCHES.md) (`LOFT_NO_VALUE_RECORD`, `LOFT_NO_VALUE_LOCAL`).

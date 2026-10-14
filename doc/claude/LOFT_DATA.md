@@ -213,7 +213,7 @@ if h[key] { found = true; }
 elem = idx[42, "foo"];    // null if not present
 ```
 
-**All keyed-collection subscripting is by KEY, never by position (C99).** On a
+**All keyed-collection subscripting is by KEY, never by position (@C99).** On a
 `sorted` / `index` / `hash`, `coll[k]` looks up the element whose key **equals**
 `k` — not the element at position `k` — so `s[20]` finds key 20 and `s[1]`
 returns `null` when there is no key 1 (it is not position 1). On an ordered
@@ -454,18 +454,24 @@ what you want.  Use a reference `struct` when you want shared/aliased mutation o
 
 A user `struct` (or `value struct`) can behave exactly like a built-in across three surfaces —
 this is what makes a wrapper type (`DateTime`, `Money`, `Colour`, a `Decimal`, a URL) ergonomic
-rather than a bag of functions.  Mark the type and these functions `pub` to use them across a
-`use` boundary.
+rather than a bag of functions.  Each is an `operator` method — written with the keyword
+`operator` where a function has `fn` — and callable by its name as well.  Mark the type and
+these methods `pub` to use them across a `use` boundary.  The full rules:
+[formal/operators.md](formal/operators.md).
 
-- **Operators** — define `fn OpLt(self: T, other: T) -> boolean` (and `OpLe/OpGt/OpGe/OpEq/OpNe`),
-  `fn OpAdd/OpMin/OpMul(self: T, …) -> …`, etc., and `a < b` / `a - b` dispatch them **directly**
-  (not only inside `<T: Ordered>`).  `OpMin` is the `-` operator (subtraction), `OpAdd` is `+`.
-  **One operator may be overloaded on its second operand's type** — `OpMin(self: T, o: T)` beside
-  `OpMin(self: T, o: integer)`, in either order: `a - b` reaches the one the call `OpMin(a, b)`
-  would, the exact type preferred over a conversion ((F-Recv), `formal/calls.md`), and a
-  `<T: Subtractable>` body takes the `(T, T)` one.  A second operand no overload takes errors
-  (`No matching operator '-' on 'T' and 'text'`), and so does a type with no such op (`dt + 5`
-  stays a compile error — distinct-type safety is free).
+- **Operators** — `operator compare(self: T, other: T) -> Ordering` gives `a < b`, `<=`, `>`,
+  `>=` (one call, `a.compare(b) == Less` and so on); `operator plus` / `minus` / `times` /
+  `divided_by` / `remainder` give `+`, `-`, `*`, `/`, `%`, and `a += b` with them;
+  `operator negate` gives `-x`.  `==` and `!=` always compare the fields (@C134).  They
+  dispatch **directly**, not only inside `<T: Ordered>`.
+  **One operator may be overloaded on its second operand's type** — `operator minus(self: T, o:
+  T)` beside `operator minus(self: T, o: integer)`, in either order: `a - b` reaches the one
+  the call `a.minus(b)` would, the exact type preferred over a conversion ((F-Recv),
+  `formal/calls.md`), and a `<T: Subtractable>` body takes the `(T, T)` one.  A second operand
+  no overload takes errors (`No matching operator '-' on 'T' and 'text'`, naming the `operator`
+  to declare), and so does a type with no such operator (`dt + 5` stays a compile error —
+  distinct-type safety is free).  A function named `OpLt` / `OpAdd` / … is an ordinary
+  function (@C132).
 - **Scope end** — define `fn OpDrop(self: T)` and it runs when the value's OWNER dies: the
   binding's own scope exit, the early-`return`/`break` paths, reverse-declaration order within a
   scope (@PLN125 arc B), and a REASSIGNMENT of the binding, which releases the record it
@@ -475,25 +481,26 @@ rather than a bag of functions.  Mark the type and these functions `pub` to use 
   (`t = s`, the variable an `if` arm yields, `t = s; return t`) moves it the same way: the
   copy releases, the source does not; a copy off a PARAMETER leaves the caller as the owner
   ([INTERFACES.md § `OpDrop`](INTERFACES.md)).  Taking a value back OUT
-  (`v.remove(i)`, `v[i] = other`) does not release it.  A drop **cannot fail** (C80 — no caller
+  (`v.remove(i)`, `v[i] = other`) does not release it.  A drop **cannot fail** (@C80 — no caller
   is left to tell), so it may not return and anything whose failure matters stays an explicit
   call (`tx.commit()` answers, the closing brace does not).  It receives only `self`, whose data
   is COPIED at construction, so its effect reaches the world (I/O, a `#c` handle it owns) rather
   than a caller's collection.  Full contract, including what it deliberately does NOT do:
   [INTERFACES.md § `OpDrop`](INTERFACES.md).
-- **Indexing** — define `fn OpIndex(self: T, i: τ) -> υ` and `x[i]` dispatches it, so a matrix, a
-  bitset, a row or a ring buffer reads as `x[i]` rather than `x.at(i)` (@PLN125 arc C).  The index
-  type is whatever the method declares — a row addressed by column NAME takes a `text`.  An
-  interface requires it as `op [] (self: Self, i: τ) -> υ`.  `OpIndex` READS: `x[i] = …` is refused
-  (a type that must be written through offers a setter, `x.set(i, v)`).
-- **Formatting** — define `fn to_text(self: T, spec: text) -> text`.  Then `"{x}"` calls it with
+- **Element reads** — `[…]` belongs to the built-in collections; a matrix, a bitset, a row or a
+  ring buffer reads through a named method, `x.at(i)`, whose index type is whatever it declares
+  (a row addressed by column NAME takes a `text`).  `x[i]` on a program's type is refused naming
+  that cure ([INTERFACES.md § Indexing](INTERFACES.md#indexing--a-library-type-reads-through-a-named-method)).
+- **Formatting** — define `operator to_text(self: T, spec: text) -> text`.  Then `"{x}"` calls it with
   `spec == ""` and `"{x:anything}"` passes `"anything"` raw — the type owns its whole spec
   vocabulary (the Python `__format__` model; core learns no date/money tokens).  *Known issue
   (#533): today the body must not be a bare tail `if` — bind the result to a local and return it
   (`r = if … else …; r`), else the branch mis-selects.*
-- **Conversions** — define `fn OpConvTFromS(v: S) -> T` (e.g. `OpConvDateTimeFromText`), and
-  `s as T` dispatches it: `"2026-07-08" as DateTime`, `"#ff0000" as Colour`, `"1.5" as Decimal`.
-  With no matching conversion, `as T` is a clean compile error (not a silent mis-cast).
+- **Conversions** — define `operator to_<t>(self: S) -> T`, where `t` is `T`'s name in snake
+  case (`operator to_date_time(self: text) -> DateTime`), and `s as T` dispatches it:
+  a date text `as DateTime`, `"red" as Colour`, `"1.5" as Decimal`.  A conversion INTO the
+  program's type may take a foreign `self` (`text`, `integer`).  With no matching conversion,
+  `as T` is a clean compile error (not a silent mis-cast).
 
 **When to reach for this — and which library types still should.**  A type earns
 the full treatment when it hits all four axes `DateTime` does: **(1)** it is one
@@ -664,15 +671,20 @@ Catalogue: @F44; guard: `tests/scripts/1147-assert-eq-reports-both-sides-at-the-
 sizeof(integer)    // 8
 sizeof(u8)         // 1 (packed field size)
 sizeof(u16)        // 2
-sizeof(MyStruct)   // sum of packed field sizes
+sizeof(MyStruct)   // the field sizes, padded to a multiple of the largest alignment
 sizeof(vector<T>)  // 4 — every collection field is one record pointer
-sizeof((u8, u8))   // 2 — a tuple is packed as a struct with those members
+sizeof((u8, u8))   // 2 — a tuple is stored as a struct with those members
+sizeof((u8, u32))  // 8 — the u32 starts at 4, its natural boundary
 sizeof(my_var)     // size of the variable's type
 ```
 
-`sizeof(TYPE)` returns the packed byte size used when the type is stored as a struct
-field or vector element. For range-constrained integer types (`u8`, `u16`, etc.) this
-is the packed size (1 or 2 bytes), not the stack slot size. `sizeof(expr)` answers
+`sizeof(TYPE)` returns the byte size used when the type is stored as a struct field or
+vector element. For range-constrained integer types (`u8`, `u16`, etc.) this is the packed
+size (1 or 2 bytes), not the stack slot size. A struct places its fields largest first and
+pads its size to a multiple of its largest field's alignment, so every element of a
+`vector<MyStruct>` is aligned: `struct { n: integer, b: boolean }` is 16, not 9 (@C138). A
+binary file written with `f#write` does not carry that padding — its records are the field
+widths summed. `sizeof(expr)` answers
 `sizeof` of the expression's type — a `u8` local or field is 1, a `vector` local 4 —
 except a struct-enum value, whose size is computed at runtime from the variant it holds.
 An absent struct-enum value holds no variant and sizes as its type, like `sizeof(Shape)`.

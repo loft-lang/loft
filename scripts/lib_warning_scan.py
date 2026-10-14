@@ -49,7 +49,7 @@ from pathlib import Path
 # The message itself may contain " at ", so the location is anchored at the end.
 # The `[code]` form is how every diagnostic with a stable identity renders; matching only
 # `Warning:` read all of them as no warning at all, so a coded deprecation on a library's own
-# source (C123's `both-receiver-deprecated`) never reached this table.
+# source (@C123's `both-receiver-deprecated`) never reached this table.
 WARNING_RE = re.compile(
     r"^\s*Warning(?:\[(?P<code>[A-Za-z0-9_-]+)\])?:\s*(?P<msg>.*?)"
     r"(?:\s+at\s+(?P<loc>\S+:\d+:\d+))?\s*$"

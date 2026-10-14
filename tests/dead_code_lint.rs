@@ -19,9 +19,9 @@
 //! stderr — same approach as `tests/runtime_warnings.rs`. `LOFT_NO_CACHE` because the program
 //! cache skips the re-parse (hence the diagnostics) on a warm run.
 
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 fn loft_bin() -> PathBuf {
@@ -51,7 +51,7 @@ const EXPECT_NEVER_READ: [&str; 4] = [
 /// `(stdout, stderr, exit_code)`. `LOFT_NO_CACHE` forces a cold compile so the parse-time
 /// diagnostics actually fire; `LOFT_TIMEOUT` bounds the native rustc step.
 fn run_env(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (String, String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env_remove("LOFT_NO_WARN_RUNTIME")
@@ -203,17 +203,26 @@ fn opt_out_silences_native() {
 /// source, so the lint must NOT fire — this locks the S4a ownership fix against regressions.
 #[test]
 fn s4a_aliases_stay_silent() {
+    // (script, dead-store reports it owes).  The two element-view scripts each carry ONE
+    // deliberate lost write: `mut_elem` binds `xs = g.c` (a copy), writes through `e = xs[i]`
+    // and returns the untouched source — their own comment: the write "hits the discarded
+    // snapshot".  loft#1864 made the lint see a copy read only through its views, so that one
+    // is reported, on `xs`; every alias in the scripts stays silent.
     let aliases = [
-        "tests/scripts/434-pln87-scalar-reference.loft", // & scalar reference
-        "tests/scripts/25-index-elision-borrower.loft",  // e = v[i] element view
-        "tests/scripts/85-borrow-elision-element-borrower.loft",
+        ("tests/scripts/434-pln87-scalar-reference.loft", 0), // & scalar reference
+        ("tests/scripts/25-index-elision-borrower.loft", 1),  // e = v[i] element view
+        ("tests/scripts/85-borrow-elision-element-borrower.loft", 1),
     ];
-    for rel in aliases {
+    for (rel, owed) in aliases {
         let (_o, diag, _c) = run_env("--interpret", &workspace(rel), &[]);
         assert_eq!(
             dead_stores(&diag),
-            0,
-            "alias script {rel} must emit NO dead-store warning (the write propagates)\n{diag}"
+            owed,
+            "alias script {rel} must emit {owed} dead-store warning(s) (an alias's write propagates)\n{diag}"
+        );
+        assert!(
+            owed == 0 || diag.contains("'xs' is mutated but its value is never read"),
+            "the one report in {rel} is mut_elem's copy `xs`\n{diag}"
         );
     }
 }
@@ -507,10 +516,10 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_781ds_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
     // One project, so the library is the author's own code and its lints are addressed to
     // this build (loft#1260).
-    std::fs::write(
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"probe781ds\"\nversion = \"0.1.0\"\ncategories = [\"testing\"]\n",
     )
@@ -518,9 +527,9 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
 
     // The dead store is line 5 of the library: the whole-value bind `d = s.items` COPIES
     // (C86), `d` is mutated, and `d` is never read — so the write is lost.
-    std::fs::write(
+    fa::write(
         lib.join("dstore781.loft"),
-        "// 1\npub struct Data781 { items: vector<integer> }\n// 3\n\
+        "// 1\npub struct Data781 { pub items: vector<integer> }\n// 3\n\
          pub fn lose_it(s: Data781) -> integer {\n  d = s.items;\n  d[0] = 99;\n  \
          return len(s.items);\n}\n",
     )
@@ -528,14 +537,14 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
 
     // Line 5 of the ENTRY is a `const` — where the warning used to land.
     let entry = root.join("main781ds.loft");
-    std::fs::write(
+    fa::write(
         &entry,
         "use dstore781::*;\n// 2\n// 3\n// 4\nconst UNRELATED781 = 1;\n// 6\n\
          fn main() {\n  s = Data781 { items: [1, 2, 3] };\n  println(\"{lose_it(s)}\");\n}\n",
     )
     .expect("write entry");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -549,7 +558,7 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         all.contains("is mutated but its value is never read"),
@@ -587,10 +596,10 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_1260ds_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
     // Deliberately NO manifest at the root: the entry is a bare script, so the library is a
     // dependency rather than part of what is being built.
-    std::fs::write(
+    fa::write(
         lib.join("dstore1260.loft"),
         "// 1\npub struct Data1260 { items: vector<integer> }\n// 3\n\
          pub fn lose_it(s: Data1260) -> integer {\n  d = s.items;\n  d[0] = 99;\n  \
@@ -598,14 +607,14 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
     )
     .expect("write lib");
     let entry = root.join("main1260ds.loft");
-    std::fs::write(
+    fa::write(
         &entry,
         "use dstore1260::*;\n// 2\n// 3\n// 4\nconst UNRELATED1260 = 1;\n// 6\n\
          fn main() {\n  s = Data1260 { items: [1, 2, 3] };\n  println(\"{lose_it(s)}\");\n}\n",
     )
     .expect("write entry");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -619,7 +628,7 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !all.contains("is mutated but its value is never read"),
@@ -654,11 +663,11 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_883amb_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
 
     // The loop-variable mutation the false warning pointed at. `lw_t` BORROWS the element,
     // so the write persists and `lw_v` is read two lines down — nothing is lost here.
-    std::fs::write(
+    fa::write(
         lib.join("slot883.loft"),
         "pub struct Slot883 { idx: integer, taken: boolean }\n\
          pub fn mutate_through_a_loop_variable() -> boolean {\n  \
@@ -673,14 +682,14 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     )
     .expect("write lib");
     // A second library declaring the SAME name is what makes the bare use ambiguous.
-    std::fs::write(
+    fa::write(
         lib.join("other883.loft"),
         "pub struct Slot883 { other: text }\n",
     )
     .expect("write other lib");
 
     let run = |entry: &std::path::Path| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["--interpret", "--check"])
             .arg("--lib")
             .arg(&lib)
@@ -698,7 +707,7 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
 
     // The bug: a bare `Slot883` is ambiguous, so the compile aborts.
     let amb = root.join("amb883.loft");
-    std::fs::write(
+    fa::write(
         &amb,
         "use slot883::*;\nuse other883::*;\nfn main() {\n  \
            s = Slot883 { idx: 0, taken: false };\n  \
@@ -720,13 +729,13 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     // The control: same library, same loop, ambiguity removed — must compile clean, which
     // is what proves the lint was suppressed for the error and not switched off.
     let ok = root.join("ok883.loft");
-    std::fs::write(
+    fa::write(
         &ok,
         "use slot883::*;\nfn main() {\n  println(\"{mutate_through_a_loop_variable()}\");\n}\n",
     )
     .expect("write ok entry");
     let clean = run(&ok);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !clean.contains("is mutated but its value is never read"),
@@ -754,7 +763,7 @@ fn a_parameter_read_by_a_later_default_is_not_dead() {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_pdflt_{}_{n}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("probe dir");
+    fa::create_dir_all(&root).expect("probe dir");
 
     // Each case pairs a shape with the values that prove the default actually ran, so a
     // silenced warning can never be silence over a broken default.
@@ -811,7 +820,7 @@ fn a_parameter_read_by_a_later_default_is_not_dead() {
     for backend in ["--interpret", "--native"] {
         for (name, src, expect_out, expect_named) in &cases {
             let file = root.join(format!("{name}.loft"));
-            std::fs::write(&file, src).expect("write probe");
+            fa::write(&file, src).expect("write probe");
             let (out, err, code) = run_env(backend, &file, &[]);
             assert_eq!(
                 code,
@@ -842,7 +851,7 @@ fn a_parameter_read_by_a_later_default_is_not_dead() {
             );
         }
     }
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 // ── An unresolved method with a named argument reports ONE error ─────────────────────────
@@ -858,10 +867,10 @@ fn an_unknown_method_with_a_named_argument_reports_one_error() {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_nmrec_{}_{n}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("probe dir");
+    fa::create_dir_all(&root).expect("probe dir");
 
     let file = root.join("recover.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "struct S986 { a: integer }\n\
          fn main() { s = S986 { a: 1 }; println(\"{s.nosuch(width: 3)}\"); }\n",
@@ -869,7 +878,7 @@ fn an_unknown_method_with_a_named_argument_reports_one_error() {
     .expect("write probe");
 
     let (_out, err, code) = run_env("--interpret", &file, &[]);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert_ne!(code, Some(0), "an unknown member must still fail\n{err}");
     assert!(
@@ -902,9 +911,9 @@ fn main() { x = W { f: Foo { a: 0, b: 5 } }; g(x); print(\"r={x.f.a}\"); }\n";
 
 fn run_body(body: &str, backend: &str, tag: &str) -> (String, String) {
     let path = std::env::temp_dir().join(format!("loft_dcl_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&path, body).expect("write script");
+    fa::write(&path, body).expect("write script");
     let (out, diag, _code) = run_env(backend, &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (out, diag)
 }
 
@@ -1002,4 +1011,139 @@ fn a_returned_text_parameter_replaced_unread_is_reported() {
         diag.contains("fn read_after"),
         "the warning names `read_after`\n{diag}"
     );
+}
+
+/// loft#1840 — an APPEND into a copy nothing reads is a lost write, and only into a COPY.
+///
+/// The fixture's warning cells are pinned with `@EXPECT_WARNING`, which cannot see a warning
+/// that fires where it should not; this asserts the EXACT set of locals warned, so the silent
+/// cells — a read after the append (an element, a `len`), the copy returned, a `&` link, a
+/// collection BUILT fresh rather than copied — are half the claim.
+fn assert_append_to_a_copy(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/1840-an-append-to-an-unread-copy-is-a-lost-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("1840 ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[lost-write]: '"))
+        .filter_map(|l| l.split('\'').next())
+        .collect();
+    warned.sort_unstable();
+    assert_eq!(
+        warned,
+        [
+            "br_xs", "fl_xs", "fv_xs", "kc_h", "lc_b", "lp_xs", "pc_w", "tx_f", "tx_m", "tx_p",
+            "vs_m"
+        ],
+        "[{backend}] the appends into an unread copy, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn an_append_to_an_unread_copy_is_a_lost_write_interpret() {
+    assert_append_to_a_copy("--interpret");
+}
+
+#[test]
+fn an_append_to_an_unread_copy_is_a_lost_write_native() {
+    assert_append_to_a_copy("--native");
+}
+
+/// loft#1864 — a copy written through a VIEW bound off it, and read only through such views,
+/// is a copy nothing reads.  Pins the EXACT set of locals warned, so the silent cells — a view
+/// read for its value, a write-back into the source, a `&` bind, a read after the write, a
+/// borrowed base — are half the claim, as in the 1840 fixture.
+fn assert_copy_through_its_view(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/1864-a-copy-written-through-its-own-view-is-a-lost-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("1864 ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[lost-write]: '"))
+        .filter_map(|l| l.split('\'').next())
+        .collect();
+    warned.sort_unstable();
+    assert_eq!(
+        warned,
+        ["cw_es", "ln_es", "nv_es", "rmw_es", "th_es", "vv_es"],
+        "[{backend}] the copies written only through their own views, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn a_copy_written_through_its_own_view_is_a_lost_write_interpret() {
+    assert_copy_through_its_view("--interpret");
+}
+
+#[test]
+fn a_copy_written_through_its_own_view_is_a_lost_write_native() {
+    assert_copy_through_its_view("--native");
+}
+
+/// loft#1871 — a parameter the callee REBINDS before writing a field writes the callee's own
+/// store (`@FR-F-ParamRebind`), so a call result handed to it loses nothing.  The literal rebind
+/// `p = S { x: … }` is itself lowered as field writes into the fresh store, and those were read
+/// as writes through `p`: `bump(bump(a))` was reported as a lost write.  A rebind counts only
+/// where EVERY path rebinds first, so the callees that write through on some path stay reported.
+const REBIND_THEN_WRITE: &str = "struct S { x: integer }\n\
+struct H { s: S }\n\
+fn first(h: H) -> S { h.s }\n\
+fn rebind_only(p: S) -> S { p = S { x: p.x + 10 }; p }\n\
+fn both_arms(p: S) -> S { if p.x > 5 { p = S { x: 2 }; } else { p = S { x: 3 }; } p.x = 7; p }\n\
+fn in_pass(p: S) -> S { for i in 0..2 { p = S { x: 3 }; p.x = i; } p }\n\
+fn from_local(p: S) -> S { q = S { x: 4 }; p = q; p.x = 5; p }\n\
+fn write_first(p: S) -> S { p.x = 9; p = S { x: 2 }; p }\n\
+fn one_arm(p: S) -> S { if p.x > 5 { p = S { x: 2 }; } p.x = 7; p }\n\
+fn after_loop(p: S) -> S { for i in 0..2 { p = S { x: 3 }; } p.x = 7; p }\n\
+fn main() {\n\
+  h = H { s: S { x: 1 } };\n\
+  t = rebind_only(first(h)).x + both_arms(first(h)).x + in_pass(first(h)).x;\n\
+  t += from_local(first(h)).x + write_first(first(h)).x + one_arm(first(h)).x;\n\
+  t += after_loop(first(h)).x;\n\
+  print(\"r={h.s.x},{t}\");\n\
+}\n";
+
+#[test]
+fn a_rebound_parameter_written_after_the_rebind_is_not_a_lost_write() {
+    let (out, diag) = run_body(REBIND_THEN_WRITE, "--interpret", "rebind_write");
+    // 11 + 7 + 1 + 5 + 2 + 7 + 7: the caller's `h` is untouched.
+    assert!(out.contains("r=1,40"), "values: {out:?}\n{diag}");
+    for (callee, reported) in [
+        ("rebind_only", false),
+        ("both_arms", false),
+        ("in_pass", false),
+        ("from_local", false),
+        ("write_first", true),
+        ("one_arm", true),
+        ("after_loop", true),
+    ] {
+        let found = diag.contains(&format!("`{callee}` writes to `p`"));
+        assert_eq!(
+            found, reported,
+            "`{callee}`: a lost write is reported exactly where some path writes through `p` \
+             before rebinding it\n{diag}"
+        );
+    }
 }

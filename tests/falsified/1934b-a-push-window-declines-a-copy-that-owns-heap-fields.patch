@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -6039,9 +6039,6 @@
+             _ => parts.push(n),
+         }
+     }
+-    if copies_heap_into_fresh(body, &fresh, data, stores) {
+-        return Err("a whole-record copy into the element owns heap fields".to_string());
+-    }
+     let mut parts: Vec<&Value> = Vec::new();
+     for s in &body.operators {
+         collect(s, data, &m.path, &fresh, &mut parts);

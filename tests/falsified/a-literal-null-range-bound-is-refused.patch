@@ -1,0 +1,13 @@
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 169df3d49..a76b10a06 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -4179,7 +4179,7 @@ impl Parser {
+             // round, so it is refused here rather than lowered: the loop it spells never runs.
+             // Judged on the second pass only: on the first, a call to a function declared
+             // further down the file (`0..layer_count(ly)`) parses as a `Null` placeholder.
+-            if !self.first_pass
++            if false
+                 && (matches!(expr.unspan(), Value::Null) || matches!(till.unspan(), Value::Null))
+             {
+                 diagnostic!(

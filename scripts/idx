@@ -32,7 +32,16 @@
 #                                   tests/ here PLUS `library` (a library repo's
 #                                   tests/ at its origin/main, index/library_guards.json
 #                                   — `make guards-fetch`).  `guards: 0` is a decision
-#                                   nothing verifies.
+#                                   nothing verifies.  Counted by scripts/decisions.py.
+#   idx decision:C<n>             — one decision: its worklist line (what keeps it,
+#                                   the work it owes), every site citing it, and the
+#                                   bare `C<n>` mentions in code that are not citations.
+#   idx decision-work [--open] [--work <token>] [--kind <kind>]
+#                                   — the decision worklist
+#                                   (doc/claude/DESIGN_DECISIONS_WORKLIST.tsv), one row
+#                                   per entry with its citation counts; `--work cite`
+#                                   lists the decisions whose sites still owe `@C<n>`.
+#                                   `python3 scripts/decisions.py check` revalidates it.
 #   idx tag:legacy:P259           — bare-name (legacy) lookup
 #   idx prefix:@PLAN22            — all tags starting with prefix
 #   idx file:doc/.../PROBLEMS.md  — all tags referenced in a file
@@ -88,6 +97,12 @@ PARA=0
 MAX_BYTES=4096
 SELECT=""          # --code / --doc ref-kind filter (empty = all)
 QUERY=""
+
+# The decision queries take their own flags, so they leave before the loop below.
+case "${1:-}" in
+  decision-work) shift; exec python3 "$ROOT/scripts/decisions.py" list "$@" ;;
+  decision:*)    exec python3 "$ROOT/scripts/decisions.py" show "${1#decision:}" ;;
+esac
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -258,21 +273,9 @@ case "$QUERY" in
     echo "next:    C$(( ${top%%$'\t'*} + 1 ))"
     ;;
   decisions)
-    # One row per register entry, in id order: where it is cited, split
-    # by kind.  A guard is a citation under tests/; a doc one a .md file; code
-    # everything else.  Read from the index, so `make index` first.
-    grep -h -E '^## C[0-9]+(\.[A-Z])? ' "$ROOT"/doc/claude/DESIGN_DECISIONS_*.md \
-      | sed -E 's/^## (C[0-9]+(\.[A-Z])?) — (.*)$/\1\t\3/' | sort -V \
-      | jq -R -s --slurpfile idx "$IDX" --slurpfile lib "${LIBGUARDS}" '
-          split("\n") | map(select(length > 0) | split("\t")) | map(
-            . as [$id, $title]
-            | ($idx[0]["@" + $id] // []) as $refs
-            | ([$lib[0].repos[].files[].cites[] | select(.tag == "@" + $id)] | length) as $library
-            | { id: $id, title: $title,
-                code:   ([$refs[] | select((.file | startswith("tests/") | not) and (.file | endswith(".md") | not))] | length),
-                docs:   ([$refs[] | select(.file | endswith(".md"))] | length),
-                guards: (([$refs[] | select(.file | startswith("tests/"))] | length) + $library),
-                library: $library })'
+    # One row per register entry, in id order: where it is cited, split by kind.
+    # scripts/decisions.py is the one decoder; it reads the index, so `make index` first.
+    exec python3 "$ROOT/scripts/decisions.py" counts
     ;;
   gh:*)
     # idx gh:247 → the issue/PR URL + every @GH247 reference (offline).

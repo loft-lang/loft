@@ -13,6 +13,25 @@ OPEN: **0** — `D-call-23` and `D-call-22` opened AND CLOSED 2026-09-28 (loft#1
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
+### D-call-30 — OPENED AND CLOSED (2026-10-12, loft#1987): a lifted call ran ahead of every operand to its left
+
+`(F-Args)` and `(E-Left)` evaluate arguments and operands left to right.  A call whose result
+is a heap value the caller must own — a stdlib function answering a `vector`, a function of
+the program answering a record — is lifted into a `__lift_N` temp by the scope pass, and the
+lift travels outward through every enclosing call to the statement, so it ran before every
+operand that stayed in the expression.  `set(j, 2) + len(j.keys()) * 10` answered 2 for 22
+(the keys read before `set` wrote them) and `c.n + made(c).v * 10` answered 11 for 10 (`c.n`
+read after `made` changed it), on both backends alike, which is why no differential check
+saw it.
+
+Closed in `Scopes::keep_operand_order` (`src/scopes/args.rs`): where an argument's
+evaluation is hoisted, each EARLIER argument that reads state or calls a function is taken
+into a temp of its own ahead of it, so the hoisted sequence is the source order.  An earlier
+argument that is a constant, a local the hoisted operations do not write, a `&` reference or
+an operator over such values stays in the call; a heap argument stays too, being read by the
+callee after both.  Measured one shape per program: the build before answers 20 of 28 cells
+wrong.  Guard `tests/scripts/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft`.
+
 ### D-call-25 — OPENED AND CLOSED (2026-09-29): a default reading an earlier parameter through a tuple read the caller's own local
 
 `(F-Default)`, written for this entry: a default fills its parameter with the earlier parameters
@@ -27,6 +46,34 @@ met it.  **Fix.**  The substitution walks `Value::for_each_child_mut`, the exhau
 list, and does not descend into a replacement (the caller's expression, whose variables are the
 caller's).  Guard `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft`.
 Found walking `(T-Syn)`: a parameter default is the one place pass 1's TREE is replayed.
+
+### D-call-28 — OPENED 2026-10-06, CLOSED 2026-10-07 (@PLN187): the C140 refusals were behind a switch
+
+Violated `(F-Visible)`: a private field read, written or matched outside its file, a literal of
+a `pub` type with a private field, a variant of a non-`pub` enum, and the abstract-alias
+refusals were refused only under `LOFT_PUB_ENFORCE=1`, so the published libraries could carry
+their `pub` first (@PLN187 step 5) and no consumer of a release broke.  Naming and the build
+refusal for a name-only type held on every build from the start.  **Closed** by @PLN187 step 6:
+the switch is gone and every refusal holds on every build; the in-tree packages' library floors
+moved to the first releases carrying `pub`.  Guard `tests/pub_visibility.rs` (`@C140`), every
+cell now on the default build.
+
+### D-call-29 — OPENED AND CLOSED (2026-10-07, @PLN187): an abstract alias the checker did not follow
+
+Opened with the abstract-alias rule (7598b6537): the fact rode one alias per operand, so an
+alias nested in a type (`vector<Handle>`, `(Handle, u8)`), the value of a branch, a `match`
+subject or pattern, a lambda's parameters and a named argument read as τ — silently, under
+enforcement.  Closed in two steps.  5ad3eb9d5 carried one `vector<…>` level.  The closing
+commit replaced the per-operand alias with `AliasFact` — a tree over a value's positions
+(alias, vector, tuple), recorded per declaration (`Attribute::fact`,
+`Definition::returned_fact`, IR text) and resolved per file, so a transparent `pub type Pair =
+(Handle, u8)` still carries its abstract member — and added the producers and consumers it
+was missing: tuple literals, member and element reads, destructuring and tuple patterns,
+`if` / `match` / block / comprehension values joined across branches, the `if` condition and
+`match` subject, lambda parameters (declared, and inferred from a generic's bound type
+variable) and results, named arguments, keyed lookups' keys, and method calls checked as calls.
+Measured: 24 new refusal cells plus the accepted program in `tests/pub_visibility.rs`, every
+earlier cell unchanged, `scripts/introspect_diff.sh` IDENTICAL with the switches off and on.
 
 ### D-call-27 — OPENED AND CLOSED (2026-09-30): a lowered text-tuple default did not answer what its argument would (loft#1758)
 

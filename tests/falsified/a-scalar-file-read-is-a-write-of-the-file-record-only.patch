@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index f5a5d6e66..93ed843e9 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -1886,7 +1886,7 @@ fn body_writes(
+                 // `@FR-R-InPlace`'s read clause, typed: a scalar `f#read` writes the File
+                 // record's own fields (its cursor, its handle on first use) and a local — a
+                 // write of that whole record type, and of no other.
+-                set.whole.insert(tp);
++                let _ = tp;
+             } else if RECORD_FREE_OPS.contains(&name) {
+                 let freed = match args.first().map(Value::unspan) {
+                     Some(Value::Var(r)) => plain_record_type(data, vars.tp(*r)),

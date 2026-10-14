@@ -14,7 +14,7 @@ Restated as the rule this batch adds:
              `τ` and for `τ?`.  Only a NULLABILITY question may differ, and it is spelled
              by reading the bool, never by the absence of an arm.
 
-It follows from C90: `Optional(τ)` shares `τ`'s storage; the `?` is a compile-time marker.
+It follows from @C90: `Optional(τ)` shares `τ`'s storage; the `?` is a compile-time marker.
 
 ## Why the design's own guarantee does not fire
 

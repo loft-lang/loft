@@ -14,7 +14,6 @@
 //! whole test and abandon the frame's buffers.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -27,7 +26,7 @@ fn script() -> PathBuf {
 
 /// Run `loft` with `args` plus extra env; return `(exit-ok, stdout, stderr)`.
 fn run(args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1");
@@ -72,6 +71,43 @@ fn both_backends_answer_the_same() {
     }
 }
 
+fn own_tail_script() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// loft#1907 — a text block whose tail is a local of its own scope (every `?? return`,
+/// `?? continue` and `?? break` over a text, and an author's `{ s = …; s }`) releases that
+/// local.  The values were always right; the interpreter orphaned one `String` per evaluation.
+#[test]
+fn a_text_block_whose_tail_is_its_own_local_releases_it() {
+    let path = own_tail_script();
+    let (ok, stdout, stderr) = run(&["--interpret", &path], &[("LOFT_TEXT_TIMELINE", "1")]);
+    assert!(
+        ok && stdout.contains("own text tails ok"),
+        "the guard must run every cell on --interpret\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("NO text leak"),
+        "a text block's own tail local was never released\nstderr:\n{stderr}"
+    );
+}
+
+/// Its value half, on both backends.
+#[test]
+fn own_text_tails_answer_alike() {
+    let path = own_tail_script();
+    for backend in ["--interpret", "--native"] {
+        let (ok, stdout, stderr) = run(&[backend, &path], &[]);
+        assert!(
+            ok && stdout.contains("own text tails ok"),
+            "{backend}: every cell must answer its hand-computed value\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
 /// A `main` that yields frames is resumed to its end under `--tests`, as the CLI resumes it:
 /// the runner used to return after the first `yield_frame` and leave the frame's formatted
 /// texts unreleased (the release sweep runs every script under `--tests`, so this was the
@@ -94,4 +130,42 @@ fn a_yielding_main_finishes_under_the_test_runner() {
         stderr.contains("NO text leak"),
         "a frame abandoned after its first yield leaves its formatted texts behind\nstderr:\n{stderr}"
     );
+}
+
+fn arrived_absence_script() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// loft#1907 — a tuple local whose absence arrived in flight, `(integer, text)?`, releases its
+/// text members as its bare twin does: at scope exit, before each rebind, and in a copy.  The
+/// values were always right; the interpreter orphaned one `String` per text member per binding
+/// (the release valgrind sweep's six red interpreter runs).
+#[test]
+fn an_arrived_absence_keeps_a_tuples_text_frees() {
+    let path = arrived_absence_script();
+    let (ok, stdout, stderr) = run(&["--interpret", &path], &[("LOFT_TEXT_TIMELINE", "1")]);
+    assert!(
+        ok && stdout.contains("arrived-absence tuple frees ok"),
+        "the guard must run every cell on --interpret\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("NO text leak"),
+        "a `(…, text)?` tuple local orphaned a text member\nstderr:\n{stderr}"
+    );
+}
+
+/// Its value half, on both backends.
+#[test]
+fn arrived_absence_tuples_answer_alike() {
+    let path = arrived_absence_script();
+    for backend in ["--interpret", "--native"] {
+        let (ok, stdout, stderr) = run(&[backend, &path], &[]);
+        assert!(
+            ok && stdout.contains("arrived-absence tuple frees ok"),
+            "{backend}: every cell must answer its hand-computed value\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
 }

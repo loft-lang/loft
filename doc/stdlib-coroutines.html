@@ -24,11 +24,11 @@
 <h1>Coroutines</h1>
 <article>
 <div class="item">
-<pre><code>pub enum CoroutineStatus {
-  Created,
-  Suspended,
-  Running,
-  Exhausted,
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-coroutines.html">CoroutineStatus</a></span> {
+  <span class="en">Created</span>,
+  <span class="en">Suspended</span>,
+  <span class="en">Running</span>,
+  <span class="en">Exhausted</span>,
 }</code></pre>
 <p>Lifecycle state of a coroutine frame. Transitions: Created -&gt; Running -&gt; Suspended -&gt; Running -&gt; ... -&gt; Exhausted.</p>
 </div>

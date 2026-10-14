@@ -25,9 +25,11 @@
 //   refused the same way on the control (measured with the others removed).
 //   HOLDS: `h`, declared receiver-only first, answers the same on both trees.
 
+// The operator row (C132): `operator minus` first and a receiver-only plain `minus` after it
+// — one set of two kinds, which is where `fn OpMin` at both arities used to collide.
 struct V { x: integer }
-fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
-fn OpMin(self: V) -> V { V { x: 0 - self.x } }
+operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
+fn minus(self: V) -> V { V { x: 0 - self.x } }
 
 struct P { x: integer }
 fn f(self: P, a: integer, b: integer) -> integer { self.x + a + b }
@@ -49,8 +51,9 @@ fn main() {
   a = V { x: 3 };
   b = V { x: 1 };
   c = a - b;
-  d = -a;
-  assert(c.x == 2 && d.x == -3, "operator, binary declared first: {c.x} {d.x}");
+  d = a.minus();
+  e = minus(a);
+  assert(c.x == 2 && d.x == -3 && e.x == -3, "operator, binary declared first: {c.x} {d.x} {e.x}");
   p = P { x: 5 };
   fs = "{p.f()} {p.f(3)} {p.f(3, 4)} {f(p)} {f(p, 3)} {f(p, 3, 4)}";
   assert(fs == "5 15 12 5 15 12", "three arities, longest first: {fs}");

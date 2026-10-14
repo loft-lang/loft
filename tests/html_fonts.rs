@@ -19,15 +19,16 @@
 //! Skips cleanly without chrome / node / python3, in the shape of
 //! `tests/gl_text_bridge.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 use loft::html_fonts::{self, PageFont};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -97,20 +98,20 @@ fn three_sources() -> Vec<PageFont> {
 fn stage_dir(name: &str) -> Option<PathBuf> {
     let root = repo_root();
     let face = root.join("doc/assets/DejaVuSans-Bold.ttf");
-    if !face.exists() {
+    if !fa::exists(&face) {
         return None;
     }
     let dir = std::env::temp_dir().join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).ok()?;
-    std::fs::copy(&face, dir.join("LoftProbeFace.ttf")).ok()?;
-    std::fs::copy(&face, dir.join("LoftCdnFace.ttf")).ok()?;
-    std::fs::copy(
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).ok()?;
+    fa::copy(&face, dir.join("LoftProbeFace.ttf")).ok()?;
+    fa::copy(&face, dir.join("LoftCdnFace.ttf")).ok()?;
+    fa::copy(
         root.join("doc/loft-gl-wasm.js"),
         dir.join("loft-gl-wasm.js"),
     )
     .ok()?;
-    std::fs::write(
+    fa::write(
         dir.join("cdn.css"),
         "@font-face{font-family:\"LoftCdnFace\";src:url(\"LoftCdnFace.ttf\") format(\"truetype\")}\n",
     )
@@ -133,7 +134,7 @@ fn write_page(dir: &Path, file: &str, fonts: &[PageFont], with_await: bool) {
         .map(|f| format!("'fonts/{}.ttf'", f.family))
         .collect::<Vec<_>>()
         .join(",");
-    std::fs::write(
+    fa::write(
         dir.join(file),
         format!(
             r#"<!DOCTYPE html>
@@ -191,7 +192,7 @@ fn check_when(
     wait_ms: u32,
     port: u16,
 ) -> Option<(bool, String)> {
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
         .args(["--wait-ms", &wait_ms.to_string()])
@@ -240,7 +241,7 @@ fn tooling() -> Option<(PathBuf, PathBuf, PathBuf)> {
 /// all).  Everything else is served at once, so the delay is on the one thing under
 /// test.
 fn spawn_server(py: &Path, dir: &Path, port: u16, delay_ms: u32) -> Option<Child> {
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .arg(repo_root().join("tests/data/slow_font_server.py"))
         .arg(dir)
         .arg(port.to_string())
@@ -392,17 +393,17 @@ fn the_boot_await_holds_the_program_until_a_slow_font_has_arrived() {
 fn a_declared_font_reaches_the_emitted_page() {
     let root = repo_root();
     let loft = root.join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP a_declared_font_reaches_the_emitted_page: target/release/loft not built");
         return;
     }
     let base = std::env::temp_dir().join("loft_html_fonts_emit");
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let dir = base.join("app");
     let lib = base.join("fontlib");
-    std::fs::create_dir_all(dir.join("src")).expect("create package");
-    std::fs::create_dir_all(lib.join("src")).expect("create library");
-    std::fs::write(
+    fa::create_dir_all(dir.join("src")).expect("create package");
+    fa::create_dir_all(lib.join("src")).expect("create library");
+    fa::write(
         dir.join("loft.toml"),
         "[package]\nname = \"fontgame\"\n\n\
          [dependencies]\nfontlib = { path = \"../fontlib\" }\n\n\
@@ -415,18 +416,18 @@ fn a_declared_font_reaches_the_emitted_page() {
     // A LIBRARY that draws its own text declares the font it draws with, and that
     // declaration has to reach the consumer's page — the route `[wasm.bridge]
     // host_js` already takes.  Untested, this is the half that would rot.
-    std::fs::write(
+    fa::write(
         lib.join("loft.toml"),
         "[package]\nname = \"fontlib\"\n\n\
          [[font]]\nfamily = \"LoftLibFace\"\nurl = \"fonts/LoftLibFace.woff2\"\n",
     )
     .expect("write library manifest");
-    std::fs::write(
+    fa::write(
         lib.join("src/fontlib.loft"),
         "pub fn lib_face() -> text { \"LoftLibFace\" }\n",
     )
     .expect("write library source");
-    std::fs::write(
+    fa::write(
         dir.join("src/fontgame.loft"),
         "use graphics;\n\
          use fontlib;\n\
@@ -438,14 +439,14 @@ fn a_declared_font_reaches_the_emitted_page() {
     .expect("write source");
 
     let html = dir.join("fontgame.html");
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().expect("utf-8 path")])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
         .arg(dir.join("src/fontgame.loft"))
         .output()
         .expect("invoke loft --html");
-    if !out.status.success() || !html.exists() {
+    if !out.status.success() || !fa::exists(&html) {
         // No wasm32 rlib / no rustc / no toolchain is an environmental skip, the
         // same one `tests/html_gl_imports.rs` takes.
         eprintln!(
@@ -454,7 +455,7 @@ fn a_declared_font_reaches_the_emitted_page() {
         );
         return;
     }
-    let page = std::fs::read_to_string(&html).expect("read emitted page");
+    let page = fa::read_to_string(&html).expect("read emitted page");
     assert!(
         page.contains(
             "@font-face{font-family:\"LoftProbeFace\";src:url(\"fonts/LoftProbeFace.woff2\") \
@@ -498,16 +499,16 @@ fn a_declared_font_reaches_the_emitted_page() {
 fn a_drifting_family_is_refused_before_the_build() {
     let root = repo_root();
     let loft = root.join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!(
             "SKIP a_drifting_family_is_refused_before_the_build: target/release/loft not built"
         );
         return;
     }
     let dir = std::env::temp_dir().join("loft_html_fonts_drift");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("src")).expect("create package");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(dir.join("src")).expect("create package");
+    fa::write(
         dir.join("loft.toml"),
         // The family the page would register, and the path the program passes,
         // differ by two spaces.  Text draws — in a fallback.
@@ -515,7 +516,7 @@ fn a_drifting_family_is_refused_before_the_build() {
          [[font]]\nfamily = \"Press Start 2P\"\nnative = \"fonts/PressStart2P.ttf\"\n",
     )
     .expect("write manifest");
-    std::fs::write(
+    fa::write(
         dir.join("src/driftgame.loft"),
         "use graphics;\n\
          fn main() {\n\
@@ -525,7 +526,7 @@ fn a_drifting_family_is_refused_before_the_build() {
     .expect("write source");
 
     let html = dir.join("driftgame.html");
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().expect("utf-8 path")])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
@@ -541,5 +542,5 @@ fn a_drifting_family_is_refused_before_the_build() {
         err.contains("PressStart2P") && err.contains("does not match"),
         "the refusal does not name the drift it found:\n{err}"
     );
-    assert!(!html.exists(), "a refused build still wrote a page");
+    assert!(!fa::exists(&html), "a refused build still wrote a page");
 }

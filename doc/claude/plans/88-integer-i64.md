@@ -133,7 +133,7 @@ codegen constant emission (C, D).
 ## Plan — rungs (each proven standalone on `--interpret` AND `--native` before the next)
 
 > **Progress (formalize4) — D2 CLOSED by reconciliation; user-visible side done.** The audit
-> RESPLIT the plan around [DESIGN_DECISIONS C83](../DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience):
+> RESPLIT the plan around [DESIGN_DECISIONS @C83](../DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience):
 > the **storage rework is OFF-PATH** (the compact `Int`/`Long` encoding is the intended design —
 > never blanket-widen for convenience), so rungs **2, 3, 6 are NOT pursued**. What matters is the
 > **user-visible** side: a large value a user can OBSERVE must never `as i32`-truncate.
@@ -150,7 +150,7 @@ codegen constant emission (C, D).
 >   user-visible truncation is found.
 
 The original 7-rung storage-migration plan below is retained as the audit record; rungs 2/3/6
-(the IR/bounds/storage-selector rework) are **declined per C83** — not the path.
+(the IR/bounds/storage-selector rework) are **declined per @C83** — not the path.
 
 1. **Keystone:** ✅ `Value::int_const(v: i64) -> Value` (data.rs) — compact `Int` if it fits i32,
    else `Long`. First use: the `float as integer` fold (const_eval.rs, audit C/D overlap).

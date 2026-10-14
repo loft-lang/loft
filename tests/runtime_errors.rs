@@ -15,7 +15,7 @@
 //! capture + the renderer's frame list.  Each new kind lands here as
 //! a `kind_<name>` test.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -30,14 +30,14 @@ fn workspace_root() -> std::path::PathBuf {
 /// normally; on signal, returns `None`.
 fn run_loft_snippet(name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_{name}.loft"));
-    std::fs::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    fa::write(&script_path, source).expect("write temp script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -52,15 +52,15 @@ fn run_loft_snippet(name: &str, source: &str) -> (String, String, Option<i32>) {
 /// index kinds, which now log-and-continue by default.
 fn run_loft_snippet_soft_halt(name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_{name}.loft"));
-    std::fs::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    fa::write(&script_path, source).expect("write temp script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .env("LOFT_DEV_SOFT_HALT", "1")
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -583,8 +583,8 @@ fn i1053_clean_par_programs_are_unaffected() {
 /// comparable byte-for-byte — the diagnostic names the source file.
 fn run_loft_snippet_on(backend: &str, name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_{name}.loft"));
-    std::fs::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    fa::write(&script_path, source).expect("write temp script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script_path)
         .env("LOFT_TIMEOUT", "120")
@@ -605,7 +605,7 @@ fn run_loft_snippet_on(backend: &str, name: &str, source: &str) -> (String, Stri
 fn rendering_shared_by_both_backends(name: &str, source: &str) -> (String, String) {
     let (i_out, i_err, i_code) = run_loft_snippet_on("--interpret", name, source);
     let (n_out, n_err, n_code) = run_loft_snippet_on("--native", name, source);
-    let _ = std::fs::remove_file(std::env::temp_dir().join(format!("loft_{name}.loft")));
+    let _ = fa::remove_file(std::env::temp_dir().join(format!("loft_{name}.loft")));
     assert_eq!(
         i_err, n_err,
         "{name}: the same fault must read the same way on both backends\n\

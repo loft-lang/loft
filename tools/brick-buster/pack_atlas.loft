@@ -204,22 +204,6 @@ fn build_atlas() -> graphics::Canvas {
   at
 }
 
-// A canvas's 0xAARRGGBB words as the RGBA bytes a texture page holds.
-//
-// Straight alpha, not premultiplied: `graphics` blends with
-// SRC_ALPHA / ONE_MINUS_SRC_ALPHA, so premultiplying here would darken every
-// blended texel.  That is why the blob is `Bytes` rather than `Rgba` —
-// `BlobKind::Rgba` promises premultiplied pixels and these are not.
-fn rgba_bytes(rb_c: const graphics::Canvas) -> vector<u8> {
-  rb_out: vector<u8> = [];
-  for i in 0..len(rb_c.data) {
-    v = rb_c.data[i]?;
-    rb_out += [((v >> 16) & 255) as u8?, ((v >> 8) & 255) as u8?,
-               (v & 255) as u8?, ((v >> 24) & 255) as u8?];
-  }
-  rb_out
-}
-
 // A rolling hash over the bytes, so the write can be checked against the read.
 fn byte_hash(bh_v: const vector<u8>) -> integer {
   h = 0;
@@ -231,7 +215,9 @@ fn byte_hash(bh_v: const vector<u8>) -> integer {
 
 fn main() {
   at = build_atlas();
-  px = rgba_bytes(at);
+  // Straight-alpha RGBA bytes, as `graphics` blends them — `assets::texels` is the one
+  // conversion every route into a page goes through, hence `BlobKind.Bytes`, not `Rgba`.
+  px = texels(at.data);
   p = assets::new_pack();
   blobs: hash<assets::Blob[bl_key]> = [];
   p.pages += [assets::PageInfo { pi_name: PAGE_NAME, pi_w: at.width,
@@ -264,9 +250,9 @@ fn main() {
   _ = assets::prefetch(res, assets::blobs_path(PACK_BASE), [PAGE_BLOB]);
   got = res[PAGE_BLOB];
   assert(got != null, "pack_atlas: {PACK_BASE} has no `{PAGE_BLOB}` pixels");
-  assert(len(got.bl_bytes) == len(px),
-         "pack_atlas: wrote {len(px)} bytes, read back {len(got.bl_bytes)}");
-  assert(byte_hash(got.bl_bytes) == byte_hash(px),
+  assert(len(got.bl_bytes?) == len(px),
+         "pack_atlas: wrote {len(px)} bytes, read back {len(got.bl_bytes?)}");
+  assert(byte_hash(got.bl_bytes?) == byte_hash(px),
          "pack_atlas: {PACK_BASE} round-tripped {len(px)} bytes that are not the ones written");
   println("pack_atlas: {info.pi_w}x{info.pi_h}, {len(px)} bytes, round-trip ok");
 }

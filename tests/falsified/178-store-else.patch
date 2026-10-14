@@ -1,0 +1,15 @@
+diff --git a/src/parser/store_else.rs b/src/parser/store_else.rs
+index eea6a7e43..0447ff9db 100644
+--- a/src/parser/store_else.rs
++++ b/src/parser/store_else.rs
+@@ -139,9 +139,7 @@ impl Parser {
+             (Some(a), Some(m)) => Some(v_if(a, Value::Boolean(true), m)),
+             (a, m) => a.or(m),
+         };
+-        if let Some(cond) = failed {
+-            steps.push(v_if(cond, arm, Value::Null));
+-        }
++        let _ = (failed, arm);
+         *n = Value::Insert(steps);
+     }
+ }

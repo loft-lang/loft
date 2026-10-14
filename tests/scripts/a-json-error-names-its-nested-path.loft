@@ -1,0 +1,35 @@
+// A JSON error names the path to the failing value, root first, however deep it sits — on
+// the parser's side (a JSON pointer, `/a/1/b`) and on the walker's side, which writes the
+// parsed tree into a typed record (`a[1].b`).  Both paths are built while the error unwinds,
+// one segment per level, so the order is the thing to pin: a level that added its segment
+// at the wrong end would name `/b/1/a`.  Every expected value is written out by hand.
+//
+// @falsified-at: none — the change that built the paths on unwind has no earlier build to catch;
+//   the planted defect is recorded with `@falsified-by:` below (the parser's segments rendered
+//   in unwind order, leaf first).
+// @falsified-by: tests/falsified/a-json-error-names-its-nested-path.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+
+struct In { b: integer }
+struct Out { a: vector<In>, n: integer }
+
+fn main() {
+  // c1 — a malformed number two levels down: the parser's pointer.
+  _ = json_parse("{{\"a\": [{{\"b\": 1}}, {{\"b\": 1.}}]}}");
+  e1 = json_errors();
+  assert(e1.contains("path: /a/1/b"), "c1: {e1}");
+
+  // c2 — one more level, through an object key and two array indices.
+  _ = json_parse("{{\"k\": [[1, 2], [3, {{\"x\": [0, 1.]}}]]}}");
+  e2 = json_errors();
+  assert(e2.contains("path: /k/1/1/x/1"), "c2: {e2}");
+
+  // c3 — the walker: element 1's `b` holds a text where the record wants an integer.
+  _ = Out.parse("{{\"a\": [{{\"b\": 1}}, {{\"b\": \"x\"}}], \"n\": 2}}");
+  e3 = json_errors();
+  assert(e3.contains("path:a[1].b"), "c3: {e3}");
+
+  // c4 — a clean parse leaves no error behind, and its values are the input's.
+  o4 = Out.parse("{{\"a\": [{{\"b\": 7}}, {{\"b\": 9}}], \"n\": 2}}");
+  assert(json_errors() == "" && len(o4.a) == 2 && o4.a[1].b == 9 && o4.n == 2, "c4: {json_errors()}");
+  println("ok");
+}

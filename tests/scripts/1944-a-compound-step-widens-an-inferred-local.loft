@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1944, `@FR-I-Join` — an INFERRED local's type is the join of every write, a compound
+// step included.  `b = x % 7; b += 1000` kept `b` at `limit(0, 6)` and the step took that
+// range's default, 0, with only an advice; `b = b + 1000` widened `b` and answered 1005.  A
+// DECLARED local keeps its declaration, and its out-of-range step still takes the default
+// (C127 `narrow-fallback`) — the last cell is that control.
+//
+// Axes it MOVES: the step (`+=`, `*=`, inside a loop), the first write's range (`%`, `&`), and
+// declared versus inferred.  Values hand-computed: 250 % 7 = 5, 250 & 15 = 10.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1944-a-compound-step-widens-an-inferred-local.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — every compound step on a narrow inferred local takes the range default.
+//   WITNESS: `assertion failed: 0 0 0` where the cell expects `1005 1505 3000`, on the control.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+fn test_an_inferred_local_widens() {
+  x: u8 = 250;
+  b = x % 7;
+  b += 1000;
+  d = x % 7;
+  for i in 0..3 { d += 500 + i - i; }
+  e = x & 15;
+  e *= 300;
+  assert(b == 1005 && d == 1505 && e == 3000, "{b} {d} {e}");
+}
+
+fn test_a_declared_local_keeps_its_range() {
+  x: u8 = 250;
+  y: u8 = x;
+  out = "";
+  y += 10 else { out = "miss" };
+  assert(out == "miss", "a declared u8 still refuses the step: {out} at {y}");
+}
+
+fn main() {
+  test_an_inferred_local_widens();
+  test_a_declared_local_keeps_its_range();
+}

@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F125 — GENERATED from loft-lang/features#125 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    s = "hello, world";
+    println("{s[0..5]}");              // hello — bytes 0 up to 5, the end excluded
+    println("{s[7..]}");               // world — from byte 7 to the end
+    println("{s[..5]} {s[-5..]}");     // hello world — a negative bound counts from the end
+    println("{s[0]}");                 // h — one character
+    // A bound is a BYTE offset; `char_slice` counts characters instead.
+    t = "héllo";                       // `é` is two bytes: len 5, size 6
+    println("{t[0..4]} {t.char_slice(0, 4)} {len(t)} {size(t)}");   // hél héll 5 6
+}

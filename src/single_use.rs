@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! `@FR-R-SingleUse`'s statement clause — a temporary assigned a pure value and read once, by
 //! the next statement, is that value, decided in the IR phase for both backends.

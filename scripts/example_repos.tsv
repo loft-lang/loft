@@ -40,14 +40,15 @@ CRY	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 RGX	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 RND	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 ZTX	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
-# loft-libs-graphics (graphics, gridmesh, shapes, imaging)
+# loft-libs-graphics (graphics, gridmesh, shapes, imaging, stage, text2d, tween, drawing)
 GFX	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 STG	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
-T2D	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
+TXD	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 TWN	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 GRM	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 IMG	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 SHP	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
+DRW	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 # loft-libs-net (game_protocol, server, web, ssh)
 GMP	loft-libs-net	https://github.com/loft-lang/loft-libs-net	main
 SRV	loft-libs-net	https://github.com/loft-lang/loft-libs-net	main
@@ -60,6 +61,7 @@ TIM	loft-libs-game	https://github.com/loft-lang/loft-libs-game	main
 # loft-libs-assets (glb, mesh3d)
 GLB	loft-libs-assets	https://github.com/loft-lang/loft-libs-assets	main
 MSH	loft-libs-assets	https://github.com/loft-lang/loft-libs-assets	main
+PAK	loft-libs-assets	https://github.com/loft-lang/loft-libs-assets	main
 # loft-libs-plugins (pluginabi)
 PAB	loft-libs-plugins	https://github.com/loft-lang/loft-libs-plugins	main
 # loft-libs-world (hex_body, hex_draw, hex_edge, hex_fit, hex_form, hex_grid, hex_place, hex_recover, hex_roof, hex_shape, hex_terrain, hex_way, hex_world)
@@ -77,3 +79,5 @@ HXT	loft-libs-world	https://github.com/loft-lang/loft-libs-world	main
 HXV	loft-libs-world	https://github.com/loft-lang/loft-libs-world	main
 HXW	loft-libs-world	https://github.com/loft-lang/loft-libs-world	main
 HXY	loft-libs-world	https://github.com/loft-lang/loft-libs-world	main
+HTM	loft-libs-docs	https://github.com/loft-lang/loft-libs-docs	main
+MKD	loft-libs-docs	https://github.com/loft-lang/loft-libs-docs	main

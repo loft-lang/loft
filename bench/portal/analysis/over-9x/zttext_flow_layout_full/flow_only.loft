@@ -1,0 +1,437 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// bench — the performance pass: the text engine's hot doors (segmentation, the piece-table
+// edits, materialisation, the flow layout, undo and the incremental patch), timed on a fixed
+// workload, with a hash of what they produced.
+//
+//     loft --interpret bench/bench.loft [--n N]         the interpreter
+//     loft --native-release bench/bench.loft [--n N]    compiled
+//     rustc -O --edition=2021 bench/bench.rs -o bench/.build/stats_rs   the Rust twin
+//
+// One tab-separated line per routine: name, iterations, total µs, ns per op, items one op
+// processes, ns per item, and an FNV-1a-32 hash of one canonical op's output.  The hash is
+// what makes a benchmark a VALIDATION: the interpreter, the native build and the pure-Rust
+// twin in bench/bench.rs must print the same hash for a row, or one of them is not computing
+// the routine it claims to — and only then does comparing their speeds mean anything.
+//
+// The documents are generated, never read: words of 3–16 letters, a soft hyphen inside one
+// word in eight, one space between words (two, one time in sixteen) and a paragraph break
+// every 40 words.  Every op takes one of two documents by `r & 1`; they differ only in which
+// letters they hold (or which style ids), never in their structure, so the amount of work is
+// the same and no backend can hoist an op out of the repetition loop.  Each op's result is
+// folded into `sink`, printed on the last line.
+use zttext::*;
+
+/// One measured routine.
+struct Row {
+  name: text = "",
+  iters: integer = 0,
+  us: integer = 0,
+  px: integer = 0,
+  hash: integer = 0,
+  sink: integer = 0,
+}
+
+const FNV_OFFSET = 2166136261;
+const FNV_PRIME = 16777619;
+
+// A 100,000-character document held as 5,000 pieces of 20 characters in a scrambled order.
+const PIECES = 5000;
+const PIECE_LEN = 20;
+const DOC_CHARS = 100000;
+// The column the flow layout wraps to, in the monospace measurer's units.
+const COLUMN = 72.0;
+const INSERTS = 500;
+const INSERT_LEN = 20;
+const DELETES = 50;
+const LOCATES = 2000;
+// The undo row: a 20,000-character document and a transaction of this many ops.  The
+// typing, deleting and undo rows are scaled down from the census's 2,000 edits so one op
+// stays near 50 ms natively: every edit copies the whole buffer, so the op cost is the edit
+// count times the document size.
+const TXN_PIECES = 1000;
+const TXN_OPS = 300;
+
+/// FNV-1a-32 over the low 32 bits of each integer, high byte first.
+fn fnv(h0: integer, v: const vector<integer>) -> integer {
+  fv_h = h0;
+  for x in v {
+    fv_w = x & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 24) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 16) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ ((fv_w >> 8) & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+    fv_h = ((fv_h ^ (fv_w & 255)) * FNV_PRIME) & 0xFFFFFFFF;
+  }
+  fv_h
+}
+
+/// FNV-1a-32 over each UTF-8 byte of a text.
+fn fnv_text(h0: integer, s: const text) -> integer {
+  ft_h = h0;
+  for i in 0..size(s) { ft_h = ((ft_h ^ s.byte_at(i)) * FNV_PRIME) & 0xFFFFFFFF; }
+  ft_h
+}
+
+/// A coordinate as a hashable integer: millionths, truncated.
+fn micro(v: float) -> integer { (v * 1000000.0) as integer }
+
+fn flag(b: boolean) -> integer { if b { 1 } else { 0 } }
+
+fn fnv_layout(h0: integer, l: const Layout) -> integer {
+  fl_ints: vector<integer> = [];
+  for b in l.boxes {
+    fl_ints += [micro(b.rect.x), micro(b.rect.y), micro(b.rect.w), micro(b.rect.h), b.ks, b.ke,
+                b.style, flag(b.hyphen)];
+  }
+  for ln in l.lines {
+    fl_ints += [ln.cs, ln.ce, micro(ln.y), micro(ln.h), flag(ln.para_end), micro(ln.right)];
+  }
+  fnv(h0, fl_ints)
+}
+
+fn fnv_doc(d: const Doc) -> integer {
+  fd_ints: vector<integer> = [];
+  for c in d.buf { fd_ints += [c as integer]; }
+  for p in d.pieces { fd_ints += [p.start, p.count, p.style]; }
+  fnv(FNV_OFFSET, fd_ints)
+}
+
+fn print_row(r: const Row) {
+  pr_ns = ((r.us * 1000) / r.iters) ?? 0;
+  pr_px = if r.px > 0 { (((r.us * 1000) as float) / ((r.iters * r.px) as float)) ?? 0.0 }
+          else { 0.0 };
+  println("{r.name}\t{r.iters}\t{r.us}\t{pr_ns}\t{r.px}\t{pr_px:.3}\t{r.hash:x}");
+}
+
+// ── The documents ───────────────────────────────────────────────────
+
+/// A 31-bit linear congruential step: the product stays inside 62 bits.
+fn lcg(s: integer) -> integer { (s * 1103515245 + 12345) & 0x7FFFFFFF }
+
+/// `n` characters of generated prose; `shift` rotates the letters and nothing else.
+fn gen_chars(n: integer, shift: integer) -> vector<character> {
+  gc_out: vector<character> = [];
+  gc_s = 12345;
+  gc_words = 0;
+  while len(gc_out) < n {
+    gc_s = lcg(gc_s);
+    gc_wl = 3 + (gc_s >> 16) % 14;
+    gc_s = lcg(gc_s);
+    gc_shy = if ((gc_s >> 16) & 7) == 0 && gc_wl >= 6 { gc_wl / 2 } else { -1 };
+    for j in 0..gc_wl {
+      if j == gc_shy { gc_out += [173 as character]; }
+      gc_s = lcg(gc_s);
+      gc_out += [(97 + ((gc_s >> 16) % 26 + shift) % 26) as character];
+    }
+    gc_words += 1;
+    if gc_words % 40 == 0 {
+      gc_out += [10 as character];
+      if ((gc_s >> 20) & 3) == 0 { gc_out += [10 as character]; }
+    } else {
+      gc_out += [' '];
+      gc_s = lcg(gc_s);
+      if ((gc_s >> 16) & 15) == 0 { gc_out += [' ']; }
+    }
+  }
+  gc_res: vector<character> = [];
+  for gc_i in 0..n { gc_res += [gc_out[gc_i]?]; }
+  gc_res
+}
+
+/// `np` pieces of `plen` characters, piece k viewing buffer span (k · 7919 mod np) — the
+/// scrambled order a history of edits leaves behind.  `shift` also moves every style id.
+fn piece_doc(np: integer, plen: integer, shift: integer) -> Doc {
+  pd_buf = gen_chars(np * plen, shift);
+  pd_p: vector<Piece> = [];
+  for k in 0..np {
+    pd_p += [Piece { start: ((k * 7919) % np)? * plen, count: plen, style: (k + shift) % 3 }];
+  }
+  Doc { buf: pd_buf, pieces: pd_p }
+}
+
+/// A freshly loaded document: one piece over the whole buffer.
+fn one_doc(n: integer, shift: integer) -> Doc {
+  od_buf = gen_chars(n, shift);
+  Doc { buf: od_buf, pieces: [Piece { start: 0, count: n, style: 0 }] }
+}
+
+/// A word of `k`'s letters rotated by `shift`, `width` characters with a trailing space.
+fn gen_word(k: integer, width: integer, shift: integer) -> text {
+  gw_out = "";
+  for j in 0..(width - 1) {
+    gw_c = (97 + (k * 7 + j + shift) % 26) as character;
+    gw_out += "{gw_c}";
+  }
+  gw_out += " ";
+  gw_out
+}
+
+// ── Segmentation: materialise, explode to characters, classify runs ──
+
+fn fnv_tokens(toks: const vector<Token>) -> integer {
+  ft_ints: vector<integer> = [];
+  for t in toks { ft_ints += [flag(t.word), t.ts, t.te, flag(t.disc), flag(t.brk)]; }
+  fnv(FNV_OFFSET, ft_ints)
+}
+
+fn bench_seg(n: integer, d0: Doc, d1: Doc) -> Row {
+  bs_t0 = ticks();
+  bs_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bs_sink += len(seg(d0)); } else { bs_sink += len(seg(d1)); }
+  }
+  bs_us = ticks() - bs_t0;
+  bs_one = seg(d0);
+  Row { name: "seg", iters: n, us: bs_us, px: DOC_CHARS, hash: fnv_tokens(bs_one), sink: bs_sink }
+}
+
+// ── Typing: every insert copies the whole append-only buffer ────────
+
+/// A 10,000-character document typed as 500 inserts of 20 characters, each at a position
+/// spread over the text so far.
+fn insert_op(words: const vector<text>) -> Doc {
+  io_d = empty_doc();
+  for k in 0..INSERTS {
+    io_a = ((k * 7919) % (k * INSERT_LEN + 1))?;
+    io_d = insert_text(io_d, io_a, words[k]?, k % 4);
+  }
+  io_d
+}
+
+fn bench_insert(n: integer) -> Row {
+  bi_w0: vector<text> = [];
+  bi_w1: vector<text> = [];
+  for k in 0..INSERTS {
+    bi_w0 += [gen_word(k, INSERT_LEN, 0)];
+    bi_w1 += [gen_word(k, INSERT_LEN, 1)];
+  }
+  bi_t0 = ticks();
+  bi_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bi_sink += len(insert_op(bi_w0).pieces); }
+    else { bi_sink += len(insert_op(bi_w1).pieces); }
+  }
+  bi_us = ticks() - bi_t0;
+  bi_one = insert_op(bi_w0);
+  Row { name: "insert_text", iters: n, us: bi_us, px: INSERTS, hash: fnv_doc(bi_one), sink: bi_sink }
+}
+
+// ── The flow layout: tokens, runs and boxes for the whole document ──
+
+// The layout's style resolver is a fn-ref answering a fresh record per call, and that
+// record is released only when a frame that answers a plain value ends: on --native a frame
+// answering a heap value (`place_line`, `flow_layout_full`, a bench returning its `Row`)
+// hands its fn-ref records up to its caller.  Left in a `Row`-answering bench they pile up
+// until `main` ends and run the store table out, so every layout here runs inside a function
+// answering an integer, which releases them once per op.
+
+fn flow_op(d: Doc) -> integer {
+  fo_l = flow_layout_full(d, default_resolver, mono_measure, COLUMN);
+  len(fo_l.boxes)
+}
+
+fn flow_hash(d: Doc) -> integer {
+  fh_l = flow_layout_full(d, default_resolver, mono_measure, COLUMN);
+  fnv_layout(FNV_OFFSET, fh_l)
+}
+
+fn bench_flow(n: integer) -> Row {
+  bf_d0 = one_doc(DOC_CHARS, 0);
+  bf_d1 = one_doc(DOC_CHARS, 1);
+  bf_t0 = ticks();
+  bf_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bf_sink += flow_op(bf_d0); } else { bf_sink += flow_op(bf_d1); }
+  }
+  bf_us = ticks() - bf_t0;
+  Row { name: "flow_layout_full", iters: n, us: bf_us, px: DOC_CHARS, hash: flow_hash(bf_d0),
+        sink: bf_sink }
+}
+
+// ── Materialise: every piece span, one character at a time ──────────
+
+fn bench_materialise(n: integer, d0: Doc, d1: Doc) -> Row {
+  bm_t0 = ticks();
+  bm_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bm_sink += size(materialise(d0)); } else { bm_sink += size(materialise(d1)); }
+  }
+  bm_us = ticks() - bm_t0;
+  bm_one = materialise(d0);
+  Row { name: "materialise", iters: n, us: bm_us, px: DOC_CHARS, hash: fnv_text(FNV_OFFSET, bm_one),
+        sink: bm_sink }
+}
+
+// ── Deleting: a fresh piece vector per edit ─────────────────────────
+
+/// Fifty three-character deletes, each at a position spread over what is left.
+fn delete_op(d: Doc) -> Doc {
+  do_d = delete_range(d, 0, 0);
+  for k in 0..DELETES {
+    do_left = DOC_CHARS - 3 * k;
+    do_a = ((k * 7919) % (do_left - 3))?;
+    do_d = delete_range(do_d, do_a, do_a + 3);
+  }
+  do_d
+}
+
+fn bench_delete(n: integer, d0: Doc, d1: Doc) -> Row {
+  bd_t0 = ticks();
+  bd_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bd_sink += len(delete_op(d0).pieces); }
+    else { bd_sink += len(delete_op(d1).pieces); }
+  }
+  bd_us = ticks() - bd_t0;
+  bd_one = delete_op(d0);
+  bd_ints: vector<integer> = [];
+  for p in bd_one.pieces { bd_ints += [p.start, p.count, p.style]; }
+  Row { name: "delete_range", iters: n, us: bd_us, px: DELETES, hash: fnv(FNV_OFFSET, bd_ints),
+        sink: bd_sink }
+}
+
+// ── Locate: a linear scan over the pieces' counts ───────────────────
+
+/// 2,000 anchors, each 5 or 6 characters into a piece spread over the document — the shift
+/// moves the anchor inside its piece, never across a piece boundary.
+fn locate_op(d: Doc, shift: integer) -> vector<integer> {
+  lo_out: vector<integer> = [];
+  for j in 0..LOCATES {
+    lo_a = ((j * 7919) % PIECES) * PIECE_LEN + 5 + shift;
+    lo_at = locate(d, lo_a);
+    lo_out += [lo_at.0, lo_at.1];
+  }
+  lo_out
+}
+
+fn bench_locate(n: integer, d: Doc) -> Row {
+  bl_t0 = ticks();
+  bl_sink = 0;
+  for r in 0..n { bl_sink += locate_op(d, r & 1)[1]?; }
+  bl_us = ticks() - bl_t0;
+  Row { name: "locate", iters: n, us: bl_us, px: LOCATES, hash: fnv(FNV_OFFSET, locate_op(d, 0)),
+        sink: bl_sink }
+}
+
+// ── Undo: the inverse transaction, rebuilt on every op ──────────────
+
+/// A transaction cycling insert (5 letters), delete (4 characters) and restyle (30
+/// characters), each at a position spread over the text as it stands at that op.
+fn gen_txn(shift: integer) -> Txn {
+  gt_ops: vector<Op> = [];
+  gt_len = TXN_PIECES * PIECE_LEN;
+  for k in 0..TXN_OPS {
+    gt_pos = ((k * 7919) % (gt_len - 40))?;
+    gt_kind = k % 3;
+    if gt_kind == 0 {
+      gt_s = "";
+      for j in 0..5 {
+        gt_c = (97 + (k + j + shift) % 26) as character;
+        gt_s += "{gt_c}";
+      }
+      gt_ops += [Ins { at: gt_pos, str: gt_s, style: k % 4 + shift }];
+      gt_len += 5;
+    } else if gt_kind == 1 {
+      gt_ops += [Del { from: gt_pos, to: gt_pos + 4 }];
+      gt_len -= 4;
+    } else {
+      gt_ops += [Sty { from: gt_pos, to: gt_pos + 30, style: k % 5 + shift }];
+    }
+  }
+  txn_of(gt_ops)
+}
+
+fn fnv_txn(t: const Txn) -> integer {
+  fx_h = FNV_OFFSET;
+  for op in t.ops {
+    if op is Ins { at, str, style } {
+      fx_h = fnv(fx_h, [0, at, style, len(str)]);
+      fx_h = fnv_text(fx_h, str);
+    } else if op is Del { from, to } {
+      fx_h = fnv(fx_h, [1, from, to]);
+    } else if op is Sty { from, to, style } {
+      fx_h = fnv(fx_h, [2, from, to, style]);
+    }
+  }
+  fx_h
+}
+
+fn bench_invert(n: integer) -> Row {
+  bv_d0 = piece_doc(TXN_PIECES, PIECE_LEN, 0);
+  bv_d1 = piece_doc(TXN_PIECES, PIECE_LEN, 1);
+  bv_t0 = gen_txn(0);
+  bv_t1 = gen_txn(1);
+  bv_start = ticks();
+  bv_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bv_sink += len(invert(bv_d0, bv_t0).ops); }
+    else { bv_sink += len(invert(bv_d1, bv_t1).ops); }
+  }
+  bv_us = ticks() - bv_start;
+  bv_one = invert(bv_d0, bv_t0);
+  Row { name: "invert", iters: n, us: bv_us, px: TXN_OPS, hash: fnv_txn(bv_one), sink: bv_sink }
+}
+
+// ── The incremental patch: one 5-character insert mid-document ─────
+
+/// The patch's inputs: the document before the edit, its layout, and the document after.
+struct PatchFix { old: Doc, lay: Layout, new: Doc }
+
+/// Fill a fixture in a frame that answers nothing, so the layout's resolver records are
+/// released here rather than held by the bench.
+fn fill_fix(pf: PatchFix, shift: integer, word: text) {
+  pf.old = one_doc(DOC_CHARS, shift);
+  pf.lay = flow_layout_full(pf.old, default_resolver, mono_measure, COLUMN);
+  pf.new = insert_text(pf.old, DOC_CHARS / 2, word, 0);
+}
+
+fn patch_op(pf: PatchFix) -> integer {
+  po_p = patch(pf.lay, pf.old, pf.new, default_resolver, mono_measure, COLUMN);
+  po_p.recomputed + len(po_p.layout.boxes)
+}
+
+fn patch_hash(pf: PatchFix) -> integer {
+  ph_p = patch(pf.lay, pf.old, pf.new, default_resolver, mono_measure, COLUMN);
+  ph_h = fnv(FNV_OFFSET, [ph_p.recomputed, ph_p.reused]);
+  fnv_layout(ph_h, ph_p.layout)
+}
+
+fn bench_patch(n: integer) -> Row {
+  bp_f0 = PatchFix { old: empty_doc(), lay: Layout { boxes: [], lines: [] }, new: empty_doc() };
+  bp_f1 = PatchFix { old: empty_doc(), lay: Layout { boxes: [], lines: [] }, new: empty_doc() };
+  fill_fix(bp_f0, 0, "vwxyz");
+  fill_fix(bp_f1, 1, "wxyza");
+  bp_t0 = ticks();
+  bp_sink = 0;
+  for r in 0..n {
+    if (r & 1) == 0 { bp_sink += patch_op(bp_f0); } else { bp_sink += patch_op(bp_f1); }
+  }
+  bp_us = ticks() - bp_t0;
+  Row { name: "patch", iters: n, us: bp_us, px: DOC_CHARS, hash: patch_hash(bp_f0), sink: bp_sink }
+}
+
+fn main() {
+  mn_n = 20;
+  mn_args = arguments();
+  mn_i = 0;
+  while mn_i < len(mn_args) {
+    if mn_args[mn_i]? == "--n" && mn_i + 1 < len(mn_args) {
+      mn_n = (mn_args[mn_i + 1]? as integer?)?;
+      mn_i += 1;
+    }
+    mn_i += 1;
+  }
+  if mn_n < 1 { mn_n = 1; }
+  mn_t0 = ticks();
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  mn_d0 = piece_doc(PIECES, PIECE_LEN, 0);
+  mn_d1 = piece_doc(PIECES, PIECE_LEN, 1);
+  mn_rows: vector<Row> = [bench_flow(mn_n)];
+  mn_sink = 0;
+  for row in mn_rows {
+    print_row(row);
+    mn_sink += row.sink;
+  }
+  println("time: {(ticks() - mn_t0) / 1000}ms sink={mn_sink}");
+}

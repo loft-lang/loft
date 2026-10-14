@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-Const-Value` admits a value-const LOCAL (`x: const T`), and `@FR-Const-ConstructExempt`
+// says the declaration's own initialising bind SETS the value rather than writes it.  For a
+// by-value scalar (`@FR-Const-ScalarCollapse`) every write is refused, `=` included — and the
+// guard asked that of the declaration too: `x: const integer = 1;` was refused as "Cannot
+// modify const variable 'x'", so no value-const scalar local could be declared at all.  The
+// declaring bind is now exempt by name, and every LATER write is still refused (pinned in
+// `tests/issues.rs`).  The cells declare one of each scalar kind, the plain enum included —
+// which the collapse now covers, through `is_scalar` — and the contents writes the rules still
+// allow beside them.
+//
+// @falsified-at: db4b19675 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `a: const integer = 1;` as a write to its own declaration).
+// @falsified-by: tests/falsified/a-value-const-scalar-local-can-be-declared.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once db4b19675 is out of reach.
+// HOLDS: leak, panic and asserts are clean on both trees and both backends.
+
+enum Col { Red, Green }
+
+struct H { const v: vector<integer>, const t: text }
+
+fn main() {
+  a: const integer = 1;
+  b: const float = 2.5;
+  c: const boolean = true;
+  d: const character = 'q';
+  e: const Col = Col.Green;
+  f: const Col? = Col.Red;
+  g: const single = 1.5f;
+  assert("{a} {b} {c} {d} {e} {f} {g}" == "1 2.5 true q Green Red 1.5", "every scalar kind");
+  h = H { v: [1], t: "a" };
+  h.v += [2];
+  h.v[0] = 7;
+  h.t += "z";
+  assert("{h.v} {h.t}" == "[7,2] az", "a binding-const field's contents stay mutable");
+}

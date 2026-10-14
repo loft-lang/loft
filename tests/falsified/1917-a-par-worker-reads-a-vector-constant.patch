@@ -1,0 +1,126 @@
+diff --git a/src/database/mod.rs b/src/database/mod.rs
+index 966e2802e..93c6e016c 100644
+--- a/src/database/mod.rs
++++ b/src/database/mod.rs
+@@ -81,9 +81,6 @@ pub struct ParallelCtx {
+     pub stack_trace_lib_nr: u16,
+     /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
+     pub frame_headroom: Arc<Vec<u32>>,
+-    /// The running program's constant table (`State::const_refs`), handed to every worker
+-    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+-    pub const_refs: Arc<Vec<DbRef>>,
+ }
+ 
+ impl ParallelCtx {
+diff --git a/src/live_dispatch.rs b/src/live_dispatch.rs
+index 4683c85d9..2cf12a59e 100644
+--- a/src/live_dispatch.rs
++++ b/src/live_dispatch.rs
+@@ -212,7 +212,6 @@ fn bootstrap_core(
+         data: data_ptr,
+         stack_trace_lib_nr: stk_lib_nr,
+         frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
+-        const_refs: std::sync::Arc::new(state.const_refs.clone()),
+     }));
+     crate::crash_report::set_source_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
+ 
+diff --git a/src/native.rs b/src/native.rs
+index fa707097c..124dc0663 100644
+--- a/src/native.rs
++++ b/src/native.rs
+@@ -1867,7 +1867,6 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
+                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+                 data_ptr: ctx.data.clone(),
+                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+-                const_refs: Arc::clone(&ctx.const_refs),
+                 frame_headroom: Arc::clone(&ctx.frame_headroom),
+                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
+             },
+@@ -2047,7 +2046,6 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
+             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+             data_ptr: ctx.data.clone(),
+             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+-            const_refs: Arc::clone(&ctx.const_refs),
+             frame_headroom: Arc::clone(&ctx.frame_headroom),
+             line_numbers: Arc::new(std::collections::BTreeMap::new()),
+         };
+@@ -2293,7 +2291,6 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
+                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+                 data_ptr: ctx.data.clone(),
+                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+-                const_refs: Arc::clone(&ctx.const_refs),
+                 frame_headroom: Arc::clone(&ctx.frame_headroom),
+                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
+             },
+diff --git a/src/parallel.rs b/src/parallel.rs
+index f0f6dba83..ea9d317ab 100644
+--- a/src/parallel.rs
++++ b/src/parallel.rs
+@@ -63,11 +63,6 @@ pub struct WorkerProgram {
+     /// `&Data` held by the spawning frame, which outlives `thread::scope`.
+     pub data_ptr: crate::data_ref::DataRef,
+     pub fn_positions: Arc<Vec<u32>>,
+-    /// The parent's constant table (`State::const_refs`): a worker runs the same bytecode, and
+-    /// `OpConstRef` indexes this table — empty, a worker that read a top-level vector constant
+-    /// panicked (loft#1917).  The DbRefs stay valid because a worker borrows the parent's
+-    /// stores read-only.
+-    pub const_refs: Arc<Vec<crate::keys::DbRef>>,
+     /// `@FR-R-FrameHeadroom` — the parent's per-function frame heights: a worker pushes
+     /// frames of the same functions, through the same direct-path operators.
+     pub frame_headroom: Arc<Vec<u32>>,
+@@ -111,7 +106,6 @@ impl WorkerProgram {
+         state.fn_positions.clone_from(&*self.fn_positions);
+         state.frame_headroom = Arc::clone(&self.frame_headroom);
+         state.line_numbers = (*self.line_numbers).clone();
+-        state.const_refs.clone_from(&*self.const_refs);
+         state
+     }
+ }
+diff --git a/src/state/debug.rs b/src/state/debug.rs
+index fbb0a9796..6700a9024 100644
+--- a/src/state/debug.rs
++++ b/src/state/debug.rs
+@@ -1939,7 +1939,6 @@ pub(super) fn execute_log_impl(
+         library: &raw const state.library,
+         stack_trace_lib_nr: stk_lib_nr,
+         frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
+-        const_refs: std::sync::Arc::new(state.const_refs.clone()),
+     }));
+     // `LOFT_LOG=poison_free`: wire the runtime flag into the Stores so
+     // every `free_named` overwrites the freed buffer with 0xDEADBEEF.
+diff --git a/src/state/mod.rs b/src/state/mod.rs
+index 5faafb02e..76ac97fdf 100644
+--- a/src/state/mod.rs
++++ b/src/state/mod.rs
+@@ -3441,7 +3441,6 @@ impl State {
+             stack_trace_lib_nr: self.stack_trace_lib_nr,
+             data_ptr: self.data_ptr.clone(),
+             fn_positions: Arc::new(self.fn_positions.clone()),
+-            const_refs: Arc::new(self.const_refs.clone()),
+             frame_headroom: Arc::clone(&self.frame_headroom),
+             line_numbers: Arc::new(self.line_numbers.clone()),
+         };
+@@ -7061,7 +7060,6 @@ impl State {
+             data: data_ptr,
+             stack_trace_lib_nr: stk_lib_nr,
+             frame_headroom: Arc::clone(&self.frame_headroom),
+-            const_refs: Arc::new(self.const_refs.clone()),
+         }));
+ 
+         self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+@@ -8344,7 +8342,6 @@ impl State {
+             stack_trace_lib_nr,
+             data_ptr: self.data_ptr.clone(),
+             fn_positions: Arc::new(self.fn_positions.clone()),
+-            const_refs: Arc::new(self.const_refs.clone()),
+             frame_headroom: Arc::clone(&self.frame_headroom),
+             line_numbers: Arc::new(self.line_numbers.clone()),
+         }
+@@ -9191,7 +9188,6 @@ impl State {
+             data: data_ptr,
+             stack_trace_lib_nr: stk_lib_nr,
+             frame_headroom: Arc::clone(&self.frame_headroom),
+-            const_refs: Arc::new(self.const_refs.clone()),
+         }));
+         if self.fn_positions.is_empty() {
+             self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();

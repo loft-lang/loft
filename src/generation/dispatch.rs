@@ -18,8 +18,24 @@ impl Output<'_> {
     /// init + ≥1 ncc-borrow reassign; see [`Output::witness_vars`]) is routed
     /// through the owned-store-tracker path so neither free-site whole-store-frees
     /// a borrowed view.  Every other var goes straight to [`Self::output_set_body`].
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn output_set(
+        &mut self,
+        w: &mut dyn Write,
+        var: u16,
+        to: &Value,
+    ) -> std::io::Result<()> {
+        self.output_set_statement(w, var, to)?;
+        // loft#1899 — a generator's link local is stored back into its field after every bind,
+        // so a later state re-reads the pointer this one made.  A write THROUGH the link
+        // leaves the pointer as it was, so storing it again is harmless.
+        if let Some((local, field)) = self.coroutine_link_fields.get(&var) {
+            write!(w, "; self.var_{field} = var_{local}")?;
+        }
+        Ok(())
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn output_set_statement(
         &mut self,
         w: &mut dyn Write,
         var: u16,
@@ -198,7 +214,7 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
         let name = sanitize(variables.name(var));
-        // A whole-value Var-copy OWNS its fresh store (C86) even though the oracle
+        // A whole-value Var-copy OWNS its fresh store (@C86) even though the oracle
         // reports the SOURCE var as Borrowed — mirror collect_witness_vars.
         let is_var_copy = matches!(
             to.unspan(),
@@ -212,7 +228,9 @@ impl Output<'_> {
         let reassign = self.declared.contains(&var);
         if reassign && !owned {
             write!(w, "{{ ")?;
+            self.call_bind_owns = false;
             self.output_set_inner(w, var, to)?;
+            let copied = std::mem::take(&mut self.call_bind_owns);
             write!(
                 w,
                 // Clear the tracker only on the branch that actually freed.  A
@@ -232,7 +250,7 @@ impl Output<'_> {
             // store — the owner the first-decl branch below teaches the tracker about.  Name
             // it here too: where a displacement free emptied the slot before the bind, the
             // copy lands in a FRESH store, and a tracker left null releases nobody.
-            if self.materialises_element(var, to) {
+            if copied || self.materialises_element(var, to) {
                 write!(w, " _own_store_{name} = var_{name};")?;
             }
             write!(w, " }}")?;
@@ -299,11 +317,31 @@ impl Output<'_> {
         // rebound).  Asking `materialises_element` rather than widening the oracle keeps
         // this to the store that was actually allocated.
         let materialised = self.materialises_element(var, to);
+        self.call_bind_owns = false;
         self.output_set_body(w, var, to)?;
-        if owned || materialised {
+        // `@FR-O-Witness` — the call-return arm COPIES a borrowed result into a store of the
+        // local's own, an owner the oracle (which read the callee's return as a borrow) never
+        // saw: without the tracker the first owned reassignment nulled `var` over it, and the
+        // copy was released by nobody (one record per such local).
+        let copied = std::mem::take(&mut self.call_bind_owns);
+        if owned || materialised || copied {
             write!(w, "; _own_store_{name} = var_{name}")?;
         }
         Ok(())
+    }
+
+    /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, a
+    /// `&(…)` parameter's (a `&mut` tuple, reached by auto-deref), or a LOCAL link's, which is a
+    /// raw pointer to the tuple and is dereferenced.  Used inside `unsafe`.
+    pub(super) fn tuple_member_place(&self, t: u16, i: u16) -> String {
+        let variables = self.data.def(self.def_nr).variables();
+        let name = sanitize(variables.name(t));
+        if matches!(variables.tp(t).base(), Type::RefVar(_)) && !variables.is_argument(t) {
+            format!("(*var_{name}).{i}")
+        } else {
+            // A generator's local is its struct field (loft#1899).
+            format!("{}.{i}", self.var_place(t))
+        }
     }
 
     /// Does a bind of `to` into `var` take the @PLN130 F1/F2 arm — the one that allocates a
@@ -413,26 +451,183 @@ impl Output<'_> {
                 // caller passed (an over-free / UAF).  Only a fn-owned
                 // intermediate (distinct from both the new value AND the witness)
                 // is freed.
-                let witness_guard = if is_retbuf_attr {
+                let mut witness_guard = if is_retbuf_attr {
                     format!(" && _old_{name}.store_nr != _rb_w_{name}.store_nr")
                 } else {
                     String::new()
                 };
+                // `@FR-O-Buffer` — nor the pooled buffer the call was handed: `v` held it from the
+                // previous pass, and a call answering another store displaces the buffer itself.
+                // A generator keeps the buffer as a coroutine field, as it keeps `var` below.
+                if let Some(buf) = variables.displaced_buffer_witness(var, to, self.data) {
+                    let buf_place = match self.coroutine_persistent_fields.get(&buf) {
+                        Some(field) => format!("self.var_{field}"),
+                        None => format!("var_{}", sanitize(variables.name(buf))),
+                    };
+                    let _ = std::fmt::Write::write_fmt(
+                        &mut witness_guard,
+                        format_args!(" && _old_{name}.store_nr != {buf_place}.store_nr"),
+                    );
+                }
                 let place = match self.coroutine_persistent_fields.get(&var) {
                     Some(field) => format!("self.var_{field}"),
                     None => format!("var_{name}"),
                 };
+                // `@FR-R-RebindBuffer` — the displaced store may become the call's next buffer.
+                let rebind_buf = if self.coroutine_persistent_fields.contains_key(&var) {
+                    None
+                } else {
+                    self.rebind_buffer_for(var, to, is_retbuf_attr)
+                };
                 write!(w, "{{ let _old_{name}: DbRef = {place}; ")?;
+                if let Some((buf_nr, buf)) = &rebind_buf {
+                    self.rebind_handed.insert(*buf_nr);
+                    self.rebind_buffer = Some((
+                        var,
+                        buf.clone(),
+                        is_retbuf_attr.then(|| format!("_rb_w_{name}")),
+                    ));
+                    self.rebind_buffer_used = false;
+                    write!(w, "let mut __rbb_{name} = false; ")?;
+                }
                 self.output_set_inner(w, var, to)?;
+                self.rebind_buffer = None;
+                let handed = std::mem::take(&mut self.rebind_buffer_used)
+                    .then_some(rebind_buf)
+                    .flatten()
+                    .map(|(_, buf)| format!("if __rbb_{name} {{ var_{buf} = _old_{name}; }} else "))
+                    .unwrap_or_default();
                 write!(
                     w,
-                    "; if _old_{name}.store_nr != {place}.store_nr{witness_guard} \
+                    "; {handed}if _old_{name}.store_nr != {place}.store_nr{witness_guard} \
                      {{ OpFreeRef(cell, _old_{name}, \"var_{name}(prev)\"); }} }}"
                 )?;
                 return Ok(());
             }
         }
         self.output_set_inner(w, var, to)
+    }
+
+    /// `@FR-R-RebindBuffer` — the hidden buffer local of the call `to` when the store `var`
+    /// displaces may be handed to it: the result is FRESH (`Own::Owned`), the buffer is a
+    /// compiler local this call alone uses (its scope-exit free aside), and nothing else
+    /// names `var`'s store — no other local depends on it, it is not captured, not an
+    /// argument (a retbuf attribute with its entry witness excepted: the emitted arm then
+    /// declines the caller's entry buffer at run time).
+    pub(super) fn rebind_buffer_for(
+        &self,
+        var: u16,
+        to: &Value,
+        is_retbuf_attr: bool,
+    ) -> Option<(u16, String)> {
+        if !crate::keys::rebind_buffer_enabled() || self.in_coroutine_body {
+            return None;
+        }
+        let trace = |why: &str| {
+            if std::env::var_os("LOFT_TRACE_REBIND_BUFFER").is_some() {
+                eprintln!(
+                    "rebind-buffer: {} `{}` declines: {why}",
+                    self.data.def(self.def_nr).name(),
+                    self.data.def(self.def_nr).variables().name(var)
+                );
+            }
+        };
+        let Value::Call(fn_nr, args) = to.unspan() else {
+            trace("not a direct call");
+            return None;
+        };
+        let callee = self.data.def(*fn_nr);
+        let Some(attr) = callee.hidden_return_buffer_attr() else {
+            trace("the callee has no hidden buffer");
+            return None;
+        };
+        let Some(Value::Var(buf)) = args.get(attr).map(Value::unspan) else {
+            trace("the buffer argument is not a local");
+            return None;
+        };
+        let buf = *buf;
+        let def = self.data.def(self.def_nr);
+        let vars = def.variables();
+        if buf == var
+            || !vars.name(buf).starts_with("__ref_")
+            || vars.is_argument(buf)
+            || vars.is_skip_free(var)
+            || vars.is_captured(var)
+            || (vars.is_argument(var) && !(is_retbuf_attr && self.retbuf_witness.contains(&var)))
+        {
+            trace("buffer or destination shape");
+            return None;
+        }
+        if !matches!(
+            crate::use_analysis::ownership_of(self.data, self.def_nr, to),
+            crate::use_analysis::Own::Owned
+        ) {
+            trace("the result is not fresh");
+            return None;
+        }
+        // A local that borrows `var`'s store (or the buffer's) blocks the hand-on only where
+        // it is still named at or after the top-level statement holding this rebind: a use
+        // wholly before it — the construction temporary of the literal that first built
+        // `var` — has ended before any store is handed on.
+        let Value::Block(top) = def.code() else {
+            trace("the body is not a block");
+            return None;
+        };
+        let target = std::ptr::from_ref(to.unspan());
+        let Some(at) = top
+            .operators
+            .iter()
+            .position(|st| st.any_node(&mut |n| std::ptr::eq(std::ptr::from_ref(n), target)))
+        else {
+            trace("the rebind is not found in the body");
+            return None;
+        };
+        // The handed store pays only when the call runs again: outside a loop the buffer is
+        // never read, and the exchange's released store would have been parked for the next
+        // mint instead of freed at exit.
+        let mut in_loop = false;
+        def.code().any_node(&mut |n| {
+            if let Value::Loop(lp) = n
+                && lp
+                    .operators
+                    .iter()
+                    .any(|st| st.any_node(&mut |m| std::ptr::eq(std::ptr::from_ref(m), target)))
+            {
+                in_loop = true;
+            }
+            in_loop
+        });
+        if !in_loop {
+            trace("not inside a loop");
+            return None;
+        }
+        let names = |w: u16, st: &Value| {
+            st.any_node(&mut |n| matches!(n, Value::Var(x) | Value::Set(x, _) if *x == w))
+        };
+        let n = vars.count();
+        let blocking: Vec<u16> = (0..n)
+            .filter(|&w| {
+                w != var
+                    && w != buf
+                    && (vars.tp(w).depend().contains(&var) || vars.tp(w).depend().contains(&buf))
+                    && top.operators[at..].iter().any(|st| names(w, st))
+            })
+            .collect();
+        if !blocking.is_empty() {
+            trace(&format!(
+                "a local borrowing its store is named after it: {:?}",
+                blocking.iter().map(|&w| vars.name(w)).collect::<Vec<_>>()
+            ));
+            return None;
+        }
+        // Every use of the buffer other than its null declaration and this call's argument
+        // is a free of it.
+        let (uses, frees) = buffer_uses(self.data, def.code(), buf);
+        if uses != frees + 1 {
+            trace(&format!("the buffer has {uses} uses, {frees} frees"));
+            return None;
+        }
+        Some((buf, sanitize(vars.name(buf))))
     }
 
     /// Writes a raw pointer to the store slot a place op names — the element of an
@@ -465,7 +660,11 @@ impl Output<'_> {
         // field directly so the value survives across `next_*` calls.
         // The same Var/Set pair would otherwise produce a state-arm-scoped
         // `let mut var_X = …` shadow that arm 1+ cannot see.
-        if let Some(field) = self.coroutine_persistent_fields.get(&var) {
+        // A TUPLE field takes the normal path below, whose destination is its place
+        // (`var_place`): that path is what converts each member to its slot (text, fn-ref).
+        if let Some(field) = self.coroutine_persistent_fields.get(&var)
+            && !matches!(variables.tp(var).base(), Type::Tuple(_))
+        {
             // The struct's own spelling for this field, not the variable's name — two
             // `for i in …` loops in one generator put two `i`s on the struct (loft#928).
             let name = field.clone();
@@ -503,7 +702,9 @@ impl Output<'_> {
             if matches!(variables.tp(var).base(), Type::Function(..)) {
                 self.fn_ref_context = true;
             }
-            write!(w, "self.var_{name} = ")?;
+            // @PLN167 decision 1 — a LINKED narrow field holds its field encoding (loft#1899).
+            let (narrow_open, narrow_close) = self.narrow_local_enc(var);
+            write!(w, "self.var_{name} = {narrow_open}")?;
             if needs_to_string || wrap_bool {
                 write!(w, "(")?;
             }
@@ -514,6 +715,7 @@ impl Output<'_> {
             } else if wrap_bool {
                 write!(w, ") as u8")?;
             }
+            write!(w, "{narrow_close}")?;
             return Ok(());
         }
         if variables.is_argument(var)
@@ -560,10 +762,10 @@ impl Output<'_> {
                         && let Value::Var(src) = src_arg.unspan()
                         && !matches!(variables.tp(*src).base(), Type::RefVar(_))
                     {
-                        let src_name = sanitize(variables.name(*src));
+                        let src_place = self.var_place(*src);
                         write!(
                             w,
-                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!(var_{src_name}) }}"
+                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!({src_place}) }}"
                         )?;
                         return Ok(());
                     }
@@ -614,6 +816,16 @@ impl Output<'_> {
                 // CAPTURING lambda already emits the pair and is not a bare `Int`, so it is
                 // untouched — which is why this hid behind the shape people write first.
                 let needs_fn_pair = matches!(inner_slot, Type::Function(..));
+                // `@FR-R-TextClear` — a `&text` parameter emptied keeps the caller's buffer, as
+                // an emptied text local does (below): the caller's work text is refilled in
+                // place each call.
+                if needs_text_coerce
+                    && crate::keys::text_clear_enabled()
+                    && matches!(to.unspan(), Value::Text(t) if t.is_empty())
+                {
+                    crate::rewrite_census::fired("R-TextClear", 1);
+                    return write!(w, "var_{name}.clear()");
+                }
                 if amp_owned_writeback {
                     write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
@@ -754,16 +966,38 @@ impl Output<'_> {
             } else if let Value::Call(d_nr, cargs) = to.unspan()
                 && self.data.def(*d_nr).name() == "OpCreateStack"
                 && let [src_arg] = cargs.as_slice()
-                && let Value::Var(src) = src_arg.unspan()
+                && let Value::TupleGet(src, idx) = src_arg.unspan()
             {
-                let src_name = sanitize(variables.name(*src));
+                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: a pointer into the
+                // Rust tuple's field, the same raw shape as a link to a whole local.
+                let place = self.tuple_member_place(*src, *idx);
                 if self.declared.contains(&var) {
-                    write!(w, "var_{name} = std::ptr::addr_of_mut!(var_{src_name})")?;
+                    write!(
+                        w,
+                        "var_{name} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
+                    )?;
                 } else {
                     self.declared.insert(var);
                     write!(
                         w,
-                        "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!(var_{src_name})"
+                        "let mut var_{name}: *mut {base} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
+                    )?;
+                }
+            } else if let Value::Call(d_nr, cargs) = to.unspan()
+                && self.data.def(*d_nr).name() == "OpCreateStack"
+                && let [src_arg] = cargs.as_slice()
+                && let Value::Var(src) = src_arg.unspan()
+            {
+                // The source's PLACE: a generator keeps its locals as struct fields
+                // (`self.var_x`), and a link names the field (loft#1899).
+                let src_place = self.var_place(*src);
+                if self.declared.contains(&var) {
+                    write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
+                } else {
+                    self.declared.insert(var);
+                    write!(
+                        w,
+                        "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!({src_place})"
                     )?;
                 }
             } else if let Value::Call(d_nr, cargs) = to.unspan()
@@ -892,7 +1126,7 @@ impl Output<'_> {
                     format!("var_{src_name}")
                 }
             } else {
-                format!("std::ptr::addr_of_mut!(var_{src_name})")
+                format!("std::ptr::addr_of_mut!({})", self.var_place(*src))
             };
             // loft#1371 — a `*mut DbRef` into the source's slot, not the source's DbRef by
             // VALUE.  By value the link could carry a read and an interior write but never
@@ -967,11 +1201,22 @@ impl Output<'_> {
                 current.to_string()
             }
         };
-        let displaced_free = |free: &str| -> String {
+        // `@FR-O-Buffer` — a local promoted onto the return buffer may still hold the store the
+        // CALLER handed (`_rb_w_<name>`), which a displaced free must never release: the next
+        // call fills that buffer again.  The rebind's own `_old_` free asks the same.
+        let entry_guard = if self.retbuf_witness.contains(&var) {
+            format!(" && _dst.store_nr != _rb_w_{name}.store_nr")
+        } else {
+            String::new()
+        };
+        let displaced_free = || -> String {
             if witnessed {
                 String::new()
             } else {
-                free.to_string()
+                format!(
+                    "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr{entry_guard} \
+                     {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
+                )
             }
         };
         // P198 — most operators are wrapped in Value::Span by the parser.
@@ -1034,7 +1279,7 @@ impl Output<'_> {
         let record_def = if self.declared.contains(&var) {
             variables.tp(var).base().heap_def_nr()
         } else {
-            match variables.tp(var).peel_optional() {
+            match crate::use_analysis::first_bind_shape(variables.tp(var)).peel_optional() {
                 (_, true) => None,
                 (shape, false) => shape.heap_def_nr(),
             }
@@ -1059,7 +1304,11 @@ impl Output<'_> {
             crate::use_analysis::callee_of(self.data, self.def_nr, to),
         ) && matches!(to_unspanned, Value::Call(_, _) | Value::CallRef(_, _))
             && self.data.def(fn_nr).is_loft_defined()
-            && !self.data.def(fn_nr).return_adopts_fresh_store()
+            // An empty return dep reads "fresh, adopt"; an instance's is empty whatever it
+            // returns, so the oracle is asked too — a `Join` instance adopted plainly freed the
+            // caller's record on the path that answered the parameter (loft#1881).
+            && (!self.data.def(fn_nr).return_adopts_fresh_store()
+                || crate::use_analysis::may_hand_back_a_caller_store(self.data, fn_nr))
             // @PLN157 § V-aa/§ V-ah (`@FR-R-ValueRecord`) — an admitted callee answers a
             // tuple: nothing to adopt, copy, protect or displace, so its binding is the
             // plain assignment below, and the buffer argument is dropped there.
@@ -1117,7 +1366,7 @@ impl Output<'_> {
             // Cluster-A A.4: ONE return-ownership query, shared with the
             // interpreter (`state/codegen.rs`).  Both backends read the same
             // fact, so they cannot diverge on the hidden-only / out-of-range edge.
-            let is_borrowed_view = self.data.def(fn_nr).returns_borrowed_view();
+            let is_borrowed_view = crate::use_analysis::may_return_a_borrow(self.data, fn_nr);
             // loft#981/#982 — a borrowed-view return is not always a borrow: the callee
             // may hand back the parameter's store OR one it minted (a `??` whose arms
             // split, a `return o` the return hoist materialises into a fresh `__ret_N`),
@@ -1171,7 +1420,18 @@ impl Output<'_> {
             // `_src == _dst` guard re-derived this and LEAKED the owned arm — `_src`
             // (a fresh `m_none()`) never equals `_dst` (the old slot), so it
             // materialised + dropped the owned store.
+            // The interpreter's twin takes this guard only where the right-hand side does not
+            // read the destination (`!stash_old_for_post_free`): `c = pick(d, c, k)` hands the
+            // callee the store the bind would adopt into, and the buffer arm then aliases the
+            // argument it was computed from (loft#1884, a leaked record once a later function
+            // re-took the slot).  Such a rebind keeps the copy below on both backends.
+            let rhs_reads_dst = self.declared.contains(&var) && {
+                let mut reads = false;
+                to.walk(&mut |n| reads |= matches!(n, Value::Var(x) if *x == var));
+                reads
+            };
             let join_witness = if crate::keys::join_own_enabled()
+                && !rhs_reads_dst
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
                 && base != u16::MAX
@@ -1192,17 +1452,26 @@ impl Output<'_> {
                 // the call itself, so it asks the same question `user_fn_call_body` does.
                 let twin_args = self.twin_call_inputs(fn_nr, args);
                 crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
+                let ranged = self.ranged_call(fn_nr, args, twin_args.is_some());
                 write!(
                     w,
-                    "{}{}(cell",
+                    "{}{}{}(cell",
                     self.fn_ident(callee),
-                    if twin_args.is_some() { "__inv" } else { "" }
+                    if twin_args.is_some() { "__inv" } else { "" },
+                    if ranged { "__rg" } else { "" }
                 )?;
                 // Emit each arg through the shared `emit_call_arg` helper so the
                 // ABI-B call applies the same per-parameter coercions (boolean→u8,
                 // narrow-int, text deref, typed-null, fn-ref) as the normal call
                 // path.  Re-deriving arg emission here is what dropped the
                 // boolean→u8 wrap and tripped rustc E0308 (issue #366).
+                //
+                // And under the context `output_call` gives every argument: an argument
+                // binds to the callee's parameter, never to the slot this call's result
+                // lands in.  Spelled here without that reset, a record bound for a fn-ref
+                // read (`mkl(5).f(4)`) emitted its integer argument as a fn-ref pair (E0308).
+                let saved_ctx = std::mem::replace(&mut self.fn_ref_context, false);
+                let saved_tuple = std::mem::replace(&mut self.tuple_text_to_string, false);
                 for (idx, arg) in args.iter().enumerate() {
                     write!(w, ", ")?;
                     // The callee this argument belongs to, for the questions `emit_call_arg`
@@ -1211,6 +1480,8 @@ impl Output<'_> {
                     self.current_call_def = fn_nr;
                     self.emit_call_arg(w, callee, idx, arg)?;
                 }
+                self.fn_ref_context = saved_ctx;
+                self.tuple_text_to_string = saved_tuple;
                 for extra in twin_args.iter().flatten() {
                     write!(w, ", {extra}")?;
                 }
@@ -1301,17 +1572,45 @@ impl Output<'_> {
             // COPY arm already makes (it clears `_dst` in place via
             // `OpDatabase`).  A same-store adopt (the NRVO alias) and the
             // null-sentinel `_dst` are excluded by the guard.
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
+            // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
+            // store into the destination without resetting it first, when it can.
+            let copy = if crate::keys::swap_rebind_enabled() {
+                crate::rewrite_census::fired("H-SwapRebind", 1);
+                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free}_i32);")
+            } else {
+                format!(
+                    "var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
+                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32);"
+                )
+            };
+            // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
+            // store it displaces is handed (by the reassignment around this arm) to the call's
+            // hidden buffer local for its next execution, instead of an exchange into it.
+            let rebind = match self.rebind_buffer.take() {
+                Some((v, buf, rbw)) if v == var && !witnessed && !variables.is_view_elided(var) => {
+                    self.rebind_buffer_used = true;
+                    crate::rewrite_census::fired("R-RebindBuffer", 1);
+                    let entry = rbw
+                        .map(|r| format!(" && _dst.store_nr != {r}.store_nr"))
+                        .unwrap_or_default();
+                    format!(
+                        "else if _src.store_nr != u16::MAX && _dst.store_nr != u16::MAX \
+                         && _src.store_nr != _dst.store_nr{entry} && (var_{buf}.store_nr == u16::MAX \
+                         || var_{buf}.store_nr == _src.store_nr) \
+                         {{ __rbb_{name} = true; var_{name} = _src; }} "
+                    )
+                }
+                _ => String::new(),
+            };
             write!(
                 w,
-                "; if {adopt} {{ {disp}var_{name} = _src; }} \
-                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
-                 OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32); }}{unprotect} }}"
+                "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
+            // Adopted or copied, the local now holds its own store — unless the bind is an
+            // elided VIEW, which aliases on purpose.
+            self.call_bind_owns = !variables.is_view_elided(var);
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the
             // guard asks whether the diagnostic ACCOUNTS for the site, not whether this
@@ -1362,10 +1661,7 @@ impl Output<'_> {
             }
             write!(w, "{{ let _dst = var_{name}; let _src = ")?;
             self.output_code_inner(w, to)?;
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             write!(
                 w,
@@ -1388,12 +1684,16 @@ impl Output<'_> {
         // unresolved.  The call's return left the minted-or-borrowed verdict; adopt the mint
         // (and take it off the hand-up list), copy a store that predates the call.  The copy
         // takes NO source-free bit: its source is a capture or an argument, owned further up.
-        if let Some(rec) = crate::use_analysis::opaque_callref_bind(
-            self.data,
-            self.def_nr,
-            variables.tp(var),
-            to_unspanned,
-        ) {
+        // A VALUE LOCAL bound from a dispatch that answers the tuple (`@FR-R-FnRefValue`)
+        // holds no store, so there is nothing to adopt or copy: it takes the plain bind.
+        if !self.value_record_locals.contains_key(&var)
+            && let Some(rec) = crate::use_analysis::opaque_callref_bind(
+                self.data,
+                self.def_nr,
+                variables.tp(var),
+                to_unspanned,
+            )
+        {
             let tp_nr = self.data.def(rec).known_type();
             let first_bind = !self.declared.contains(&var);
             if first_bind {
@@ -1407,10 +1707,7 @@ impl Output<'_> {
             }
             write!(w, "{{ let _dst = var_{name}; let _src = ")?;
             self.output_code_inner(w, to)?;
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             write!(
                 w,
@@ -1721,6 +2018,15 @@ impl Output<'_> {
         // so no double-borrow (and the receiver was already pre-eval-hoisted).
         if let Value::Call(call_dnr, args) = to.unspan()
             && self.data.def(*call_dnr).rust().is_empty()
+            // loft#1847, `@FR-R-ValueRecord` — an admitted callee has no return buffer and
+            // returns its fields as a tuple; the ordinary call emitter (`user_fn_call_body`)
+            // drops the buffer argument and reads the tuple, and this path spelled every
+            // argument itself, buffer included.
+            && !self.value_records.fns.contains_key(call_dnr)
+            // …and a callee receiving a parameter as a TUPLE (`@FR-R-ValueLocal`): the ordinary
+            // emitter builds that tuple from the record, and this path spelled the argument as
+            // the attribute's own `DbRef` (E0308 at a lifted call of a generic's instance).
+            && !self.value_records.params.contains_key(call_dnr)
             && args.iter().any(|a| self.arg_needs_text_hoist(a))
         {
             let def_fn = self.data.def(*call_dnr);
@@ -1823,6 +2129,27 @@ impl Output<'_> {
         let discard_loop_var = variables.name(var) == "_"
             && is_scalar(variables.tp(var))
             && matches!(to.unspan(), Value::Block(bl) if is_scalar(&bl.result));
+        // `@FR-R-TextClear` — a declared text local emptied (`out = ""`) keeps its buffer:
+        // `.clear()` leaves the same empty `String` that `"".to_string()` builds, but holds the
+        // capacity, so a work text refilled once per iteration — a call's text result buffer,
+        // an accumulator — is not claimed and regrown on every pass.
+        if needs_to_string
+            && crate::keys::text_clear_enabled()
+            && !discard_loop_var
+            && !variables.is_argument(var)
+            && self.declared.contains(&var)
+            && matches!(to.unspan(), Value::Text(t) if t.is_empty())
+            && self.narrow_local_enc(var).0.is_empty()
+            && self.local_rust_type(var, variables.tp(var)) == "String"
+        {
+            self.predeclared.remove(&var);
+            if self.next_format_count > 1 {
+                self.next_format_count = 0;
+            }
+            let place = self.var_place(var);
+            crate::rewrite_census::fired("R-TextClear", 1);
+            return write!(w, "{place}.clear()");
+        }
         let first_assign = !self.declared.contains(&var) || self.predeclared.remove(&var);
         // @PLN167 decision 1 — a LINKED narrow local takes its value encoded; the suffix
         // closes the call at the end of this arm.
@@ -1832,7 +2159,9 @@ impl Output<'_> {
             self.narrow_local_enc(var)
         };
         if self.declared.contains(&var) && !discard_loop_var {
-            write!(w, "var_{name} = {narrow_open}")?;
+            // Its place: a generator's tuple local is the struct field (loft#1899).
+            let place = self.var_place(var);
+            write!(w, "{place} = {narrow_open}")?;
         } else {
             self.declared.insert(var);
             let var_tp = if discard_loop_var && let Value::Block(bl) = to.unspan() {
@@ -1845,7 +2174,9 @@ impl Output<'_> {
         }
         // @PLN157 § V-ah — a value local's DECLARATION (`x = null` in the IR) binds the
         // tuple's zero, not a null `DbRef`: the local never names a store.
-        if matches!(to, Value::Null)
+        // `@FR-R-ValueRecord`'s nullable clause — and a bind of the bare `null` sentinel
+        // (`w: S? = null`) binds the nullable tuple's ABSENT spelling, which is that zero.
+        if (matches!(to, Value::Null) || super::hoist::is_null_sentinel(self.data, to))
             && let Some(d) = self.value_record_locals.get(&var).copied()
         {
             let zero = self.value_tuple_zero(d);
@@ -2099,18 +2430,18 @@ impl Output<'_> {
                 } else if tuple_text_elem_clone {
                     // P228: read through the same unspan as the detection above.
                     if let Value::TupleGet(v, idx) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.{idx}.clone()")?;
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.{idx}.clone()")?;
                     }
                 } else if nested_tuple_clone {
                     if let Value::TupleGet(v, idx) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.{idx}.clone()")?;
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.{idx}.clone()")?;
                     }
                 } else if whole_tuple_clone {
                     if let Value::Var(v) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.clone()")?;
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.clone()")?;
                     }
                 } else {
                     self.output_code_inner(w, to)?;
@@ -2575,4 +2906,27 @@ fn tuple_has_non_copy_leaf(elems: &[Type]) -> bool {
         }
     }
     false
+}
+
+/// `@FR-R-RebindBuffer` — how often `body` names the hidden buffer `buf` (its null declaration
+/// aside), and how many of those are frees of it.
+fn buffer_uses(data: &crate::data::Data, body: &Value, buf: u16) -> (usize, usize) {
+    let (mut uses, mut frees) = (0usize, 0usize);
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(v) if *v == buf => uses += 1,
+            // Its declaration `buf = null` is not a use; any other write is.
+            Value::Set(v, rhs) if *v == buf && !matches!(rhs.unspan(), Value::Null) => uses += 2,
+            Value::Call(d, a)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name().starts_with("OpFree")
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf) =>
+            {
+                frees += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    (uses, frees)
 }

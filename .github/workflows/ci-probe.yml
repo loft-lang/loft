@@ -29,6 +29,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
@@ -45,6 +47,7 @@ env:
 
 jobs:
   probe:
+    # @windows-exempt: a Linux timing probe of the CI itself
     name: probe (ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -55,7 +58,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold + ALSA + headless GL
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
 
       # Private `probe-*` cache namespace — same PATHS + run_id-keyed structure
       # as the main test job (so it measures the real persistence + ~/.loft

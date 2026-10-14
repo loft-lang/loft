@@ -24,8 +24,8 @@
 <h1>Memory diagnostics</h1>
 <article>
 <div class="item">
-<pre><code>pub fn store_memory() -&gt; text</code></pre>
-<p>Returns a multi-line snapshot of all LIVE stores' internal memory utilisation: total capacity vs actual claimed data vs free space, record + free-block counts, mergeable adjacent-free pairs (free neighbours that should have coalesced), and the largest stores by capacity with their creation site (`bc:&lt;pos&gt;` — a bytecode position on the interpreter; 0 on --native) and type name.  Use to watch memory growth in a running program.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-memory-diagnostics.html">store_memory</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Returns a multi-line snapshot of all LIVE stores' internal memory utilisation: total capacity vs actual claimed data vs free space, record + free-block counts, mergeable adjacent-free pairs (free neighbours that should have coalesced), and the largest stores by capacity with their creation site (<code>bc:&lt;pos&gt;</code> — a bytecode position on the interpreter; 0 on --native) and type name.  Use to watch memory growth in a running program.</p>
 </div>
 
   </article>

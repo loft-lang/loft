@@ -25,7 +25,7 @@ this is where it is written down.
 | R-State | the ORDER of `hoist::hoistable`'s collectors (reads, callee inputs, then pushes removing themselves from the read list) | run the push collector first: a pushed path gets a plain header too, and a twin handed the plain one reads one push behind (the 2026-09-09 emission, caught by the verifier) | held by order, not by construction; the closure is the state builder (below) |
 | R-Alias | `hoist::owned_local` / `hoist::retbuf_var` in `hoistable`'s admission block | drop a view candidate's exclusion: an alias of a pushed local reads a moved record | — |
 | R-Base | `hoist::LoopHoist::growth_free` (decided before the analysis' early returns — a pixel loop has no record scalars to hoist and returns there) and the base bindings in `begin_vector_hoist`, one per header of a growth-free frame or per HELD header of a growth-free inner loop; `vector::vec_base` / `get_elem_at` / `Stores::vec_set_at` | `vec_base` answering one element past element 0: every cell of `V-ak-vector-base-cells.loft` answers a neighbour's value (`b1 900` for 910) — the VALUE channel, at once; a store that grows under a base: `LOFT_HOIST_VERIFY=1` panics at the first read (`hoisted vector base is stale`) | the growth-free test placed AFTER the scalar early return (the first build): green everywhere and the resample's loops never bound a base — the profile, not a cell, said so (probe 130 ms unchanged) |
-| R-Counter / R-LitDiv | `non_sentinel::seed_range_counters` over `hoist::range_counters`, the fill rewrite's own parser moved verbatim into one home; `int_arith::literal_divisor_form` before the proof-gated table | `LOFT_NN_VERIFY=1` asserts every seeded counter at its use; an inclusive range to the type maximum stepping through the non-null add is loft#1525's edge and is excluded by the literal-below-maximum test | the integer closure (`+`/`-`/`*` over proven operands counted proven): `LOFT_NN_VERIFY=1` green on every cell because no cell overflows — the divergence it would open is after a reported fault, which no verify run reaches; declined on C85, its price measured in § V-aj, and closed by the owner on 2026-09-15 (DESIGN_DECISIONS.md C120: no value may differ after a fault — a range PROOF is the admissible successor) |
+| R-Counter / R-LitDiv | `non_sentinel::seed_range_counters` over `hoist::range_counters`, the fill rewrite's own parser moved verbatim into one home; `int_arith::literal_divisor_form` before the proof-gated table | `LOFT_NN_VERIFY=1` asserts every seeded counter at its use; an inclusive range to the type maximum stepping through the non-null add is loft#1525's edge and is excluded by the literal-below-maximum test | the integer closure (`+`/`-`/`*` over proven operands counted proven): `LOFT_NN_VERIFY=1` green on every cell because no cell overflows — the divergence it would open is after a reported fault, which no verify run reaches; declined on @C85, its price measured in § V-aj, and closed by the owner on 2026-09-15 (DESIGN_DECISIONS.md @C120: no value may differ after a fault — a range PROOF is the admissible successor) |
 | R-ValueRecord | `hoist::value_shape` (what a value leaf is) and the positional `hoist::site_walk` (where a tuple may stand), read by the gate's fixpoint AND by the emitter's `value_locals_in` / `value_view_leaves`, so admission and emission are one computation; the fn-ref arms come from `fnref::dispatch_arms`, the emitter's own scan | admit an `Operand` position (pass a tuple where a record is wanted): the generated crate does not compile — measured as 376 rustc errors over the corpus before the site gate held (§ V-ah stage 1); judge the view leaf by its dep list instead of the ownership oracle: `q1021`'s `__ret_1` (`Own::Join`) is read as a tuple and the default it minted is nobody's (measured: five corpus scripts, before the oracle stood here); a value local bound by the whole-record COPY arm (a generic instance's statement join): the crate does not compile — `expected DbRef, found (i64,)` ×6 on `tests/docs/25-generics.loft`, the heavy shard's `native_dir` (t14, 2026-09-14); a `__lift_` temp read as a view leaf: every value exact and one record leaked per call under `LOFT_NATIVE_LEAK_CHECK`, on `const` parameters too (t15) | the by-RECORD fn-ref test that stood beside the `FnRef` scan: green on every cell and wrong on a lambda reaching a dispatch through a typed variable alone — the second spelling the one-home refactor removed; the lift's VIEW verdict — the oracle derives an un-minted `x = a` from `a` (Borrowed) while the lowering mints and the record form hands the store up: green on every cell because no cell selected a by-value parameter, caught by a probe's leak check the morning the generics doc failed to compile |
 | R-LoopBuffer | `hoist::loop_buffers` (a `__vdb` minted under a `Loop`, backing ONE vector of no-heap elements, every mention its init family or a free, its `Set(v, Null)` outside the loop; the emitter drops buffers other rewrites own — § V-x, § V-z, § V-j, § V-u), the `OpDatabase` emitter's reuse arm (`vector::vector_buffer_reset`) and the block loop's dropped `OpSetInt4` zero | the length reset sabotaged into a no-op: `l1 315 20 51` for `210 10 -4` — every sum and length accumulates and the stale probe reads real elements (the VALUE channel, at once); a `text` vector admitted: `LOFT_NATIVE_LEAK_CHECK` sees each iteration's strings stranded | the hand-patched resample emission (F3, 2026-09-15) kept the field zero as well as the store on one draft: the vector record was orphaned inside the store and every iteration claimed a new one — green on the hash, growing the store per pixel, caught by reading the emission before running it |
 | R-PushFill | `hoist::push_loop` (the counted pushes at the body's top level, `simple_invariant` for the end and the fill value, the early-exit and other-write walks over the body) and `Output::push_fast_path` / `push_fast_path_tail` (`stores.push_fill`, `vector::reserve_more`, the counters through `range_tail` shared with R-Fill) | the fill's length bumped one short: `p1 4 28` for `5 35` — the VALUE channel, at once; `LOFT_HOIST_VERIFY=1` re-derives the push header at the fill and panics on a stale one | the first recogniser counted the path's own `OpPreAllocVector` as a foreign statement because the parser emits it BEFORE the push it reserves for, so every constant push loop took the reserve and none the fill — green on every cell (the reserve is exact), caught by reading the resample's emission for the `__pf_` line that was not there |
@@ -54,8 +54,27 @@ this is where it is written down.
 | R-SingleUse (statement clause) | `single_use::rewrite_program`: a `_comp_N` temporary assigned once, read once, pure, read after pure operands only | any element taken as pure: the element with a side effect moved, the pin red (2026-10-02) | fired nowhere at first, twice over: a comprehension's statements sit in a `Loop` node, which the walk did not visit, and the element value under its block is `Span`-wrapped |
 | R-DischargeInto | `discharge_into::discharge_into` (the shape and the two target clauses), the single-use count in `rewrite_in` | the null test inverted reads `[]` for `[yy]`; the default dropped reads `[null]` — both silent (2026-10-02); the target-in-read, target-in-default and single-use clauses: planted away, all green — DEFENSIVE, the parser routes an assignment naming its target through a work buffer | `tests/text_borrow.rs` pinned the discharge TEMP as a `&str`; with the temp gone the pin asks the temps of the `LOFT_NO_DISCHARGE_INTO=1` emission and the locals of both |
 | R-KeyList | `Stores::get_keys` (cache or compute), `determine_keys_for` (fills it), `State::stack_keys` (copies the kinds out) | a stale cache (every key as text): the keyed bench panics in `allocation.rs`; under `LOFT_KEY_LIST_VERIFY=1` it stops at the first lookup naming `hash<E[id]>` (2026-10-02) | priced at ~7 % from the profile, measured −15 to −22 % on the keyed lookups: the per-call walk through `key_contents_for_field` cost more than its own frames showed.  Built EAGER first (filled in `determine_keys_for`): +171 front-end allocations on the tiny program, the frontend pin red, and the schema round-trip red (a reloaded schema had not filled it) — made lazy (`OnceLock`, reset by `determine_keys_for`) and equality-blind, as `TypeFacts` is |
+| R-ByteCopy (vector clause) | `byte_copy::guarded`'s range guard (`0 <= off`, `lo <= hi`, `hi <= len(v) - off`) before `OpSliceVector` | the upper test struck: v5's length reads 3 for 5 on both backends (the slice clamps where the loop pushed defaults) | — |
+| R-TextRun | `text_run::inert` (the statements between the bytes and the text read may not write a variable the guard reads) and `replace_read`'s guarded `Set` | the protected-variable test struck: t6 reads "world" for "hello" on both backends | — |
+| R-RepeatRun | `repeat_run`'s fill total (`OpAppendCopy` handed the run's count) | the fill handed `count - 1`: r1's matrix reads 15 elements for 16 on both backends | — |
+| R-WorkerLean | `State::worker_lean_ok` (admission) and `lean_stop(true)` (a worker's stop leaves the fault takeover to the main loop) | the worker ignoring its stop flag: `runtime_errors::i1056…` and placement_parity's two library-fault cells red on `--interpret` | the remembered lookup answering its stored definition for any position: green, because every `par` loop builds fresh worker States, so a worker State only ever enters one function |
+| R-StartStep | `start_step` (the iterator's shape), `State::start_step_holds` (the rest of the loop) and `gen_rotated_loop`'s seed with its entry past `pre` | the entry on the step: s1 reads 39 for 42; `continue`s patched past the step, or the seed dropped: s2 / s1 never end (timeout) | the rest-of-loop check struck: green, because a body reading the index reads the right value either way and no spelling writes it |
 
 ## Attempts and closures
+
+- **2026-10-04 — `(R-Cold)`'s fold clause.**  bench/10_sort's insertion sort reads
+  `arr[j - 1]` in its test and again in its body.  LLVM merged the two in-range loads, but
+  the outlined re-derivation (`get_elem_hoisted_cold`, a call into the rlib that LLVM must
+  assume writes) stayed twice, which kept the inner loop at 17 instructions a step with the
+  store's lock flag tested inside.  With every index resolved inline (`vector::elem_index`)
+  the loop is 13 instructions and the flag is unswitched out: 1.905 → 1.64 M ns per op
+  (−14 %), hash unchanged — the price the hand-merged read had shown (1.94 → 1.62 M), now
+  reached with no emitter rule, for every repeated element read.  An interleaved A/B of the
+  two rlibs over lanes 01–16 (same emitted Rust, five runs each) moved sort −13.8 %,
+  bfs_flow −9.3 %, collatz −8.4 % and nothing else past noise, except `join`: the text
+  reader folded the same way cost it +14 % (8.47 → 9.67 µs), and +10 % with the hot test
+  kept first and only the negative arm inline behind `cold_path()`.  The text reader keeps
+  `text_elem_cold`; the clause names the exception.
 
 - **2026-09-30 — `(R-Cold)`'s `#[cold]` half (823989c77).**  `get_elem_hoisted_cold`,
   `text_elem_cold` and `vec_set_hoisted_cold` carried `#[inline(never)]` without `#[cold]`.
@@ -339,7 +358,7 @@ outcome; the numbers and the story are here.
 
 ### A character walk steps an ASCII byte in one move
 
-- Together 23.5 → 12.9 µs on the `char_walk` row (4.6× → ~2.5×); the two checked accumulator adds of the body are what remains, C120's territory.
+- Together 23.5 → 12.9 µs on the `char_walk` row (4.6× → ~2.5×); the two checked accumulator adds of the body are what remains, @C120's territory.
 
 ### A format appended to a text is written into it
 
@@ -415,15 +434,15 @@ outcome; the numbers and the story are here.
 Each entry is the stamped phrase as it stood; the rule sentence it sat in remains in
 [rewrites.md](rewrites.md) without the date.
 
-- (Every rewrite is switchable and falsifiable) `(C122, owner 2026-09-15.)`
+- (Every rewrite is switchable and falsifiable) `(@C122, owner 2026-09-15.)`
 - (A record view carries its address) `**In words.** 2026-09-18, the drawing library's crossing loop`
 - (A stdlib one-op wrapper is its op) `and, since 2026-09-22 (@PLN158 round 3), a pure`
 - (A minted element is a record no holder can name) `*The own-buffer mint (2026-09-27):*`
 - (A minted element is a record no holder can name) `*The field clause (2026-09-21, @PLN158 R1):*`
 - (A record append emits through its push header) `*The heap clause (2026-09-18):*`
 - (A mint group outside any held header binds its own) `@PLN157 (2026-09-18).`
-- (An integer operator whose result provably fits emits the plain operator) `**The type clause, in words.** 2026-09-22, the C129/C120`
-- (An integer operator whose result provably fits emits the plain operator) `**In words.** 2026-09-20. C120 declined`
+- (An integer operator whose result provably fits emits the plain operator) `**The type clause, in words.** 2026-09-22, the @C129/@C120`
+- (An integer operator whose result provably fits emits the plain operator) `**In words.** 2026-09-20. @C120 declined`
 - (An integer operator whose result provably fits emits the plain operator) `**The accumulator clause** (2026-09-22, @PLN158 round 4):`
 - (A counted loop's index chains run plain behind a guard) `**In words.** 2026-09-20. `(R-BoundedNest)`'s method`
 - (A format appended to a text is written into it) `**BUILT** (2026-09-25, `Parser::format_append_in_place``
@@ -452,3 +471,18 @@ s21); the first s2 passed `nothing ?? ""`, an empty text, and saw nothing.  The 
 then made to answer the null text as one piece, matching `split`.  loft#1795 made `len` and
 `size` of an absent text 0, as `for c in t` over it already was, and the iterator, `split`
 and the split table now all answer no pieces.
+
+## 2026-10-05 — `(R-RefillText)` proposed and built
+
+Priced first on `msg_ping` (x86-64, 17.4 → 4.78 ms by hand), then built in the five steps the
+proposal named: `Store::refill_str` with unit tests over its three cases; the census guard,
+whose planted defect (the text release dropped, nothing refilling) read 31 → 3001 records
+on both backends before any rewrite existed; the admission traced and pinned while it
+emitted nothing; the twin and the site behind `LOFT_NO_REFILL_TEXT`, falsified by the twin
+releasing nothing (native 31 → 3001) and by (b)'s whole-body checks removed (native 11 → 1001);
+then the row, 18.03 → 4.89 ms.  The first trace declined `msg_ping` itself as "an exit that is
+not the literal": a literal with no work text is lowered as `return { …; b }`, which the exit
+check then learned.  An earlier draft pinned the text clause on `(R-RefillBuffer)`'s return
+buffer; the release removed is the pool's `OpClear` (`@FR-H-ClearRelease`).  Found on the
+way: a text field reassigned on a live record leaks the text it replaces, on both backends
+(loft#1873) — the same slot invariant, at every `OpSetText` site.

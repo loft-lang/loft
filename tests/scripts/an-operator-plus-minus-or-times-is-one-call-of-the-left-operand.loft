@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN182 P2 — `operator plus`, `operator minus` and `operator times` give a user type `+`, `-`
+// and `*` (`@FR-Op-Back`): each is ONE call of the LEFT operand's method, chosen among its
+// members by the right operand's type (`@FR-Op-Left`), its type and value the method's
+// (`@FR-Op-Result`).  `a ⊕= b` is `a = a.m(b)` on any place (`@FR-Op-Compound`).  `Addable` and
+// `Subtractable` are met by them (`@FR-Op-Bound`), so `sum` and a user generic call them too.
+//
+// The parallel run: `time`'s arithmetic — `DateTime - DateTime -> Duration`, `DateTime +
+// Duration`, `Duration ± Duration`, `Duration * integer` — as `operator` definitions on
+// `DtN`/`DuN`, against the integer arithmetic their bodies compute (the reference was the same
+// arithmetic as `fn Op…` until C132 retired that spelling), over a matrix of instants; plus the
+// mixed `DateTime - Duration`.  Further cells: a field place and an element place, a type with
+// BOTH a (deliberately wrong) plain `fn OpAdd` and an `operator plus` — the function is
+// ordinary, the operator answers at the concrete site and in the generic alike — and one call
+// each, left to right.
+//
+// @falsified-by: tests/falsified/an-operator-plus-minus-or-times-is-one-call-of-the-left-operand.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: `+` sent to `operator minus`)
+//   CHANNEL: exit on both backends — on the control `operator plus` is not built yet, so the
+//   definitions are refused.
+//   ARMED: nothing.
+//   WITNESS: scored by hand as well against a mutation sending `+` to `operator minus`: the
+//   parallel run fails on both backends, listing every pair whose sums differ.
+//   HOLDS: every asserted value on this tree, both backends.
+value struct DtN { ms: integer }
+value struct DuN { ms: integer }
+pub operator minus(self: DtN, other: DtN) -> DuN { DuN { ms: self.ms - other.ms } }
+pub operator minus(self: DtN, span: DuN) -> DtN { DtN { ms: self.ms - span.ms } }
+pub operator plus(self: DtN, span: DuN) -> DtN { DtN { ms: self.ms + span.ms } }
+pub operator plus(self: DuN, other: DuN) -> DuN { DuN { ms: self.ms + other.ms } }
+pub operator minus(self: DuN, other: DuN) -> DuN { DuN { ms: self.ms - other.ms } }
+pub operator times(self: DuN, factor: integer) -> DuN { DuN { ms: self.ms * factor } }
+
+struct Rec { d: DuN, n: integer }
+struct Both { v: integer }
+pub fn OpAdd(self: Both, other: Both) -> Both { Both { v: self.v - other.v } }
+pub operator plus(self: Both, other: Both) -> Both { Both { v: self.v + other.v } }
+struct Log { n: integer }
+fn mk(log: Log, v: integer) -> DuN { log.n = log.n * 10 + v; DuN { ms: v } }
+
+fn diff < T: Subtractable > (a: T, b: T) -> T { a - b }
+fn add2 < T: Addable > (a: T, b: T) -> T { a + b }
+
+fn row(a: integer, b: integer) -> text {
+  na = DtN { ms: a }; nb = DtN { ms: b }; va = DuN { ms: a }; vb = DuN { ms: b };
+  old = "{a - b} {a + b} {a + b} {a - b} {a * 3}";
+  new = "{(na - nb).ms} {(na + vb).ms} {(va + vb).ms} {(va - vb).ms} {(va * 3).ms}";
+  if old == new { "" } else { "[{a} {b}: {old} / {new}]" }
+}
+
+fn main() {
+  vals = [0 - 86400000, 0 - 1, 0, 1, 1700000000000, 1700000003600];
+  d = ""; n = 0;
+  for a in vals { for b in vals { d += row(a, b); n += 1; } }
+  assert(n == 36 && d == "", "the parallel run: {d}");
+  t = DtN { ms: 1000 }; w = DuN { ms: 250 };
+  // Two assertions, not one `&&`: a struct literal inside the lifted right operand of `&&`
+  // trips loft#1847 on --native, whatever spells the call.
+  assert((t - w).ms == 750, "minus chosen by the right operand: Duration");
+  assert((t - DtN { ms: 400 }).ms == 600, "minus chosen by the right operand: DateTime");
+  t += w;
+  assert(t.ms == 1250, "+= {t.ms}");
+  t -= w;
+  assert(t.ms == 1000, "-= {t.ms}");
+  w *= 4;
+  assert(w.ms == 1000, "*= {w.ms}");
+  r = Rec { d: DuN { ms: 10 }, n: 0 };
+  r.d += DuN { ms: 5 };
+  assert(r.d.ms == 15, "a field place: {r.d.ms}");
+  v = [DuN { ms: 1 }, DuN { ms: 2 }];
+  v[1] += DuN { ms: 40 };
+  v[0] *= 7;
+  assert(v[0].ms == 7 && v[1].ms == 42, "an element place");
+  s = [DuN { ms: 1 }, DuN { ms: 20 }, DuN { ms: 300 }];
+  assert(sum(s, DuN { ms: 0 }).ms == 321, "sum through Addable");
+  assert(diff(DuN { ms: 9 }, DuN { ms: 4 }).ms == 5, "a Subtractable generic");
+  x = Both { v: 5 }; y = Both { v: 3 };
+  assert((x + y).v == 8 && add2(x, y).v == 8, "operator plus wins over a fn OpAdd, concrete and generic");
+  log = Log { n: 0 };
+  sm = mk(log, 1) + mk(log, 2);
+  assert(sm.ms == 3 && log.n == 12, "one call each, left to right: {log.n}");
+  println("ok");
+}

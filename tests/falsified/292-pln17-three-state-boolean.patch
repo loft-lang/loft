@@ -1,20 +1,9 @@
-diff --git a/src/fill.rs b/src/fill.rs
---- a/src/fill.rs
-+++ b/src/fill.rs
-@@ -2822,7 +2822,7 @@
- fn eq_bool(s: &mut State) {
-     let v_v2 = s.get_stack::<u8>();
-     let v_v1 = s.get_stack::<u8>();
--    let new_value = v_v1 == v_v2;
-+    let new_value = (v_v1 == 1) == (v_v2 == 1);
-     s.put_stack(new_value);
- }
- 
 diff --git a/default/01_code.loft b/default/01_code.loft
+index a1f89a19..856cb81e 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -1455,7 +1455,7 @@
- #rust"i64::from(tree::count(&@r, @fields, &s.database.allocations))"
+@@ -1669,7 +1669,7 @@ pub fn size(self: const index) -> integer {
+ #pure
  
  fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
 -#rust"@v1 == @v2"
@@ -22,3 +11,16 @@ diff --git a/default/01_code.loft b/default/01_code.loft
  fn OpNeBool(v1: boolean, v2: boolean) -> boolean;
  #rust"@v1 != @v2"
  // --- Output and Diagnostics ---
+diff --git a/src/fill.rs b/src/fill.rs
+index 4101451b..a161ee0a 100644
+--- a/src/fill.rs
++++ b/src/fill.rs
+@@ -5769,7 +5769,7 @@ fn size_index_r(s: &mut State, r: Regs) -> Regs {
+ fn eq_bool<const F: bool>(s: &mut State) {
+     let v_v2 = s.get_stack_m::<F, u8>();
+     let v_v1 = s.get_stack_m::<F, u8>();
+-    let new_value = v_v1 == v_v2;
++    let new_value = (v_v1 == 1) == (v_v2 == 1);
+     s.put_stack_m::<F, _>(new_value);
+ }
+ 

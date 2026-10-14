@@ -107,22 +107,16 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
         return false;
     };
     let dir = pkg_dir.join("prebuilt").join(&triple);
-    if std::fs::create_dir_all(&dir).is_err() {
+    if crate::file_access::create_dir_all(&dir).is_err() {
         return false;
     }
-    let filename = if cfg!(target_os = "macos") {
-        format!("lib{stem}.dylib")
-    } else if cfg!(windows) {
-        format!("{stem}.dll")
-    } else {
-        format!("lib{stem}.so")
-    };
+    let filename = crate::platform::cdylib_file_name(&stem);
     let dest = dir.join(&filename);
     let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
         return false;
     };
     if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
-        let _ = std::fs::remove_file(&dest);
+        let _ = crate::file_access::remove_file(&dest);
         return false;
     }
     // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
@@ -207,7 +201,7 @@ pub fn install_one(
 
     for r in &graph {
         let dir = registry_index::extract_dir(&r.name, &r.version.semver);
-        if dir.join("loft.toml").exists() {
+        if crate::file_access::exists(dir.join("loft.toml")) {
             report
                 .skipped_cached
                 .push((r.name.clone(), r.version.semver.clone()));
@@ -278,7 +272,8 @@ pub fn install_one(
                 match crate::c_shim::build(&dir.to_string_lossy(), &m.c_shim) {
                     Ok(so) => report.surface.push(format!(
                         "  C shim built: {}",
-                        so.file_name().unwrap_or(so.as_os_str()).to_string_lossy()
+                        crate::file_access::file_name(&so)
+                            .unwrap_or_else(|| so.to_string_lossy().into_owned())
                     )),
                     Err(why) => report.surface.push(format!(
                         "  C shim NOT built — {why}; `use {}` will report it again",
@@ -406,7 +401,7 @@ static INDEX_MEMO: std::sync::Mutex<Option<(IndexMemoKey, RegistryIndex)>> =
     std::sync::Mutex::new(None);
 
 fn file_stamp(p: &Path) -> Option<(u64, u128)> {
-    let meta = std::fs::metadata(p).ok()?;
+    let meta = crate::file_access::metadata(p).ok()?;
     let mtime = meta
         .modified()
         .ok()?
@@ -480,7 +475,7 @@ fn load_index_inner(
                 // when there is no `.sig` beside the index) — but the verdict is
                 // still reached before anything is written.
                 let sig_bytes = if fetched.signature.is_empty() {
-                    std::fs::read(&sig_path).unwrap_or_default()
+                    crate::file_access::read(&sig_path).unwrap_or_default()
                 } else {
                     fetched.signature.clone()
                 };
@@ -589,6 +584,29 @@ impl CachedPairError {
     }
 }
 
+/// The registry index already on this machine, verified against its signature — never
+/// fetched.  The REPL's `:libs` and `:api` read it (@PLN183): a documentation lookup answers
+/// offline, and an index that does not verify is not shown, as `loft install` would not use it.
+///
+/// # Errors
+/// A sentence for the reader: no index has been fetched yet, or the one here does not verify.
+pub fn cached_index() -> Result<registry_index::RegistryIndex, String> {
+    let (idx_path, sig_path, _) = registry_index::index_paths();
+    if !crate::file_access::is_file(crate::file_access::PathText::from_os(&idx_path)) {
+        return Err(
+            "no registry index on this machine yet — `loft search <word>` or \
+                    `loft install <library>` fetches it"
+                .to_string(),
+        );
+    }
+    let content = read_cached_index_verified(&idx_path, &sig_path, &InstallOptions::default())
+        .map_err(|e| match e {
+            CachedPairError::Io(e) => format!("the registry index could not be read: {e}"),
+            CachedPairError::Verify(msg) => msg,
+        })?;
+    registry_index::parse_index(&String::from_utf8_lossy(&content))
+}
+
 /// Read the cached index against the cached signature, treating a refresh landing
 /// underneath as what it is rather than as a bad signature.
 ///
@@ -626,7 +644,7 @@ fn read_cached_index_verified(
 }
 
 fn index_stale(idx_path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(idx_path) else {
+    let Ok(meta) = crate::file_access::metadata(idx_path) else {
         return true;
     };
     let Ok(modified) = meta.modified() else {
@@ -717,6 +735,34 @@ pub fn constraint_for(pinned: Option<&str>, declared: Option<&str>) -> Option<St
         (Some(v), Some(c)) if !registry_index::satisfies(v, c) => Some(c.to_string()),
         (Some(v), _) => Some(v.to_string()),
         (None, c) => c.map(ToString::to_string),
+    }
+}
+
+/// The constraint a source-level `use` resolves under: [`constraint_for`]'s governing
+/// constraint AND the range the package whose file says `use` names for the dependency.
+///
+/// PACKAGES.md: the declarations asked are "the project's `[dependencies]` and those of the
+/// package whose file says `use glb`".  Without the second, a `use` inside a dependency was
+/// bound by the root alone — and a root that declares the package as a PATH declares no
+/// range, so the dependency's own `>=0.9.6` was answered with whatever the catalogue
+/// offered, silently (loft#1849).  Both halves are joined into one comma-list, which
+/// [`registry_index::satisfies`] reads as every part at once; an exact lock pin that
+/// already satisfies the declaring range stands alone, being the resolved form of both.
+#[must_use]
+pub fn use_constraint(
+    pinned: Option<&str>,
+    root: Option<&str>,
+    declaring: Option<&str>,
+) -> Option<String> {
+    let base = constraint_for(pinned, root);
+    match (base, declaring) {
+        (Some(b), Some(d))
+            if b != d && !(pinned == Some(b.as_str()) && registry_index::satisfies(&b, d)) =>
+        {
+            Some(format!("{b}, {d}"))
+        }
+        (Some(b), _) => Some(b),
+        (None, d) => d.map(ToString::to_string),
     }
 }
 
@@ -1600,8 +1646,8 @@ mod tests {
             }
         }
         let dir = std::env::temp_dir().join("loft-lockfile-pin-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("loft.lock");
         let opts = InstallOptions {
             lock_path: Some(lock_path.clone()),
@@ -1644,7 +1690,7 @@ mod tests {
             check_against_lockfile(&same("bbbb", "0.2.0"), &opts).is_ok(),
             "an upgrade must not be mistaken for tampering"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// @PLN143 — which lockfile a resolution is BOUND by, which is not always the one it
@@ -1718,6 +1764,64 @@ mod tests {
             constraint_for(None, None),
             None,
             "nothing declared at all is the bare script: the newest release"
+        );
+    }
+
+    /// loft#1849 — a `use` inside a dependency is bound by the range that dependency names
+    /// as well as by the root's declaration and the lock.  Each cell answers a constraint
+    /// `registry_index::satisfies` reads; the checks after the table read it the way the
+    /// resolver does.
+    #[test]
+    fn a_nested_use_is_bound_by_the_declaring_packages_range_too() {
+        let cell = |p: Option<&str>, r: Option<&str>, d: Option<&str>| use_constraint(p, r, d);
+        assert_eq!(
+            cell(None, None, Some(">=0.9.6")).as_deref(),
+            Some(">=0.9.6"),
+            "root says nothing (a path dep): the dependency's range binds"
+        );
+        assert_eq!(
+            cell(None, Some(">=0.9.0"), Some(">=0.9.6")).as_deref(),
+            Some(">=0.9.0, >=0.9.6"),
+            "both ranges at once"
+        );
+        assert_eq!(
+            cell(None, Some(">=0.9.6"), Some(">=0.9.6")).as_deref(),
+            Some(">=0.9.6"),
+            "one range named twice is one range"
+        );
+        assert_eq!(
+            cell(Some("0.9.7"), None, Some(">=0.9.6")).as_deref(),
+            Some("0.9.7"),
+            "a pin that satisfies the range stands alone"
+        );
+        assert_eq!(
+            cell(None, None, None),
+            None,
+            "nothing declared anywhere: the newest release"
+        );
+        assert_eq!(
+            cell(Some("0.9.4"), None, None).as_deref(),
+            Some("0.9.4"),
+            "a pin with nothing to answer to"
+        );
+        // The joined form excludes exactly what each half excludes.
+        let both = cell(None, Some(">=0.9.0"), Some("<0.9.5")).unwrap();
+        assert!(
+            crate::registry_index::satisfies("0.9.4", &both),
+            "inside both"
+        );
+        assert!(
+            !crate::registry_index::satisfies("0.9.5", &both),
+            "outside the dependency's half"
+        );
+        assert!(
+            !crate::registry_index::satisfies("0.8.0", &both),
+            "outside the root's half"
+        );
+        let unmet = cell(None, None, Some(">=9.9.9")).unwrap();
+        assert!(
+            !crate::registry_index::satisfies("0.9.4", &unmet),
+            "an unsatisfiable floor admits no release"
         );
     }
 

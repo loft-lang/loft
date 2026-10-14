@@ -32,10 +32,16 @@ for f in "$@"; do
   i=$((i + 1))
 done
 total=$i
+# ASan's redzones make every frame several times larger, and the parse runs on the main
+# thread, whose stack the process limit sets on Linux (`RUST_MIN_STACK` reaches only spawned
+# threads; a macOS sanitizer build links 64 MiB, `build.rs`): the corpus's 250-deep
+# expressions overflowed the default 8 MiB.
+ulimit -s unlimited 2>/dev/null || ulimit -s 131072 2>/dev/null || true
 scan_one() {
   local f
   f=$(cat "$tmp/$1.name")
-  ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}" "$ABIN" --interpret "$f" >"$tmp/$1.out" 2>&1 || true
+  ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}" "$ABIN" --interpret "$f" >"$tmp/$1.out" 2>&1
+  echo $? > "$tmp/$1.rc"
 }
 export -f scan_one
 export ABIN tmp
@@ -44,11 +50,22 @@ export ABIN tmp
 fail=0
 scanned=0
 leakers=0
+crashed=0
 # `seq 0 -1` counts DOWN on BSD (macOS), so an empty list must not reach it.
 for i in $( [ "$total" -gt 0 ] && seq 0 $((total - 1)) ); do
   f=$(cat "$tmp/$i.name")
   scanned=$((scanned + 1))
   out=$(cat "$tmp/$i.out" 2>/dev/null)
+  # A run the OS killed (exit 128 + signal) is no leak report and no verdict: an ASan finding
+  # ends with its own report and exit 1, so a bare SIGSEGV is a crash this scan must name
+  # rather than count as clean.
+  rc=$(cat "$tmp/$i.rc" 2>/dev/null || echo 0)
+  if [ "$rc" -ge 128 ]; then
+    fail=1
+    crashed=$((crashed + 1))
+    echo "::error file=${f}::killed by signal $((rc - 128)) under ASan"
+    printf 'CRASH %-52s signal=%s\n' "$f" "$((rc - 128))"
+  fi
   roots=$(printf '%s\n' "$out" | grep -c '^Direct leak' || true)
   if [ "$roots" -gt 0 ]; then
     fail=1
@@ -73,5 +90,5 @@ for i in $( [ "$total" -gt 0 ] && seq 0 $((total - 1)) ); do
     fi
   fi
 done
-echo "=== leak scan: ${leakers} leaking file(s) of ${scanned} scanned ==="
+echo "=== leak scan: ${leakers} leaking and ${crashed} crashed file(s) of ${scanned} scanned ==="
 exit $fail

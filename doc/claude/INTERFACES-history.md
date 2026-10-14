@@ -341,3 +341,47 @@ Also add a diagnostic for using an interface name as a type
 
 **Test:** a deliberately unsatisfied call produces the formatted multi-line
 error. Using an interface as a variable type produces the specific message.
+
+## The standard library interfaces as first designed
+
+Moved from INTERFACES.md when @PLN182 Q13 re-spelled the interfaces as `operator` members;
+the shipped set had been narrower than this block from the start.
+
+```loft
+// Comparison.  `>`, `<=` and `>=` all DERIVE from `<`, so one operator is the whole bound.
+pub interface Ordered {
+  op < (self: Self, other: Self) -> boolean
+}
+
+// Equality.  `!=` derives from `==` for the same reason.
+pub interface Equatable {
+  op == (self: Self, other: Self) -> boolean
+}
+
+// Addition, returning the same type.
+pub interface Addable {
+  op + (self: Self, other: Self) -> Self
+}
+
+// Multiplication, and UNARY negation.
+pub interface Numeric {
+  op * (self: Self, other: Self) -> Self
+  op - (self: Self) -> Self
+}
+
+// BINARY subtraction — a bound of its own, see the note below.
+pub interface Subtractable {
+  op - (self: Self, other: Self) -> Self
+}
+
+// Integer scaling, as a METHOD rather than `op *` — see the note below.
+pub interface Scalable {
+  fn scale(self: Self, factor: integer) -> integer
+}
+
+// Text conversion — for generic print/log helpers.
+pub interface Printable {
+  fn to_text(self: Self) -> text
+}
+```
+

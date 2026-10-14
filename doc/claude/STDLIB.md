@@ -81,6 +81,8 @@ method (`x.abs()`) or free (`abs(x)`) — the same function either way.
 | `min(self: N, b: N) -> N` | Smaller of two values. Returns null if either is null. |
 | `max(self: N, b: N) -> N` | Larger of two values. Returns null if either is null. |
 | `clamp(self: N, lo: N, hi: N) -> N` | Clamps to `[lo, hi]`. Returns null if any arg is null. |
+| `compare(self: O, other: O) -> Ordering` | Where `self` stands against `other`: `Less`, `Equal` or `Greater`, in the order `<` uses (O = integer \| single \| float \| text \| character; text by bytes, a character by code point). An enum, not a signed number, so it never overflows the way `a - b` can. |
+| `then(self: Ordering, next: Ordering) -> Ordering` | `self`, or `next` when `self` is `Equal`: orders by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`. |
 | `approx(self: F, b: F, eps: F) -> boolean` | True when `a`/`b` (F = single \| float) differ by ≤ `eps`. `==` on float/single is **exact IEEE** (@PLN102); use `approx` for tolerance. A null (NaN) operand → false. |
 | `floor_mod(self: integer, divisor: integer) -> integer?` | Floor modulo: the remainder that takes the sign of the **divisor**, so it lands in `[0, divisor)` for a positive `divisor`. `%` truncates and keeps the **dividend's** sign (`-1 % 3 == -1`); `floor_mod` wraps (`(-1).floor_mod(3) == 2`) — use it for circular indexing (`grid[(i - 1).floor_mod(w)]`). `floor_mod(x, 0)` is null (like `%`). Integer-only. |
 
@@ -230,7 +232,7 @@ routes between the two views.
 | `chr(cp: integer) -> text` | Build a one-character text from a Unicode CODE POINT — the inverse of the `ch as integer` that iteration gives. `chr(65)` → `"A"`, `chr(20013)` → `"中"`, `chr(128512)` → `"😀"`. For decoding an escape (`\u{…}`, an HTML entity) or reassembling text a code point at a time. |
 | `ch as integer` | The code point of a `character` (via `as i32?` for a nullable). The direction that already existed; `chr` is its inverse. |
 
-⚠ **A code point that names no character gives `""`, not an error** (C80): a
+⚠ **A code point that names no character gives `""`, not an error** (@C80): a
 surrogate (`D800`–`DFFF`), anything past `U+10FFFF`, a negative number — and `0`,
 because `character` uses 0 as its null and text ITERATION STOPS at a NUL, so a
 NUL built by `chr` could not be read back by the loop it is the inverse of. The
@@ -357,8 +359,12 @@ and inside a generic all six comparisons work anyway:
 Each derivation evaluates every operand exactly once, and each agrees with the concrete
 operator on every value the bound's types can hold.
 
+| `contains<T: Equatable>(self: vector<T>, value: T) -> boolean` | Does the vector hold `value`?  Compared by content, as `==` compares every type (@C91); `changed.contains(path)` or `contains(changed, path)`; the empty vector holds nothing. |
 | `min_of<T: Ordered>(v: vector<T>) -> T?` | Smallest element, or **null** when the vector is empty (the type is honest about the empty case — @PLN102). |
 | `max_of<T: Ordered>(v: vector<T>) -> T?` | Largest element, or **null** when the vector is empty (@PLN102). |
+| `v.sort_by(key: fn(T) -> K)` | Sort in place by a key, ascending and stable; `K` is any `Ordered` value — a number, a `text`, or a type with an `operator compare` — so a struct sorts by whatever key one call names. |
+| `v.min_by(key) -> T?` / `v.max_by(key) -> T?` | The element with the smallest / largest key, the FIRST of tied keys, or **null** when the vector is empty. |
+| `v.sum_by(key: fn(T) -> K, init: K? = null) -> K` | The sum of an `Addable` key over the elements, from `init` or the key type's zero, so an empty vector sums to it. |
 
 ### Tree traversal — `tree_walk` and the `Walkable` interface
 
@@ -548,7 +554,7 @@ print("{p}\n");                // a user type via its to_text
 
 This one tool covers printing a value, separating several values, and appending strings
 — loft has no variadic `print(a, b, c)` and no bare `print(42)` (a deliberate decision,
-[DESIGN_DECISIONS.md § C100](DESIGN_DECISIONS_SYNTAX.md#c100--print-stays-text-only-no-bare-printvalue-or-variadic-print); @PLN13 step 5). Write the separator you
+[DESIGN_DECISIONS.md § @C100](DESIGN_DECISIONS_SYNTAX.md#c100--print-stays-text-only-no-bare-printvalue-or-variadic-print); @PLN13 step 5). Write the separator you
 want inside the braces (`"{a} {b}"` spaces, `"{a}, {b}"` commas, `"{a}{b}"` appends).
 
 ---
@@ -594,16 +600,16 @@ pub enum JsonValue {
   JBool { value: boolean },
   JNumber { value: float },
   JString { value: text },
-  JArray { items: vector<JsonValue> },
-  JObject { fields: vector<JsonField> },
+  JArray { pub items: vector<JsonValue> },
+  JObject { pub fields: vector<JsonField> },
   JInteger { value: integer },
 }
 ```
 <!-- from default/06_json.loft -->
 ```loft
 pub struct JsonField {
-  name: text,
-  value: JsonValue,
+  pub name: text,
+  pub value: JsonValue,
 }
 ```
 
@@ -682,7 +688,7 @@ return response.to_json_pretty();
 | `"{value:j}"` | Serialise any struct/enum/vector to JSON text |
 | `Type.parse(text)` | Parse JSON or loft-native text into a struct (P54 step 5 will require `Type.parse(JsonValue)` for structs) |
 | `vector<T>.parse(text)` | Parse a JSON array into an iterable vector |
-| `record#errors` | The last `Type.parse()` call's errors as ONE text (newline-separated), cleared by the read |
+| `record#errors` | The errors of the `Type.parse(text)` call that built `record`, as a `vector<text>` with one entry per error; empty after a success, unchanged by a read, and carried with the whole value (@C148) |
 
 <!-- from tests/reference/json-values.loft -->
 ```loft
@@ -690,7 +696,7 @@ user = User.parse(`{{"id":42,"name":"Alice"}}`);
 scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 
 // A failed parse leaves the record at its type's zeros, so ask whether it failed.
-errs = user#errors;              // TEXT, not a collection — and the read clears it
+errs = user#errors;              // a vector<text>: one entry per error of user's own parse
 ```
 
 Reach for this form when you KNOW the document's shape and it maps onto a struct you have
@@ -781,7 +787,7 @@ XS = single-line/single-fn change; S = focused half-day fix.
 
 | Item | Where it bit | Shape | Effort |
 |---|---|---|---|
-| `vector.sort()` (text added 2026-05-18); `vector.sort_by(fn)` deferred | scan.loft (3 sites), viewer's plan-bucket sort, activity feed date sort | Pre-existing `sort(v)` builtin extended to dispatch on text element type via `vector::sort_text_vector` (lexicographic, sorts u32 string offsets by what they point at).  A user type sorts by its own `op <` since @PLN165 E4 (`sort<T: Ordered>`, stable); `sort_by(fn)` — a comparator other than the type's own `<` — is still open.  Replaces the `sorted<T[K]>` set-as-sort-proxy pattern for text. | **`sort()` text-element shipped (@PLN42 phase 10.8)**; `sort_by(fn)` open. |
+| `vector.sort()` (text elements too); `vector.sort_by(key)` | scan.loft (3 sites), viewer's plan-bucket sort, activity feed date sort | Pre-existing `sort(v)` builtin extended to dispatch on text element type via `vector::sort_text_vector` (lexicographic, sorts u32 string offsets by what they point at).  A user type sorts by its own `operator compare` (`sort<T: Ordered>`, stable), and by any other key with `sort_by(key)` (@PLN182 Q11).  Replaces the `sorted<T[K]>` set-as-sort-proxy pattern for text. | **`sort()` text-element shipped (@PLN42 phase 10.8)**; `sort_by(key)` shipped (@PLN182 Q11). |
 | JSON emission helpers | scan.loft has 80+ lines of manual `json_escape` + per-row format-string emission + comma management.  viewer reads via `value.field("x").as_text()` — no symmetric write API. | `to_json(value) -> text` for primitives + `JsonBuilder` for nested structures.  Mirror of the existing `json_parse` + `JsonValue` read API. | S–M |
 | `args() -> vector<text>` builtin | scan.loft uses env var `LOFT_INDEX_BUCKETED` as a CLI-arg workaround; viewer doesn't support args at all | Add the builtin that returns the program's invocation args. | XS |
 

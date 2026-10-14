@@ -49,8 +49,8 @@ fn main() {
   // path and pass for the wrong reason.
   c = S.parse(`{{"keep":"k","i":-300,"plain":1,"flag":true}}`);
   j = c.to_json();
-  assert(j == `{{"keep":"k","i":-300,"plain":1,"flag":true}}`,
-         "absent fields stay absent, the present narrow value is exact");
+  assert(j == `{{"keep":"k","b":null,"s":null,"i":-300,"r":null,"w":null,"f":null,"t":null,"o":null,"plain":1,"flag":true}}`,
+         "absent fields are written null (@C143), the present narrow value is exact");
   back = S.parse(j);
   assert(back.i == -300 && back.s == null && back.o == null && back.keep == "k",
          "round-trip keeps the value and the absence");

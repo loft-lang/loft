@@ -1,5 +1,7 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::cast_possible_truncation,
@@ -32,15 +34,17 @@ use loft::base64;
 use loft::compile;
 use loft::data;
 use loft::extensions;
+use loft::file_access as fa;
 use loft::generation;
 use loft::log_config;
 use loft::logger;
 use loft::manifest;
 mod android;
 mod native_utils;
+use loft::file_access;
 use loft::parser;
 use loft::platform;
-use loft::portable_path;
+use loft::platform::process::{Program, Spawn, Tree};
 use loft::scopes;
 use loft::state;
 mod test_runner;
@@ -416,6 +420,8 @@ fn print_help() {
     println!(
         "                                                 — build what a run will need, first"
     );
+    println!("                                a rerun reuses its parse, a dev build included;");
+    println!("                                LOFT_NO_CACHE=1 parses fresh and caches nothing");
     println!("  generate [path]               generate Rust stubs for #native declarations");
     println!("                                writes native/src/generated.rs in the package");
     println!("  package [path]                build a publishable <pkg>-<version>.tar.gz");
@@ -462,8 +468,8 @@ fn handle_generate_log_config(path_opt: Option<&str>) {
     let content = logger::generate_config();
     match path_opt {
         Some(path) => {
-            if let Err(e) = std::fs::write(path, content) {
-                println!("Error writing config to '{path}': {e}");
+            if let Err(e) = fa::write(path, content) {
+                println!("Error writing config to {e}");
                 std::process::exit(1);
             }
             println!("Log config written to: {path}");
@@ -604,14 +610,14 @@ fn run_dep_tests(
         // 1 — an explicit path dep.
         if let Some(p) = loft::manifest::extract_path_dep(value) {
             let candidate = from_pkg.join(p);
-            if candidate.join("loft.toml").exists() {
-                return Some(portable_path::plain_canonical(&candidate));
+            if fa::exists(candidate.join("loft.toml")) {
+                return Some(file_access::plain_canonical(&candidate));
             }
         }
         let usable = |d: &Option<PathBuf>| -> Option<PathBuf> {
             d.as_ref()
-                .filter(|c| c.join("loft.toml").exists())
-                .map(|c| portable_path::plain_canonical(c))
+                .filter(|c| fa::exists(c.join("loft.toml")))
+                .map(|c| file_access::plain_canonical(c))
         };
         // 2 — an asked-for lock outranks the working copy.
         if lock_first && let Some(d) = usable(&locked) {
@@ -619,8 +625,8 @@ fn run_dep_tests(
         }
         // 3 — the sibling working copy.
         let sibling = from_pkg.join("..").join(name);
-        if sibling.join("loft.toml").exists() {
-            return Some(portable_path::plain_canonical(&sibling));
+        if fa::exists(sibling.join("loft.toml")) {
+            return Some(file_access::plain_canonical(&sibling));
         }
         // 4 — the project's own lock, filling what nothing above reached.
         usable(&locked)
@@ -684,12 +690,15 @@ fn run_dep_tests(
                 }
                 continue;
             }
-            if dep_dir.join("tests").is_dir() {
+            if fa::is_dir(dep_dir.join("tests")) {
                 tested += 1;
-                let mut cmd = std::process::Command::new(&loft_bin);
-                cmd.arg("test").current_dir(&dep_dir);
+                // A dependency's tests are handed the terminal, as `loft test` run there would be.
+                let mut cmd = Spawn::new(Program::os(&loft_bin))
+                    .arg("test")
+                    .cwd(&fa::PathText::from_os(&dep_dir))
+                    .tree(Tree::Foreground);
                 if native_mode {
-                    cmd.arg("--native");
+                    cmd.push_arg("--native");
                 }
                 // A dep's warnings are suppressed by default: a consumer should
                 // not be blocked by lint debt inside a package it does not own,
@@ -701,7 +710,7 @@ fn run_dep_tests(
                 // opt-in that was read nowhere — the flag is the opt-in, and now
                 // it exists.
                 if !strict_deps {
-                    cmd.arg("--no-warnings");
+                    cmd.push_arg("--no-warnings");
                     // `--no-warnings` only silences the PRINTING; whether a
                     // warning is fatal is decided separately, and
                     // `LOFT_DENY_WARNINGS` is read from the environment the
@@ -710,12 +719,9 @@ fn run_dep_tests(
                     // `LOFT_DENY_WARNINGS=1` set, a dep's lint debt failed the
                     // consumer's run — the exact thing the default exists to
                     // prevent.  Measured, not reasoned: exit 1 where 0 was owed.
-                    cmd.env("LOFT_DENY_WARNINGS", "0");
+                    cmd.push_env("LOFT_DENY_WARNINGS", "0");
                 }
-                let label = dep_dir
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| dep_name.clone());
+                let label = fa::file_name(&dep_dir).unwrap_or_else(|| dep_name.clone());
                 println!("  --deps: testing {label}");
                 let status = cmd.status();
                 let ok = status.as_ref().map(|s| s.success()).unwrap_or(false);
@@ -752,7 +758,7 @@ fn run_dep_tests(
 
 fn install_package(pkg_path: &std::path::Path) {
     let manifest_file = pkg_path.join("loft.toml");
-    if !manifest_file.exists() {
+    if !fa::exists(&manifest_file) {
         println!("loft install: no loft.toml found in {}", pkg_path.display());
         std::process::exit(1);
     }
@@ -764,13 +770,7 @@ fn install_package(pkg_path: &std::path::Path) {
     let pkg_name = loft::manifest::read_manifest(&manifest_file.to_string_lossy())
         .and_then(|m| m.name)
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| {
-            pkg_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-        });
+        .unwrap_or_else(|| fa::file_name(pkg_path).unwrap_or_default());
     if pkg_name.is_empty() {
         println!("loft install: cannot determine package name from path");
         std::process::exit(1);
@@ -835,7 +835,7 @@ fn install_manifest_dependencies(opts: &loft::install::InstallOptions) {
 
     let cwd = std::env::current_dir().unwrap_or_default();
     let manifest_file = cwd.join("loft.toml");
-    if !manifest_file.exists() {
+    if !fa::exists(&manifest_file) {
         eprintln!("loft install: no loft.toml in {}", cwd.display());
         eprintln!("  loft install <pkg>   install a package from the registry");
         eprintln!("  loft install .       install a package directory into ~/.loft/lib");
@@ -870,7 +870,7 @@ fn install_manifest_dependencies(opts: &loft::install::InstallOptions) {
             // A path dep with a `version` too is still resolved by path; the version is a
             // publish-time claim, not something to fetch.
             let dir = cwd.join(rel);
-            if !dir.join("loft.toml").exists() {
+            if !fa::exists(dir.join("loft.toml")) {
                 unresolved_paths.push(format!("  {name}  NOT FOUND at `{rel}` — check the path"));
             }
             continue;
@@ -927,7 +927,7 @@ fn install_manifest_dependencies(opts: &loft::install::InstallOptions) {
 /// itself still stands, and the missing declaration is visible in the next run.
 #[cfg(feature = "registry")]
 fn manifest_for_new_package(dir: &std::path::Path, manifest: &std::path::Path) -> Option<String> {
-    let raw = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    let raw = fa::file_name(dir).unwrap_or_default();
     let folded: String = raw
         .chars()
         .map(|c| {
@@ -948,7 +948,7 @@ fn manifest_for_new_package(dir: &std::path::Path, manifest: &std::path::Path) -
         "# Written by `loft install`: this directory's dependency declaration.\n\
          [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
     );
-    std::fs::write(manifest, body).ok().map(|()| name)
+    fa::write(manifest, body).ok().map(|()| name)
 }
 
 /// REG.2: Install a package from the registry by name (optionally with `@version`).
@@ -1010,13 +1010,13 @@ fn install_from_registry_with_opts(args: &[String], opts: &loft::install::Instal
                 // finds no root, so the lock this install writes governs nothing: an
                 // explicit `loft install <pkg>@<version>` would be silently ignored on the
                 // next run, which is worse than the stray-lockfile defect it replaces.
-                if !manifest.exists() {
+                if !fa::exists(&manifest) {
                     if let Some(pkg) = manifest_for_new_package(&cwd, &manifest) {
                         println!("  created loft.toml (package `{pkg}`)");
                     }
                 }
                 let path = manifest.to_string_lossy().to_string();
-                if manifest.exists()
+                if fa::exists(&manifest)
                     && (loft::manifest::record_dependency(&path, name, &requirement)
                         // An explicit version MOVES an existing declaration: left standing,
                         // it overruled the lock this install wrote (loft#1751).
@@ -1305,14 +1305,14 @@ fn package_info(name: &str) {
 fn api_resolve_pkg_dir(name: &str) -> Option<std::path::PathBuf> {
     if name.contains('/') || name == "." {
         let direct = std::path::PathBuf::from(name);
-        return direct.join("loft.toml").exists().then_some(direct);
+        return fa::exists(direct.join("loft.toml")).then_some(direct);
     }
     let project = std::path::PathBuf::from("lib").join(name);
-    if project.join("loft.toml").exists() {
+    if fa::exists(project.join("loft.toml")) {
         return Some(project);
     }
     let user = loft_home().join("lib").join(name);
-    if user.join("loft.toml").exists() {
+    if fa::exists(user.join("loft.toml")) {
         return Some(user);
     }
     let mut hits: Vec<(Vec<u32>, std::path::PathBuf)> = loft::registry_index::installed_packages()
@@ -1386,7 +1386,7 @@ fn api_command(target: Option<&str>) {
 
     // No name: one listing of everything reachable from here.
     let manifest_path = std::path::Path::new("loft.toml");
-    if manifest_path.exists() {
+    if fa::exists(manifest_path) {
         let manifest = loft::manifest::read_manifest("loft.toml").unwrap_or_default();
         println!("== project dependencies (loft.toml) ==");
         if manifest.dependencies.is_empty() {
@@ -1425,14 +1425,14 @@ fn api_command(target: Option<&str>) {
         println!("  {name} {version}  {}", path.display());
     }
     let user_lib = loft_home().join("lib");
-    if let Ok(read) = std::fs::read_dir(&user_lib) {
+    if let Ok(read) = fa::read_dir(&user_lib) {
         println!("== user libraries ({}) ==", user_lib.display());
-        for ent in read.filter_map(Result::ok) {
-            if ent.path().join("loft.toml").exists() {
+        for ent in read {
+            if fa::exists(ent.join("loft.toml")) {
                 println!(
                     "  {}  {}",
-                    ent.file_name().to_string_lossy(),
-                    ent.path().display()
+                    ent.file_name().unwrap_or_default(),
+                    ent.os_spelling().display()
                 );
             }
         }
@@ -1482,17 +1482,17 @@ fn write_api_stubs(lock_path: &std::path::Path, project_dir: &std::path::Path) {
         return;
     }
     let api_dir = project_dir.join(".loft").join("api");
-    if std::fs::create_dir_all(&api_dir).is_err() {
+    if fa::create_dir_all(&api_dir).is_err() {
         return;
     }
     let mut written = 0u32;
     for p in &lock.packages {
         let dir = loft::registry_index::extract_dir(&p.name, &p.version);
-        if !dir.join("loft.toml").exists() {
+        if !fa::exists(dir.join("loft.toml")) {
             continue;
         }
         if let Ok(text) = loft::documentation::render_pkg_api_text(&dir) {
-            if std::fs::write(api_dir.join(format!("{}.api", p.name)), text).is_ok() {
+            if fa::write(api_dir.join(format!("{}.api", p.name)), text).is_ok() {
                 written += 1;
             }
         }
@@ -1518,7 +1518,7 @@ fn write_api_stubs(lock_path: &std::path::Path, project_dir: &std::path::Path) {
         lock_path: None,
     };
     if let Ok(index) = loft::install::load_index(&opts) {
-        let _ = std::fs::write(
+        let _ = fa::write(
             api_dir.join("_available.api"),
             loft::registry_index::render_catalog(&index),
         );
@@ -1596,7 +1596,7 @@ struct SelfUpdateArgs<'a> {
 #[cfg(feature = "registry")]
 fn self_update_from_local(dir: &str, dry_run: bool, force: bool) -> i32 {
     let staged = std::path::Path::new(dir);
-    if !staged.is_dir() {
+    if !fa::is_dir(staged) {
         eprintln!(
             "loft self-update --from: {dir} is not a directory (unpack the release zip first)"
         );
@@ -1782,7 +1782,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
     } = *args;
     use loft::install::InstallOptions;
     use loft::self_update::{Plan, host_triple, plan};
-    let current = env!("CARGO_PKG_VERSION");
+    let current = loft::manifest::LOFT_RUNNING_VERSION;
     let triple = host_triple();
     // `--from <dir>` — install a bundle the user already has, with no registry at all.
     //
@@ -1870,7 +1870,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
             let staged = match loft::self_update::fetch_bundle(&url, &sha256, &tmp) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = std::fs::remove_dir_all(&tmp);
+                    let _ = fa::remove_dir_all(&tmp);
                     eprintln!("loft self-update: {e}");
                     return 1;
                 }
@@ -1882,7 +1882,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
                 dry_run: false,
                 force,
             });
-            let _ = std::fs::remove_dir_all(&tmp);
+            let _ = fa::remove_dir_all(&tmp);
             code
         }
     }
@@ -1903,7 +1903,7 @@ fn published_manifest_digest() -> Result<Option<String>, String> {
         .ok_or_else(|| "the registry carries no toolchain entry".to_string())?;
     Ok(pkg
         .versions
-        .get(env!("CARGO_PKG_VERSION"))
+        .get(loft::manifest::LOFT_RUNNING_VERSION)
         .and_then(|v| v.binaries.get(&loft::self_update::host_triple()))
         .and_then(|b| b.manifest_sha256.clone()))
 }
@@ -2048,7 +2048,7 @@ fn list_installed() {
     use std::path::PathBuf;
 
     let cache = registry_index::cache_dir();
-    if !cache.exists() {
+    if !fa::exists(&cache) {
         println!("No registry cache at {}.", cache.display());
         return;
     }
@@ -2196,7 +2196,7 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
     };
     let worklist = lockfile::update_worklist(&lock.packages, &declared);
     if worklist.is_empty() {
-        if lock_path.exists() {
+        if fa::exists(&lock_path) {
             eprintln!("loft update: lockfile has no packages, and loft.toml declares none.");
             return 0;
         }
@@ -2422,8 +2422,8 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
     use std::path::Path;
 
     let out = Path::new(outdir);
-    if let Err(e) = std::fs::create_dir_all(out.join("packages")) {
-        eprintln!("loft bundle export: cannot create {}: {e}", out.display());
+    if let Err(e) = fa::create_dir_all(out.join("packages")) {
+        eprintln!("loft bundle export: cannot create {e}");
         return 1;
     }
 
@@ -2456,21 +2456,21 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
 
     // Copy index.json + sig.
     let (idx_path, sig_path, _) = registry_index::index_paths();
-    if idx_path.exists() {
-        if let Err(e) = std::fs::copy(&idx_path, out.join("index.json")) {
+    if fa::exists(&idx_path) {
+        if let Err(e) = fa::copy(&idx_path, out.join("index.json")) {
             eprintln!("loft bundle export: copy index.json: {e}");
             return 1;
         }
     }
-    if sig_path.exists() {
-        let _ = std::fs::copy(&sig_path, out.join("index.json.sig"));
+    if fa::exists(&sig_path) {
+        let _ = fa::copy(&sig_path, out.join("index.json.sig"));
     }
     // Advisories (optional — registry may not host one yet).
     let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
-    if adv_path.exists() {
-        let _ = std::fs::copy(&adv_path, out.join("advisories.json"));
-        if adv_sig_path.exists() {
-            let _ = std::fs::copy(&adv_sig_path, out.join("advisories.json.sig"));
+    if fa::exists(&adv_path) {
+        let _ = fa::copy(&adv_path, out.join("advisories.json"));
+        if fa::exists(&adv_sig_path) {
+            let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
         }
     }
 
@@ -2514,7 +2514,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
         .collect::<Vec<_>>()
         .join(",\n");
     let registry_url = registry_index::registry_url();
-    let loft_version = env!("CARGO_PKG_VERSION");
+    let loft_version = loft::manifest::LOFT_RUNNING_VERSION;
     let manifest = format!(
         "{{\n  \"schema_version\": 1,\n  \"created\": \"{}\",\n  \"registry_url\": \"{}\",\n  \"loft_version\": \"{}\",\n  \"packages\": [\n{}\n  ]\n}}\n",
         chrono_iso8601_utc(),
@@ -2522,7 +2522,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
         loft_version,
         manifest_pkgs
     );
-    if let Err(e) = std::fs::write(out.join("manifest.json"), manifest) {
+    if let Err(e) = fa::write(out.join("manifest.json"), manifest) {
         eprintln!("loft bundle export: write manifest: {e}");
         return 1;
     }
@@ -2554,13 +2554,13 @@ fn bundle_import(indir: &str) -> i32 {
 
     let inp = Path::new(indir);
     let bundle_index = inp.join("index.json");
-    if !bundle_index.exists() {
+    if !fa::exists(&bundle_index) {
         eprintln!("loft bundle import: {} has no index.json", inp.display());
         return 1;
     }
 
     // Read + parse the bundle's index so we know the per-tarball sha256.
-    let idx_bytes = match std::fs::read(&bundle_index) {
+    let idx_bytes = match fa::read(&bundle_index) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("loft bundle import: read index: {e}");
@@ -2584,38 +2584,38 @@ fn bundle_import(indir: &str) -> i32 {
 
     // Copy index + sig + (optional) advisories into the cache.
     let cache = registry_index::cache_dir();
-    if let Err(e) = std::fs::create_dir_all(&cache) {
-        eprintln!("loft bundle import: cannot create {}: {e}", cache.display());
+    if let Err(e) = fa::create_dir_all(&cache) {
+        eprintln!("loft bundle import: cannot create {e}");
         return 1;
     }
-    let _ = std::fs::copy(&bundle_index, cache.join("index.json"));
+    let _ = fa::copy(&bundle_index, cache.join("index.json"));
     let bundle_sig = inp.join("index.json.sig");
-    if bundle_sig.exists() {
-        let _ = std::fs::copy(&bundle_sig, cache.join("index.json.sig"));
+    if fa::exists(&bundle_sig) {
+        let _ = fa::copy(&bundle_sig, cache.join("index.json.sig"));
     }
     let bundle_adv = inp.join("advisories.json");
-    if bundle_adv.exists() {
-        let _ = std::fs::copy(&bundle_adv, cache.join("advisories.json"));
+    if fa::exists(&bundle_adv) {
+        let _ = fa::copy(&bundle_adv, cache.join("advisories.json"));
         let bundle_adv_sig = inp.join("advisories.json.sig");
-        if bundle_adv_sig.exists() {
-            let _ = std::fs::copy(&bundle_adv_sig, cache.join("advisories.json.sig"));
+        if fa::exists(&bundle_adv_sig) {
+            let _ = fa::copy(&bundle_adv_sig, cache.join("advisories.json.sig"));
         }
     }
 
     // Extract each tarball; verify sha256 against the index entry.
     let pkg_dir = inp.join("packages");
-    let read = match std::fs::read_dir(&pkg_dir) {
+    let read = match fa::read_dir(&pkg_dir) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("loft bundle import: read {}: {e}", pkg_dir.display());
+            eprintln!("loft bundle import: read {e}");
             return 1;
         }
     };
     let mut imported: Vec<(String, String)> = Vec::new();
-    for ent in read.filter_map(Result::ok) {
-        let path = ent.path();
-        let fname = match path.file_name().and_then(|s| s.to_str()) {
-            Some(s) => s.to_string(),
+    for ent in read {
+        let path = ent.os_spelling();
+        let fname = match fa::file_name(&path) {
+            Some(s) => s,
             None => continue,
         };
         if !fname.ends_with(".tar.gz") {
@@ -2646,7 +2646,7 @@ fn bundle_import(indir: &str) -> i32 {
             eprintln!("  skip {fname}: version not in bundle's index");
             continue;
         };
-        let bytes = match std::fs::read(&path) {
+        let bytes = match fa::read(&path) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("  read {fname}: {e}");
@@ -2705,21 +2705,19 @@ fn undeclared_source_deps(
     declared: &[(String, String)],
 ) -> Vec<String> {
     let src_dir = pkg_path.join("src");
-    let Ok(entries) = std::fs::read_dir(&src_dir) else {
+    let Ok(entries) = fa::read_dir(&src_dir) else {
         return Vec::new();
     };
     let files: Vec<std::path::PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
-        .collect();
-    let local: std::collections::HashSet<String> = files
         .iter()
-        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .map(fa::PathText::os_spelling)
+        .filter(|p| fa::extension(p).is_some_and(|x| x == "loft"))
         .collect();
+    let local: std::collections::HashSet<String> =
+        files.iter().filter_map(|p| fa::file_stem(p)).collect();
     let mut out: Vec<String> = Vec::new();
     for f in &files {
-        let Ok(text) = std::fs::read_to_string(f) else {
+        let Ok(text) = fa::read_to_string(f) else {
             continue;
         };
         for line in text.lines() {
@@ -2952,7 +2950,7 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
         return 1;
     }
     // A library may not claim a language-namespace name (`std`, `core`): those
-    // resolve to a built-in namespace, not a package (@PLN13 / C101).
+    // resolve to a built-in namespace, not a package (@PLN13 / @C101).
     if loft::libscan::is_reserved_package_name(name) {
         eprintln!(
             "loft new: `{name}` is a reserved namespace name (the standard library is `std::`); choose another library name"
@@ -2961,7 +2959,7 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
     }
 
     let pkg_dir = std::path::PathBuf::from(name);
-    if pkg_dir.exists() {
+    if fa::exists(&pkg_dir) {
         eprintln!("loft new: `{name}/` already exists; refusing to overwrite");
         return 1;
     }
@@ -2970,24 +2968,27 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
     let write_file = |rel: &str, content: &str| -> std::io::Result<()> {
         let path = pkg_dir.join(rel);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            fa::create_dir_all(parent)?;
         }
-        let mut f = std::fs::File::create(&path)?;
+        let mut f = fa::create(&path)?;
         f.write_all(content.as_bytes())?;
         Ok(())
     };
 
-    // loft.toml — includes [native] declaration when --native.
+    // loft.toml — includes [native] declaration when --native.  The loft floor is the loft
+    // this library is written against: a floor older than that is a claim nothing checked, and
+    // the resolver hands the library to a loft it does not build on.
+    let floor = env!("CARGO_PKG_VERSION");
     let loft_toml = if native {
         format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">={floor}\"\n\
              description = \"One-line description of {name}.\"\n\n\
              [library]\nentry = \"src/{name}.loft\"\nnative = \"loft_{name}\"\n\n\
              [native]\ncrate = \"loft-{name}\"\n\n[dependencies]\n"
         )
     } else {
         format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">={floor}\"\n\
              description = \"One-line description of {name}.\"\n\n\
              [library]\nentry = \"src/{name}.loft\"\n\n[dependencies]\n"
         )
@@ -3128,14 +3129,8 @@ echo "  external lib         -> loft publish + open a registry PR."
         write_file("tests/01-smoke.loft", &test_loft)?;
         write_file("README.md", &readme)?;
         write_file("release.sh", release_sh)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let p = pkg_dir.join("release.sh");
-            let mut perm = std::fs::metadata(&p)?.permissions();
-            perm.set_mode(0o755);
-            std::fs::set_permissions(&p, perm)?;
-        }
+        // Executable where the host keeps an execute bit; a no-op on Windows.
+        platform::set_permission_bits(&pkg_dir.join("release.sh"), 0o755)?;
         if native {
             let cargo_toml = format!(
                 "[package]\nname = \"loft-{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nlicense = \"LGPL-3.0-or-later\"\n\n\
@@ -3184,7 +3179,7 @@ echo "  external lib         -> loft publish + open a registry PR."
     })() {
         eprintln!("loft new: failed to write scaffolding: {e}");
         // Best-effort cleanup
-        let _ = std::fs::remove_dir_all(&pkg_dir);
+        let _ = fa::remove_dir_all(&pkg_dir);
         return 1;
     }
 
@@ -3204,6 +3199,10 @@ echo "  external lib         -> loft publish + open a registry PR."
     }
     println!();
     println!("Next steps:");
+    if native && !loft::native_lib::rustc_available() {
+        // @C102 — `native/` is a Rust crate: say so where the developer is setting it up.
+        println!("  # native/ is Rust: {}", loft::native_lib::NO_RUSTC);
+    }
     println!("  cd {name}");
     println!("  loft test           # exercises the smoke test");
     println!("  $EDITOR src/{name}.loft   # add your library's API");
@@ -3245,7 +3244,7 @@ fn warn_trigger_collisions(pkg_name: &str, triggers: &[String]) {
         return;
     }
     let (idx_path, _, _) = loft::registry_index::index_paths();
-    let Ok(content) = std::fs::read_to_string(&idx_path) else {
+    let Ok(content) = fa::read_to_string(&idx_path) else {
         return;
     };
     let Ok(index) = loft::registry_index::parse_index(&content) else {
@@ -3413,7 +3412,7 @@ fn publish_package(pkg_path: &std::path::Path, dry_run: bool) -> i32 {
             .entry
             .clone()
             .unwrap_or_else(|| format!("src/{}.loft", pkg.name));
-        let src = std::fs::read_to_string(pkg_path.join(&entry)).unwrap_or_default();
+        let src = fa::read_to_string(pkg_path.join(&entry)).unwrap_or_default();
         let triggers: Vec<String> = loft::triggers::derive_triggers(&src)
             .methods
             .iter()
@@ -3457,7 +3456,7 @@ fn publish_package(pkg_path: &std::path::Path, dry_run: bool) -> i32 {
 /// call fails.
 #[cfg(feature = "registry")]
 fn github_release_has_asset(org: &str, repo: &str, tag: &str, asset: &str) -> bool {
-    let out = std::process::Command::new("gh")
+    let out = Spawn::new(Program::search("gh"))
         .args([
             "release",
             "view",
@@ -3467,7 +3466,7 @@ fn github_release_has_asset(org: &str, repo: &str, tag: &str, asset: &str) -> bo
             "--json",
             "assets",
         ])
-        .output();
+        .run(b"");
     let Ok(out) = out else {
         return false;
     };
@@ -3528,7 +3527,7 @@ fn audit_installed() -> i32 {
 
     // Enumerate cached installs (same logic as list-installed).
     let cache = loft::registry_index::cache_dir();
-    let read = match std::fs::read_dir(&cache) {
+    let read = match fa::read_dir(&cache) {
         Ok(r) => r,
         Err(_) => {
             println!("No registry cache; nothing to audit.");
@@ -3536,13 +3535,13 @@ fn audit_installed() -> i32 {
         }
     };
     let mut entries: Vec<(String, String)> = Vec::new();
-    for ent in read.filter_map(Result::ok) {
-        let path = ent.path();
-        if !path.is_dir() {
+    for ent in read {
+        let path = ent.os_spelling();
+        if !fa::is_dir(&path) {
             continue;
         }
-        let dirname = match path.file_name().and_then(|s| s.to_str()) {
-            Some(n) => n.to_string(),
+        let dirname = match fa::file_name(&path) {
+            Some(n) => n,
             None => continue,
         };
         let mut split: Option<usize> = None;
@@ -3639,10 +3638,10 @@ fn dir_size_bytes(dir: &std::path::Path) -> Option<u64> {
     let mut total: u64 = 0;
     let mut stack: Vec<std::path::PathBuf> = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let read = std::fs::read_dir(&d).ok()?;
-        for ent in read.filter_map(Result::ok) {
-            let p = ent.path();
-            let m = match ent.metadata() {
+        let read = fa::read_dir(&d).ok()?;
+        for ent in read {
+            let p = ent.os_spelling();
+            let m = match fa::symlink_metadata(&ent) {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -3677,11 +3676,11 @@ fn pin_script(script: &str) {
     use std::path::PathBuf;
 
     let script_path = PathBuf::from(script);
-    if !script_path.exists() {
+    if !fa::exists(&script_path) {
         eprintln!("loft pin: script `{}` not found", script_path.display());
         std::process::exit(1);
     }
-    let source = match std::fs::read_to_string(&script_path) {
+    let source = match fa::read_to_string(&script_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("loft pin: cannot read `{}`: {e}", script_path.display());
@@ -3731,10 +3730,7 @@ fn pin_script(script: &str) {
     let mut sidecar = script_path.clone();
     let sidecar_name = format!(
         "{}.lock",
-        script_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("script.loft")
+        fa::file_name(&script_path).unwrap_or_else(|| "script.loft".to_string())
     );
     sidecar.set_file_name(sidecar_name);
 
@@ -3870,8 +3866,8 @@ fn install_from_registry_legacy(arg: &str) {
     // Check if already installed.
     let lib = registry::lib_dir();
     let installed_toml = lib.join(name).join("loft.toml");
-    if installed_toml.exists()
-        && let Ok(content) = std::fs::read_to_string(&installed_toml)
+    if fa::exists(&installed_toml)
+        && let Ok(content) = fa::read_to_string(&installed_toml)
     {
         let installed_ver = extract_toml_version(&content);
         if installed_ver == entry.version {
@@ -3885,16 +3881,16 @@ fn install_from_registry_legacy(arg: &str) {
 
     // Download and extract.
     let tmp = std::env::temp_dir().join("loft_install");
-    let _ = std::fs::create_dir_all(&tmp);
+    let _ = fa::create_dir_all(&tmp);
     match registry::download_and_extract(entry, &tmp) {
         Ok(pkg_root) => {
             install_package(&pkg_root);
             // Clean up temp.
-            let _ = std::fs::remove_dir_all(&tmp);
+            let _ = fa::remove_dir_all(&tmp);
         }
         Err(e) => {
             eprintln!("loft install: {e}");
-            let _ = std::fs::remove_dir_all(&tmp);
+            let _ = fa::remove_dir_all(&tmp);
             std::process::exit(1);
         }
     }
@@ -3935,7 +3931,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
     use loft::data::{DefType, Type};
 
     let toml_path = pkg_path.join("loft.toml");
-    if !toml_path.exists() {
+    if !fa::exists(&toml_path) {
         eprintln!("Error: no loft.toml in {}", pkg_path.display());
         std::process::exit(1);
     }
@@ -3954,13 +3950,13 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
             let name = manifest.name.as_deref().unwrap_or("lib");
             pkg_path.join(format!("src/{name}.loft"))
         });
-    if !entry.exists() {
+    if !fa::exists(&entry) {
         eprintln!("Error: entry file {} not found", entry.display());
         std::process::exit(1);
     }
 
     // Parse just enough to read definitions.
-    let abs = portable_path::plain_canonical(&entry);
+    let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
 
     let mut p = parser::Parser::new();
@@ -4237,10 +4233,10 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
     }
 
     let out_dir = pkg_path.join("native/src");
-    if out_dir.exists() {
+    if fa::exists(&out_dir) {
         let out_file = out_dir.join("generated.rs");
-        std::fs::write(&out_file, &output).unwrap_or_else(|e| {
-            eprintln!("Error writing {}: {e}", out_file.display());
+        fa::write(&out_file, &output).unwrap_or_else(|e| {
+            eprintln!("Error writing {e}");
             std::process::exit(1);
         });
         println!("Wrote {} stubs to {}", stubs.len(), out_file.display());
@@ -4285,7 +4281,7 @@ fn native_source_key_fingerprint(
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
     if let Some(lib_dir) = loft_lib_dir()
-        && let Ok(meta) = std::fs::metadata(lib_dir.join("libloft.rlib"))
+        && let Ok(meta) = fa::metadata(lib_dir.join("libloft.rlib"))
     {
         meta.modified().ok().hash(&mut h);
     }
@@ -4412,24 +4408,35 @@ fn exec_native_binary(
     // re-parses the same sources, so hand it the resolved paths the driver
     // already knows.  Inert unless the binary runs under LOFT_LIVE_FLIP=1;
     // explicit user-set values win.
-    let mut cmd = std::process::Command::new(binary);
-    cmd.args(user_args);
-    // The compiled program dies with this driver.  A `loft prog.loft` run IS its
-    // program: when the driver is killed outright — a test harness reaping its
-    // `loft` child, a terminal closing, an OOM kill — the program must not
-    // outlive it holding a port or a terminal, which is exactly what left a
-    // listening engine host behind per test run (they were reparented to the
-    // session's `systemd --user` and so read as live to a `ppid == 1` orphan
-    // test).  The same backstop a placed library's worker arms for itself
-    // (`lib_placement::wire::serve`); SIGTERM rather than SIGKILL so a program
-    // with a handler (the profiler's report) gets to run it.
-    loft::platform::dies_with_driver(&mut cmd, true);
+    // The compiled program dies with this driver (`Tree::Foreground`).  A `loft
+    // prog.loft` run IS its program: when the driver is killed outright — a test harness
+    // reaping its `loft` child, a terminal closing, an OOM kill — the program must not
+    // outlive it holding a port or a terminal, which is exactly what left a listening
+    // engine host behind per test run (they were reparented to the session's `systemd
+    // --user` and so read as live to a `ppid == 1` orphan test).  The same backstop a placed
+    // library's worker arms for itself (`lib_placement::wire::serve`); SIGTERM rather than
+    // SIGKILL so a program with a handler (the profiler's report) gets to run it.  It is
+    // handed the terminal, so it stays in loft's process group: foreground, not owned.
+    let mut cmd = Spawn::new(Program::os(binary)).tree(Tree::Foreground);
+    cmd.push_args(user_args);
+    // A test/semantics build bakes no path (`codegen_runtime::main_file_or`): the program's own
+    // path arrives here, the one its stack traces and log-config lookup name.  It is the main
+    // definition's position when there was a parse, the canonical entry path otherwise — the
+    // same string, since the parser records the entry under `abs_file`.
+    let main_file = data
+        .map(|d| d.def_nr("n_main"))
+        .filter(|&n| n != u32::MAX)
+        .map_or_else(
+            || abs_file.to_string(),
+            |n| data.expect("checked").def(n).position().file.to_string(),
+        );
+    cmd.push_env("LOFT_NATIVE_MAIN_FILE", &main_file);
     // @PLN26 follow-up — run the native binary with cwd = source_dir so its
     // raw `std::fs` anchors where its loft `file()` does (the binary bakes
     // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
     // the interpreter chdir above; gated on the same `program_relative`.
     if program_relative && let Some(dir) = std::path::Path::new(&abs_file).parent() {
-        cmd.current_dir(dir);
+        cmd = cmd.cwd(&fa::PathText::from_os(dir));
     }
     // The artifact anchors relative paths at its OWN dir (the
     // standalone-bundle rule) — in driver mode that is the cache/tmp
@@ -4438,36 +4445,38 @@ fn exec_native_binary(
     if std::env::var("LOFT_SOURCE_DIR").is_err()
         && let Some(dir) = std::path::Path::new(&abs_file).parent()
     {
-        cmd.env("LOFT_SOURCE_DIR", dir);
+        cmd.push_env("LOFT_SOURCE_DIR", dir);
     }
     if std::env::var("LOFT_LIVE_SRC").is_err() {
-        cmd.env("LOFT_LIVE_SRC", abs_file);
+        cmd.push_env("LOFT_LIVE_SRC", abs_file);
     }
     if std::env::var("LOFT_LIVE_STDLIB").is_err() {
-        cmd.env("LOFT_LIVE_STDLIB", default_str);
+        cmd.push_env("LOFT_LIVE_STDLIB", default_str);
     }
     if std::env::var("LOFT_LIVE_LIBS").is_err() && !lib_dirs.is_empty() {
-        cmd.env("LOFT_LIVE_LIBS", lib_dirs.join(":"));
+        cmd.push_env("LOFT_LIVE_LIBS", lib_dirs.join(":"));
     }
     // @PLN18 08-S4 — the background rebuild re-invokes THIS driver.
     if std::env::var("LOFT_LIVE_DRIVER").is_err()
         && let Ok(me) = std::env::current_exe()
     {
-        cmd.env("LOFT_LIVE_DRIVER", me);
+        cmd.push_env("LOFT_LIVE_DRIVER", me);
     }
     // A crate with no `main` was compile-CHECKED rather than linked, so no binary
     // exists to run.  Say what happened; reporting a missing file here would describe
     // the symptom of a decision made two steps earlier (loft#1171).
-    if !binary.exists() && !cached_binary.exists() {
+    if !fa::exists(binary) && !fa::exists(cached_binary) {
         eprintln!(
             "loft: `{abs_file}` defines no `main`, so there is nothing to run — it compiled cleanly."
         );
         std::process::exit(0);
     }
+    let t_run = std::time::Instant::now();
     let run_status = cmd.status().unwrap_or_else(|e| {
         eprintln!("loft: failed to run native binary: {e}");
         std::process::exit(1);
     });
+    loft::platform::phase("run", t_run.elapsed().as_secs_f64());
     // Clean up temp binary (not the cached copy).
     //
     // ⚠ And its DEBUG-SYMBOL companion.  The MSVC linker writes `<binary>.pdb` beside the
@@ -4482,8 +4491,8 @@ fn exec_native_binary(
     // Written as "remove the companion whatever it is called" rather than `#[cfg(windows)]`
     // so a toolchain that emits one on another host is covered by the same line.
     if binary != cached_binary {
-        let _ = std::fs::remove_file(binary);
-        let _ = std::fs::remove_file(binary.with_extension("pdb"));
+        let _ = fa::remove_file(binary);
+        let _ = fa::remove_file(fa::with_extension(binary, "pdb"));
     }
     if !run_status.success() {
         if let Some(data) = data {
@@ -4630,9 +4639,9 @@ fn cache_warm(argv: &[String], from: usize) {
     //    A missing target is a skip, not a failure: a box without that target has no wasm test
     //    to warm for. `HtmlThreads` is deliberately absent — it needs a nightly `-Z build-std`,
     //    which is far too big a thing to start implicitly before a test run.
-    let installed = std::process::Command::new("rustup")
+    let installed = Spawn::new(Program::search("rustup"))
         .args(["target", "list", "--installed"])
-        .output()
+        .run(b"")
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
@@ -4664,11 +4673,11 @@ fn cache_warm(argv: &[String], from: usize) {
     let home = loft_home();
     let build_cache = home.join("build-cache");
     let registry = home.join("registry");
-    let mut entries: Vec<String> = std::fs::read_dir(&build_cache)
+    let mut entries: Vec<String> = fa::read_dir(&build_cache)
         .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
+            rd.iter()
+                .filter(|e| fa::is_dir(*e))
+                .filter_map(|e| e.file_name().map(str::to_string))
                 .collect()
         })
         .unwrap_or_default();
@@ -4725,7 +4734,7 @@ fn cache_warm(argv: &[String], from: usize) {
         // when everything is warm).  Duplicating its test bought nothing and could only be
         // wrong.
         let pkg_dir = registry.join(&name);
-        if !pkg_dir.is_dir() {
+        if !fa::is_dir(&pkg_dir) {
             continue; // a build tree whose package is gone; `loft cache prune` owns that
         }
         let stem = format!("loft_{pkg}");
@@ -4746,17 +4755,15 @@ fn cache_warm(argv: &[String], from: usize) {
 /// need. Over-collecting is harmless here (an unused name simply matches no stale build tree);
 /// under-collecting would leave the cost where it was.
 fn collect_used_packages(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    let Ok(rd) = fa::read_dir(dir) else {
         return;
     };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
+    for e in rd {
+        let p = e.os_spelling();
+        if fa::is_dir(&p) {
             collect_used_packages(&p, out);
-        } else if p
-            .extension()
-            .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
-            && let Ok(src) = std::fs::read_to_string(&p)
+        } else if fa::extension(&p).is_some_and(|x| x.eq_ignore_ascii_case("loft"))
+            && let Ok(src) = fa::read_to_string(&p)
         {
             for line in src.lines() {
                 let t = line.trim();
@@ -4966,9 +4973,9 @@ fn registry_sync_flat_file(existing_source: Option<&str>) {
     // Download to a temp file first, then validate and move.
     let dst = registry::default_registry_path();
     if let Some(parent) = dst.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = fa::create_dir_all(parent);
     }
-    let tmp = dst.with_extension("tmp");
+    let tmp = fa::with_extension(&dst, "tmp");
 
     #[cfg(feature = "registry")]
     {
@@ -4990,11 +4997,11 @@ fn registry_sync_flat_file(existing_source: Option<&str>) {
     // `dead_code` quiet without a blanket `#[allow]`.)
     #[cfg(feature = "registry")]
     {
-        let content = match std::fs::read_to_string(&tmp) {
+        let content = match fa::read_to_string(&tmp) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("loft registry sync: cannot read downloaded file: {e}");
-                let _ = std::fs::remove_file(&tmp);
+                let _ = fa::remove_file(&tmp);
                 std::process::exit(1);
             }
         };
@@ -5002,14 +5009,14 @@ fn registry_sync_flat_file(existing_source: Option<&str>) {
             eprintln!(
                 "loft registry sync: invalid registry content: {e}\n  local registry is unchanged."
             );
-            let _ = std::fs::remove_file(&tmp);
+            let _ = fa::remove_file(&tmp);
             std::process::exit(1);
         }
 
         // Move into place.
-        if let Err(e) = std::fs::rename(&tmp, &dst) {
-            eprintln!("loft registry sync: cannot write {}: {e}", dst.display());
-            let _ = std::fs::remove_file(&tmp);
+        if let Err(e) = fa::rename(&tmp, &dst) {
+            eprintln!("loft registry sync: cannot write {e}");
+            let _ = fa::remove_file(&tmp);
             std::process::exit(1);
         }
 
@@ -5174,8 +5181,8 @@ fn registry_list(installed_only: bool) {
 fn chrono_date() -> String {
     // Use file modification time of a temp file as a proxy for "now".
     let tmp = std::env::temp_dir().join(".loft_date_probe");
-    let _ = std::fs::write(&tmp, "");
-    let date = std::fs::metadata(&tmp)
+    let _ = fa::write(&tmp, "");
+    let date = fa::metadata(&tmp)
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| {
@@ -5187,7 +5194,7 @@ fn chrono_date() -> String {
             Some(format!("{year}-{month:02}-{day:02}"))
         })
         .unwrap_or_else(|| "unknown date".to_string());
-    let _ = std::fs::remove_file(&tmp);
+    let _ = fa::remove_file(&tmp);
     date
 }
 
@@ -5210,7 +5217,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 
 /// Human-readable age of the registry file.
 fn registry_age_str(path: &std::path::Path) -> String {
-    let age = std::fs::metadata(path)
+    let age = fa::metadata(path)
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
@@ -5242,7 +5249,7 @@ fn start_repl() -> ! {
     }
     let base = project_dir();
     let default_dir = std::path::Path::new(&base).join("default");
-    let stdlib = if default_dir.exists() {
+    let stdlib = if fa::exists(&default_dir) {
         default_dir.to_string_lossy().into_owned()
     } else {
         "default".to_string()
@@ -5278,7 +5285,7 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
     while i + 1 < args.len() {
         if args[i] == "--lib" {
             let raw = &args[i + 1];
-            let abs = portable_path::plain_canonical_str(raw);
+            let abs = file_access::plain_canonical_str(raw);
             if !dirs.contains(&abs) {
                 dirs.push(abs);
             }
@@ -5341,7 +5348,7 @@ fn run_file_debugger() -> ! {
     let args: Vec<String> = std::env::args().collect();
     let base = project_dir();
     let default_dir = std::path::Path::new(&base).join("default");
-    let stdlib = if default_dir.exists() {
+    let stdlib = if fa::exists(&default_dir) {
         default_dir.to_string_lossy().into_owned()
     } else {
         "default".to_string()
@@ -5455,10 +5462,10 @@ fn api_surface_of(
     String,
 > {
     let entry = std::path::PathBuf::from(file);
-    if !entry.exists() {
+    if !fa::exists(&entry) {
         return Err(format!("file {file} not found"));
     }
-    let abs = portable_path::plain_canonical(&entry);
+    let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
@@ -5481,7 +5488,7 @@ fn api_surface_of(
     Ok((surface, identity))
 }
 
-/// @PLN102 C96 — `loft ship [args…]`: the maintainer ship verb.  Locates
+/// @PLN102 @C96 — `loft ship [args…]`: the maintainer ship verb.  Locates
 /// `scripts/registry_maintain.sh` (env override, exe-relative, or CWD) and runs it.
 /// On a KEY-PRESENT machine (`~/.loft/trust-root/registry-signing-key.bin` exists) it
 /// defaults the local file signer + non-interactive `--yes` — autonomous package →
@@ -5495,7 +5502,7 @@ fn run_ship_command(args: &[String]) -> i32 {
     let script = std::env::var("LOFT_SHIP_SCRIPT")
         .ok()
         .map(PathBuf::from)
-        .filter(|p| p.is_file())
+        .filter(|p| fa::is_file(p))
         .or_else(|| {
             let mut cands: Vec<PathBuf> = Vec::new();
             if let Ok(exe) = std::env::current_exe() {
@@ -5510,7 +5517,7 @@ fn run_ship_command(args: &[String]) -> i32 {
             if let Ok(cwd) = std::env::current_dir() {
                 cands.push(cwd.join("scripts/registry_maintain.sh"));
             }
-            cands.into_iter().find(|p| p.is_file())
+            cands.into_iter().find(|p| fa::is_file(p))
         });
     let Some(script) = script else {
         eprintln!(
@@ -5521,17 +5528,18 @@ fn run_ship_command(args: &[String]) -> i32 {
 
     let key_present = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join(".loft/trust-root/registry-signing-key.bin"))
-        .is_some_and(|p| p.is_file());
+        .is_some_and(|p| fa::is_file(&p));
 
-    let mut cmd = std::process::Command::new("bash");
-    cmd.arg(&script);
+    // The script may prompt (a push asking for credentials): it is handed the terminal.
+    let mut cmd = Spawn::new(Program::bash()).tree(Tree::Foreground);
+    cmd.push_arg(&script);
     let passthrough_yes = args.iter().any(|a| a == "--yes" || a == "--dry-run");
     if key_present {
         if std::env::var_os("LOFT_REGISTRY_SIGNER").is_none() {
-            cmd.env("LOFT_REGISTRY_SIGNER", "file"); // C96: local file key is the default signer
+            cmd.push_env("LOFT_REGISTRY_SIGNER", "file"); // C96: local file key is the default signer
         }
         if !passthrough_yes {
-            cmd.arg("--yes"); // autonomous — no prompt on a key-present machine
+            cmd.push_arg("--yes"); // autonomous — no prompt on a key-present machine
         }
     } else {
         eprintln!(
@@ -5541,11 +5549,11 @@ fn run_ship_command(args: &[String]) -> i32 {
             "           Prepare a submission for a key holder to fold in (see REGISTRY_SUBMIT.md); running in review mode below."
         );
         if !passthrough_yes {
-            cmd.arg("--dry-run"); // key-absent → don't attempt to sign/push, just report
+            cmd.push_arg("--dry-run"); // key-absent → don't attempt to sign/push, just report
         }
     }
     for a in args {
-        cmd.arg(a);
+        cmd.push_arg(a);
     }
     match cmd.status() {
         Ok(s) => s.code().unwrap_or(1),
@@ -5669,7 +5677,7 @@ fn run_compat_command(args: &[String]) -> i32 {
     // The published source must be on disk to diff against. Reuse the install cache rather
     // than fetching a second way, so this sees exactly what a consumer would get.
     let dir = loft::registry_index::extract_dir(&name, &target);
-    if !dir.join("loft.toml").exists() {
+    if !fa::exists(dir.join("loft.toml")) {
         eprintln!(
             "loft compat: `{name}` {target} is not available locally — install it first \
              (`loft install {name}@{target}`).\n\
@@ -5810,7 +5818,7 @@ fn compat_floor(name: &str, own_version: Option<&str>, with_tests: bool) -> i32 
 
     for v in versions.iter().rev() {
         let dir = loft::registry_index::extract_dir(name, v);
-        if !dir.join("loft.toml").exists() {
+        if !fa::exists(dir.join("loft.toml")) {
             // A gap is not a pass.  Treat it as the end of the reachable window rather than
             // stepping over it, or the floor would claim a version nobody looked at.
             stopped_at = Some((v.clone(), "not installed — cannot be verified".to_string()));
@@ -5837,7 +5845,7 @@ fn compat_floor(name: &str, own_version: Option<&str>, with_tests: bool) -> i32 
             stopped_at = Some((v.clone(), "DATA break — stored layout reshaped".to_string()));
             break;
         }
-        if with_tests && dir.join("tests").is_dir() {
+        if with_tests && fa::is_dir(dir.join("tests")) {
             // ONLY a Break lowers the floor.  A Break is evidence about the LIBRARY: the
             // release's tests pass against its own source and fail against this tree, so
             // released behaviour changed.  Unverifiable and CouldNotRun are evidence about
@@ -5962,7 +5970,7 @@ fn compat_check_full(name: &str, versions: &[String], floor: Option<&str>) -> i3
             return 1;
         }
         let dir = loft::registry_index::extract_dir(name, v);
-        if !dir.join("loft.toml").exists() {
+        if !fa::exists(dir.join("loft.toml")) {
             unreadable.push(v.clone());
             continue;
         }
@@ -6129,7 +6137,7 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
     let mut violated: Vec<String> = Vec::new();
     for v in &sample {
         let dir = loft::registry_index::extract_dir(name, v);
-        if !dir.join("loft.toml").exists() {
+        if !fa::exists(dir.join("loft.toml")) {
             println!("  {v}: SKIPPED (not installed)");
             continue;
         }
@@ -6255,12 +6263,12 @@ fn compat_test(name: &str, version: &str, published: &std::path::Path) -> i32 {
 
 #[cfg(feature = "registry")]
 fn compat_test_verdict(name: &str, version: &str, published: &std::path::Path) -> TestVerdict {
-    if !published.join("tests").is_dir() {
+    if !fa::is_dir(published.join("tests")) {
         eprintln!("loft compat: `{name}` {version} ships no tests/ — nothing to check against");
         return TestVerdict::CouldNotRun;
     }
     let base = std::env::temp_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 
     // CONTROL: the published tests against the published source. Establishes that this corpus
     // can pass at all on today's loft, so a subject failure means something.
@@ -6283,7 +6291,7 @@ fn compat_test_verdict(name: &str, version: &str, published: &std::path::Path) -
         return TestVerdict::CouldNotRun;
     }
     let subject_ok = run_package_tests(&subj);
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 
     println!("compat: `{name}` — {version} tests against the working tree");
     match (control_ok, subject_ok) {
@@ -6322,10 +6330,10 @@ fn stage_package(
     tests_from: &std::path::Path,
     dst: &std::path::Path,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(dst).map_err(|e| format!("cannot create {}: {e}", dst.display()))?;
+    fa::create_dir_all(dst).map_err(|e| format!("cannot create {e}"))?;
     for item in ["loft.toml", "src", "native"] {
         let from = src_from.join(item);
-        if from.exists() {
+        if fa::exists(&from) {
             copy_tree(&from, &dst.join(item))?;
         }
     }
@@ -6336,22 +6344,24 @@ fn stage_package(
 /// into the staged package and have it test something other than the source beside it.
 #[cfg(feature = "registry")]
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
-    let meta = std::fs::metadata(from).map_err(|e| format!("{}: {e}", from.display()))?;
+    let meta = fa::metadata(from).map_err(|e| e.to_string())?;
     if meta.is_file() {
         if let Some(parent) = to.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+            fa::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        std::fs::copy(from, to).map_err(|e| format!("{}: {e}", from.display()))?;
+        fa::copy(from, to).map_err(|e| e.to_string())?;
         return Ok(());
     }
-    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
-    for entry in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {
-        let entry = entry.map_err(|e| format!("read_dir: {e}"))?;
-        let nm = entry.file_name();
-        if matches!(nm.to_str(), Some(".loft" | "native-auto" | "target")) {
+    fa::create_dir_all(to).map_err(|e| e.to_string())?;
+    for entry in fa::read_dir(from).map_err(|e| e.to_string())? {
+        let nm = entry.file_name().unwrap_or_default();
+        if matches!(nm, ".loft" | "native-auto" | "target") {
             continue;
         }
-        copy_tree(&entry.path(), &to.join(&nm))?;
+        copy_tree(
+            &entry.os_spelling(),
+            &to.join(entry.os_name().unwrap_or_default()),
+        )?;
     }
     Ok(())
 }
@@ -6361,16 +6371,16 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<(), String>
 #[cfg(feature = "registry")]
 fn run_package_tests(dir: &std::path::Path) -> bool {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("loft"));
-    std::process::Command::new(exe)
+    Spawn::new(Program::os(exe))
         .arg("--interpret")
         .arg("--tests")
         .arg("tests")
-        .current_dir(dir)
+        .cwd(&fa::PathText::from_os(dir))
         .env(
             "LOFT_TIMEOUT",
             std::env::var("LOFT_TIMEOUT").unwrap_or_else(|_| "120".into()),
         )
-        .output()
+        .run(b"")
         .is_ok_and(|o| o.status.success())
 }
 
@@ -6415,7 +6425,7 @@ fn run_api_surface_command(args: &[String]) -> i32 {
             );
             return 2;
         };
-        let Ok(text) = std::fs::read_to_string(baseline_path.as_str()) else {
+        let Ok(text) = fa::read_to_string(baseline_path.as_str()) else {
             eprintln!("loft api-surface: cannot read baseline {baseline_path}");
             return 2;
         };
@@ -6593,11 +6603,11 @@ fn parse_baseline(
 fn run_layout_command(sub: &str, file: &str) -> i32 {
     use loft::schema_sidecar as ss;
     let entry = std::path::PathBuf::from(file);
-    if !entry.exists() {
+    if !fa::exists(&entry) {
         eprintln!("loft layout: file {file} not found");
         return 1;
     }
-    let abs = portable_path::plain_canonical(&entry);
+    let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
@@ -6642,9 +6652,9 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 if diff.is_actionable() {
                     let path = project.join(".loft").join("migration_outline.loft");
                     if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        let _ = fa::create_dir_all(parent);
                     }
-                    match std::fs::write(&path, ss::migration_outline(&diff)) {
+                    match fa::write(&path, ss::migration_outline(&diff)) {
                         Ok(()) => println!("  migration outline written to {}", path.display()),
                         Err(e) => eprintln!("  could not write migration outline: {e}"),
                     }
@@ -6709,7 +6719,7 @@ fn run_fix_command(args: &[String]) -> i32 {
 
     let mut exit = 0;
     for file in &files {
-        let src = match std::fs::read_to_string(file) {
+        let src = match fa::read_to_string(file) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("loft fix: cannot read {file}: {e}");
@@ -6734,8 +6744,8 @@ fn run_fix_command(args: &[String]) -> i32 {
             println!("  {}:{}  {}  [{mark}]", file, r.line, r.title);
         }
         if apply && rewritten != src {
-            if let Err(e) = std::fs::write(file, &rewritten) {
-                eprintln!("loft fix: cannot write {file}: {e}");
+            if let Err(e) = fa::write(file, &rewritten) {
+                eprintln!("loft fix: cannot write {e}");
                 exit = 1;
                 continue;
             }
@@ -6806,7 +6816,7 @@ fn run_fmt_command(args: &[String]) -> i32 {
             }
             s
         } else {
-            match std::fs::read_to_string(file) {
+            match fa::read_to_string(file) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("loft fmt: cannot read {file}: {e}");
@@ -6836,8 +6846,8 @@ fn run_fmt_command(args: &[String]) -> i32 {
             }
         } else if write && file != "-" {
             if formatted != src {
-                if let Err(e) = std::fs::write(file, &formatted) {
-                    eprintln!("loft fmt: cannot write {file}: {e}");
+                if let Err(e) = fa::write(file, &formatted) {
+                    eprintln!("loft fmt: cannot write {e}");
                     exit = 1;
                     continue;
                 }
@@ -6893,7 +6903,7 @@ fn lsp_default_dir() -> String {
     let dir = stdlib_default_dir();
     // Canonicalize so recorded def paths are clean (no `..`, no `//`) — those
     // paths are shown to the user and pasted into `file:line` references.
-    portable_path::plain_canonical(&dir)
+    file_access::plain_canonical(&dir)
         .to_string_lossy()
         .to_string()
 }
@@ -6938,7 +6948,7 @@ fn run_symbols_command(args: &[String]) -> i32 {
         eprintln!("loft symbols: usage: loft symbols <file.loft> [--json]");
         return 2;
     };
-    let text = match std::fs::read_to_string(file) {
+    let text = match fa::read_to_string(file) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("loft symbols: cannot read {file}: {e}");
@@ -6981,7 +6991,7 @@ fn run_def_command(args: &[String]) -> i32 {
         return 2;
     };
     let (text, name) = match positional.get(1) {
-        Some(file) => match std::fs::read_to_string(file.as_str()) {
+        Some(file) => match fa::read_to_string(file.as_str()) {
             Ok(t) => (t, (*file).clone()),
             Err(e) => {
                 eprintln!("loft def: cannot read {file}: {e}");
@@ -7022,7 +7032,7 @@ fn run_hover_command(args: &[String]) -> i32 {
         eprintln!("loft hover: line and col must be positive integers");
         return 2;
     };
-    let text = match std::fs::read_to_string(file.as_str()) {
+    let text = match fa::read_to_string(file.as_str()) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("loft hover: cannot read {file}: {e}");
@@ -7047,7 +7057,7 @@ fn find_index_dir() -> Option<String> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         let cand = dir.join("index");
-        if cand.join("tags.json").is_file() {
+        if fa::is_file(cand.join("tags.json")) {
             return Some(cand.to_string_lossy().into_owned());
         }
         if !dir.pop() {
@@ -7152,7 +7162,8 @@ fn main() {
     // between calls by design, and the caller's `LOFT_TIMEOUT` is a bound on the
     // caller's work, not on how long a library is allowed to sit waiting to be
     // asked. Arming it here would kill a healthy worker mid-run.
-    #[cfg(target_os = "linux")]
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    #[cfg(unix)]
     if std::env::args().nth(1).is_some_and(|a| a == "--lib-worker") {
         let a: Vec<String> = std::env::args().skip(1).collect();
         let stdlib = a
@@ -7181,7 +7192,8 @@ fn main() {
     // where the library should run. It takes over the process and never returns,
     // and it is armed before the watchdog for the same reason a worker is —
     // sitting idle waiting to be asked is what it is FOR.
-    #[cfg(target_os = "linux")]
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    #[cfg(unix)]
     if std::env::args().nth(1).is_some_and(|a| a == "--lib-server") {
         let a: Vec<String> = std::env::args().skip(1).collect();
         let stdlib = a
@@ -7234,6 +7246,9 @@ fn main() {
         loft::timeout::env_timeout_secs(),
         loft::timeout::env_grace_secs(),
     );
+    // A memory bound beside the time bound, but only when asked for: an explicit
+    // `LOFT_MEMORY_LIMIT` caps an ordinary run too (`store_budget::apply_env_limit_if_set`).
+    loft::store_budget::apply_env_limit_if_set();
     // Plan-07 phase 1 step 1.20 / phase 3 — chain a Rust panic hook
     // that surfaces the loft source position of the offending pc
     // before the default panic message.  Reads the per-thread snapshot
@@ -7391,7 +7406,13 @@ fn main() {
             continue;
         }
         if a == "--version" {
-            println!("loft {}", env!("CARGO_PKG_VERSION"));
+            println!("loft {}", loft::manifest::LOFT_RUNNING_VERSION);
+            // @C102 — the toolchain a native build would use, on the line after the version
+            // (a reader of the first line alone sees what it always saw).
+            match loft::native_lib::rustc_version() {
+                Some(v) => println!("native: {v}"),
+                None => println!("native: {}", loft::native_lib::NO_RUSTC),
+            }
             return;
         } else if a == "--migrate-long" {
             // C54.B migration tool — rewrite `long` type references and
@@ -7441,7 +7462,7 @@ fn main() {
             production = true;
             // A `--native` run spawns the compiled program, which builds its own logger:
             // the environment is what carries production mode across to it, so a panic, an
-            // assert or a locked write logs there instead of halting, as it does here (C80).
+            // assert or a locked write logs there instead of halting, as it does here (@C80).
             //
             // SAFETY: set_var is unsafe in Rust 2024; this runs during argument parsing,
             // before any thread or State exists, as the `--dev-soft-halt` arm below does.
@@ -7761,11 +7782,10 @@ fn main() {
             // the `--check` flag keep the compile-check behaviour.
             let next_is_file = argv.get(i).is_some_and(|s| {
                 !s.starts_with('-')
-                    && std::path::Path::new(s)
-                        .extension()
+                    && fa::extension(std::path::Path::new(s))
                         .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
             });
-            if next_is_file || !std::path::Path::new("loft.toml").exists() {
+            if next_is_file || !fa::exists(std::path::Path::new("loft.toml")) {
                 check_only = true;
             } else {
                 let mut requested: Vec<String> = Vec::new();
@@ -7829,8 +7849,7 @@ fn main() {
                     force = true;
                 } else if arg.starts_with('-') {
                     break;
-                } else if std::path::Path::new(arg)
-                    .extension()
+                } else if fa::extension(std::path::Path::new(arg))
                     .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
                 {
                     entry_override = Some(arg.clone());
@@ -7839,7 +7858,7 @@ fn main() {
                 }
                 i += 1;
             }
-            let manifest = if std::path::Path::new("loft.toml").exists() {
+            let manifest = if fa::exists(std::path::Path::new("loft.toml")) {
                 loft::manifest::read_manifest("loft.toml").unwrap_or_default()
             } else {
                 loft::manifest::Manifest::default()
@@ -7850,7 +7869,7 @@ fn main() {
                     let n = manifest.name.clone().unwrap_or_else(|| "main".to_string());
                     format!("src/{n}.loft")
                 });
-            if !std::path::Path::new(&entry).exists() {
+            if !fa::exists(std::path::Path::new(&entry)) {
                 eprintln!(
                     "loft build: entry `{entry}` not found — run in a project dir (with a \
                      loft.toml declaring [package] entry / name), or pass a .loft file."
@@ -7904,7 +7923,7 @@ fn main() {
             }
             // Read loft.toml to find src/ directory, dependency paths, and native libs.
             let manifest_path = std::path::Path::new("loft.toml");
-            if manifest_path.exists() {
+            if fa::exists(manifest_path) {
                 let manifest = loft::manifest::read_manifest("loft.toml").unwrap_or_default();
                 let entry = manifest.entry.unwrap_or_else(|| "src".to_string());
                 let src_dir = std::path::Path::new(&entry)
@@ -7918,7 +7937,7 @@ fn main() {
                 lib_dirs.push(abs_src);
                 // Add parent directory so sibling packages (dependencies) are found.
                 if !manifest.dependencies.is_empty() {
-                    let parent = portable_path::plain_canonical(
+                    let parent = file_access::plain_canonical(
                         &std::env::current_dir().unwrap_or_default().join(".."),
                     )
                     .to_string_lossy()
@@ -7937,14 +7956,14 @@ fn main() {
                         .to_string();
                     let lib_file = loft::extensions::platform_lib_name(stem);
                     let prebuilt = format!("{pkg_dir}/native/{lib_file}");
-                    if std::path::Path::new(&prebuilt).exists() {
+                    if fa::exists(std::path::Path::new(&prebuilt)) {
                         native_lib_paths.push(prebuilt);
                     } else if let Some(built) = loft::extensions::auto_build_native(&pkg_dir, stem)
                     {
                         native_lib_paths.push(built);
                     }
                 }
-            } else if std::path::Path::new("src").is_dir() {
+            } else if fa::is_dir(std::path::Path::new("src")) {
                 let abs_src = std::env::current_dir()
                     .unwrap_or_default()
                     .join("src")
@@ -8500,7 +8519,7 @@ fn main() {
                 std::process::exit(1);
             }
         } else if a == "ship" {
-            // C96 — the maintainer ship verb.  On a key-present machine (the local
+            // @C96 — the maintainer ship verb.  On a key-present machine (the local
             // trust-root file key exists) it packages + signs + pushes every own lib
             // newer than the index, autonomously; a key-absent machine can only defer
             // to a submission.  Wraps scripts/registry_maintain.sh (which chains the
@@ -8609,7 +8628,7 @@ fn main() {
                 // Canonicalize: the auto-native branch resolves the library via
                 // `use <name>` and filters its defs by `pkg_str` prefix, so the
                 // path the parser opens and `pkg_str` must be one form.
-                let pkg_path = portable_path::plain_canonical(&pkg_path);
+                let pkg_path = file_access::plain_canonical(&pkg_path);
                 let manifest =
                     loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy());
                 let pkg_str = pkg_path.to_string_lossy().to_string();
@@ -8662,13 +8681,15 @@ fn main() {
                     if let Some(parent) = pkg_path.parent() {
                         p.lib_dirs.push(parent.to_string_lossy().to_string());
                     }
-                    let default_dir = format!("{}/default", project_dir());
+                    let default_dir = file_access::PathText::host(&project_dir())
+                        .join("default")
+                        .native();
                     let _ = p.parse_dir(&default_dir, true, false);
                     let tmp = std::env::temp_dir()
                         .join(format!("loft_build_native_{}.loft", std::process::id()));
-                    let _ = std::fs::write(&tmp, format!("use {name};\n"));
+                    let _ = fa::write(&tmp, format!("use {name};\n"));
                     p.parse(&tmp.to_string_lossy(), false);
-                    let _ = std::fs::remove_file(&tmp);
+                    let _ = fa::remove_file(&tmp);
                     // Slot/scope analysis the cdylib codegen depends on — the run
                     // path runs this before its auto-native build (main.rs), and
                     // without it codegen emits undeclared locals (e.g. `var_me`).
@@ -8791,7 +8812,7 @@ fn main() {
                         String,
                         std::path::PathBuf,
                     )> = None;
-                    if as_path.is_dir() {
+                    if fa::is_dir(&as_path) {
                         (as_path, None)
                     } else if let Some((name, version, dir)) = installed {
                         // An installed package is shared, immutable cache content: its
@@ -8997,7 +9018,7 @@ fn main() {
         start_repl();
     }
     // Resolve the script path to absolute before potentially changing directory.
-    let abs_file = portable_path::plain_canonical(std::path::Path::new(&file_name));
+    let abs_file = file_access::plain_canonical(std::path::Path::new(&file_name));
     let abs_file = abs_file.to_str().unwrap().to_string();
     // @P296-sibling (Windows-only): `canonicalize()` returns an
     // extended-length `\\?\D:\…` verbatim path, but library `use`
@@ -9007,12 +9028,12 @@ fn main() {
     // path while the same module loaded via `use` uses the plain form —
     // the two sources don't dedup → "Dual definition of <lib>" on
     // Windows (crystal_gold CI).  Strip the verbatim-disk prefix so every
-    // path shares one representation (`portable_path::plain_canonical`, which already
+    // path shares one representation (`file_access::plain_canonical`, which already
     // shed the prefix above; this line is the documented reason it does).
     // --project: change working directory so file I/O is sandboxed to the project root.
     if let Some(ref proj) = project {
-        if let Err(e) = env::set_current_dir(proj) {
-            println!("Error: cannot change to project directory '{proj}': {e}");
+        if let Err(e) = fa::set_current_dir(proj) {
+            println!("Error: cannot change to the project directory {e}");
             std::process::exit(1);
         }
         // Also expose the project's lib/ sub-directory for 'use' imports.
@@ -9033,7 +9054,7 @@ fn main() {
         if let Some(mut search) = script_dir.map(std::path::Path::to_path_buf) {
             loop {
                 let candidate = search.join("loft.toml");
-                if candidate.exists() {
+                if fa::exists(&candidate) {
                     if let Some(manifest) =
                         manifest::read_manifest(candidate.to_str().unwrap_or("loft.toml"))
                     {
@@ -9049,7 +9070,7 @@ fn main() {
                         // Add parent directory so sibling packages (deps) are found.
                         if !manifest.dependencies.is_empty() {
                             if let Some(parent) =
-                                portable_path::try_plain_canonical(&search.join(".."))
+                                file_access::try_plain_canonical(search.join(".."))
                             {
                                 let ps = parent.to_string_lossy().to_string();
                                 if !lib_dirs.contains(&ps) {
@@ -9067,7 +9088,7 @@ fn main() {
                     }
                     // Auto-add lib/ subdirectory for package imports.
                     let lib_dir = search.join("lib");
-                    if lib_dir.is_dir() {
+                    if fa::is_dir(&lib_dir) {
                         let ls = lib_dir.to_string_lossy().to_string();
                         if !lib_dirs.contains(&ls) {
                             lib_dirs.push(ls);
@@ -9093,7 +9114,7 @@ fn main() {
     // prefix-match, so the entry package auto-native-compiled after all.
     let lib_dirs: Vec<String> = lib_dirs
         .into_iter()
-        .map(|d| portable_path::plain_canonical_str(&d))
+        .map(|d| file_access::plain_canonical_str(&d))
         .collect();
     let mut p = parser::Parser::new();
     p.lib_dirs = lib_dirs;
@@ -9137,7 +9158,7 @@ fn main() {
         if abs_file.is_empty() {
             (None, None)
         } else {
-            match std::fs::read_to_string(&abs_file)
+            match fa::read_to_string(&abs_file)
                 .ok()
                 .and_then(|src| loft::script::script_desugar_mapped(&src))
             {
@@ -9167,7 +9188,7 @@ fn main() {
     // therefore always parse fresh: disable the warm-load when a policy is active.
     // The host owns this policy — a script cannot designate itself.
     if let Some(dir) = std::path::Path::new(&abs_file).parent()
-        && let Ok(content) = std::fs::read_to_string(dir.join("loft.toml"))
+        && let Ok(content) = fa::read_to_string(dir.join("loft.toml"))
     {
         p.set_sandbox_config(loft::sandbox::parse_sandbox_config(&content));
     }
@@ -9210,7 +9231,7 @@ fn main() {
         && native_lib_paths.is_empty()
         && program_cache_on
         && !p.sandbox_is_active()
-        && !cfg!(windows)
+        && !platform::stages_dlls_beside_binary()
         && !native_cache_bypassed()
         && native_fast_path_env_ok();
     if native_fast_path_wanted {
@@ -9234,6 +9255,7 @@ fn main() {
                 p.diagnostics.restore_from_cache(e);
             }
             report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
+            native_utils::touch_cached_binary(&hit.binary);
             exec_native_binary(
                 &hit.binary,
                 &hit.binary,
@@ -9249,7 +9271,23 @@ fn main() {
     } else if platform::timing_enabled() && native_mode && native_emit.is_none() {
         eprintln!("LOFT_TIMING native_source_key=off");
     }
+    // A live tier keeps the program OPEN (`Data::open_world`), which the whole-program
+    // rewrites read — so it is part of what a cached image was closed under (loft#1858).
+    let ships_live_tier = if html_out.is_some() {
+        debug_name.is_some() && !lean
+    } else if native_mode
+        || native_wasm.is_some()
+        || native_emit.is_some()
+        || native_android.is_some()
+    {
+        !(lean || native_release)
+    } else {
+        false
+    };
     let mut warm_store: Option<(loft::database::Stores, loft::keys::DbRef)> = None;
+    if html_out.is_some() {
+        loft::extensions::set_browser_target();
+    }
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
     let warm_user_start = if program_cache_on && !p.sandbox_is_active() {
@@ -9257,13 +9295,18 @@ fn main() {
             &mut p,
             &abs_file,
             &default_str,
-            &loft::startup_cache::native_lib_context(html_out.is_some()),
+            &loft::startup_cache::native_lib_context(html_out.is_some(), ships_live_tier),
             &mut warm_store,
         )
     } else {
         None
     };
     let program_warm = warm_user_start.is_some();
+    // The image is a CLOSED program (`compile::close_program`): its rewrites ran before it was
+    // taken, and must not run again over a table that no longer carries what they read.
+    if program_warm {
+        p.data.program_closed = true;
+    }
     // A warm bundle REPLACES the parse.  When the user has armed a compiler
     // diagnostic, that silence is indistinguishable from "the code path never ran" —
     // it cost a full debugging session reading a stale parse while `eprintln`s in the
@@ -9285,7 +9328,7 @@ fn main() {
         // from there it cannot mismatch this binary's dispatch table, so a MISSING
         // directory is not an error.  A directory that is there but refused (a parse
         // error, a `default/` from another build) still is, below.
-        let default_missing = !stdlib_warm && !path_given && !default_dir.is_dir();
+        let default_missing = !stdlib_warm && !path_given && !fa::is_dir(&default_dir);
         if default_missing {
             if let Err(e) = p.parse_stdlib(&default_str) {
                 eprintln!("loft: {e}");
@@ -9320,6 +9363,7 @@ fn main() {
     // `definitions()` would put `start_def` PAST the user fns and the no-`main`
     // test-fn fallback would silently execute nothing; use the persisted boundary.
     let start_def = warm_user_start.unwrap_or_else(|| p.data.definitions());
+    loft::platform::phase("parse_default", t_parse_default.elapsed().as_secs_f64());
     if std::env::var("LOFT_TIMING").is_ok() {
         eprintln!(
             "LOFT_TIMING parse_default={:.2}ms ({start_def} defs)",
@@ -9389,13 +9433,20 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(ms));
         }
         scopes_ms = t.elapsed().as_secs_f64() * 1000.0;
-        let t = std::time::Instant::now();
-        loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
-        lints_ms = t.elapsed().as_secs_f64() * 1000.0;
+        // A warm load replays the cold run's diagnostics, these lints' among them; running
+        // them again reported each warning twice (loft#1858).
+        if !program_warm {
+            let t = std::time::Instant::now();
+            loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+            lints_ms = t.elapsed().as_secs_f64() * 1000.0;
+        }
     }
     // The front end by phase.  `front_end` is measured on its own clock from the start of
     // `parse_default`, so the four phases summing to it is the check that none is missed or
     // counted twice; the remainder is the `#c` gate between the parse and the scope pass.
+    loft::platform::phase("parse_user", parse_user_ms / 1000.0);
+    loft::platform::phase("scopes", scopes_ms / 1000.0);
+    loft::platform::phase("lints", lints_ms / 1000.0);
     if std::env::var("LOFT_TIMING").is_ok() {
         eprintln!(
             "LOFT_TIMING parse_user={parse_user_ms:.2}ms scopes={scopes_ms:.2}ms \
@@ -9499,7 +9550,9 @@ fn main() {
     let native_required = std::env::var("LOFT_REQUIRE_NATIVE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let mut pending_native = if native_libs_off {
+    // A browser build compiles every library into the page's wasm: a default-native host
+    // cdylib would be built and never linked (`extensions::browser_target`).
+    let mut pending_native = if native_libs_off || loft::extensions::browser_target() {
         p.pending_native_compile.clear();
         Vec::new()
     } else {
@@ -9528,9 +9581,8 @@ fn main() {
     // `OpStaticCall` to a missing bridge → the compile.rs panic stub.  Under
     // `--native` these functions compile into the whole-program binary anyway, so
     // excluding them from the cdylib loop costs nothing there.
-    let entry_path = std::path::Path::new(&abs_file);
     for pkg_dir in &pending_native {
-        if entry_path.starts_with(pkg_dir) {
+        if file_access::is_under(&abs_file, pkg_dir) {
             continue;
         }
         // #453 — for an `--html` build a `[wasm.bridge]` library builds its WASM
@@ -9545,7 +9597,7 @@ fn main() {
             && p.data
                 .wasm_bridge_packages
                 .iter()
-                .any(|(_, dir)| dir == pkg_dir)
+                .any(|(_, dir)| file_access::same_path(dir, pkg_dir))
         {
             continue;
         }
@@ -9685,7 +9737,7 @@ fn main() {
         }
     }
     // @PLN181 — the standard library's compiled loft bodies, routed like a `use`d library's
-    // (C71) when the program is INTERPRETED; `--native` compiles those bodies itself, and a
+    // (@C71) when the program is INTERPRETED; `--native` compiles those bodies itself, and a
     // browser build has no bridge dispatcher.  Declines on its own when the program's type
     // table does not start with the standard library's (`compiled_stdlib::mark`).
     if !native_mode && html_out.is_none() {
@@ -9708,7 +9760,8 @@ fn main() {
     // the whole-program binary, so its calls never reach a worker however they
     // were marked. Marking anyway would leave a dispatch symbol nothing routes
     // and start a worker process to sit idle for the run.
-    #[cfg(target_os = "linux")]
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    #[cfg(unix)]
     if !native_requested {
         for (_, pkg_dir, _) in &placed_libs {
             loft::lib_placement::dispatch::mark_exports(&mut p.data, pkg_dir);
@@ -9753,6 +9806,12 @@ fn main() {
                 p.lib_dirs
             );
         }
+        // Close the program before taking its image, under the openness this run compiles
+        // it with: the image is then what codegen compiles, cold or warm (loft#1858).
+        if ships_live_tier {
+            p.data.open_world = true;
+        }
+        compile::close_program(&mut p.data, &mut p.database);
         loft::startup_cache::save_program(
             &p,
             &abs_file,
@@ -9761,7 +9820,7 @@ fn main() {
             start_def,
             &placed_libs,
             &loft::startup_cache::AutoNative {
-                ctx: &loft::startup_cache::native_lib_context(html_out.is_some()),
+                ctx: &loft::startup_cache::native_lib_context(html_out.is_some(), ships_live_tier),
                 libs: &auto_native_libs,
             },
         );
@@ -9774,8 +9833,8 @@ fn main() {
     // No effect unless the env var is set.
     if let Ok(path) = std::env::var("LOFT_DUMP_SNAPSHOT") {
         let json = loft::ir_schema::data_to_json(&p.data);
-        if let Err(e) = std::fs::write(&path, &json) {
-            eprintln!("loft: failed to write snapshot to {path}: {e}");
+        if let Err(e) = fa::write(&path, &json) {
+            eprintln!("loft: failed to write snapshot to {e}");
             std::process::exit(1);
         }
         eprintln!(
@@ -9814,21 +9873,12 @@ fn main() {
     // (html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm).  Each path's
     // live-tier decision is the one its `Output::emit_live` makes below; `--interpret`,
     // `--lean` and `--native-release` ship none and keep the pass.
-    let ships_live_tier = if html_out.is_some() {
-        debug_name.is_some() && !lean
-    } else if native_mode
-        || native_wasm.is_some()
-        || native_emit.is_some()
-        || native_android.is_some()
-    {
-        !(lean || native_release)
-    } else {
-        false
-    };
     if ships_live_tier {
         p.data.open_world = true;
     }
+    let t_byte_code = std::time::Instant::now();
     compile::byte_code_with_store(&mut state, &mut p.data, warm_store.as_ref());
+    loft::platform::phase("byte_code", t_byte_code.elapsed().as_secs_f64());
     // @PLN119 arc A — a platform without the placement transport runs a placed
     // library in-process. By the plan's invariant that is the same PROGRAM, so
     // it is silent by default; but it is not the same ISOLATION, and a
@@ -9842,8 +9892,8 @@ fn main() {
     // never leave the process.
     let no_placement_because = if placed_libs.is_empty() {
         None
-    } else if cfg!(not(target_os = "linux")) {
-        Some("out-of-process placement needs Linux")
+    } else if !platform::placement_transport_available() {
+        Some("out-of-process placement needs a Unix host")
     } else if native_requested {
         Some(
             "`--native` compiles a library's own body into the program binary, so its \
@@ -9866,7 +9916,8 @@ fn main() {
     // functions at it. After `byte_code`, because the stubs this replaces are
     // what `byte_code` registered — and only where marking happened, since a
     // worker with nothing routed to it is a process that idles for the run.
-    #[cfg(target_os = "linux")]
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    #[cfg(unix)]
     if !placed_libs.is_empty() && !native_requested {
         let stdlib = std::path::PathBuf::from(&default_str);
         // The directory the program will RUN in, which is not the one this
@@ -9965,7 +10016,7 @@ fn main() {
         let build_dir = platform::build_scratch_dir("android");
         let rs_path = build_dir.join("prog.rs");
         {
-            let mut f = match std::fs::File::create(&rs_path) {
+            let mut f = match fa::create(&rs_path) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!(
@@ -10011,7 +10062,7 @@ fn main() {
             &p.data.native_packages,
         );
         if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
-            let _ = std::fs::remove_file(&rs_path);
+            let _ = fa::remove_file(&rs_path);
         } else {
             eprintln!(
                 "loft: Android source preserved at {} (LOFT_KEEP_NATIVE_RS)",
@@ -10020,8 +10071,7 @@ fn main() {
         }
         match result {
             Ok(()) => {
-                let kind = if std::path::Path::new(&android_out)
-                    .extension()
+                let kind = if fa::extension(std::path::Path::new(&android_out))
                     .is_some_and(|e| e.eq_ignore_ascii_case("apk"))
                 {
                     "APK"
@@ -10055,7 +10105,7 @@ fn main() {
         let build_dir = platform::build_scratch_dir("wasm");
         let rs_path = build_dir.join("prog.rs");
         {
-            let mut f = match std::fs::File::create(&rs_path) {
+            let mut f = match fa::create(&rs_path) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!(
@@ -10093,9 +10143,8 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        let mut cmd = std::process::Command::new("rustc");
-        loft::platform::dies_with_driver(&mut cmd, false);
-        cmd.arg("--edition=2024")
+        let mut cmd = Spawn::new(Program::search("rustc"))
+            .arg("--edition=2024")
             .arg("--target")
             .arg("wasm32-wasip2")
             .arg("--crate-type")
@@ -10110,12 +10159,13 @@ fn main() {
         let wasm_deps_dir = if let Some(lib_dir) =
             native_utils::ensure_loft_runtime_rlib(native_utils::WasmRuntimeShape::Wasi)
         {
-            cmd.args(loft::native_lib::loft_extern_args(
+            cmd.push_args(loft::native_lib::loft_extern_args(
                 &lib_dir.join("libloft.rlib"),
             ));
             let search = native_utils::dep_search_dirs(&lib_dir);
             for d in &search {
-                cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", d.display()));
             }
             search.first().cloned()
         } else {
@@ -10130,7 +10180,7 @@ fn main() {
         );
         let status = cmd.status();
         if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
-            let _ = std::fs::remove_file(&rs_path);
+            let _ = fa::remove_file(&rs_path);
         } else {
             eprintln!(
                 "loft: wasm source preserved at {} (LOFT_KEEP_NATIVE_RS)",
@@ -10186,7 +10236,7 @@ fn main() {
             let mut found = None;
             while let Some(d) = dir {
                 let manifest = d.join("loft.toml");
-                if manifest.exists() {
+                if fa::exists(&manifest) {
                     found = loft::manifest::read_manifest(&manifest.to_string_lossy());
                     break;
                 }
@@ -10265,7 +10315,7 @@ fn main() {
         // page carries loft's thread pool.
         let uses_par;
         {
-            let mut f = match std::fs::File::create(&rs_path) {
+            let mut f = match fa::create(&rs_path) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!("loft: cannot write source to '{}': {e}", rs_path.display());
@@ -10298,7 +10348,7 @@ fn main() {
             // Embed the program source so the debug client bootstraps the parked
             // interpreter from BYTES (no filesystem in a browser) — see P3.1.
             if out.emit_live {
-                out.program_src = std::fs::read_to_string(&abs_file).ok();
+                out.program_src = fa::read_to_string(&abs_file).ok();
             }
             let main_nr = p.data.def_nr("n_main");
             let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -10365,22 +10415,22 @@ fn main() {
         // threaded runtime + its atomics std come from nightly (only `-Z
         // build-std` can produce that std).  So the link runs on nightly too.
         let mut cmd = native_utils::wasm_rustc(atomics_sysroot.as_deref());
-        loft::platform::dies_with_driver(&mut cmd, false);
-        cmd.arg("--edition=2024")
-            .arg("--target")
-            .arg("wasm32-unknown-unknown")
-            .arg("--crate-type")
-            .arg("cdylib")
-            .arg("-O")
-            .arg("-o")
-            .arg(&wasm_path)
-            .arg(&rs_path);
+        cmd.push_arg("--edition=2024")
+            .push_arg("--target")
+            .push_arg("wasm32-unknown-unknown")
+            .push_arg("--crate-type")
+            .push_arg("cdylib")
+            .push_arg("-O")
+            .push_arg("-o")
+            .push_arg(&wasm_path)
+            .push_arg(&rs_path);
         if let Some(lib_dir) = html_runtime_dir.clone() {
-            cmd.args(loft::native_lib::loft_extern_args(
+            cmd.push_args(loft::native_lib::loft_extern_args(
                 &lib_dir.join("libloft.rlib"),
             ));
             for d in native_utils::dep_search_dirs(&lib_dir) {
-                cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", d.display()));
             }
             // W1.1 env fix: libloft.rlib depends on wasm-bindgen, which pulls
             // in the proc-macro crate wasm_bindgen_macro.  Proc-macros are
@@ -10392,8 +10442,9 @@ fn main() {
             // so `cr_call_push` is reported unfound as a collateral).
             if let Some(host_lib_dir) = loft_lib_dir_for(None) {
                 for d in native_utils::dep_search_dirs(&host_lib_dir) {
-                    if d.is_dir() {
-                        cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                    if fa::is_dir(&d) {
+                        cmd.push_arg("-L")
+                            .push_arg(format!("dependency={}", d.display()));
                     }
                 }
             }
@@ -10403,9 +10454,9 @@ fn main() {
         //
         // Build via rustc directly, not `cargo build`: cargo would
         // produce a SECOND copy of `loft` (with a different
-        // StableCrateId than the top-level
-        // `target/wasm32-unknown-unknown/release/libloft.rlib` the
-        // standalone-binary `--extern loft=…` references), and rustc
+        // StableCrateId than the `--html` runtime rlib in
+        // `html_runtime_dir` that the standalone-binary `--extern
+        // loft=…` references), and rustc
         // would refuse with "expected DbRef, found DbRef" (two distinct
         // types from two builds of the same source).  By invoking
         // rustc with the SAME `--extern loft=…` + deps search path
@@ -10415,7 +10466,7 @@ fn main() {
         for (bridge_crate, pkg_dir) in &p.data.wasm_bridge_packages {
             let wasm_dir = std::path::PathBuf::from(pkg_dir).join("wasm");
             let bridge_src = wasm_dir.join("src/lib.rs");
-            if !bridge_src.exists() {
+            if !fa::exists(&bridge_src) {
                 eprintln!(
                     "loft: --html: [wasm.bridge] declared `crate = \"{bridge_crate}\"` \
                      but {} is missing — skipping bridge link",
@@ -10450,7 +10501,7 @@ fn main() {
             // resolving the manifest's `loft` path dep.
             let wasm_cargo = wasm_dir.join("Cargo.toml");
             // Every non-`loft` [dependencies] entry as (crate_ident, full TOML line).
-            let nonloft_deps: Vec<(String, String)> = std::fs::read_to_string(&wasm_cargo)
+            let nonloft_deps: Vec<(String, String)> = fa::read_to_string(&wasm_cargo)
                 .map(|text| bridge_nonloft_deps(&text))
                 .unwrap_or_default();
             let nonloft_idents: Vec<String> = nonloft_deps
@@ -10464,9 +10515,9 @@ fn main() {
                 let synth_dir = build_dir.join(format!("bridge_deps_{crate_ident}"));
                 let synth_src = synth_dir.join("src");
                 let manifest = synth_bridge_deps_manifest(&nonloft_deps);
-                let staged = std::fs::create_dir_all(&synth_src).is_ok()
-                    && std::fs::write(synth_dir.join("Cargo.toml"), &manifest).is_ok()
-                    && std::fs::write(synth_src.join("lib.rs"), "").is_ok();
+                let staged = fa::create_dir_all(&synth_src).is_ok()
+                    && fa::write(synth_dir.join("Cargo.toml"), &manifest).is_ok()
+                    && fa::write(synth_src.join("lib.rs"), "").is_ok();
                 if !staged {
                     eprintln!(
                         "loft: --html: failed to stage wasm-bridge dependency build for {bridge_crate}"
@@ -10477,15 +10528,14 @@ fn main() {
                 // staleness question is delegated wholesale to cargo, which is correct (it is
                 // the tool that knows) but means the cost is invisible from loft's side.  Name
                 // it in the report so a slow `--html` says which bridge is paying.
-                let mut dep_build = std::process::Command::new("cargo");
-                loft::platform::dies_with_driver(&mut dep_build, false);
+                let mut dep_build = Spawn::new(Program::search("cargo"));
                 dep_build
-                    .arg("build")
-                    .arg("--release")
-                    .arg("--target")
-                    .arg("wasm32-unknown-unknown")
-                    .arg("--manifest-path")
-                    .arg(synth_dir.join("Cargo.toml"));
+                    .push_arg("build")
+                    .push_arg("--release")
+                    .push_arg("--target")
+                    .push_arg("wasm32-unknown-unknown")
+                    .push_arg("--manifest-path")
+                    .push_arg(synth_dir.join("Cargo.toml"));
                 let cargo_ok = loft::platform::timing_exec(
                     "cargo",
                     &format!("bridge deps ({crate_ident})"),
@@ -10501,12 +10551,12 @@ fn main() {
                     std::process::exit(1);
                 }
                 let deps = synth_dir.join("target/wasm32-unknown-unknown/release/deps");
-                if deps.is_dir() {
+                if fa::is_dir(&deps) {
                     // Resolve each DIRECT dep to its `lib<ident>-<hash>.rlib` for `--extern`.
-                    let files: Vec<String> = std::fs::read_dir(&deps)
+                    let files: Vec<String> = fa::read_dir(&deps)
                         .map(|rd| {
-                            rd.flatten()
-                                .map(|e| e.file_name().to_string_lossy().into_owned())
+                            rd.iter()
+                                .filter_map(|e| e.file_name().map(str::to_string))
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -10514,8 +10564,7 @@ fn main() {
                         let prefix = format!("lib{ident}-");
                         if let Some(f) = files.iter().find(|f| {
                             f.starts_with(&prefix)
-                                && std::path::Path::new(f.as_str())
-                                    .extension()
+                                && fa::extension(std::path::Path::new(f.as_str()))
                                     .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
                         }) {
                             bridge_externs.push((ident.clone(), deps.join(f)));
@@ -10528,32 +10577,35 @@ fn main() {
             // gets the same compiler and the same std: an atomics rlib and a
             // non-atomics one do not link together.
             let mut build = native_utils::wasm_rustc(atomics_sysroot.as_deref());
-            loft::platform::dies_with_driver(&mut build, false);
             build
-                .arg("--edition=2024")
-                .arg("--target")
-                .arg("wasm32-unknown-unknown")
-                .arg("--crate-type")
-                .arg("rlib")
-                .arg("--crate-name")
-                .arg(&crate_ident)
-                .arg("-O")
-                .arg("-o")
-                .arg(&bridge_rlib)
-                .arg(&bridge_src);
+                .push_arg("--edition=2024")
+                .push_arg("--target")
+                .push_arg("wasm32-unknown-unknown")
+                .push_arg("--crate-type")
+                .push_arg("rlib")
+                .push_arg("--crate-name")
+                .push_arg(&crate_ident)
+                .push_arg("-O")
+                .push_arg("-o")
+                .push_arg(&bridge_rlib)
+                .push_arg(&bridge_src);
             if let Some(ref lib_dir) = loft_wasm_lib_dir {
-                build.args(loft::native_lib::loft_extern_args(
+                build.push_args(loft::native_lib::loft_extern_args(
                     &lib_dir.join("libloft.rlib"),
                 ));
                 for d in native_utils::dep_search_dirs(lib_dir) {
-                    if d.is_dir() {
-                        build.arg("-L").arg(format!("dependency={}", d.display()));
+                    if fa::is_dir(&d) {
+                        build
+                            .push_arg("-L")
+                            .push_arg(format!("dependency={}", d.display()));
                     }
                 }
                 if let Some(host_lib_dir) = loft_lib_dir_for(None) {
                     for d in native_utils::dep_search_dirs(&host_lib_dir) {
-                        if d.is_dir() {
-                            build.arg("-L").arg(format!("dependency={}", d.display()));
+                        if fa::is_dir(&d) {
+                            build
+                                .push_arg("-L")
+                                .push_arg(format!("dependency={}", d.display()));
                         }
                     }
                 }
@@ -10563,13 +10615,13 @@ fn main() {
             // `-L` the deps dir for their transitive deps.
             for (ident, rlib) in &bridge_externs {
                 build
-                    .arg("--extern")
-                    .arg(format!("{ident}={}", rlib.display()));
+                    .push_arg("--extern")
+                    .push_arg(format!("{ident}={}", rlib.display()));
             }
             if let Some(ref deps) = bridge_dep_search {
                 build
-                    .arg("-L")
-                    .arg(format!("dependency={}", deps.display()));
+                    .push_arg("-L")
+                    .push_arg(format!("dependency={}", deps.display()));
             }
             let status = build.status();
             if !matches!(status, Ok(s) if s.success()) {
@@ -10580,16 +10632,17 @@ fn main() {
                 );
                 std::process::exit(1);
             }
-            cmd.arg("--extern")
-                .arg(format!("{crate_ident}={}", bridge_rlib.display()));
+            cmd.push_arg("--extern")
+                .push_arg(format!("{crate_ident}={}", bridge_rlib.display()));
             // Build-extension: link the bridge crate's Cargo deps into the main wasm.
             if let Some(ref deps) = bridge_dep_search {
-                cmd.arg("-L").arg(format!("dependency={}", deps.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", deps.display()));
             }
         }
         let status = cmd.status();
         if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
-            let _ = std::fs::remove_file(&rs_path);
+            let _ = fa::remove_file(&rs_path);
         } else {
             eprintln!(
                 "loft: browser-wasm source preserved at {} (LOFT_KEEP_NATIVE_RS)",
@@ -10634,12 +10687,12 @@ fn main() {
         // Asyncify lets loft_gl_swap_buffers suspend the WASM execution
         // so the browser can render the frame via requestAnimationFrame.
         let opt_path = build_dir.join("prog_opt.wasm");
-        let mut wasm_opt = std::process::Command::new("wasm-opt");
+        let mut wasm_opt = Spawn::new(Program::search("wasm-opt"));
         if threaded {
             // A threaded bundle uses atomics, shared memory and mutable globals;
             // without these wasm-opt rejects the module outright rather than
             // silently dropping anything.
-            wasm_opt.args([
+            wasm_opt.push_args([
                 "--enable-threads",
                 "--enable-bulk-memory",
                 "--enable-mutable-globals",
@@ -10657,7 +10710,7 @@ fn main() {
             ("--strip-debug", &[])
         };
         wasm_opt
-            .args([
+            .push_args([
                 // -O / -Oz plus --asyncify strips the host imports
                 // (loft_gl.*, loft_io.*) entirely — wasm goes from 25
                 // imports to 0 and every GL call runtime-panics as
@@ -10694,10 +10747,10 @@ fn main() {
                 //     only reports what the completed fetch already learned.
                 "--pass-arg=asyncify-imports@loft_gl.loft_gl_swap_buffers,loft_web.ws_yield,loft_io.loft_host_http_get,loft_io.loft_host_http_range",
             ])
-            .args(debuginfo_flags)
-            .arg("-o")
-            .arg(&opt_path)
-            .arg(&wasm_path);
+            .push_args(debuginfo_flags)
+            .push_arg("-o")
+            .push_arg(&opt_path)
+            .push_arg(&wasm_path);
         // loft#1238 — wasm-opt runs unconditionally: `--asyncify` is not an optimisation but
         // the pass that makes frame-yield work at all, so there is no staleness question and
         // nothing to skip.  Named in the report anyway, because a reader looking at a slow
@@ -10710,7 +10763,7 @@ fn main() {
         )
         .is_ok_and(|s| s.success())
         {
-            let _ = std::fs::remove_file(&wasm_path);
+            let _ = fa::remove_file(&wasm_path);
             opt_path
         } else {
             // @P337: a missing wasm-opt is NOT a cosmetic "larger output"
@@ -10731,8 +10784,8 @@ fn main() {
             wasm_path
         };
         // Assemble HTML
-        let wasm_bytes = std::fs::read(&final_wasm).unwrap_or_default();
-        let _ = std::fs::remove_file(&final_wasm);
+        let wasm_bytes = fa::read(&final_wasm).unwrap_or_default();
+        let _ = fa::remove_file(&final_wasm);
         // loft#954 — `--names` is asked for precisely when a page has to be
         // debugged from its backtrace, so a build that silently produced no names
         // is the one failure that must not be quiet: the page looks identical and
@@ -10777,10 +10830,7 @@ fn main() {
             std::process::exit(1);
         }
         let wasm_b64 = crate::base64::encode(&wasm_bytes);
-        let title = std::path::Path::new(&file_name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Loft Program".to_string());
+        let title = fa::file_stem(&file_name).unwrap_or_else(|| "Loft Program".to_string());
         // @P321(c) Phase 3a: auto-discover *.png siblings of the entry .loft
         // and embed each as a base64 string under `ctrl.assets[basename]`.
         // Phase 3b's JS preamble decodes them to RGB bytes before
@@ -10792,21 +10842,21 @@ fn main() {
                 .map(std::path::Path::to_path_buf)
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
             let mut entries: Vec<(String, String)> = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&entry_dir) {
+            if let Ok(rd) = fa::read_dir(&entry_dir) {
                 let mut pngs: Vec<std::path::PathBuf> = rd
-                    .filter_map(Result::ok)
-                    .map(|e| e.path())
-                    .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")))
+                    .iter()
+                    .map(fa::PathText::os_spelling)
+                    .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("png")))
                     .collect();
                 pngs.sort();
                 for p in pngs {
-                    let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+                    let Some(name) = fa::file_name(&p) else {
                         continue;
                     };
-                    let Ok(bytes) = std::fs::read(&p) else {
+                    let Ok(bytes) = fa::read(&p) else {
                         continue;
                     };
-                    entries.push((name.to_string(), crate::base64::encode(&bytes)));
+                    entries.push((name.clone(), crate::base64::encode(&bytes)));
                 }
             }
             if entries.is_empty() {
@@ -10868,7 +10918,7 @@ fn main() {
         let host_js_extensions = {
             let mut s = String::new();
             for path in &p.data.wasm_bridge_host_js_files {
-                match std::fs::read_to_string(path) {
+                match fa::read_to_string(path) {
                     Ok(content) => {
                         s.push_str("\n/* === lib_plan-29 W2: host.js from ");
                         s.push_str(path);
@@ -11230,8 +11280,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
 </script></body></html>"#
             )
         };
-        if let Err(e) = std::fs::write(&html_path, &html) {
-            eprintln!("loft: cannot write HTML to '{html_path}': {e}");
+        if let Err(e) = fa::write(&html_path, &html) {
+            eprintln!("loft: cannot write HTML to {e}");
             std::process::exit(1);
         }
         let wasm_kb = wasm_bytes.len() / 1024;
@@ -11280,7 +11330,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             Some(p) => std::path::PathBuf::from(p),
         };
         {
-            let mut f = match std::fs::File::create(&emit_path) {
+            let mut f = match fa::create(&emit_path) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!(
@@ -11298,7 +11348,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // @PLN98 P3.1 — embed the program's own source so a live build can
             // bootstrap the parked interpreter from BYTES (no `LOFT_LIVE_SRC` file)
             // — the browser/wasm delivery.  Best-effort: unreadable → fs fallback.
-            out.program_src = std::fs::read_to_string(&abs_file).ok();
+            out.program_src = fa::read_to_string(&abs_file).ok();
             // Host-native backend: link each `#native` package's cdylib by C-ABI
             // (`extern "C"` decls + `.so`), not its rlib — see NATIVE.md
             // § Resolution: separate the API id from the Rust part.  The shared
@@ -11329,6 +11379,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // MEASUREMENT build, never one that ships: the attribute costs the inlining
             // it names.  PERFORMANCE.md § Attributing a row.
             out.keep_fn_names = html_names;
+            let t_emit = std::time::Instant::now();
             let result = if native_release {
                 let main_nr = p.data.def_nr("n_main");
                 let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -11340,6 +11391,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             } else {
                 out.output_native(&mut f, 0, end_def)
             };
+            loft::platform::phase("native_emit", t_emit.elapsed().as_secs_f64());
             if let Err(e) = result {
                 eprintln!("loft: native code generation failed: {e}");
                 std::process::exit(1);
@@ -11363,7 +11415,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                         continue;
                     }
-                    if portable_path::is_stdlib_source(&def.position.file) {
+                    if file_access::is_stdlib_source(def.position.file.as_str()) {
                         continue;
                     }
                     let has_user_params = def
@@ -11438,11 +11490,16 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // Cache compiled binaries in .loft/cache/ next to the source file,
         // keyed by a hash of the generated Rust source so recompilation is
         // skipped when the output hasn't changed.
-        let source_bytes = std::fs::read(&emit_path).unwrap_or_default();
+        let source_bytes = fa::read(&emit_path).unwrap_or_default();
+        // The key leaves out the program's own path: a test/semantics build holds it only in
+        // comments (the code reads it at run time, `codegen_runtime::main_file_or`), so the same
+        // program at two paths is one binary.  A lean build bakes the path into its code, and
+        // keeps it in the key.
+        let key_bytes = native_utils::path_free_key_source(&source_bytes, &p.data, lean);
         let source_hash = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            source_bytes.hash(&mut h);
+            key_bytes.hash(&mut h);
             // Include the release + debug flags in the hash so each
             // distinct rustc invocation produces a distinct cached
             // binary.  Without this, switching between `--native`
@@ -11455,7 +11512,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // Include modification times of native package rlibs and loft's
             // own rlib so the cache invalidates when dependencies are rebuilt.
             if let Some(lib_dir) = loft_lib_dir() {
-                if let Ok(meta) = std::fs::metadata(lib_dir.join("libloft.rlib")) {
+                if let Ok(meta) = fa::metadata(lib_dir.join("libloft.rlib")) {
                     meta.modified().ok().hash(&mut h);
                 }
             }
@@ -11464,7 +11521,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 let rlib_path = std::path::PathBuf::from(pkg_dir)
                     .join("native/target/release")
                     .join(&rlib_name);
-                if let Ok(meta) = std::fs::metadata(&rlib_path) {
+                if let Ok(meta) = fa::metadata(&rlib_path) {
                     meta.modified().ok().hash(&mut h);
                 }
             }
@@ -11475,12 +11532,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             .unwrap_or(std::path::Path::new("."))
             .join(".loft")
             .join("cache");
-        let source_stem = std::path::Path::new(&abs_file)
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let cached_binary = cache_dir.join(format!("{source_stem}-{source_hash}"));
+        let source_stem = fa::file_stem(&abs_file).unwrap_or_default();
+        // Named by the key alone: a program's file name is not part of what it compiles to.
+        let _ = &source_stem;
+        let cached_binary = cache_dir.join(format!("native-{source_hash}"));
 
         // P254 — cache-poisoning defense.  Bypass the cache entirely
         // when the user opts out via `LOFT_NATIVE_NO_CACHE=1` (matches
@@ -11495,7 +11550,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // recompile.
         let no_cache = native_cache_bypassed();
         let cache_usable = !no_cache
-            && cached_binary.exists()
+            && fa::exists(&cached_binary)
             && native_utils::cache_safe_to_execute(&cached_binary);
         if platform::timing_enabled() {
             eprintln!(
@@ -11503,7 +11558,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 if cache_usable { "hit" } else { "miss" }
             );
         }
-        if !no_cache && cached_binary.exists() && !cache_usable {
+        if !no_cache && fa::exists(&cached_binary) && !cache_usable {
             eprintln!(
                 "loft: rejecting suspicious cached binary at {} (P254 — wrong owner, world-writable, symlink, or SUID); recompiling",
                 cached_binary.display()
@@ -11514,9 +11569,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // sites (the up-front version check and the post-compile retry) read it, so a
         // tree the rebuild cannot fix fails once instead of rebuilding per attempt.
         let mut runtime_rebuilt = false;
+        let t_compile = std::time::Instant::now();
         // Use cached binary if it exists AND passes the safety check;
         // otherwise compile and cache.
         let binary = if cache_usable {
+            native_utils::touch_cached_binary(&cached_binary);
             cached_binary.clone()
         } else {
             // Up-front toolchain check (cache miss ⇒ about to compile).  A rustc
@@ -11569,7 +11626,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     } else {
                         format!("native compilation unavailable ({reason}); rebuild loft")
                     });
-                    let _ = std::fs::remove_file(&emit_path);
+                    let _ = fa::remove_file(&emit_path);
                     break 'native;
                 }
                 // healed → fresh rlib in place, fall through to the compile.
@@ -11598,39 +11655,40 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // Does the crate that was just generated have an entry point?  Read it off the
             // artefact rather than re-deriving the decision that produced it: the file is
             // the fact, and one `fn main` in it is exactly what rustc will look for.
-            let program_has_entry = std::fs::read_to_string(&emit_path)
+            let program_has_entry = fa::read_to_string(&emit_path)
                 .map(|src| src.contains("\nfn main(") || src.starts_with("fn main("))
                 .unwrap_or(true);
-            let mut cmd = std::process::Command::new("rustc");
-            loft::platform::dies_with_driver(&mut cmd, false);
-            cmd.env("TMPDIR", &scratch).arg("--edition=2024");
+            let mut cmd = Spawn::new(Program::search("rustc"));
+            cmd.push_env("TMPDIR", &scratch).push_arg("--edition=2024");
             if program_has_entry {
-                cmd.arg("-o").arg(&binary);
+                cmd.push_arg("-o").push_arg(&binary);
             } else {
                 // No `main`: there is no program to link.  Check the crate compiles and
                 // stop — which is what a library asked to build as an executable can
                 // honestly answer, and it keeps `loft build` / `loft check` on a
                 // library-only package a clean pass instead of a raw rustc E0601.
-                cmd.arg("--crate-type=lib")
-                    .arg("--emit=metadata")
-                    .arg("-o")
-                    .arg(scratch.join(format!("loft_native_check_{}.rmeta", std::process::id())));
+                cmd.push_arg("--crate-type=lib")
+                    .push_arg("--emit=metadata")
+                    .push_arg("-o")
+                    .push_arg(
+                        scratch.join(format!("loft_native_check_{}.rmeta", std::process::id())),
+                    );
             }
-            cmd.arg(&emit_path);
+            cmd.push_arg(&emit_path);
             if native_release {
                 // A shipped binary: full optimisation.  Measured on the drawing pass
                 // over `-O`: `hash` −15–20 %, the pixel rows −3–5 %; opt-level 3 alone
                 // and `-C target-cpu=native` moved nothing, so neither is asked for on
                 // its own.  Semantics runs (`--native`, the test runner) keep the
                 // faster compile.
-                cmd.args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
+                cmd.push_args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
             }
             // Layer 1: strip the linked binary (~36MB → ~1MB; the bulk is
             // debug info from libloft.rlib + std).  Skipped when the user
             // asked for debug info (--native-debug) or set
             // LOFT_NATIVE_KEEP_SYMBOLS=1.
             if !native_debug && platform::native_strip_symbols() {
-                cmd.arg("-Cstrip=symbols");
+                cmd.push_arg("-Cstrip=symbols");
             }
             // NDB.0 — when --native-debug is set, emit DWARF debug
             // info so stock GDB / LLDB can step through the native
@@ -11638,7 +11696,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // an optimised build with debug info if both flags are
             // present.
             if native_debug {
-                cmd.arg("-Cdebuginfo=2");
+                cmd.push_arg("-Cdebuginfo=2");
             }
             // P266 follow-up: each native package's rlib carries a copy
             // of `loft_register_v1` (synthesized by the `loft_ffi::loft_register!`
@@ -11667,16 +11725,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // once per occurrence, which on the `#c` shim path was three lines of
             // noise directly above the real error. Same reason as macOS: a flag
             // the host linker has no equivalent for is not passed to it.
-            #[cfg(not(any(target_os = "macos", windows)))]
-            cmd.arg("-Clink-arg=-Wl,--allow-multiple-definition");
+            cmd.push_args(platform::allow_multiple_definition_arg());
             // Point rustc at loft's own runtime rlib and everything it links against,
             // answering the deps dir it found.  A closure rather than straight-line code
             // because the post-compile heal below rebuilds that rlib and must ask AGAIN:
             // the args are decided from what is on disk, and the whole point of the
             // rebuild is to change that (loft#855).
-            let attach_loft_runtime = |cmd: &mut std::process::Command| {
+            let attach_loft_runtime = |cmd: &mut Spawn| {
                 let lib_dir = loft_lib_dir()?;
-                cmd.args(loft::native_lib::loft_extern_args(
+                cmd.push_args(loft::native_lib::loft_extern_args(
                     &lib_dir.join("libloft.rlib"),
                 ));
                 // One `-L` per search dir: the classic layout yields exactly one
@@ -11684,7 +11741,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // 2026-07-29 yields one per crate.  See `dep_search_dirs`.
                 let search = native_utils::dep_search_dirs(&lib_dir);
                 for d in &search {
-                    cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                    cmd.push_arg("-L")
+                        .push_arg(format!("dependency={}", d.display()));
                 }
                 let deps = search
                     .first()
@@ -11697,8 +11755,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 if let Some(ffi) =
                     loft::native_lib::loft_ffi_for_libloft(&lib_dir.join("libloft.rlib"), &deps)
                 {
-                    cmd.arg("--extern")
-                        .arg(format!("loft_ffi={}", ffi.display()));
+                    cmd.push_arg("--extern")
+                        .push_arg(format!("loft_ffi={}", ffi.display()));
                 }
                 // Propagate `-L native=` for every build-script `OUT_DIR`
                 // that bundles a native lib.  Windows-targets ships
@@ -11706,7 +11764,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // paths the link step fails with `LNK1181: cannot open
                 // input file 'windows.0.48.5.lib'`.
                 for out_dir in build_script_native_lib_dirs(&lib_dir) {
-                    cmd.arg("-L").arg(format!("native={}", out_dir.display()));
+                    cmd.push_arg("-L")
+                        .push_arg(format!("native={}", out_dir.display()));
                 }
                 Some(deps)
             };
@@ -11721,6 +11780,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // @PLN24 arc D — and the C libraries `#c` bindings resolve against.
             // Host target only: wasm has no C ABI to link (arc E).
             native_utils::add_c_library_flags(&mut cmd, &p.data);
+            native_utils::add_main_stack_flags(&mut cmd);
             // @PLN54 S6 — native-backend AddressSanitizer.  LOFT_NATIVE_ASAN=1
             // instruments the generated native binary with ASan so a codegen bug
             // that emits an out-of-bounds / use-after-free raw-pointer store access
@@ -11730,12 +11790,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // there is no artifact cache to invalidate.  Opt-in, off by default.
             if std::env::var_os("LOFT_NATIVE_ASAN").is_some() {
                 if std::env::var_os("RUSTUP_TOOLCHAIN").is_none() {
-                    cmd.env("RUSTUP_TOOLCHAIN", "nightly");
+                    cmd.push_env("RUSTUP_TOOLCHAIN", "nightly");
                 }
-                cmd.arg("-Zsanitizer=address");
+                cmd.push_arg("-Zsanitizer=address");
             }
             loft::timeout::blocked_on("rustc compiling the program");
-            let output = cmd.output();
+            let output = cmd.run(b"");
             loft::timeout::unblocked();
             let output = match output {
                 Ok(o) => o,
@@ -11752,7 +11812,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                         );
                     }
                     native_fallback_reason = Some("rustc not found".to_string());
-                    let _ = std::fs::remove_file(&emit_path);
+                    let _ = fa::remove_file(&emit_path);
                     break 'native;
                 }
                 Err(e) => {
@@ -11764,7 +11824,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                         );
                     }
                     native_fallback_reason = Some(format!("rustc could not be launched ({e})"));
-                    let _ = std::fs::remove_file(&emit_path);
+                    let _ = fa::remove_file(&emit_path);
                     break 'native;
                 }
             };
@@ -11812,7 +11872,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 if native_deps_dir.is_none() {
                     native_deps_dir = attach_loft_runtime(&mut cmd);
                 }
-                if let Ok(retry) = cmd.output() {
+                if let Ok(retry) = cmd.run(b"") {
                     output = retry;
                 }
             }
@@ -11846,7 +11906,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                      update, or loft's runtime library unavailable); rebuild loft"
                         .to_string(),
                 );
-                let _ = std::fs::remove_file(&emit_path);
+                let _ = fa::remove_file(&emit_path);
                 break 'native;
             }
             // Relay rustc's own output to the user.
@@ -11867,14 +11927,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     }
                     if let Some(deps) = native_deps_dir.as_ref() {
                         eprintln!("\nDeps directory: {}", deps.display());
-                        match std::fs::read_dir(deps) {
+                        match fa::read_dir(deps) {
                             Ok(rd) => {
                                 let mut entries: Vec<_> = rd
-                                    .flatten()
+                                    .iter()
                                     .filter_map(|e| {
-                                        let n = e.file_name().to_string_lossy().to_string();
-                                        let is_rlib = std::path::Path::new(&n)
-                                            .extension()
+                                        let n = e.file_name().unwrap_or_default().to_string();
+                                        let is_rlib = fa::extension(std::path::Path::new(&n))
                                             .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"));
                                         if n.contains("rand") || n.contains("loft") || is_rlib {
                                             Some(n)
@@ -11919,7 +11978,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // Store in cache for next run.  P254 — also opt out
             // when LOFT_NATIVE_NO_CACHE=1 is set so paranoid users
             // can avoid leaving a cache file on disk at all.
-            if !no_cache && std::fs::create_dir_all(&cache_dir).is_ok() {
+            if !no_cache && fa::create_dir_all(&cache_dir).is_ok() {
                 // P254 — tighten cache-dir mode to 0700 so a future
                 // attacker can't drop files into our cache (or
                 // remove ours from under us).  Repairs pre-existing
@@ -11967,6 +12026,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             }
             binary
         };
+        // The program's own compile — rustc and its heals — or the cache that spared it: the
+        // `binary` row says which, and is what tells a slow test from a cold cache.
+        loft::platform::timing_record(
+            "binary",
+            &source_stem,
+            cache_usable,
+            Some(t_compile.elapsed().as_secs_f64()),
+        );
         // NDB.0 — preserve the generated .rs on disk when
         // --native-debug is set so DWARF's `.debug_line` table points
         // at a real file the debugger can show.  Without this, GDB /
@@ -11978,7 +12045,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // aliasing/cluster-V-native-only.md.
         let keep_rs = std::env::var("LOFT_KEEP_NATIVE_RS").is_ok();
         if !native_debug && !keep_rs {
-            let _ = std::fs::remove_file(&emit_path);
+            let _ = fa::remove_file(&emit_path);
         } else {
             let reason = if native_debug {
                 "--native-debug"
@@ -11999,7 +12066,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             && program_cache_on
             && !has_auto_native
             && !any_dev_interpret
-            && cached_binary.is_file()
+            && fa::is_file(&cached_binary)
         {
             loft::startup_cache::save_native_sidecar(
                 &abs_file,
@@ -12018,7 +12085,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // Prefer the DURABLE content-addressed cache path over the
             // per-pid temp the miss branch built into (the consumer is the
             // S5 swap; a temp path is clobbered by the next same-pid run).
-            let artifact = if !no_cache && cached_binary.exists() {
+            let artifact = if !no_cache && fa::exists(&cached_binary) {
                 &cached_binary
             } else {
                 &binary
@@ -12138,7 +12205,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // execution; no restore needed (the process exits after the run).  The
     // --native path uses `Command::current_dir` on the spawn instead.
     if state.database.program_relative && !state.database.source_dir.is_empty() {
-        let _ = std::env::set_current_dir(&state.database.source_dir);
+        let _ = fa::set_current_dir(&state.database.source_dir);
     }
     // @C67 — a `#native` the program calls and nothing implements is refused HERE, at
     // startup, as `--native` refuses it at build time (P269): run, it panicked when the call
@@ -12197,7 +12264,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 && def.native.is_empty()
                 && def.attributes.is_empty()
                 && matches!(def.returned, data::Type::Void)
-                && !portable_path::is_stdlib_source(&def.position.file)
+                && !file_access::is_stdlib_source(def.position.file.as_str())
             {
                 let name = def.name.strip_prefix("n_").unwrap_or(&def.name);
                 test_names.push(name.to_string());
@@ -12215,12 +12282,16 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `db.database(1000)` would panic with `allocations[max]` OOB.
             let clean_data = p.data.clone();
             let clean_db = state.database.clone();
+            let mut byte_code_secs = 0.0;
+            let mut run_secs = 0.0;
             for name in &test_names {
                 let mut data_iter = clean_data.clone();
                 let mut db_iter = clean_db.clone();
                 db_iter.max = 0;
                 let mut state_iter = State::new(db_iter);
+                let t_byte_code = std::time::Instant::now();
                 compile::byte_code(&mut state_iter, &mut data_iter);
+                byte_code_secs += t_byte_code.elapsed().as_secs_f64();
                 // Preserve native-extension wiring across test iterations.
                 extensions::load_all(&mut state_iter, all_native_libs.clone());
                 extensions::wire_native_fns(&mut state_iter, &data_iter);
@@ -12229,8 +12300,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // this wire every such call hits the panicking stub.
                 extensions::wire_shared_native_fns(&mut state_iter, &data_iter);
                 // The run co-owns this iteration's table; no further copy.
+                let t_run = std::time::Instant::now();
                 state_iter.execute_argv(name, std::sync::Arc::new(data_iter), &[]);
+                run_secs += t_run.elapsed().as_secs_f64();
             }
+            loft::platform::phase("byte_code", byte_code_secs);
+            loft::platform::phase("run", run_secs);
         }
     } else if dump_only {
         // --dump: compile to bytecode, dump to stderr, exit (no execution).
@@ -12260,12 +12335,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.
         state.arm_profiler();
+        let t_run = std::time::Instant::now();
         state.execute_argv("main", &p.data, &user_args);
         // FY.3: native desktop frame loop — gl_swap_buffers sets frame_yield,
         // causing execute_argv to return. Resume until the program finishes.
         while state.database.frame_yield {
             state.resume();
         }
+        loft::platform::phase("run", t_run.elapsed().as_secs_f64());
         // The program is over HERE in the frame-yield case — unwire the
         // parallel ctx at its program-scope owner (`resume` deliberately
         // does not: it also serves per-call re-entry, where the standing
@@ -12311,11 +12388,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // third instrument that reports on a RUNNING program.
     loft::net_profile::report();
     // @PLN119 arc A — say goodbye to each placed library's worker rather than
-    // leaving the kernel to do it. `PR_SET_PDEATHSIG` is the backstop that
+    // leaving the kernel to do it. the parent-death watch (`wire::die_with_parent`) is the backstop that
     // covers every `exit` path below and an outright kill; this is the graceful
     // one, and it runs after the leak check so a worker teardown can never be
     // what a leak report is describing.
-    #[cfg(target_os = "linux")]
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    #[cfg(unix)]
     loft::lib_placement::dispatch::shutdown();
     // @PLN130 F8 — LOFT_STRICT_STORES makes both store-lifetime faults fatal: a reference
     // that outlived its store, and a store nobody freed.  Reported at every site during the
@@ -12340,6 +12418,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         }
     }
     if let Some(err) = runtime_err {
+        // `exit(code)` is the program's own verdict: no message, the code as the status,
+        // the same way the generated binary's `exit_program` ends (@PLN179 finding 009).
+        if let loft::runtime_error::RuntimeErrorKind::Exit { code } = err.kind {
+            loft::runtime_error::exit_program(code);
+        }
         // The typed-error block plus the call chain captured at raise time, through the
         // renderer the generated binary also uses (`RuntimeError::report_and_exit`).
         // Rendering it here in its own spelling is how `--native` and `--interpret`
@@ -12387,7 +12470,7 @@ fn resolve_test_target(arg: &str) -> String {
     // Read the leading COMPONENT rather than the leading text: `components()`
     // drops a `./` prefix and splits on the platform's separator, so this is
     // right on Windows without a backslash rewrite (which would corrupt a Unix
-    // filename that legitimately contains one — `portable_path`'s gate).
+    // filename that legitimately contains one — `file_access`'s guard).
     let as_path = std::path::Path::new(path);
     // `components()` keeps a leading `.` (it only drops interior ones), so skip
     // CurDir to see what the path really starts with.
@@ -12401,7 +12484,7 @@ fn resolve_test_target(arg: &str) -> String {
     // and a bare `Prefix` covers the drive-relative `C:x.loft`, which is no more a name
     // than `/abs` is.
     let rooted = as_path.is_absolute()
-        || as_path.has_root()
+        || matches!(first, Some(std::path::Component::RootDir))
         || matches!(first, Some(std::path::Component::Prefix(_)))
         || matches!(first, Some(std::path::Component::ParentDir))
         || first.is_some_and(|c| c.as_os_str() == TESTS_DIR);
@@ -12416,10 +12499,9 @@ fn resolve_test_target(arg: &str) -> String {
     // both `loft test unit` and `loft test tests/unit` see the same thing, and only
     // when there is no `::selector` (a selector names a function inside one FILE, so
     // a directory there is a mistake worth leaving to the existing report).
-    let names_a_dir = selector.is_none() && std::path::Path::new(&out).is_dir();
+    let names_a_dir = selector.is_none() && fa::is_dir(std::path::Path::new(&out));
     if !names_a_dir
-        && !std::path::Path::new(path)
-            .extension()
+        && !fa::extension(std::path::Path::new(path))
             .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
     {
         out.push_str(".loft");
@@ -12441,14 +12523,14 @@ mod tests {
     fn source_uses_that_the_manifest_does_not_declare_are_reported() {
         let dir = std::env::temp_dir().join(format!("loft_1136_{}", std::process::id()));
         let src = dir.join("src");
-        std::fs::create_dir_all(&src).expect("mkdir");
-        std::fs::write(
+        fa::create_dir_all(&src).expect("mkdir");
+        fa::write(
             src.join("hex_shape.loft"),
             "use hex_field::*;\nuse hex_grid;\nuse helper::thing;\nuse hex_shape;\n",
         )
         .expect("write entry");
         // A SIBLING module of this package, not a registry package: `use helper` names it.
-        std::fs::write(src.join("helper.loft"), "fn h() -> integer { 1 }\n").expect("write mod");
+        fa::write(src.join("helper.loft"), "fn h() -> integer { 1 }\n").expect("write mod");
 
         let declared = vec![("hex_grid".to_string(), ">=0.1".to_string())];
         let got = super::undeclared_source_deps(&dir, "hex_shape", &declared);
@@ -12465,7 +12547,7 @@ mod tests {
             got_none,
             vec!["hex_field".to_string(), "hex_grid".to_string()]
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&dir);
     }
 
     /// The control: a package whose every `use` is a sibling module has nothing to report, so
@@ -12474,12 +12556,12 @@ mod tests {
     fn a_package_with_only_local_modules_reports_nothing() {
         let dir = std::env::temp_dir().join(format!("loft_1136b_{}", std::process::id()));
         let src = dir.join("src");
-        std::fs::create_dir_all(&src).expect("mkdir");
-        std::fs::write(src.join("solo.loft"), "use parts::*;\n").expect("write entry");
-        std::fs::write(src.join("parts.loft"), "fn p() -> integer { 2 }\n").expect("write mod");
+        fa::create_dir_all(&src).expect("mkdir");
+        fa::write(src.join("solo.loft"), "use parts::*;\n").expect("write entry");
+        fa::write(src.join("parts.loft"), "fn p() -> integer { 2 }\n").expect("write mod");
         let unexpected = super::undeclared_source_deps(&dir, "solo", &[]);
         assert!(unexpected.is_empty(), "{unexpected:?}");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&dir);
     }
 
     use super::*;

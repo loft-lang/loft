@@ -212,24 +212,24 @@ first site that forgot the flag.
 it has no finite set of instances.
 
 **`D-Keyed`.**  A keyed collection over a type variable stays refused at the definition
-(loft#1538's message).  C110's record-set decision stands whole: this plan proposes no
+(loft#1538's message).  @C110's record-set decision stands whole: this plan proposes no
 `hash<K, V>`, and does not offer a hand-built `Map<K, V>` as a reason for anything — a keyed
 lookup is what a record set is for.  That answers open question 4.
 
 ## C110, evaluated
 
-The material for step C0, which is done: the owner revised C110 as C126 on 2026-09-21, and
+The material for step C0, which is done: the owner revised @C110 as @C126 on 2026-09-21, and
 the register entry is the decision — this section is the measurement it rests on.  Each of
-C110's reasons, run against `9f5cf6a96`, and what the measurement leaves standing.
+@C110's reasons, run against `9f5cf6a96`, and what the measurement leaves standing.
 
-| C110's reason | Verdict | Measured |
+| @C110's reason | Verdict | Measured |
 |---|---|---|
 | The monomorph's name is its identity, built *"from the FIRST argument's type"*, and four readers must follow a second type: `find_fn`, native, `original_name`, the H5 guard | **no longer holds** | The name is built from what `T` BINDS to: `first<T>(v: vector<T>)` at `integer` is `t_7integer_first`.  `find_fn` looks under the first argument (`vector`) and never finds it — `LOFT_TRACE=call` shows both calls of `first(a)` resolving through the template.  All three stdlib generics have that shape.  Where `find_fn` DOES find an instance, that is finding 5's defect.  `h5_split_mangled` reads every leading digit and only the function-name half; native emits whatever the key is.  Three readers are indifferent to the key's content, and the fourth is a bug |
-| *"The cost is understood — it has simply never been worth paying"* (C95: *"when mangling extends beyond the first parameter…"*) | **overtaken** | @PLN162 extended it on 2026-09-14: every overload key carries every parameter's type (`f_10Rock#Paper_beat`) and the emitter maps `#` |
-| The sole named consumer is HARMED: *"a generic `hole<T>` accepts every type by construction"*, deleting the per-kind opt-in | **false as stated; stands on narrower ground** | `hole<T: SqlHole>(v: T)` called with a type that has not opted in is refused *"'Raw' does not satisfy interface 'SqlHole': missing sql_hole"* — a compile error naming the method to add, the property C110 says a generic deletes.  A BOUND is a per-kind opt-in.  What does change is who owns the list: the target's author today, anyone who implements the interface under a bound.  For a surface whose audit is *"read one target's method list"* that is a real difference, so the `hole_*` family stays per-kind.  It was a reason for one consumer not to use the feature, never a reason against the feature |
+| *"The cost is understood — it has simply never been worth paying"* (@C95: *"when mangling extends beyond the first parameter…"*) | **overtaken** | @PLN162 extended it on 2026-09-14: every overload key carries every parameter's type (`f_10Rock#Paper_beat`) and the emitter maps `#` |
+| The sole named consumer is HARMED: *"a generic `hole<T>` accepts every type by construction"*, deleting the per-kind opt-in | **false as stated; stands on narrower ground** | `hole<T: SqlHole>(v: T)` called with a type that has not opted in is refused *"'Raw' does not satisfy interface 'SqlHole': missing sql_hole"* — a compile error naming the method to add, the property @C110 says a generic deletes.  A BOUND is a per-kind opt-in.  What does change is who owns the list: the target's author today, anyone who implements the interface under a bound.  For a surface whose audit is *"read one target's method list"* that is a real difference, so the `hole_*` family stays per-kind.  It was a reason for one consumer not to use the feature, never a reason against the feature |
 | `hash<K, V>` would be a second spelling of a keyed collection, and a worse one | **holds in full** | Nothing has changed, and `D-Keyed` keeps it |
 
-**The consumer C110 asked for is the language itself.**  `map` is
+**The consumer @C110 asked for is the language itself.**  `map` is
 `vector<T> × fn(T) -> U → vector<U>`, and `reduce` is `vector<T> × U × fn(U, T) -> U`: two
 type variables each, shipped as compiler special forms (`parse_map`, `parse_reduce`) because a
 library cannot say `U`.  The H5 guard carries an exemption for exactly this — *"For `map` the
@@ -238,16 +238,16 @@ half as a library generic today (`[10,20,30]`) and cannot write `T → U`, which
 answers (`["<1>","<2>","<3>"]`).  The owner's rule of 2026-09-15 is *no observable special
 names*; arc E's first list (`insert`, `sort`, `reverse`, `reserve`) is the ONE-variable
 built-ins, and `map` and `reduce` are missing from it because they need two.  That is new
-evidence in C110's own sense — a use, not a shape that reads familiar from another language.
+evidence in @C110's own sense — a use, not a shape that reads familiar from another language.
 No LIBRARY consumer was found: the published libraries declare zero generics.
 
-**What C110 never decided.**  Its reasons against *"multiple type variables"* are all about
+**What @C110 never decided.**  Its reasons against *"multiple type variables"* are all about
 keyed collections; its decision says a case for multi-parameter generics *"must argue for
 itself"* — they were set aside, not evaluated.  And a generic struct with ONE variable
 (`struct Grid<T>`) is named nowhere in the register: it is unbuilt, not declined.  So arc D
 needs no revisit until its one step that gives a type several variables (D9).
 
-**Several variables on a TYPE.**  C110's reasons do not reach it, and its bar — *"a use that a
+**Several variables on a TYPE.**  @C110's reasons do not reach it, and its bar — *"a use that a
 record set genuinely cannot express"* — is not met either: a tuple already is `Pair<K, V>`,
 `τ?` already is an option, and a record set already is a map.  It is in the plan on the
 owner's first reason below: `instance_def` takes an argument LIST, so the capability arrives
@@ -258,19 +258,19 @@ could derive from anything.
 
 | Needs the revision | Does not |
 |---|---|
-| C1 — a variable in any parameter (C110 (a)) | arcs A and B |
-| C2–C4 — several variables on a function (C110 (b), for functions) | D1–D8, D10 — one-variable generic types |
+| C1 — a variable in any parameter (@C110 (a)) | arcs A and B |
+| C2–C4 — several variables on a function (@C110 (b), for functions) | D1–D8, D10 — one-variable generic types |
 | D9 — several variables on a type | E1–E5 — the one-variable built-ins |
 | E6–E7 — `map`, `reduce` (they need C2) | |
 
-**The owner's reasons for the revision (2026-09-21)** — and they are not C110's bar, which
+**The owner's reasons for the revision (2026-09-21)** — and they are not @C110's bar, which
 asked for a consumer.  (1) *No random-feeling restrictions*: "one type variable, in the first
 parameter" is a restriction a reader meets with no way to derive it, and the measurement
 above says nothing in the compiler needs it any more.  (2) *Before stable*: the change is
 allowed later, the work under it is not — § Why before contract 1 says which steps.
 (3) *The fallout must not become a long-lived branch* — § How it lands.
 
-**The decision** is [C126](../../DESIGN_DECISIONS.md) — its text lives in the register and
+**The decision** is [@C126](../../DESIGN_DECISIONS.md) — its text lives in the register and
 nowhere here, so the two cannot disagree.
 
 ## Why before contract 1
@@ -284,7 +284,7 @@ a call reaches, or adds a refusal cannot — and those are the steps under every
 | definition keys — they are native symbols, and the library path decodes them (`native_lib.rs`, `lib_placement/dispatch.rs` call `original_name`) | A1, A5, B1 | a key is how a library's function is FOUND |
 | the IR schema and every cached image of it | D2 (a new definition kind), D3 (an instance records its template and arguments) | a published library's cached IR is read by later compilers |
 | which definition a call reaches | B4 — selection by rank where a receiver key decided | a program that compiles today may become ambiguous: an error-ADD |
-| the set of refused programs | D1 (`T` outside its header), `D-Regular`, `D-Rank`'s ambiguity | C95's rule: the error surface can only shrink after contract 1 |
+| the set of refused programs | D1 (`T` outside its header), `D-Regular`, `D-Rank`'s ambiguity | @C95's rule: the error surface can only shrink after contract 1 |
 
 Pure broadening, safe at any time: A6, B2–B3, B5–B7, all of C, D4–D11 — and arc E, wherever a
 step's emission gate holds (a built-in that becomes a library function also renumbers

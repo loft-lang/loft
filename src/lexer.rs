@@ -13,7 +13,6 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::vec::IntoIter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,28 +48,162 @@ pub enum LexItem {
     None,
 }
 
-#[derive(Clone, PartialEq)]
+/// What follows a vector literal's closing `]` ([`Lexer::peek_literal_subscript`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LiteralSubscript {
+    /// Not subscripted.
+    None,
+    /// An element: `[…][i]`.
+    Index,
+    /// A slice: `[…][a..b]`.
+    Slice,
+    /// Subscripted, of a kind the scan could not read.
+    Unknown,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub struct Position {
-    /// The file name where this construct is found.
+    /// The file name where this construct is found — an INTERNED name ([`FileName`]).
     ///
-    /// Shared, not owned: a position is cloned per token and per operator (about 1.4 M
-    /// times over a 12 826-line compile), and the name never changes within a file, so a
-    /// `String` here was the front end's largest remaining allocation source (@PLN166 B5).
-    /// [`Arc`] rather than `Rc` because a position travels with the IR into worker threads.
-    pub file: Arc<str>,
+    /// A position is copied per token and per operator, and the name never changes within a
+    /// file, so it is held once per distinct name for the life of the process and a position
+    /// only carries the reference: copying one is three words, with no allocation and no
+    /// reference count.  An `Arc<str>` here made every token's clone and drop an atomic
+    /// increment and decrement — measured, two thirds of the lexer's own time on a JSON parse.
+    pub file: FileName,
     /// The line where this result was found.
     pub line: u32,
     /// The position on the line where this result was found.
     pub pos: u32,
 }
 
+/// A source file's name, held once per distinct name for the life of the process
+/// ([`intern_file`]).  Copying one copies a reference; comparing two compares the reference
+/// first, so two positions in one file compare in one instruction — the property `Arc<str>`'s
+/// identity check gave the comparisons that read it, which a plain `&str` loses (every compare
+/// scanned two long paths).  Reads as a `str` everywhere one is expected.
+#[derive(Clone, Copy, Default)]
+pub struct FileName(&'static str);
+
+impl FileName {
+    /// The name, for as long as the process runs.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl std::ops::Deref for FileName {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.0
+    }
+}
+
+impl AsRef<str> for FileName {
+    fn as_ref(&self) -> &str {
+        self.0
+    }
+}
+
+impl AsRef<std::ffi::OsStr> for FileName {
+    fn as_ref(&self) -> &std::ffi::OsStr {
+        std::ffi::OsStr::new(self.0)
+    }
+}
+
+impl AsRef<std::path::Path> for FileName {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(self.0)
+    }
+}
+
+impl PartialEq for FileName {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0) || self.0 == other.0
+    }
+}
+
+impl Eq for FileName {}
+
+impl PartialEq<str> for FileName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for FileName {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl std::hash::Hash for FileName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl std::fmt::Display for FileName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::fmt::Debug for FileName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.0, f)
+    }
+}
+
+impl From<&str> for FileName {
+    fn from(name: &str) -> Self {
+        intern_file(name)
+    }
+}
+
+impl From<&String> for FileName {
+    fn from(name: &String) -> Self {
+        intern_file(name)
+    }
+}
+
+impl From<String> for FileName {
+    fn from(name: String) -> Self {
+        intern_file(&name)
+    }
+}
+
 /// The file name of a position that has none: a synthetic definition, a test fixture, a
-/// runtime error raised outside any source.  `Arc<str>`'s default is backed by a static
-/// (std, since 1.80), so this allocates nothing — which the allocation ratchet
-/// (`tests/frontend_counts.rs`) checks by demanding the same count from two runs in one
-/// process: a lazily minted shared name read one more on the first run.
-pub fn no_file() -> Arc<str> {
-    Arc::default()
+/// runtime error raised outside any source.
+#[must_use]
+pub fn no_file() -> FileName {
+    FileName("")
+}
+
+/// The process-wide copy of a file name, made once per distinct name and never freed: the
+/// names are few (one per source file, plus the fixed tags a lexer is opened with), and every
+/// position naming that file shares it.
+#[must_use]
+pub fn intern_file(name: &str) -> FileName {
+    use std::sync::{Mutex, OnceLock};
+    if name.is_empty() {
+        return no_file();
+    }
+    static NAMES: OnceLock<Mutex<std::collections::HashSet<&'static str>>> = OnceLock::new();
+    // Room for every name a process meets, so a compile never pays the set's growth: a
+    // growth lands on whichever compile crosses a capacity step, and made two identical
+    // compiles allocate differently (the front-end pins, loft#1772).
+    let names = NAMES.get_or_init(|| Mutex::new(std::collections::HashSet::with_capacity(256)));
+    let mut names = names
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(&known) = names.get(name) {
+        return FileName(known);
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.insert(leaked);
+    FileName(leaked)
 }
 
 impl Position {
@@ -140,8 +273,12 @@ struct Recorded {
     /// Where the consumed source ended when the token became the one held.
     prev_end: (u32, u32),
     /// The string-interpolation state the read left: a literal that opens a hole leaves
-    /// `Formatting`, with the string the closing `}` resumes.
-    scan: ScanState,
+    /// `Formatting`, with the string the closing `}` resumes.  `None` for a QUEUED piece
+    /// (the `.` after `5` in `5.tri()`): it was scanned with the token before it, so it
+    /// leaves the state as that token and the parser since left it.  Restoring the state of
+    /// the moment it was queued undid the parser's switch into code at a format hole that
+    /// starts with a number: `"{5.tri()}"` and `"{5..7}"` read the rest of the hole as text.
+    scan: Option<ScanState>,
 }
 
 /// A lexer that can remember a state via a link and then optionally return to that state.
@@ -198,6 +335,11 @@ pub struct Lexer {
     /// missing restore to the one diagnostic it was made for.
     seek_return: Option<(u32, u32)>,
     tokens: HashSet<String>,
+    /// [`token_tables`] of `tokens`: which ASCII characters are a token alone, and which
+    /// begin a two-character token — so a punctuation character costs an index, not a
+    /// `HashSet<String>` lookup, and the two-character lookup runs only where one can match.
+    tok1: [bool; 128],
+    tok2: [bool; 128],
     keywords: HashSet<String>,
     /// The comment marker (from it to end-of-line is skipped); loft `//`.  See
     /// [`LexConfig`].
@@ -316,6 +458,7 @@ static KEYWORDS: &[&str] = &[
     "panic",
     "interface",
     "is",
+    "operator",
 ];
 
 /// True when `word` is one of loft's reserved keywords (the `KEYWORDS` table above).
@@ -500,6 +643,8 @@ impl Default for Lexer {
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
             iter: LINE.chars().collect::<Vec<_>>().into_iter().peekable(),
+            tok1: token_tables(&cfg.tokens).0,
+            tok2: token_tables(&cfg.tokens).1,
             tokens: cfg.tokens,
             keywords: cfg.keywords,
             comment: cfg.comment,
@@ -519,18 +664,15 @@ impl Default for Lexer {
 /// whose name is within the shared edit-distance cap.  Used to turn a mistyped
 /// path into a suggestion rather than a dead end.
 fn suggest_sibling_file(path: &str) -> Option<String> {
-    let p = std::path::Path::new(path);
-    let want = p.file_name()?.to_str()?;
-    let dir = if p.parent()?.as_os_str().is_empty() {
-        std::path::Path::new(".")
-    } else {
-        p.parent()?
-    };
-    let names: Vec<String> = std::fs::read_dir(dir)
+    let p = crate::file_access::PathText::host(path);
+    let want = p.file_name()?;
+    // An empty parent renders as `.`, the current directory.
+    let dir = p.parent()?;
+    let names: Vec<String> = crate::file_access::read_dir(&dir)
         .ok()?
-        .filter_map(std::result::Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "loft"))
-        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .iter()
+        .filter(|e| !e.last_is_unspellable() && e.extension() == Some("loft"))
+        .filter_map(|e| e.file_name().map(String::from))
         .collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     crate::diagnostics::suggest_similar_capped(want, &refs).map(String::from)
@@ -549,7 +691,7 @@ impl Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
-                file: filename.into(),
+                file: intern_file(filename),
                 line: 0,
                 pos: 0,
             },
@@ -557,13 +699,13 @@ impl Lexer {
             peek: LexResult {
                 has: LexItem::None,
                 position: Position {
-                    file: filename.into(),
+                    file: intern_file(filename),
                     line: 0,
                     pos: 0,
                 },
             },
             position: Position {
-                file: filename.into(),
+                file: intern_file(filename),
                 line: 0,
                 pos: 0,
             },
@@ -573,6 +715,8 @@ impl Lexer {
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
             iter: LINE.chars().collect::<Vec<_>>().into_iter().peekable(),
+            tok1: token_tables(&config.tokens).0,
+            tok2: token_tables(&config.tokens).1,
             tokens: config.tokens,
             keywords: config.keywords,
             comment: config.comment,
@@ -670,7 +814,10 @@ impl Lexer {
         if self.mode != Mode::Formatting {
             loop {
                 if let Some(&c) = self.iter.peek() {
-                    if c != ' ' && c != '\t' {
+                    // A carriage return is whitespace too: text handed over whole (a JSON
+                    // document written on Windows, loft#1908) keeps its `\r\n` line ends,
+                    // where a source file's lines arrive without them.
+                    if c != ' ' && c != '\t' && c != '\r' {
                         break;
                     }
                     self.next_char();
@@ -705,7 +852,7 @@ impl Lexer {
                 }
             }
         }
-        let pos = self.position.clone();
+        let pos = self.position;
         if let Some(&c) = self.iter.peek() {
             Some(match c {
                 '0'..='9' => self.number(),
@@ -741,14 +888,20 @@ impl Lexer {
                     let one = c.len_utf8();
                     c.encode_utf8(&mut spelled);
                     let single = std::str::from_utf8(&spelled[..one]).unwrap_or_default();
-                    if self.tokens.contains(single) {
+                    let is_token = if c.is_ascii() {
+                        self.tok1[c as usize]
+                    } else {
+                        self.tokens.contains(single)
+                    };
+                    if is_token {
                         let single = single.to_string();
                         self.next_char();
+                        let may_pair = !c.is_ascii() || self.tok2[c as usize];
                         if let Some(&d) = self.iter.peek() {
                             d.encode_utf8(&mut spelled[one..]);
                             let double = std::str::from_utf8(&spelled[..one + d.len_utf8()])
                                 .unwrap_or_default();
-                            if self.tokens.contains(double) {
+                            if may_pair && self.tokens.contains(double) {
                                 let double = double.to_string();
                                 self.next_char();
                                 LexResult::new(LexItem::Token(double), pos)
@@ -805,7 +958,7 @@ impl Lexer {
                     self.iter = ln.chars().collect::<Vec<_>>().into_iter().peekable();
                     self.position.line += 1;
                     self.position.pos = 1;
-                    Some(LexResult::new(LexItem::None, self.position.clone()))
+                    Some(LexResult::new(LexItem::None, self.position))
                 }
                 Err(e) => {
                     self.position.line += 1;
@@ -878,7 +1031,7 @@ impl Lexer {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         let (line, pos) = self.report_pos();
         self.diagnostics
-            .add_at(level, message, &self.position.file, line, pos);
+            .add_at(level, message, self.position.file.as_str(), line, pos);
     }
 
     /// Attach a machine-readable `suggestion` (a replacement token) to the
@@ -915,8 +1068,14 @@ impl Lexer {
     pub fn diagnostic_coded(&mut self, level: Level, code: &'static str, message: &str) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         let (line, pos) = self.report_pos();
-        self.diagnostics
-            .add_at_coded(level, Some(code), message, &self.position.file, line, pos);
+        self.diagnostics.add_at_coded(
+            level,
+            Some(code),
+            message,
+            self.position.file.as_str(),
+            line,
+            pos,
+        );
     }
 
     #[track_caller]
@@ -925,7 +1084,7 @@ impl Lexer {
         self.diagnostics.add_at(
             level,
             message,
-            &self.position.file,
+            self.position.file.as_str(),
             result.position.line,
             result.position.pos,
         );
@@ -935,7 +1094,7 @@ impl Lexer {
     pub fn pos_diagnostic(&mut self, level: Level, pos: &Position, message: &str) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         self.diagnostics
-            .add_at(level, message, &pos.file, pos.line, pos.pos);
+            .add_at(level, message, pos.file.as_str(), pos.line, pos.pos);
     }
 
     /// Like [`pos_diagnostic`], but carrying a stable `code` — the explicit-position twin of
@@ -949,8 +1108,14 @@ impl Lexer {
         message: &str,
     ) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
-        self.diagnostics
-            .add_at_coded(level, Some(code), message, &pos.file, pos.line, pos.pos);
+        self.diagnostics.add_at_coded(
+            level,
+            Some(code),
+            message,
+            pos.file.as_str(),
+            pos.line,
+            pos.pos,
+        );
     }
 
     pub fn diagnostics(&self) -> &Diagnostics {
@@ -1036,7 +1201,7 @@ impl Lexer {
             res: res.clone(),
             cursor: (self.position.line, self.position.pos),
             prev_end: (self.prev_end.line, self.prev_end.pos),
-            scan: self.scan_state(),
+            scan: Some(self.scan_state()),
         }
     }
 
@@ -1044,12 +1209,11 @@ impl Lexer {
     /// as it would be read, with the cursor and consumed end the scan leaves.
     fn queue(&mut self, res: LexResult) {
         let at = (self.position.line, self.position.pos);
-        let scan = self.scan_state();
         self.memory.push(Recorded {
             res,
             cursor: at,
             prev_end: at,
-            scan,
+            scan: None,
         });
     }
 
@@ -1067,7 +1231,9 @@ impl Lexer {
         self.position.pos = n.cursor.1;
         self.prev_end.line = n.prev_end.0;
         self.prev_end.pos = n.prev_end.1;
-        self.restore_scan_state(n.scan);
+        if let Some(scan) = n.scan {
+            self.restore_scan_state(scan);
+        }
         n.res
     }
 
@@ -1106,7 +1272,7 @@ impl Lexer {
 
     /// Parse a character constant for the lexer.
     fn char(&mut self) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '\'' {
@@ -1149,7 +1315,9 @@ impl Lexer {
         // EXCEPT the last one (which the caller will skip).
         if let Some(&c) = self.iter.peek() {
             match c {
-                '"' | '\'' | '\\' => res.push(c),
+                // `` \` `` is a backtick: the one way a backtick literal can hold one, so a
+                // block of text that quotes code can be one literal (@PLN179 finding 014).
+                '"' | '\'' | '\\' | '`' => res.push(c),
                 // @PLN109 JSON: `\/` is a JSON escape for `/`; loft rejects it.
                 '/' if self.json_strings => res.push('/'),
                 't' => res.push('\t'),
@@ -1348,7 +1516,7 @@ impl Lexer {
 
     /// Parse a string for the lexer.
     fn string(&mut self) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '"' {
@@ -1460,7 +1628,7 @@ impl Lexer {
     }
 
     fn string_nested(&mut self, escaped_delim: bool, resumed: bool) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '"' {
@@ -1611,7 +1779,7 @@ impl Lexer {
     /// time as the line is entered — which is what lets a literal with an
     /// interpolation in it be dedented at all (loft#990).
     fn backtick_string(&mut self, nested: bool) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut lines: Vec<String> = Vec::new();
         let mut cur = String::new();
 
@@ -1719,7 +1887,7 @@ impl Lexer {
     /// Called from the `}` token handler when the backtick string owns the
     /// format context.
     fn backtick_string_resume(&mut self, nested: bool) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut cur = String::new();
         loop {
             match self.iter.peek() {
@@ -1868,7 +2036,7 @@ impl Lexer {
     /// Parse a number for the lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn number(&mut self) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let (mut val, int_groups) = self.get_number();
         // L11 thousands-grouping lint: warn (but still accept) when decimal `_`
         // separators don't carve standard 3-digit groups — the leftmost group
@@ -1907,10 +2075,7 @@ impl Lexer {
             if let Some('.') = self.iter.peek() {
                 self.next_char();
                 self.link = self.memory.len();
-                self.queue(LexResult::new(
-                    LexItem::Token("..".to_string()),
-                    pos.clone(),
-                ));
+                self.queue(LexResult::new(LexItem::Token("..".to_string()), pos));
                 // Through `ret_number`, NOT a bare `u32` parse (loft#1559).  This
                 // short-circuit is taken when a number is followed by `..`, and parsing it
                 // as `u32` skipped the width split every other integer literal goes
@@ -1928,7 +2093,15 @@ impl Lexer {
                     self.ret_number(0, pos, false)
                 };
             }
-            if prev_was_field_dot {
+            // A letter or `_` after the dot starts a method or a field (`5.abs()`, `5.tri()`),
+            // never a float fraction: no decimal literal has one there.  Read as a float, the
+            // receiver was refused with "Problem parsing float" while `(5).tri()` and `x.tri()`
+            // worked.
+            let member_dot = self
+                .iter
+                .peek()
+                .is_some_and(|c| c.is_alphabetic() || *c == '_');
+            if prev_was_field_dot || member_dot {
                 // P195 + P234: when the previous emitted token was a `.`
                 // (field access), the current number is a tuple/struct
                 // field index — NEVER a float fragment.  This covers two
@@ -1947,7 +2120,7 @@ impl Lexer {
                 self.link = self.memory.len();
                 self.queue(LexResult::new(
                     LexItem::Token(".".to_string()),
-                    self.position.clone(),
+                    self.position,
                 ));
                 // Through `ret_number` for the same reason as the `..` site above: one
                 // home for what an integer literal's token is.  A tuple index this large is
@@ -2166,7 +2339,7 @@ impl Lexer {
             self.restart(filename);
             return;
         }
-        let Ok(bytes) = std::fs::read(filename) else {
+        let Ok(bytes) = crate::file_access::read(filename) else {
             // Mistyping the path is one of the commonest FIRST things anyone does
             // (`loft examples/helo.loft`), so answer it the way a mistyped
             // function or type is answered: name the file and offer the nearest
@@ -2216,7 +2389,7 @@ impl Lexer {
 
     fn restart(&mut self, filename: &str) {
         self.position = Position {
-            file: filename.into(),
+            file: intern_file(filename),
             line: 0,
             pos: 0,
         };
@@ -2225,10 +2398,10 @@ impl Lexer {
         self.seek_return = None;
         // Likewise the consumed-source position: `report_pos` also checks the file, so
         // this is the second of two independent guards rather than the only one.
-        self.prev_end = self.position.clone();
+        self.prev_end = self.position;
         self.peek = LexResult {
             has: LexItem::None,
-            position: self.position.clone(),
+            position: self.position,
         };
         self.memory.clear();
         self.replay_return = None;
@@ -2293,7 +2466,7 @@ impl Lexer {
         // past the `{`.  Point the caret AT it instead of one past: the whole message is
         // about that character, and a reader following the caret to the space beside it
         // has to guess which of the two the compiler meant.
-        let mut at = self.position.clone();
+        let mut at = self.position;
         at.pos = at.pos.saturating_sub(1).max(1);
         diagnostic_at!(
             self,
@@ -2419,7 +2592,7 @@ impl Lexer {
     fn end(&mut self) {
         self.peek = LexResult {
             has: LexItem::None,
-            position: self.position.clone(),
+            position: self.position,
         }
     }
 
@@ -2435,7 +2608,7 @@ impl Lexer {
         let at_edge = self.link == self.memory.len();
         // Where the source the parser has consumed stops, captured before the cursor
         // runs on to the next token — see `report_pos`.
-        self.prev_end = self.position.clone();
+        self.prev_end = self.position;
         let Some(n) = self.next() else {
             self.end();
             return;
@@ -2463,7 +2636,7 @@ impl Lexer {
                 self.memory.clear();
                 self.link = 0;
             }
-        } else if at_edge && self.link < self.memory.len() && self.count_links() > 0 {
+        } else if at_edge && self.link < self.memory.len() {
             // A mid-scan QUEUE: reading `1..` or `n.v.0.0`, the number lexer emits two
             // tokens from one scan — it pushes the follow-up (`..` / `.`) into the buffer
             // and returns the NUMBER as the live token.  So the number is the one token
@@ -2473,7 +2646,9 @@ impl Lexer {
             //
             // Insert it BEFORE the queued token and step over it, which leaves the live
             // sequence unchanged — the next `cont()` still replays the follow-up — and
-            // makes the buffer say what was actually read.
+            // makes the buffer say what was actually read.  Whether or not a link is open:
+            // a link taken ON the number reads its position from this record, and without
+            // it a revert resumed after the follow-up (`x: 2..=5` came back as `= 5`).
             self.memory.insert(self.link, self.recorded(&res));
             self.link += 1;
         }
@@ -2538,7 +2713,10 @@ impl Lexer {
             // `checkpoint_parse` isn't on every token.
             bc_throttle = bc_throttle.wrapping_add(1);
             if bc_throttle.is_multiple_of(256) {
-                crate::timeout::checkpoint_parse(&self.peek.position.file, self.peek.position.line);
+                crate::timeout::checkpoint_parse(
+                    self.peek.position.file.as_str(),
+                    self.peek.position.line,
+                );
             }
             if matches!(self.peek.has, LexItem::None) {
                 return false;
@@ -2664,6 +2842,81 @@ impl Lexer {
         found
     }
 
+    /// Is the vector literal whose `[` was just consumed SUBSCRIPTED — is its matching `]`
+    /// followed by a `[` — and is that subscript a slice (a `..` at its own depth)?  `None`
+    /// when the scan stopped before the literal's `]`.  The lexer is restored either way.
+    ///
+    /// A subscripted literal is not the value an assignment's destination receives, so it
+    /// must not be built INTO that destination (loft#1923): `s = [1][1..1]` sliced the
+    /// destination into itself.  Asked before the literal is parsed, so both passes make
+    /// the same decision.
+    ///
+    /// A string element is stepped over when it closed without a hole — the scanner is then
+    /// back in code, as before it — and the scan stops at a string that OPENED a hole, whose
+    /// scanner state a revert does not restore ([`peek_literal_receiver`](Self::peek_literal_receiver)
+    /// stops at every string).
+    pub fn peek_literal_subscript(&mut self) -> Option<LiteralSubscript> {
+        let saved = self.link();
+        let mut depth: i32 = 0;
+        let mut found = None;
+        loop {
+            if matches!(self.peek.has, LexItem::None)
+                || (matches!(self.peek.has, LexItem::CString(_)) && self.mode != Mode::Code)
+            {
+                break;
+            }
+            if depth == 0 && self.peek_token(";") {
+                break;
+            }
+            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+                depth += 1;
+            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+                if depth == 0 {
+                    if self.peek_token("]") {
+                        self.cont();
+                        found = Some(if self.peek_token("[") {
+                            self.cont();
+                            self.subscript_kind()
+                        } else {
+                            LiteralSubscript::None
+                        });
+                    }
+                    break;
+                }
+                depth -= 1;
+            }
+            self.cont();
+        }
+        self.revert(saved);
+        found
+    }
+
+    /// The kind of the subscript whose `[` was just consumed, by a `..` at its own depth; a
+    /// scan stopped first (a hole-opening string) cannot say.  Part of
+    /// [`peek_literal_subscript`](Self::peek_literal_subscript), which restores the lexer.
+    fn subscript_kind(&mut self) -> LiteralSubscript {
+        let mut depth: i32 = 0;
+        loop {
+            if matches!(self.peek.has, LexItem::None)
+                || (matches!(self.peek.has, LexItem::CString(_)) && self.mode != Mode::Code)
+            {
+                return LiteralSubscript::Unknown;
+            }
+            if depth == 0 && self.peek_token("..") {
+                return LiteralSubscript::Slice;
+            }
+            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+                depth += 1;
+            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+                if depth == 0 {
+                    return LiteralSubscript::Index;
+                }
+                depth -= 1;
+            }
+            self.cont();
+        }
+    }
+
     /// Shorthand test if the current element is a specific token and skip it if found.
     pub fn has_token(&mut self, token: &'static str) -> bool {
         if self.peek_token(token) {
@@ -2705,7 +2958,9 @@ impl Lexer {
 
     /// Shorthand test if the current element is a specific local keyword, so not one of the reserved
     pub fn has_keyword(&mut self, keyword: &'static str) -> bool {
-        if self.peek.has == LexItem::Identifier(keyword.to_string()) {
+        // Compared in place, as `peek_token` does: a `String` built to compare against was
+        // one allocation per keyword test (`-> const T` asks one per declared result).
+        if matches!(&self.peek.has, LexItem::Identifier(n) if n == keyword) {
             self.cont();
             true
         } else {
@@ -2812,7 +3067,7 @@ impl Lexer {
     pub fn has_identifier_pos(&mut self) -> Option<(String, Position)> {
         if let LexItem::Identifier(n) = &self.peek.has {
             let n = n.clone();
-            let pos = self.peek.position.clone();
+            let pos = self.peek.position;
             lex_trace(format_args!(
                 "idpos {n:?} @ {}:{} (cursor {}:{})",
                 pos.line, pos.pos, self.position.line, self.position.pos
@@ -2842,6 +3097,27 @@ impl Lexer {
         res.cont();
         res
     }
+}
+
+/// The ASCII halves of a token set: which characters are a token on their own, and which
+/// begin a two-character token.  A character outside ASCII is asked of the set itself.
+fn token_tables(tokens: &HashSet<String>) -> ([bool; 128], [bool; 128]) {
+    let mut one = [false; 128];
+    let mut two = [false; 128];
+    for t in tokens {
+        let mut cs = t.chars();
+        let (Some(a), second, None) = (cs.next(), cs.next(), cs.next()) else {
+            continue;
+        };
+        if a.is_ascii() {
+            if second.is_some() {
+                two[a as usize] = true;
+            } else {
+                one[a as usize] = true;
+            }
+        }
+    }
+    (one, two)
 }
 
 #[cfg(test)]
@@ -2874,20 +3150,20 @@ mod test {
     fn one_parse_reads_a_file_once_and_the_next_parse_reads_it_again() {
         let path = std::env::temp_dir().join(format!("loft_1648_{}.loft", std::process::id()));
         let path_s = path.to_string_lossy().to_string();
-        std::fs::write(&path, "first_pass_text").unwrap();
+        crate::file_access::write(&path, "first_pass_text").unwrap();
         let mut lexer = Lexer::default();
         lexer.begin_parse();
         lexer.switch(&path_s);
         test_id(&lexer, "first_pass_text");
         // Rewritten between the two passes, as a concurrent extraction would.
-        std::fs::write(&path, "second_pass_text").unwrap();
+        crate::file_access::write(&path, "second_pass_text").unwrap();
         lexer.switch(&path_s);
         test_id(&lexer, "first_pass_text");
         // A new parse sees the disk as it is now.
         lexer.begin_parse();
         lexer.switch(&path_s);
         test_id(&lexer, "second_pass_text");
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
     }
 
     fn validate(s: &'static str, data: &[LexItem]) {
@@ -3159,9 +3435,30 @@ mod test {
         );
     }
 
+    /// A letter or `_` after an integer's dot starts a method or a field, never a float
+    /// fraction: `5.tri()` calls `tri` on `5`, as `(5).tri()` does.
+    #[test]
+    fn integer_then_member_does_not_glue_into_float() {
+        validate_cont(
+            "123.a",
+            &[
+                LexItem::Integer(123, false),
+                LexItem::Token(".".to_string()),
+                LexItem::Identifier("a".to_string()),
+            ],
+        );
+        validate_cont(
+            "5._x",
+            &[
+                LexItem::Integer(5, false),
+                LexItem::Token(".".to_string()),
+                LexItem::Identifier("_x".to_string()),
+            ],
+        );
+    }
+
     #[test]
     fn lexer_errors() {
-        error("123.a", "[\"Error: Problem parsing float at error:1:5\"]");
         error("12. ", "[\"Error: Problem parsing float at error:1:4\"]");
         error("1.12ea", "[\"Error: Problem parsing float at error:1:6\"]");
         error(
@@ -3265,6 +3562,27 @@ mod test {
         assert_eq!(lex.peek().has, LexItem::Token("..".into()));
         lex.cont();
         assert_eq!(lex.peek().has, LexItem::Integer(4, false));
+    }
+
+    #[test]
+    fn link_taken_on_a_number_before_a_range_replays_the_number() {
+        // A number read before `..` queues the `..` and returns the number live.  With no
+        // link open the buffer then held the `..` alone, so a link taken ON the number had no
+        // record of it: a revert replayed from after the `..` and the parser met `= 5`
+        // (`x: 2..=5` in a match arm, behind a peek that read nothing).
+        let mut lex = Lexer::from_str("x 2..=5", "link_on_queued_number");
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Integer(2, false));
+        let l = lex.link();
+        assert!(lex.has_identifier().is_none());
+        lex.revert(l);
+        assert_eq!(lex.peek().has, LexItem::Integer(2, false));
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Token("..".into()));
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Token("=".into()));
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Integer(5, false));
     }
 
     #[test]

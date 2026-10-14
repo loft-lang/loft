@@ -1,0 +1,13 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 42d78bcbb..12c49d849 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -14215,7 +14215,7 @@ impl Parser {
+             data,
+             sets: &sets,
+             xs,
+-            self_d,
++            self_d: u32::MAX,
+         };
+         // (found, all) over the leaves reached: a body with no leaf answers no, and one
+         // leaf that does not view `xs` refuses the whole body.

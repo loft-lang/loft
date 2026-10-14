@@ -35,7 +35,7 @@ fn vadd_trace_enabled() -> bool {
 use crate::keys::DbRef;
 use crate::store::{RECORD_PAYLOAD, Store};
 use crate::vector;
-use crate::{hash, keys, tree};
+use crate::{btree, hash, keys};
 
 /// @PLN174 F5 — one cdylib bridge call's heap-typed arguments as the bridge is handed
 /// them ([`Stores::bridge_args`]): the store the bridge allocates in, whether that store
@@ -48,7 +48,6 @@ pub struct BridgeArgs {
     pub handed: Vec<DbRef>,
     copies: Vec<(DbRef, DbRef)>,
 }
-use std::collections::HashSet;
 
 /// Why a field is being given its absent value — which decides what that value may COST.
 ///
@@ -113,7 +112,7 @@ enum InsertKind {
     Hash(u16),
     Index(u16),
     Ordered(u16),
-    Trie,
+    Trie(u16),
     Radix,
     Other,
 }
@@ -125,9 +124,9 @@ impl InsertKind {
             Parts::Sorted(c, _) => Self::Sorted(*c),
             Parts::Array(_) => Self::Array,
             Parts::Hash(c, _) => Self::Hash(*c),
-            Parts::Index(c, _, _) => Self::Index(*c),
+            Parts::Index(c, _) => Self::Index(*c),
             Parts::Ordered(c, _) => Self::Ordered(*c),
-            Parts::Trie(_, _) => Self::Trie,
+            Parts::Trie(c, _) => Self::Trie(*c),
             Parts::Radix(_, _) => Self::Radix,
             _ => Self::Other,
         }
@@ -252,6 +251,9 @@ impl Stores {
     /// # Panics
     /// Panics on an unsupported `parent_tp`/`field` parts kind (an internal invariant
     /// violation — the parser only emits `OpNewRecord` for collection/struct field types).
+    ///
+    /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
+    /// reference to it keeps its place while the collection around it grows or re-sorts.
     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
         self.records_created += 1;
@@ -330,7 +332,7 @@ impl Stores {
             }
             Parts::Array(c)
             | Parts::Ordered(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
             | Parts::Hash(c, _) => {
@@ -834,6 +836,92 @@ impl Stores {
             .map(|i| i as u16)
     }
 
+    /// `@FR-H-RefHome` — the record type a collection type holds, for a place that is one of
+    /// its elements: a vector-like one's, or a keyed one's (`hash`, `index`, `spatial`, a
+    /// trie), whose element a key lookup (`OpGetRecord`) names.
+    #[must_use]
+    pub fn collection_content(&self, tp: u16) -> Option<u16> {
+        match &self.types.get(tp as usize)?.parts {
+            Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Sorted(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _) => Some(*c),
+            _ => None,
+        }
+    }
+
+    /// `@FR-H-RefHome` — does any record type hold a user's `reference<T>` field?  A program
+    /// without one stores no reference, so the analysis has nothing to judge.
+    #[must_use]
+    pub fn has_reference_fields(&self) -> bool {
+        self.types.iter().any(|t| match &t.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields.iter().any(|f| {
+                f.target != u16::MAX
+                    && matches!(
+                        self.types.get(f.content as usize).map(|t| &t.parts),
+                        Some(Parts::DbRef)
+                    )
+            }),
+            _ => false,
+        })
+    }
+
+    /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
+    /// record type `struct_tp` names: the type a copy of its record is made as.
+    #[must_use]
+    pub fn reference_field_target(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        (f.target != u16::MAX).then_some(f.target)
+    }
+
+    /// `@FR-H-RefHome` — the name of the field at byte `byte_off` of record type `struct_tp`
+    /// when it is a user's `reference<T>` (a stored reference with a target type); `None` for
+    /// any other field, a closure's captured reference included.
+    #[must_use]
+    pub fn reference_field_name(&self, struct_tp: u16, byte_off: u16) -> Option<String> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        (f.target != u16::MAX
+            && matches!(
+                self.types.get(f.content as usize).map(|t| &t.parts),
+                Some(Parts::DbRef)
+            ))
+        .then(|| f.name.clone())
+    }
+
+    /// `@FR-H-Removed` — the element type whose records a clear of the vector field at
+    /// `byte_off` of `struct_tp` releases one by one: the field is an `array` (its element
+    /// type linked, each element a record of its own) and it holds those records itself —
+    /// it is in no group, or it is the group's holder rather than a view of it.  `None` for
+    /// every other field: an inline element dies with the length reset, and a view's records
+    /// belong to the holder.
+    #[must_use]
+    pub fn clear_releases_records(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        let Parts::Array(elem) = self.types.get(f.content as usize)?.parts else {
+            return None;
+        };
+        (f.other_indexes.first() != Some(&u16::MAX)).then_some(elem)
+    }
+
     /// loft#898 — the members of the linked collection group the keyed field at
     /// `byte_off` belongs to, as `(byte_off, collection_tp, is_view)` per member,
     /// INCLUDING the field itself. Empty when the field is not in a group.
@@ -935,7 +1023,7 @@ impl Stores {
         let walked = match probed {
             hash::Probed::Unknown => return,
             hash::Probed::Free { .. } => None,
-            hash::Probed::Present(e) => Some((e.rec, e.pos)),
+            hash::Probed::Present { entry: e, .. } => Some((e.rec, e.pos)),
         };
         assert!(
             walked == looked,
@@ -944,9 +1032,9 @@ impl Stores {
         );
     }
 
-    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `tree::add` reports, taken BEFORE the
+    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `btree::add` reports, taken BEFORE the
     /// add on a throwaway descent: the record `dedup_keyed`'s lookup names, or none.
-    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16, left: u16) {
+    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16) {
         let key = keys::get_key(rec, &self.allocations, &self.types[tp as usize].keys);
         let looked = self.find(data, tp, &key);
         let looked = if looked.rec != 0 && looked.rec != rec.rec {
@@ -954,13 +1042,8 @@ impl Stores {
         } else {
             0
         };
-        let walked = tree::find_exact(
-            data,
-            left,
-            &self.allocations,
-            &self.types[tp as usize].keys,
-            &key,
-        );
+        let walked =
+            btree::find_exact(data, &self.allocations, &self.types[tp as usize].keys, &key);
         let walked = if walked == rec.rec { 0 } else { walked };
         assert!(
             walked == looked,
@@ -1034,7 +1117,40 @@ impl Stores {
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     ),
-                    hash::Probed::Present(existing) => {
+                    hash::Probed::Present {
+                        entry: existing,
+                        bucket,
+                        index,
+                    } if keys::keyed_replace_enabled() => {
+                        // The new record takes the displaced entry's bucket: the unlink,
+                        // its back-shift and the second walk of `hash::add` all left the
+                        // table exactly as this one write does.  The displaced entry is
+                        // released as `displace_keyed` releases it — claims first, then
+                        // its slot, and only by the collection that owns it.
+                        self.forget_in_scratches(data, &existing);
+                        let gone = hash::replace_at(data, bucket, index, &mut self.allocations);
+                        if !secondary {
+                            self.remove_claims(&existing, c);
+                            self.free_hash_entry(data, &existing, gone);
+                        }
+                        if keys::keyed_verify() {
+                            let key = keys::get_key(
+                                rec,
+                                &self.allocations,
+                                &self.types[tp as usize].keys,
+                            );
+                            let found = self.find(data, tp, &key);
+                            assert!(
+                                (found.rec, found.pos) == (rec.rec, rec.pos),
+                                "LOFT_KEYED_VERIFY: the replaced bucket answers {found:?} \
+                                 where the insert filed {rec:?}"
+                            );
+                        }
+                        displaced = Some(existing);
+                    }
+                    hash::Probed::Present {
+                        entry: existing, ..
+                    } => {
                         self.displace_keyed(data, &existing, tp, c, secondary);
                         displaced = Some(existing);
                         hash::add(
@@ -1057,30 +1173,31 @@ impl Stores {
             }
             InsertKind::Index(c) => {
                 // @P306, @FR-Col-Insert — replace any existing record with this key
-                // (dedup); tree::add otherwise rejects the duplicate and keeps the old.
-                let left = self.fields(tp);
+                // (dedup); `btree::add` otherwise refuses the duplicate and keeps the old.
+                debug_assert_eq!(
+                    rec.store_nr, data.store_nr,
+                    "an index's records live in its store"
+                );
                 if !keys::fast_order_enabled() {
                     let gone = self.dedup_keyed(data, rec, tp, c, secondary);
-                    tree::add(
+                    btree::add(
                         data,
-                        rec,
-                        left,
+                        rec.rec,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
                     return if secondary { gone } else { None };
                 }
-                // The insert's OWN descent finds the duplicate: a refused `tree::add`
+                // The insert's OWN descent finds the duplicate: a refused `btree::add`
                 // names it and leaves the tree as it was, so the lookup that used to run
                 // first — a second full descent per insert — is only ever the rare
                 // displacement's.
                 if keys::keyed_verify() {
-                    self.verify_tree_duplicate(data, rec, tp, left);
+                    self.verify_tree_duplicate(data, rec, tp);
                 }
-                let duplicate = tree::add(
+                let duplicate = btree::add(
                     data,
-                    rec,
-                    left,
+                    rec.rec,
                     &mut self.allocations,
                     &self.types[tp as usize].keys,
                 );
@@ -1092,10 +1209,9 @@ impl Stores {
                     };
                     self.displace_keyed(data, &existing, tp, c, secondary);
                     displaced = Some(existing);
-                    tree::add(
+                    btree::add(
                         data,
-                        rec,
-                        left,
+                        rec.rec,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
@@ -1128,9 +1244,11 @@ impl Stores {
                     }
                 }
             }
-            InsertKind::Trie => {
-                // Same no-dedup contract as the spatial side: two records may share a
-                // key, differing in the id suffix, and land adjacent (`r8b`).
+            InsertKind::Trie(c) => {
+                // @FR-Col-Insert, @C68 — a trie key names one record: the record already filed
+                // under this key is displaced first, as a hash's is.  (A spatial keeps both:
+                // its key is a point, and two records may share one.)
+                displaced = self.dedup_keyed(data, rec, tp, c, secondary);
                 let keys = self.types[tp as usize].keys.clone();
                 crate::trie_db::add(data, rec, &mut self.allocations, &keys);
             }
@@ -1239,6 +1357,40 @@ impl Stores {
         }
     }
 
+    /// `OpChildRec` — a fresh `tp` child record in `host_field`'s store, default-filled, its
+    /// rec-id written into the field (loft#1867).  In-store mechanics only: a record the field
+    /// held before is released as BYTES of this store; what it adopted outside the store is
+    /// the emitted cascade's to release (CODEGEN_METHOD.md § Ownership and copy semantics are
+    /// emitted code).
+    pub fn new_child_rec(&mut self, host_field: &DbRef, tp: u16) -> DbRef {
+        if host_field.store_nr == u16::MAX || host_field.rec == 0 {
+            return DbRef::NULL;
+        }
+        let old = self
+            .store(host_field)
+            .get_u32_raw(host_field.rec, host_field.pos);
+        if old != 0 {
+            let old_db = DbRef {
+                store_nr: host_field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&old_db, tp);
+            self.store_mut(host_field).delete(old);
+        }
+        let size = u32::from(self.size(tp));
+        let rec = self.allocations[host_field.store_nr as usize].claim(size);
+        let db = DbRef {
+            store_nr: host_field.store_nr,
+            rec,
+            pos: 8,
+        };
+        self.set_default_value(tp, &db);
+        self.store_mut(host_field)
+            .set_u32_raw(host_field.rec, host_field.pos, rec);
+        db
+    }
+
     /// Make `db` (dest) hold `o_db` (src)'s content — the aliasing-safe vector
     /// "deliver into buffer" the return machinery needs.  When `db` and `o_db`
     /// name the SAME backing vector (the NRVO case where a returned local still
@@ -1256,6 +1408,7 @@ impl Stores {
         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
+        self.deliver_vector_parse_errors(o_db, db, true);
         // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
         // slot, never the value-level null, so its absence is the marker the slot holds.
         let slot_absent = o_db.store_nr != u16::MAX
@@ -1290,7 +1443,7 @@ impl Stores {
     /// ([`vector::append_slot_in_capacity`]); a new or full vector takes `vector_append`.  Each
     /// branch finishes the append itself: joined into one `Option<DbRef>` the two answers met
     /// in memory, written as narrow fields and re-read as one wide load — a store-forward
-    /// stall on every push (2026-10-01).
+    /// stall on every push.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn append_with(&mut self, db: &DbRef, size: u32, write: impl Fn(&mut Store, &DbRef)) {
@@ -1316,7 +1469,7 @@ impl Stores {
     /// The store an append writes its element to — `store_mut`'s answer, with its
     /// `LOFT_STRICT_STORES` report behind a cold call so this inlines into every append op
     /// (`@FR-R-Cold`): `store_mut` whole, with the report's argument setup inline, fell out of
-    /// line in them and cost a push op a call per element (2026-10-01).
+    /// line in them and cost a push op a call per element.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn append_store(&mut self, slot: &DbRef) -> &mut Store {
@@ -1348,7 +1501,7 @@ impl Stores {
     // another crate: without `#[inline]`, whether they are inlined there — and whether
     // `store_mut` is inlined into them — is rustc's call, and that call moves when this crate
     // grows elsewhere.  Forced since the two operator tables (`@FR-R-FastTable`) doubled their
-    // callers: `append_i64` ran as a call of its own, 17 % of a push loop (2026-10-02).
+    // callers: `append_i64` ran as a call of its own, 17 % of a push loop.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {
@@ -1425,6 +1578,21 @@ impl Stores {
         self.append_with(db, 4, |store, slot| {
             store.set_u32_raw(slot.rec, slot.pos, v);
         });
+    }
+
+    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination `OpNewRecord` just created
+    /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT: its bytes WRITTEN
+    /// all-zero — a nullable struct-enum's discriminant 0, the only null encoding a fresh slot
+    /// has — because a claimed slot holds no value until one is written.  An existing
+    /// destination keeps what it held (`vec[i] = <runtime-null>` into a non-nullable element,
+    /// which has no null to write).  Both backends' copy calls this from their null-source
+    /// branch.
+    pub fn copy_null_into(&mut self, to: &DbRef, raw_tp: u16) {
+        if raw_tp & crate::keys::COPY_FRESH_DEST == 0 || to.store_nr == u16::MAX {
+            return;
+        }
+        let size = u32::from(self.size(raw_tp & crate::keys::COPY_TP_MASK));
+        keys::mut_store(to, &mut self.allocations).zero_range(to.rec, to.pos, size);
     }
 
     /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):
@@ -1543,6 +1711,11 @@ impl Stores {
             let from = lo as usize * size as usize;
             store.bytes_of(o_rec)[from..from + n as usize * size as usize].to_vec()
         };
+        self.append_span(db, &span, n, size);
+    }
+
+    /// Append `n` elements of `size` bytes, held as raw bytes in `span`, to the vector `db`.
+    fn append_span(&mut self, db: &DbRef, span: &[u8], n: u32, size: u32) {
         let new_db = vector::vector_append(db, size, &mut self.allocations);
         let append_pos = new_db.pos;
         self.vector_set_size(db, n, size);
@@ -1551,7 +1724,55 @@ impl Stores {
         // `vector_append` answers the byte position of the new slot from the record's
         // start; `buffer` starts at the payload (+8).
         let at = (append_pos - 8) as usize;
-        store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(&span);
+        store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(span);
+    }
+
+    /// `r = r[lo..hi]` for a SCALAR element kind (`OpKeepRange`): the vector keeps that range
+    /// IN PLACE — the kept span moves to the front of its own record and the length is set —
+    /// where the self-slice copied the span into a temporary, released `r` and copied it back
+    /// (an alias break).  The bounds arrive clamped by the slice prelude and are clamped
+    /// again here, as [`Self::vector_slice`] does.  A vector whose store may not be written —
+    /// a FOREIGN view, a locked store — takes the copy form instead: the span copied out, the
+    /// vector cleared as `OpClearVector` clears it (a view is released), the span appended.
+    ///
+    /// Answers whether the vector's record was KEPT — `true` on the in-place form, `false`
+    /// when the copy form released and re-appended it (`@FR-R-Refresh`'s keep-range clause
+    /// re-derives a held header on `false`, and only sets its length on `true`) and for an
+    /// absent vector, which nothing holds.
+    ///
+    /// # Panics
+    /// When `known` is an element kind that owns records — the parser never emits
+    /// `OpKeepRange` for one.
+    pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) -> bool {
+        if db.is_null() || db.rec == 0 || db.pos == 0 {
+            return false;
+        }
+        assert!(
+            !self.is_linked(known) && !self.type_owns_heap(known),
+            "vector_keep_range: element type {known} owns records; the slice loop is its form"
+        );
+        let length = i64::from(vector::length_vector(db, &self.allocations));
+        let lo = lo.clamp(0, length);
+        let hi = hi.clamp(lo, length);
+        let n = u32::try_from(hi - lo).unwrap_or(0);
+        let size = u32::from(self.size(known));
+        let (from, to) = (lo as usize * size as usize, hi as usize * size as usize);
+        let store = keys::mut_store(db, &mut self.allocations);
+        let v_rec = store.collection_rec(db.rec, db.pos);
+        if v_rec == 0 {
+            return false;
+        }
+        if store.is_foreign() || store.read_only || !crate::keys::keep_range_enabled() {
+            let span = store.bytes_of(v_rec)[from..to].to_vec();
+            self.clear_vector_release(db);
+            if n > 0 {
+                self.append_span(db, &span, n, size);
+            }
+            return false;
+        }
+        store.buffer(v_rec).copy_within(from..to, 0);
+        store.set_u32_raw(v_rec, 4, n);
+        true
     }
 
     /// @PLN174 F4b — `r = src[lo..hi]` bound to a local that owns its backing store (a
@@ -1606,6 +1827,7 @@ impl Stores {
     /// meets the read-only refusal instead of the silent drop #410 closed.
     /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
     pub fn vector_adopt(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+        self.deliver_vector_parse_errors(o_db, db, true);
         let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
         if view
             && !db.is_null()
@@ -1782,6 +2004,7 @@ impl Stores {
                 self.types.get(known as usize).map(|t| t.parts.clone())
             );
         }
+        self.deliver_vector_parse_errors(o_db, db, false);
         let o_length = vector::length_vector(o_db, &self.allocations);
         if o_length == 0 {
             // The other vector has no data
@@ -2063,7 +2286,7 @@ impl Stores {
     /// Together they form the only `text → struct` path in the
     /// crate; the legacy hand-rolled scanner was removed when
     /// every Parts arm gained walker coverage.
-    #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // path push/pop; arg-count is intrinsic to the dispatch
+    #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // arg-count is intrinsic to the dispatch
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn walk_parsed_into(
         &mut self,
@@ -2080,7 +2303,18 @@ impl Stores {
         // default is the FIELD's question, not the type's, and
         // [`Self::write_absent_value`] is where that question is answered.
         if matches!(parsed, crate::json::Parsed::Null) {
-            self.write_absent_value(tp, rec_tp, field, to);
+            // A COLLECTION field arrives with `to` at the struct BASE and its index in
+            // `field` (`walk_parsed_struct`'s `else` arm, as the non-null path below feeds
+            // `record_new`), so its absent marker belongs at the field's own slot.  Written
+            // at `to` it landed on the FIRST field: `{"p":{"x":1},"v":null}` read `p.x`
+            // back as 4294967295 (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a
+            // record with a null collection field once null fields are written (@C143).
+            let slot = if self.content(tp) == u16::MAX {
+                *to
+            } else {
+                self.field_ref(to, rec_tp, field)
+            };
+            self.write_absent_value(tp, rec_tp, field, &slot);
             return Ok(());
         }
         let mismatch = || WalkErr {
@@ -2096,21 +2330,19 @@ impl Stores {
             | Parts::Hash(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
-            | Parts::Index(c, _, _) => {
+            | Parts::Index(c, _) => {
                 let crate::json::Parsed::Array(items) = parsed else {
                     return Err(mismatch());
                 };
-                // @P357: an EMPTY JSON array must still zero the collection
-                // header.  The per-item loop below is the ONLY thing that
-                // initialises the vector/array field (the first `record_new`
-                // writes its header) — so with zero items the field keeps
-                // whatever bytes the recycled store record held, reading back
-                // as a phantom non-zero length (e.g. `json_parse("[]").item(0)`
-                // returning a garbage object, and `len` reporting 8 after a
-                // run of earlier parses populated then freed that block).  The
-                // `Parts::Null` arm above already calls `set_default_value` for
-                // exactly this reason; do the same when the array is empty.
-                if items.is_empty() {
+                // The collection field is WRITTEN empty before any item is
+                // appended, whatever the item count.  Nothing else initialises it: the
+                // first `record_new` READS the field's handle to find the vector, so a
+                // field holding the claim's bytes — an element the loop above just
+                // minted, whose own vector field is walked here — appended into a
+                // handle that was never written (`LOFT_POISON_CLAIM=1` reads it as
+                // 0xDEADBEEF), and an empty array read back a phantom length.  The
+                // `Parts::Null` arm above writes the same default for the same reason.
+                {
                     // @P373: write the default to the COLLECTION FIELD's slot,
                     // not to `to` — which for a struct field is the struct base
                     // (field 0), so `set_default_value(tp, to)` zeroed the FIRST
@@ -2126,11 +2358,16 @@ impl Stores {
                     self.set_default_value(tp, &slot);
                 }
                 for (idx, item) in items.iter().enumerate() {
-                    path.push(format!("[{idx}]"));
                     let res = self.record_new(to, rec_tp, field);
-                    self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at)?;
+                    // The element's segment joins the error's path as it unwinds: pushed per
+                    // element on the way in, it was a formatted `String` per array item that
+                    // only a failing walk reads.
+                    self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at)
+                        .map_err(|mut e| {
+                            e.path.insert(0, format!("[{idx}]"));
+                            e
+                        })?;
                     self.record_finish(to, &res, rec_tp, field);
-                    path.pop();
                 }
                 Ok(())
             }
@@ -2278,7 +2515,7 @@ impl Stores {
     /// `at` hint so a leaf type-mismatch reports the field's position),
     /// default-fills any unmentioned field (mirroring the legacy
     /// scanner's "missing field → default" behaviour).
-    #[allow(clippy::ptr_arg)] // path needs push/pop, slice not enough
+    #[allow(clippy::ptr_arg)] // `path` is the walk's error path, built as an error unwinds
     fn walk_parsed_struct(
         &mut self,
         parsed: &crate::json::Parsed,
@@ -2301,13 +2538,14 @@ impl Stores {
         } else {
             to.rec
         };
-        let mut found_fields: HashSet<&str> = HashSet::new();
+        // Fx, not the default SipHash: a per-object set of field names, never adversarial input
+        // to a hash table that outlives the call — SipHash was 7 % of a JSON-parse row.
+        let mut found_fields: crate::fxhash::FxHashSet<&str> = crate::fxhash::FxHashSet::default();
         for (name, key_at, value) in entries {
             let mut matched = false;
             for (f_nr, f) in object.iter().enumerate() {
                 if f.name == *name {
                     matched = true;
-                    path.push(name.clone());
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -2326,8 +2564,11 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
-                    res?;
-                    path.pop();
+                    // The key's segment joins the error's path as it unwinds (see the array arm).
+                    res.map_err(|mut e| {
+                        e.path.insert(0, name.clone());
+                        e
+                    })?;
                     break;
                 }
             }
@@ -2369,7 +2610,7 @@ impl Stores {
     /// `at` is the byte offset where this primitive was parsed —
     /// reported on the [`WalkErr`] of any type mismatch so users
     /// see the real position instead of byte 0.
-    #[allow(clippy::ptr_arg)] // path needs push/pop, slice not enough
+    #[allow(clippy::ptr_arg)] // `path` is the walk's error path, built as an error unwinds
     fn walk_primitive_into(
         &mut self,
         parsed: &crate::json::Parsed,
@@ -2836,7 +3077,7 @@ impl Stores {
                     self.store_mut(rec).set_float(rec.rec, rec.pos, v);
                 }
                 4 => {
-                    // @PLN17 C73 — a boolean stores tri-state (0 / 1 / 255), and 255 IS
+                    // @PLN17 @C73 — a boolean stores tri-state (0 / 1 / 255), and 255 IS
                     // its null.  Writing `false` for an absent NULLABLE boolean made it
                     // the one nullable base type whose absence read back as a VALUE; the
                     // integer, float and text arms beside it all write their sentinel.
@@ -3011,6 +3252,94 @@ impl Stores {
             pos: 8,
         }
         .or_null()
+    }
+
+    /// The 12-byte stored reference at field `fld` of `db` (`OpGetDbRef`): null when the
+    /// holder has no record, and null when the record it names was removed
+    /// (`@FR-H-Removed`) — the position is no record any more, whatever claim came after.
+    #[must_use]
+    pub fn get_db_ref(&self, db: &DbRef, fld: u32) -> DbRef {
+        if db.rec == 0 {
+            return DbRef::NULL;
+        }
+        let store = self.store(db);
+        let off = db.pos + fld;
+        let store_nr = store.get_u32_raw(db.rec, off) as u16;
+        let rec = store.get_u32_raw(db.rec, off + 4);
+        let pos = store.get_u32_raw(db.rec, off + 8);
+        if self.reference_removed(store_nr, rec) {
+            return DbRef::NULL;
+        }
+        DbRef { store_nr, rec, pos }
+    }
+
+    /// `@FR-H-Removed` — whether a stored reference to record `rec` of store `store_nr` names
+    /// a removed record, and so reads null.
+    #[inline]
+    #[must_use]
+    pub fn reference_removed(&self, store_nr: u16, rec: u32) -> bool {
+        rec != 0
+            && self
+                .allocations
+                .get(store_nr as usize)
+                .is_some_and(|s| s.is_removed(rec))
+    }
+
+    /// Store `r` as the 12-byte reference at field `fld` of `db` (`OpSetDbRef`), and mark the
+    /// record it names (`@FR-H-Removed`): removing that record later leaves its position
+    /// behind, so this reference reads null instead of the next record claimed there.
+    /// `false` when the holder has no record, for the caller to report the dropped write.
+    /// `@C145` — the record the field named before is left where it is: nothing records who
+    /// else names it.
+    pub fn set_db_ref(&mut self, db: &DbRef, fld: u32, r: DbRef) -> bool {
+        if db.rec == 0 {
+            return false;
+        }
+        let off = db.pos + fld;
+        let store = self.store_mut(db);
+        store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
+        store.set_u32_raw(db.rec, off + 4, r.rec);
+        store.set_u32_raw(db.rec, off + 8, r.pos);
+        if r.rec != 0
+            && let Some(target) = self.allocations.get_mut(r.store_nr as usize)
+        {
+            target.note_referenced(r.rec);
+        }
+        true
+    }
+
+    /// `@FR-H-RefHome` (`OpEvacuate`) — the store `home` names is about to be freed: when the
+    /// stored reference at byte `fld` of `holder` names a record in it, that record is copied
+    /// as a `tp` record into the holder's own store and the reference names the copy.  A null
+    /// or removed reference, one naming another store, and a holder inside the store being
+    /// freed are left as they are.  Two holders in one store that named one record name one
+    /// copy, so a write through either still shows through the other.
+    pub fn evacuate(&mut self, holder: &DbRef, fld: u32, home: &DbRef, tp: u16) {
+        if holder.rec == 0
+            || holder.store_nr == u16::MAX
+            || home.store_nr == u16::MAX
+            || holder.store_nr == home.store_nr
+            || (holder.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        let old = self.get_db_ref(holder, fld);
+        if old.rec == 0 || old.store_nr != home.store_nr {
+            return;
+        }
+        let key = (old, holder.store_nr);
+        let copy = if let Some((_, copy)) = self.evacuated.iter().find(|(k, _)| *k == key) {
+            *copy
+        } else {
+            let copy = self.place_record_prefilled(holder, tp);
+            let size = u32::from(self.size(tp));
+            self.remove_claims(&copy, tp);
+            self.copy_block(&old, &copy, size);
+            self.copy_claims(&old, &copy, tp);
+            self.evacuated.push((key, copy));
+            copy
+        };
+        self.set_db_ref(holder, fld, copy);
     }
 
     #[must_use]

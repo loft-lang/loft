@@ -161,13 +161,17 @@ first bisect step for a wrong element, a leak or a double free at an element ass
 literal.  A computed index keeps the copy (the receiver is re-derived per field write), as do
 a collection-TYPED field and a linked-group member.
 **`LOFT_NO_BUFFER_IS_PLACE=1`** (@PLN164 C2, `@FR-R-Place`, `@FR-O-Buffer`, parse time, BOTH
-backends) makes `h.v = mkints(n)` mint a buffer store, fill it, clear `h.v` and copy every
-element in again — with it off, the call is handed the destination AS its return buffer: the
+backends) makes `h.v = mkints(n)` and the literal `H { v: mkints(n) }` mint a buffer store,
+fill it and copy every element into the field again — with it off, the call is handed the destination AS its return buffer: the
 buffer stays the variable the call site mints and only what it holds changes, so the result's
 deps and the free sweep are untouched, and `(O-Buffer)` gains the clause that such a buffer is
 never freed — and is the first bisect step for a wrong, empty or stale vector field after an
-assignment from a call.  Declined where an argument reaches the destination, where the callee
-MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
+assignment or a literal field from a call.  Declined where an argument reaches the destination,
+where the callee MINTS a record into its buffer (a projection chain does; a returned
+collection literal's wrapper mint answers the place, so it is placed), for a struct-enum
+variant's field read through a variant check, and for a literal's `?` field (the replace is
+what leaves it absent).  `tests/scripts/a-literal-vector-field-is-built-in-its-field.loft` is
+the literal's guard.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
@@ -232,8 +236,25 @@ the type MAXIMUM that never terminates on either form.
 loop is one append of the bytes `[lo, hi)` behind `0 <= lo && lo <= hi && hi <= size(t)`,
 the loop as written running for a range the guard refuses (cbor `encode_bytes` 94.7× →
 43.1×; 2.9 → 0.4 ns a byte on the probe) — and is the first bisect step for a wrong, missing
-or extra byte out of such a copy.  `LOFT_TRACE_BYTE_COPY=1` names each site admitted and
-each kept.
+or extra byte out of such a copy.  It turns off the rule's vector clause with it
+(`for i in lo..hi { buf += [v[off + i] ?? d] }` as one slice append behind its in-range
+guard) and `@FR-R-TextRun`, which builds on that clause: a byte vector filled only by such a
+copy and read once by `text_from_bytes` is read in place by `text_from_byte_range`, so the
+switch is also the first bisect step for a wrong text out of a decoder.
+`LOFT_TRACE_BYTE_COPY=1` names each site admitted and each kept (`[byte-copy]`, `[text-run]`).
+
+**`LOFT_NO_REPEAT_RUN=1`** (`@FR-R-RepeatRun`, default-ON, scope pass, BOTH backends) keeps a
+literal that spells one constant four or more times (`[0.0, 0.0, 0.0, 0.0, …]`) as one push per
+element — with it off, the run is a reservation, one template push and one doubling fill, as
+`[0.0; n]` lowers — and is the first bisect step for a wrong element out of such a literal.
+`LOFT_TRACE_REPEAT_RUN=1` names each run admitted.
+
+**`LOFT_NO_STORE_SWAP=1`** (`@FR-H-SwapIn`, default-ON, runtime, BOTH backends) keeps the deep
+copy of a rebind `x = f(…, x, …)` from a callee that minted its result — with it off, the two
+stores' contents are exchanged and the released slot freed, where both records are their
+store's root of the copied type and the type keeps its pointers inside its store — and is the
+first bisect step for a wrong record after such a rebind.  Read at run time, so one binary
+serves both arms.  `LOFT_TRACE_STORE_SWAP=1` names each exchange.
 
 **`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
 pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where
@@ -256,6 +277,15 @@ first bisect step for a wrong value, order or count out of a loop over a literal
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
 ## Lowering: adopting and minting call buffers
+
+**`LOFT_NO_NULLABLE_RETBUF=1`** (`@FR-N-Road`, default-ON, parse time,
+BOTH backends) takes the caller-allocated `__retbuf` away from a `-> τ?` return again — with
+it on, a nullable collection, record or record enum takes the buffer its dense twin takes, and
+its caller binds the result through the dense arm (`use_analysis::first_bind_shape`).  It is the
+first bisect step for a wrong value, leak or use-after-free that appears only in the `τ?`
+spelling of a function.  `LOFT_TRACE_RETPROMO=1` names each return promotion and its verdict;
+`LOFT_STRICT_STORES=1` is the falsifier, since every value is right whether or not the delivery
+was.  The pairs `scripts/nullable_road.py` measures are the coverage.
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
@@ -280,6 +310,16 @@ null again and mints no snapshot — the first bisect step for a use-after-free 
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
+**Detach a literal buffer its owner took (`@FR-O-Owner`, default-ON, both backends, after
+the scope pass):** a collection literal or copy is built in a `__vdb_N` buffer and handed to
+its local through the buffer's field.  Where that local is an OWNER that releases the store
+itself (a value branch whose other arm mints, `r = if c { m(0) } else { cp }`), the buffer is
+set to the null sentinel after its last use in the block, so its next mint is fresh and its
+exit free a no-op.  **`LOFT_NO_BUFFER_DETACH=1`** keeps the buffer naming the store; it is the
+first bisect step for a store released twice, or cleared under another owner, out of a
+branch's literal arm.  The store timeline (`LOFT_STORES=timeline`, more frees than
+allocations) and `LOFT_STRICT_STORES=1` are the falsifiers.
+
 **A reduction loop as one kernel call (@PLN180 § Kernels, `@FR-R-BoundedNest`'s reduction
 clause, default-ON, both backends, scope pass):** `acc = acc + v[i]` over `0..v.len()` of an
 integer vector — the stdlib `sum` over integers — is one call of the loop kernel
@@ -289,14 +329,19 @@ for a wrong sum on either backend.  `LOFT_HOIST_VERIFY=1` re-checks each plain b
 kernel admits against the checked add.
 
 **A small record returned as a tuple (@PLN180, `@FR-R-ValueRecord`, default-ON, both
-backends, at the top of `byte_code_from`):** a function returning a flat record of scalars
-from an object literal, whose every caller only reads fields off the local it binds, returns
-a tuple, and its callers read tuple elements.  The call's buffer store, its mint and its
-frees leave the IR, so the interpreter claims no store per call.  A program parsed against
-again after compiling (the REPL, the debugger, live reload, a host calling by name) keeps
-records (`Data::open_world`).  **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form on
-both backends, leaving the case to `--native`'s own rewrite (`LOFT_NO_VALUE_RECORD`).  It is
-the first bisect step for a wrong field read out of a small-record call on the interpreter.
+backends, at the top of `byte_code_from`, `src/value_record.rs`):** a function returning a
+small record of scalars (flat, or with inline sub-records) from object literals returns a
+tuple in schema order, and the locals its callers bind carry it (`@FR-R-ValueLocal`): a field
+read is a `TupleGet`, a field write a `TuplePut`, and the local may be handed whole to an
+admitted parameter (a tuple parameter), copied into a place field by field, or forwarded.  A
+site that owes a record calls a TWIN that keeps it, so that site runs what it ran before.  The
+call's buffer store, its mint and its frees leave the IR, so the interpreter claims no store per
+call.  A program parsed against again after compiling (the REPL, the debugger, live reload, a
+host calling by name, a build that ships the live tier — plain `--native` among them) keeps
+records (`Data::open_world`); `--native-release` and `--interpret` run the pass.
+**`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form, leaving the case to `--native`'s own
+rewrite (`LOFT_NO_VALUE_RECORD`); it is the first bisect step for a wrong field out of a
+small-record call.  **`LOFT_TRACE_IR_VALUEREC=1`** names each carrier the pass declines and why.
 
 **A scalar leaf's call is its body (`@FR-R-InlineLeaf`, default-ON, both backends, at the
 top of `byte_code_from` after the value records):** a call of a function whose parameters,
@@ -308,7 +353,8 @@ power-of-two scale folds into a literal divisor (`@FR-R-ScaleFold`).  A program 
 again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps every call and
 is the first bisect step for a wrong answer out of a small scalar function on either backend;
 **`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
-reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+reduction each; **`LOFT_NO_INLINE_APPENDER=1`** keeps the calls of a void leaf that appends to a
+record parameter's vector fields (the appender clause); **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 
 **The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
@@ -490,16 +536,37 @@ that ORDERS — an `index` descent, a `sorted` / `ordered` binary search — com
 general `key_compare` / `compare` again, an exact `index` lookup take the boundary descent,
 and an `index` insert look its duplicate up before it descends — with it off, the key is
 resolved once per search (`keys::FastOrder`), a full-key lookup stops at the equal node
-(`tree::find_exact`), and a refused `tree::add` names the duplicate its own descent met
+(`btree::find_exact`), and a refused `btree::add` names the duplicate its own descent met
 (`index` fill-and-find −33 %) — and is the first bisect step for a wrong element, order or
-lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
+lookup out of a `sorted`, `ordered` or `index`.  It also sorts a `for e in hash` walk through
+`keys::compare` again, where with it off a single key, or a compound key of two to four
+integer parts, is read once per record and the reads sorted (`keys::sort_records`) — the
+first bisect step for a hash walk visiting in the wrong order.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
 `hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
 — with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
 is the first bisect step for a lost, duplicated or unfindable `hash` entry.
+**`LOFT_NO_KEYED_REPLACE=1`** makes a `hash` insert of a key already present unlink the
+displaced entry (with the back-shift of the entries probed past it) and file the new one with
+a second walk again — with it off, the new record takes the displaced entry's bucket in one
+write (`hash::replace_at`; the key's probe chain is the same, the count does not move) — and is
+the first bisect step for a lost or doubled entry, or a leak, after a repeated key.
+**`LOFT_NO_SLICE_WRITE=1`** writes every vector to a file element by element through
+`Stores::read_data` again — with it off, a vector whose elements are stored as they are written
+(`integer`, `long`, `float`, `single`, `character`, a 4-byte sized integer, in the host's byte
+order) goes out as one copy of its payload (`Stores::write_vector_payload`, the one walk both
+backends and a vector field inside a record share) — and is the first bisect step for wrong bytes
+in a binary file written from a vector.
+**`LOFT_NO_KEEP_RANGE=1`** makes `v = v[lo..hi]` over a scalar element kind (lowered to
+`OpKeepRange`) copy the kept span out, clear the vector and append the span again — with it
+off, the span moves to the front of the vector's own record and the length is set
+(`Stores::vector_keep_range`; a foreign view or a locked store always takes the copy form,
+since neither may be written) — and is the first bisect step for a wrong element or length
+after a vector is assigned its own slice.  `LOFT_NO_SLICE_COPY=1` keeps the parse-time
+per-element form for every slice, this one included.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus
-under it after touching `keys.rs`, `hash.rs`, `tree.rs` or the `sorted` searches.  Two more
+under it after touching `keys.rs`, `hash.rs`, `btree.rs` or the `sorted` searches.  Two more
 levers of the same pass carry no switch because they have no second answer to bisect to: a
 miss on a collection with no lazy binding answers at once (`Stores::lazy_bound`, a lookup
 loop that misses half the time −20 %), and a whole word fed to the hasher on a word boundary
@@ -509,6 +576,11 @@ full again instead of at half — a writer's policy no reader assumes, so stores
 either read under both; with it off a miss walks ~1 bucket where it walked 5 at the old
 threshold (removal −25 %, the vector + hash group −22 %, fill −21 %), for ~3.6 bytes an entry
 more bucket array — and is the bisect step for a `hash` whose table size matters.
+**`LOFT_NO_POW2_BUCKETS=1`** (`@FR-Col-Bucket`, @C146; runtime, BOTH backends) grows and
+reserves a `hash` table to the sizes it had before — a count that is not a power of two — and
+places every key by division.  The placement formula is `digest mod count` either way, so
+stores written under either read under both; it is the A/B for the rule and the way to write a
+table whose count the mask does not serve.
 **`LOFT_NO_TYPED_KEYED=1`** (`@FR-R-TypedKeyed`, generation time, `--native` only) emits a
 lookup in a `hash` with ONE integer key as the general `OpGetRecord` again — with it off it
 is `OpGetHashLong`, the key handed over as the integer it is, with no `Content` built, no
@@ -520,13 +592,16 @@ entry too, and checks a removal's recognised slot against the entry's own index.
 
 ## Runtime: store claims, clears and prefill
 
-**`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
-`0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
-the falsifier for *"does this caller rely on zero-init?"*: a handle or length read out of
-unwritten space becomes a loud out-of-range value the store's guards refuse, where
-`LOFT_NO_ZERO_CLAIM=1` only leaves stale bytes that often look enough like zeros to pass.
-Census 2026-09-12: 1 232 of 1 261 `tests/scripts` clean on the interpreter, 29 dependent
-(the buffer/delivery family), every @PLN157 cell corpus clean on both backends.
+**A claim writes nothing** (`@FR-H-Claim`, `@C137`): a claimed payload, and the tail an
+in-place grow exposes, hold whatever the block held last; every value is written by the code
+that builds it.  **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill` / `poison_range`) fills both
+with `0xDEADBEEF` instead — the claim-side twin of `LOFT_POISON`'s poison-on-free, and the
+falsifier for *"does this reader rely on bytes nothing wrote?"*: a handle or length read out of
+unwritten space becomes a loud out-of-range value the store's guards refuse, where the default's
+stale bytes often look enough like valid data to pass.  The nightly `poison-claim` job runs the
+suite under it on both backends, and `tests/poison_claim.rs` keeps the interpreter corpus at
+zero dependents.  **`LOFT_ZERO_CLAIM=1`** zeroes every claim again — a debugging lever, never a
+fix (DEBUG_STORES.md).
 
 **`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
 vector's entry clear a pure length reset again — with it off, clearing a REUSED
@@ -588,3 +663,69 @@ is the smallest that fits, so the remainder keeps its order, and every claim tak
 always took (`hash_text_keys` −8 %).  **`LOFT_NO_CARVE_IN_PLACE=1`** deletes and inserts again
 (read per store at construction) and is the bisect step for a store-layout fault or a corrupt
 free tree after a claim.
+
+**A store starts in a lazy-free phase (default-ON, both backends, `@FR-H-LazyFree`):** a
+delete of a small block (at most 64 words) merges with its free neighbours as ever and leaves
+the result out of the tree (a block ending the store becomes the wilderness); a larger block is
+tracked at its delete as ever — and the phase ends at the first
+claim once the untracked words reach 256 and a fifth of the extent written, with one sweep
+that merges and tracks every free block, or at an explicit reclaim; a fresh or reset store
+starts the phase again, a store bound to a file never enters it.  A store built once and freed whole
+(a call's result buffer, a decoder's tree) never pays for its deletes, and its claims stay on
+the tail (pluginabi's `check_request` −6 %: the free-tree walks were a quarter of the row).
+**`LOFT_NO_LAZY_FREE=1`** tracks every delete at its site again (read per store at
+construction) and is the first bisect step for a store-layout fault, a claim that hands out a
+live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
+own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
+pin the untracked delete, the growth below the floor and the one sweep at the bound.
+
+**A removed record a stored reference named leaves a tombstone (default-ON, both backends,
+`@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
+keeps such a record's header word as a one-word block that no claim reuses and frees the rest,
+and `OpGetDbRef` reads null there.  A store minted again in place by `OpDatabase` keeps the
+marks of the records it held.  It costs one word per such removal, and nothing for a program
+without stored references.  **`LOFT_NO_TOMBSTONE=1`** frees the record like any other,
+so the reference reads whatever is claimed there next.  It is the bisect step for a reference
+that reads null where its record should still be there, or for a store that grows under
+removals.
+
+**A record a stored reference names lives as long as its holder's store (default-ON, both
+backends, `@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_homes` finds each
+`reference<T>` written, copied or linked by a callee into a holder that outlives the variable
+holding the record.  A named local held from an enclosing block has its store moved out to that
+block; a literal, a call result or a refilled local's own record is built in the holder's store
+(`OpPlaceRecord`); a record a parameter or the returned value names is copied into that holder's
+store just before its home is freed (`OpEvacuate`).  What none of those keeps is refused.  A
+reassignment of a local vector such a reference names into empties it in place.
+**`LOFT_NO_REF_HOME=1`** withholds the move, the placement, the copy-out and the refusal (the
+in-place reassignment stays).  It is the bisect step when a program that compiled before is
+refused, or reads a stored reference differently, and the A/B that shows what such a shape
+reads without it.
+
+## Falsifier: the emulated Windows host
+
+**`LOFT_POISON_HOST=windows`** (@PLN184 Track W, runtime, BOTH backends, Linux and macOS)
+runs a loft program as if on Windows.  It sits in the same family as `LOFT_POISON`: a run
+mode that changes what the program meets, so that a defect a normal run hides shows up.  It
+is real code in every build, and on Windows it changes nothing.
+
+Every path a program sees uses the Windows spelling on drive `L:`, which is the real root:
+`temp_dir()` is `L:/tmp`, and a listing hands back `L:/…`.  Every path a program hands
+loft is read under Windows' rules.  `file_access` (`src/file_access/emulated.rs`) applies
+Microsoft's naming rules over the real file system:
+- a reserved character or a device name is refused;
+- a trailing dot or space is stripped;
+- `name:stream` writes a silent alternate data stream;
+- a name matches an existing entry whatever its case.
+
+**Scope.** Only a program's file handling is covered: what `Stores::resolve_path` resolves,
+and the directories `file_access::given` hands out.  The compiler's own paths stay on the
+host's rules until @PLN184 Track A moves them into `file_access`.  Store persistence is
+exempt; the daily windows-latest run proves it.  `MAX_PATH` is not reproduced, because
+`std` hands a long path to Windows in the verbatim form.
+
+**The checks:**
+- the unit tests in `src/file_access/emulated.rs` (one per rule, through
+  `file_access::with_program_host`);
+- the platform guard `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`
+  run under the switch.

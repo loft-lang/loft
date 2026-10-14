@@ -1,0 +1,22 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 5783a6e25..633d8eeb2 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -907,16 +907,7 @@
+         let rec = if size == u32::MAX {
+             0
+         } else {
+-            let rec = store.claim(size);
+-            // `@FR-H-Claim` — the root record's header is its size word and its TYPE TAG
+-            // (`alloc_record_into` writes both); a claim writes only the first.  A typed mint
+-            // stamps its tag over this; a raw one (`read_bytes`, a parsed vector, …) has none,
+-            // and says so: left unwritten, the word keeps the tag of whatever record the reused
+-            // slot held, and the free's `File` release (`release_file_leases`) reads a freed
+-            // `File`'s tag off a `vector<u8>` root — then its handle field past the record's
+-            // end, releasing a live file whose index the vector's length happens to name.
+-            store.set_u32_raw(rec, 4, u32::from(u16::MAX));
+-            rec
++            store.claim(size)
+         };
+         // @PLN133 S8 — while a lazy DRIVER is running, remember every store it
+         // creates. A fault inside it abandons its frames, and a frame's locals

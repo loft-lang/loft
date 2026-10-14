@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-ParamScalar` — a scalar parameter is bound to a COPY of its argument: `p = e` in the
+// body is a local update and the caller's value is unchanged.  The cells cross that with every
+// scalar type (integer and its narrow widths, float, single, boolean, character, an enum, a
+// nullable integer set to null), with a compound and a loop update, with an argument read off a
+// field or an element, and with every call form: plain, through a fn-ref, a lambda, a method on
+// `self`, a defaulted parameter, and a generic instance.
+//
+// The generic was the defect: `fn setg<T>(p: T, q: T) -> T { p = q; p }` at `T = integer` was
+// an internal compiler error on both backends, because the template lowered `p = q` as the
+// heap-parameter rebind while `p` was still `T` (`@FR-G-Mono`: the instance answers as its
+// non-generic twin does).
+//
+// @falsified-at: 38b0a878e — interpret exit 101 -> 0, interpret panicked -> clean, native exit
+//   101 -> 0, native panicked -> clean (the internal error at src/state/codegen.rs, from the
+//   generic instance at integer).
+// @falsified-by: tests/falsified/a-scalar-parameter-is-a-copy-at-every-call-form.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   38b0a878e is out of reach.
+// HOLDS: leak and asserts are clean on both trees and both backends.
+
+struct S { x: integer, u: u8 }
+
+enum Col { Red, Green }
+
+fn chg_int(p: integer) -> integer { p = 9; p }
+fn chg_u8(p: u8) -> u8 { p = 9; p }
+fn chg_i32(p: i32) -> i32 { p = 9; p }
+fn chg_float(p: float) -> float { p = 9.5; p }
+fn chg_single(p: single) -> single { p = 9.5f; p }
+fn chg_bool(p: boolean) -> boolean { p = false; p }
+fn chg_char(p: character) -> character { p = 'z'; p }
+fn chg_enum(p: Col) -> Col { p = Col.Green; p }
+fn chg_null(p: integer?) -> integer? { p = null; p }
+
+fn add10(p: integer) -> integer {
+  p += 10;
+  p
+}
+
+fn loopy(p: integer) -> integer {
+  for i in 0..5 {
+    p += 1;
+  }
+  p
+}
+
+fn tenfold(self: integer) -> integer {
+  self = self * 10;
+  self
+}
+
+fn dflt(p: integer, q: integer = 9) -> integer {
+  p = q;
+  p
+}
+
+fn setg<T>(p: T, q: T) -> T {
+  p = q;
+  p
+}
+
+fn main() {
+  i = 3;
+  n8: u8 = 3;
+  n32: i32 = 3;
+  fl = 1.5;
+  sg = 1.5f;
+  b = true;
+  c = 'a';
+  e = Col.Red;
+  ni: integer? = 3;
+  got = "{chg_int(i)} {chg_u8(n8)} {chg_i32(n32)} {chg_float(fl)} {chg_single(sg)}";
+  got += " {chg_bool(b)} {chg_char(c)} {chg_enum(e)} {chg_null(ni)}";
+  assert(got == "9 9 9 9.5 9.5 false z Green null", "the callee sees its update: got {got}");
+  assert("{i} {n8} {n32} {fl} {sg} {b} {c} {e} {ni}" == "3 3 3 1.5 1.5 true a Red 3",
+    "every scalar type keeps the caller's value");
+  x = 3;
+  assert(add10(x) == 13 && loopy(x) == 8 && x == 3, "a compound and a loop update");
+  s = S { x: 1, u: 5 };
+  v: vector<integer> = [1, 2];
+  assert(chg_int(s.x) + chg_u8(s.u) + chg_int(v[0]) == 27, "the field and element calls");
+  assert(s.x == 1 && s.u == 5 && "{v}" == "[1,2]", "an argument read off a field or element");
+  f: fn(integer) -> integer = chg_int;
+  l = fn(p: integer) -> integer { p = 9; p };
+  assert(f(x) == 9 && l(x) == 9 && x == 3, "through a fn-ref and a lambda");
+  assert(x.tenfold() == 30 && dflt(x) == 9 && x == 3, "a method on self and a default");
+  assert(setg(x, 9) == 9 && x == 3, "a generic instance at integer");
+}

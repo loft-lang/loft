@@ -72,7 +72,7 @@ game developer ever need to open this?" — no (codegen, type checker, allocator
 (world model, gameplay primitives, rendering composition) stays loft, even when hard.  Libraries are
 kits of primitives lifted one at a time; needing to move game-facing code into Rust is a language
 bug to fix in loft.  **Why.** A genre in the compiler taxes every other author, and Rust code is a
-black box the developer cannot read or fork.  Orthogonal to C71 (how a library runs).
+black box the developer cannot read or fork.  Orthogonal to @C71 (how a library runs).
 
 **Revisit when.** A genre-neutral mechanism in a library (likely the streaming substrate) is a
 measured bottleneck only the engine can fix, and moving it buries neither a worldview nor a
@@ -123,7 +123,7 @@ the only faithful answer is to make it unexpressible.
 
 **Revisit when.** Never by loosening `par`; broader shared-mutation parallelism would be a new,
 inherently safe construct, and none is envisioned.  Decided 2026-07-14 — [record](DESIGN_DECISIONS-history.md#c93--a-par-workers-captured-parent-state-is-read-only-a-write-to-it-is-a-compile-error).
-**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
+**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [@C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
 
 ## C96 — Library shipping is keyed on trust-root presence: a key-present machine ships autonomously, a key-absent one defers
 
@@ -145,12 +145,17 @@ Decided 2026-07-15, amended 2026-09-25 — [record](DESIGN_DECISIONS-history.md#
 explanation prints only when native was explicitly asked for (`--native`), and stays in `--help`
 and the release `QUICKSTART.md`.  Every fallback still records `native_fallback_reason`, which
 `LOFT_REQUIRE_NATIVE=1` turns into a hard error.  A source checkout without `rustc` still explains
-itself, because there the message is actionable.  **Why.** Someone who downloaded a release chose
+itself, because there the message is actionable.  The developer's own moments name a missing
+`rustc` instead of staying silent: the second line of `loft --version`, the `loft test` summary
+(which otherwise suggests `loft test --native`), and the next steps of `loft new --native`.
+**Why.** Someone who downloaded a release chose
 not to install a toolchain, so "install Rust and rebuild" on a run that succeeds is noise, not a
 warning; gating on a per-user marker file was rejected because a fresh container has no `~/.loft`.
 
 **Revisit when.** No trigger recorded.  Decided 2026-07-24 — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
-**Holds at:** `src/main.rs`'s fallback arms; `tests/exit_codes.rs::a_missing_rustc_falls_back_quietly_except_where_asked`.
+**Holds at:** `src/main.rs`'s fallback arms; `native_lib::NO_RUSTC`;
+`tests/exit_codes.rs::a_missing_rustc_falls_back_quietly_except_where_asked` and
+`::a_missing_rustc_is_named_where_the_developer_looks`.
 
 ## C106 — `#c` has ONE arity ceiling for both backends, and it was raised rather than lowered
 
@@ -202,7 +207,7 @@ trampoline arity list; an argument would need a rung per subset of positions.  W
 level-1 BLAS function and every LAPACK routine that answers a number needed a C shim.
 
 **Revisit when.** Someone needs a float argument badly enough to pay for an SSE-aware ladder; it
-moves for both backends at once, as C106 requires.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not).
+moves for both backends at once, as @C106 requires.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not).
 **Catalogue:** @F92 (direct C binding)
 
 ## C122 — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
@@ -212,7 +217,132 @@ moves for both backends at once, as C106 requires.  Decided 2026-08-10 — [reco
 declines otherwise.  A construction escaping the unit keeps the promised representation; which API
 is a boundary is a BUILD fact (`--native-release` compiles its loft libraries into the unit; a
 `#rust` native, live reload, a stored layout and a placed library stay boundaries).  **Why.** What a
-program cannot observe is the compiler's; what it can is the language's (C120, other side).
+program cannot observe is the compiler's; what it can is the language's (@C120, other side).
 
 **Revisit when.** Not stated.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
 Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
+
+## C135 — loft has no unsafe construct; representation is observable only at a native boundary or a file-backed store
+
+**Decision.** No loft construct lets a program observe how a value is represented: no address,
+no raw buffer, no layout, no `unsafe` block.  A Rust body belongs to the standard library
+(`#rust`, @C87); a package binds Rust only through `#native` and its own native crate.
+Representation is observable at exactly two boundaries: a package's native code, and a store
+whose bytes persist or are mapped from a file — there the store layout IS the contract, read
+back by another run, process or tool.  Everywhere else a value's representation is the
+compiler's (@C122).  Reports of representation — `store_memory()`, the `LOFT_TRACE_*` switches —
+describe the build, not the program; their output is not part of the contract.  **Why.** Every
+representation rewrite (`(R-Escape)`, `(R-ValueRecord)`, the store rewrites, the proposed
+`(R-Apart)` in [APART_VALUES.md](APART_VALUES.md)) is sound only because a program cannot tell
+the forms apart.  Rust's optimiser stays conservative because `unsafe` code may depend on a
+`Vec`'s layout; loft keeps Rust's guarantees underneath without that door on top.
+
+**Revisit when.** A use case needs a program to observe representation that neither a native
+package nor a file-backed store serves.  Opening that door makes every representation rewrite a
+soundness question at once, so the proposal must name each rewrite it invalidates.  Decided
+2026-10-04 — [record](DESIGN_DECISIONS-history.md#c135--loft-has-no-unsafe-construct-representation-is-observable-only-at-a-native-boundary-or-a-file-backed-store).
+**Holds at:** `@C135` — the `#rust` refusal in `src/parser/definitions.rs` (with @C87),
+`(R-Escape)` in [formal/rewrites.md](formal/rewrites.md); guard
+`tests/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
+boundary by the store format's guards (`tests/store_durable_format.rs`).
+
+## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
+
+**Decision.** On the reference host, a routine whose `--native-release` time is over 3× its
+like-for-like Rust twin is a defect.  When its mechanism class's median is at or under 3×, it is
+an ordinary `performance` issue.  When the class median is over 3×, the class is the defect and
+its plan owns the routine.  `bench/stats.py`'s 2× stays the stricter "ok" line of that report and
+the portal's goal.  **The stable release** waits only on routines over **5×**: a routine between
+3× and 5× is still a defect, and is worked after stability, because every optimisation also
+moves code the release must hold still.  The bar does not narrow which cures are taken: the work
+toward it removes mechanisms as the rest of this entry says, and the instability that work
+brings is accepted while it runs.  **Why.** loft is not inherently slower than rustc: checked arithmetic, null
+handling and the store protocol cost something, and known layouts, a static type for every value
+and ordered stores give something back.  Overhead past 3× is therefore a mechanism in loft costing
+more than it should.  Removing that mechanism brings every routine using it closer to rustc, not
+only the one measured.  The bar is set where the excess is
+a symptom, not where loft should end up.
+
+**Revisit when.** Every class median is under 2× on the reference host (tighten the bar), or a
+class is shown to carry a cost the contract requires that Rust does not pay — that class then
+gets its own recorded bar here, with the cost named.  And when contract-1 stability is reached:
+optimisation after it needs a way to reduce its risk beyond running the test suite, which is
+not enough then (owner) — not designed yet.  Decided 2026-10-04 —
+[record](DESIGN_DECISIONS-history.md#c136--a-routine-over-3-its-rust-twin-is-a-defect-a-class-whose-median-is-over-3-is-a-systemic-one).
+**Holds at:** `@C136` — the bar in `bench/portal/outliers.py`; guard
+`tests/doc_hygiene.rs::the_outlier_report_reproduces_the_hand_count`; PERFORMANCE.md § What
+makes a slow routine a bug.
+
+## C133 — A development build uses the startup cache; LOFT_NO_CACHE=1 turns it off
+
+**Decision.** The whole-program startup cache is on for every build — `cargo run`, `cargo test`
+and a binary under `target/` as much as an installed `loft` — and `LOFT_NO_CACHE=1` is the one
+switch that turns it off, shown in `loft --help`, STARTUP_CACHE.md, DEBUG.md and
+RUNNING_TESTS.md.  **Why.** Every dev run and every test that runs the binary paid the full
+stdlib parse, to guard against a stale bundle answering for a changed compiler; both cache keys
+fold in the build signature, so a rebuild already invalidates.  What no key sees — a compiler
+instrumented without a rebuild, a test measuring a cold parse — is what the switch is for.
+
+**Revisit when.** A warm run is measured answering differently from the cold run it stands in
+for, on a dev build.  Decided 2026-09-30 — loft#1762.
+**Guard:** `tests/arc_e_program_cache.rs::a_development_build_caches_unless_told_not_to`.
+**Catalogue:** STARTUP_CACHE.md § Default-on behaviour and the off switch · `src/cache.rs`
+`cache_decision`.
+
+## C138 — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
+
+**Decision.** A record's size is rounded up to a multiple of its alignment, and a tuple's
+members each sit at the next position their alignment divides, so every field of every record —
+standalone, inlined, or the n-th element of a collection — is naturally aligned (`(L-Align)`).
+The compiler checks that alignment once, at compile time (`Stores::validate_all_layouts`
+reports a misaligned place as a `type layout:` error); nothing re-tests it at run time.  The
+store's `read` and `write` claim no alignment (`read_unaligned` / `write_unaligned`): on x86-64
+the same single `mov`, and defined at any offset, so a layout defect can never become undefined
+behaviour.  Only `addr` / `addr_mut`, which hand out a reference, assert alignment per call, and
+they are off every per-element path.  `sizeof(T)` answers the padded size.  A binary file written with `f#write`
+keeps the WIRE width — the field widths summed, no padding — so a file's format does not move
+with the layout.  The interpreter's bytecode stream stays byte-packed and is read unaligned, and
+so do its stack frames, which the frame allocator lays out.
+**Why.** A packed record left every field aligned only by accident (an `i64` field at all seven
+non-zero remainders), so the store could not hand Rust a reference into itself: a native `&`
+link panicked or was undefined behaviour (loft#1481).  Aligned data is what Rust's pointer rules,
+C structs and the C boundary (@C108) assume.  The check belongs where the offsets are made, not
+on the access: a per-access test re-asks a fact the layout settled, and on the store's hottest
+path it cost 11–13 % on native keyed and vector-build routines.  The cost falls only on collections of small records
+and on inlined records: a standalone record is claimed in whole 8-byte words anyway.  The
+bytecode is the other way round: one cursor decodes it in order, its operands are never
+referenced, and a smaller stream stays in cache — CPython and Lua use fixed instruction units,
+the JVM, CIL and Wasm decode packed byte streams, and none of them pads an operand to its
+alignment.
+
+**Revisit when.** A program's memory is measured to be dominated by the padding in a collection
+of small records — the remedy then is an opt-in packed collection kind, not packed records
+everywhere; or a target that faults on an unaligned load runs the interpreter.  Decided
+2026-10-06 — [record](DESIGN_DECISIONS-history.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed).
+**Holds at:** `@C138` — `calc::calculate_positions` (the size rounding), `Stores::validate_all_layouts`
+(the compile-time check), `data::element_storage_offsets` (the restated tuple view);
+the rule `(L-Align)` in [formal/layout.md](formal/layout.md); guards `tests/layout_alignment.rs`,
+`tests/scripts/a-record-is-padded-to-its-alignment.loft` and the unit test
+`validate_all_layouts_reports_a_misaligned_field`.
+**Catalogue:** `formal/layout.md` `(L-Struct)` `(L-Tuple)` `(L-Ref)` `(L-Sound)` · LOFT_DATA.md
+§ Sizeof
+
+## C144 — A nullable value record carries a presence word; an absent one holds its fields' nulls
+
+**Decision.** On `--native`, a `-> S?` of a record `(R-ValueRecord)` admits returns the tuple of
+`S`'s fields followed by one `bool`, the PRESENCE word: `(f₁, …, fₙ, present)`.  An absent tuple
+holds every field's null (`i64::MIN`, `NAN`, `false`) and `false`.  A field read is the same tuple
+index as on the dense tuple; a presence test reads the last element.  The dense and the nullable
+layout are two keys, so no site is handed the other's tuple.
+**Why.** `(N-Road)`: the `?` is a marker over τ's storage and must not select the slower road.
+A tuple has no spare bit for absence, and a field's own null cannot stand for it, because a
+present record may hold null fields.  Filling an absent tuple with field nulls makes every field
+read answer exactly what a read off the null record answers, with no test of its own.
+**Revisit when.** A record whose heap field is a view leaf must be nullable too — its absence is
+a REPORTED null, which this tuple does not spell — or the interpreter's IR value record
+(@PLN180) takes the nullable road and needs a presence spelling of its own.  Decided 2026-10-09
+(loft#1952) — [record](DESIGN_DECISIONS-history.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls).
+**Holds at:** `@C144` — `hoist::ValueTuple::absent` / `presence` and `hoist::NULLABLE_LAYOUT`
+(`src/generation/hoist.rs`), `ref_ops::PresenceEmitter`, `formal/rewrites.md` `(R-ValueRecord)`
+nullable clause, guard `tests/scripts/a-nullable-record-returns-its-fields-in-registers.loft`.
+**Catalogue:** `formal/types.md` `(N-Road)` · NATIVE_SWITCHES.md `LOFT_NO_NULLABLE_VALUE_RECORD`.

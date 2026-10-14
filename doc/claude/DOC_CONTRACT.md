@@ -70,7 +70,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 ## Reviewer pass
 
 Judgment rules are applied by a reviewer, not by whoever wrote the text, on the release
-checklist's `[mid]` and `[pre]` beat (@PLN172).  The reviewer is a fresh session that loads
+checklist's `[mid]` and `[pre]` beat (rows `A-docs-lint` and `M-doc-review`).  The reviewer is a fresh session that loads
 this contract and the `doc-quality` skill, runs the reports named above, takes the top doc from
 their worklist, and brings it fully under the contract in one PR: split it, move its history
 out, fix its index entry.  It changes no code.

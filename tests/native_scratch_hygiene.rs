@@ -8,10 +8,10 @@
 // with nothing else ever looking at the directory those accumulated one per killed process
 // — sixteen thousand of them, 151 GB, on one box (RUN_BOUNDS.md § Scratch hygiene).
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn rustc_available() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
@@ -24,25 +24,25 @@ fn a_native_compile_sweeps_dead_process_artefacts_and_keeps_the_test_cache() {
         return;
     }
     let scratch = std::env::temp_dir().join(format!("loft_scratch_hygiene_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).unwrap();
+    let _ = fa::remove_dir_all(&scratch);
+    fa::create_dir_all(&scratch).unwrap();
     // u32::MAX-1 is no real pid (Linux pid_max caps far below): provably dead.
     let dead_bin = scratch.join("loft_native_bin_4294967294");
     let dead_rs = scratch.join("loft_native_4294967294.rs");
     // The test runner's cache is named by STEM, not pid: it must survive a compile with room.
     let cache_bin = scratch.join("loft_test_native_some_file_bin");
     for f in [&dead_bin, &dead_rs, &cache_bin] {
-        std::fs::write(f, b"planted").unwrap();
+        fa::write(f, b"planted").unwrap();
     }
     // Unique source per run: the binary cache is content-addressed, and only a cache MISS
     // compiles — which is where the sweep runs.
     let prog = scratch.join("hello.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         format!("fn main() {{ println(\"hi {}\"); }}\n", std::process::id()),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native")
         .arg(&prog)
         // Both spellings: `make ci` exports `LOFT_TMPDIR` beside `TMPDIR`, and the runtime
@@ -58,22 +58,22 @@ fn a_native_compile_sweeps_dead_process_artefacts_and_keeps_the_test_cache() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        !dead_bin.exists() && !dead_rs.exists(),
+        !fa::exists(&dead_bin) && !fa::exists(&dead_rs),
         "dead-process artefacts are swept by the compile"
     );
     assert!(
-        cache_bin.exists(),
+        fa::exists(&cache_bin),
         "the test runner's per-file cache survives a compile with room"
     );
-    let own: Vec<String> = std::fs::read_dir(&scratch)
+    let own: Vec<String> = fa::read_dir(&scratch)
         .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().to_string())
+        .into_iter()
+        .map(|e| e.file_name().unwrap_or_default().to_string())
         .filter(|n| n.starts_with("loft_native_"))
         .collect();
     assert!(
         own.is_empty(),
         "a run that ends normally leaves no artefact of its own, found {own:?}"
     );
-    let _ = std::fs::remove_dir_all(&scratch);
+    let _ = fa::remove_dir_all(&scratch);
 }

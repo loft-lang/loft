@@ -35,7 +35,7 @@ pub fn calculate_positions(
     let mut gaps = BTreeMap::new();
     // Calculated position for each field on number.
     let mut positions = BTreeMap::new();
-    let mut pos = 0;
+    let mut pos: u16 = 0;
     // Keep space for the type for an EnumValue.
     if sub {
         // Start on the first 8 byte alignment position.
@@ -84,6 +84,17 @@ pub fn calculate_positions(
                         }
                     }
                     Ordering::Less => {
+                        // `@FR-L-Align` — the end of what is placed so far is not always a
+                        // multiple of `al`: a linked group (an index's 9-byte link triple)
+                        // ends where its size does.  Skip to the boundary and keep the bytes
+                        // skipped as a gap a smaller field can still use; a 2-byte field
+                        // after the triple sat at an odd offset, and the layout was refused
+                        // (loft#1911).
+                        let aligned = pos.div_ceil(u16::from(al)) * u16::from(al);
+                        if aligned > pos {
+                            gaps.insert(pos, aligned - pos);
+                            pos = aligned;
+                        }
                         positions.insert(nr, pos);
                         pos += field_size;
                         *size = pos;
@@ -92,6 +103,13 @@ pub fn calculate_positions(
             }
         }
     }
+    // `@FR-L-Align` (@C138) — a record's size is a multiple of its alignment, so the record is
+    // aligned wherever it is placed: as a collection element its size is the stride, and as an
+    // inline field of another record its size is how far the next field starts.  Without this
+    // tail padding `{ integer, boolean }` was 9 bytes, and element 1 of a vector of it put its
+    // `integer` at byte 9.
+    let al = u16::from((*alignment).max(1));
+    *size = size.div_ceil(al) * al;
     let mut result = Vec::new();
     for (_, pos) in positions {
         result.push(pos);
@@ -111,15 +129,11 @@ pub fn calculate_positions(
 /// its in-group offset.  Non-group fields use the same gap-tracker
 /// as `calculate_positions`.
 ///
-/// **Why**: the index bookkeeping triple `[#left_N, #right_N,
-/// #color_N]` and tuple element fields `[_0, _1, …, _N]` must stay
-/// CONTIGUOUS so consumers (`tree::add` for index, tuple-as-arg
-/// inflation for tuples) can use simple offset arithmetic.  Without
-/// group-awareness, `calculate_positions` packs fields individually
-/// (largest-first by alignment) and a 1-byte `bool` member of an
-/// index group can be pulled to the trailing 1-byte fill region of
-/// the host struct — breaking `tree::add`'s `color = left + 8`
-/// expectation.
+/// **Why**: tuple element fields `[_0, _1, …, _N]` must stay
+/// CONTIGUOUS so tuple-as-arg inflation can use simple offset
+/// arithmetic.  Without group-awareness, `calculate_positions` packs
+/// fields individually (largest-first by alignment) and a small member
+/// can be pulled into a fill gap elsewhere in the host struct.
 ///
 /// **Args**:
 /// - `fields[i] = (size, alignment)` per host field, in original

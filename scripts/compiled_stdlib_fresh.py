@@ -39,7 +39,10 @@ DEFAULT = ROOT / "default"
 
 def source_hash(default_dir: Path) -> int:
     h = hashlib.sha256()
-    for path in sorted(default_dir.glob("*.loft"), key=lambda p: p.name):
+    # Files only: a program cache directory `default/.loft/` (ignored by git) also matches
+    # `*.loft`, and reading it as a source stopped the gate's pre-flight.
+    sources = (p for p in default_dir.glob("*.loft") if p.is_file())
+    for path in sorted(sources, key=lambda p: p.name):
         for part in (path.name.encode(), path.read_bytes()):
             h.update(len(part).to_bytes(8, "little"))
             h.update(part)

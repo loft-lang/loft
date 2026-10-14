@@ -40,13 +40,17 @@
 //! **The baseline** (`tests/ownership_drop_gate.baseline`) lists every cell that is not clean,
 //! with the kinds of finding it has.  It is a record of the tree it was measured on: the test
 //! fails when a cell gains or changes a finding, and it also fails when a finding is GONE, so
-//! that a fix retires its line in the same commit.  A line in it is an open defect, not an
-//! accepted behaviour — the register for each one is `doc/claude/formal/heap.md`.
+//! that a fix retires its line in the same commit.  The cells run with the lease refusals off
+//! (`gate_command`), so a line is a shape `(H-Copy-Refuse)` or `(H-Spent)` refuses by default
+//! — `a_refused_cell_is_a_compile_error_and_a_once_cell_is_not` holds the compiler to that —
+//! and a cell the rules permit that releases wrongly must name its open `heap.md` deviation in
+//! `LEASE_DEVIATIONS`.
 //!
 //!   run:    cargo test --release --test ownership_drop_gate      (both backends)
 //!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
 //!           (writes `ownership_drop_gate.baseline` and `ownership_drop_gate.native.baseline`)
 
+use loft::file_access as fa;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -981,14 +985,14 @@ fn loft_bin() -> PathBuf {
 /// shape releases, and the shapes `(H-Copy-Refuse)` and `(H-Spent)` refuse are the population
 /// @PLN163 P5 is verified against — refused, they would compile to nothing and measure nothing.
 fn gate_command() -> Command {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_NO_LEASE_REFUSE", "1");
     cmd
 }
 
 fn run_cell(dir: &Path, c: &Cell, mode: &str, timeout: &str) -> Verdict {
     let path = dir.join(format!("{}.loft", c.name));
-    std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+    fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
     let mut cmd = gate_command();
     cmd.arg(mode)
         .arg(&path)
@@ -1016,6 +1020,7 @@ fn run_cell(dir: &Path, c: &Cell, mode: &str, timeout: &str) -> Verdict {
 /// `LOFT_MEMORY_LIMIT` is armed only under `loft test`.  A cell peaks near 22 MiB of address
 /// space, so 2 GiB never binds on a working one.  A native cell is left unbounded: its driver
 /// runs `rustc`, which would inherit the limit.
+// approved exemption: `setrlimit(RLIMIT_AS)` in the child has no Windows equivalent; Windows substitute: the `LOFT_MEMORY_LIMIT` store-heap ceiling (the other arm)
 #[cfg(target_os = "linux")]
 fn cap_address_space(cmd: &mut Command, mode: &str) {
     use std::os::unix::process::CommandExt as _;
@@ -1036,8 +1041,15 @@ fn cap_address_space(cmd: &mut Command, mode: &str) {
     }
 }
 
+// approved exemption: `setrlimit(RLIMIT_AS)` in the child has no Windows equivalent; Windows substitute: the `LOFT_MEMORY_LIMIT` store-heap ceiling (the other arm)
 #[cfg(not(target_os = "linux"))]
-fn cap_address_space(_cmd: &mut Command, _mode: &str) {}
+fn cap_address_space(cmd: &mut Command, mode: &str) {
+    // macOS does not enforce `RLIMIT_AS`; the store-heap ceiling bounds the same runaway
+    // allocation on every platform (`store_budget::apply_env_limit_if_set`).
+    if mode == "--interpret" {
+        cmd.env("LOFT_MEMORY_LIMIT", "2G");
+    }
+}
 
 /// Runs every cell alone, `workers` at a time, and answers the verdicts in cell order.
 fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Verdict> {
@@ -1046,8 +1058,19 @@ fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Ver
     })
 }
 
+/// A gate's scratch directory, removed however the call that made it ends: a cell that panics
+/// unwinds out of the worker scope past any removal written after it, and a native chunk's
+/// directory holds about 1.3 GB of compiled cells.
+struct ScratchDir(PathBuf);
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = fa::remove_dir_all(&self.0);
+    }
+}
+
 /// Answers `run(dir, cell)` for every cell, `workers` at a time, in cell order.  `dir` is a
-/// scratch directory of its own, named by `tag`, removed afterwards.
+/// scratch directory of its own, named by `tag`, removed afterwards — on a panic too.
 fn for_each_cell<T: Send>(
     cells: &[Cell],
     tag: &str,
@@ -1063,7 +1086,9 @@ fn for_each_cell<T: Send>(
         std::process::id(),
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).expect("create the gate's scratch directory");
+    fa::create_dir_all(&dir).expect("create the gate's scratch directory");
+    let scratch = ScratchDir(dir);
+    let dir = scratch.0.as_path();
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<T>>> = Mutex::new(cells.iter().map(|_| None).collect());
     std::thread::scope(|s| {
@@ -1074,13 +1099,13 @@ fn for_each_cell<T: Send>(
                     if i >= cells.len() {
                         break;
                     }
-                    let v = run(&dir, &cells[i]);
+                    let v = run(dir, &cells[i]);
                     results.lock().unwrap()[i] = Some(v);
                 }
             });
         }
     });
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(scratch);
     results
         .into_inner()
         .unwrap()
@@ -1100,7 +1125,8 @@ fn workers(cap: usize) -> usize {
 fn render(verdicts: &[Verdict], backend: &str) -> String {
     let mut s = format!(
         "# ownership_drop_gate — the {backend} cells that are NOT clean, measured on the tree that\n\
-         # committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.\n\
+         # committed this file, with the lease refusals off: `cell KIND,KIND`.  Every line is a cell the\n\
+         # lease rules REFUSE at compile time; a cell they permit is never listed.\n\
          # Regenerate only after reading the diff: {BLESS}=1 cargo test --release --test ownership_drop_gate\n"
     );
     let mut lines: Vec<String> = verdicts
@@ -1140,11 +1166,11 @@ fn parse_baseline(text: &str) -> BTreeMap<String, String> {
 fn check_baseline(verdicts: &[Verdict], path: &str, backend: &str) {
     let rendered = render(verdicts, backend);
     if std::env::var_os(BLESS).is_some() {
-        std::fs::write(path, &rendered).unwrap_or_else(|e| panic!("write {path}: {e}"));
+        fa::write(path, &rendered).unwrap_or_else(|e| panic!("write {path}: {e}"));
         eprintln!("ownership_drop_gate: blessed {path}");
         return;
     }
-    let Ok(pinned) = std::fs::read_to_string(path) else {
+    let Ok(pinned) = fa::read_to_string(path) else {
         panic!("{path} is missing — measure it with {BLESS}=1 and READ it before committing");
     };
     let want = parse_baseline(&pinned);
@@ -1205,9 +1231,9 @@ fn every_cell_releases_each_resource_once_on_the_interpreter() {
 
 /// The same cells on `--native`, against a baseline of their own: the backends disagree on three
 /// cells today, and each disagreement is a finding rather than noise, so it is printed on every
-/// run.  One `rustc` per cell, so the leg is CHUNKED — `…_on_native_0` … `_3`, each taking every
-/// [`NATIVE_GATE_CHUNKS`]-th cell from its own offset — because the whole family took 386-690 s
-/// on the Windows runner and the duration gate allows a test half its 600 s limit.  Each chunk
+/// run.  One `rustc` per cell, so the leg is CHUNKED — `…_on_native_0` … `_7`, each taking every
+/// [`NATIVE_GATE_CHUNKS`]-th cell from its own offset — because the duration gate allows a test
+/// half its 600 s limit, and a chunk of a quarter of the cells crossed it on the macOS runner.  Each chunk
 /// checks and blesses only its own cells' lines of the one baseline file.
 fn native_gate_chunk(chunk: usize) {
     let cells: Vec<Cell> = all_cells()
@@ -1231,7 +1257,7 @@ fn native_gate_chunk(chunk: usize) {
 }
 
 /// How many tests the native leg is split across — see [`native_gate_chunk`].
-const NATIVE_GATE_CHUNKS: usize = 4;
+const NATIVE_GATE_CHUNKS: usize = 8;
 
 #[test]
 fn every_cell_releases_each_resource_once_on_native_0() {
@@ -1253,6 +1279,26 @@ fn every_cell_releases_each_resource_once_on_native_3() {
     native_gate_chunk(3);
 }
 
+#[test]
+fn every_cell_releases_each_resource_once_on_native_4() {
+    native_gate_chunk(4);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_5() {
+    native_gate_chunk(5);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_6() {
+    native_gate_chunk(6);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_7() {
+    native_gate_chunk(7);
+}
+
 /// [`check_baseline`] for one chunk: only the lines naming `names` are this chunk's to compare —
 /// and, under `BLESS`, to rewrite.  The chunks run as separate processes writing ONE file, so a
 /// bless is a read-modify-write under a lock file, never a whole-file overwrite.
@@ -1262,11 +1308,11 @@ fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &st
     if std::env::var_os(BLESS).is_some() {
         let lock = format!("{path}.lock");
         let mut waited = 0;
-        while std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock)
-            .is_err()
+        while fa::open_with(
+            &lock,
+            std::fs::OpenOptions::new().write(true).create_new(true),
+        )
+        .is_err()
         {
             waited += 1;
             assert!(
@@ -1275,7 +1321,7 @@ fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &st
             );
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        let pinned = std::fs::read_to_string(path).unwrap_or_default();
+        let pinned = fa::read_to_string(path).unwrap_or_default();
         let mut merged = parse_baseline(&pinned);
         merged.retain(|name, _| !names.contains(name));
         merged.extend(got);
@@ -1283,12 +1329,12 @@ fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &st
         for (name, kinds) in &merged {
             let _ = writeln!(out, "{name} {kinds}");
         }
-        std::fs::write(path, &out).unwrap_or_else(|e| panic!("write {path}: {e}"));
-        let _ = std::fs::remove_file(&lock);
+        fa::write(path, &out).unwrap_or_else(|e| panic!("write {path}: {e}"));
+        let _ = fa::remove_file(&lock);
         eprintln!("ownership_drop_gate: blessed this chunk's lines of {path}");
         return;
     }
-    let Ok(pinned) = std::fs::read_to_string(path) else {
+    let Ok(pinned) = fa::read_to_string(path) else {
         panic!("{path} is missing — measure it with {BLESS}=1 and READ it before committing");
     };
     let want: BTreeMap<String, String> = parse_baseline(&pinned)
@@ -1323,7 +1369,7 @@ fn every_cell_is_distinct_and_mints() {
 fn census(dir: &Path, c: &Cell, prelude: &str) -> Option<(Vec<String>, String)> {
     let path = dir.join(format!("{}.loft", c.name));
     let text = program(c).replacen(PRELUDE, prelude, 1);
-    std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+    fa::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
     let out = gate_command()
         .arg("--interpret")
         .arg(&path)
@@ -1729,7 +1775,7 @@ const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[];
 /// does a deviation closed in the register while a cell still measures it.
 #[test]
 fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
-    let heap = std::fs::read_to_string(concat!(
+    let heap = fa::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/doc/claude/formal/heap.md"
     ))
@@ -1761,7 +1807,7 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     }
     let cells = all_cells();
     for (path, backend) in [(BASELINE, "interpreter"), (NATIVE_BASELINE, "native")] {
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let text = fa::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let measured = parse_baseline(&text);
         let mut refused = 0;
         for c in &cells {
@@ -1810,8 +1856,8 @@ fn a_refused_cell_is_a_compile_error_and_a_once_cell_is_not() {
     let cells = all_cells();
     let answers = for_each_cell(&cells, "lease_default", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
-        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-        let out = Command::new(loft_bin())
+        fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--check")
             .arg("--interpret")
             .arg(&path)
@@ -1859,7 +1905,7 @@ fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
     let cells = all_cells();
     let reports = for_each_cell(&cells, "lease_manifest", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
-        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
         let out = gate_command()
             .arg("--native-emit")
             .arg(dir.join(format!("{}.rs", c.name)))

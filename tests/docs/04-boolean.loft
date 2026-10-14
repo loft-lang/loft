@@ -37,14 +37,12 @@ fn main() {
   // The `?? null` is not what makes that safe, and it silences nothing. loft warns
   // about a divisor that is a literal 0 in your source, while READING your code, and
   // it warns whether or not you wrote `?? null`; a divisor that is only zero at RUN
-  // time is not warned about at all. What `?? null` changes is the VALUE: loft prints
-  // the reason it knows, so an undefended result formats as 'null(/0)', and coalescing
-  // it to a plain null throws that reason away. Reach for `?? null` when you want the
-  // bare null, and for `?? <value>` when you want a number — not to quiet a warning.
+  // time is not warned about at all. Either way the result is null, and a null prints as
+  // 'null'. Reach for `?? <value>` when you want a number — not to quiet a warning.
   zero = 0;
   assert(!(12 / zero ?? null), "null from division-by-zero is false-like when defended");
-  assert("{12 / zero}" == "null(/0)", "an undefended result carries its reason");
-  assert("{12 / zero ?? null}" == "null", "…and `?? null` trades the reason for a plain null");
+  assert("{12 / zero}" == "null", "an undefended result prints as null");
+  assert("{12 / zero ?? null}" == "null", "…and so does a defended one");
   assert(12 > 0, "positive integer is true");
   // ## Bitwise operators
   // While 'and'/'or' work on true/false values, bitwise operators work on

@@ -730,6 +730,11 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);
             }
+            // `@FR-R-Base`'s byte clause — the same, for a byte element read: its element
+            // address is folded into the fast path, so only the index can still hold work.
+            if let Some(b) = self.fused_byte_read(self.data.def(*d_nr).name(), vals) {
+                return self.collect_pre_evals_inner(b.index, result);
+            }
             // `@FR-R-Base`'s join clause — `v[i]?.f` folds its JOIN block: in range the field
             // is one load and the block never runs, and the emitter writes the block itself
             // in the fallback arm.  Lifted into a `let _pre_N` it would run on every pass and
@@ -781,6 +786,15 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 self.collect_pre_evals_inner(fused.fld, result)?;
                 return self.collect_pre_evals_inner(fused.val, result);
+            }
+            // `@FR-R-FoldCompare` — a predicate over a case fold emits the fold's ARGUMENT
+            // and never the fold, so the fold's block must not be lifted: it would be built in
+            // front of the statement and read by nothing.  Both sides ask
+            // `fold_compare_site`, which admits only operands with no work to lift.
+            if crate::generation::ops::is_fold_compare(self.data.def(*d_nr).name())
+                && self.fold_compare_site(vals).is_some()
+            {
+                return Ok(());
             }
             let def_fn = self.data.def(*d_nr);
             if def_fn.rust().is_empty() {
@@ -937,6 +951,12 @@ impl Output<'_> {
             Value::Insert(ops) => ops.last().is_some_and(|tail| self.yields_owned_text(tail)),
             _ => false,
         }
+    }
+
+    /// An operand with no work for a `let _pre_N` to lift — no sequence, no nested user
+    /// call — so reading it inline, in either order, is reading it where it stands.
+    pub(crate) fn plain_operand(&self, v: &Value) -> bool {
+        !Self::is_sequence_arg(v) && !self.needs_pre_eval(v)
     }
 
     fn is_sequence_arg(arg: &Value) -> bool {

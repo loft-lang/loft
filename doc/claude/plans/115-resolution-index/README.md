@@ -174,7 +174,7 @@ from a source position to a `Resolution`:
 - **Local** — a variable / parameter: its function, `var_nr`, resolved `Type`, and scope.
 - **Field** — `expr.field`: the receiver's type + the attribute.
 - **Method** — `expr.method(…)`: the receiver's type + the method def.
-- **Unresolved** — a name that bound to nothing (a typo, or C80 value-undefinedness).
+- **Unresolved** — a name that bound to nothing (a typo, or @C80 value-undefinedness).
 
 Expose it on the parser after a parse so tooling can answer *"what is the symbol at
 `(line, col)`?"* and *"where are all the occurrences of THIS binding?"* precisely —

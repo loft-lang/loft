@@ -5,12 +5,12 @@
 //! `LoftStore::foreign_vector_from_owned`, and the cell file reads it beside the copying
 //! answer on both backends, under the hoist verifier, the strict-store, poison and leak
 //! switches, and the copy A/B (`LOFT_NO_FOREIGN_VIEW=1`, which must print the same lines).
-//! A WRITE into the answer, or into a foreign answer beside a vector argument, halts with the
-//! foreign store's own advice; the halt is `report_and_exit`, so it is asserted on the
-//! spawned binary.  The fixture cdylib must be built (`cd tests/lib/native_pkg/native &&
+//! The bridge declares its foreign answers `-> const vector<u8>` (`(Const-Foreign)`, @C139),
+//! so a WRITE into the answer, or into a foreign answer beside a vector argument, is refused
+//! when the program is COMPILED, with the copy advice; asserted on the spawned binary.  The fixture cdylib must be built (`cd tests/lib/native_pkg/native &&
 //! cargo build --release`); the tests skip when it is absent, as `native_loader.rs` does.
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -20,17 +20,11 @@ const PKG: &str = "tests/lib/native_pkg";
 const CELLS: &str = "tests/lib/native_pkg/tests/174-foreign-bridge.loft";
 
 fn fixture_built() -> bool {
-    let so = if cfg!(target_os = "macos") {
-        "libloft_native_test.dylib"
-    } else if cfg!(windows) {
-        "loft_native_test.dll"
-    } else {
-        "libloft_native_test.so"
-    };
+    let so = loft::native_lib::platform_cdylib_name("loft_native_test");
     let p = std::path::Path::new(PKG)
         .join("native/target/release")
         .join(so);
-    if !p.exists() {
+    if !fa::exists(&p) {
         eprintln!(
             "skipping: fixture cdylib not built — run: cd {PKG}/native && cargo build --release"
         );
@@ -76,16 +70,16 @@ fn run(
         backend.trim_start_matches('-'),
         std::process::id()
     ));
-    std::fs::create_dir_all(&root).expect("scratch dir");
+    fa::create_dir_all(&root).expect("scratch dir");
     let cwd = std::env::current_dir().expect("cwd");
     let path = if inline {
         let p = root.join("prog.loft");
-        std::fs::write(&p, src).expect("write program");
+        fa::write(&p, src).expect("write program");
         p
     } else {
         cwd.join(src)
     };
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg("--lib")
         .arg(cwd.join(PKG))
@@ -99,7 +93,7 @@ fn run(
     let out = cmd.output().expect("run loft");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let text = format!("{stdout}{}", String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     (out.status.success(), stdout, text)
 }
 
@@ -149,7 +143,7 @@ fn the_view_and_the_copy_print_the_same_lines_on_both_backends() {
 }
 
 #[test]
-fn a_write_into_a_bridge_answer_halts_with_the_copy_first_advice_on_both_backends() {
+fn a_write_into_a_bridge_answer_is_refused_at_compile_time_with_the_copy_advice() {
     if !fixture_built() {
         return;
     }
@@ -159,14 +153,15 @@ fn a_write_into_a_bridge_answer_halts_with_the_copy_first_advice_on_both_backend
     ] {
         for backend in ["--interpret", "--native"] {
             let (ok, _, out) = run(tag, backend, prog, true, &[]);
+            assert!(!ok, "{backend} {tag}: the write must be refused:\n{out}");
             assert!(
-                !ok,
-                "{backend} {tag}: the write must halt the program:\n{out}"
+                out.contains("it holds read-only data the program does not own")
+                    && out.contains("copy it first"),
+                "{backend} {tag}: the compile-time refusal with the copy cure:\n{out}"
             );
             assert!(
-                out.contains("write to bytes the program does not own")
-                    && out.contains("copy them first"),
-                "{backend} {tag}: the halt must be the foreign store's own advice:\n{out}"
+                !out.contains("write to bytes the program does not own"),
+                "{backend} {tag}: refused before the program runs, not at run time:\n{out}"
             );
             assert!(
                 !out.contains(landed),

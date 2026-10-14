@@ -14,7 +14,9 @@ trade-offs and evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-histor
 added and held by a guard.
 
 Every entry, by the subject it decides.  Ids are one flat sequence across the subject files;
-`./scripts/idx next-decision` names the next free one.
+`./scripts/idx next-decision` names the next free one.  What each entry still owes — an uncited site,
+a guard that does not exercise it — is its line in
+[DESIGN_DECISIONS_WORKLIST.tsv](DESIGN_DECISIONS_WORKLIST.tsv) (`make decisions`).
 
 ## Values, null and arithmetic — [DESIGN_DECISIONS_VALUES.md](DESIGN_DECISIONS_VALUES.md)
 
@@ -32,12 +34,14 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C120](DESIGN_DECISIONS_VALUES.md#c120--integer-arithmetic-on-native-stays-sentinel-aware-after-a-fault-the-non-null-proof-does-not-close-over----) — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
 - [C127](DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so) — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 - [C129](DESIGN_DECISIONS_VALUES.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type) — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
+- [C139](DESIGN_DECISIONS_VALUES.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable) — A tuple IS a record; foreign data is value-const and never presented as writable
+- [C143](DESIGN_DECISIONS_VALUES.md#c143--a-rendered-record-shows-its-null-fields) — A rendered record shows its null fields
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 
 - [C38](DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition) — Closure capture is copy-at-definition
 - [C74](DESIGN_DECISIONS_OWNERSHIP.md#c74--a-mutated-scalar-may-be-captured-by-only-one-closure) — A mutated scalar may be captured by only ONE closure
-- [C75](DESIGN_DECISIONS_OWNERSHIP.md#c75--closure-carrying-struct-values-are-frame-bound) — Closure-carrying struct values are frame-bound
+- [C75](DESIGN_DECISIONS_OWNERSHIP.md#c75--a-closure-carrying-struct-owns-what-its-closures-adopted) — A closure-carrying struct owns what its closures adopted
 - [C77](DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference) — Binding ownership: heap aliases by default; `&` binds a live reference
 - [C79](DESIGN_DECISIONS_OWNERSHIP.md#c79--ownership-is-internal-no-user-facing-borrow-checker) — Ownership is internal; no user-facing borrow checker
 - [C83](DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience) — The internal representation follows the user-visible contract; never widen storage for implementation convenience
@@ -50,9 +54,13 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C124](DESIGN_DECISIONS_OWNERSHIP.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof) — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 - [C125](DESIGN_DECISIONS_OWNERSHIP.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object) — The store model stays simple: performance work removes objects, it does not add a second kind of object
 - [C128](DESIGN_DECISIONS_OWNERSHIP.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures) — a yielded lambda owns copies of what it captures
+- [C137](DESIGN_DECISIONS_OWNERSHIP.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written) — A claim promises no value; a slot is read only after it is written
+- [C141](DESIGN_DECISIONS_OWNERSHIP.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from) — A decoded text or byte string may be a view into the bytes it was decoded from
+- [C145](DESIGN_DECISIONS_OWNERSHIP.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it) — No back references inside a store: what a reference points at never moves under it
 
 ## Syntax, names and calls — [DESIGN_DECISIONS_SYNTAX.md](DESIGN_DECISIONS_SYNTAX.md)
 - [C132](DESIGN_DECISIONS_SYNTAX.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function) — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
+- [C134](DESIGN_DECISIONS_SYNTAX.md#c134---is-always-structural-no-type-defines-its-own) — `==` is always structural; no type defines its own
 
 - [C62](DESIGN_DECISIONS_SYNTAX.md#c62--no-type-annotations-in-x-shorthand-lambdas) — No type annotations in `|x|` shorthand lambdas
 - [C63](DESIGN_DECISIONS_SYNTAX.md#c63--no-nested-fn-definitions-inside-fn-bodies) — No nested `fn` definitions inside fn bodies
@@ -70,6 +78,8 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C112](DESIGN_DECISIONS_SYNTAX.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call) — a binding position mints a local whatever else carries that name; the function stays reachable as a call
 - [C123](DESIGN_DECISIONS_SYNTAX.md#c123--one-name-has-one-body-per-receiver-type-both-is-how-a-function-takes-both-spellings) — one name has one body per receiver type; `both` is how a function takes both spellings
 - [C126](DESIGN_DECISIONS_SYNTAX.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set) — a generic's type variables are unrestricted; a keyed collection stays a record set
+- [C140](DESIGN_DECISIONS_SYNTAX.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants) — private by default, `pub` is consent: fields, literals and variants
+- [C149](DESIGN_DECISIONS_SYNTAX.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included) — one structural limit, 300, for every count a program has — a function's variables included
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 
@@ -81,6 +91,8 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C114](DESIGN_DECISIONS_COLLECTIONS.md#c114--a-keyed-collection-is-refused-as-a-vector-element-not-given-an-element-form) — a keyed collection is refused as a vector ELEMENT, not given an element form
 - [C117](DESIGN_DECISIONS_COLLECTIONS.md#c117--a-linked-groups-members-must-share-one-element-layout-the-tag-aware-dense-read-is-declined) — a linked group's members must share one element LAYOUT; the tag-aware dense read is declined
 - [C118](DESIGN_DECISIONS_COLLECTIONS.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined) — an append to an ABSENT collection instantiates it empty and fills it; refusing or warning is declined
+- [C146](DESIGN_DECISIONS_COLLECTIONS.md#c146--a-hash-tables-bucket-count-is-a-power-of-two) — A hash table's bucket count is a power of two
+- [C147](DESIGN_DECISIONS_COLLECTIONS.md#c147--an-index-is-a-btree-of-key-parts-and-record-numbers-kept-apart-from-the-records) — An `index` is a B+tree of key parts and record numbers, kept apart from the records
 
 ## Failure — [DESIGN_DECISIONS_FAILURE.md](DESIGN_DECISIONS_FAILURE.md)
 
@@ -89,6 +101,8 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) — The spreadsheet fault model: nothing stops a running calculation
 - [C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment) — A store carries its own failure arm: else after the assignment
 - [C131](DESIGN_DECISIONS_FAILURE.md#c131--a-cast-to-a-variant-answers-the-variant-a-provable-miss-is-refused-an-unproven-one-defaults-and-warns) — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
+- [C148](DESIGN_DECISIONS_FAILURE.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes) — A parsed value carries its own parse errors, wherever the whole value goes
+- [C142](DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null) — A null inside a `{…}` hole renders plain `null`, never the reason it is null
 
 ## Backends, execution and libraries — [DESIGN_DECISIONS_PLATFORM.md](DESIGN_DECISIONS_PLATFORM.md)
 
@@ -99,6 +113,8 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C78](DESIGN_DECISIONS_PLATFORM.md#c78--the-rust-engine--loft-library-boundary-mechanism-not-genre-and-no-black-boxes-above-the-engine) — The Rust-engine ↔ loft-library boundary: mechanism not genre, and no black boxes above the engine
 - [C84](DESIGN_DECISIONS_PLATFORM.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework) — `server` ships as minimal TCP/WS primitives, not a fully-featured HTTP framework
 - [C87](DESIGN_DECISIONS_PLATFORM.md#c87--rust-template-path-is-kept-do-not-migrate-it-away-to-per-op-emitters-pln81-closed) — `#rust"..."` template path is KEPT; do NOT migrate it away to per-Op emitters (@PLN81 closed)
+- [C135](DESIGN_DECISIONS_PLATFORM.md#c135--loft-has-no-unsafe-construct-representation-is-observable-only-at-a-native-boundary-or-a-file-backed-store) — loft has no unsafe construct; representation is observable only at a native boundary or a file-backed store
+- [C136](DESIGN_DECISIONS_PLATFORM.md#c136--a-routine-over-3-its-rust-twin-is-a-defect-a-class-whose-median-is-over-3-is-a-systemic-one) — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
 - [C93](DESIGN_DECISIONS_PLATFORM.md#c93--a-par-workers-captured-parent-state-is-read-only-a-write-to-it-is-a-compile-error) — A `par` worker's captured parent state is read-only; a write to it is a compile error
 - [C96](DESIGN_DECISIONS_PLATFORM.md#c96--library-shipping-is-keyed-on-trust-root-presence-a-key-present-machine-ships-autonomously-a-key-absent-one-defers) — Library shipping is keyed on trust-root presence: a key-present machine ships autonomously, a key-absent one defers
 - [C102](DESIGN_DECISIONS_PLATFORM.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter) — a release binary says nothing when it falls back to the interpreter
@@ -107,3 +123,6 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C108](DESIGN_DECISIONS_PLATFORM.md#c108--a-vectort-and-the-c-pointee-are-two-spellings-of-one-layout) — a `vector<T>` and the C pointee are two spellings of ONE layout
 - [C109](DESIGN_DECISIONS_PLATFORM.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not) — a float RETURN crosses `#c`; a float ARGUMENT still does not
 - [C122](DESIGN_DECISIONS_PLATFORM.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary) — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
+- [C133](DESIGN_DECISIONS_PLATFORM.md#c133--a-development-build-uses-the-startup-cache-loft_no_cache1-turns-it-off) — A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off
+- [C138](DESIGN_DECISIONS_PLATFORM.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed) — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
+- [C144](DESIGN_DECISIONS_PLATFORM.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls) — A nullable value record carries a presence word; an absent one holds its fields' nulls

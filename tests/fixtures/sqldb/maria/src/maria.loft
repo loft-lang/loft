@@ -104,7 +104,7 @@ pub struct MariaRows {
 
 pub fn ok(self: MariaRows) -> boolean { return self.good; }
 
-pub fn next(self: MariaRows) -> boolean {
+pub operator next(self: MariaRows) -> boolean {
   if self.from_ps {
     if self.ps == 0 { return false }
     r = my_stmt_fetch(self.ps);

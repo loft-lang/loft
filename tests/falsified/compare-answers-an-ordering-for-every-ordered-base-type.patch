@@ -1,0 +1,42 @@
+diff --git a/default/01_code.loft b/default/01_code.loft
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -778,21 +778,6 @@
+ }
+ #pure
+ 
+-/// Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `<` uses.
+-pub operator compare(self: integer, other: integer) -> Ordering {
+-  if self < other { Less } else if other < self { Greater } else { Equal }
+-}
+-#pure
+-/// Where `self` stands against `other`, in the order `<` uses.
+-pub operator compare(self: single, other: single) -> Ordering {
+-  if self < other { Less } else if other < self { Greater } else { Equal }
+-}
+-#pure
+-/// Where `self` stands against `other`, in the order `<` uses.
+-pub operator compare(self: float, other: float) -> Ordering {
+-  if self < other { Less } else if other < self { Greater } else { Equal }
+-}
+-#pure
+ /// `+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+ pub operator plus(self: integer, other: integer) -> integer { self + other }
+ #pure
+@@ -943,16 +928,6 @@
+ fn OpConvIntFromCharacter(v1: character) -> i32;
+ #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
+ // `compare` for text and character sits here, after the operators `<` reads for them.
+-/// Where `self` stands against `other`, in the order `<` uses: by bytes, as `<` compares text.
+-pub operator compare(self: text, other: text) -> Ordering {
+-  if self < other { Less } else if other < self { Greater } else { Equal }
+-}
+-#pure
+-/// Where `self` stands against `other`, by code point, in the order `<` uses.
+-pub operator compare(self: character, other: character) -> Ordering {
+-  if self < other { Less } else if other < self { Greater } else { Equal }
+-}
+-#pure
+ type enumerate size(1);
+ fn OpVarEnum(pos: const u16) -> enumerate;
+ #rust"s.get_var::<u8>(@pos)"

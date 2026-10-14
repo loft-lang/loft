@@ -7,8 +7,8 @@
 //! must not — is a red test rather than a quiet slowdown or a lucky value.  It also runs the
 //! cells under every switch, since the default run never reaches the paths a switch restores,
 //! and checks the drawing hash loop the rules were built for no longer calls its leaf.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-leaf-call-inlined-answers-what-the-call-answers.loft";
 
@@ -40,15 +40,17 @@ const FIRES: &[(&str, usize, usize, usize, usize)] = &[
     ("n_test_a_tuple_result", 4, 0, 0, 0),
 ];
 
-const SWITCHES: [&str; 4] = [
+const SWITCHES: [&str; 5] = [
     "LOFT_NO_INLINE_LEAF",
     "LOFT_NO_MASK_RANGE",
     "LOFT_NO_SINGLE_USE",
     "LOFT_NO_SCALE_FOLD",
+    "LOFT_NO_INLINE_APPENDER",
 ];
 
 fn loft(args: &[&str], file: &Path, env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .arg(file)
         .env("LOFT_TIMEOUT", "120")
@@ -102,6 +104,52 @@ fn each_rule_fires_where_the_cells_say_and_nowhere_else() {
     );
 }
 
+const APPENDER_CELLS: &str =
+    "tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft";
+
+/// `@FR-R-InlineLeaf`'s appender clause: where it fires, read off the trace, and what the
+/// program answers on the release build with the clause on and off.  Plain `--native` ships a
+/// live tier and runs no IR rewrite, so the script corpus checks the inlined form on the
+/// interpreter only; this is its native check.
+#[test]
+fn the_appender_clause_fires_where_its_cells_say_and_holds_on_the_release_build() {
+    let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join(APPENDER_CELLS);
+    let (_, err, ok) = loft(&["--interpret"], &cells, &[("LOFT_TRACE_INLINE_LEAF", "1")]);
+    assert!(ok, "the appender cells failed:\n{err}");
+    // `emit` at its two plain-variable sites; the field site and the user-call site keep it.
+    for (leaf, sites) in [
+        ("n_emit", 2),
+        ("n_emit_narrow", 1),
+        ("n_emit_scaled", 1),
+        ("n_emit_twice", 1),
+    ] {
+        let fired = err
+            .lines()
+            .filter(|l| l.starts_with(&format!("inline-leaf: {leaf} into ")))
+            .count();
+        assert_eq!(fired, sites, "{leaf} inlined at {fired} sites:\n{err}");
+    }
+    assert!(
+        err.lines()
+            .any(|l| l.starts_with("inline-leaf: n_emit_len declined:")),
+        "a body reading its record beyond its appends is declined:\n{err}"
+    );
+    for off in ["0", "1"] {
+        let (out, err, ok) = loft(
+            &["--native-release"],
+            &cells,
+            &[
+                ("LOFT_NO_INLINE_APPENDER", off),
+                ("LOFT_NATIVE_NO_CACHE", "1"),
+            ],
+        );
+        assert!(
+            ok && out.trim_end().ends_with("ok"),
+            "--native-release, LOFT_NO_INLINE_APPENDER={off}:\n{out}\n{err}"
+        );
+    }
+}
+
 #[test]
 fn the_cells_hold_under_every_switch() {
     for s in SWITCHES {
@@ -116,9 +164,9 @@ fn the_cells_hold_under_every_switch() {
 #[test]
 fn the_hash_loop_no_longer_calls_its_leaf() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_inline_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("hash.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "pub fn seed_hash(hseed: integer, hidx: integer, hsalt: integer) -> float {\n\
          \x20 hx = ((hseed * 73856093) ^ (hidx * 19349663) ^ (hsalt * 83492791)) & 0xFFFFFFFF;\n\
@@ -158,5 +206,5 @@ fn the_hash_loop_no_longer_calls_its_leaf() {
     let (a, _, ok_a) = loft(&["--interpret"], &file, &[]);
     let (b, _, ok_b) = loft(&["--interpret"], &file, &[("LOFT_NO_INLINE_LEAF", "1")]);
     assert!(ok_a && ok_b && a == b, "same answer either way: {a} / {b}");
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
 }

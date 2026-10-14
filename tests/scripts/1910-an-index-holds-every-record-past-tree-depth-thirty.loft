@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1910, `@FR-Col-Index` / `@FR-Col-Insert` — an `index` holds every record inserted under a
+// new key, however deep its red-black tree grows.
+//
+// The tree's descent was bounded at 30 levels, and past the bound an insert answered as if its
+// key were a duplicate: the record was dropped, silently, on both backends.  A red-black tree of
+// n records is up to 2·log2(n+1) deep, so keys inserted in order reached the bound at 98,303
+// records.  The bound is now 64, the depth no tree of `u32`-addressed records can pass.
+//
+// Axes it MOVES: insertion order (ascending, descending, scattered), and the index alone or as
+// the keyed member of a linked group beside a vector.  Every count is hand-computed from the
+// loop bound; each test also looks up the keys inserted LAST, which are the ones dropped.
+// Axes HELD FIXED: one integer key; the record layout (a struct of two integers).
+//
+// @falsified-at: 231a813a9 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1910-an-index-holds-every-record-past-tree-depth-thirty.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — the ascending cell counts 98,302 of 100,000 and the first key past the
+//   old bound reads null, on both backends.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct E1910 { id: integer, v: integer }
+struct G1910 { all: vector<E1910>, by: index<E1910[id]> }
+
+fn count1910(h: index<E1910[id]>) -> integer {
+  c = 0;
+  for e in h { c += 1 + e.v - e.v; }
+  c
+}
+
+fn test_ascending_keys_past_the_old_bound() {
+  h: index<E1910[id]> = [];
+  for i in 0..100000 { h += [E1910 { id: i, v: i * 2 }]; }
+  assert(count1910(h) == 100000, "ascending: {count1910(h)} of 100000");
+  assert((h[98302].v ?? -1) == 196604, "the first key past the old bound: {h[98302].v ?? -1}");
+  assert((h[99999].v ?? -1) == 199998, "the last key: {h[99999].v ?? -1}");
+}
+
+fn test_descending_keys_past_the_old_bound() {
+  h: index<E1910[id]> = [];
+  for i in 0..100000 { h += [E1910 { id: 100000 - i, v: i }]; }
+  assert(count1910(h) == 100000, "descending: {count1910(h)} of 100000");
+  missing = 0;
+  for k in 1..=100000 { if h[k] == null { missing += 1; } }
+  assert(missing == 0, "descending: {missing} keys missing");
+  assert((h[1].v ?? -1) == 99999, "the last inserted key: {h[1].v ?? -1}");
+}
+
+fn test_scattered_keys() {
+  h: index<E1910[id]> = [];
+  for i in 0..200000 { h += [E1910 { id: (i * 1000003) % 200003, v: i }]; }
+  assert(count1910(h) == 200000, "scattered: {count1910(h)} of 200000");
+}
+
+fn test_a_linked_group_keeps_its_members_in_step() {
+  g = G1910 { all: [], by: [] };
+  for i in 0..99000 { g.all += [E1910 { id: i, v: i }]; }
+  assert(g.all.len() == 99000, "vector: {g.all.len()}");
+  assert(count1910(g.by) == 99000, "index: {count1910(g.by)} of 99000");
+  assert((g.by[98999].v ?? -1) == 98999, "the last member: {g.by[98999].v ?? -1}");
+}
+
+fn main() {
+  test_ascending_keys_past_the_old_bound();
+  test_descending_keys_past_the_old_bound();
+  test_scattered_keys();
+  test_a_linked_group_keeps_its_members_in_step();
+}

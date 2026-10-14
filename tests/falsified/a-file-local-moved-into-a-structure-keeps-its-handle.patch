@@ -1,0 +1,13 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 5783a6e25..de2cdcd5b 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -1565,7 +1565,7 @@
+         if file_ref != i32::MIN
+             && let Some(Some(handle)) = self.files.get_mut(file_ref as usize)
+         {
+-            handle.lease();
++            let _ = handle;
+         }
+     }
+ 

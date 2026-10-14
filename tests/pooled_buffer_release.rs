@@ -9,6 +9,7 @@
 //! memory and the values; this pins the DECISION the scope pass makes, which both backends
 //! read: a record with a heap field is released, a record of scalars is not, and a
 //! struct-enum is released through its PARENT type, the one its walk dispatches from.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -19,7 +20,8 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "200")
         .env_remove("LOFT_NO_LAZY_BUFFER")
         .env_remove("LOFT_NO_RETBUF_REUSE");
@@ -154,10 +156,14 @@ fn native_lowers_the_release_to_remove_claims() {
         "loft_pooled_buffer_release_{}.rs",
         std::process::id()
     ));
+    // The release's LOWERING, asked where one is emitted: `@FR-R-RefillText`'s vector clause
+    // leaves c1's release out (its callee empties the vector field in place), so the question
+    // is asked with that clause off; the clause's own sites are pinned in tests/refill_text.rs.
     let out = loft()
         .arg("--native-emit")
         .arg(&out_path)
         .arg(cells())
+        .env("LOFT_NO_REFILL_VECTORS", "1")
         .output()
         .expect("spawn loft");
     assert!(
@@ -165,8 +171,8 @@ fn native_lowers_the_release_to_remove_claims() {
         "--native-emit failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let rust = std::fs::read_to_string(&out_path).expect("the emitted Rust");
-    let _ = std::fs::remove_file(&out_path);
+    let rust = fa::read_to_string(&out_path).expect("the emitted Rust");
+    let _ = fa::remove_file(&out_path);
     let body = |name: &str| {
         let start = rust
             .find(&format!("fn {name}("))

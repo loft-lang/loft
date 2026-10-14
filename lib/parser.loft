@@ -75,7 +75,7 @@ pub fn parse(name: text, s: text) -> integer {
   p.lexer.set_tokens(["+=", "*=", "-=", "<=", ">=", "!=", "==", ">>", "<<", "->", "=>", ">>>", "..", "..=", "&&", "||", "??", "::"]);
   p.lexer.set_keywords([
   "for", "in", "if", "else", "fn", "pub", "use", "struct", "enum", "match", "and", "or", "true", "false", "null",
-  "while"
+  "while", "operator"
   ]);
   // No prelude is loaded, and pointing one at `default/01_code.loft` would be a
   // REGRESSION rather than the fix it looks like.  `parse` answers a count of the errors
@@ -249,7 +249,8 @@ fn def_type(self: Parser, _public: boolean) -> boolean {
 // identifier() takes the next name. matches vs test is the distinction to get
 // right — one advances, one does not.
 fn function(self: Parser, _public: boolean) -> boolean {
-  if !self.lexer.matches("fn") {
+  // `operator` takes `fn`'s place in a definition an operator form reaches (@PLN182).
+  if !self.lexer.matches("fn") && !self.lexer.matches("operator") {
     return false;
   }
   self.lexer.identifier();

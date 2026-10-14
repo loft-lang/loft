@@ -1,0 +1,33 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 114912e5d..722f5086f 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -5238,9 +5223,6 @@ impl Parser {
+                             if f.len() == 1 {
+                                 self.check_key_is_text(sub_nr, &f[0], true);
+                                 Type::Trie(sub_nr, f[0].clone(), crate::data::Deps::none())
+-                            } else if f.is_empty() {
+-                                // `parse_fields` refused the empty key list.
+-                                Type::Unknown(0)
+                             } else {
+                                 diagnostic!(
+                                     self.lexer,
+@@ -5430,18 +5412,6 @@ impl Parser {
+             }
+         }
+         self.lexer.token("]");
+-        // @FR-Col-Hash / @FR-Col-Sorted / @FR-Col-Index / @FR-Col-Spatial — a keyed collection is
+-        // `kind<T[k…]>` with at least one key.  `[]` names none, so every record would share
+-        // the empty key and each insert would replace the last (loft#1912).
+-        if result.is_empty() {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "a keyed collection needs at least one key field — `[]` names none, so every \
+-                 record would share one key; name the field to key on, as in `hash<Row[id]>`, \
+-                 or hold the records in a `vector<…>`"
+-            );
+-        }
+         self.lexer.closing_angle();
+     }
+ 

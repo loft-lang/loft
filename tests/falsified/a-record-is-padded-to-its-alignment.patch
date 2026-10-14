@@ -1,0 +1,46 @@
+diff --git a/src/calc.rs b/src/calc.rs
+index 816a94b31..e7cdc3961 100644
+--- a/src/calc.rs
++++ b/src/calc.rs
+@@ -92,13 +92,6 @@
+             }
+         }
+     }
+-    // `@FR-L-Align` (@C138) — a record's size is a multiple of its alignment, so the record is
+-    // aligned wherever it is placed: as a collection element its size is the stride, and as an
+-    // inline field of another record its size is how far the next field starts.  Without this
+-    // tail padding `{ integer, boolean }` was 9 bytes, and element 1 of a vector of it put its
+-    // `integer` at byte 9.
+-    let al = u16::from((*alignment).max(1));
+-    *size = size.div_ceil(al) * al;
+     let mut result = Vec::new();
+     for (_, pos) in positions {
+         result.push(pos);
+diff --git a/src/data.rs b/src/data.rs
+index 132a6e970..b24fb0785 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -5106,7 +5106,8 @@
+             offsets[i] = pos;
+             pos += size;
+         }
+-        (offsets, pos.next_multiple_of(max_align))
++        let _ = max_align;
++        (offsets, pos)
+     }
+ 
+     /// Per-member offsets inside a group in WRITTEN order — the index group's layout; a
+diff --git a/src/database/types.rs b/src/database/types.rs
+index a19ad4576..3a300bc5b 100644
+--- a/src/database/types.rs
++++ b/src/database/types.rs
+@@ -1468,9 +1468,6 @@
+                 _ => {}
+             }
+         }
+-        // `@FR-L-Align` (@C138) — checked here, at compile time, and nowhere at run time:
+-        // `Store::read` / `Store::write` claim no alignment and do not re-test it per access.
+-        issues.extend(self.alignment_violations());
+         // Dedup — recursion can produce the same issue multiple times
+         // when a struct is referenced from many places.
+         issues.sort();

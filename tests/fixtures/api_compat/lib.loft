@@ -6,7 +6,7 @@
 // API break or value-type layout reshape. Regenerate the baseline on an INTENTIONAL change:
 //   target/release/loft api-surface tests/fixtures/api_compat/lib.loft --emit-baseline \
 //     > tests/fixtures/api_compat/lib.api-baseline
-pub struct Version { major: integer, minor: integer }
+pub struct Version { pub major: integer, pub minor: integer }
 
 pub fn current() -> Version { Version { major: 1, minor: 0 } }
 

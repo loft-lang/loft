@@ -14,8 +14,8 @@
 //! one that keeps the rest honest: without it, a lookup that resolved NOTHING would
 //! satisfy every row about not lying.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -24,11 +24,11 @@ fn loft_bin() -> PathBuf {
 /// Run `src` on the interpreter and return everything it printed.
 fn run(tag: &str, src: &str) -> String {
     let root = std::env::temp_dir().join(format!("loft_1262_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("mkdir");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir");
     let file = root.join("p.loft");
-    std::fs::write(&file, src).expect("write p.loft");
-    let out = Command::new(loft_bin())
+    fa::write(&file, src).expect("write p.loft");
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .args(["--interpret", "p.loft"])
         .env("LOFT_TIMEOUT", "120")
@@ -44,7 +44,7 @@ fn run(tag: &str, src: &str) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     text
 }
 

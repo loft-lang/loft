@@ -26,7 +26,7 @@ have).
 
 loft has no runtime exceptions: nothing a running program does may stop it, except `panic`
 and `assert`, and those only in tests and development builds
-([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation),
+([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation),
 owner ruling 2026-09-28).  Every calculation fault already degrades to null and logs.  The
 call-depth cap is the one runtime halt left:
 
@@ -87,7 +87,7 @@ Each phase compares against the build before it and can go red on its own.
 | 0 | **Probe** — measure, per backend, the worst frame of every function in the corpus and the deep-recursion scripts: interpreter `frame_hwm` + eval depth; native stack pointer delta per call (a probe build that records `psm`-style stack addresses at entry).  Answers: how big a block, how big a red zone, and whether a per-function native bound is derivable or needs a fixed red zone | a table in this file; the probe falsifies "a fixed red zone covers every native frame" if any frame exceeds it | XS |
 | 1 | **Interpreter: blocks, no cap** — at `fn_call`, if the space left in the current block is below the callee's `frame_hwm` + eval bound, continue in a new block; return steps back.  `MAX_CALL_DEPTH` leaves the interpreter | `rec(9_999)` answers identically before and after; `rec(1_000_000)` answers where it halted; every existing test unchanged; `LOFT_POISON` / `LOFT_VERIFY_STACK` sweeps green | M |
 | 2 | **Native: blocks for recursive functions only** — an entry check in functions on a call-graph cycle: when the OS stack left is below the bound phase 0 derived, the rest of the call runs on a fresh segment.  Non-recursive functions emit byte-identical code | emitted Rust byte-identical for every non-recursive function (the codegen skill's refactor gate); `rec(1_000_000)` answers the interpreter's value; `make perf-portal` rows unchanged within noise | M–H |
-| 3 | **wasm** — the host stack is not the module's to grow; decide between stack switching, asyncify, or a documented cap that degrades per C80 | a decision recorded here and in WASM.md, with the chosen spelling measured under `wasmtime` and a browser | M |
+| 3 | **wasm** — the host stack is not the module's to grow; decide between stack switching, asyncify, or a documented cap that degrades per @C80 | a decision recorded here and in WASM.md, with the chosen spelling measured under `wasmtime` and a browser | M |
 | 4 | **Depth limit is development-only, and reports fully** — `MAX_CALL_DEPTH` becomes a development/test limit (never reached in production, where the stack only grows); its report names the recursing cycle, the entry point and the repeating arguments, identically on both backends; the caveat and CONTROL.md item 11 are rewritten to say so | a production-mode run of `rec(1_000_000)` answers; a development run halts with the full report, pinned by a both-backend test; no production path can raise the kind | S–M |
 
 ## Open questions

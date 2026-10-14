@@ -92,11 +92,11 @@ pub fn nbr_count_idx(cidx: hash<CellRef[ck]>, cx: integer, cy: integer) -> integ
 // no precision loss vs what is rendered) and kind/colour are `u8`
 // (M1 narrowing: ~60 % less memory than the i64/f64 prototype).
 pub struct SegMesh {
-  kinds:   vector<u8>,
-  x0s:     vector<single>, y0s: vector<single>, z0s: vector<single>,
-  x1s:     vector<single>, y1s: vector<single>, z1s: vector<single>,
-  colors:  vector<u8>,
-  cell_ix: vector<integer>,
+  pub kinds:   vector<u8>,
+  pub x0s:     vector<single>, pub y0s: vector<single>, pub z0s: vector<single>,
+  pub x1s:     vector<single>, pub y1s: vector<single>, pub z1s: vector<single>,
+  pub colors:  vector<u8>,
+  pub cell_ix: vector<integer>,
 }
 
 pub fn seg_mesh_new() -> SegMesh {
@@ -148,7 +148,7 @@ pub fn seg_mesh_append(dst: &SegMesh, src: SegMesh) {
 
 // A chunk-space coordinate.  `ck = enc_coord(cx, cy)` is its identity for
 // dedup in the dirty index.
-pub struct ChunkKey { ck: integer not null, cx: integer not null, cy: integer not null }
+pub struct ChunkKey { pub ck: integer not null, pub cx: integer not null, pub cy: integer not null }
 
 // floor(v / cs) for cs > 0, correct for negative coords (truncating `/`
 // would map cells across the origin to the wrong chunk).  Mirrors moros's
@@ -182,18 +182,18 @@ struct ChunkBucket {
   ck:       integer not null,
   cx:       integer,
   cy:       integer,
-  cell_ixs: vector<integer>,
+  pub cell_ixs: vector<integer>,
 }
 
 pub struct ChunkField {
   layout:      integer,                // HexLayout tag (Phase A: OffsetPointy = 0)
-  xs:          vector<integer>,        // cell coords (index 0 = oldest)
+  pub xs:          vector<integer>,        // cell coords (index 0 = oldest)
   ys:          vector<integer>,
-  cidx:        hash<CellRef[ck]>,      // coord -> cell index (Phase A)
+  pub cidx:        hash<CellRef[ck]>,      // coord -> cell index (Phase A)
   chunk_shift: integer,                // chunk = coord >> chunk_shift (5 = 32×32)
   halo_k:      integer,                // halo radius (border-dirty propagation)
   dirty:       hash<ChunkKey[ck]>,     // WIRED-IN dirty-chunk index (keyed set; dedup)
-  buckets:     hash<ChunkBucket[ck]> not null,
+  pub buckets:     hash<ChunkBucket[ck]> not null,
                                        // WIRED-IN chunk -> owned cell indices,
                                        // maintained incrementally so dirty-chunk
                                        // extraction is O(dirty), not a re-scan.
@@ -318,9 +318,9 @@ pub fn chunk_is_dirty(f: ChunkField, x: integer, y: integer) -> boolean {
 // forwards it as a context arg, so the per-chunk working set stays small
 // and cache-resident (copying the whole index per chunk would be O(N)).
 pub struct ChunkInput {
-  key:      ChunkKey,
-  cell_ixs: vector<integer>,   // cells owned by this chunk (emit for these)
-  halo_ixs: vector<integer>,   // ≤halo_k border-neighbour cells (read-only context)
+  pub key:      ChunkKey,
+  pub cell_ixs: vector<integer>,   // cells owned by this chunk (emit for these)
+  pub halo_ixs: vector<integer>,   // ≤halo_k border-neighbour cells (read-only context)
 }
 
 // Internal: a cell-index set for halo dedup.
@@ -395,11 +395,11 @@ pub fn collect_dirty_inputs(f: ChunkField, halo_k: integer) -> vector<ChunkInput
 // caches a mesh per chunk and assembles a group's VBO from its chunks'
 // cached meshes, re-uploading only groups that contain a dirty chunk.
 
-pub struct GroupKey { gk: integer not null, gx: integer not null, gy: integer not null }
+pub struct GroupKey { pub gk: integer not null, pub gx: integer not null, gy: integer not null }
 
 // The chunk ck's a group contains that actually hold cells (the assemble
 // work-list).  No mesh here — gridmesh partitions; the consumer owns meshes.
-pub struct GroupInput { key: GroupKey, chunk_cks: vector<integer> }
+pub struct GroupInput { key: GroupKey, pub chunk_cks: vector<integer> }
 
 // Internal accumulator for all_groups (keyed so chunks dedup into their group).
 struct GroupAcc { gk: integer not null, gx: integer, gy: integer, chunk_cks: vector<integer> }

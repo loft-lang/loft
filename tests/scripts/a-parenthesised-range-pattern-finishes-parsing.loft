@@ -1,0 +1,20 @@
+// @FR-G-Pat-Group — a parenthesised RANGE is a group of one range pattern.  Read as an
+// expression it never finished parsing: the compiler looped until killed.
+// @falsified-at: cfa1d2662 — interpret exit 134 -> 0, native exit 134 -> 0
+// @falsified-by: tests/falsified/a-parenthesised-range-pattern-finishes-parsing.patch — interpret exit 134 -> 0, native exit 134 -> 0
+// HOLDS: leak and assertions are clean on this tree on both backends.
+// CHANNEL: the exit — the control's parser loops until the time bound kills it (134).
+
+struct Box { n: integer, s: text }
+
+fn incl(n: integer) -> integer { match n { (2..=5) => 1, _ => 0 } }
+fn excl(n: integer) -> integer { match n { (2..5) => 1, _ => 0 } }
+fn either(n: integer) -> integer { match n { (7 | 2..=3) => 1, _ => 0 } }
+fn field(b: Box) -> integer { match b { Box { n: (10..=20) } => 1, _ => 0 } }
+
+fn main() {
+  assert("{incl(2)}{incl(5)}{incl(6)}" == "110", "inclusive: {incl(2)}{incl(5)}{incl(6)}");
+  assert("{excl(2)}{excl(4)}{excl(5)}" == "110", "exclusive: {excl(2)}{excl(4)}{excl(5)}");
+  assert("{either(2)}{either(3)}{either(5)}{either(7)}" == "1101", "a range in an alternation");
+  assert(field(Box { n: 15, s: "" }) == 1 && field(Box { n: 21, s: "" }) == 0, "a range in a field group");
+}

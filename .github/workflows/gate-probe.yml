@@ -38,6 +38,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_NET_RETRY: 10
@@ -45,6 +47,7 @@ env:
 
 jobs:
   debug-assertions:
+    # @windows-exempt: a platform-independent invariant sweep (debug assertions); the corpus runs on windows-latest daily
     name: probe — debug-assertions sweep
     if: github.event_name == 'push' || inputs.legs != 'browser'
     runs-on: ubuntu-latest
@@ -56,7 +59,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       # Private `probe-*` namespace so this never disturbs the nightly gate's
       # cache, and a cold/warm A/B here stays reproducible in isolation.
@@ -100,6 +103,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   browser-ui-gate:
+    # @windows-exempt: platform-free — a browser UI probe
     name: probe — browser UI responsiveness
     if: github.event_name == 'push' || inputs.legs != 'da'
     runs-on: ubuntu-latest
@@ -127,7 +131,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install mold + binaryen
-        run: sudo apt-get update && sudo apt-get install -y mold binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
 
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
@@ -138,7 +142,7 @@ jobs:
             echo "browser present"
           else
             wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-            sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+            timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y ./google-chrome-stable_current_amd64.deb
           fi
           "$(command -v google-chrome || command -v chromium || command -v chromium-browser)" --version
 

@@ -1,0 +1,13 @@
+diff --git a/src/hash.rs b/src/hash.rs
+index da7523e62..06dc017d3 100644
+--- a/src/hash.rs
++++ b/src/hash.rs
+@@ -507,7 +507,7 @@ pub fn replace_at(hash: &DbRef, bucket: u32, index: u32, stores: &mut [Store]) -
+     let claim = keys::store(hash, stores).collection_rec(hash.rec, hash.pos);
+     let store = keys::mut_store(hash, stores);
+     let gone = store.get_u32_raw(claim, bucket);
+-    store.set_u32_raw(claim, bucket, index);
++    store.set_u32_raw(claim, bucket, gone.max(index - index));
+     gone
+ }
+ 

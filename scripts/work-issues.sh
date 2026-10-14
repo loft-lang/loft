@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
         --count) count_only=1 ;;
         --repo) shift; repo="$1" ;;
         --label) shift; labels+=("$1") ;;
-        -h|--help) sed -n '2,29p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,29p' "$0" | sed -E 's/^# ?//'; exit 0 ;;
         *) echo "work-issues: unknown argument $1" >&2; exit 2 ;;
     esac
     shift
@@ -57,14 +57,16 @@ args=(issue list --state open --limit 200 --json number,title,labels)
 [ -z "$repo" ] || args+=(--repo "$repo")
 for l in ${labels+"${labels[@]}"}; do args+=(--label "$l"); done
 
-# One jq: drop the three "no work due" labels, then render severity first so the
-# list reads in the order it should be picked up in.
+# One jq: drop the four "no work due" labels, then render severity first so the
+# list reads in the order it should be picked up in.  `in-progress` is a live claim
+# (scripts/claim.py): another stream is fixing it, on this machine or another.
 jq_prog='
   [ .[]
     | select([.labels[].name] as $l
              | ($l | index("fixed-pending-merge")) == null
                and ($l | index("status:planned")) == null
-               and ($l | index("next-release")) == null)
+               and ($l | index("next-release")) == null
+               and ($l | index("in-progress")) == null)
   ]
   | sort_by([.labels[].name] | map(select(startswith("sev:"))) | .[0] // "sev:zzz")
   | .[]
@@ -102,7 +104,7 @@ if [ "$n" = 0 ]; then
     exit 0
 fi
 
-echo "work issues: $n (open, minus fixed-pending-merge, status:planned and next-release)"
+echo "work issues: $n (open, minus fixed-pending-merge, status:planned, next-release and in-progress)"
 echo
 printf '%s\n' "$out"
 [ -z "$parked_line" ] || { echo; echo "$parked_line"; }

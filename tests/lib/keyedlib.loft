@@ -9,7 +9,7 @@
 // the keyed type is first minted by the importing struct's own field, in the
 // order the native `init()` emitter assumes.
 
-pub struct KTile { tkey: integer, name: text }
+pub struct KTile { pub tkey: integer, pub name: text }
 
 pub fn tile_count(store: hash<KTile[tkey]>) -> integer {
   n = 0;

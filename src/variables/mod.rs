@@ -156,8 +156,18 @@ pub(crate) struct VarSnapshot<'a> {
     pub store_text_link: bool,
     /// A user identifier names it (loft#1834); `is_compiler_generated` reads it.
     pub user_named: bool,
+    /// The program's own `+=` wrote into it (loft#1840); the `lost-write` lint reads it.
+    pub user_appended: bool,
+    /// A whole-value bind COPIED a place into it (`(B-Copy)`, loft#1840); the lint reads it.
+    pub copy_bound: bool,
+    /// A construction work-ref still names its store (loft#1522), so no rebind frees it.
+    pub buffer_witnessed: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
+    /// A rebound parameter's entry witness (@PLN87 P2.1), `u16::MAX` for none.
+    pub rebind_orig: u16,
+    /// The scope that declares it; the yield emitter reads it (loft#1676).
+    pub scope: u16,
 }
 
 /// @PLAN28 C4 — owned codegen-read fields of one `Variable`, consumed by
@@ -179,7 +189,12 @@ pub(crate) struct RestoredVar {
     pub linked_narrow: bool,
     pub store_text_link: bool,
     pub user_named: bool,
+    pub user_appended: bool,
+    pub copy_bound: bool,
+    pub buffer_witnessed: bool,
     pub owner_witness: u16,
+    pub rebind_orig: u16,
+    pub scope: u16,
 }
 
 impl Variable {
@@ -205,6 +220,16 @@ pub struct Variable {
     /// assignment in the body (loft#1816): a plain parameter enters already written, so the
     /// first `p = …` before any read of `p` throws the caller's value away unread.
     incoming_seed: bool,
+    /// `@FR-H-RefHome` — a stored reference in a holder declared in an enclosing block names a
+    /// record of this store, so the store lives to the holder's block: store confinement and
+    /// last-use reclaim leave it alone.  Set by `Parser::check_reshape_under_reference` from
+    /// `scopes::stored_reference_homes`; read by the scope pass only.
+    ref_home: bool,
+    /// `@FR-H-RefHome` — a call's return buffer claimed in a stored reference's holder's store
+    /// (`OpPlaceRecord`): the record the call writes into it lives in that store, so a variable
+    /// the scope pass binds the call's result to is not freed.  Set by
+    /// `Parser::check_reshape_under_reference`; read by `scopes::keep_placed_results`.
+    place_buffer: bool,
     /// Mentions counted in `uses` that were the TARGET of an `=` (loft#1816), which the lints
     /// do not count as reads; see [`Function::reads`].
     target_mentions: u16,
@@ -215,6 +240,17 @@ pub struct Variable {
     /// be (`_b` is the spelling the lints suggest for an unused one), so the prefix alone
     /// cannot tell them apart; see [`Function::is_compiler_generated`].
     user_named: bool,
+    /// The program's own `+=` wrote into this local's content (loft#1840).  The IR cannot
+    /// say so on its own: the copy-fill a whole-value bind lowers to (`d = s.f`) is the same
+    /// `OpAppendVector` a user's `d += other` is, and a literal append's pushes are what a
+    /// slice copy's fill is made of — so the `lost-write` lint, which must not read a copy's
+    /// own fill as a mutation, asks this mark instead of the ops.
+    user_appended: bool,
+    /// A whole-value bind COPIED a place into it — the `(B-Copy)` verdict, recorded where the
+    /// copy is lowered (loft#1840).  An append into a fresh collection is how one is BUILT,
+    /// so the `lost-write` lint reports an append only into a copy; the IR cannot tell the two
+    /// apart, because a literal's fill and a copy's fill are the same ops.
+    copy_bound: bool,
     argument: bool,
     defined: bool,
     /// Binding-const (`const` PREFIX): `const x` local, `const p: T` param, and the
@@ -404,6 +440,12 @@ pub struct Function {
     /// too made store confinement free that store at its own block's exit), so a closure
     /// capture of the result learns the other arm here: `scopes::capture_join_candidates`.
     join_owners: HashMap<u16, Vec<u16>>,
+    /// `@FR-H-RefHome` — the stored references to copy out before a local's store is freed:
+    /// `[holder, field offset, owner, record type]`, the holder a parameter whose field may
+    /// name a record of the store `owner` owns.  Set by `Parser::check_reshape_under_reference`
+    /// from `scopes::stored_reference_homes`; read by `scopes::insert_evacuations` after the
+    /// scope pass has placed the frees.
+    ref_evacuations: Vec<[u16; 4]>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -653,6 +695,9 @@ pub struct Function {
     pub logging: bool,
     // maps fn_ref_var_nr → closure_var_nr for native codegen.
     closure_var_map: HashMap<u16, u16>,
+    /// fn-ref local → the one capturing lambda it is assigned (`u32::MAX`: several, or another
+    /// value) — [`Function::note_fn_lambda`], loft#1869.
+    fn_lambda_map: HashMap<u16, u32>,
     /// @PLN87 P2.1 — reassignment-locality.  Maps a user-visible heap PARAMETER
     /// (whole-binding-reassigned in the body) → its `__orig` witness var, a
     /// skip-free work-ref holding the param's caller-supplied DbRef captured at
@@ -748,6 +793,7 @@ impl Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
+            ref_evacuations: Vec::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -789,6 +835,7 @@ impl Function {
             logging: false,
             done: false,
             closure_var_map: HashMap::new(),
+            fn_lambda_map: HashMap::new(),
             rebind_orig: BTreeMap::new(),
             owner_witness: HashMap::new(),
         }
@@ -837,7 +884,12 @@ impl Function {
             linked_narrow: v.linked_narrow,
             store_text_link: v.store_text_link,
             user_named: v.user_named,
+            user_appended: v.user_appended,
+            copy_bound: v.copy_bound,
+            buffer_witnessed: self.is_buffer_witnessed(i as u16),
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
+            rebind_orig: self.rebind_orig(i as u16).unwrap_or(u16::MAX),
+            scope: v.scope,
         }
     }
 
@@ -882,6 +934,12 @@ impl Function {
             if r.owner_witness != u16::MAX {
                 f.owner_witness.insert(i as u16, r.owner_witness);
             }
+            if r.rebind_orig != u16::MAX {
+                f.rebind_orig.insert(i as u16, r.rebind_orig);
+            }
+            if r.buffer_witnessed {
+                f.buffer_witnessed_vars.insert(i as u16);
+            }
         }
         f.variables = vars
             .into_iter()
@@ -901,11 +959,15 @@ impl Function {
                 linked_narrow: r.linked_narrow,
                 store_text_link: r.store_text_link,
                 user_named: r.user_named,
+                user_appended: r.user_appended,
+                copy_bound: r.copy_bound,
+                scope: r.scope,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
-                scope: u16::MAX,
                 uses_at_write: 0,
                 incoming_seed: false,
+                ref_home: false,
+                place_buffer: false,
                 target_mentions: 0,
                 incoming_reported: false,
                 write_source: (0, 0),
@@ -962,6 +1024,7 @@ impl Function {
         // parsing (loft#1721).
         self.join_owners.clear();
         self.join_owners.clone_from(&other.join_owners);
+        self.ref_evacuations.clone_from(&other.ref_evacuations);
         // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
         // the mark at that local's own declaration (loft#1616).
         self.nullable_text_buffers.clear();
@@ -1010,6 +1073,9 @@ impl Function {
         self.closure_var_map.clear();
         self.closure_var_map.clone_from(&other.closure_var_map);
         other.closure_var_map.clear();
+        self.fn_lambda_map.clear();
+        self.fn_lambda_map.clone_from(&other.fn_lambda_map);
+        other.fn_lambda_map.clear();
         // @PLN87 P2.1 — carry the parsed pass's rebind-witness map into the
         // stored function so `scopes::check` can emit the function-exit
         // `OpFreeRefIfDistinct`.  Cleared first so a re-parse can't leave a
@@ -1041,6 +1107,7 @@ impl Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
+            ref_evacuations: other.ref_evacuations.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -1102,6 +1169,7 @@ impl Function {
             logging: other.logging,
             done: other.done,
             closure_var_map: other.closure_var_map.clone(),
+            fn_lambda_map: other.fn_lambda_map.clone(),
             rebind_orig: other.rebind_orig.clone(),
             owner_witness: other.owner_witness.clone(),
         }
@@ -2813,9 +2881,13 @@ impl Function {
             uses: 1,
             uses_at_write: 0,
             incoming_seed: false,
+            ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
+            user_appended: false,
+            copy_bound: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2867,9 +2939,14 @@ impl Function {
             uses: self.variables[var as usize].uses,
             uses_at_write: self.variables[var as usize].uses_at_write,
             incoming_seed: false,
+            ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: self.variables[var as usize].user_named,
+            // A split is a second place: an append into the first wrote nothing here.
+            user_appended: false,
+            copy_bound: false,
             // A SPLIT of a linked local is a second place, and the `&` names the original;
             // the copy is not the place the link holds, so it inherits no link.
             amp_linked_by: u16::MAX,
@@ -2916,9 +2993,13 @@ impl Function {
             uses: 1,
             uses_at_write: 0,
             incoming_seed: false,
+            ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
+            user_appended: false,
+            copy_bound: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2962,9 +3043,13 @@ impl Function {
             uses: 1,
             uses_at_write: 0,
             incoming_seed: false,
+            ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
+            user_appended: false,
+            copy_bound: false,
             write_source: (0, 0),
             argument: false,
             defined: true,
@@ -3728,13 +3813,32 @@ impl Function {
             );
             return;
         }
+        // A DECLARED scalar keeps its type (`@FR-N-Decl`), so "a new variable name" is no cure
+        // there — the author asked for this type — and the cast that is one is spelled out,
+        // as the author would write it (`as u8`, not the unparseable `as integer(0, 255)`).
+        // The diagnosis half stays word for word, for the reason the arms above give.
+        if self.annotated.contains(&var_nr)
+            && crate::data::is_scalar(var_tp)
+            && crate::data::is_scalar(type_def)
+        {
+            let declared = data.written_type_name(var_tp);
+            diagnostic!(
+                lexer,
+                Level::Error,
+                "Variable '{}' cannot change type from {} to {}; it is declared `{declared}` — cast the value with `as {declared}`",
+                self.name(var_nr),
+                declared,
+                data.written_type_name(type_def)
+            );
+            return;
+        }
         diagnostic!(
             lexer,
             Level::Error,
             "Variable '{}' cannot change type from {} to {}; use a new variable name or cast with 'as'",
             self.name(var_nr),
-            var_tp.source_name(data),
-            type_def.source_name(data)
+            data.written_type_name(var_tp),
+            data.written_type_name(type_def)
         );
     }
 
@@ -3781,6 +3885,22 @@ impl Function {
         swap_in_bset(&mut self.inline_ref_vars, a, b);
         swap_in_hset(&mut self.annotated, a, b);
         swap_map_indices(&mut self.closure_var_map, a, b);
+        // Only the KEY is a variable here; the value is a definition.
+        self.fn_lambda_map = std::mem::take(&mut self.fn_lambda_map)
+            .into_iter()
+            .map(|(k, l)| {
+                (
+                    if k == a {
+                        b
+                    } else if k == b {
+                        a
+                    } else {
+                        k
+                    },
+                    l,
+                )
+            })
+            .collect();
         swap_map_indices(&mut self.rebind_orig, a, b);
         swap_map_indices(&mut self.owner_witness, a, b);
     }
@@ -3949,6 +4069,45 @@ impl Function {
     /// same binds.
     pub fn mark_view_elided(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].view_elided = true;
+    }
+
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn mark_ref_home(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].ref_home = true;
+    }
+
+    #[must_use]
+    pub fn is_ref_home(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].ref_home
+    }
+
+    /// `@FR-H-RefHome` — does any variable of this function hold a moved-out home?
+    #[must_use]
+    pub fn has_ref_home(&self) -> bool {
+        self.variables.iter().any(|v| v.ref_home)
+    }
+
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn add_ref_evacuation(&mut self, holder: u16, fld: u16, owner: u16, tp: u16) {
+        let e = [holder, fld, owner, tp];
+        if !self.ref_evacuations.contains(&e) {
+            self.ref_evacuations.push(e);
+        }
+    }
+
+    #[must_use]
+    pub fn ref_evacuations(&self) -> &[[u16; 4]] {
+        &self.ref_evacuations
+    }
+
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn mark_place_buffer(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].place_buffer = true;
+    }
+
+    #[must_use]
+    pub fn is_place_buffer(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].place_buffer
     }
 
     /// Mark `var_nr` as a hidden return buffer minted at its first use — see the
@@ -4167,6 +4326,12 @@ impl Function {
     /// @PLN87 P2.1 — record that visible heap parameter `param` is
     /// whole-binding-reassigned in the body and `orig` is its caller-store
     /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.
+    /// Forget `param`'s rebind witness — a generic instance whose parameter is not a heap
+    /// type undoes the rebind its template lowered (`Parser::strip_scalar_instance_rebinds`).
+    pub fn clear_rebind_orig(&mut self, param: u16) {
+        self.rebind_orig.remove(&param);
+    }
+
     pub fn set_rebind_orig(&mut self, param: u16, orig: u16) {
         self.rebind_orig.insert(param, orig);
     }
@@ -4303,7 +4468,6 @@ impl Function {
         self.names.insert(name.to_string(), new_var);
     }
 
-    #[allow(dead_code)]
     pub fn rename(&mut self, v: u16, new_name: &str) {
         self.variables[v as usize].name = new_name.to_string();
     }
@@ -5114,8 +5278,49 @@ impl Function {
             // proxy answers "owned" for such a local because the adoption leaves its dep list
             // empty, so without this the rebind released the buffer's store out from under it;
             // the buffer's own scope-exit free is what releases it, once.
-            && !(self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled())
+            && !self.rebind_keeps_displaced(v)
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
+    }
+
+    /// Does a rebind of `v` release NOTHING it displaces, whatever the right-hand side?  The
+    /// loft#1522 veto: `v` adopted a construction work-ref's store, and the buffer frees it
+    /// once at function exit.  The one spelling of the veto, read by
+    /// [`Self::owns_displaced_store`] and by the record-buffer pool, whose only objection to a
+    /// local bound twice is the store such a rebind would release (`@FR-O-LazyBuffer`).
+    #[must_use]
+    pub fn rebind_keeps_displaced(&self, v: u16) -> bool {
+        self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled()
+    }
+
+    /// `@FR-O-Buffer` — the compiler-built buffer the CALL in `value` is handed for its result,
+    /// when `v = value` reassigns `v`: the one store the displaced free must never release.
+    ///
+    /// A POOLED buffer (one store per call site per activation, cleared on re-entry) comes back
+    /// as the call's result whenever the callee adopts it, so `v` holds the buffer's store from
+    /// the previous pass.  When this pass's call answers another store, the displaced store IS
+    /// the buffer, and releasing it freed the store the next pass hands the call again.  Both
+    /// backends ask this one question (@FR-O-NoDiverge): the interpreter guards its pre-`Set`
+    /// free with it, native its post-call `_old_` free.  `None` where the right-hand side is not
+    /// such a call, where its buffer is not a compiler local, or where the buffer is `v` itself.
+    #[must_use]
+    pub fn displaced_buffer_witness(&self, v: u16, value: &Value, data: &Data) -> Option<u16> {
+        let call = match value.unspan() {
+            Value::Insert(steps) => steps.last().map(Value::unspan),
+            other => Some(other),
+        };
+        let Some(Value::Call(f, args)) = call else {
+            return None;
+        };
+        if (*f as usize) >= data.definitions.len() || *data.def(*f).code() == Value::Null {
+            return None;
+        }
+        data.def(*f)
+            .hidden_return_buffer_attr()
+            .and_then(|b| args.get(b))
+            .and_then(|a| match a.unspan() {
+                Value::Var(w) if *w != v && self.is_compiler_generated(*w) => Some(*w),
+                _ => None,
+            })
     }
 
     pub fn is_inline_ref(&self, v: u16) -> bool {
@@ -5412,6 +5617,26 @@ impl Function {
         var.name.starts_with('_') && !var.user_named
     }
 
+    /// `@FR-T-Record` — does tuple variable `v`'s frame slot OWN its `text` members — each the
+    /// tuple's own `String`, as a text local is?  A tuple the AUTHOR named and that is not a
+    /// parameter does (`data::TUPLE_LOCAL_TEXT_OWNED`).  A by-value parameter borrows its
+    /// members, as a text argument does; a compiler temp carries a tuple value through a
+    /// lowering and keeps the borrowed layout that lowering was built for (a null-coalesce
+    /// temp yields its value past its own scope).  The one answer both halves ask: the
+    /// interpreter's slot layout and the scope pass's member frees.
+    #[must_use]
+    pub fn tuple_owns_text(&self, v: u16) -> bool {
+        crate::data::TUPLE_LOCAL_TEXT_OWNED
+            && (v as usize) < self.variables.len()
+            && !self.is_argument(v)
+            // A parameter's promoted copy (`__tp_<name>`) is the author's parameter, copied:
+            // it owns its text like any tuple local the author named.  Recognised by its
+            // NAME, which the IR store carries, not by `promoted_from`, which it does not —
+            // a decoded program has to lay the copy out as its parse did.
+            && (!self.is_compiler_generated(v) || self.name(v).starts_with("__tp_"))
+            && matches!(self.tp(v).base(), Type::Tuple(_))
+    }
+
     /// The parameters the signature of `d_nr` declares are named by the user (loft#1834) —
     /// including one the body never mentions.
     pub fn mark_declared_parameters(&mut self, data: &Data, d_nr: u32) {
@@ -5420,6 +5645,39 @@ impl Function {
                 var.user_named = true;
             }
         }
+    }
+
+    /// The program's own `+=` wrote into `v`'s content (loft#1840) — see
+    /// [`Variable::user_appended`].
+    pub fn mark_user_appended(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.user_appended = true;
+        }
+    }
+
+    /// Did the program's own `+=` write into `v`'s content (loft#1840)?
+    #[must_use]
+    pub fn user_appended(&self, v: u16) -> bool {
+        self.variables
+            .get(v as usize)
+            .is_some_and(|var| var.user_appended)
+    }
+
+    /// A whole-value bind copied a place into `v` (loft#1840) — see [`Variable::copy_bound`].
+    pub fn mark_copy_bound(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.copy_bound = true;
+        }
+    }
+
+    /// Did a whole-value bind copy a place into `v` (loft#1840)?  Never for a `&` link: an `=`
+    /// through one writes the place it names (`(B-Ref)`), so the local holds no copy whatever
+    /// its spelling, and an append through it lands where the link points.
+    #[must_use]
+    pub fn copy_bound(&self, v: u16) -> bool {
+        self.variables.get(v as usize).is_some_and(|var| {
+            var.copy_bound && !var.amp_link && !var.amp_container_link && !var.store_text_link
+        })
     }
 
     /// A user identifier names `v` (loft#1834).
@@ -5489,6 +5747,29 @@ impl Function {
     }
 
     /// Return the closure variable number for a fn_ref variable, if any.
+    /// loft#1869 — note that fn-ref local `fn_ref` is assigned `lambda` (a capturing lambda's
+    /// definition), or `None` for any other value.  A local assigned one lambda only, in every
+    /// assignment, keeps it; any other mix marks it as holding no one known lambda.
+    pub fn note_fn_lambda(&mut self, fn_ref: u16, lambda: Option<u32>) {
+        let l = lambda.unwrap_or(u32::MAX);
+        self.fn_lambda_map
+            .entry(fn_ref)
+            .and_modify(|x| {
+                if *x != l {
+                    *x = u32::MAX;
+                }
+            })
+            .or_insert(l);
+    }
+
+    /// The one capturing lambda fn-ref local `fn_ref` is ever assigned, if that is all it holds.
+    pub fn fn_lambda_of(&self, fn_ref: u16) -> Option<u32> {
+        self.fn_lambda_map
+            .get(&fn_ref)
+            .copied()
+            .filter(|l| *l != u32::MAX)
+    }
+
     pub fn closure_var_of(&self, fn_ref: u16) -> Option<u16> {
         self.closure_var_map.get(&fn_ref).copied()
     }
@@ -5716,7 +5997,11 @@ pub fn size(tp: &Type, context: &Context) -> u16 {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Iterator(_, _) => size_of::<DbRef>() as u16,
-        Type::Tuple(elems) => crate::data::element_stack_size(&Type::Tuple(elems.clone())) as u16,
+        // A tuple LOCAL's slot holds its own text members (`data::TUPLE_LOCAL_TEXT_OWNED`).
+        Type::Tuple(elems) => crate::data::element_stack_size_in(
+            &Type::Tuple(elems.clone()),
+            crate::data::TUPLE_LOCAL_TEXT_OWNED && context == &Context::Variable,
+        ) as u16,
         _ => 0,
     }
 }
@@ -5941,7 +6226,7 @@ pub fn owns_literal_backing_store(name: &str) -> bool {
 /// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked
 /// representation is exercised by every program rather than by the few that write a `&` to
 /// one.  Read once per process.
-fn link_all_narrow() -> bool {
+pub(crate) fn link_all_narrow() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         crate::env_once!(std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))

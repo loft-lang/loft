@@ -40,7 +40,7 @@ fn test_a_text_arm_behind_a_float_arm() {
   assert(f == 0.0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_into_a_u8_local() {
   a: u8 = 250; b: u8 = 10; k = 2;
   c: u8 = match k { 1 => a, _ => a + b };
@@ -54,20 +54,20 @@ fn test_a_literal_arm_that_does_not_fit() {
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_as_an_argument() {
   a: u8 = 250; b: u8 = 10; k = 2;
   assert(takes1380d(match k { 1 => a, _ => a + b }) == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_under_a_text_subject() {
   a: u8 = 250; b: u8 = 10; s = "z";
   c: u8 = match s { "q" => a, _ => a + b };
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_under_an_enum_subject() {
   a: u8 = 250; b: u8 = 10;
   e: Ch1380d = Ch1380d::Beta { n: 2 };
@@ -75,7 +75,7 @@ fn test_an_overflowing_arm_under_an_enum_subject() {
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_under_a_struct_enum_subject() {
   a: u8 = 250; b: u8 = 10;
   e: Ch1380d = Ch1380d::Beta { n: 2 };
@@ -83,7 +83,7 @@ fn test_an_overflowing_arm_under_a_struct_enum_subject() {
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_under_a_vector_subject() {
   a: u8 = 250; b: u8 = 10;
   v: vector<integer> = [9];
@@ -91,7 +91,7 @@ fn test_an_overflowing_arm_under_a_vector_subject() {
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_arm_in_a_block_arm() {
   a: u8 = 250; b: u8 = 10; k = 2;
   c: u8 = match k { 1 => { a }, _ => { a + b } };

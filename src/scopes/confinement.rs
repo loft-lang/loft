@@ -715,6 +715,11 @@ pub(super) fn store_confinement(
         if vars.is_skip_free(local) || vars.is_skip_free(vdb) || guard_escapes(code, local) {
             continue;
         }
+        // `@FR-H-RefHome` — a stored reference in an outer holder names a record of this
+        // store: it lives to the holder's block, not to its own references' block.
+        if vars.is_ref_home(vdb) || vars.is_ref_home(local) {
+            continue;
+        }
         let multi_store = recovered || vars.tp(local).depend().len() != 1;
         // A multi-store local must never carry `vdb`'s store across a block
         // boundary unreassigned, else block-exit freeing is a UAF.  Gate on the

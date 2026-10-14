@@ -1,0 +1,640 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Every count `crate::limits::LIMIT` bounds is refused at 301, at the 301st item, with a
+// message naming the limit: a struct field, a parameter, a variable a function binds, and a
+// tuple literal's element.  These are all refused while the program is first read; a tuple
+// TYPE is refused on the second pass, so it has a file of its own
+// (`a-tuple-type-past-the-limit-is-refused.loft`).  The counts that work at 300 are
+// `the-counts-within-the-limit-compile.loft`.
+//
+// @falsified-at: none — no earlier build had these limits; 301 of each compiled (or, for the
+//   tuple returned by value, crashed the interpreter: see
+//   `a-returned-value-past-255-bytes-arrives-whole.loft`).
+//
+// @EXPECT_ERROR: a struct holds at most 300 fields — `f300` is one more
+
+struct Wide {
+  f0: integer,
+  f1: integer,
+  f2: integer,
+  f3: integer,
+  f4: integer,
+  f5: integer,
+  f6: integer,
+  f7: integer,
+  f8: integer,
+  f9: integer,
+  f10: integer,
+  f11: integer,
+  f12: integer,
+  f13: integer,
+  f14: integer,
+  f15: integer,
+  f16: integer,
+  f17: integer,
+  f18: integer,
+  f19: integer,
+  f20: integer,
+  f21: integer,
+  f22: integer,
+  f23: integer,
+  f24: integer,
+  f25: integer,
+  f26: integer,
+  f27: integer,
+  f28: integer,
+  f29: integer,
+  f30: integer,
+  f31: integer,
+  f32: integer,
+  f33: integer,
+  f34: integer,
+  f35: integer,
+  f36: integer,
+  f37: integer,
+  f38: integer,
+  f39: integer,
+  f40: integer,
+  f41: integer,
+  f42: integer,
+  f43: integer,
+  f44: integer,
+  f45: integer,
+  f46: integer,
+  f47: integer,
+  f48: integer,
+  f49: integer,
+  f50: integer,
+  f51: integer,
+  f52: integer,
+  f53: integer,
+  f54: integer,
+  f55: integer,
+  f56: integer,
+  f57: integer,
+  f58: integer,
+  f59: integer,
+  f60: integer,
+  f61: integer,
+  f62: integer,
+  f63: integer,
+  f64: integer,
+  f65: integer,
+  f66: integer,
+  f67: integer,
+  f68: integer,
+  f69: integer,
+  f70: integer,
+  f71: integer,
+  f72: integer,
+  f73: integer,
+  f74: integer,
+  f75: integer,
+  f76: integer,
+  f77: integer,
+  f78: integer,
+  f79: integer,
+  f80: integer,
+  f81: integer,
+  f82: integer,
+  f83: integer,
+  f84: integer,
+  f85: integer,
+  f86: integer,
+  f87: integer,
+  f88: integer,
+  f89: integer,
+  f90: integer,
+  f91: integer,
+  f92: integer,
+  f93: integer,
+  f94: integer,
+  f95: integer,
+  f96: integer,
+  f97: integer,
+  f98: integer,
+  f99: integer,
+  f100: integer,
+  f101: integer,
+  f102: integer,
+  f103: integer,
+  f104: integer,
+  f105: integer,
+  f106: integer,
+  f107: integer,
+  f108: integer,
+  f109: integer,
+  f110: integer,
+  f111: integer,
+  f112: integer,
+  f113: integer,
+  f114: integer,
+  f115: integer,
+  f116: integer,
+  f117: integer,
+  f118: integer,
+  f119: integer,
+  f120: integer,
+  f121: integer,
+  f122: integer,
+  f123: integer,
+  f124: integer,
+  f125: integer,
+  f126: integer,
+  f127: integer,
+  f128: integer,
+  f129: integer,
+  f130: integer,
+  f131: integer,
+  f132: integer,
+  f133: integer,
+  f134: integer,
+  f135: integer,
+  f136: integer,
+  f137: integer,
+  f138: integer,
+  f139: integer,
+  f140: integer,
+  f141: integer,
+  f142: integer,
+  f143: integer,
+  f144: integer,
+  f145: integer,
+  f146: integer,
+  f147: integer,
+  f148: integer,
+  f149: integer,
+  f150: integer,
+  f151: integer,
+  f152: integer,
+  f153: integer,
+  f154: integer,
+  f155: integer,
+  f156: integer,
+  f157: integer,
+  f158: integer,
+  f159: integer,
+  f160: integer,
+  f161: integer,
+  f162: integer,
+  f163: integer,
+  f164: integer,
+  f165: integer,
+  f166: integer,
+  f167: integer,
+  f168: integer,
+  f169: integer,
+  f170: integer,
+  f171: integer,
+  f172: integer,
+  f173: integer,
+  f174: integer,
+  f175: integer,
+  f176: integer,
+  f177: integer,
+  f178: integer,
+  f179: integer,
+  f180: integer,
+  f181: integer,
+  f182: integer,
+  f183: integer,
+  f184: integer,
+  f185: integer,
+  f186: integer,
+  f187: integer,
+  f188: integer,
+  f189: integer,
+  f190: integer,
+  f191: integer,
+  f192: integer,
+  f193: integer,
+  f194: integer,
+  f195: integer,
+  f196: integer,
+  f197: integer,
+  f198: integer,
+  f199: integer,
+  f200: integer,
+  f201: integer,
+  f202: integer,
+  f203: integer,
+  f204: integer,
+  f205: integer,
+  f206: integer,
+  f207: integer,
+  f208: integer,
+  f209: integer,
+  f210: integer,
+  f211: integer,
+  f212: integer,
+  f213: integer,
+  f214: integer,
+  f215: integer,
+  f216: integer,
+  f217: integer,
+  f218: integer,
+  f219: integer,
+  f220: integer,
+  f221: integer,
+  f222: integer,
+  f223: integer,
+  f224: integer,
+  f225: integer,
+  f226: integer,
+  f227: integer,
+  f228: integer,
+  f229: integer,
+  f230: integer,
+  f231: integer,
+  f232: integer,
+  f233: integer,
+  f234: integer,
+  f235: integer,
+  f236: integer,
+  f237: integer,
+  f238: integer,
+  f239: integer,
+  f240: integer,
+  f241: integer,
+  f242: integer,
+  f243: integer,
+  f244: integer,
+  f245: integer,
+  f246: integer,
+  f247: integer,
+  f248: integer,
+  f249: integer,
+  f250: integer,
+  f251: integer,
+  f252: integer,
+  f253: integer,
+  f254: integer,
+  f255: integer,
+  f256: integer,
+  f257: integer,
+  f258: integer,
+  f259: integer,
+  f260: integer,
+  f261: integer,
+  f262: integer,
+  f263: integer,
+  f264: integer,
+  f265: integer,
+  f266: integer,
+  f267: integer,
+  f268: integer,
+  f269: integer,
+  f270: integer,
+  f271: integer,
+  f272: integer,
+  f273: integer,
+  f274: integer,
+  f275: integer,
+  f276: integer,
+  f277: integer,
+  f278: integer,
+  f279: integer,
+  f280: integer,
+  f281: integer,
+  f282: integer,
+  f283: integer,
+  f284: integer,
+  f285: integer,
+  f286: integer,
+  f287: integer,
+  f288: integer,
+  f289: integer,
+  f290: integer,
+  f291: integer,
+  f292: integer,
+  f293: integer,
+  f294: integer,
+  f295: integer,
+  f296: integer,
+  f297: integer,
+  f298: integer,
+  f299: integer,
+  f300: integer
+}
+
+// @EXPECT_ERROR: `many` takes more than 300 parameters
+fn many(p0: integer, p1: integer, p2: integer, p3: integer, p4: integer, p5: integer, p6: integer, p7: integer, p8: integer, p9: integer, p10: integer, p11: integer, p12: integer, p13: integer, p14: integer, p15: integer, p16: integer, p17: integer, p18: integer, p19: integer, p20: integer, p21: integer, p22: integer, p23: integer, p24: integer, p25: integer, p26: integer, p27: integer, p28: integer, p29: integer, p30: integer, p31: integer, p32: integer, p33: integer, p34: integer, p35: integer, p36: integer, p37: integer, p38: integer, p39: integer, p40: integer, p41: integer, p42: integer, p43: integer, p44: integer, p45: integer, p46: integer, p47: integer, p48: integer, p49: integer, p50: integer, p51: integer, p52: integer, p53: integer, p54: integer, p55: integer, p56: integer, p57: integer, p58: integer, p59: integer, p60: integer, p61: integer, p62: integer, p63: integer, p64: integer, p65: integer, p66: integer, p67: integer, p68: integer, p69: integer, p70: integer, p71: integer, p72: integer, p73: integer, p74: integer, p75: integer, p76: integer, p77: integer, p78: integer, p79: integer, p80: integer, p81: integer, p82: integer, p83: integer, p84: integer, p85: integer, p86: integer, p87: integer, p88: integer, p89: integer, p90: integer, p91: integer, p92: integer, p93: integer, p94: integer, p95: integer, p96: integer, p97: integer, p98: integer, p99: integer, p100: integer, p101: integer, p102: integer, p103: integer, p104: integer, p105: integer, p106: integer, p107: integer, p108: integer, p109: integer, p110: integer, p111: integer, p112: integer, p113: integer, p114: integer, p115: integer, p116: integer, p117: integer, p118: integer, p119: integer, p120: integer, p121: integer, p122: integer, p123: integer, p124: integer, p125: integer, p126: integer, p127: integer, p128: integer, p129: integer, p130: integer, p131: integer, p132: integer, p133: integer, p134: integer, p135: integer, p136: integer, p137: integer, p138: integer, p139: integer, p140: integer, p141: integer, p142: integer, p143: integer, p144: integer, p145: integer, p146: integer, p147: integer, p148: integer, p149: integer, p150: integer, p151: integer, p152: integer, p153: integer, p154: integer, p155: integer, p156: integer, p157: integer, p158: integer, p159: integer, p160: integer, p161: integer, p162: integer, p163: integer, p164: integer, p165: integer, p166: integer, p167: integer, p168: integer, p169: integer, p170: integer, p171: integer, p172: integer, p173: integer, p174: integer, p175: integer, p176: integer, p177: integer, p178: integer, p179: integer, p180: integer, p181: integer, p182: integer, p183: integer, p184: integer, p185: integer, p186: integer, p187: integer, p188: integer, p189: integer, p190: integer, p191: integer, p192: integer, p193: integer, p194: integer, p195: integer, p196: integer, p197: integer, p198: integer, p199: integer, p200: integer, p201: integer, p202: integer, p203: integer, p204: integer, p205: integer, p206: integer, p207: integer, p208: integer, p209: integer, p210: integer, p211: integer, p212: integer, p213: integer, p214: integer, p215: integer, p216: integer, p217: integer, p218: integer, p219: integer, p220: integer, p221: integer, p222: integer, p223: integer, p224: integer, p225: integer, p226: integer, p227: integer, p228: integer, p229: integer, p230: integer, p231: integer, p232: integer, p233: integer, p234: integer, p235: integer, p236: integer, p237: integer, p238: integer, p239: integer, p240: integer, p241: integer, p242: integer, p243: integer, p244: integer, p245: integer, p246: integer, p247: integer, p248: integer, p249: integer, p250: integer, p251: integer, p252: integer, p253: integer, p254: integer, p255: integer, p256: integer, p257: integer, p258: integer, p259: integer, p260: integer, p261: integer, p262: integer, p263: integer, p264: integer, p265: integer, p266: integer, p267: integer, p268: integer, p269: integer, p270: integer, p271: integer, p272: integer, p273: integer, p274: integer, p275: integer, p276: integer, p277: integer, p278: integer, p279: integer, p280: integer, p281: integer, p282: integer, p283: integer, p284: integer, p285: integer, p286: integer, p287: integer, p288: integer, p289: integer, p290: integer, p291: integer, p292: integer, p293: integer, p294: integer, p295: integer, p296: integer, p297: integer, p298: integer, p299: integer, p300: integer) -> integer {
+  p0 + p300
+}
+
+// @EXPECT_ERROR: `locals` binds more than 300 variables — `v300` is one more
+fn locals() -> integer {
+  v0 = 0;
+  v1 = 1;
+  v2 = 2;
+  v3 = 3;
+  v4 = 4;
+  v5 = 5;
+  v6 = 6;
+  v7 = 7;
+  v8 = 8;
+  v9 = 9;
+  v10 = 10;
+  v11 = 11;
+  v12 = 12;
+  v13 = 13;
+  v14 = 14;
+  v15 = 15;
+  v16 = 16;
+  v17 = 17;
+  v18 = 18;
+  v19 = 19;
+  v20 = 20;
+  v21 = 21;
+  v22 = 22;
+  v23 = 23;
+  v24 = 24;
+  v25 = 25;
+  v26 = 26;
+  v27 = 27;
+  v28 = 28;
+  v29 = 29;
+  v30 = 30;
+  v31 = 31;
+  v32 = 32;
+  v33 = 33;
+  v34 = 34;
+  v35 = 35;
+  v36 = 36;
+  v37 = 37;
+  v38 = 38;
+  v39 = 39;
+  v40 = 40;
+  v41 = 41;
+  v42 = 42;
+  v43 = 43;
+  v44 = 44;
+  v45 = 45;
+  v46 = 46;
+  v47 = 47;
+  v48 = 48;
+  v49 = 49;
+  v50 = 50;
+  v51 = 51;
+  v52 = 52;
+  v53 = 53;
+  v54 = 54;
+  v55 = 55;
+  v56 = 56;
+  v57 = 57;
+  v58 = 58;
+  v59 = 59;
+  v60 = 60;
+  v61 = 61;
+  v62 = 62;
+  v63 = 63;
+  v64 = 64;
+  v65 = 65;
+  v66 = 66;
+  v67 = 67;
+  v68 = 68;
+  v69 = 69;
+  v70 = 70;
+  v71 = 71;
+  v72 = 72;
+  v73 = 73;
+  v74 = 74;
+  v75 = 75;
+  v76 = 76;
+  v77 = 77;
+  v78 = 78;
+  v79 = 79;
+  v80 = 80;
+  v81 = 81;
+  v82 = 82;
+  v83 = 83;
+  v84 = 84;
+  v85 = 85;
+  v86 = 86;
+  v87 = 87;
+  v88 = 88;
+  v89 = 89;
+  v90 = 90;
+  v91 = 91;
+  v92 = 92;
+  v93 = 93;
+  v94 = 94;
+  v95 = 95;
+  v96 = 96;
+  v97 = 97;
+  v98 = 98;
+  v99 = 99;
+  v100 = 100;
+  v101 = 101;
+  v102 = 102;
+  v103 = 103;
+  v104 = 104;
+  v105 = 105;
+  v106 = 106;
+  v107 = 107;
+  v108 = 108;
+  v109 = 109;
+  v110 = 110;
+  v111 = 111;
+  v112 = 112;
+  v113 = 113;
+  v114 = 114;
+  v115 = 115;
+  v116 = 116;
+  v117 = 117;
+  v118 = 118;
+  v119 = 119;
+  v120 = 120;
+  v121 = 121;
+  v122 = 122;
+  v123 = 123;
+  v124 = 124;
+  v125 = 125;
+  v126 = 126;
+  v127 = 127;
+  v128 = 128;
+  v129 = 129;
+  v130 = 130;
+  v131 = 131;
+  v132 = 132;
+  v133 = 133;
+  v134 = 134;
+  v135 = 135;
+  v136 = 136;
+  v137 = 137;
+  v138 = 138;
+  v139 = 139;
+  v140 = 140;
+  v141 = 141;
+  v142 = 142;
+  v143 = 143;
+  v144 = 144;
+  v145 = 145;
+  v146 = 146;
+  v147 = 147;
+  v148 = 148;
+  v149 = 149;
+  v150 = 150;
+  v151 = 151;
+  v152 = 152;
+  v153 = 153;
+  v154 = 154;
+  v155 = 155;
+  v156 = 156;
+  v157 = 157;
+  v158 = 158;
+  v159 = 159;
+  v160 = 160;
+  v161 = 161;
+  v162 = 162;
+  v163 = 163;
+  v164 = 164;
+  v165 = 165;
+  v166 = 166;
+  v167 = 167;
+  v168 = 168;
+  v169 = 169;
+  v170 = 170;
+  v171 = 171;
+  v172 = 172;
+  v173 = 173;
+  v174 = 174;
+  v175 = 175;
+  v176 = 176;
+  v177 = 177;
+  v178 = 178;
+  v179 = 179;
+  v180 = 180;
+  v181 = 181;
+  v182 = 182;
+  v183 = 183;
+  v184 = 184;
+  v185 = 185;
+  v186 = 186;
+  v187 = 187;
+  v188 = 188;
+  v189 = 189;
+  v190 = 190;
+  v191 = 191;
+  v192 = 192;
+  v193 = 193;
+  v194 = 194;
+  v195 = 195;
+  v196 = 196;
+  v197 = 197;
+  v198 = 198;
+  v199 = 199;
+  v200 = 200;
+  v201 = 201;
+  v202 = 202;
+  v203 = 203;
+  v204 = 204;
+  v205 = 205;
+  v206 = 206;
+  v207 = 207;
+  v208 = 208;
+  v209 = 209;
+  v210 = 210;
+  v211 = 211;
+  v212 = 212;
+  v213 = 213;
+  v214 = 214;
+  v215 = 215;
+  v216 = 216;
+  v217 = 217;
+  v218 = 218;
+  v219 = 219;
+  v220 = 220;
+  v221 = 221;
+  v222 = 222;
+  v223 = 223;
+  v224 = 224;
+  v225 = 225;
+  v226 = 226;
+  v227 = 227;
+  v228 = 228;
+  v229 = 229;
+  v230 = 230;
+  v231 = 231;
+  v232 = 232;
+  v233 = 233;
+  v234 = 234;
+  v235 = 235;
+  v236 = 236;
+  v237 = 237;
+  v238 = 238;
+  v239 = 239;
+  v240 = 240;
+  v241 = 241;
+  v242 = 242;
+  v243 = 243;
+  v244 = 244;
+  v245 = 245;
+  v246 = 246;
+  v247 = 247;
+  v248 = 248;
+  v249 = 249;
+  v250 = 250;
+  v251 = 251;
+  v252 = 252;
+  v253 = 253;
+  v254 = 254;
+  v255 = 255;
+  v256 = 256;
+  v257 = 257;
+  v258 = 258;
+  v259 = 259;
+  v260 = 260;
+  v261 = 261;
+  v262 = 262;
+  v263 = 263;
+  v264 = 264;
+  v265 = 265;
+  v266 = 266;
+  v267 = 267;
+  v268 = 268;
+  v269 = 269;
+  v270 = 270;
+  v271 = 271;
+  v272 = 272;
+  v273 = 273;
+  v274 = 274;
+  v275 = 275;
+  v276 = 276;
+  v277 = 277;
+  v278 = 278;
+  v279 = 279;
+  v280 = 280;
+  v281 = 281;
+  v282 = 282;
+  v283 = 283;
+  v284 = 284;
+  v285 = 285;
+  v286 = 286;
+  v287 = 287;
+  v288 = 288;
+  v289 = 289;
+  v290 = 290;
+  v291 = 291;
+  v292 = 292;
+  v293 = 293;
+  v294 = 294;
+  v295 = 295;
+  v296 = 296;
+  v297 = 297;
+  v298 = 298;
+  v299 = 299;
+  v300 = 300;
+  v0 + v300
+}
+
+// @EXPECT_ERROR: a tuple holds at most 300 elements, this literal has 301
+fn wide_tuple() -> integer {
+  t = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300);
+  t.0
+}
+
+fn main() {
+  println("{locals()}");
+}

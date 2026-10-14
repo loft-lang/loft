@@ -9,9 +9,9 @@
 //! the EMISSION per cell — which loops earn a push header, which decline — and the switch
 //! (`LOFT_NO_PUSH_HOIST=1`), which is what makes it red on the build before the unit and on
 //! one that lost it.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-q-hoisted-push-cells.loft";
@@ -43,7 +43,8 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -53,12 +54,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(push headers, hoisted pushes, plain headers)`.
@@ -109,7 +110,7 @@ fn each_loop_earns_exactly_the_push_header_predicted() {
             "{name}: (push headers, hoisted pushes, plain headers)"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -123,5 +124,5 @@ fn the_switch_hoists_no_push() {
             && !rust.contains("vector::push_window("),
         "LOFT_NO_PUSH_HOIST=1 must bind no push header, open no window on one, and route every push through its template"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

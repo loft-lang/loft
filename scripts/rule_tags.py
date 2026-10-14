@@ -29,6 +29,9 @@
 #                  entry that names no tracking issue (`loft#N`) and is not marked
 #                  `not resolvable in a release`; `--issues` also asks whether an open
 #                  entry's issue has closed
+#   worklist       the rule-led walk's queue, ordered by the defects a walk of each rule is
+#                  expected to find (its chapter's historical yield × how exposed the rule is);
+#                  `--all` lists every candidate, the default the top 30
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
 #   claims         the LIMITATION sentences of the hand-written reference docs (LOFT*.md,
@@ -788,9 +791,13 @@ LIB_SECTION = re.compile(r"`use\s+([a-z_][a-z0-9_]*)\s*;`")
 
 
 def stdlib_names():
-    """Every function, struct, enum, interface and type name `default/*.loft` declares."""
+    """Every function, operator, struct, enum, interface and type name `default/*.loft` declares.
+
+    `operator` declares a method as surely as `fn` does (@PLN182: the stdlib's `compare`,
+    `plus`, … on its base types are `operator` definitions), so a signature row naming one is
+    kept."""
     names = set()
-    decl = re.compile(r"^\s*(?:pub\s+)?(?:fn|struct|enum|interface|type|value struct)\s+"
+    decl = re.compile(r"^\s*(?:pub\s+)?(?:fn|operator|struct|enum|interface|type|value struct)\s+"
                       r"([A-Za-z_][A-Za-z0-9_]*)", re.M)
     const = re.compile(r"^\s*(?:pub\s+)?(?:const\s+)?([A-Z][A-Z0-9_]+)\s*=", re.M)
     for path in glob.glob(os.path.join(ROOT, "default", "*.loft")):
@@ -973,6 +980,55 @@ def main():
               "bugs actually met (2026-09-17).")
         return 0
 
+    if cmd == "worklist":
+        # The rule-led walk's queue (STABILITY_METHOD.md § The rule-led walk), computed rather
+        # than written down, for the reason that section gives: a position stated in prose is
+        # stale the moment it is committed.  Each rule is weighed by
+        #
+        #   YIELD     its chapter's deviation entries per defined rule — what walks and
+        #             measurements have recorded against that chapter's rules so far;
+        #   EXPOSURE  1 for a rule nothing cites, 0.5 for one code cites but no test names
+        #             (someone looked; nothing would fail without it), 0 once a test names it.
+        #
+        # The product ORDERS the queue; it is not a forecast.  The walk takes the most
+        # error-prone rules first, so a chapter's tail yields less than its average (the low
+        # bound halves it), while a single walk of a covered rule has found several defects
+        # (the high bound takes half again).
+        ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
+        grd = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+
+        def chapter(files):
+            return sorted(files)[0].removesuffix(".md").removesuffix("-history")
+
+        size = collections.Counter(chapter(f) for f in rules.values())
+        found = collections.Counter(chapter(f) for f, _status in defined_deviations().values())
+        items = []
+        for tag, files in rules.items():
+            if tag in grd:
+                continue
+            ch = chapter(files)
+            exposure = 0.5 if tag in ann else 1.0
+            items.append((exposure * found[ch] / size[ch], tag, ch, exposure))
+        items.sort(key=lambda it: (-it[0], it[2], it[1]))
+        shown = items if "--all" in sys.argv else items[:30]
+        print(f"{'#':>3}  {'rule':<26} {'chapter':<13} {'tier':<10} expected")
+        for i, (est, tag, ch, exposure) in enumerate(shown, 1):
+            tier = "nowhere" if exposure == 1.0 else "code-only"
+            print(f"{i:>3}  @FR-{tag:<22} {ch:<13} {tier:<10} {est:5.2f}")
+        per = collections.defaultdict(float)
+        for est, _tag, ch, _exp in items:
+            per[ch] += est
+        total = sum(per.values())
+        print(f"\n{len(items)} rules no test names; expected defects behind them "
+              f"{total * 0.5:.0f}–{total * 1.5:.0f}, by chapter:")
+        for ch, est in sorted(per.items(), key=lambda kv: -kv[1]):
+            if est > 0:
+                print(f"  {ch:<13} {est * 0.5:5.1f}–{est * 1.5:5.1f}")
+        print("\nAn ORDER for the walk, not a forecast: the yield is what was found where walks "
+              "already\nlooked, and a rule closes with a guard that would FAIL without it, not "
+              "with a citation.")
+        return 0
+
     cites = citations()
 
     if cmd == "sites":
@@ -1132,9 +1188,29 @@ def main():
         live, drift, regs = open_register()
         print(f"{len(regs)} chapters with a Deviations section · "
               f"{len(live)} open entries · {len(drift)} chapter(s) whose count disagrees\n")
+        devs = defined_deviations()
         for f, stated, found, tags in drift:
             print(f"  {f}: states OPEN: {stated}, lists {found} "
                   f"({', '.join(tags) if tags else 'none'})")
+            # An entry the chapter itself writes as OPEN that the register resolves CLOSED is
+            # outranked by a later-dated entry of the same tag — a closure this chapter never
+            # recorded, or a REUSED number.  `interfaces.md` listed `D-gen-7 (OPEN, loft#1872)`
+            # over a closed `D-gen-7` of loft#1868, and the drift line alone read "lists 0 (none)".
+            own = next((e for g, _, e in regs if g == f), [])
+            for t, st, iss, _ in own:
+                if st == "OPEN" and t not in tags and devs.get(t, (0, "?"))[1] == "CLOSED":
+                    print(f"    {t} is written OPEN here ({', '.join(iss) or 'no issue'}) but "
+                          f"another entry of that tag outranks it CLOSED — record the closure, "
+                          f"or renumber a reused tag")
+        # README.md's area table restates each chapter's count — a FOURTH decoder of the one
+        # number, and the one a reader meets first.  It read `calls.md … **0 open**` over a
+        # register stating and listing `D-call-28`.
+        open_by = collections.Counter(f for f, *_ in live)
+        for line in open(os.path.join(FORMAL, "README.md"), encoding="utf-8"):
+            row = re.match(r"\| \[([\w-]+\.md)\]\([\w-]+\.md\) \|[^|]*\| \*\*(\d+) (?:open|own)", line)
+            if row and int(row.group(2)) != open_by.get(row.group(1), 0):
+                print(f"  README.md: {row.group(1)} reads {row.group(2)} open, the register "
+                      f"lists {open_by.get(row.group(1), 0)}")
         untracked = [(f, t) for f, t, iss, unres in live if not iss and not unres]
         unresolvable = [(f, t) for f, t, iss, unres in live if unres]
         print(f"{len(live) - len(untracked) - len(unresolvable)} open entr(y/ies) tracked by an "
@@ -1152,7 +1228,7 @@ def main():
                 print(f"  ⚠ {len(unreachable)} could not be asked "
                       f"({', '.join('loft#%d' % n for n in unreachable)}) — unknown, not clean")
             for f, tag, iss, _ in live:
-                hit = [int(n) for n in iss if int(n) in done]
+                hit = [int(n) for n in iss if n.isdigit() and int(n) in done]
                 if hit:
                     print(f"  {f}: {tag} is OPEN but names "
                           f"{', '.join('loft#%d' % n for n in hit)}, CLOSED — re-measure")

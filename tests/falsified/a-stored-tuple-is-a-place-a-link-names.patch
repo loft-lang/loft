@@ -1,0 +1,68 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..b12c36915 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4923,7 +4923,7 @@
+         // names that record (`@FR-T-Ref-Src`, loft#1883).
+         let mut place_linked = false;
+         if amp_unlowered {
+-            let place = Self::stored_tuple_dest(code).unwrap_or_else(|| code.clone());
++            let place = code.clone();
+             let record = match (self.vars.tp(var_nr).clone(), s_type.base()) {
+                 (Type::RefVar(inner), _)
+                     if var_nr != u16::MAX
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9f0a3619b..4f2aaa523 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -6624,28 +6624,6 @@
+             && let Type::Tuple(elems) = is_type
+             && crate::data::ref_tuple_is_record(elems)
+         {
+-            // `@FR-T-Ref-Src` — a vector element or a struct field of tuple type, read with
+-            // its address: the parameter names that record, through a borrowed work-ref as
+-            // any `&S` argument that is not a variable is passed (loft#1883).
+-            if !self.first_pass
+-                && let Some(dbref) = Self::stored_tuple_dest(code)
+-                && dbref.is_place_read(&self.data)
+-            {
+-                // Typed as the place's VIEW (it borrows the container), so neither backend
+-                // copies the element into a store of its own.  Pass 2 only, so it draws from
+-                // the pass-2 sequence (loft#848).
+-                let mut rec = (**ref_tp).clone();
+-                if let Some(root) = dbref.base_var() {
+-                    rec = rec.depending(root);
+-                }
+-                let wv = self.vars.work_refs_p2(&rec, &mut self.lexer);
+-                self.vars.set_skip_free(wv);
+-                *code = Value::Insert(vec![
+-                    v_set(wv, dbref),
+-                    self.cl("OpCreateStack", &[Value::Var(wv)]),
+-                ]);
+-                return true;
+-            }
+             if let Value::Var(v) = code.unspan() {
+                 self.ref_linked_tuple_locals
+                     .insert((self.context, self.vars.name(*v).to_string()));
+@@ -17816,8 +17794,6 @@
+                 && !matches!(&actual_code, Value::Var(_))
+                 && !scalar_place
+                 && !Self::is_addressable(&actual_code, &self.data)
+-                && !Self::stored_tuple_dest(&actual_code)
+-                    .is_some_and(|d| d.is_place_read(&self.data))
+             {
+                 // Defer on pass 1 (#375): a field access on a struct whose
+                 // layout is not yet finalised — because one of its fields is a
+@@ -22386,12 +22362,6 @@
+     /// allowlist (place-GETTERS only) keeps temporary-builders like `OpGetTextSub`
+     /// and every arithmetic / `n_*` op out.
+     fn is_amp_place(val: &Value, data: &Data) -> bool {
+-        // A stored tuple read with its address (`tuple_unbox`, built while a link parses): a
+-        // vector element or a struct field of tuple type, the record a link names
+-        // (`@FR-T-Ref-Src`, loft#1883).
+-        if let Some(dbref) = Self::stored_tuple_dest(val) {
+-            return dbref.is_place_read(data);
+-        }
+         match val.unspan() {
+             // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
+             // member types it can link, and refuses the rest by name.

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// I13: Iterator protocol — for x in val when val's type has fn next(self) -> Item?
+// I13: Iterator protocol — for x in val when val's type has operator next(self) -> Item?
 
 struct Counter {
   current: integer,
@@ -11,14 +11,14 @@ fn new_counter(limit: integer) -> Counter {
   Counter { current: 0, limit: limit }
 }
 
-fn next(self: Counter) -> integer? {
+operator next(self: Counter) -> integer? {
   val = self.current;
   self.current = val + 1;
   if val >= self.limit { return null; }
   val
 }
 
-// @FTR-040 — a custom iterator: any type with `fn next(self) -> T?` drives a for-loop,
+// @FTR-040 — a custom iterator: any type with `operator next(self) -> T?` drives a for-loop,
 // including the empty and single-element cases
 fn main() {
   // Basic custom iterator: count from 0 to 2

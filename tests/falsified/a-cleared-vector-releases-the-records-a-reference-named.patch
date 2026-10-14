@@ -1,0 +1,13 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index c061209cb..39a877395 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -3329,7 +3329,7 @@ use a separate collection or add after the loop"
+         site: Option<(u16, u16)>,
+         vec_tp: Option<&Type>,
+     ) -> Option<Value> {
+-        if self.first_pass {
++        if self.first_pass || !self.first_pass {
+             return None;
+         }
+         // A site that names no struct field — an element of an outer vector reads as

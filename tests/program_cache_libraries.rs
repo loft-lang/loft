@@ -22,12 +22,12 @@
 //!   The answer stays `probepkg-0.1.0 45` under both.  CHANNEL: the cache verdict (the trace
 //!   line), not the value.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A private tree with a library `probepkg` under `libs/` (the search path the run is given)
@@ -39,7 +39,7 @@ fn write(path: &Path, body: &str) {
 /// library's name and version, and `probe_sum` crosses into the dependency.
 fn home_with_package(tag: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("loft_1684_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     write(
         &home.join("ext/probedep/loft.toml"),
         "[package]\nname = \"probedep\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
@@ -71,7 +71,8 @@ fn home_with_package(tag: &str) -> PathBuf {
 /// One `--interpret` run of the project's script with the program cache forced on (a
 /// `target/` build disables it by default) in a private cache dir, offline, traced.
 fn run(home: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(["--interpret", "--lib"])
         .arg(home.join("libs"))
         .arg("s.loft")
@@ -79,7 +80,7 @@ fn run(home: &Path, env: &[(&str, &str)]) -> String {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("XDG_CACHE_HOME", home.join("cache"))
-        .env("LOFT_PROGRAM_CACHE", "1")
+        .env_remove("LOFT_NO_CACHE")
         .env("LOFT_TRACE_WARM", "1")
         .env("LOFT_OFFLINE", "1")
         .env_remove("LOFT_NO_CACHE")
@@ -100,17 +101,27 @@ fn run(home: &Path, env: &[(&str, &str)]) -> String {
 
 const ANSWER: &str = "probepkg-0.1.0 45";
 
+/// The IR images the cache holds (`*.store`), by file name.  @C70: the standard library and
+/// the whole program are imaged, and a library never is on its own — it is recorded by its
+/// artifacts in the program's manifest.
+fn ir_images(home: &Path) -> Vec<String> {
+    let mut out: Vec<String> = fa::read_dir(home.join("cache/loft"))
+        .into_iter()
+        .flatten()
+        .filter_map(|e| fa::file_name(e.os_spelling()))
+        .filter(|n| n.ends_with(".store"))
+        .collect();
+    out.sort();
+    out
+}
+
 /// The auto-native cdylibs the saved manifest records (`alib` lines).
 fn recorded_artifacts(home: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    for e in std::fs::read_dir(home.join("cache/loft"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let p = e.path();
-        if p.extension().is_some_and(|x| x == "manifest")
-            && let Ok(text) = std::fs::read_to_string(&p)
+    for e in fa::read_dir(home.join("cache/loft")).into_iter().flatten() {
+        let p = e.os_spelling();
+        if fa::has_extension(&p, "manifest")
+            && let Ok(text) = fa::read_to_string(&p)
         {
             out.extend(
                 text.lines()
@@ -127,7 +138,9 @@ fn recorded_artifacts(home: &Path) -> Vec<String> {
 /// c2 — that cdylib removed: a named miss, the same answer, and the run after warms again.
 /// c3 — `LOFT_NO_NATIVE_LIBS=1` over a bundle marked native: a miss and the
 /// same answer, never a replay of the native marks.
-/// @C70 — no per-library IR snapshot; a library is recorded as its artifacts.
+///
+/// @C70 — no per-library IR snapshot: one image for the program, a library recorded as its
+/// artifacts.
 #[test]
 fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
     let home = home_with_package("warm");
@@ -140,6 +153,17 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
         warm.contains("[warm] hit"),
         "c1: the second run of an unchanged program must be a warm hit (loft#1684):\n{warm}"
     );
+    // @C70 — one image for the program and none per library: `probepkg` and the `probedep`
+    // it depends on are inside the program's bundle, not imaged beside it.
+    let images = ir_images(&home);
+    assert!(
+        images
+            .iter()
+            .all(|n| n.starts_with("stdlib-") || n.starts_with("program-"))
+            && images.iter().filter(|n| n.starts_with("program-")).count() == 1,
+        "c1: the cache holds the stdlib image and ONE program image, never one per library \
+         (@C70); found {images:?}"
+    );
     let arts = recorded_artifacts(&home);
     assert!(
         !arts.is_empty(),
@@ -147,7 +171,7 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
     );
 
     for a in &arts {
-        std::fs::remove_file(a).expect("remove the recorded cdylib");
+        fa::remove_file(a).expect("remove the recorded cdylib");
     }
     let gone = run(&home, &[]);
     assert!(
@@ -173,5 +197,51 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
         "c3: a bundle marked native must not serve a LOFT_NO_NATIVE_LIBS run:\n{nolibs}"
     );
 
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
+}
+
+/// A manifest decides which sources a program is made of, so editing one is a miss even when
+/// every source is unchanged.  The bundle hashed only the parsed sources: dropping
+/// `probepkg`'s `[dependencies]` line left `probedep`'s source in place, and the warm load
+/// still answered `probepkg-0.1.0 45` for a program that no longer compiles.  Each source's
+/// nearest `loft.toml` is hashed beside it now.
+///
+/// @falsified-at: hand-measured (2026-10-09) — `save_program` without the manifests: the
+///   third run names `[warm] hit` and answers `probepkg-0.1.0 45`.  CHANNEL: the cache verdict
+///   and the value together.
+#[test]
+fn an_edited_manifest_is_a_miss_even_when_no_source_changed() {
+    let home = home_with_package("manifest_edit");
+    let lib_manifest = home.join("libs/probepkg/loft.toml");
+    let declared = fa::read_to_string(&lib_manifest).expect("read the manifest");
+
+    let cold = run(&home, &[]);
+    assert!(cold.contains(ANSWER), "cold answer:\n{cold}");
+    let warm = run(&home, &[]);
+    assert!(
+        warm.contains(ANSWER) && warm.contains("[warm] hit"),
+        "warm:\n{warm}"
+    );
+
+    let undeclared = declared
+        .split("[dependencies]")
+        .next()
+        .expect("the manifest's head")
+        .to_string();
+    write(&lib_manifest, &undeclared);
+    let edited = run(&home, &[]);
+    assert!(
+        !edited.contains("[warm] hit") && edited.contains("loft.toml changed"),
+        "an edited manifest must be a named miss:\n{edited}"
+    );
+    assert!(
+        !edited.contains(ANSWER),
+        "without its dependency the program must not answer as before:\n{edited}"
+    );
+
+    write(&lib_manifest, &declared);
+    let restored = run(&home, &[]);
+    assert!(restored.contains(ANSWER), "restored answer:\n{restored}");
+
+    let _ = fa::remove_dir_all(&home);
 }

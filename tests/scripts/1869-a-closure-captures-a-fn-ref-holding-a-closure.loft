@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1869, `@FR-L-Fn` / `@FR-L-CapHeap` / `@FR-L-CapOwn` — a closure captures a fn-ref that
+// holds a capturing closure, like any other value.
+//
+// A fn-ref is a pair: the function, and the closure record its captures live in.  The record is
+// a heap value, so a closure capturing the fn-ref shares it (`(L-CapHeap)`), and ownership
+// follows `(L-CapOwn)` exactly as for a captured struct: a record that leaves the frame adopts
+// it (and runs its cascade, so what the inner closure adopted is released too), a record left
+// behind borrows it.  A record held through a captured fn-ref leaves with the record holding
+// it.  A parameter's closure is the caller's and is always a borrow; where the lambda a fn-ref
+// holds is a run-time fact, an adopted record is released through the function it holds.
+//
+// Every value is hand-computed: `a * k` with k = 2, `a + v.a` with v.a = 7 (then 10 after the
+// write the closure shares), a counter shared through two calls, `a ± n * n` per arm, a shared
+// vector grown to 4 after the capture, and the loop sum Σ (1 + i) * 10 for i in 0..3 = 60.
+//
+// @falsified-at: 39d4bd137 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1869-a-closure-captures-a-fn-ref-holding-a-closure.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — a capture of a fn-ref holding a closure was refused at compile time.
+//   The patch removes only the fn-ref's `<name>__clos` capture; the whole fix is too large a
+//   diff to isolate the defect.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct V { a: integer }
+struct H { f: fn(integer) -> integer, t: integer }
+
+fn churn() -> integer { junk = []; for i in 0..30 { junk += [V { a: 100 + i }]; } junk.len() }
+fn plus1(k: integer) -> fn(integer) -> integer { dbl = fn(a: integer) -> integer { a * k }; fn(a: integer) -> integer { dbl(a) + 1 } }
+fn twice_v(n: integer) -> fn(integer) -> integer { v = V { a: n }; dbl = fn(a: integer) -> integer { a + v.a }; fn(a: integer) -> integer { dbl(a) * 2 } }
+fn rebound(n: integer) -> fn(integer) -> integer {
+  v = V { a: n };
+  d = fn(a: integer) -> integer { a + v.a };
+  t = d(0);
+  d = fn(a: integer) -> integer { a * 2 + v.a + t - n };
+  fn(a: integer) -> integer { d(a) }
+}
+fn wrap(f: fn(integer) -> integer) -> fn(integer) -> integer { fn(a: integer) -> integer { f(a) + 1 } }
+fn by_arm(n: integer) -> fn(integer) -> integer {
+  v = V { a: n * n };
+  d = if n > 0 { fn(a: integer) -> integer { a + v.a } } else { fn(a: integer) -> integer { a - v.a } };
+  fn(a: integer) -> integer { d(a) }
+}
+fn over_text(s: text) -> fn(integer) -> integer { t = "{s}"; ln = fn(a: integer) -> integer { a + len(t) }; fn(a: integer) -> integer { ln(a) } }
+fn over_vector() -> fn(integer) -> integer { xs = [1, 2, 3]; sm = fn(a: integer) -> integer { a + xs.len() }; fn(a: integer) -> integer { sm(a) * 2 } }
+fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+fn in_field(n: integer) -> H { v = V { a: n }; dbl = fn(a: integer) -> integer { a + v.a }; H { f: fn(a: integer) -> integer { dbl(a) + 1 }, t: n } }
+
+fn test_the_filed_shape() {
+  k = 2;
+  dbl: fn(integer) -> integer = |a| { a * k };
+  fd = fn(a: integer) -> integer { dbl(a) };
+  assert(fd(6) == 12 && fd(7) == 14, "fd {fd(6)} {fd(7)}, want 12 14");
+}
+
+fn test_a_shared_struct_capture() {
+  v = V { a: 7 };
+  dbl = fn(a: integer) -> integer { a + v.a };
+  fd = fn(a: integer) -> integer { dbl(a) * 2 };
+  x = fd(1);
+  v.a = 10;
+  assert(x == 16 && fd(1) == 22, "shared {x} {fd(1)}, want 16 22");
+}
+
+fn test_returned_past_the_inner_local() {
+  f = plus1(3);
+  g = twice_v(5);
+  h = rebound(4);
+  assert(churn() == 30, "churn");
+  assert(f(5) == 16 && g(1) == 12 && h(1) == 6, "returned {f(5)} {g(1)} {h(1)}, want 16 12 6");
+}
+
+fn test_a_parameter_and_a_field() {
+  k = 5;
+  w = wrap(fn(a: integer) -> integer { a * k });
+  h = in_field(5);
+  assert(churn() == 30, "churn");
+  assert(w(2) == 11 && h.f(1) == 7 && h.t == 5, "param {w(2)}, field {h.f(1)}");
+}
+
+fn test_relayed_and_zero_arguments() {
+  k = 2;
+  dbl = fn(a: integer) -> integer { a * k };
+  fd = fn(a: integer) -> integer { fe = fn(b: integer) -> integer { dbl(b) + 1 }; fe(a) * 2 };
+  c = 0;
+  inc = fn() -> integer { c += 1; c };
+  tw = fn() -> integer { inc() + inc() };
+  a = tw();
+  b = tw();
+  assert(fd(3) == 14 && a == 3 && b == 7 && c == 4, "relay {fd(3)}, counter {a} {b} {c}");
+}
+
+fn test_other_captures_and_an_arm() {
+  xs = [1, 2, 3];
+  sm = fn(a: integer) -> integer { a + xs.len() };
+  fd = fn(a: integer) -> integer { sm(a) * 2 };
+  xs += [4];
+  f = by_arm(3);
+  g = by_arm(-2);
+  t = over_text("hello");
+  u = over_vector();
+  assert(churn() == 30, "churn");
+  assert(fd(1) == 10 && f(10) == 19 && g(10) == 6, "vector {fd(1)}, arms {f(10)} {g(10)}");
+  assert(t(1) == 6 && u(1) == 8 && apply(fd, 3) == 14, "text {t(1)}, returned vector {u(1)}, passed {apply(fd, 3)}");
+}
+
+fn test_built_every_pass() {
+  s = 0;
+  for i in 0..3 {
+    v = V { a: i };
+    dbl = fn(a: integer) -> integer { a + v.a };
+    fd = fn(a: integer) -> integer { dbl(a) * 10 };
+    s += fd(1);
+  }
+  assert(s == 60, "loop {s}, want 60");
+}
+
+fn main() {
+  test_the_filed_shape();
+  test_a_shared_struct_capture();
+  test_returned_past_the_inner_local();
+  test_a_parameter_and_a_field();
+  test_relayed_and_zero_arguments();
+  test_other_captures_and_an_arm();
+  test_built_every_pass();
+}

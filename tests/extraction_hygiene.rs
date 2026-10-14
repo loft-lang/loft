@@ -34,7 +34,7 @@
 //! `n_load_png` to `src/codegen_runtime.rs`, this test fails before
 //! the PR can merge.
 
-use std::fs;
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
 /// Manual fallback list for library `n_*` symbols that need to be
@@ -221,21 +221,21 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
         .map(|(s, o)| ((*s).to_string(), (*o).to_string()))
         .collect();
     let lib_dir = workspace_root().join("lib");
-    let Ok(entries) = fs::read_dir(&lib_dir) else {
+    let Ok(entries) = fa::read_dir(&lib_dir) else {
         return out;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+    for entry in entries {
+        let path = entry.os_spelling();
+        if !fa::is_dir(&path) {
             continue;
         }
         // Skip `.loft_test_tmp_*` artifact-isolation dirs (run_lib_test_in_temp_cwd)
         // — transient symlinked package mirrors, not real packages.
-        if entry.file_name().to_string_lossy().starts_with('.') {
+        if entry.file_name().unwrap_or_default().starts_with('.') {
             continue;
         }
         let manifest_path = path.join("loft.toml");
-        let Ok(content) = fs::read_to_string(&manifest_path) else {
+        let Ok(content) = fa::read_to_string(&manifest_path) else {
             continue;
         };
         // @PLN18 — `[native] in_binary = true`: the library's natives are
@@ -249,10 +249,7 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
         {
             continue;
         }
-        let pkg_name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let pkg_name = fa::file_name(&path).unwrap_or_default();
         let owner = format!("lib/{pkg_name}/native");
         let mut in_section = false;
         for line in content.lines() {
@@ -282,7 +279,7 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
         let mut loft_files = Vec::new();
         collect_loft_files(&path, &mut loft_files);
         for lf in &loft_files {
-            let Ok(src) = fs::read_to_string(lf) else {
+            let Ok(src) = fa::read_to_string(lf) else {
                 continue;
             };
             // Track the most recent `fn <name>` so a BARE `#native`
@@ -334,15 +331,15 @@ const FORBIDDEN_MAIN_CRATE_DEPS: &[&str] = &[
 ];
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
+    let entries = match fa::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
+    for entry in entries {
+        let path = entry.os_spelling();
+        if fa::is_dir(&path) {
             collect_rs_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
+        } else if fa::has_extension(&path, "rs") {
             out.push(path);
         }
     }
@@ -351,18 +348,18 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Recursively collect every `*.loft` file under `dir` (skipping any
 /// `native/` subtree — those hold Rust, not loft source).
 fn collect_loft_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
+    let entries = match fa::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if path.file_name().is_some_and(|n| n == "native") {
+    for entry in entries {
+        let path = entry.os_spelling();
+        if fa::is_dir(&path) {
+            if fa::file_name(&path).is_some_and(|n| n == "native") {
                 continue;
             }
             collect_loft_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "loft") {
+        } else if fa::has_extension(&path, "loft") {
             out.push(path);
         }
     }
@@ -490,7 +487,7 @@ fn forbidden_library_symbols_absent_from_src() {
 
     let mut violations: Vec<String> = Vec::new();
     for path in &files {
-        let content = match fs::read_to_string(path) {
+        let content = match fa::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -556,7 +553,7 @@ fn forbidden_library_symbols_absent_from_src() {
 #[test]
 fn forbidden_library_deps_absent_from_main_cargo() {
     let root = workspace_root();
-    let cargo = fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
+    let cargo = fa::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
     // Match a top-level dep line like `png = "0.17"` or `png = {..}` —
     // anchored at start-of-line so feature-gated lines `dep:png` are
     // ignored (the `[features]` section is its own thing).
@@ -665,25 +662,22 @@ const CLEAN_REGISTER_EXCEPTIONS: &[(&str, &str)] = &[
 fn native_libraries_follow_clean_binding_pattern() {
     let lib_dir = workspace_root().join("lib");
     let mut violations: Vec<String> = Vec::new();
-    let Ok(entries) = fs::read_dir(&lib_dir) else {
+    let Ok(entries) = fa::read_dir(&lib_dir) else {
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for entry in entries {
+        let path = entry.os_spelling();
         // Skip `.loft_test_tmp_*` artifact-isolation dirs (run_lib_test_in_temp_cwd).
-        if entry.file_name().to_string_lossy().starts_with('.') {
+        if entry.file_name().unwrap_or_default().starts_with('.') {
             continue;
         }
         let native_src = path.join("native").join("src");
-        if !native_src.is_dir() {
+        if !fa::is_dir(&native_src) {
             continue;
         }
-        let pkg = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let pkg = fa::file_name(&path).unwrap_or_default();
         // (1) no [native.functions] manifest table.
-        if let Ok(toml) = fs::read_to_string(path.join("loft.toml"))
+        if let Ok(toml) = fa::read_to_string(path.join("loft.toml"))
             && toml.lines().any(|l| l.trim() == "[native.functions]")
         {
             violations.push(format!(
@@ -697,7 +691,7 @@ fn native_libraries_follow_clean_binding_pattern() {
         let mut has_include = false;
         let mut hand_register: Option<String> = None;
         for f in &rs {
-            let s = fs::read_to_string(f).unwrap_or_default();
+            let s = fa::read_to_string(f).unwrap_or_default();
             if s.contains("loft_register_gen.rs") {
                 has_include = true;
             }

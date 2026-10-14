@@ -440,7 +440,7 @@ fn decay_sweep(world: World, base: integer, lease: integer, window: integer) {
 
 fn main() {
   srv = server::listen(PORT);
-  if srv.handle < 0 {
+  if !srv.bound() {
     println("single-port: FAILED to listen on port {PORT}");
     return;
   }

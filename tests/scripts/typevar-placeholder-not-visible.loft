@@ -36,15 +36,9 @@ fn main() {
   v = [3, 1, 2];
   assert(min_of(v) == 1, "stdlib generic min_of");
 
-  // ── a user generic whose parameter is spelled `T` while an enum `T` exists in the same
-  //    file is a real conflict (loft has one flat namespace) and stays refused.  Not
-  //    asserted here because this file must COMPILE; the shape is
-  //    `enum T { … }` beside `fn f<T>(…)`, which reports "generic type parameter 'T'
-  //    conflicts with a enum of the same name — pick a different name".  Only the
-  //    declared-above order words it that way; declared below, the same conflict surfaces
-  //    later and less clearly.  That wording gap is pre-existing and out of scope here —
-  //    moving the diagnostic to pass 2 fixes the below order and silences the above one,
-  //    so it needs its own change, not a one-line gate flip.
+  // ── a user generic whose parameter is spelled like a declaration in the same file is
+  //    no conflict either: the header's variable occupies no name (@FR-G-Gen-Scope), and
+  //    `tests/scripts/a-type-variable-reserves-no-name.loft` guards both orders.
 
   // ── other one-letter type names keep working beside `T` ──────────────────────────────
   assert(match U.Ua { Ua => 5, Ub => 6 } == 5, "one-letter enum U");

@@ -832,8 +832,8 @@ differently and only a cell could ever have caught the claim.
 
 | chapter source | reviewed through | commit |
 |---|---|---|
-| `default` | 2026-10-01 | `497b1e491` |
-| `doc/00-vs-python.html` | 2026-10-01 | `497b1e491` |
+| `default` | 2026-10-01 | `a80e26737` |
+| `doc/00-vs-python.html` | 2026-10-01 | `a80e26737` |
 | `doc/00-vs-rust.html` | 2026-10-01 | `0c1e2c840` |
 | `doc/install.html` | 2026-10-01 | `0c1e2c840` |
 | `doc/roadmap.html` | 2026-10-01 | `0c1e2c840` |
@@ -851,7 +851,7 @@ differently and only a cell could ever have caught the claim.
 | `tests/docs/12-hash.loft` | 2026-09-01 | `e9643ff6` |
 | `tests/docs/13-file.loft` | 2026-09-01 | `e9643ff6` |
 | `tests/docs/15-lexer.loft` | 2026-09-01 | `e9643ff6` |
-| `tests/docs/16-parser.loft` | 2026-10-01 | `497b1e491` |
+| `tests/docs/16-parser.loft` | 2026-10-01 | `a80e26737` |
 | `tests/docs/17-libraries.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/18-locks.loft` | 2026-09-01 | `e9643ff6` |
 | `tests/docs/19-threading.loft` | 2026-10-01 | `0c1e2c840` |
@@ -859,7 +859,7 @@ differently and only a cell could ever have caught the claim.
 | `tests/docs/22-time.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/23-safety.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/24-json.loft` | 2026-09-03 | `b1ccf0e9` |
-| `tests/docs/25-generics.loft` | 2026-10-01 | `497b1e491` |
+| `tests/docs/25-generics.loft` | 2026-10-01 | `a80e26737` |
 | `tests/docs/26-closures.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/27-coroutines.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/28-tuples.loft` | 2026-10-01 | `0c1e2c840` |

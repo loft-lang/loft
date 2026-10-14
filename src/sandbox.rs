@@ -233,7 +233,7 @@ impl SandboxConfig {
 /// to prevent.
 #[must_use]
 pub fn path_selector_matches(pat: &str, file: &str) -> bool {
-    let file = crate::portable_path::portable_str(file);
+    let file = crate::file_access::portable_str(file);
     if glob_matches(pat.as_bytes(), file.as_bytes()) {
         return true;
     }
@@ -247,12 +247,12 @@ pub fn path_selector_matches(pat: &str, file: &str) -> bool {
 /// machine-specific policy nobody can commit.
 #[must_use]
 pub fn suggested_path_selector(file: &str) -> String {
-    let file = crate::portable_path::portable_str(file);
-    let mut segs = file.rsplit('/');
+    let path = crate::file_access::PathText::host(file);
+    let mut segs = path.parts().iter().rev().map(String::as_str);
     match (segs.next(), segs.next()) {
         (Some(base), Some(dir)) if !dir.is_empty() => format!("{dir}/{base}"),
         (Some(base), _) => base.to_string(),
-        _ => file,
+        _ => file.to_string(),
     }
 }
 
@@ -551,8 +551,19 @@ pub enum CapViolation {
 #[must_use]
 pub fn def_library(data: &Data, def_nr: u32) -> Option<String> {
     let def = data.def(def_nr);
-    let file = &*def.position().file;
-    let base = std::path::Path::new(file).file_stem()?.to_str()?;
+    // A compiler OPERATOR with no capability gate is the language core, wherever the stdlib
+    // happens to declare it.  `02_files.loft` declares the vector, coroutine, fn-ref and
+    // constant operators beside the file ones, so `v.reverse()`, a `for` over a vector
+    // constant and a generator were "library `files`" and refused in a sandbox unless that
+    // library — and with it every file operation — was allowed.  The file operators carry
+    // their `fs#…` gate and stay gated by it.
+    if def.name().starts_with("Op") && def.cap().is_empty() && def.source == crate::data::STD_SOURCE
+    {
+        return Some("code".to_string());
+    }
+    let file = def.position().file;
+    let stem = crate::file_access::file_stem(file.as_str())?;
+    let base = stem.as_str();
     // Strip a leading `\d+_` (stdlib module naming: `01_code` -> `code`).
     let name = match base.find('_') {
         Some(i) if i > 0 && base.as_bytes()[..i].iter().all(u8::is_ascii_digit) => &base[i + 1..],
@@ -730,11 +741,11 @@ pub fn reference_position(data: &Data, from: u32, symbol: u32) -> Option<Positio
         }
         match v {
             Value::Call(d, _) if *d == target => {
-                *found = cur.cloned();
+                *found = cur.copied();
                 return;
             }
             Value::FnRef(d, _, _) if *d >= 0 && *d as u32 == target => {
-                *found = cur.cloned();
+                *found = cur.copied();
                 return;
             }
             _ => {}
@@ -764,8 +775,7 @@ pub fn describe_violation(
     let sym_name = display_name(data, symbol);
     let lib = def_library(data, symbol);
     let libhint = lib.as_deref().unwrap_or("<unknown>");
-    let pos =
-        reference_position(data, from, symbol).unwrap_or_else(|| data.def(from).position().clone());
+    let pos = reference_position(data, from, symbol).unwrap_or_else(|| *data.def(from).position());
     let profile_name = sandboxed.get(&from);
     let profile = profile_name.and_then(|n| config.profiles.get(n));
     let allowed_libs = profile.map(|p| p.allow_libs.join(", ")).unwrap_or_default();
@@ -800,6 +810,18 @@ pub fn describe_violation(
         }
     };
     match v {
+        // The sandboxed code's OWN library cannot be allow-listed (#631,
+        // `self_allow_list_violations` refuses that policy), so the grant is the only fix.
+        CapViolation::UngrantedCap { group, .. }
+            if lib.is_some() && lib == def_library(data, from) =>
+        {
+            format!(
+                "{pos}: sandboxed `{from_name}` reaches `{sym_name}`, which needs capability \
+                 `{group}` — not granted.\n  fix: add `{group}` to `allow` (its library \
+                 `{libhint}` holds the sandboxed code and cannot be allow-listed).\n  {}",
+                grants(false)
+            )
+        }
         CapViolation::UngrantedCap { group, .. } => format!(
             "{pos}: sandboxed `{from_name}` reaches `{sym_name}`, which needs capability \
              `{group}` — not granted.\n  fix: add `{group}` to `allow`, or add its \
@@ -822,7 +844,7 @@ pub fn describe_violation(
                  add `{libhint}` to `allow_libs` — a library holding sandboxed code cannot \
                  vet itself, and allow-listing it would disable the raw-write guard and \
                  under-report the data envelope for every helper in it.",
-                suggested_path_selector(&data.def(symbol).position().file)
+                suggested_path_selector(data.def(symbol).position().file.as_str())
             )
         }
         CapViolation::UntaggedSymbol { .. } => format!(
@@ -957,7 +979,7 @@ pub enum TotalityViolation {
 /// terminate the script (a fault the host must never see), and unlike the
 /// arithmetic ops cannot be given a total result.  By stored name so the check
 /// is a set membership over the reachable refs.
-pub(crate) const ABORT_OPS: &[&str] = &["n_assert", "n_panic", "n_log_fatal"];
+pub(crate) const ABORT_OPS: &[&str] = &["n_assert", "n_panic", "n_log_fatal", "n_exit"];
 
 /// The sandboxed defs that `from` calls — the edges of the sandboxed call graph
 /// (trusted callees are not followed; they are total by the host contract).
@@ -1195,7 +1217,7 @@ pub fn admit_totality(
     for def in looped {
         violations.push(TotalityViolation::UnboundedLoop {
             def,
-            position: unbounded_loops[&def].clone(),
+            position: unbounded_loops[&def],
         });
     }
     // 3.2 — recursion cycles.
@@ -1699,7 +1721,7 @@ pub fn raw_write_violations(
         .filter(|(d, _)| sandboxed.contains_key(d))
         .map(|(&def, position)| RawWriteViolation {
             def,
-            position: position.clone(),
+            position: *position,
         })
         .collect();
     out.sort_by_key(|v| v.def);
@@ -1749,7 +1771,7 @@ pub fn field_read_violations(
                 out.push(FieldReadViolation {
                     def,
                     token: token.clone(),
-                    position: position.clone(),
+                    position: *position,
                 });
             }
         }
@@ -1808,7 +1830,7 @@ pub fn field_update_violations(
                         def,
                         field: field.clone(),
                         token: token.clone(),
-                        position: position.clone(),
+                        position: *position,
                     });
                 }
             }
@@ -1868,7 +1890,7 @@ pub fn field_append_violations(
                         def,
                         field: field.clone(),
                         token: token.clone(),
-                        position: position.clone(),
+                        position: *position,
                     });
                 }
             }
@@ -1923,7 +1945,7 @@ pub fn param_lock_violations(
                 out.push(ParamLockViolation {
                     def,
                     token: token.clone(),
-                    position: position.clone(),
+                    position: *position,
                 });
             }
         }

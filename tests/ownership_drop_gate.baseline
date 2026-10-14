@@ -1,5 +1,6 @@
 # ownership_drop_gate — the interpreter cells that are NOT clean, measured on the tree that
-# committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.
+# committed this file, with the lease refusals off: `cell KIND,KIND`.  Every line is a cell the
+# lease rules REFUSE at compile time; a cell they permit is never listed.
 # Regenerate only after reading the diff: LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
 c_callproj_annot DOUBLE,EARLY
 c_callproj_arm DOUBLE,EARLY

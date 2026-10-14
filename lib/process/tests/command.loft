@@ -69,11 +69,25 @@ fn test_lists() {
   refused("rm {args(d)}", "[\"rm\",\"ok\"]", "a listed value starting with '-'");
 }
 
+// The cast spelling, `("…" as Command)`, takes the same hook as the declaration: a hole
+// stays one word, a `-` value is refused, a null hole drops its word — never a text built
+// first and parsed as a record (@PLN179 finding 016, which held once and was re-measured
+// closed; this is what remembers it).
+fn test_the_cast_spelling_takes_the_hook() {
+  w = "a b";
+  ok(("printf %s|{w}|" as Command), "[\"printf\",\"%s|a b|\"]", "cast: a hole with spaces is one word");
+  o = "-x";
+  refused(("printf {o}" as Command), "[\"printf\"]", "cast: a - value is refused");
+  n: text? = null;
+  ok(("printf a {n} b" as Command), "[\"printf\",\"a\",\"b\"]", "cast: a null hole drops its word");
+}
+
 fn main() {
   test_words_and_holes();
   test_quoted_spans();
   test_null_holes();
   test_options_are_syntax();
   test_lists();
+  test_the_cast_spelling_takes_the_hook();
   println("ok");
 }

@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1872, `@FR-G-Mono` / `@FR-F-Ret` — a generic instance's result answers as its concrete
+// twin's does, read inline or bound, whatever its body hands back.
+//
+// A recursive instance returns a JOIN: the argument on one arm, a fresh result on the other.
+// Read straight off the call (`pick(1, a, b).x`), the record half left the fresh result to
+// nobody, one record per call; the call is now lifted as its twin's is, and the bind is an
+// `OpBindOrCopy` against the argument, so the borrow arm costs a copy and not the argument.
+// The vector half was silent: the instance handed the caller's own vector up on its borrow
+// arm and the lift freed it — in a loop `w` came back empty and the sum wrong.  The returned
+// vector is now always a copy (`(F-Ret)`: a returned whole heap value is fresh), with one
+// return source, as the twin's buffer gives it.
+//
+// Every value is hand-computed: `pick(n, a, b)` is `a` for an even `n` and `b` for an odd one.
+//
+// @falsified-at: 89da26e59 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1872-a-generic-instance-answers-as-its-twin-when-read-inline.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — the vector loop answers a short sum with `w` emptied, on both backends.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree; the record half's leak is
+//   the exit check's (`kt=96 S`), which the file's `main` run reports on the control.
+
+struct S { x: integer }
+struct E { k: integer, v: integer }
+
+fn pick<T>(n: integer, a: T, b: T) -> T { if n == 0 { a } else { pick(n - 1, b, a) } }
+fn id<T>(a: T) -> T { a }
+fn sel<T>(n: integer, a: T, b: T) -> T { if n == 0 { a } else { b } }
+fn wrap<T>(a: T) -> T { y: T = a; y }
+fn outer<T>(n: integer, a: T, b: T) -> T { pick(n + 1, a, b) }
+fn twin(n: integer, a: S, b: S) -> S { if n == 0 { a } else { twin(n - 1, b, a) } }
+
+fn test_a_record_read_inline() {
+  a = S { x: 1 };
+  b = S { x: 9 };
+  assert(pick(0, a, b).x == 1 && pick(1, a, b).x == 9 && pick(2, a, b).x == 1, "pick inline");
+  assert(twin(1, a, b).x == 9, "the twin {twin(1, a, b).x}");
+  s = 0;
+  for i in 0..6 { s += pick(i % 3, a, b).x; }
+  assert(s == 22 && a.x == 1 && b.x == 9, "loop {s}, want 22; args {a.x} {b.x}");
+}
+
+fn test_a_record_bound_and_written() {
+  a = S { x: 1 };
+  b = S { x: 9 };
+  r = pick(0, a, b);
+  r.x = 50;
+  q = pick(1, a, b);
+  q.x = 60;
+  assert(r.x == 50 && q.x == 60 && a.x == 1 && b.x == 9, "a written result is the caller's own: {a.x} {b.x}");
+}
+
+fn test_the_other_generic_shapes() {
+  a = S { x: 1 };
+  b = S { x: 9 };
+  q = S { x: 5 };
+  id(q).x = 99;
+  assert(q.x == 5 && id(q).x == 5, "a write through an inline result is not the argument's: {q.x}");
+  assert(sel(1, a, b).x + sel(0, a, b).x == 10, "sel");
+  assert(wrap(a).x == 1, "wrap");
+  assert(outer(0, a, b).x + outer(1, a, b).x == 10, "a generic calling the recursive one");
+}
+
+fn test_a_vector_join_keeps_the_argument() {
+  w = [7, 8, 9];
+  s = 0;
+  for i in 0..40 { s += pick(i % 2, w, [1]).len(); }
+  assert(s == 80 && w.len() == 3, "vector loop {s}, want 80; w.len() {w.len()}, want 3");
+  assert(pick(1, w, [1, 2]).len() * 10 + pick(0, w, [1]).len() == 23, "vector inline");
+  r = pick(0, w, [1]);
+  r += [10];
+  assert(r.len() == 4 && w.len() == 3, "the result is a copy: {r.len()} {w.len()}");
+}
+
+fn test_text_and_keyed() {
+  assert(pick(1, "abc", "de").len() + pick(0, "abc", "de").len() == 5, "text");
+  h1: hash<E[k]> = [E { k: 1, v: 10 }, E { k: 2, v: 20 }];
+  h2: hash<E[k]> = [E { k: 3, v: 30 }];
+  assert(pick(1, h1, h2).len() * 10 + pick(0, h1, h2).len() == 12, "keyed");
+  assert(h1.len() == 2 && h2.len() == 1, "keyed args {h1.len()} {h2.len()}");
+}
+
+fn main() {
+  test_a_record_read_inline();
+  test_a_record_bound_and_written();
+  test_the_other_generic_shapes();
+  test_a_vector_join_keeps_the_argument();
+  test_text_and_keyed();
+}

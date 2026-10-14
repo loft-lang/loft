@@ -44,9 +44,9 @@ layout contract (which pins field/enum identity + order, not byte encoding).
 - **record** — a value of type τ occupies `size(τ)` contiguous bytes; a field/element sits at a
   fixed byte offset within it. `H[r ⊕ n]` (heap.md) reads at `r.pos + n`.
 - **`DbRef`** = `(store_nr: u16, rec: u32, pos: u32)` (`src/keys.rs`) — the universal pointer. A
-  STORED reference to another record is a **4-byte record pointer** (the `rec` into the target
-  store); the full 12-byte `DbRef` is stored only where a value must round-trip its whole pointer
-  (the closure half of a fn-ref field, `Parts::DbRef`).
+  STORED `reference<T>` field holds the whole 12-byte `DbRef` (`Parts::DbRef`), because the record
+  it names may live in any store; a COLLECTION field is a **4-byte record pointer** into its own
+  store.  An embedded struct field is no pointer at all: its record sits inline (L-Struct).
 - **null is in-band** — a nullable field uses a SENTINEL inside its own bytes (`i64::MIN` for
   integer, `nullref` for a reference), not an extra byte. Nullability is therefore NOT a layout
   fact (rule `L-Null`).
@@ -85,7 +85,7 @@ store written by one build readable by another *of the same layout*.
 ```
   (L-Scalar)  width(boolean)=1  width(character)=4  width(single)=4
               width(float)=8    width(integer)=8    width(text)=4 (a Str handle)
-              align(τ) = its natural alignment (1,4,4,4,8,8,4 respectively).
+              align(τ) = its natural alignment (1,4,4,8,8,4 respectively).
   (L-Narrow)  a range-annotated integer stores in the SMALLEST width that holds its range (#399):
               u8 → 1 B, u16/i16 → 2 B, i32/u32 → 4 B, else 8 B.  The narrowing is a WIDTH change,
               so it moves offsets and record size — a layout fact the golden pins.
@@ -100,14 +100,14 @@ store written by one build readable by another *of the same layout*.
               element, a parameter and a return of a DECLARED narrow range without `?` all give
               the type's DEFAULT for a value that does not fit — zero where the range holds it,
               the bound nearest zero otherwise — never a null, because such a type has no null to
-              hold (`DESIGN_DECISIONS.md` C127, `(N-Reserve)`, `(E-Uncomp-NN)`).  A code left
+              hold (`DESIGN_DECISIONS.md` @C127, `(N-Reserve)`, `(E-Uncomp-NN)`).  A code left
               spare inside the storage width is not a place to put one: whether a declared range
               leaves one is arithmetic the author did not do, and two ranges one value apart
               would otherwise answer differently.  The plain `integer` and `i32` TEMPLATES are
-              EXEMPT and keep C85's sentinel — a pragmatic exemption and not a principled one:
+              EXEMPT and keep @C85's sentinel — a pragmatic exemption and not a principled one:
               the rule reaches them, and reserving `i32::MIN` is allowed because it costs one
               value in 2^32 and buys the only narrow type whose overflow is detectable
-              ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
+              ([@C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
               § Decision).  `u32` reserves a code too and takes the DEFAULT, so the exemption
               is not a line to extend.  Where the language can
               demand the author say what an unfitting value becomes it refuses instead; where it
@@ -173,7 +173,7 @@ where the field is NULLABLE, and reading it as null regardless reported a not-nu
 Three more readers joined the count, all of them the same sentence again and all
 found by ONE probe of an `i8` holding `-1`.  `Parser::get_val` and `Parser::set_field_check` are
 the field's read and write: a non-null type that kept a spare top code decoded every code as a
-value, so C85's overflow read back as `64535` at two bytes, and at ONE byte the write lost the
+value, so @C85's overflow read back as `64535` at two bytes, and at ONE byte the write lost the
 code entirely (`i64::MIN as i32` is `0`, a value inside the declared range) — loft#1615.  The
 `min` operand of all twelve narrow ops was `const i16` while a minimum is an `i32`, so a bias
 outside i16 was truncated at EMISSION and `limit(40000, 40100) size(1)` read one wrong number for
@@ -193,43 +193,72 @@ The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
 ### References, collections, and child records
 
 ```
-  (L-Ref)     a stored reference / collection field (Reference, Vector, Hash, Sorted, Ordered,
-              Index) is a 4-byte RECORD POINTER into the target store.  A ChildRec is a 4-byte
-              co-located rec id.  The full 12-byte DbRef is stored only for Parts::DbRef (a
-              fn-ref field's closure half).  A collection's ELEMENT stride is width(element).
+  (L-Ref)     a stored COLLECTION field (Vector, Hash, Sorted, Ordered, Index, Spatial, Trie)
+              is a 4-byte RECORD POINTER into its own store.  A stored `reference<T>` field is
+              the full 12-byte DbRef (Parts::DbRef, alignment 4): it may name a record in any
+              store.  A ChildRec is a 4-byte co-located rec id; a fn-ref field is a 4-byte
+              function id followed by the ChildRec of its closure record.  An embedded struct
+              field is inline (L-Struct), not a pointer.  A collection's ELEMENT stride is
+              width(element), which for a record element is its size (L-Align: a multiple of
+              its alignment).
 ```
 
-**In words.** A field that points at other records holds a small (4-byte) pointer, not the data
-inline. The data lives in the target store; the collection's per-element stride is the element's
+**In words.** A collection field holds a small (4-byte) pointer, not the data inline, and a
+`reference<T>` field holds a whole pointer because its target may be in another store. The data lives in the target store; the collection's per-element stride is the element's
 own width — so a change to an element's width (e.g. the nested-vector stride, #477) is a layout
 change even though the field pointer is unchanged.
 
 ### Structs, enums, tuples
 
 ```
+  (L-Align)   every scalar a store holds sits at an offset its alignment divides.  align(τ) is a
+              scalar's width (1, 2, 4 or 8; a text handle and a record pointer 4), a record's
+              is the largest of its fields', and size(τ) is a multiple of align(τ) — so the
+              element after it in a collection, and the field after it when it is inlined,
+              start aligned too.  A record starts on an 8-byte word, so an aligned offset is an
+              aligned address.  The compiler checks the rule once, over every finished layout
+              (`Stores::validate_all_layouts`); no access re-tests it at run time, and the
+              store's reads and writes claim no alignment, so a defect cannot become UB.  The
+              bytes of a FOREIGN store (a producer's buffer), the interpreter's bytecode stream
+              and its stack frames (laid out by the frame allocator) are outside the rule: all
+              three are read unaligned.  (@C138)
   (L-Struct)  a struct record packs its fields by DESCENDING alignment; off(τ, fᵢ) is the packed
-              position; size(τ) is the packed total.  A field access is H[r ⊕ off(τ, f)].
-  (L-Enum)    an enum is a 1-byte discriminant; a data-carrying variant (EnumValue) is
-              [tag byte] followed by the variant's fields (L-Struct packing).  Variants are
+              position; size(τ) is the packed total rounded up to align(τ) (L-Align).  A field
+              access is H[r ⊕ off(τ, f)].
+  (L-Enum)    an enum is a 1-byte discriminant; a data-carrying variant (EnumValue) is a
+              record whose first 8-byte word holds the tag at offset 0; its fields fill the
+              rest of that word and then follow it, each at an offset its alignment divides
+              (`B { s: u8 }` puts `s` at 7 and is 8 bytes; calc::calculate_positions).  Variants are
               numbered from 1: 0 is the absent value (L-Null) and 255 is the null a write
               spells, so an enum holds at most 254 variants and the parser refuses the 255th.
-  (L-Tuple)   a tuple (τ₀,…,τₙ) is a synthetic __tuple<…> struct.  Element offsets are
-              natural-alignment packing — off = the next position ≥ the element's alignment —
-              and a tuple has TWO layout views that must compute the SAME offsets: the STACK
-              view (data::element_stack_offsets / element_stack_size) and the STORAGE view
-              (the synthetic struct, calc::calculate_positions_with_groups, read back by
-              data::stored_tuple_offsets).  Their agreement is part of the rule, not an
-              implementation detail.
+  (L-Tuple)   a tuple (τ₀,…,τₙ) is a record (tuples.md T-Record), stored as a synthetic
+              __tuple<…> struct packed by L-Struct — largest alignment first, the size rounded
+              up to the largest member alignment (L-Align) — so the ORDER of its members in the
+              bytes is the record's, not the written one.  That order has no effect on a
+              member's name (`0` … `n` stay the written positions) or on `t.i` (@C139).  A
+              tuple has no text form: formatting one is refused (TUPLES.md § Non-goals).  That placement is computed
+              by calc::calculate_positions_with_groups (read back by data::stored_tuple_offsets)
+              and restated by data::element_storage_offsets / element_storage_size for the par
+              paths that copy a stored row without the type table; the two must agree.  The
+              STACK form (data::element_stack_offsets / element_stack_size) is a different
+              layout — one 8-byte-stepped slot per member, a text member a 16-byte Str — and
+              is converted member by member at every boundary between the two, never read as
+              stored bytes.
 ```
 
-**In words.** Fields are packed largest-alignment first, so the record has no wasted padding and
-every field lands on its natural boundary. Enums carry a 1-byte tag; a variant with data is that
-tag plus the variant's own fields. A tuple is stored as a hidden struct, packed the same way.
+**In words.** Every field lands on its natural boundary. A struct packs its fields largest
+alignment first, so padding only appears at the end, where the size is rounded up to the
+record's alignment: `struct { n: integer, b: boolean }` is 9 bytes of fields and 16 bytes of
+record. That rounding is what keeps element 1 of a `vector` aligned. Enums carry a 1-byte tag; a
+variant with data is that tag plus the variant's own fields. A tuple is stored as a hidden
+struct packed like any other, so `(u8, u32, u16)` places its `u32` first: members `1`, `2` and
+`0` at 0, 4 and 6, 8 bytes in all.  Member `0` is still `t.0` and still prints first.
 
 ⚠ A tuple lives in two places — on the stack and in a record — and the two are computed by
-different code. That is why `L-Tuple` names both and requires them to agree: @PLN114 split the
-one ambiguous `element_offsets` into the two named views precisely so a site has to declare which
-it means, and a site that picks the wrong one reads a plausible offset from the wrong model.
+different code. @PLN114 split the one ambiguous `element_offsets` into the two named views so a
+site has to declare which it means: a site that picks the wrong one reads a plausible offset
+from the wrong model. `tests/layout_alignment.rs` holds the restated storage view to the
+struct's own layout.
 
 ### Nullability is a sentinel, not a layout
 
@@ -351,7 +380,7 @@ two writers spell it differently: a never-written slot keeps the zero handle a f
 starts with, while writing `null` — from a literal, an assignment, a call, or any native text
 path — allocates a record holding the sentinel bytes.  Neither writer is wrong; what is wrong is
 a reader that knows only one.  Measured (loft#1270): `Stores::is_null` tested the handle alone
-and is the predicate deciding whether a struct field is OMITTED, so `NT { a: 1, t: null }`
+and decided whether a struct field was OMITTED (a null field was left out until @C143), so `NT { a: 1, t: null }`
 serialised `{"a":1,"t":null}` while the same value parsed back serialised `{"a":1}` — one value,
 two documents, and a document that is hashed, signed or diffed changed for a value that did not.
 The render arm applied the content test only under `json`/`loft`, so the plain form put the
@@ -387,11 +416,17 @@ remote store's layout identity (its `.dschema` / `layout_algo_hash`) before walk
 it silently misreads data fetched over the network. `schema_sidecar::check_beside` / `classify` is
 that gate, now applied across a network boundary.
 
+A layout change (`(L-Align)` was one) changes the identity, so a store written by an older
+build is refused by this rule and rebuilt from its source; it is never read under the new
+offsets. A binary file written with `f#write` is not a store: its records carry the WIRE width
+— the sum of the field widths, with no padding — so its format does not follow the store
+layout, and `f#read` infers a record count from the same width.
+
 ---
 
 ## Deviations
 
-**OPEN: 0.**  Every entry is closed; the record — `D-layout-1` to `-11` — is in
+**OPEN: 0.**  The closed record — `D-layout-1` to `-12` — is in
 [layout-history.md](layout-history.md).
 
 ## Conformance
@@ -405,6 +440,11 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Align`** — `tests/layout_alignment.rs` asks `Stores::alignment_violations` of every
+  finished type (the standard library and a corpus of the spellings that reach the layout
+  differently), compares the restated tuple storage view with the `__tuple<…>` record's own
+  layout, and pins hand-computed sizes; `Store::read` / `write` panic on a misaligned offset
+  in every build, so the whole suite is the falsifier of the store half.
 - **`L-Tuple`, the two views AGREEING under either spelling** — a tuple type written both with a
   type annotation and left inferred, in one program, resolves to one def with ONE layout, and a
   read through either spelling answers the same value

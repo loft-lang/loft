@@ -122,6 +122,10 @@ export CARGO_INCREMENTAL := 0
 endif
 endif
 
+# @PLN184 D1 — every Python script a recipe runs decodes files as UTF-8, as it does on
+# Linux; a Windows Python defaults to cp1252 and misreads any non-ASCII byte.
+export PYTHONUTF8 := 1
+
 # macOS: cc-rs invocations (notably `ring`'s build script) need the SDK path
 # on -isysroot.  When `xcode-select -p` points at the bare Command Line Tools,
 # plain `cc` does not auto-detect it and the build fails with
@@ -168,7 +172,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -771,8 +775,8 @@ gallery:
 	done; \
 	if [ $$missing -gt 0 ]; then exit 1; fi
 	@echo "  [5/8] checking wasm/js glue are from the same build ..."
-	@js_mtime=$$(stat -c %Y doc/pkg/loft.js); \
-	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm); \
+	@js_mtime=$$(stat -c %Y doc/pkg/loft.js 2>/dev/null || stat -f %m doc/pkg/loft.js); \
+	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm 2>/dev/null || stat -f %m doc/pkg/loft_bg.wasm); \
 	delta=$$((wasm_mtime - js_mtime)); \
 	delta=$${delta#-}; \
 	if [ $$delta -gt 120 ]; then \
@@ -912,13 +916,11 @@ hooks:
 # that CI runs cross-backend.  See doc/claude/plans/92-feature-catalogue/.
 FEATURES_REPO ?= loft-lang/features
 
-# CAVEAT: the probe reads target/wasm32-unknown-unknown/release/libloft.rlib, and it
-# must be the `--html` shape (`--no-default-features --features random`).  `make wasm`
-# overwrites that rlib with the wasm-bindgen variant, against which the probe records
-# store_load_url and store_load_url_trusted as unavailable in the BROWSER and commits
-# that as derived truth.  So after a bundle rebuild the order is: `make wasm`, then
-# `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features
-# --features random`, then this.
+# The probe reads the `--html` shape's OWN rlib, target/loft/html/wasm32-unknown-unknown/
+# release — the one `loft --html` links, in the directory `make wasm`'s wasm-bindgen build
+# cannot overwrite.  Build it first: `loft cache warm`, or `cargo build --release --target
+# wasm32-unknown-unknown --lib --no-default-features --features random --target-dir
+# target/loft/html`.
 surface-gen:  ## Regenerate index/target_surface.json (which builtins exist per target)
 	@python3 scripts/gen_target_surface.py
 
@@ -934,13 +936,19 @@ optional-ratchet-pin:  ## Re-pin the ratchet after a walk that lowered it
 guards-fetch:  ## @PLN175 — refresh index/library_guards.json: the @C<n> guards in each library's tests/ at origin/main (network; gh)
 	@python3 scripts/fetch-library-guards.py
 
+decisions:  ## @PLN175 — the design decisions that still owe work (DESIGN_DECISIONS_WORKLIST.tsv; `make index` first)
+	@python3 scripts/decisions.py list --open
+
+decisions-check:  ## @PLN175 — the decision worklist against the register and the tree (the index_hygiene gate)
+	@python3 scripts/decisions.py check
+
 guards-check:  ## @PLN175 — fail when a library guard was added or removed since index/library_guards.json (network; gh; nightly in lib-main-health)
 	@python3 scripts/fetch-library-guards.py --check
 
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
 	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \
 	    --json number,title,labels,body \
-	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), body})' \
+	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), group: (.labels|map(.name)|map(select(startswith("group:"))|sub("^group:";""))|join(",")), keys: ([.body|scan("<!-- keys: ([^>]*?) -->")]|.[0][0] // ""|split(" ")|map(select(length>0))), body})' \
 	  > index/features.json
 	@echo "index/features.json: $$(jq length index/features.json) issues"
 
@@ -965,6 +973,15 @@ features-check: features-gen  ## Drift guard: fail if the committed shadow is st
 	    exit 1; \
 	fi
 	@echo "features shadow in sync with index/features.json."
+	@# @PLN183 — the overview groups and the lookup keys the issues carry: every entry in
+	@# exactly one `group:` (a `group:` label on its issue), and no key claimed by two entries.
+	@bad=$$(jq -r '.[] | select((.group // "") == "" or (.group|test(","))) | "  #\(.number) \(.title): group \"\(.group // "")\""' index/features.json); \
+	dup=$$(jq -r '[.[] | .number as $$n | (.keys // [])[] | {k: ., n: $$n}] | group_by(.k) | map(select(length > 1)) | .[] | "  key \(.[0].k): #\(map(.n|tostring)|join(", #"))"' index/features.json); \
+	if [ -n "$$bad$$dup" ]; then \
+	    echo "ERROR: an entry needs exactly one group: label, and a key one owner (edit the issues, then make features-fetch):"; \
+	    [ -n "$$bad" ] && echo "$$bad"; [ -n "$$dup" ] && echo "$$dup"; \
+	    exit 1; \
+	fi
 
 examples-index:  ## Regenerate examples-index.tsv (worked-example tag -> file:line -> blob link)
 	@bash scripts/check_doc_drift.sh write-examples-index
@@ -1089,6 +1106,11 @@ release-checklist:  ## Per-release checklist: what CI proved, and what is left f
 # how long files are and whether their sections are comparable subjects (file-sizes),
 # and whether a contract doc has absorbed its own history instead of splitting it into
 # an `-history.md` companion (doc_history_report).  A REPORT, never a gate.
+# @PLN184 E2 — where Windows parity stands: every census count and every exemption, one page.
+# A REPORT (`--check` exits 1 while a count is open); the release checklist reads it.
+windows-parity:
+	python3 scripts/windows_parity.py $(ARGS)
+
 file-sizes:  ## Are doc/source files too long to use, and do they hold one subject?
 	@python3 scripts/file-sizes.py $(ARGS) || true
 	@echo
@@ -2038,7 +2060,7 @@ check-rlib:  ## One-second pre-flight: is target/release/libloft.rlib present an
 	@fail=0; \
 	for spec in \
 	    "target/release/libloft.rlib|cargo build --release --lib|native (--native, cdylib tests)" \
-	    "target/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random|browser (--html)" \
+	    "target/loft/html/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html|browser (--html)" \
 	    "target/wasm32-wasip2/release/libloft.rlib|cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random|wasip2 (wasm library suite)"; do \
 	    rlib=$${spec%%|*}; rest=$${spec#*|}; cure=$${rest%%|*}; what=$${rest#*|}; \
 	    dir=$$(dirname "$$(dirname "$$rlib")"); \
@@ -2155,6 +2177,10 @@ ci-guard:
 # enough to see whether a red is one defect or several, which is the question the count is
 # actually being asked.
 CI_MAX_FAIL ?= 5
+# The starvation victims (.config/nextest.toml `[profile.ci-victims]`): the gate's main pass runs
+# without them, the storm-makers wide, and a second pass runs them alone once every storm has
+# ended.  Read from the profile, so the passes, nextest and ci.yml select one set.
+CI_VICTIMS := $(shell python3 scripts/ci_test_filter.py victims)
 
 # THE LOCAL GATE IS CANCELLED WHEN IT RUNS LONG, and that is the point.  A gate that grows is
 # a gate that stops being run: measured 2026-09-12, a local `make ci` on macOS passed 45
@@ -2364,7 +2390,7 @@ ci: ci-guard
 	cargo build --release --lib >> result.txt 2>&1 && \
 	cargo build --no-default-features --target-dir target/nodefault >> result.txt 2>&1 && \
 	cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random >> result.txt 2>&1 && \
-	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random >> result.txt 2>&1 && \
+	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html >> result.txt 2>&1 && \
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
@@ -2376,8 +2402,11 @@ ci: ci-guard
 	  case "$$sel" in \
 	    NONE) rc=0 ;; \
 	    FILTER) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first --no-tests=pass \
-	              -E "$$(cat target/gate-ledger/filter)" >> result.txt 2>&1; rc=$$? ;; \
-	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1; rc=$$? ;; \
+	              -E "($$(cat target/gate-ledger/filter)) - ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$?; \
+	            cargo nextest run --profile ci-victims --max-fail $(CI_MAX_FAIL) --no-tests=pass \
+	              -E "($$(cat target/gate-ledger/filter)) & ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$(( rc + $$? )) ;; \
+	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first -E "not ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$?; \
+	       cargo nextest run --profile ci-victims --max-fail $(CI_MAX_FAIL) -E "$(CI_VICTIMS)" >> result.txt 2>&1; rc=$$(( rc + $$? )) ;; \
 	  esac; \
 	  python3 scripts/gate_ledger.py record >> result.txt 2>&1; \
 	  [ $$rc -eq 0 ]; } && \
@@ -2804,6 +2833,10 @@ linkcheck-external:
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
 
+.PHONY: rule-worklist
+rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
+	@python3 scripts/rule_tags.py worklist $(ARGS)
+
 .PHONY: script-census
 script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)
 	@cargo build --release --bin loft -q
@@ -2828,9 +2861,14 @@ kernel-ratio:  ## every kernel against the loft body it stands in for, both back
 	@echo "== --native-release"; LOFT_TIMEOUT=600 target/release/loft --native-release scripts/kernel_ratio
 
 .PHONY: script-twin
-script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]
-	@[ -n "$(ORIG)" ] && [ -n "$(PORT)" ] || { echo "usage: make script-twin ORIG=<script> PORT=<script> [ARGS=…] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]"; exit 2; }
-	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twin.sh $(if $(FILES),--files $(FILES)) $(if $(BY_CONTENT),--by-content) --runs $(or $(RUNS),1) $(ORIG) $(PORT) -- $(ARGS)
+script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [REPLAY=<recording dir>] [RUNS=n]
+	@[ -n "$(ORIG)" ] && [ -n "$(PORT)" ] || { echo "usage: make script-twin ORIG=<script> PORT=<script> [ARGS=…] [FILES=<dir>] [BY_CONTENT=1] [REPLAY=<dir>] [RUNS=n]"; exit 2; }
+	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twin.sh $(if $(FILES),--files $(FILES)) $(if $(BY_CONTENT),--by-content) $(if $(REPLAY),--replay $(REPLAY)) --runs $(or $(RUNS),1) $(ORIG) $(PORT) -- $(ARGS)
+
+.PHONY: script-twins
+script-twins:  ## @PLN179 every declared twin case (tests/comparisons/scripts/*/cases.tsv), both backends; ARGS="--list" names them, "--only <port>", "--slow"
+	@cargo build --release --bin loft -q
+	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twins.sh $(ARGS)
 
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly

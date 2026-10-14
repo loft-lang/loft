@@ -1,2 +1,2 @@
-pub struct Inner { val: integer }
-pub struct Box { items: vector<Inner> }
+pub struct Inner { pub val: integer }
+pub struct Box { pub items: vector<Inner> }

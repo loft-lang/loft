@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `match Q.Qb { … }` where `Q` is a STRUCT with no variant `Qb`: the parser spun in
+// `parse_match_inner`'s arm skip (99 % of a perf sample) until the watchdog stopped it — a
+// typo-sized mistake that froze the compiler.  The skip takes a `{ … }` group whole now
+// (`skip_braced`), and the program is refused instead.
+// @falsified-at: 64f4ff30e — interpret exit 134 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 134 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, n
+// @falsified-by: tests/falsified/a-match-on-a-struct-name-cannot-hang-the-parser.patch — interpret exit 134 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 134 -> 
+//   CHANNEL: exit and expectations — the control never finishes (loft's watchdog stops the
+//     parser, exit 134); this tree refuses the program with the expected errors.
+//   ARMED: nothing.
+//   WITNESS: on the control, "[timeout] hard-kill … phase=parse" with no diagnostic.
+//   HOLDS: a refusal, never a hang, on both backends.
+// @EXPECT_ERROR: Expect token {
+// @EXPECT_ERROR: Expect token }
+
+struct Q { x: integer }
+
+fn main() {
+  v = match Q.Qb { Qa => 1, Qb => 2 };
+  println("{v}");
+}

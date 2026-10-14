@@ -1,6 +1,6 @@
 // @I116 — Library placement — in-process, a worker, or another machine
 
-//! The Linux transport for @PLN119 placement: the shared mapping, the
+//! The Unix transport for @PLN119 placement: the shared mapping, the
 //! spin-then-sleep handshake, the frame codec, and the two ends of a call.
 //!
 //! See the parent module for why the handshake spins before it sleeps and what
@@ -156,7 +156,7 @@ impl Fault {
             crate::host::LoftError::Runtime(err) => Fault {
                 message: err.message.clone(),
                 label: err.kind.label().to_string(),
-                position: err.position.clone(),
+                position: err.position,
                 call_chain: err.call_chain.clone(),
             },
             other => Fault::from(other.to_string()),
@@ -191,11 +191,13 @@ unsafe impl Send for Wire {}
 
 impl Drop for Wire {
     fn drop(&mut self) {
+        // SAFETY: `base` is the mapping `map` made, `WIRE_BYTES` long, and nothing reads it
+        // after the drop.
         unsafe {
-            libc::munmap(self.base.cast::<libc::c_void>(), WIRE_BYTES);
+            crate::platform::unmap_shared(self.base, WIRE_BYTES);
         }
         if self.owner {
-            let _ = std::fs::remove_file(&self.path);
+            let _ = crate::file_access::remove_file(&self.path);
         }
     }
 }
@@ -207,12 +209,14 @@ impl Wire {
     /// # Errors
     /// Any failure to create, size, or map the file.
     pub fn create(path: &Path) -> io::Result<Wire> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true),
+        )?;
         file.set_len(WIRE_BYTES as u64)?;
         let w = Wire::map(&file, path, true)?;
         unsafe {
@@ -231,10 +235,10 @@ impl Wire {
     /// A missing or unmappable file, a wrong magic (not our file), or a
     /// protocol mismatch (a stale worker executable against a newer caller).
     pub fn attach(path: &Path) -> io::Result<Wire> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)?;
+        let file = crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().read(true).write(true),
+        )?;
         let w = Wire::map(&file, path, false)?;
         if w.get_u32(OFF_MAGIC) != MAGIC {
             return Err(io::Error::new(
@@ -256,22 +260,9 @@ impl Wire {
     }
 
     fn map(file: &std::fs::File, path: &Path, owner: bool) -> io::Result<Wire> {
-        use std::os::fd::AsRawFd;
-        let base = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                WIRE_BYTES,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                file.as_raw_fd(),
-                0,
-            )
-        };
-        if base == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
+        let base = crate::platform::map_shared_file(file, WIRE_BYTES)?;
         Ok(Wire {
-            base: base.cast::<u8>(),
+            base,
             path: path.to_path_buf(),
             owner,
         })
@@ -402,8 +393,9 @@ impl Wire {
     }
 
     /// The worker's wait for the next call. Untimed: a worker has its own way of
-    /// noticing the caller is gone (`PR_SET_PDEATHSIG`), so waking it on a timer
-    /// would burn a wakeup per idle period to learn nothing.
+    /// noticing the caller is gone (`platform::process::die_with_parent`), so waking it on a timer
+    /// would burn a wakeup per idle period to learn nothing.  (Where the platform
+    /// has no shared wait, `platform::shared_word_wait` polls in short steps instead.)
     fn await_request(&self, last: u32) -> u32 {
         self.await_past(OFF_REQ_SEQ, OFF_REQ_SLEEPERS, last, None, || true)
             .expect("an untimed wait never abandons")
@@ -427,38 +419,20 @@ impl Wire {
     }
 }
 
-// ── futex ───────────────────────────────────────────────────────────────────
+// ── wait / wake on the shared word ─────────────────────────────────────────
 //
-// Shared (no `FUTEX_PRIVATE_FLAG`): the word lives in a file mapping that spans
-// two processes, and the private variant hashes on the mm, so the two sides
-// would queue on different keys and every wake would be lost.
+// One contract on every platform (`platform::shared_word_wait`): `futex_wait` returns when
+// the word may differ from `expect`, when `limit` passes, or spuriously — every caller
+// re-reads the word in a loop (`await_past`) — and `futex_wake` wakes one waiter.  The word
+// lives in a file mapping shared by two processes, so the platform uses the SHARED form of
+// its wait, or polls where it has none.
 
 fn futex_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::time::Duration>) {
-    let ts = limit.map(|d| libc::timespec {
-        tv_sec: d.as_secs() as libc::time_t,
-        tv_nsec: libc::c_long::from(d.subsec_nanos()),
-    });
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            std::ptr::from_ref(a),
-            libc::FUTEX_WAIT,
-            expect,
-            ts.as_ref()
-                .map_or(std::ptr::null(), std::ptr::from_ref::<libc::timespec>),
-        );
-    }
+    crate::platform::shared_word_wait(a, expect, limit);
 }
 
 fn futex_wake(a: &std::sync::atomic::AtomicU32) {
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            std::ptr::from_ref(a),
-            libc::FUTEX_WAKE,
-            1i32,
-        );
-    }
+    crate::platform::shared_word_wake(a);
 }
 
 // ── frame codec ─────────────────────────────────────────────────────────────
@@ -584,7 +558,7 @@ impl Frame {
         let (file, line, col) = e
             .position
             .as_ref()
-            .map_or(("", 0u32, 0u32), |p| (&*p.file, p.line, p.pos));
+            .map_or(("", 0u32, 0u32), |p| (p.file.as_str(), p.line, p.pos));
         self.put_str(&e.message)
             && self.put_str(&e.label)
             && self.put_str(file)
@@ -613,7 +587,7 @@ impl Frame {
             // An empty file is "no position known", the same reading
             // `RuntimeError::user_panic` gives it.
             position: (!file.is_empty()).then_some(crate::lexer::Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(&file),
                 line,
                 pos: col,
             }),
@@ -719,8 +693,8 @@ enum Link {
     Local {
         wire: Wire,
         /// Behind a `RefCell` so a call — which holds `&self` — can ask whether
-        /// the child is still running. `try_wait` reaps, which needs `&mut`.
-        child: std::cell::RefCell<std::process::Child>,
+        /// the child is still running: `Running::alive` needs `&mut`.
+        child: std::cell::RefCell<crate::platform::process::Running>,
     },
     /// A server, reachable at an address. Nothing is shared and nothing is
     /// owned: this side did not start it and does not stop it.
@@ -747,8 +721,7 @@ impl Drop for Worker {
                 }
                 // A worker that ignores the shutdown word must not wedge the run.
                 let mut child = child.borrow_mut();
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = child.stop_tree();
             }
             // A remote server outlives its callers by design — closing the
             // socket is the whole goodbye, and killing it would be someone
@@ -796,17 +769,20 @@ impl Worker {
             Some(p) => PathBuf::from(p),
             None => std::env::current_exe()?,
         };
-        let mut command = std::process::Command::new(exe);
-        command
+        use crate::platform::process::{Program, Spawn, Tree};
+        // The worker shares the terminal, as the library would in this process: it
+        // stays in loft's process group (`Tree::Foreground`), and still ends with loft.
+        let mut command = Spawn::new(Program::os(exe))
             .arg("--lib-worker")
             .arg(&path)
             .arg(pkg_dir)
             .arg("--default")
-            .arg(stdlib_dir);
+            .arg(stdlib_dir)
+            .tree(Tree::Foreground);
         if !cwd.as_os_str().is_empty() {
-            command.current_dir(cwd);
+            command = command.cwd(&crate::file_access::PathText::from_os(cwd));
         }
-        let child = command.spawn()?;
+        let child = command.start()?;
 
         let mut w = Worker {
             link: Link::Local {
@@ -915,13 +891,13 @@ impl Worker {
 
     /// Is the worker still there?
     ///
-    /// `try_wait` rather than a signal probe, because a worker that has exited
-    /// but not been reaped is a zombie — still a live pid, answering `kill(0)`
+    /// Asked of the child (`Running::alive`) rather than by a signal probe,
+    /// because a worker that has exited but not been reaped is a zombie — still a live pid, answering `kill(0)`
     /// perfectly happily, and never going to serve another call.
     fn still_running(&self) -> bool {
         match &self.link {
             Link::Local { child, .. } => match child.try_borrow_mut() {
-                Ok(mut c) => matches!(c.try_wait(), Ok(None)),
+                Ok(mut c) => c.alive(),
                 // Borrowed means `Drop` is already tearing this worker down; let
                 // the wait end rather than claim a liveness we cannot check.
                 Err(_) => false,
@@ -1271,11 +1247,9 @@ pub fn serve(wire_path: &Path, pkg_dir: &Path, stdlib_dir: &Path) -> ! {
     // `exit` from any of a dozen places, or be killed outright. Without this a
     // crashed run leaves a worker holding the terminal's stdout, which reads as
     // the run itself having hung.
-    unsafe {
-        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-    }
+    crate::platform::process::die_with_parent();
     // Re-check after arming: if the caller died in the window before the
-    // `prctl`, the signal has already been missed.
+    // watch was armed, its exit has already been missed.
     if unsafe { libc::getppid() } == 1 {
         std::process::exit(0);
     }

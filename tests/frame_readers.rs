@@ -25,9 +25,10 @@
 //! correct without a change — it re-enters the frame and reads through the ordinary ops — so
 //! it is pinned here rather than fixed, to keep a later change from quietly breaking it.
 
+use loft::file_access as fa;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Every local here is named by a `&`, so every one holds its field encoding; `h` is the
 /// unlinked control and keeps the full-width slot.
@@ -47,15 +48,16 @@ fn main() {
 /// Write `PROG` to a scratch file and run `loft debug <file>:<line>` with `cmds` on stdin.
 fn debug_session(dir: &std::path::Path, line: u32, cmds: &str) -> String {
     let prog = dir.join("frame_readers.loft");
-    std::fs::write(&prog, PROG).expect("write the probe");
-    let mut child = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("debug")
-        .arg(format!("{}:{line}", prog.display()))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn loft debug");
+    fa::write(&prog, PROG).expect("write the probe");
+    let mut child =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("debug")
+            .arg(format!("{}:{line}", prog.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn loft debug");
     child
         .stdin
         .as_mut()
@@ -70,7 +72,7 @@ fn debug_session(dir: &std::path::Path, line: u32, cmds: &str) -> String {
 /// running at once cannot write each other's probe.
 fn scratch(who: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_frame_readers_{who}"));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -113,19 +115,20 @@ fn an_edit_of_a_linked_narrow_local_lands_as_typed() {
 fn a_watch_on_a_linked_narrow_local_reports_values() {
     let dir = scratch("watch");
     let prog = dir.join("watch.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "fn main() {\n  b: i8 = -1; q = &b;\n  n = 0;\n  q = 5;\n  n = n + 1;\n  q = -7;\n  println(\"{b} {n}\");\n}\n",
     )
     .expect("write");
-    let mut child = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("debug")
-        .arg(format!("{}:3", prog.display()))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn");
+    let mut child =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("debug")
+            .arg(format!("{}:3", prog.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
     child
         .stdin
         .as_mut()

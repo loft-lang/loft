@@ -136,9 +136,9 @@ impl LocalFileProvider {
     /// `InvalidData` when what is there does not begin with the store signature.
     pub fn open(path: &str) -> std::io::Result<Self> {
         use std::io::Read as _;
-        let mut file = match std::fs::File::open(path) {
+        let mut file = match crate::file_access::open(path) {
             Ok(f) => f,
-            // `std::fs` failing is not "absent" on a browser target — it is the only
+            // A failed open is not "absent" on a browser target — it is the only
             // answer that target can give, so the host filesystem is asked next.
             Err(no_file) => return Self::open_host(path, &no_file),
         };
@@ -1040,7 +1040,7 @@ pub fn find_hash_entry<P: PageProvider>(
     let stride = reader.u32_at(claim, crate::hash::STRIDE_FLD);
     let seed = reader.i64_at(claim, crate::hash::SEED_FLD) as u64;
     let hash_val = crate::keys::key_hash(key, seed);
-    let mut index = (hash_val % u64::from(elms)) as u32;
+    let mut index = crate::hash::home_bucket(hash_val, elms);
     let mut slot = reader.u32_at(
         claim,
         crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES,
@@ -1122,7 +1122,7 @@ pub fn hash_bucket_addrs<P: PageProvider>(
     key_sets
         .iter()
         .map(|k| {
-            let index = (crate::keys::key_hash(k, seed) % u64::from(elms)) as u32;
+            let index = crate::hash::home_bucket(crate::keys::key_hash(k, seed), elms);
             (
                 u64::from(claim) * 8
                     + u64::from(crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES),

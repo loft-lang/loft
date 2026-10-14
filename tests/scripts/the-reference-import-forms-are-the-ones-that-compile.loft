@@ -1,19 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// The Libraries chapter's model of `use`: `pub` decides the BARE spelling, the prefix reaches
-// everything.
-//
-// The chapter used to teach the opposite — that a library name needs the `libname::` prefix
-// and that omitting it is a parse error — and every sentence saying so lived in a comment, so
-// the suite ran none of them while the bare call compiled and answered.  What made the mistake
-// survivable is that both spellings work for a `pub` name: a chapter can teach the long one
-// exclusively and every example in it still passes.
-//
-// So the chapter now shows both spellings on one constant and one function, and the boundary
-// they sit on is pinned here: the bare form is available for a `pub` name and refused for a
-// name the library did not mark, which is the whole of what `pub` decides.  A reader who takes
-// the chapter at its word and drops the prefix is relying on this.
+// The Libraries chapter's model of `use`: `pub` decides what a library offers, by EITHER
+// spelling (@FR-F-Surface).  A `pub` name answers bare after `use lib::*` and through the
+// `lib::` prefix; a name the library did not mark answers to neither — the bare call is an
+// unknown function, and the prefixed one is refused as "not `pub`".  A reader who takes the
+// chapter at its word is relying on both halves, so both are pinned here.
 //
 // @ARGS: --lib tests/lib
 //
@@ -23,7 +15,7 @@
 //
 //   Measured by hand in both directions instead, because a guard whose point is a REFUSAL
 //   passes most easily when it is proving nothing:
-//     - marking `pubvis_hidden` as `pub` in the fixture makes the @EXPECT_ERROR cell compile,
+//     - marking `pubvis_hidden` as `pub` in the fixture makes the @EXPECT_ERROR cells compile,
 //       and the file fails;
 //     - dropping `pub` from `pubvis_shown` makes the bare call in the running cell unknown,
 //       and the file fails;
@@ -31,9 +23,9 @@
 //       passing on its refusal alone.
 //   Restoring each returns the suite to green.
 //
-//   `make falsify` reads `expect 1/1` and INERT on both backends, which is the right answer
-//   for a lock: the declared refusal matched, and a file that refuses on every build cannot
-//   move against a control.
+//   The two prefix cells are the ones loft#1848 changed, and they are falsified as their own
+//   guard — a-qualified-name-reaches-only-what-a-library-publishes.loft — against the build
+//   before it, where both compiled.
 
 use pubvis::*;
 
@@ -49,13 +41,17 @@ fn a_pub_name_answers_to_both_spellings() {
   assert(PUBVIS_SHOWN_LIMIT == 100, "the same constant written bare");
 }
 
-// The other half of the same boundary: a definition without `pub` never entered the namespace,
-// so the prefix is the only way in.  Nothing is hidden — the value is right here — but the
-// short spelling is not on offer.
-fn a_non_pub_name_is_reachable_only_through_the_prefix() {
+// The other half of the same boundary: a definition without `pub` is the library's own, and
+// the prefix does not reach it either (loft#1848).
+// @EXPECT_ERROR: `pubvis_hidden` is not `pub` in `pubvis`, so `pubvis::pubvis_hidden` cannot reach it
+fn a_non_pub_function_is_not_reached_through_the_prefix() {
   pv_hidden = pubvis::pubvis_hidden(3, 4);
-  assert(pv_hidden == 7, "a non-pub library fn through the prefix: {pv_hidden}");
-  assert(pubvis::PUBVIS_HIDDEN_LIMIT == 42, "a non-pub constant through the prefix");
+  assert(pv_hidden == 7, "unreachable: the call above is refused");
+}
+
+// @EXPECT_ERROR: `PUBVIS_HIDDEN_LIMIT` is not `pub` in `pubvis`, so `pubvis::PUBVIS_HIDDEN_LIMIT` cannot reach it
+fn a_non_pub_constant_is_not_reached_through_the_prefix() {
+  assert(pubvis::PUBVIS_HIDDEN_LIMIT == 42, "unreachable: the constant above is refused");
 }
 
 // And the bare spelling of that same name is refused.  This is the cell the chapter cannot

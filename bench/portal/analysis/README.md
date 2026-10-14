@@ -6,6 +6,10 @@ The files here say WHY, price what could be done about it, and record what was b
 the twin winning by something loft cannot say, that is the unit to price — `(Perf-Gap)` in
 `doc/claude/formal/performance.md` — and the twin stays as written.
 
+**Start from [`worklist.md`](worklist.md)**: every routine over the 3× bar, sorted by what is
+known about it — a priced path under the bar, a priced path that ends above it, or no price —
+with the units in build order and the file below that priced each.
+
 | file | class | state |
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
@@ -15,7 +19,10 @@ the twin winning by something loft cannot say, that is the unit to price — `(P
 | `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, `(R-WorkBuffer)` BUILT** (§ Built: scalar-element vector locals, pooled per frame, promotion transitive); left: record and text elements, result buffers, the 28 hand-offs, the allocator shave and the fn-ref result buffer, priced there |
 | `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **W1, W2, C1 (`(R-GuardFree)`) and P1 BUILT** (§ Built, § Order); the single-row harness attributed `mesh_aabb` and `enum_match`; `smooth`, `sort`, `grid`, `copy`, `catalog_churn` remain unpriced |
 | `word-count.md` | the INTERPRETER against Python on `bench/08_word_count` (5.16×, the one row of the original suite Python still wins clearly) | **levers 1–2 BUILT 2026-10-02** (−27 %, now 3.8× Python: `(R-DischargeInto)`, `(R-KeyList)`); priced first — the `?? ""` text discharge copies each word twice (−24 %, an exact IR rewrite), the key list is rebuilt per lookup (~−7 %), the SipHash per lookup is structural; native's 3.23× is the generic `Content` lookup (`keyed.md`) |
+| `under-10x.md` | the 15 routines at 10× or worse on the 2026-10-02 run, across eight classes | **PRICED, NOT BUILT** — fourteen fixes (F1–F14), each with its declining site and a hand price; F1 (`atan2` read as a store writer, `roof_match` −72 %) is two lines; the per-routine table says which fixes each row needs to clear 10× |
 | `rules.md` | every rule, from the RULES' side: the declines traced on the benches, the shapes with no rule, the instruments' gaps | **AUDITED 2026-09-28**; its § Change is DONE the same day (the census counts 49 of 51 rewrites, the two native rewrites with no switch entry documented, seven homeless traces given a home, the `(R-Const)` panic filed as loft#1729 / D-rw-6); what is left is its § Optimise: the growth-blocked record pointer first, then the clauses each class file prices |
+| `apart.md` | the (R-Apart) instances, priced on the rows the design named: `mat4_mul` (instance 2) and `rig_world_frame3` (instance 3), plus a triage of every other throwaway-shaped row | **PRICED 2026-10-04, NOT BUILT** — instance 2 `mat4_mul` 38 → 4.9 ns a product (4.8× → 0.63× Rust); instance 3 is an INLINE BUFFER, never a bare `Vec` (a `Vec` was +37 %, a stack buffer −48 %) |
+| `over-9x.md` | the five rows over 9× on the 2026-10-05 run (`header`, `decode`, `flow_layout_full`, `draw_bezier`, `check_request`), by MECHANISM | **PRICED 2026-10-05, NOT BUILT** — every row reaches 3.6–4.8× by hand except `check_request` (≈5.5× by `decode`'s ladder, clearly under only with texts kept in their slots); four new rules drafted in rewrites.md § Proposed (`(R-FoldCompare)`, `(R-Destination)`, `(R-FnRefValue)`, `(R-ViewReturn)`) and seven clauses on existing ones; the edit scripts under `over-9x/` |
 
 ## Where to resume (2026-09-28 evening, branch `157-native-4x`)
 
@@ -159,6 +166,15 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
 - **The measuring laptop runs ONE heavy job at a time**, and `/tmp` is RAM: a build tree
   there is memory.  `scripts/find_problems.sh --changed` falls back to the long curated set
   while `loft-ffi/Cargo.lock` sits untracked in the tree; run named test binaries instead.
+
+- **A slow path that takes a `&DbRef` keeps the record in memory for the whole loop.**  An
+  outlined (`#[cold]`, `#[inline(never)]`) helper the optimiser cannot see into makes every
+  `DbRef` handed to it by reference live in a stack slot; on x86-64 its fields are then
+  written narrow and read back wide every pass, a store-forwarding stall per element that
+  arm64 barely shows.  `rec_set`'s refusal path took one: `timer_spend` 13.9× on x86-64
+  against 3.7× on the Mac, 3.2× once it took the fields by value.  A host gap in loft's own
+  lane with the twin level is the tell; `perf annotate` shows the stall as the load after a
+  narrower store to the same slot.
 
 ## Tools used here
 

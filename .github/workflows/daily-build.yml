@@ -39,6 +39,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -62,6 +64,10 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # A daily build answers `<last release>.<yyyymmdd>` (build.rs `effective_version`),
+          # which needs the release tags.
+          fetch-tags: true
 
       # A dispatch naming one triple builds only that leg; `all` (the default, and what a
       # PR or a push always does) builds every leg.
@@ -87,7 +93,7 @@ jobs:
       # the static target; macOS ships zip; Windows takes it from chocolatey.
       - name: Install packaging tools (Linux)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools zip unzip
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools zip unzip
 
       - name: Install packaging tools (Windows)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Windows'

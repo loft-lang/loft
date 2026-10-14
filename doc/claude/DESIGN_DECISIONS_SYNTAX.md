@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Design decisions — syntax, names and calls
 
-The entries of the [decision register](DESIGN_DECISIONS.md) about the surface grammar, how a name resolves (imports, methods, shadowing) and how generics are written.  Each states
+The entries of the [decision register](DESIGN_DECISIONS.md) about the surface grammar, how a name resolves (imports, methods, shadowing), how generics are written and how large a program's parts may be.  Each states
 the decision, its reason and what would reopen it; its **record** link opens the question, the
 trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-history.md).
 
@@ -102,14 +102,14 @@ letting the user's definition win would let a program silently re-point a stdlib
 
 **Revisit when.** No trigger recorded; the predicate follows the mangling if it ever keys on more
 than the first parameter.  Decided 2026-07-15 — [record](DESIGN_DECISIONS-history.md#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition).
-**Catalogue:** @F2 (operators) / naming. Instances the platform rule *no runtime errors, ever* ([C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)) at its **compile-time valve**: what cannot work is *disallowed*, not run into a silent-wrong result. Surfaced by C94 (adding stdlib `floor_mod` collided with an existing library helper).
+**Catalogue:** @F2 (operators) / naming. Instances the platform rule *no runtime errors, ever* ([@C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)) at its **compile-time valve**: what cannot work is *disallowed*, not run into a silent-wrong result. Surfaced by @C94 (adding stdlib `floor_mod` collided with an existing library helper).
 **Holds at:** `src/data.rs::add_fn`.
 
 ## C97 — A library's public symbols live under its module, not the global namespace (so the stdlib can grow without breaking a shipped lib)
 
 **Decision.** A library's public symbols are `lib::name`, registered scoped to the library's source;
 the stdlib is the only global namespace.  A library may define a free function with a stdlib name
-(C95 guards a program's own definitions); a library `self:`/`both:` METHOD named like a stdlib
+(@C95 guards a program's own definitions); a library `self:`/`both:` METHOD named like a stdlib
 method still errors — accepted.  **Why.** Global library symbols let any stdlib addition break a
 published, immutable library, which absolute compatibility forbids.
 
@@ -134,7 +134,7 @@ library's own imports do not leak into its consumers' namespace.
 today (Rust lets the local shadow a glob); relaxing it is open.  Decided 2026-07-15, `pub use`
 and the rustc rule 2026-09-28 (owner) — [record](DESIGN_DECISIONS-history.md#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins).
 **Holds at:** `@C98` — `./scripts/idx tag:@C98`.
-**Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
+**Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
 
 ## C100 — `print` stays text-only (no bare `print(value)` or variadic `print`)
 
@@ -158,21 +158,21 @@ freezes with contract 1, so the escape hatch and the names that must never be a 
 fixed now, while no published package uses them.
 
 **Revisit when.** No trigger recorded; frozen with contract 1.  Decided 2026-07-24 — [record](DESIGN_DECISIONS-history.md#c101--stdcore-are-reserved-package-names-stdname-is-the-stdlibs-qualified-form-the-shadow-escape-hatch).
-**Catalogue:** @F2 (operators) / modules + naming; completes the C97/C98 namespace model.
+**Catalogue:** @F2 (operators) / modules + naming; completes the @C97/@C98 namespace model.
 **Holds at:** `src/libscan.rs` `RESERVED_PACKAGE_NAMES` / `is_reserved_package_name`; the guard in
 `tests/imports.rs`.
 
 ## C110 — a generic's type variable stays in the FIRST parameter, and a keyed collection stays a record set
 
 **Decision.** Superseded in part by
-[C126](#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set)
+[@C126](#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set)
 (type variables in any parameter; several per generic).  Still holding: keyed collections stay
 record sets keyed on a named field (no `hash<K, V>`), and `hole_*` stays per-kind.  **Why.** A
 record set carries its own key, so key and value cannot desync and one model covers all five keyed
 kinds; a generic `hole<T>` would drop the per-kind opt-in keeping non-literal values out of SQL.
 
 **Revisit when.** A multi-parameter keyed type has a use a record set cannot express.  Decided
-2026-08-11, revised 2026-09-21 by C126 — [record](DESIGN_DECISIONS-history.md#c110--a-generics-type-variable-stays-in-the-first-parameter-and-a-keyed-collection-stays-a-record-set).
+2026-08-11, revised 2026-09-21 by @C126 — [record](DESIGN_DECISIONS-history.md#c110--a-generics-type-variable-stays-in-the-first-parameter-and-a-keyed-collection-stays-a-record-set).
 **Holds at:** `@C110` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F26 (interfaces & bounded generics) · @F94 (type-directed interpolation)
 
@@ -182,12 +182,15 @@ kinds; a generic `hole<T>` would drop the per-kind opt-in keeping non-literal va
 parameter, `for` variable, struct field — mints a local whatever function carries that name; the
 function stays callable in the same scope (`chr = 65` beside `chr(65)`): parentheses pick the
 namespace.  **Why.** Otherwise every short verb a library exports is a word its consumers may not
-use.  This does not reopen C95 (a local re-points no call site).
+use.  This does not reopen @C95 (a local re-points no call site).
 
-**Revisit when.** No trigger recorded.  Decided 2026-08-11 — [record](DESIGN_DECISIONS-history.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call).
+**Revisit when.** A reported defect shows a local silently standing in for a function reference
+the author meant — a bare name read as the local, with no type error, where the function was
+intended.  A bare name of a different type is a compile error, so only a local holding a function
+of the same type could do this.  Decided 2026-08-11 — [record](DESIGN_DECISIONS-history.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call).
 **Holds at:** `tests/scripts/852-local-shadows-a-function-name.loft`;
 `tests/imports.rs::pln102_c98_a_local_may_shadow_a_library_function`.
-**Catalogue:** @F2 (operators) / modules + naming · [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756
+**Catalogue:** @F2 (operators) / modules + naming · [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756
 
 ## C123 — one name has one body per receiver type; `both` is how a function takes both spellings
 
@@ -204,29 +207,125 @@ Remove `both` once no published version declares it.  Decided 2026-09-15 — [re
 ## C126 — a generic's type variables are unrestricted; a keyed collection stays a record set
 
 **Decision.** A type variable may appear in any parameter, and a function, struct or enum may
-declare several; one that appears in no parameter or field is refused.  Kept from C110: keyed
+declare several; one that appears in no parameter or field is refused.  Kept from @C110: keyed
 collections stay record sets (no `hash<K, V>`), and the SQL `hole_*` family stays per-kind.
 **Why.** "One variable, first parameter only" is a restriction no reader can derive, and `map` /
 `reduce` need a second variable to stop being special forms.
 
 **Revisit when.** A keyed type has a use a record set cannot express, or a target wants an OPEN
 set of hole kinds.  Decided 2026-09-21 — [record](DESIGN_DECISIONS-history.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set).
-**Catalogue:** @F25 (generics) · @F26 (bounded generics) · @F94 · revises C110.
+**Catalogue:** @F25 (generics) · @F26 (bounded generics) · @F94 · revises @C110.
 
 ## C132 — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
 
-**Decision.** Outside `default/*.loft`, a function named `OpLt`, `OpAdd`, … binds no operator,
-is no operator template, and satisfies no operator interface (`Ordered`, `Addable`, …).  A user
-type keeps structural `==` (C91), its keyed collections, named methods, and the key-based stdlib
-functions this decision adds (`sort_by`, `min_by`, `max_by`, `sum_by` — loft#1833, not yet
-shipped).  **Why.** `fn Op<Name>` is the compiler's
+**Decision.** Outside `default/*.loft`, a function named `OpLt`, `OpAdd`, `OpIndex`, `OpConv…`, …
+binds no operator, is no operator template, and satisfies no operator interface (`Ordered`,
+`Addable`, …): it is an ordinary function, callable by its name, and its definition says so
+(a warning for `OpEq` / `OpNe` / `OpNot`, an advice otherwise).  An operator on a user type is
+the designed spelling this entry asked for — an `operator` method (`operator compare`, `plus`,
+`minus`, `times`, `divided_by`, `remainder`, `negate`, `to_<type>`, `next`, `to_text`; @PLN182,
+formal/operators.md) — `==` stays structural (@C134), and `[…]` stays the built-in collections'.  A user type keeps structural `==` (@C91), its keyed
+collections and named methods, and the key-based stdlib functions `sort_by`, `min_by`,
+`max_by` and `sum_by` (@PLN182 Q11) order and total it by any key one call names.  **Why.** `fn Op<Name>` is the compiler's
 operator table, designed for the stdlib: its names do not say the symbol (`OpMin` is `-`), three
 comparisons derive from `OpLt` unseen, and an operator that calls user code is a place the reader
 does not see what runs (CONTROL.md).  The user path produced six defects in one cycle.
 
-**Revisit when.** A user type needs operator syntax that a method and the `_by` functions cannot
-give it readably — and then with a designed spelling (`op <`), never `fn Op…`.  Decided
+**Revisit when.** A form a type cannot define yet (`**`, the bit operators, `[…]`) is needed by
+a real program — through its reserved `operator` name, never `fn Op…`.  Decided
 2026-10-01 — [record](DESIGN_DECISIONS-history.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function).
-**Guard:** `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` keeps the template half;
-the rest is guarded with its implementation (loft#1833).
-**Catalogue:** @F26 (bounded generics) · `formal/interfaces.md` (G-Sat) · loft#1833 (the work).
+**Guard:** `a-fn-named-for-an-operator-is-an-ordinary-function.loft` (no operator reaches a
+`fn Op…`), `1580` / `1581` (`==` / `!=` stay field-wise beside one), `996-opindex-composite-subscript.loft`
+(`[…]` refused), `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` (the template half).
+**Catalogue:** @F26 (bounded generics) · @F37 (operators) · `formal/operators.md` (Op-Std) · loft#1833 (the work).
+
+## C134 — `==` is always structural; no type defines its own
+
+**Decision.** `==` and `!=` compare what two values hold, on every type at every depth, and no
+program redefines them: `operator equals` is refused at its definition, naming the cure — a
+named method for a comparison of the type's own (`same_second(self, other)`).  A plain `fn
+equals` is an ordinary method.  `Equatable` declares nothing, and every type meets it.  **Why.**
+The Go/Java choice, in the owner's words: "we allow everybody to write their own deep compares
+but the `==` in loft stays reliable."  A user `==` is an unchecked contract — nothing makes it an
+equivalence, keeps it agreeing with a key's hash and order, or bounds what it runs — and it
+reaches every structural comparison that holds the type (a field, a vector, a keyed lookup), so
+`==`'s cost and answer would stop being readable from the line.  With it structural, a key
+stays found by its structure and no key rule is needed.
+
+**Revisit when.** A real program needs `==` to mean something its structure does not — and then
+as a question about that program's type, not by reopening user `==`.  Decided 2026-10-02 (owner,
+via the @PLN182 P5b question).
+**Guard:** `tests/parse_errors.rs` (`operator_equals_is_refused`),
+`negate-divided-by-and-remainder-are-operator-methods.loft` (structural `==` at a program's type,
+in a held field and through `Equatable`), `1580` / `1581` (a function named `OpEq` changes
+nothing).
+**Catalogue:** @F37 (operators) · `formal/operators.md` (Op-Eq) · @C91 (every type is
+`Equatable`).
+
+## C140 — private by default, `pub` is consent: fields, literals and variants
+
+**Decision.** Everything a file declares is private to that file; `pub` gives consent to show
+it.  A TYPE outside its file has one of three levels: **invisible** (not `pub`, named by no `pub`
+signature of its file — it cannot be named), **name only** (not `pub`, but named by a `pub` fn's
+signature or by a `pub` field's type of a visible type, transitively through type arguments —
+it can be named, passed and stored, never built, and its variant names stay hidden) and **`pub`**
+(as name only, and built: a struct literal when every field is `pub`, an enum's variants).  A
+FIELD of a struct or of a variant is private to its file; `pub` on it makes it readable, writable
+and matchable wherever its type is visible.  No `private` keyword, no opaque-type form.
+**Why.** It keeps the pressure off the developer — a `pub fn`'s returned type is usable by its
+caller with no extra ceremony — while no detail bleeds out without explicit consent.  A name-only
+type with no `pub` field is OCaml's abstract type; with readable fields it is close to OCaml's
+private type.  Printing, JSON and placement still carry every field: the rule is about code
+depending on internals, not about the data being seen.
+
+A TUPLE has no declaration: it is spelled inline where it is used, so its members are visible
+wherever it is, and the only way to hide a value's parts is a declared type whose fields lack
+`pub` — `pub` or not, the type is what owns them.  Privacy inside a tuple's spelling
+(`(pub integer, u8)`) was declined (owner, 2026-10-06): no file would own it, and destructuring,
+assignment to the plain spelling and type equality would each need a rule that rebuilds a struct.
+
+A `type` ALIAS is a declaration, so its file owns it: a non-`pub` alias that a `pub` signature
+names is ABSTRACT outside its file — abstract types with no new syntax (owner, 2026-10-07).
+`type Handle = integer; pub fn open(…) -> Handle` lets a caller bind a `Handle`, hand it back to
+a parameter declared `Handle`, keep it in a variable or field declared `Handle`, compare it with
+`==` and print it; an operator, a member or element read, a method or parameter of `integer`,
+destructuring, and a plain value handed where a `Handle` is declared are refused.  A
+`vector<Handle>` holds `Handle`s: its elements read as `Handle`, and what never looks at an
+element (`len`, `insert`, `+=`) is open while `sort` and `sum` are not.  The abstraction follows
+the value wherever it goes — a tuple member, a branch's value, a pattern binder, a lambda's
+parameter through `map` — and an `if` or `match` on a `Handle` reads it.  So
+`type Data = (integer, text, boolean)` keeps a tuple's members private the way a struct's own
+fields are.  In its own file, and as a `pub type`, an alias is the substitution it always was.
+The abstraction is a fact the checker tracks beside the type (`parser::abstract_alias`), never
+a change to it, so nothing emitted differs.
+
+**Revisit when.** A read-only field outside its file is asked for — declined (a function covers
+it).
+Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants).
+**Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; every refusal
+holds on every build.
+**Catalogue:** @F2 / modules.  Extends [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.
+
+## C149 — one structural limit, 300, for every count a program has — a function's variables included
+
+**Decision.** One number bounds a program's structure: an expression nests 300 levels deep, a
+struct declares 300 fields, a function takes 300 parameters and binds 300 variables of its own,
+a tuple holds 300 elements.  Each works at 300 on both backends, and the 301st is refused at
+compile time with a message naming the limit (`crate::limits::LIMIT`).  No count has a number of
+its own, and the variable count is not lifted for a function that happens to fit its frame.
+**Why.** A programmer can know the limit only if it is the same number everywhere.  And the
+count has to be the limit a programmer meets: the other bound on a function, its 64 KiB frame,
+depends on what each variable holds, so a function that reached it first would be refused at a
+size nobody can predict from the source.  At 300 the count arrives first for every ordinary
+variable — 300 `text` parameters beside 300 `text` variables fit, as do 300 three-element
+tuples — and the frame is met only where every variable is a tuple of 28 integers or more
+(65536 / 300 is 218 bytes a variable).  A function past the count is split by its author; that
+is the supported path and the message says so.
+
+**Revisit when.** A function that cannot be split meets the count — generated code, or a
+table-shaped initialiser — or a slot grows until 300 ordinary variables no longer fit the frame.
+Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included).
+**Holds at:** `tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft` (the margin),
+`the-counts-within-the-limit-compile.loft` beside `a-count-past-the-limit-is-refused.loft` (the
+count itself).
+**Catalogue:** [LOFT.md § Limits](LOFT.md#limits) · [COMPATIBILITY.md](COMPATIBILITY.md) (the consumer function it refuses).

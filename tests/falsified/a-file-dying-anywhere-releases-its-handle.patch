@@ -1,0 +1,14 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 2404dce19..a069b21da 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -1413,6 +1413,9 @@ impl Stores {
+     /// releases nothing twice: a lease is returned once per record, never per walk.
+     #[cfg(not(host_fs))]
+     fn release_file_handle(&mut self, rec: &DbRef) {
++        if rec.rec != 0 {
++            return;
++        }
+         let file_ref = self.store(rec).get_i32_raw(rec.rec, rec.pos + 28);
+         if file_ref == i32::MIN {
+             return;

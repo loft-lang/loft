@@ -187,6 +187,19 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
     rt::rtree_remove(store, tree, rec.rec, &RadixOracle { keys })
 }
 
+/// The tree's own footprint in bytes (`radix_tree::rtree_bytes`), 0 when none is allocated.
+#[must_use]
+pub fn table_bytes(coll: &DbRef, stores: &[Store]) -> u32 {
+    if coll.is_null() {
+        return 0;
+    }
+    let store = crate::keys::store(coll, stores);
+    match store.collection_rec(coll.rec, coll.pos) {
+        0 => 0,
+        tree => rt::rtree_bytes(store, tree),
+    }
+}
+
 /// Number of element records in the collection.  Reads the tree's cached length
 /// word (O(1)); key-free, mirroring `hash::count`.
 #[must_use]
@@ -887,12 +900,7 @@ mod tests {
     fn d1_insert_and_find_round_trip() {
         let mut store = Store::new_in_use(1 << 15);
         let keys = xy_keys();
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
 
         let mut seed = 0x2024_1111_2222_3333;
         let mut pts = Vec::new();
@@ -939,12 +947,7 @@ mod tests {
     fn d2_same_cell_keeps_every_record() {
         let mut store = Store::new_in_use(1 << 13);
         let keys = xy_keys();
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
 
         // Three entities at (5, 7), plus neighbours either side.
         add_point(&mut store, &coll, &keys, 1, 1);
@@ -976,12 +979,7 @@ mod tests {
     fn d4_range_matches_the_code_interval() {
         let mut store = Store::new_in_use(1 << 15);
         let keys = xy_keys();
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         // The full 128-bit Morton code of a point, for the brute-force oracle.
         let code_of = |store: &Store, rec: u32| -> [u64; MAX_AXES] {
             morton_words(2, |a| axis_code(store, rec, &keys[a]))
@@ -1034,12 +1032,7 @@ mod tests {
     fn d5_box_walk_is_exactly_the_box() {
         let mut store = Store::new_in_use(1 << 15);
         let keys = xy_keys();
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         let code_of = |store: &Store, rec: u32| -> [u64; MAX_AXES] {
             morton_words(2, |a| axis_code(store, rec, &keys[a]))
         };
@@ -1106,12 +1099,7 @@ mod tests {
     fn d6_box_walk_skips_the_gaps() {
         let mut store = Store::new_in_use(1 << 18);
         let keys = xy_keys();
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         // Clustered, like a real point set: 24 towns on a grid, 400 points each,
         // over a plane fifty times wider than one town.
         let mut seed = 0x0bad_c0de_1234_5678;

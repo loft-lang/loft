@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1926 — `(Disp-Hint)`: a name with several definitions offers no parse hint; an untyped
+// `|x|` lambda is refused at the call, naming the definitions and the typed spelling that cures
+// it.  A FREE set did this; a `self` set hinted its arguments with the attribute slot's routine
+// — its FIRST member — so the lambda took that member's parameter type and the call then
+// selected that member BECAUSE of it: `int 2` with one declaration order, `text a` with the
+// other, on both backends and in both spellings.  A vector literal needing a width was hinted
+// the same way (`vector<u8>` from the first member).
+//
+// Axes this file MOVES:  the declaration order (`ap` / `aq`), the spelling (method · free), the
+//                        hinted argument (an untyped lambda · a bare vector literal).
+// Axes it HOLDS FIXED:   two members on one struct receiver.  The lambda bodies do not name
+//                        their parameter: an untyped one used in the body draws a follow-on
+//                        "Unknown variable" on the first pass, which the suite reads in
+//                        place of the refusal (`1067b` pins the same shape).
+//
+// @falsified-by: tests/falsified/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control each lambda is typed by its set's FIRST member, so
+//   none of the four refusals is made; `|y|` takes `aq`'s `fn(text) -> text` and its body
+//   `7` is refused as *expected text, got integer* instead.
+//   ARMED: nothing.
+//   WITNESS: with bodies naming their parameter the control printed `int 2` / `text a` /
+//   `int 2` / `u8 3` on both backends (loft#1926's matrix).
+//   HOLDS: nothing else — the file is the refusals.
+// @EXPECT_ERROR: cannot infer the type of lambda parameter 'x': `ap` is ap(P, fn(integer) -> integer) and ap(P, fn(text) -> text)
+// @EXPECT_ERROR: cannot infer the type of lambda parameter 'y': `aq` is aq(P, fn(text) -> text) and aq(P, fn(integer) -> integer)
+// @EXPECT_ERROR: cannot infer the type of lambda parameter 'z': `ap` is ap(P, fn(integer) -> integer) and ap(P, fn(text) -> text)
+// @EXPECT_ERROR: no definition of `w` takes (P, vector<integer>)
+
+struct P { x: integer }
+fn ap(self: P, f: fn(integer) -> integer) -> text { "int {f(2)}" }
+fn ap(self: P, f: fn(text) -> text) -> text { "text {f("a")}" }
+fn aq(self: P, f: fn(text) -> text) -> text { "text {f("a")}" }
+fn aq(self: P, f: fn(integer) -> integer) -> text { "int {f(2)}" }
+fn w(self: P, v: vector<u8>) -> text { "u8 {v.len()}" }
+fn w(self: P, v: text) -> text { "t" }
+
+fn main() {
+  p = P { x: 1 };
+  println(p.ap(|x| { 7 }));
+  println(p.aq(|y| { 7 }));
+  println(ap(p, |z| { 7 }));
+  println(p.w([1, 2, 3]));
+}

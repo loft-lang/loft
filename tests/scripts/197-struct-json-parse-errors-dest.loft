@@ -3,19 +3,15 @@
 // @PLN10 (retire `stores.scratch`) Phase 1 batch 2 — non-null codegen_runtime
 // producers ride the chokepoint.
 //
-// `struct_to_json` / `struct_to_json_pretty` (a user struct's `.to_json()`) and
-// `i_parse_errors` (`s#errors`) are always-non-null text producers.  They gained
-// `_dest` variants + `is_text_dest_native` entries, so the synth-temp chokepoint
-// routes their value-position calls away from `stores.scratch` (proven scratch-free
-// under `LOFT_SCRATCH_TRIP`: 3+10 trips when unconverted, zero when converted).
+// `struct_to_json` / `struct_to_json_pretty` (a user struct's `.to_json()`) are
+// always-non-null text producers.  They gained `_dest` variants +
+// `is_text_dest_native` entries, so the synth-temp chokepoint routes their
+// value-position calls away from `stores.scratch` (proven scratch-free under
+// `LOFT_SCRATCH_TRIP`: trips when unconverted, zero when converted).
 struct PUser {
   id: integer,
   name: text,
 }
-struct PScore {
-  val: integer,
-}
-
 fn took(s: text) -> integer {
   len(s)
 }
@@ -33,18 +29,5 @@ fn main() {
   assert(u.to_json_pretty() == jp, "to_json_pretty compare");
   for _ in 0..3 { assert(u.to_json() == j, "to_json loop no-accumulate"); }
 
-  // i_parse_errors (#errors) is STATEFUL (clears after read) → re-parse per call.
-  // NOTE: an inline `"[{x#errors}]" != "[]"` hits a pre-existing native double-
-  // eval bug (gh #272); use the value-position shapes that don't (arg, bare
-  // compare, format-into-a-variable).
-  b1 = PScore.parse("not_json");
-  assert(len(b1#errors) > 0, "errors arg-position");
-  b2 = PScore.parse("not_json");
-  empty = "";
-  assert(b2#errors != empty, "errors compare-position");
-  b3 = PScore.parse("not_json");
-  f3 = "[{b3#errors}]";
-  assert(f3 != "[]", "errors format-into-var");
-
-  println("phase1 batch2 struct_to_json/parse_errors dest: all shapes ok");
+  println("phase1 batch2 struct_to_json dest: all shapes ok");
 }

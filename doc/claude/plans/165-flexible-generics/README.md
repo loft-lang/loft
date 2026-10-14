@@ -44,7 +44,7 @@ The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.
 
-| Arc | Delivers | State | Waits for C110 to be revised |
+| Arc | Delivers | State | Waits for @C110 to be revised |
 |---|---|---|---|
 | phase 0 | today's generics hold `G-Mono` | DONE | no |
 | **A** groundwork | one key decoder, one home for a template's variables, an instance key of its own, a lambda typed under its bindings | BUILT | no |
@@ -53,8 +53,8 @@ in [`probes/`](probes/), each with the answer it gave at the top.
 | **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | BUILT | D9 (several variables on a type) and D11 only |
 | **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as stdlib `#builtin` methods on `vector` | BUILT (E1–E7) | E6–E7 only (`map`, `reduce`) |
 
-Every arc can start: step C0 is done.  The owner revised C110 as
-[C126](../../DESIGN_DECISIONS.md) on 2026-09-21, after DESIGN.md § C110, evaluated measured
+Every arc can start: step C0 is done.  The owner revised @C110 as
+[@C126](../../DESIGN_DECISIONS.md) on 2026-09-21, after DESIGN.md § @C110, evaluated measured
 each of its reasons against the tree — two no longer held, one stood on narrower ground, one
 held in full, and the consumer it asked for turned out to be the language's own `map` and
 `reduce`.
@@ -84,7 +84,7 @@ heights = map_grid(tiles, |t| { t.height });                     // Grid<Tile> -
 ```
 
 The tracker issue's goal is `Map<K, V>` beside a concrete `insert`.  It is replaced here on
-purpose: a keyed lookup is the one case where C110 still holds — a record set does it better
+purpose: a keyed lookup is the one case where @C110 still holds — a record set does it better
 — so it cannot be the reason for anything.  `map_grid` is: it is `map` over a container the
 program defined, which needs a generic struct AND a second type variable, and which no record
 set, tuple or `τ?` expresses.
@@ -122,7 +122,7 @@ A6), and the method that captures a generic's call
 
 | Question (plans#165) | Answer | Where |
 |---|---|---|
-| 1. Is this the C110 revisit? | Yes — recorded as C126: both restrictions lifted, for functions and types; "no `hash<K, V>`" and `hole_*` per-kind kept | `DESIGN_DECISIONS.md` C126 |
+| 1. Is this the @C110 revisit? | Yes — recorded as @C126: both restrictions lifted, for functions and types; "no `hash<K, V>`" and `hole_*` per-kind kept | `DESIGN_DECISIONS.md` @C126 |
 | 2. Explicit type arguments? | In TYPE position only; inferred everywhere else | `D-Infer` |
 | 3. Bound versus enum? | Incomparable, so ambiguous — RULES.md already decided it | `D-Kind` |
 | 4. Keyed collections over `T`? | Stay refused at the definition; no `hash<K, V>` | `D-Keyed` |
@@ -135,4 +135,4 @@ A6), and the method that captures a generic's call
   takes from it.
 - [`../../formal/interfaces.md`](../../formal/interfaces.md) — `G-Gen`, `G-Mono`, `G-Sat`;
   `G-Select` (arc B), `G-Key` (arc C), `G-Type` and `G-Regular` (arc D) joined it.
-- [`../../DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) C110 and C126, which revises it.
+- [`../../DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) @C110 and @C126, which revises it.

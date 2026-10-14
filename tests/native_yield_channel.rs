@@ -15,8 +15,8 @@
 //! alone, and that was the state of the first attempt at this fix — the message arrived
 //! buried under an `E0605` from the producer and an `E0308` from the consumer.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -27,17 +27,17 @@ fn emit(tag: &str, src: &str) -> String {
     let dir = std::env::temp_dir();
     let lf = dir.join(format!("loft_1132_{tag}_{}.loft", std::process::id()));
     let rf = dir.join(format!("loft_1132_{tag}_{}.rs", std::process::id()));
-    std::fs::write(&lf, src).expect("write probe");
-    let st = Command::new(loft_bin())
+    fa::write(&lf, src).expect("write probe");
+    let st = loft::platform::process::harness_command(loft_bin())
         .args(["--native-emit", rf.to_str().expect("path")])
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .status()
         .expect("spawn loft");
     assert!(st.success(), "--native-emit must succeed for {tag}");
-    let rs = std::fs::read_to_string(&rf).expect("read emitted Rust");
-    let _ = std::fs::remove_file(&lf);
-    let _ = std::fs::remove_file(&rf);
+    let rs = fa::read_to_string(&rf).expect("read emitted Rust");
+    let _ = fa::remove_file(&lf);
+    let _ = fa::remove_file(&rf);
     rs
 }
 
@@ -66,15 +66,20 @@ fn assert_refused(tag: &str, src: &str, named: &str) {
     );
 }
 
-/// A tuple carrying a `text` element: `tuple_kinds` cannot classify it, and the legacy
-/// channel it fell through to ends in `(i64, &String) as i64`.
+/// A tuple carrying a `text` element rides the `next_into` buffer: the text is an owned
+/// `String` handed over in one slot (`YieldSlot::Text`), so nothing is refused (loft#1891).
+/// The values are checked on both backends by
+/// `tests/scripts/a-generator-yields-a-tuple-with-a-text-member-on-both-backends.loft`.
 #[test]
-fn a_tuple_with_a_text_element_is_refused_by_name() {
-    assert_refused(
+fn a_tuple_with_a_text_element_is_carried_not_refused() {
+    let rs = emit(
         "text_elem",
         "fn g() -> iterator<(integer, text)> { yield (1, \"a\".to_uppercase()); }\n\
          fn main() { for t in g() { print(\"{t.0} {t.1}\\n\"); } }\n",
-        "(integer, text)",
+    );
+    assert!(
+        !rs.contains("compile_error!"),
+        "a text member has a transport slot now, so no refusal may be emitted"
     );
 }
 
@@ -139,7 +144,7 @@ fn a_handle_carrying_tuple_the_eager_collector_would_hold_is_refused() {
     }
 }
 
-/// A refused type whose NAME carries quotes — a keyed collection renders its key list as
+/// A refused type (a nested tuple) whose NAME carries quotes — a keyed collection renders its key list as
 /// `spatial<P,["x", "y"]>`, and the message splices that name into a Rust string literal.
 ///
 /// Spliced raw, the first quote ends the literal and the comma becomes a second macro
@@ -150,9 +155,9 @@ fn a_refused_type_whose_name_contains_quotes_still_renders_one_message() {
     let rs = emit(
         "quoted_name",
         "struct Pq { x: integer, y: integer, n: integer }\n\
-         fn g() -> iterator<(spatial<Pq[x,y]>, text)> {\n\
+         fn g() -> iterator<((spatial<Pq[x,y]>, integer), integer)> {\n\
          \x20 a: spatial<Pq[x,y]> = [Pq { x: 1, y: 2, n: 3 }];\n\
-         \x20 yield (a, \"hi\");\n\
+         \x20 yield ((a, 1), 2);\n\
          }\n\
          fn main() { for t in g() { print(\"{t.1}\\n\"); } }\n",
     );
@@ -226,7 +231,7 @@ fn a_by_value_tuple_from_a_loop_body_is_not_refused() {
 fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
     let dir = std::env::temp_dir();
     let lf = dir.join(format!("loft_1467_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &lf,
         "struct Ck1467 { k: integer, v: integer }\n\
          fn g(n: integer) -> iterator<(Ck1467, integer)> {\n\
@@ -236,12 +241,12 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
          fn main() { s = 0; for t in g(3) { s += t.1 + t.0.v; } print(\"{s}\\n\"); }\n",
     )
     .expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&lf);
+    let _ = fa::remove_file(&lf);
     let err = String::from_utf8_lossy(&out.stderr).to_string();
 
     assert!(
@@ -279,7 +284,7 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
 fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
     let dir = std::env::temp_dir();
     let lf = dir.join(format!("loft_1467_ok_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &lf,
         "fn g(n: integer) -> iterator<(integer, integer)> {\n\
          \x20 for i in 0..n { yield (i, i * 11); }\n\
@@ -287,12 +292,12 @@ fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
          fn main() { s = 0; for t in g(3) { s += t.0 + t.1; } print(\"{s}\\n\"); }\n",
     )
     .expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&lf);
+    let _ = fa::remove_file(&lf);
     assert!(
         out.status.success(),
         "a by-value tuple yield from a loop body must still COMPILE on --native:\n{}",

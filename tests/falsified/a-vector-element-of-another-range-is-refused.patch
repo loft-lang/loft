@@ -1,0 +1,17 @@
+diff --git b/src/data.rs a/src/data.rs
+index 049b70714..38d7117fc 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -3360,10 +3360,8 @@ impl Type {
+                     matches!(self, Type::Optional(_)),
+                     matches!(other, Type::Optional(_)),
+                 );
+-                let (a_w, b_w) = (a.byte_width(a_null), b.byte_width(b_null));
+-                a_null == b_null
+-                    && a_w == b_w
+-                    && (a_w >= 8 || a.part_min(a_w, a_null) == b.part_min(b_w, b_null))
++                let _ = (a_null, b_null);
++                a.byte_width(!a.not_null) == b.byte_width(!b.not_null) && (a.min < 0) == (b.min < 0)
+             }
+             (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
+             // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is

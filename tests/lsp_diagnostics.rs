@@ -16,6 +16,7 @@
 // cannot carry state across edits.
 
 use loft::diagnostics::Level;
+use loft::file_access as fa;
 use loft::parser::Parser;
 
 /// The loft-lsp diagnostics recipe: fresh stdlib-loaded parser -> parse buffer ->
@@ -180,7 +181,7 @@ fn a_fix_without_an_edit_still_reaches_the_editor() {
 /// what this plan refuses, and a URL nobody checks is exactly how one appears.
 #[test]
 fn the_code_links_to_an_anchor_that_exists() {
-    let doc = std::fs::read_to_string(
+    let doc = fa::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/claude/DIAGNOSTICS.md"),
     )
     .expect("DIAGNOSTICS.md");

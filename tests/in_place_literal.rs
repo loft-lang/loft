@@ -20,7 +20,8 @@ fn guard() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env_remove("LOFT_NO_ELEMENT_IN_PLACE");
     cmd
 }

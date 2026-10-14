@@ -7,7 +7,7 @@
 [![Libraries](https://img.shields.io/badge/registry-42_libraries-brightgreen)](https://loft-lang.org/loft/)
 [![Gallery](https://img.shields.io/badge/gallery-live-brightgreen)](https://loft-lang.org/loft/gallery.html)
 
-[**▶ Try it in the browser**](https://loft-lang.org/loft/playground.html) · [**📘 Docs**](https://loft-lang.org/loft/) · [**🎮 Play Brick Buster**](https://loft-lang.org/loft/brick-buster.html) · [**🖼 Gallery**](https://loft-lang.org/loft/gallery.html)
+[**▶ Try it in the browser**](https://loft-lang.org/loft/playground.html) · [**📘 Docs**](https://loft-lang.org/loft/) · [**🎮 Play Brick Buster**](https://loft-lang.org/loft/brick-buster.html) · [**🖼 Gallery**](https://loft-lang.org/loft/gallery.html) · [**✍ Blog**](https://loft-lang.org/blog/)
 
 ---
 
@@ -175,7 +175,7 @@ runs any package's suite.
 hand-designed levels, pause, game-over, an animated paddle explosion — running in your
 browser. Click, press **Space**, play. No install, no sign-up, no download.
 
-It is one file — [read all 1,854 lines](tools/brick-buster/25-brick-buster.loft). No engine and no
+It is one file — [read all 1,807 lines](tools/brick-buster/25-brick-buster.loft). No engine and no
 framework — that file *is* the game. Its sprite sheet is art, not code, drawn once by
 [a build step](tools/brick-buster/pack_atlas.loft) into a content pack the game reads and the
 browser page carries inside itself.

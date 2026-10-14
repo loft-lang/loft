@@ -88,7 +88,7 @@ automatically not copying ([COPY_DIAGNOSTICS.md § North-star](../../COPY_DIAGNO
   matrix-guarded prototypes established that A2 is **invalid**: a struct-field return **must COPY**
   per the decided value-semantics contract (`tests/scripts/85-store-lifetime-field-read-copy.loft`,
   the #415 guard: *"binding or returning a heap vector FIELD must COPY (establish a new owner)"*;
-  C86: *"#415 is the SEMANTIC not a stopgap"*). Aliasing `f(b){ b.v }` violates value semantics (a
+  @C86: *"#415 is the SEMANTIC not a stopgap"*). Aliasing `f(b){ b.v }` violates value semantics (a
   later `b.v += …` would change the result). The copy is FORCED, not avoidable; the current
   behaviour is correct. W3 (drop the buffer) is moot. [CLOSEOUT.md § W2](CLOSEOUT.md).
 - **The user-facing copy lint.** Indicate every **unbound** structure copy — the copy's

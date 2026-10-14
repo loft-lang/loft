@@ -64,7 +64,11 @@ pub fn dispatch_arms(
         if !matches!(def.def_type(), DefType::Function) {
             continue;
         }
-        if def.name().starts_with("Op") || def.is_store_text_instance() {
+        // A placeholder instance is not emitted, so it is no arm (@FR-G-Mono).
+        if def.name().starts_with("Op")
+            || def.is_store_text_instance()
+            || data.is_placeholder_instance(d)
+        {
             continue;
         }
         // A closure-capturing lambda has a hidden `__closure` param as its last
@@ -99,6 +103,18 @@ pub fn dispatch_arms(
             continue;
         }
         if rust_type(def.returned(), &Context::Result) != rust_type(ret_type, &Context::Result) {
+            continue;
+        }
+        // Every record is a `DbRef` to Rust, so the test above admits a `fn(integer) -> Row`
+        // into the dispatch of a `fn(integer) -> Style` — an arm no value can select, since
+        // the type checker refuses that function in that slot (as an argument and as a
+        // bind).  It is not harmless: an arm returning another record keeps the whole
+        // dispatch off the tuple road (`@FR-R-FnRefValue`), so two record types are two
+        // signatures.
+        if let (Type::Reference(want, _), Type::Reference(got, _)) =
+            (ret_type.base(), def.returned().base())
+            && want != got
+        {
             continue;
         }
         candidates.push(Arm {

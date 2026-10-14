@@ -20,8 +20,8 @@
 //! file carries the two things a script cannot state: that stdout shows every row, and
 //! that the generated Rust CALLS the runtime helper rather than an empty body.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -42,12 +42,12 @@ fn main() {\n\
 
 fn write_probe(tag: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_987_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, PROBE).expect("write probe");
+    fa::write(&path, PROBE).expect("write probe");
     path
 }
 
 fn run(backend: &str, file: &PathBuf) -> (bool, String, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -64,7 +64,7 @@ fn run(backend: &str, file: &PathBuf) -> (bool, String, String) {
 fn assert_every_row_ran(backend: &str) {
     let probe = write_probe(backend.trim_start_matches('-'));
     let (ok, stdout, stderr) = run(backend, &probe);
-    let _ = std::fs::remove_file(&probe);
+    let _ = fa::remove_file(&probe);
     assert!(
         ok,
         "[{backend}] an empty par body must compile and run\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -106,16 +106,16 @@ fn an_empty_par_body_runs_its_workers_on_native() {
 fn the_discard_route_lowers_to_the_runtime_helper() {
     let probe = write_probe("emit");
     let out_rs = std::env::temp_dir().join(format!("loft_987_emit_{}.rs", std::process::id()));
-    let status = Command::new(loft_bin())
+    let status = loft::platform::process::harness_command(loft_bin())
         .args(["--native-emit", out_rs.to_str().unwrap()])
         .arg(&probe)
         .env("LOFT_TIMEOUT", "300")
         .status()
         .expect("failed to invoke loft binary");
     assert!(status.success(), "--native-emit must succeed");
-    let src = std::fs::read_to_string(&out_rs).expect("read emitted Rust");
-    let _ = std::fs::remove_file(&probe);
-    let _ = std::fs::remove_file(&out_rs);
+    let src = fa::read_to_string(&out_rs).expect("read emitted Rust");
+    let _ = fa::remove_file(&probe);
+    let _ = fa::remove_file(&out_rs);
     assert!(
         src.contains("n_parallel_discard_native(cell,"),
         "the discard route must lower to `n_parallel_discard_native`, not to the \

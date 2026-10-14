@@ -20,7 +20,7 @@ That simplification is now the **wrong shape**. Since @PLN79 was deferred:
   @PLN79's "emit more frees, rely on idempotency," and is a **fresh plan** to file once the oracle
   graduates from observer to authority (still stabilizing — caught #495/#500/#501 this cycle).
 
-Full decision record: [DESIGN_DECISIONS.md § C88](../../DESIGN_DECISIONS.md). The phase-00
+Full decision record: [DESIGN_DECISIONS.md § @C88](../../DESIGN_DECISIONS.md). The phase-00
 characterisation ([00-characterize.md](00-characterize.md), incl. the @P203 strace diagnostic) and
 the phase-01 sketch ([01-simplify-gate.md](01-simplify-gate.md)) are retained below as historical
 record.

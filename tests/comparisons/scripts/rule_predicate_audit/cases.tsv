@@ -1,0 +1,6 @@
+# orig: scripts/rule_predicate_audit.py
+# port: scripts/rule_predicate_audit
+# case	twin options	arguments
+default		
+near		--near
+min-2		--min 2

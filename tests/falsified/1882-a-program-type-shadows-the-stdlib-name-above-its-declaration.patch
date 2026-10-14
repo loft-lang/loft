@@ -1,0 +1,13 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 5559ed728..ce84bdbe7 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -18566,7 +18566,7 @@ impl Parser {
+     /// that would shadow a prelude type gets that stub in the file's own namespace — the lookup
+     /// asks the file before the stdlib — so the declaration adopts it like any forward reference.
+     fn claim_declared_type_names(&mut self, file: &str) {
+-        if !self.first_pass || self.default || self.data.source == crate::data::STD_SOURCE {
++        if true || !self.first_pass || self.default || self.data.source == crate::data::STD_SOURCE {
+             return;
+         }
+         let src = self

@@ -6,40 +6,40 @@
 // "terrain", "floor", "stair", "spiral_stair", "grand_arc_stair",
 // "roof", "water", "void".
 pub struct MaterialDef {
-  md_name:       text,
-  md_category:   text,
-  md_stair_kind: text,
-  md_texture:    integer not null,
-  md_tint_r:     integer not null,
-  md_tint_g:     integer not null,
-  md_tint_b:     integer not null,
-  md_walkable:   integer not null,
-  md_swimmable:  integer not null,
-  md_climbable:  integer not null,
-  md_slippery:   integer not null,
-  md_loud:       integer not null,
+  pub md_name:       text,
+  pub md_category:   text,
+  pub md_stair_kind: text,
+  pub md_texture:    integer not null,
+  pub md_tint_r:     integer not null,
+  pub md_tint_g:     integer not null,
+  pub md_tint_b:     integer not null,
+  pub md_walkable:   integer not null,
+  pub md_swimmable:  integer not null,
+  pub md_climbable:  integer not null,
+  pub md_slippery:   integer not null,
+  pub md_loud:       integer not null,
 }
 
 // Wall definition. Body type determines geometry:
 // "SOLID", "HALF_HEIGHT", "FENCE", "BATTLEMENT",
 // "THICK_FLAT", "THICK_CURVED", "ROAD_GUIDE".
 pub struct WallDef {
-  wd_name:      text,
-  wd_body:      text,
-  wd_base:      text,
-  wd_thickness: float not null,
-  wd_texture:   integer not null,
-  wd_tint_r:    integer not null,
-  wd_tint_g:    integer not null,
-  wd_tint_b:    integer not null,
+  pub wd_name:      text,
+  pub wd_body:      text,
+  pub wd_base:      text,
+  pub wd_thickness: float not null,
+  pub wd_texture:   integer not null,
+  pub wd_tint_r:    integer not null,
+  pub wd_tint_g:    integer not null,
+  pub wd_tint_b:    integer not null,
 }
 
 // Item definition. Kind determines placeholder 3D geometry:
 // "PILLAR", "TREE", "FURNITURE", "CONTAINER", etc.
 pub struct ItemDef {
-  id_name:       text,
-  id_kind:       text,
-  id_model:      integer not null,
-  id_symmetric:  integer not null,
-  id_arc_radius: float not null,
+  pub id_name:       text,
+  pub id_kind:       text,
+  pub id_model:      integer not null,
+  pub id_symmetric:  integer not null,
+  pub id_arc_radius: float not null,
 }

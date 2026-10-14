@@ -107,7 +107,7 @@ struct Walk {
 /// Build the point index, or `None` where the host has no corpus.
 fn build() -> Option<Fixture> {
     let path = corpus_path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Ok(text) = crate::file_access::read_to_string(&path) else {
         println!("SKIP — no corpus at {path} (see the module header to build one)");
         return None;
     };

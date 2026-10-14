@@ -33,14 +33,14 @@ struct C { a: character?, b: text, n: integer? }
 struct T { c1: character, c2: character, c3: character, tail: integer }
 struct P { a: character, b: text }
 
-fn test_an_absent_character_is_omitted_like_every_other_width() {
+fn test_an_absent_character_renders_null_like_every_other_width() {
   lit = C { a: null, b: "x", n: null };
   assert(lit.a == null, "the read says null");
-  assert("{lit}" == "{{b:\"x\"}}", "the render omits it, as it does the null integer");
-  assert(lit.to_json() == "{{\"b\":\"x\"}}", "and so does to_json — no space on the wire");
+  assert("{lit}" == "{{a:null,b:\"x\",n:null}}", "the render shows null, as it does the null integer (@C143)");
+  assert(lit.to_json() == "{{\"a\":null,\"b\":\"x\",\"n\":null}}", "and so does to_json — no space on the wire");
 
   om = C.parse("{{\"b\":\"y\"}}");
-  assert(om.a == null && om.to_json() == "{{\"b\":\"y\"}}", "same through a parse");
+  assert(om.a == null && om.to_json() == "{{\"a\":null,\"b\":\"y\",\"n\":null}}", "same through a parse");
   tw = C.parse(json_parse("{{\"b\":\"y\"}}"));
   assert(tw.a == null, "and through the two-stage parse");
 }

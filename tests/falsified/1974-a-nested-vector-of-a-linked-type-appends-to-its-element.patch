@@ -1,0 +1,13 @@
+diff --git a/src/database/types.rs b/src/database/types.rs
+index c22152916..f0dc575fd 100644
+--- a/src/database/types.rs
++++ b/src/database/types.rs
+@@ -1813,7 +1813,7 @@ impl Stores {
+             "vector".to_string()
+         } else {
+             let t = &self.types[content as usize];
+-            let inner = Self::promoted_lookup_key(t).unwrap_or_else(|| t.name.clone());
++            let inner = t.name.clone();
+             format!("vector<{inner}>")
+         };
+         mint_trace(

@@ -16,8 +16,8 @@
 //! The supported shape also leaked: the argv store is nobody's to free from loft code, so it
 //! is released with the entry frame.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -29,10 +29,10 @@ fn run(src: &str, args: &[&str], strict: bool) -> (bool, String) {
         std::process::id(),
         fastrand_ish(src)
     ));
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
     let file = dir.join("m.loft");
-    std::fs::write(&file, src).expect("write");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&file, src).expect("write");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret").arg(&file).args(args);
     if strict {
         cmd.env("LOFT_STRICT_STORES", "1");
@@ -43,7 +43,7 @@ fn run(src: &str, args: &[&str], strict: bool) -> (bool, String) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (out.status.success(), combined)
 }
 

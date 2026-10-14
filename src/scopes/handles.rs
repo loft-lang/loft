@@ -59,7 +59,7 @@ pub(crate) fn handle_rhs_kinds(rhs: &Value, data: &Data) -> (bool, bool) {
 pub(super) fn tag_handle_leaves(rhs: &Value, flag: u16, data: &Data) -> Value {
     let tag = |leaf: &Value| v_set(flag, Value::Boolean(is_handle_projection(leaf, data)));
     match rhs {
-        Value::Span(b) => Value::Span(Box::new((b.0.clone(), tag_handle_leaves(&b.1, flag, data)))),
+        Value::Span(b) => Value::Span(Box::new((b.0, tag_handle_leaves(&b.1, flag, data)))),
         Value::If(c, t, e) => Value::If(
             c.clone(),
             Box::new(tag_handle_leaves(t, flag, data)),

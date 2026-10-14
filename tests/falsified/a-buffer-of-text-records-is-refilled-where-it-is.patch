@@ -1,0 +1,14 @@
+diff --git a/src/generation/text.rs b/src/generation/text.rs
+index d3ed7a025..bd6619752 100644
+--- a/src/generation/text.rs
++++ b/src/generation/text.rs
+@@ -59,8 +59,7 @@ impl Output<'_> {
+                 crate::rewrite_census::fired("R-RefillText", 1);
+                 return Ok(());
+             }
+-            if self.refill.var == Some(*nr) && !self.refill_keep_disabled && !self.refill.heap_elems
+-            {
++            if self.refill.var == Some(*nr) && !self.refill_keep_disabled {
+                 write!(
+                     w,
+                     "if {v_nr}.rec != 0 {{ vector::clear_vector(&{v_nr}, &mut stores.allocations); }}"

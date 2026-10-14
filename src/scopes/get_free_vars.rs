@@ -7,13 +7,13 @@
 
 use super::backings::{member_backing, outer_collection_backing};
 use super::capture_adoption::{
-    closure_records_of_source, link_written_closure_records, owning_record_locals,
-    record_leaves_frame,
+    closure_record_leaves_frame, closure_records_of_source, link_written_closure_records,
+    owning_record_locals,
 };
 use super::capture_builds::{
     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
     escaping_record_holds_buffer, free_unless_record_built, join_capture_witness,
-    reassigned_join_capture_slot,
+    reassigned_join_capture_slot, rebound_capture_slots,
 };
 use super::free_vars::Delivered;
 use super::tuple_members::{MemberFacts, tuple_owned_elem_frees};
@@ -22,6 +22,18 @@ use super::{Scopes, call};
 use crate::data::{Data, Type, Value, v_if, v_set};
 use crate::fxhash::FxHashSet as HashSet;
 use crate::variables::Function;
+
+/// Does local `v` own its text — a `String` of its own that a bind COPIED the bytes into?
+///
+/// Then a dep it carries names where the bytes came FROM (`s = r.name` reads `text["r"]`), not a
+/// store it still views, so it keeps nothing alive.  A never-free text (`skip_free`, the `??`
+/// temp whose present-path value is a view of its subject) is the one text local that does view.
+/// @FR-F-Call — the store the bytes were copied out of is this frame's to free: read as the tail
+/// value's backing, a block's record (`{ r = R { … }; s = r.name; s }`) was held past its scope
+/// with nothing left to free it, one store per evaluation on both backends.
+fn owns_text_copy(function: &Function, v: u16) -> bool {
+    matches!(function.tp(v).base(), Type::Text(_)) && !function.is_skip_free(v)
+}
 
 /// The members of a TUPLE local whose values live in a backing registered in an OUTER scope,
 /// as `(member index, backing)`: a vector member's `__vdb_N`, or the `__ref_N` a whole-tuple
@@ -356,8 +368,10 @@ impl Scopes<'_> {
                 ls.push(call("OpFreeScratch", v, data));
                 continue;
             }
-            // T1.3: tuple scope exit — free owned elements in reverse index order.
-            if let Type::Tuple(elems) = function.tp(v) {
+            // T1.3: tuple scope exit — free owned elements in reverse index order.  A tuple
+            // whose absence ARRIVED in flight is `(τ…)?` (`@FR-T-Absent`, `marks_absence`) and
+            // has the bare tuple's slots, so it owes the same frees: read through the `?`.
+            if let Type::Tuple(elems) = function.tp(v).base() {
                 let elems = elems.clone();
                 ls.extend(tuple_owned_elem_frees(
                     &elems,
@@ -372,6 +386,9 @@ impl Scopes<'_> {
                     None,
                 ));
                 ls.extend(self.tuple_handle_frees(v, function, data));
+                ls.extend(super::tuple_members::tuple_text_member_frees(
+                    &elems, v, data, function,
+                ));
                 continue;
             }
             if matches!(function.tp(v).base(), Type::Text(_)) {
@@ -449,7 +466,9 @@ impl Scopes<'_> {
                 let leaves_frame = ret_borrows_v
                     || backs_return_source
                     || (link_delivered.contains(&v) && !self.closure_keep.decides_link(v))
-                    || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
+                    || ret_var != u16::MAX
+                        && function.tp(ret_var).depend().contains(&v)
+                        && !owns_text_copy(function, ret_var)
                     // …and a CLOSURE RECORD this return delivers.  `ret_borrows_v` decodes the
                     // declared return's `CalleeFrame` note, and that note is published once per
                     // lambda and OVERWRITTEN — so where a function builds more than one it names
@@ -463,10 +482,8 @@ impl Scopes<'_> {
                     // variable's own free; the record local's free was left reading the note.
                     // Gated on the local actually being a closure record so this stays a
                     // statement about `@FR-L-CapOwn` and not a new suppression for every
-                    // reference local.
-                    || (matches!(function.tp(v), Type::Reference(r, _)
-                            if data.def(*r).name.starts_with("__closure_"))
-                        && record_leaves_frame(data, function, self.d_nr, v));
+                    // reference local.  One predicate, asked by `check_ref_leaks` too.
+                    || closure_record_leaves_frame(data, function, self.d_nr, v);
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
@@ -665,6 +682,38 @@ impl Scopes<'_> {
                     );
                 }
                 if emit {
+                    for (w, pos) in rebound_capture_slots(
+                        data,
+                        self.database,
+                        function,
+                        &self.capture_build_backing,
+                        v,
+                    ) {
+                        let held = Value::Call(
+                            data.def_nr("OpGetDbRef"),
+                            vec![Value::Var(w), Value::Int(i32::from(pos))],
+                        );
+                        let release = Value::Insert(vec![
+                            Value::Call(
+                                data.def_nr("OpFreeRefIfDistinct"),
+                                vec![held, Value::Var(v)],
+                            ),
+                            Value::Call(
+                                data.def_nr("OpSetDbRef"),
+                                vec![
+                                    Value::Var(w),
+                                    Value::Int(i32::from(pos)),
+                                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                                ],
+                            ),
+                        ]);
+                        let built = v_if(
+                            Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(w)]),
+                            Value::Boolean(false),
+                            Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(w)]),
+                        );
+                        ls.push(v_if(built, release, Value::Null));
+                    }
                     if scope_debug {
                         eprintln!(
                             "[scope_debug] freeing '{}' (var={v}, scope={})",
@@ -997,7 +1046,12 @@ impl Scopes<'_> {
                         && (r as usize) < function.count() as usize
                         && self.var_scope.get(&r) != self.var_scope.get(&v)
                 });
-                let emit = !leaves_frame && !function.is_skip_free(v) && !record_outlives;
+                // loft#1869, `@FR-L-CapOwn` — a closure record that captured this fn-ref adopts
+                // the record it holds, and its cascade is the release.
+                let adopted =
+                    capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
+                let emit =
+                    !leaves_frame && !function.is_skip_free(v) && !record_outlives && !adopted;
                 if emit {
                     if scope_debug {
                         eprintln!(
@@ -1022,7 +1076,13 @@ impl Scopes<'_> {
                     if keep {
                         ls.extend(self.closure_keep_stand_down(v, function, data));
                     }
-                    if (keep || !local_record) && data.any_closure_drop() {
+                    // A fn-ref with a local record of its own may hold ANOTHER record by now — a
+                    // closure written into it through a `&fn` link (loft#1463) — so its release
+                    // dispatches on what it holds.  The cascade runs only on a live store
+                    // (`OpDropFnRef` asks, as `OpStoreLive` does at a record's own release), so
+                    // where the local record already released this store nothing runs twice.
+                    let _ = (keep, local_record);
+                    if data.any_closure_drop() {
                         ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));
@@ -1095,6 +1155,15 @@ impl Scopes<'_> {
         if to_scope == 1 {
             let free_distinct = data.def_nr("OpFreeRefIfDistinct");
             for (param, orig) in function.rebind_params() {
+                // A rebound parameter this exit HANDS OUT is not released here: the caller
+                // takes it (`(F-ParamRebind)`).  Its call site already decides per run — it
+                // copies a fresh store with `COPY_FREE_SOURCE` and protects its own argument
+                // — so a release here freed the store the return was about to read
+                // (`fn f(p: S) -> S { p = S { x: 5 }; p }`: a use-after-free on
+                // `--interpret`, a panic on `--native`, loft#1871).
+                if param == ret_var || return_sources.contains(&param) {
+                    continue;
+                }
                 ls.push(Value::Call(
                     free_distinct,
                     vec![Value::Var(param), Value::Var(orig)],

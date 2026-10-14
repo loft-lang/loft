@@ -82,7 +82,18 @@ use sha2::{Digest, Sha256};
 ///
 /// 15 — `Variable` carries `user_named` (stride 42 → 43, loft#1834): a warm load without it
 /// reads a user's `_`-prefixed parameter as a compiler temporary, and loses F-ParamRebind.
-const CACHE_FORMAT_VERSION: u8 = 15;
+///
+/// 16 — `Variable` carries `user_appended` and `copy_bound` (stride 43 → 45, loft#1840): a
+/// warm load without them reads a copy the program appended to as unwritten, and loses its
+/// `lost-write`.
+///
+/// 17 — `Definition` carries `operator` (stride 184 → 185, @PLN182): a warm stdlib without it
+/// reads an `operator` definition as a plain method, which no operator form reaches.
+///
+/// 18 — `Variable` carries `buffer_witnessed`, `rebind_orig` and `scope` (stride 45 → 62), and
+/// the image is the CLOSED program (loft#1858): a warm load without `rebind_orig` freed the
+/// store a caller handed a rebound parameter.
+const CACHE_FORMAT_VERSION: u8 = 18;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -131,35 +142,50 @@ pub fn feature_signature() -> String {
 /// build must never be loaded by another (its baked store layout / codegen may
 /// differ, which `Store::is_store_file`'s fixed magic does NOT catch).
 ///
-/// Also folds in the running executable's modification time ([`binary_signature_tag`])
-/// so an **uncommitted** compiler rebuild invalidates bundles too — [`BUILD_ID`]
-/// is the git HEAD hash, which does not change across uncommitted edits, leaving
-/// a parser/scopes fix under development at risk of a stale warm-load (see the
-/// plan's "Debugging-iteration cost + dev-safety caveat").
+/// Also folds in the build's source content ([`build_identity_tag`]) so an **uncommitted**
+/// compiler rebuild invalidates bundles too — [`BUILD_ID`] is the git HEAD hash, which does
+/// not change across uncommitted edits, leaving a parser/scopes fix under development at
+/// risk of a stale warm-load (see the plan's "Debugging-iteration cost + dev-safety caveat").
 #[must_use]
 pub fn build_signature() -> String {
     format!(
         "v{CACHE_FORMAT_VERSION}|{LOFT_VERSION}|{BUILD_ID}|{}|{}|{}",
         target_triple(),
         feature_signature(),
-        binary_signature_tag(),
+        build_identity_tag(),
     )
 }
 
-/// A tag for the *running binary's own build*, folded into [`build_signature`].
+/// Which compiler BUILD this is, for the two startup caches (loft#1859): the content hash of
+/// the sources it was built from (`build.rs` `source_stamp`), the flags it was built with,
+/// and whether debug assertions are compiled in — the facts that decide what a parse
+/// produces.  Every binary of one build answers the same, so the loft binary and each test
+/// binary share one stdlib image; keyed on each executable's own modification time, every
+/// test binary of every rebuild wrote its own.  A rebuild from edited sources still moves
+/// it, which is what the executable's mtime was there for.
+#[must_use]
+fn build_identity_tag() -> String {
+    format!(
+        "{}/{}/{}",
+        env!("LOFT_BUILD_STAMP"),
+        env!("LOFT_BUILD_RUSTFLAGS"),
+        cfg!(debug_assertions)
+    )
+}
+
+/// A tag for the *running executable*, folded into [`loft_exe_identity`].
 ///
-/// The executable's modification time changes on every rebuild (cargo rewrites
-/// the binary), so mixing it in makes any rebuild — committed or not —
-/// invalidate program bundles, closing the gap [`BUILD_ID`] (git HEAD) leaves
-/// open for uncommitted dev builds.  Best-effort: returns `""` when the exe path
-/// or its mtime is unavailable, so the signature gracefully falls back to the
-/// [`BUILD_ID`]-only behaviour rather than panicking.
+/// The executable's modification time changes on every rebuild (cargo rewrites the
+/// binary), and it differs between two executables of ONE build — which is why the startup
+/// caches key on [`build_identity_tag`] instead, and why an auto-native artifact, which must
+/// never cross executables, keys on this.  Best-effort: returns `""` when the exe path or its
+/// mtime is unavailable.
 #[must_use]
 fn binary_signature_tag() -> String {
     let Ok(exe) = std::env::current_exe() else {
         return String::new();
     };
-    let Ok(meta) = std::fs::metadata(&exe) else {
+    let Ok(meta) = crate::file_access::metadata(&exe) else {
         return String::new();
     };
     let Ok(mtime) = meta.modified() else {
@@ -191,48 +217,11 @@ pub fn loft_exe_identity() -> u64 {
 }
 
 /// @PLN11 G2 / track 1 — whether the whole-program startup cache is active for
-/// this run.  **Default ON** (the 3–3.6× warm-start win, no longer hidden behind
-/// an opt-in flag), with three overrides; see [`cache_decision`] for the policy.
+/// this run: **on**, for an installed `loft` and a development build alike, unless
+/// `LOFT_NO_CACHE` is set — see [`cache_decision`] for the policy.
 #[must_use]
 pub fn program_cache_enabled() -> bool {
-    fn is_set(name: &str) -> bool {
-        std::env::var_os(name).is_some_and(|v| !v.is_empty())
-    }
-    cache_decision(
-        is_set("LOFT_NO_CACHE"),
-        is_set("LOFT_PROGRAM_CACHE"),
-        std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
-        running_a_dev_build(),
-    )
-}
-
-/// Whether THIS binary is a development build — one living inside a Cargo
-/// `target/debug/` or `target/release/` tree, as opposed to an installed `loft`.
-///
-/// Read from the binary's own path rather than from the environment, because that is
-/// where the fact lives.  `CARGO_MANIFEST_DIR` (the signal
-/// [`cache_decision`] already had) is set by `cargo run` but NOT by invoking
-/// `target/debug/loft` directly — which is the commoner half of the compiler-debug
-/// loop, since it skips the rebuild check.  So the exemption meant to protect that
-/// loop missed its most frequent form, and a cached bundle silently answered for a
-/// parser the developer had just changed.
-#[must_use]
-pub fn running_a_dev_build() -> bool {
-    std::env::current_exe().is_ok_and(|p| {
-        // Any `debug` / `release` path component.  Cargo always puts a build under one
-        // — `target/debug/loft`, `target/debug/deps/loft-<hash>` for a test binary,
-        // `target/loft/html-mt/release/loft` for a custom target-dir build, and
-        // `target-da/release/loft` for the debug-assertions calibration build the
-        // project's own guidance uses.  An installed binary
-        // (`/usr/local/bin/loft`) has none.
-        //
-        // Deliberately NOT "a `target` component followed by debug/release": that is
-        // the obvious reading and it misses `CARGO_TARGET_DIR=target-da`, which is
-        // precisely the configuration this exemption exists to protect.  A false
-        // positive would only disable a cache, which is the safe direction.
-        p.components()
-            .any(|c| c.as_os_str() == "debug" || c.as_os_str() == "release")
-    })
+    cache_decision(std::env::var_os("LOFT_NO_CACHE").is_some_and(|v| !v.is_empty()))
 }
 
 /// Whether the user has armed a compiler diagnostic for this run.
@@ -247,51 +236,20 @@ pub fn diagnostics_armed() -> bool {
         .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty()))
 }
 
-/// The cache-enable policy: on for an installed `loft`, off for a Cargo invocation and for
-/// any binary living in a `target/` tree, with `LOFT_NO_CACHE` and `LOFT_PROGRAM_CACHE` as
-/// the explicit overrides in that precedence.
+/// The cache-enable policy (@C133): on, unless `LOFT_NO_CACHE` turns it off.
 ///
-/// **The default was flipped ON and is flipped back here, deliberately and temporarily.**
-/// The flip's own precondition is that *a cached run reports and BEHAVES as an uncached one*,
-/// and the invalidation half of that is genuinely fixed — both cache keys now fold in
-/// [`binary_signature_tag`], so any rebuild invalidates, and a warm load replays the cold
-/// parse's diagnostics. What is not yet true is the BEHAVIOUR half, measured on this tree:
-///
-///   * an out-of-process placed library never started its worker on a warm run, because the
-///     list `main` installs workers from is built by the parse. `mark_exports` writes its
-///     marks into `Data` and the bundle carries them, so the marked calls resolved to
-///     `compile.rs`'s "native function not loaded" stub — a placed library that works on its
-///     first run and panics on its second. The manifest now carries that list too
-///     (`startup_cache`'s `plib` headers), which is what makes the flip reachable;
-///   * `placement_parity`'s in-process-vs-placed comparisons became ORDER-DEPENDENT: four of
-///     them pass alone and fail inside their own test binary, because the second of the two
-///     runs they compare is warm and the first is cold. **CLOSED (loft#1129):** the warm
-///     load replayed each diagnostic's ENTRY but not its `fixes`, and `fixable` is what puts
-///     the once-per-run *"N diagnostics above suggest what to write instead — re-run with
-///     `--explain`"* line under the report. So a warm run said strictly less than the cold
-///     one it stood in for — deterministic, not a race; the thread count only decided
-///     whether a given comparison straddled the two. The fixes now ride the manifest line.
-///
-/// Both measured classes are closed and `LOFT_PROGRAM_CACHE=1 cargo test --release --test
-/// placement_parity` is green in PARALLEL, so nothing known blocks the flip. The context
-/// rules stay until the flip is taken deliberately, with a full gate run behind it —
-/// flipping a default is the owner's call, not a side effect of closing its blocker.
-/// `LOFT_PROGRAM_CACHE` is honoured for the same reason it existed: it is how the cache's own
-/// tests, and anyone measuring the warm start, reach the quick path from a dev build.
-// Four independent SIGNALS, not a state machine: each is a separate fact about the
-// invocation, and the precedence between them is the policy.  A struct of four bools would
-// only rename them, and keeping it a pure function is what makes it unit-testable without
-// mutating process env.
-#[allow(clippy::fn_params_excessive_bools)]
+/// A development build (`cargo run`, `cargo test`, a binary under `target/`) is cached like
+/// an installed one, which is safe on the facts: both cache keys fold in
+/// [`binary_signature_tag`], so a rebuilt compiler never reads a bundle an earlier build
+/// wrote, and a warm load reproduces the cold run's behaviour — the placed-library workers
+/// ride the manifest's `plib` list, and each diagnostic's fixes ride its line
+/// (loft#1129).  What stays is the case no key can see: a compiler instrumented WITHOUT a
+/// rebuild (an armed `LOFT_LOG` / `LOFT_IR`), where a warm run says so and names
+/// `LOFT_NO_CACHE=1` (`main.rs`), and a test that runs the binary to measure a cold compile,
+/// which sets it.
 #[must_use]
-fn cache_decision(no_cache: bool, program_cache: bool, under_cargo: bool, dev_build: bool) -> bool {
-    if no_cache {
-        return false;
-    }
-    if program_cache {
-        return true;
-    }
-    !under_cargo && !dev_build
+fn cache_decision(no_cache: bool) -> bool {
+    !no_cache
 }
 
 /// Compute the stdlib cache key: a SHA-256 over every input that can
@@ -303,6 +261,7 @@ fn cache_decision(no_cache: bool, program_cache: bool, under_cargo: bool, dev_bu
 /// - [`BUILD_ID`] — same-version rebuild discriminator
 /// - the target triple — no cross-arch cache reuse
 /// - the active [`feature_signature`]
+/// - `default_dir` as the parse was given it — the spelling every position names
 /// - the concatenated `default/*.loft` source bytes (the
 ///   retirement-bug fix: a stdlib edit changes the key)
 ///
@@ -310,7 +269,7 @@ fn cache_decision(no_cache: bool, program_cache: bool, under_cargo: bool, dev_bu
 /// passes them in a stable order (the loader collects them sorted);
 /// names are included so a rename also invalidates.
 #[must_use]
-pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
+pub fn stdlib_cache_key(default_dir: &str, stdlib_sources: &[(String, String)]) -> [u8; 32] {
     let mut h = Sha256::new();
     // Each field is fed as (u64 little-endian length, bytes) so two
     // different field boundaries can never hash identically.
@@ -329,10 +288,15 @@ pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
     // because someone remembered to bump the format byte by hand.  The two caches answer ONE
     // question — *may a bundle written by another build be read by this one?* — so they fold in
     // the same facts; the format byte goes back to being a second line of defence.
-    put(binary_signature_tag().as_bytes());
+    put(build_identity_tag().as_bytes());
     put(target_triple().as_bytes());
     put(feature_signature().as_bytes());
     put(semantic_env_signature().as_bytes());
+    // The directory as the parse was GIVEN it: every position in the image names its file
+    // under this spelling, and a diagnostic or a go-to-definition renders it.  The loft binary
+    // reads `default/` by its absolute path and a test binary by a relative one, so once one
+    // build's binaries share an image (loft#1859) the spelling has to key it apart.
+    put(default_dir.as_bytes());
     // Number of stdlib files, then each (name, content).
     h.update((stdlib_sources.len() as u64).to_le_bytes());
     for (name, content) in stdlib_sources {
@@ -358,6 +322,7 @@ pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
 pub const INERT_ENV: &[&str] = &[
     "LOFT_TIMING",
     "LOFT_TIMING_LEDGER",
+    "LOFT_TIMING_TEST",
     "LOFT_TIMEOUT",
     "LOFT_TIMEOUT_GRACE",
     "LOFT_MEMORY_LIMIT",
@@ -369,6 +334,16 @@ pub const INERT_ENV: &[&str] = &[
     "LOFT_TMPDIR",
     "LOFT_TMPFS_MIN_FREE_MB",
     "LOFT_SOURCE_DIR",
+    // loft#1859 — the build script's own stamps.  `cargo test` and `cargo run` export them
+    // into the process they start, while an installed binary sees none, so counting them
+    // keyed every test binary apart from the `loft` binary of the same build.  Nothing reads
+    // them at run time: the build's values are compiled in (`env!`) and already in the key.
+    "LOFT_BUILD_ID",
+    "LOFT_BUILD_RUSTC",
+    "LOFT_BUILD_RUSTFLAGS",
+    "LOFT_BUILD_STAMP",
+    "LOFT_BUILD_TARGET",
+    "LOFT_FFI_FINGERPRINT",
 ];
 
 /// Whether `name` is an environment variable that may change what a run parses or emits:
@@ -436,21 +411,16 @@ pub fn host_triple() -> String {
 /// "cannot cache" and falls back to a cold parse.
 #[must_use]
 pub fn collect_stdlib_sources(default_dir: &str) -> Vec<(String, String)> {
-    let Ok(entries) = std::fs::read_dir(default_dir) else {
+    let Ok(entries) = crate::file_access::read_dir(default_dir) else {
         return Vec::new();
     };
     let mut out: Vec<(String, String)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for path in &entries {
+        if path.extension() != Some("loft") {
             continue;
         }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let Ok(content) = std::fs::read_to_string(&path) else {
+        let name = path.file_name().unwrap_or_default().to_string();
+        let Ok(content) = crate::file_access::read_to_string(path) else {
             return Vec::new();
         };
         out.push((name, content));
@@ -499,7 +469,7 @@ fn hex32(key: &[u8; 32]) -> String {
 /// hash every parsed source for the whole-program bundle's drift manifest.
 #[must_use]
 pub fn file_hash(path: &str) -> Option<[u8; 32]> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = crate::file_access::read(path).ok()?;
     let mut h = Sha256::new();
     h.update(&bytes);
     Some(h.finalize().into())
@@ -510,16 +480,19 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
 fn loft_rlib_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    if let Some(found) = rlib_candidates(exe_dir).into_iter().find(|c| c.exists()) {
+    if let Some(found) = rlib_candidates(exe_dir)
+        .into_iter()
+        .find(|c| crate::file_access::exists(c))
+    {
         return Some(found);
     }
-    if exe_dir.file_name().is_some_and(|n| n == "bin") {
+    if crate::file_access::file_name(exe_dir).as_deref() == Some("bin") {
         let share = exe_dir
             .parent()?
             .join("share")
             .join("loft")
             .join("libloft.rlib");
-        if share.exists() {
+        if crate::file_access::exists(&share) {
             return Some(share);
         }
     }
@@ -548,7 +521,7 @@ fn rlib_candidates(exe_dir: &std::path::Path) -> [std::path::PathBuf; 2] {
 }
 
 /// @PLN11 Arc N / N0 — the canonical fingerprint of THIS loft build, for
-/// native-artifact validity (C71 "build fingerprint").  A native artifact links
+/// native-artifact validity (@C71 "build fingerprint").  A native artifact links
 /// `libloft.rlib`, so it is valid only against the loft build whose rlib it links:
 /// this is the rlib's **content** hash (sha256 → `u64`), memoised per process.  A
 /// loft codegen/runtime change, a rustc bump, or a cross-target build all rewrite
@@ -612,8 +585,8 @@ fn warn_if_uplifted_rlib_stale() {
     let deps = exe_dir.join("deps").join("libloft.rlib");
     let bare = exe_dir.join("libloft.rlib");
     let (Ok(deps_t), Ok(bare_t)) = (
-        std::fs::metadata(&deps).and_then(|m| m.modified()),
-        std::fs::metadata(&bare).and_then(|m| m.modified()),
+        crate::file_access::metadata(&deps).and_then(|m| m.modified()),
+        crate::file_access::metadata(&bare).and_then(|m| m.modified()),
     ) else {
         return;
     };
@@ -694,11 +667,26 @@ fn rustflags_fp_of(flags: &str) -> u64 {
 /// loft it would have answered green on a stale one.  @PLN159 phase C.
 #[must_use]
 pub fn native_artifact_cache_key() -> u64 {
+    // An empty recipe leaves the key as it was, so a platform with nothing extra is not
+    // made to rebuild every package for a change that is not its own.
+    let rustflags_and_recipe = if NATIVE_LINK_RECIPE.is_empty() {
+        rustflags_fingerprint()
+    } else {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        rustflags_fingerprint().hash(&mut h);
+        NATIVE_LINK_RECIPE.hash(&mut h);
+        h.finish()
+    };
     native_artifact_cache_key_of(
-        combine_native_cache_key(loft_ffi_fingerprint(), rustflags_fingerprint()),
+        combine_native_cache_key(loft_ffi_fingerprint(), rustflags_and_recipe),
         LOFT_VERSION,
     )
 }
+
+/// The platform part of how a package cdylib is linked, folded into
+/// [`native_artifact_cache_key`]: [`crate::platform::NATIVE_LINK_RECIPE`].
+pub use crate::platform::NATIVE_LINK_RECIPE;
 
 /// Pure core of [`native_artifact_cache_key`] (testable without the build-time env):
 /// fold `LOFT_VERSION` into the ABI/RUSTFLAGS key — a release is the one floor under
@@ -736,7 +724,7 @@ pub fn native_artifact_fingerprint_matches(profile_dir: &std::path::Path, fp: u6
     if fp == 0 {
         return true;
     }
-    std::fs::read_to_string(fp_sidecar(profile_dir))
+    crate::file_access::read_to_string(fp_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .is_some_and(|stored| stored == fp)
@@ -746,7 +734,7 @@ pub fn native_artifact_fingerprint_matches(profile_dir: &std::path::Path, fp: u6
 /// there (best-effort; no-op when `fp == 0`).
 pub fn write_native_artifact_fingerprint(profile_dir: &std::path::Path, fp: u64) {
     if fp != 0 {
-        let _ = std::fs::write(fp_sidecar(profile_dir), fp.to_string());
+        let _ = crate::file_access::write(fp_sidecar(profile_dir), fp.to_string());
     }
 }
 
@@ -765,7 +753,7 @@ const RUNTIME_FPS_KEPT: usize = 4;
 #[must_use]
 pub fn runtime_fingerprint_matches(profile_dir: &std::path::Path, fp: u64) -> bool {
     fp == 0
-        || std::fs::read_to_string(fp_sidecar(profile_dir))
+        || crate::file_access::read_to_string(fp_sidecar(profile_dir))
             .is_ok_and(|s| s.split_whitespace().any(|t| t.parse::<u64>() == Ok(fp)))
 }
 
@@ -782,7 +770,7 @@ pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt
     let mut fps: Vec<u64> = if rebuilt {
         Vec::new()
     } else {
-        std::fs::read_to_string(fp_sidecar(profile_dir))
+        crate::file_access::read_to_string(fp_sidecar(profile_dir))
             .map(|s| {
                 s.split_whitespace()
                     .filter_map(|t| t.parse().ok())
@@ -794,7 +782,7 @@ pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt
     fps.push(fp);
     let keep = fps.len().saturating_sub(RUNTIME_FPS_KEPT);
     let text: Vec<String> = fps[keep..].iter().map(u64::to_string).collect();
-    let _ = std::fs::write(fp_sidecar(profile_dir), text.join(" "));
+    let _ = crate::file_access::write(fp_sidecar(profile_dir), text.join(" "));
 }
 
 /// The fingerprint a native artifact dir was stamped with, if any — the
@@ -806,7 +794,7 @@ pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt
 /// published `loft-ffi` version instead of the rlib hash.
 #[must_use]
 pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(fp_sidecar(profile_dir))
+    crate::file_access::read_to_string(fp_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
@@ -837,12 +825,14 @@ pub fn rustc_mismatch() -> Option<&'static str> {
             if stamp.is_empty() {
                 return None;
             }
-            let live = std::process::Command::new("rustc")
-                .arg("--version")
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            let live = crate::platform::process::Spawn::new(
+                crate::platform::process::Program::search("rustc"),
+            )
+            .arg("--version")
+            .run(b"")
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
             match live {
                 Some(v) if v == stamp => None,
                 Some(v) => Some(format!(
@@ -878,19 +868,19 @@ pub fn clear_stale_native_target(
         return false;
     }
     let release_dir = target_root.join("release");
-    let artifact_present =
-        release_dir.join(lib_name).exists() || release_dir.join(rlib_name).exists();
+    let artifact_present = crate::file_access::exists(release_dir.join(lib_name))
+        || crate::file_access::exists(release_dir.join(rlib_name));
     // Clear only on a PRESENT-and-mismatched sidecar — proof the artifact
     // was stamped by another loft build.  An ABSENT sidecar is unknown
     // provenance and commonly a legitimate HAND-BUILT artifact (`cargo
     // build` in the library's `native/` dir — the documented workflow; the
     // `tests/lib` fixture cdylibs are exactly this) — deleting those breaks
     // the dev loop, so they keep the pre-existing build-and-stamp path.
-    let stamped = std::fs::read_to_string(release_dir.join(".loft-build-fp"))
+    let stamped = crate::file_access::read_to_string(release_dir.join(".loft-build-fp"))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok());
     if artifact_present && stamped.is_some_and(|s| s != fp) {
-        let _ = std::fs::remove_dir_all(target_root);
+        let _ = crate::file_access::remove_dir_all(target_root);
         return true;
     }
     false
@@ -907,7 +897,7 @@ fn run_hash_sidecar(profile_dir: &std::path::Path) -> std::path::PathBuf {
 /// Read the source hash recorded on the previous run (None if absent/unreadable).
 #[must_use]
 pub fn read_run_source_hash(profile_dir: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(run_hash_sidecar(profile_dir))
+    crate::file_access::read_to_string(run_hash_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
@@ -916,8 +906,8 @@ pub fn read_run_source_hash(profile_dir: &std::path::Path) -> Option<u64> {
 /// needed, since a library that has only ever interpreted has no artifact dir yet).
 /// Best-effort.
 pub fn write_run_source_hash(profile_dir: &std::path::Path, hash: u64) {
-    let _ = std::fs::create_dir_all(profile_dir);
-    let _ = std::fs::write(run_hash_sidecar(profile_dir), hash.to_string());
+    let _ = crate::file_access::create_dir_all(profile_dir);
+    let _ = crate::file_access::write(run_hash_sidecar(profile_dir), hash.to_string());
 }
 
 /// @PLN11 arc E — the `(bundle, manifest)` paths for the whole-program cache of
@@ -935,6 +925,8 @@ pub fn write_run_source_hash(profile_dir: &std::path::Path, hash: u64) {
 /// to notice.  A consumer's A/B harness compared an arm against itself and read the
 /// byte-identical output as the strongest possible pass.  The environment is part of it
 /// for the same reason: a lowering switch parses another program (`env_counts`, loft#1697).
+///
+/// @C70 — one cached image per program, never one per library.
 #[must_use]
 pub fn program_cache_paths(
     script_abspath: &str,
@@ -970,7 +962,7 @@ pub fn program_cache_paths(
 /// both current execs the binary without parsing, and one evicts with the other.
 #[must_use]
 pub fn native_sidecar_path(manifest: &std::path::Path) -> std::path::PathBuf {
-    manifest.with_extension("native")
+    crate::file_access::with_extension(manifest, "native")
 }
 
 /// @PLN11 G2 / track 1 — default budget (MiB) for the program-cache directory
@@ -993,7 +985,7 @@ fn program_cache_budget_bytes() -> u64 {
 /// evicted (`LOFT_CACHE_TTL_HOURS`, default 24 h).  A re-use ([`touch_now`]) or a
 /// re-save refreshes the entry's mtime, so an actively-used "library set" persists
 /// indefinitely while a one-off ages out — "store common sets longer, clear when
-/// idle 24 h" (C71).  A malformed value falls back to the default.
+/// idle 24 h" (@C71).  A malformed value falls back to the default.
 #[must_use]
 fn cache_ttl() -> std::time::Duration {
     let hours = std::env::var("LOFT_CACHE_TTL_HOURS")
@@ -1006,21 +998,12 @@ fn cache_ttl() -> std::time::Duration {
 /// @PLN11 Arc N / N1 — mark a cached file as used *now* (touch-on-use): bumps its
 /// modification time so the idle-TTL GC keeps it.  Best-effort (no-op if the file
 /// is missing / unopenable).
-///
-/// The handle is opened for WRITE only on Windows, where `SetFileTime` needs it.  On Unix
-/// `futimens` works on a read-only descriptor, and the files touched here are cached
-/// executables and loaded cdylibs: a write handle on a Mach-O another process is running
-/// is what macOS's code-signing checks act on (a cached native test binary was killed by
-/// a signal on its first run after this took a write handle everywhere).
+/// The per-platform handle rule is `file_access::set_modified`'s.
 pub fn touch_now(path: &std::path::Path) {
-    let mut open = std::fs::OpenOptions::new();
-    open.read(true);
-    if cfg!(windows) {
-        open.write(true);
-    }
-    if let Ok(f) = open.open(path) {
-        let _ = f.set_modified(std::time::SystemTime::now());
-    }
+    let _ = crate::file_access::set_modified(
+        crate::file_access::PathText::from_os(path),
+        std::time::SystemTime::now(),
+    );
 }
 
 /// @PLN11 G2 / track 1 + Arc N / N1 — bound cache growth.  With the cache
@@ -1040,7 +1023,7 @@ pub fn prune_program_cache() {
 /// every bundle idle longer than `ttl` (the primary policy); phase 2 is the
 /// oldest-first size-cap backstop on what remains.
 fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration) {
-    let Ok(entries) = std::fs::read_dir(base) else {
+    let Ok(entries) = crate::file_access::read_dir(base) else {
         return;
     };
     struct Bundle {
@@ -1049,31 +1032,29 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
         size: u64,
     }
     let mut bundles: Vec<Bundle> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let is_program_store = path.extension().and_then(|x| x.to_str()) == Some("store")
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("program-"));
+    for entry in &entries {
+        let is_program_store = !entry.last_is_unspellable()
+            && entry.extension() == Some("store")
+            && entry.file_name().is_some_and(|n| n.starts_with("program-"));
         if !is_program_store {
             continue;
         }
-        let Ok(meta) = entry.metadata() else {
+        // `DirEntry::metadata` did not follow a link: neither does this.
+        let Ok(meta) = crate::file_access::symlink_metadata(entry) else {
             continue;
         };
         bundles.push(Bundle {
-            store: path,
+            store: entry.os_spelling(),
             mtime: meta.modified().unwrap_or(std::time::UNIX_EPOCH),
             size: meta.len(),
         });
     }
     let now = std::time::SystemTime::now();
     let remove_pair = |store: &std::path::Path| {
-        let _ = std::fs::remove_file(store);
-        let manifest = store.with_extension("manifest");
-        let _ = std::fs::remove_file(native_sidecar_path(&manifest));
-        let _ = std::fs::remove_file(manifest);
+        let _ = crate::file_access::remove_file(store);
+        let manifest = crate::file_access::with_extension(store, "manifest");
+        let _ = crate::file_access::remove_file(native_sidecar_path(&manifest));
+        let _ = crate::file_access::remove_file(manifest);
     };
     // Phase 1 — idle-TTL: drop any bundle not used within `ttl`.
     bundles.retain(|b| {
@@ -1096,6 +1077,53 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
         }
         remove_pair(&b.store);
         total = total.saturating_sub(b.size);
+    }
+}
+
+/// How many stdlib images the cache keeps (loft#1859).  One image serves every binary of one
+/// compiler build ([`build_identity_tag`]), so the images in use at once are one per build
+/// that is still running — a checkout's debug and release builds, a sibling checkout's, a
+/// falsify control — which this covers with room to spare.  An image dropped while wanted is
+/// a cold parse of `default/`, then written again.
+pub const KEEP_STDLIB_IMAGES: usize = 16;
+
+/// After writing a stdlib image: keep the [`KEEP_STDLIB_IMAGES`] most recently USED (a warm
+/// load bumps an image's mtime) and remove the rest.  Each build writes one image and none
+/// reads another's, so without this the directory only grows.  A process that still maps a
+/// removed image keeps reading it; one that has yet to open it parses cold.
+pub fn prune_stdlib_images() {
+    prune_stdlib_dir(&cache_base_dir(), KEEP_STDLIB_IMAGES);
+}
+
+/// [`prune_stdlib_images`] against an explicit directory, for the tests.  Only a
+/// `stdlib-<64 hex>.store` name is considered.
+fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
+    use crate::file_access as fa;
+    let Ok(entries) = fa::read_dir(fa::PathText::from_os(base)) else {
+        return;
+    };
+    let mut images: Vec<(std::time::SystemTime, fa::PathText)> = entries
+        .into_iter()
+        .filter(|p| {
+            p.parts().last().is_some_and(|n| {
+                n.strip_prefix("stdlib-")
+                    .and_then(|r| r.strip_suffix(".store"))
+                    .is_some_and(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))
+            })
+        })
+        .map(|p| {
+            let at = fa::metadata(&p)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (at, p)
+        })
+        .collect();
+    if images.len() <= keep {
+        return;
+    }
+    images.sort_by_key(|i| std::cmp::Reverse(i.0)); // newest first
+    for (_, path) in &images[keep..] {
+        let _ = fa::remove_file(path);
     }
 }
 
@@ -1152,44 +1180,44 @@ mod tests {
     #[test]
     fn key_is_deterministic() {
         // Identical inputs → identical key, across repeated calls.
-        let a = stdlib_cache_key(&sample());
-        let b = stdlib_cache_key(&sample());
+        let a = stdlib_cache_key("default", &sample());
+        let b = stdlib_cache_key("default", &sample());
         assert_eq!(a, b, "same inputs must yield the same key");
     }
 
     #[test]
     fn key_changes_on_stdlib_content() {
         // The retirement bug: a stdlib edit MUST change the key.
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut edited = sample();
         edited[0].1.push_str(" // tweak");
         assert_ne!(
             base,
-            stdlib_cache_key(&edited),
+            stdlib_cache_key("default", &edited),
             "editing default/*.loft content must invalidate the cache"
         );
     }
 
     #[test]
     fn key_changes_on_stdlib_name() {
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut renamed = sample();
         renamed[0].0 = "01_core.loft".to_string();
         assert_ne!(
             base,
-            stdlib_cache_key(&renamed),
+            stdlib_cache_key("default", &renamed),
             "renaming a stdlib file must invalidate the cache"
         );
     }
 
     #[test]
     fn key_changes_on_file_count() {
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut more = sample();
         more.push(("03_text.loft".to_string(), "fn c() {}".to_string()));
         assert_ne!(
             base,
-            stdlib_cache_key(&more),
+            stdlib_cache_key("default", &more),
             "adding a stdlib file must invalidate the cache"
         );
     }
@@ -1198,12 +1226,12 @@ mod tests {
     fn key_is_order_sensitive() {
         // Reordering files is a different stdlib (load order matters for
         // parse); the key must reflect it.
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut swapped = sample();
         swapped.swap(0, 1);
         assert_ne!(
             base,
-            stdlib_cache_key(&swapped),
+            stdlib_cache_key("default", &swapped),
             "stdlib file order is part of the key"
         );
     }
@@ -1212,8 +1240,8 @@ mod tests {
     fn boundary_shift_changes_key() {
         // Moving a byte across the name/content boundary must not
         // collide (length-prefixing guarantees this).
-        let a = stdlib_cache_key(&[("ab".to_string(), "c".to_string())]);
-        let b = stdlib_cache_key(&[("a".to_string(), "bc".to_string())]);
+        let a = stdlib_cache_key("default", &[("ab".to_string(), "c".to_string())]);
+        let b = stdlib_cache_key("default", &[("a".to_string(), "bc".to_string())]);
         assert_ne!(a, b, "field boundaries must not be ambiguous");
     }
 
@@ -1239,7 +1267,7 @@ mod tests {
         );
         assert!(
             srcs.iter()
-                .all(|(n, _)| std::path::Path::new(n).extension() == Some("loft".as_ref()))
+                .all(|(n, _)| crate::file_access::extension(n).as_deref() == Some("loft"))
         );
         // Sorted by filename → deterministic key.
         let mut sorted = srcs.clone();
@@ -1333,8 +1361,8 @@ mod tests {
     #[test]
     fn native_artifact_fingerprint_sidecar_gate() {
         let dir = std::env::temp_dir().join(format!("loft_fpgate_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         // No sidecar yet → a non-zero fp must NOT match (forces a rebuild).
         assert!(!native_artifact_fingerprint_matches(&dir, 0xABCD));
         // Stamp it: the same fp matches, a different (stale) one does not.
@@ -1352,7 +1380,7 @@ mod tests {
             native_artifact_fingerprint_matches(&dir, 0xABCD),
             "a 0-fp write must not overwrite the existing stamp"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1374,8 +1402,8 @@ mod tests {
     #[test]
     fn a_runtime_rlib_is_stamped_for_every_build_it_serves() {
         let dir = std::env::temp_dir().join(format!("loft_runtime_fp_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         // The single-number sidecar every older loft wrote still reads.
         write_native_artifact_fingerprint(&dir, 11);
         assert!(runtime_fingerprint_matches(&dir, 11));
@@ -1396,7 +1424,7 @@ mod tests {
             &dir,
             40 + RUNTIME_FPS_KEPT as u64 - 1
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1422,48 +1450,10 @@ mod tests {
 
     #[test]
     fn cache_decision_precedence() {
-        // (no_cache, program_cache, under_cargo, dev_build) → enabled?
-        // 1. the kill switch wins over everything.
-        assert!(!cache_decision(true, true, false, false));
-        assert!(!cache_decision(true, false, true, false));
-        assert!(!cache_decision(true, false, false, true));
-        // 2. the explicit force-on overrides both context defaults — the cache's own tests
-        //    rely on it, and it is how a dev build reaches the quick path deliberately.
-        assert!(cache_decision(false, true, true, false));
-        assert!(cache_decision(false, true, false, true));
-        // 3–4. the two context defaults.  They are NOT the incomplete-invalidation proxy
-        //    they used to be — `stdlib_cache_key` folds in `binary_signature_tag` now, so
-        //    that half is answered on the fact.  What they hold back is the BEHAVIOUR half:
-        //    the warm path does not yet reproduce every parse-time effect (see
-        //    `cache_decision`'s doc for the two measured classes).
-        assert!(!cache_decision(false, false, true, false));
-        assert!(!cache_decision(false, false, false, true));
-        // 5. plain installed invocation → on.
-        assert!(cache_decision(false, false, false, false));
-    }
-
-    /// The dev-build probe must recognise a cargo build and NOT an installed one — the
-    /// point is to tell a development build from a shipped one, and a false negative
-    /// re-enables the cache for the compiler-debug loop it exists to protect.
-    #[test]
-    fn dev_build_probe_reads_the_binary_path() {
-        // This test binary is itself a cargo build, so the running executable is by
-        // construction a dev build — a self-check that needs no fixture and cannot
-        // drift from how the real binary is laid out.  It holds under a custom
-        // `CARGO_TARGET_DIR` too (e.g. `target-da/`, the debug-assertions
-        // calibration build), which the first version of this predicate got wrong.
-        assert!(
-            running_a_dev_build(),
-            "a cargo-built test binary must read as a dev build: {:?}",
-            std::env::current_exe()
-        );
-        // The shipped shape must NOT: no `debug`/`release` component.
-        assert!(
-            !std::path::Path::new("/usr/local/bin/loft")
-                .components()
-                .any(|c| c.as_os_str() == "debug" || c.as_os_str() == "release"),
-            "an installed path must not look like a dev build"
-        );
+        // The kill switch is the one setting: on without it, off with it — a development
+        // build included, which the policy treats like any other.
+        assert!(cache_decision(false));
+        assert!(!cache_decision(true));
     }
 
     #[test]
@@ -1471,11 +1461,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("loft_stale_clear_{}", std::process::id()));
         let release = root.join("release");
         let setup = |sidecar: Option<&str>| {
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(&release).unwrap();
-            std::fs::write(release.join("libprobe.so"), b"so").unwrap();
+            let _ = crate::file_access::remove_dir_all(&root);
+            crate::file_access::create_dir_all(&release).unwrap();
+            crate::file_access::write(release.join("libprobe.so"), b"so").unwrap();
             if let Some(s) = sidecar {
-                std::fs::write(release.join(".loft-build-fp"), s).unwrap();
+                crate::file_access::write(release.join(".loft-build-fp"), s).unwrap();
             }
         };
         // 1. Mismatched sidecar → cleared (the laundering hazard: cargo can
@@ -1487,7 +1477,10 @@ mod tests {
             "libprobe.rlib",
             7
         ));
-        assert!(!release.exists(), "stale target must be removed");
+        assert!(
+            !crate::file_access::exists(&release),
+            "stale target must be removed"
+        );
         // 2. Matching sidecar → kept.
         setup(Some("7"));
         assert!(!clear_stale_native_target(
@@ -1496,7 +1489,10 @@ mod tests {
             "libprobe.rlib",
             7
         ));
-        assert!(release.join("libprobe.so").exists(), "fresh artifact kept");
+        assert!(
+            crate::file_access::exists(release.join("libprobe.so")),
+            "fresh artifact kept"
+        );
         // 3. Missing sidecar = unknown provenance, commonly a legitimate
         //    HAND-BUILT artifact (the documented `cargo build` workflow;
         //    the tests/lib fixture cdylibs) → NOT cleared, keeps the
@@ -1509,12 +1505,12 @@ mod tests {
             7
         ));
         assert!(
-            release.join("libprobe.so").exists(),
+            crate::file_access::exists(release.join("libprobe.so")),
             "hand-built artifact kept"
         );
         // 4. No artifact at all → nothing to clear (first build).
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&release).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&release).unwrap();
         assert!(!clear_stale_native_target(
             &root,
             "libprobe.so",
@@ -1529,7 +1525,7 @@ mod tests {
             "libprobe.rlib",
             0
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     #[test]
@@ -1545,19 +1541,17 @@ mod tests {
     fn prune_dir_evicts_oldest_over_budget() {
         use std::time::Duration;
         let dir = std::env::temp_dir().join(format!("loft_prune_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         // Three 10-byte bundles (+ manifests); set distinct mtimes oldest→newest.
         let mk = |name: &str, age_secs: u64| {
             let store = dir.join(format!("{name}.store"));
-            std::fs::write(&store, b"0123456789").unwrap();
-            std::fs::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
+            crate::file_access::write(&store, b"0123456789").unwrap();
+            crate::file_access::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
             let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write
             // access (Unix `futimens` works on a read-only fd), matching `touch_now`.
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&store)
+            crate::file_access::open_with(&store, std::fs::OpenOptions::new().write(true))
                 .unwrap()
                 .set_modified(when)
                 .unwrap();
@@ -1566,45 +1560,49 @@ mod tests {
         mk("program-bbb", 200);
         mk("program-ccc", 100); // newest
         // A non-program file must be left alone.
-        std::fs::write(dir.join("stdlib-zzz.store"), b"keepme").unwrap();
+        crate::file_access::write(dir.join("stdlib-zzz.store"), b"keepme").unwrap();
 
         // Budget 25 bytes: 3×10 = 30 > 25 → evict the single oldest (→ 20 ≤ 25).
         // TTL of a year so the (recent-mtime) bundles never trip the idle pass —
         // this exercises the size-cap backstop in isolation.
         prune_dir(&dir, 25, Duration::from_hours(24 * 365));
         assert!(
-            !dir.join("program-aaa.store").exists(),
+            !crate::file_access::exists(dir.join("program-aaa.store")),
             "oldest store evicted"
         );
         assert!(
-            !dir.join("program-aaa.manifest").exists(),
+            !crate::file_access::exists(dir.join("program-aaa.manifest")),
             "oldest manifest evicted with it"
         );
-        assert!(dir.join("program-bbb.store").exists(), "newer bundle kept");
-        assert!(dir.join("program-ccc.store").exists(), "newest bundle kept");
         assert!(
-            dir.join("stdlib-zzz.store").exists(),
+            crate::file_access::exists(dir.join("program-bbb.store")),
+            "newer bundle kept"
+        );
+        assert!(
+            crate::file_access::exists(dir.join("program-ccc.store")),
+            "newest bundle kept"
+        );
+        assert!(
+            crate::file_access::exists(dir.join("stdlib-zzz.store")),
             "non-program cache file untouched"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
     fn prune_dir_idle_ttl_evicts_unused() {
         use std::time::Duration;
         let dir = std::env::temp_dir().join(format!("loft_idle_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let mk = |name: &str, age_secs: u64| {
             let store = dir.join(format!("{name}.store"));
-            std::fs::write(&store, b"x").unwrap();
-            std::fs::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
+            crate::file_access::write(&store, b"x").unwrap();
+            crate::file_access::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
             let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write
             // access (Unix `futimens` works on a read-only fd), matching `touch_now`.
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&store)
+            crate::file_access::open_with(&store, std::fs::OpenOptions::new().write(true))
                 .unwrap()
                 .set_modified(when)
                 .unwrap();
@@ -1615,29 +1613,71 @@ mod tests {
         // TTL = 1 day: the 2-day-idle bundle is evicted, the fresh one kept.
         prune_dir(&dir, u64::MAX, Duration::from_hours(24));
         assert!(
-            dir.join("program-fresh.store").exists(),
+            crate::file_access::exists(dir.join("program-fresh.store")),
             "a recently-used bundle is kept regardless of age"
         );
         assert!(
-            !dir.join("program-stale.store").exists(),
+            !crate::file_access::exists(dir.join("program-stale.store")),
             "a bundle idle longer than the TTL is evicted"
         );
         assert!(
-            !dir.join("program-stale.manifest").exists(),
+            !crate::file_access::exists(dir.join("program-stale.manifest")),
             "the idle bundle's manifest is evicted with it"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
+    }
+
+    /// loft#1859 — the stdlib images are bounded: the newest `keep` stay, the rest go, and
+    /// nothing but a `stdlib-<64 hex>.store` is touched.
+    #[test]
+    fn stdlib_images_keep_the_newest_and_nothing_else() {
+        use crate::file_access as fa;
+        use std::time::{Duration, SystemTime};
+        let dir = std::env::temp_dir().join(format!("loft_stdlib_prune_{}", std::process::id()));
+        let root = fa::PathText::from_os(&dir);
+        let _ = fa::remove_dir_all(&root);
+        fa::create_dir_all(&root).unwrap();
+        let name = |i: u8| format!("stdlib-{}.store", format!("{i:02x}").repeat(32));
+        for i in 0..5u8 {
+            let p = root.join(&name(i));
+            fa::write(&p, b"img").unwrap();
+            let when = SystemTime::now() - Duration::from_secs(1000 - u64::from(i) * 100);
+            fa::open_read_write(&p).unwrap().set_modified(when).unwrap();
+        }
+        fa::write(root.join("stdlib-zzz.store"), b"keepme").unwrap();
+        fa::write(root.join("program-aaa.store"), b"keepme").unwrap();
+        prune_stdlib_dir(&dir, 2);
+        for i in 0..3u8 {
+            assert!(!fa::exists(root.join(&name(i))), "older image {i} removed");
+        }
+        for i in 3..5u8 {
+            assert!(fa::exists(root.join(&name(i))), "newest image {i} kept");
+        }
+        assert!(
+            fa::exists(root.join("stdlib-zzz.store")),
+            "a foreign name is left alone"
+        );
+        assert!(
+            fa::exists(root.join("program-aaa.store")),
+            "a program bundle is left alone"
+        );
+        let _ = fa::remove_dir_all(&root);
     }
 
     #[test]
     fn cache_path_is_deterministic_and_key_specific() {
-        let k1 = stdlib_cache_key(&[("x.loft".into(), "a".into())]);
-        let k2 = stdlib_cache_key(&[("x.loft".into(), "b".into())]);
+        let k1 = stdlib_cache_key("default", &[("x.loft".into(), "a".into())]);
+        let k2 = stdlib_cache_key("default", &[("x.loft".into(), "b".into())]);
         let p1 = stdlib_cache_path(&k1);
         assert_eq!(p1, stdlib_cache_path(&k1), "same key → same path");
         assert_ne!(p1, stdlib_cache_path(&k2), "different key → different path");
-        let name = p1.file_name().unwrap().to_string_lossy();
-        assert!(name.starts_with("stdlib-") && name.ends_with(".store"));
+        assert_ne!(
+            k1,
+            stdlib_cache_key("/abs/default", &[("x.loft".into(), "a".into())]),
+            "a different spelling of the stdlib directory → a different key (loft#1859)"
+        );
+        let name = crate::file_access::file_name(&p1).unwrap();
+        assert!(name.starts_with("stdlib-") && crate::file_access::has_extension(&p1, "store"));
         assert!(
             name.len() == "stdlib-".len() + 64 + ".store".len(),
             "filename embeds 64-hex key"

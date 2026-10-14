@@ -9,15 +9,17 @@ Tracker: [@PLN181](https://github.com/loft-lang/plans/issues/181).
 
 ## Status
 
-Active on `laptop-superinstructions`.  **P0, P1 and P2 are built.**  An interpreted program
-dispatches the standard library's looping loft functions (13) to their compiled bodies, built
-into the loft binary, with no rustc at run time; the `split` and `lines` kernels are retired
-(KERNELS.md § Removed).  What stays open is below.
+**Finished (2026-10-06).  P0, P1 and P2 are built and on `main`.**  An interpreted program
+dispatches the standard library's looping loft functions to their compiled bodies, built into the
+loft binary, with no rustc at run time; the `split` and `lines` kernels are retired.  How it works
+now lives in [INTERPRETER_PERFORMANCE.md § The compiled standard library](../INTERPRETER_PERFORMANCE.md#the-compiled-standard-library),
+with the open work (the test runner, the REPL, the debugger, embedding, the browser).  What
+follows is the record.
 
 ## Goal
 
 An interpreted program calls the standard library's COMPILED loft bodies, exactly as it
-already calls a `use`d library's (C71, "libraries compile, scripts interpret"), without
+already calls a `use`d library's (@C71, "libraries compile, scripts interpret"), without
 rustc on the user's machine.  Then the hand-written Rust kernels
 ([KERNELS.md](../KERNELS.md)) are replaced by their loft bodies, as the owner directed: every
 kernel is a stop-gap, and a Rust routine is replaced by loft as soon as that is viable.
@@ -25,7 +27,7 @@ kernel is a stop-gap, and a Rust routine is replaced by loft as soon as that is 
 ## Why
 
 A kernel fixes one name with hand-written Rust.  Loft compiles through rustc, so its own code
-can be as fast; the only gap is the interpreter, and C71 already closes that gap for every
+can be as fast; the only gap is the interpreter, and @C71 already closes that gap for every
 library except the standard library.  Measured in P0: `split`'s own loft body, compiled and
 called from the interpreter, runs within 1.4× of the `split` kernel (the retirement bar is 2×);
 interpreted, it is 21× slower.

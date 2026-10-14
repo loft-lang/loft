@@ -22,7 +22,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > The model here is now also the one in [OWNERSHIP_MODEL.md § The law](../OWNERSHIP_MODEL.md) —
 > @PLN87 rewrote it to the bind-site-link framing (the old "`&` = reassignment write-back"
 > framing is gone). Design home: [OWNERSHIP_MODEL.md](../OWNERSHIP_MODEL.md),
-> [DESIGN_DECISIONS.md C77](../DESIGN_DECISIONS.md).
+> [DESIGN_DECISIONS.md @C77](../DESIGN_DECISIONS.md).
 > This doc is the **binding surface**; the `deps`/borrow *checker* (lifetimes) stays in
 > the deferred `ownership.md`.
 
@@ -246,7 +246,7 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   with no runtime machinery.  Taking a `&` is the author's OWNERSHIP
                   DECISION, and this is its consequence: loft will not quietly downgrade
                   the reference to a copy, so where it cannot honour the write it
-                  declines the program (C79, revisited 2026-08-05).  LIVENESS is the
+                  declines the program (@C79, revisited 2026-08-05).  LIVENESS is the
                   condition, not existence — `c = &v[0]; c.n = 1; v.remove(0);` is fine,
                   because the reference is dead at the disturbance.  The disturbance may
                   be in this frame or in anything the frame CALLS (`f(v[i], v)` where
@@ -358,6 +358,19 @@ source: [../plans/40-const-fields/const-model.md](../plans/40-const-fields/const
                           the rebind, Const-Value rejects every through-write — so
                           the field is FULLY immutable: neither `t.v = other` nor
                           any mutation beneath it is accepted.
+  (Const-Foreign)         FOREIGN data — a structure whose bytes loft does not own: a
+                          native library's text, record, tuple or vector, a mapped
+                          file, a producer's buffer — presents as an ordinary loft
+                          type and is VALUE-CONST: its producer's declared type is
+                          `const T`, so being read-only is static.  It is traversed
+                          and read, whole or in parts, in place and without a copy;
+                          a `&` link to a part is a VIEW (B-View), read-only like the
+                          value; every write — through the value, a view or a link —
+                          is Const-Value's compile-time error, never a runtime check
+                          (@C80).  The cure is a copy, which is the reader's own:
+                          `c = t.0 + "!"` where `c = &t.0; c += "!"` is refused,
+                          `w = v` (B-Copy).  Foreign data is never presented as
+                          writable (@C139).
   (Const-ConstructExempt) construction lowers via a SEPARATE path (`Value::Insert`),
                           not the reassignment guard (`validate_write` /
                           `const_write_blocked`), so write-once is SET at
@@ -398,7 +411,9 @@ different lowering path (`Value::Insert`) that the reassignment guard never sees
   (P-Cap-View)   a SINGLE structural capture that names an INTERIOR place of the subject (a struct
                  field, a struct-typed element) is a VIEW (B-View / heap.md H-View): it aliases
                  WITHOUT `&`, and carries the subject's borrow-dep (`Deps::frame1(subject)`) so both
-                 backends agree on free.
+                 backends agree on free.  A capture of the WHOLE subject at the arm root
+                 (`whole: Rect { w, h }`, `other: _`) names the subject's own place and is a view
+                 on the same terms: a write through it reaches the subject.
   (P-Cap-Fresh)  a `..rest` sub-slice and a repetition `(a)*` accumulator are FRESH vectors
                  (heap.md H-Alloc), INDEPENDENT of the subject (B-Copy / iteration.md I-Comp).
 ```
@@ -423,6 +438,10 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
                  it.  A `match` arm's PATTERN binds its names into that arm — its guard and
                  its body — and they end with it, whatever a later arm or `match` binds
                  under the same name.  Parameters are bound for the whole function.
+                 A binding starts when its statement COMPLETES: a read of the name on that
+                 statement's right-hand side is refused — `read-in-own-binding` on a first
+                 binding, `local-out-of-scope` on a bind after the block ended — while a
+                 rebind of a live binding reads the value it holds (loft#1955).
 ```
 
 **In words.** loft follows rustc here: a local lives in the block that binds it.
@@ -441,6 +460,8 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 ## Deviations
 
 **OPEN: 0.**
+
+(none)
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is

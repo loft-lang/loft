@@ -87,9 +87,9 @@ fn test_field_variant() { h = fresh(); h.s = mc(0); assert(radius(h.s) == -1, "s
 
 // A POINTER field repoints, so it does hold null.
 struct Nd { v: integer, next: reference<Nd> }
-fn mn(i: integer) -> Nd? { if i == 0 { null } else { Nd { v: i } } }
+fn mn(i: integer) -> Nd? { if i == 0 { null } else { Nd { v: i, next: null } } }
 // @EXPECT_WARNING: a nullable `Nd?` is stored into the assignment target of the non-null type `Nd` — it becomes null there
-fn test_field_pointer() { n = Nd { v: 1, next: Nd { v: 2 } }; n.next = mn(0); assert(n.next == null, "next null"); }
+fn test_field_pointer() { n = Nd { v: 1, next: Nd { v: 2, next: null } }; n.next = mn(0); assert(n.next == null, "next null"); }
 
 // A NULLABLE field is the control: nothing to report, and it holds the null.
 struct Q { p: P?, t: text? }

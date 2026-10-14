@@ -9,6 +9,7 @@ measurement on this machine — before committing.
                                             #   change touched them), measured and compared
     scripts/perf_check.py --only 16,17,18   # these lanes (bench/stats.py's --only syntax)
     scripts/perf_check.py --package ../loft-bench-libs/loft-libs-graphics/drawing=drawing
+    scripts/perf_check.py --routine check_request,cbor/decode   # these routines only
     scripts/perf_check.py --baseline run.tsv    # compare with a saved `stats.py --tsv` run
     scripts/perf_check.py --record          # …and make this run the machine's baseline
                                             #   (bench/portal/results/<host>.tsv — commit it)
@@ -33,7 +34,6 @@ run is measured and, with `--record`, becomes the baseline the next check reads.
 """
 import argparse
 import os
-import platform
 import subprocess
 import sys
 import tempfile
@@ -41,6 +41,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bench" / "portal"))
+from portal import host_key  # noqa: E402
 RESULTS = ROOT / "bench" / "portal" / "results"
 
 
@@ -94,18 +95,22 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", help="lanes, bench/stats.py's syntax")
     ap.add_argument("--package", action="append", default=[], help="a library bench DIR=NAME (repeatable)")
+    ap.add_argument("--routine", action="append", default=[],
+                    help="[BENCH/]NAME[,…]: only these routines, in the programs that hold them")
     ap.add_argument("--baseline", help="a saved stats.py --tsv run to compare with")
     ap.add_argument("--threshold", type=float, default=15.0)
     ap.add_argument("--record", action="store_true", help="merge this run into the machine's results file")
     ap.add_argument("--no-build", action="store_true", help="skip `cargo build --release --bin loft`")
     a = ap.parse_args()
-    host = platform.node() or "unknown"
+    host = host_key()
     if not a.no_build:
         subprocess.run(["cargo", "build", "--release", "--bin", "loft", "-q"], cwd=ROOT, check=True)
     only, packages = a.only, []
     for p in a.package:
         packages += ["--package", p]
-    if not only and not packages:
+    if a.routine:
+        pass  # stats.py places the routines in their programs itself
+    elif not only and not packages:
         names = changed_programs()
         if not names:
             print("the census moved no program: nothing this change touched to measure")
@@ -121,6 +126,8 @@ def main():
     elif packages:
         cmd += ["--no-suite"]
     cmd += packages
+    for r in a.routine:
+        cmd += ["--routine", r]
     subprocess.run(cmd, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
     now = read_tsv(out)
     base_path = Path(a.baseline) if a.baseline else RESULTS / f"{host}.tsv"

@@ -12,7 +12,7 @@ Each entry keeps its heading, so an entry here and its compact form in the regis
 anchor.  The register states what is decided now; where the two differ, the register is
 current.  A new entry's deliberation is appended here under the same heading.
 
-The id **C129** was **C67** until 2026-09-28: two entries carried that id, and the later one
+The id **@C129** was **@C67** until 2026-09-28: two entries carried that id, and the later one
 (the processor's arithmetic) was renumbered.
 
 ---
@@ -95,7 +95,7 @@ truly-immutable scalar captures in pure read-only contexts:
   (`Type::Reference(__cell_<T>, vec![])` encoding).  The outer
   scope and the (single) mutating closure share the same cell —
   sharing the cell across SEVERAL closures is rejected at compile
-  time since C74 (#314).
+  time since @C74 (#314).
 - Pure read-only scalar captures remain value-copy (Case A
   semantics — unchanged).
 
@@ -133,7 +133,7 @@ Adding suffix syntax would:
 - Solve a 1 % problem that `as` already covers.
 
 **Decision.** **Closed — declined.**  Dated 2026-04-13.  See
-[QUALITY-history.md § C54](QUALITY-history.md#c54--integer-i64--landed-2026-04-21) — `C54.D` listed under sub-tickets.
+[QUALITY-history.md § C54](QUALITY-history.md#c54--integer-i64--landed-2026-04-21) — `@C54.D` listed under sub-tickets.
 
 **Revisit when.** A real loft program needs a literal-size
 distinction that cannot be expressed as `as <T>` in reasonable
@@ -357,12 +357,12 @@ tuple member destructures, projects and copies as a value.
 
 **Catalogue:** @F38 (arithmetic safety), @F44 (logging — panic/assert).
 
-> **Revised by [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)
+> **Revised by [@C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)
 > (2026-06-24).** The "development *may halt*" half no longer applies to **calculation**
 > faults (divide-by-zero, overflow, OOB, null-deref): those now yield **null and continue in
-> every mode** (the spreadsheet model), silently by default. C66's split still holds for the
+> every mode** (the spreadsheet model), silently by default. @C66's split still holds for the
 > *explicit* signals — `panic` / `assert` halt in dev/test, log + continue in production — and
-> for startup ([C67](#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs)).
+> for startup ([@C67](#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs)).
 
 **Question.** Should runtime fault sites (divide-by-zero, vector /
 text out-of-bounds, null DbRef dereference, narrow-cast overflow,
@@ -538,9 +538,9 @@ behaviour has held for years without complaint.
 
 ### Workflow corollaries (added 2026-05-11)
 
-The 2026-05-11 evaluation of the C66 framework against the
+The 2026-05-11 evaluation of the @C66 framework against the
 day-to-day loft-development workflow surfaced four corollaries
-that bind the abstract C66 rule to the developer experience.
+that bind the abstract @C66 rule to the developer experience.
 All four are tracked under @PLN28 phase 4:
 
 1. **Format strings are observability, never raise** — every
@@ -806,9 +806,9 @@ C09/C10 document the append-no-dedup behaviour this decision blesses).
 
 `!x` where `x` is a non-boolean (integer, single, reference, …) reads as
 *"is `x` null?"* rather than C-style logical-not.  Because the null sentinel
-is **in-band** (`i64::MIN` for integer, byte `255` for boolean per @PLN17 / C73,
+is **in-band** (`i64::MIN` for integer, byte `255` for boolean per @PLN17 / @C73,
 null `DbRef` for references), `!0` is `false` — `0` is a real value, not the
-sentinel.  (This C69 decision is about *non-boolean* `!x`; boolean `!` is ordinary
+sentinel.  (This @C69 decision is about *non-boolean* `!x`; boolean `!` is ordinary
 coercing negation — both `null` and `false` give `!b == true`.)  A
 crawler report (GitHub #253) hit this as a footgun: `f = 0; if !f { … }` never
 runs, and a `gl_load_font` zero-handle check silently misses.  Should `!`
@@ -828,7 +828,7 @@ Both proposed fixes break a load-bearing idiom:
 
 The asymmetry is **documented** (`LOFT.md` → *"`!value` asymmetry — read
 carefully"*) and intrinsic to the in-band-sentinel memory model (the same
-model that makes `C66`'s "return a sentinel, keep running" possible).  `!x`
+model that makes `@C66`'s "return a sentinel, keep running" possible).  `!x`
 as a null test is the *deliberate* shape: for a nullable `x` it is a real,
 useful check; the surprise only arises when a reader imports C's
 value-falsiness expectation.
@@ -966,7 +966,7 @@ the perf rationale for E2 is superseded.
   WASM concerns.  First-use compile latency is accepted.
 - Cache native artifacts **per library** (max reuse; native `init()`-sequencing
   composes independently-compiled libs at load — this is why per-library native
-  artifacts work where per-library IR snapshots did NOT; see C70).
+  artifacts work where per-library IR snapshots did NOT; see @C70).
 - Eviction = **idle-TTL with touch-on-use**: update an entry's last-use timestamp
   on every cache hit; a startup GC sweep deletes entries idle longer than
   `LOFT_CACHE_TTL_HOURS` (default 24 h).  The current
@@ -1041,7 +1041,7 @@ builds ship.
 
 **Goal alignment ([GOALS.md](GOALS.md)) — and the guardrails this decision carries.**
 
-C71 is the **Purpose made concrete**: *do the hard plumbing so it's fun to pick
+@C71 is the **Purpose made concrete**: *do the hard plumbing so it's fun to pick
 up* — libraries **done** (compiled, fast, stable) so the script is **written**
 (interpreted, instant iteration, no `rustc` per edit).  The **shared store /
 `DbRef` heap is the structural reason it can be goal-true**: one heap means one
@@ -1064,7 +1064,7 @@ Per goal, in brief:
 - **A (soundness): both an instrument and a surface expansion.**  The build
   fingerprint is itself a Goal-A veil-lifter — it forbids the "stale artifact
   silently links after a build / rustc bump" failure A is *defined against*.  But
-  C71 puts more, less-battle-tested native code across the interpret↔native
+  @C71 puts more, less-battle-tested native code across the interpret↔native
   boundary, so the sanitizer (Miri / ASan / `stack_align_guard`, esp. macOS-ARM
   alignment) must grow a leg for the *mixed* boundary — it **adds to the soundness
   floor, it does not clear it**.
@@ -1080,10 +1080,10 @@ Per goal, in brief:
 
 **Guardrails (must hold, not later polish):**
 
-1. **Sequencing vs the two floors.**  C71 is capability work, which GOALS.md gates
-   on the soundness floor — and C71 *enlarges* that floor with the mixed boundary.
+1. **Sequencing vs the two floors.**  @C71 is capability work, which GOALS.md gates
+   on the soundness floor — and @C71 *enlarges* that floor with the mixed boundary.
    So grow the A / D detectors to the mixed boundary **as part of** the work, not
-   after; do not let C71 run ahead of the soundness floor it extends.
+   after; do not let @C71 run ahead of the soundness floor it extends.
 2. **F line:** the native/interpret decision stays automatic + silent-interpret
    fallback — zero user-facing surface, no "can't compile this native" error.
 3. **E line:** the boundary stays memory-model-transparent; `LOFT_STORE_GUARD` is
@@ -1196,7 +1196,7 @@ real integer, unlike an enum's `0` which is null.)
 **Decision.** (1) **Notation:** the default-fallback is postfix `?` (`x?`), tightest
 precedence — not `?? _` or a named form.  loft has no exceptions / early-return-on-null, so
 `x?` carries no hidden control flow (local, total, value-in-value-out), and `.` already
-null-propagates (C80), so both neighbouring `?`-slots are vacant.  `??` lexes greedily over
+null-propagates (@C80), so both neighbouring `?`-slots are vacant.  `??` lexes greedily over
 `?`, so `a ?? b?` is `a ?? (b?)`.
 
 (2) **One default predicate** (`has_default`) feeds BOTH `x?` and the `S{}` zero value —
@@ -1305,6 +1305,18 @@ the deep-copy path gets a designed ownership transfer (claim the captured
 stores into the host, or re-point the record at host-owned copies) —
 verified on both backends.
 
+
+**Revised 2026-10-05 (loft#1867).**  The revisit condition was met by a different route than the
+one it named: no deep copy transfers the captured stores — the closure record is BUILT in the
+host's child-record slot (`OpChildRec`), adopts its captures there, and the host's drop cascade
+runs the record's.  The return route and the argument route are accepted; the collection route
+(@C116) and a closure-carrying struct VALUE placed into another struct's field (loft#1877) stay
+refused.  The decision as it stood until then:
+
+> A struct that holds a capturing closure cannot leave the frame that owns the captures:
+> returning such a struct type, writing a capturing closure into a struct rooted at an argument,
+> and a collection of such structs are compile errors.  Local use and passing it down as an
+> argument are supported.
 ## C76 — Selective imports group with `()`, not Rust-style `{}`; flat comma list dropped
 
 **Catalogue:** @F47 (library imports / module system).
@@ -1379,7 +1391,7 @@ annotations (the borrow checker infers source-outlives-binding from scope, as it
 does for `&` params — C38's objection was to reference *types*, not this binding
 *notation*). This is **smaller than full value-semantics** (no copy-on-write, no p379
 rewrite — p379's field mutation already writes through) and is the concrete content of
-the OWNERSHIP_MODEL beacon. Consistent with C64 (tuple struct-ref elements already use
+the OWNERSHIP_MODEL beacon. Consistent with @C64 (tuple struct-ref elements already use
 MOVE). See [OWNERSHIP_MODEL.md § The law](OWNERSHIP_MODEL.md).
 
 **Revisit when.** The reference-default aliasing proves a net footgun — a real consumer
@@ -1388,6 +1400,15 @@ intend to alias, and the cost of those bugs exceeds the value-semantics migratio
 (copy-on-write + `&` on every alias) it would take to remove them. Only then reconsider
 value-semantics-by-default; until then the W4 lint + the documented view default are the
 cheaper guard.
+
+> **AMENDED (2026-10-11, owner, closing @PLN189).** `&` was designed for one case: changing
+> the content of a parameter.  The implementation now allows broader use, which is welcome —
+> a stored `reference<T>` reaches a deep record inside another structure without keeping its
+> path keys — but that does not make references a construction every combination of
+> expressions must accept.  Ruled while declining @PLN189's step 10 (freeing a record built in
+> its holder's store when the reference is re-pointed, a test on every reference write for a
+> rare shape) and the alternative of making `q = h.r` a copy.  It replaces the plan issue's
+> "no refusal where the language can give the answer".
 
 ---
 
@@ -1466,12 +1487,12 @@ its reliability as a *closed* box — opaque to everyone. loft's engine is close
 the developer's *concern*, and open to anyone who wants to work on loft itself; everything
 above it is loft source the developer can read, learn from, and fork.
 
-**Not in tension with C71.** [C71](#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
+**Not in tension with @C71.** [@C71](#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
 (native libraries compile, scripts interpret) is about *how a loft library executes*
-(native vs interpret); C78 is about *where code lives* (Rust engine vs loft library).
-They are orthogonal: a loft library may be native-compiled for speed (C71) and still be
-transparent loft *source* the developer reads and forks (C78) — the native artifact is a
-derived, invisible cache, and the loft source stays the truth (cf. [C70](#c70--no-per-library-ir-snapshot--cache):
+(native vs interpret); @C78 is about *where code lives* (Rust engine vs loft library).
+They are orthogonal: a loft library may be native-compiled for speed (@C71) and still be
+transparent loft *source* the developer reads and forks (@C78) — the native artifact is a
+derived, invisible cache, and the loft source stays the truth (cf. [@C70](#c70--no-per-library-ir-snapshot--cache):
 "the loft source is the better representation of a library's state").
 
 ### Corollary — the move-to-Rust alarm (added 2026-06-23)
@@ -1498,7 +1519,7 @@ only the first is the failure —
    rule-1/rule-2's boundary *correcting itself*, not loft failing — relocate without
    shame. The streaming substrate (see Revisit-when) is this case.
 
-The test that separates them is C78's own: *would a developer ever want to open this?*
+The test that separates them is @C78's own: *would a developer ever want to open this?*
 **Yes** + dropping it to Rust → the failure; fix the language. **No** → engine mechanism
 wearing a library's clothes; moving it is housekeeping. Even then there is a gentler step
 before Rust: neutral-but-readable mechanism can sink into a **lower loft library** and
@@ -1620,7 +1641,7 @@ clearly-diagnosable surface, never the general Rust model.)**
 When a runtime fault occurs mid-execution — a calculation that can't produce a value
 (`s / 0`, an overflow it can't represent, `v[99]` out of bounds, a deref of an absent value),
 or an explicit `panic("msg")` / `assert(cond, msg)` — should the program stop (halt the run /
-skip the rest), as C66's *development* mode does, or keep running?
+skip the rest), as @C66's *development* mode does, or keep running?
 
 ### Evaluation
 
@@ -1632,7 +1653,7 @@ behaving strangely* and *the whole world freezing because one mob did*. The visi
 the **null itself** (you see it in the result); there is **no per-fault log by default** — in a
 spreadsheet most empty cells are normal, so logging each uncomputable would be pure spam. A
 programmer who wants to trace *where* uncomputables arise can opt into a **debug log level**.
-This is the same through-line as [C79](#c79--ownership-is-internal-no-user-facing-borrow-checker)
+This is the same through-line as [@C79](#c79--ownership-is-internal-no-user-facing-borrow-checker)
 (ownership) and the differential-oracle decision: the safety lives *under* a surface that keeps
 going.
 
@@ -1672,7 +1693,7 @@ corruption surface.
 
 ### Decision
 
-**Closed (2026-06-24) — NOTHING stops a running calculation. Revises C66.**
+**Closed (2026-06-24) — NOTHING stops a running calculation. Revises @C66.**
 
 1. **Uncomputable → null, by default, silently.** `s / 0`, overflow, out-of-bounds index,
    deref of an absent value all yield **null** with no `??` needed. `??` means "give me a
@@ -1686,12 +1707,12 @@ corruption surface.
    sequence of independent steps. Step A producing null does not abort; step B still
    **executes** (and gets null if it consumed A's null — null is contagious — but it *runs*).
    No step is skipped because something earlier "happened to be wrong."
-3. **`panic` / `assert` are NOT calculations — they keep their C66 split.** They are explicit
+3. **`panic` / `assert` are NOT calculations — they keep their @C66 split.** They are explicit
    developer signals, so during **development and testing they still HALT** (you want a
    deliberate `assert(false)` / `panic(...)` to stop and show you, exactly as today). In
    **production** they **log and continue** — one assertion never takes down a running system.
    Only the *implicit* calculation faults of point 1 move to universal null-and-continue.
-4. **Startup still stops** ([C67](#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs)): bad config /
+4. **Startup still stops** ([@C67](#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs)): bad config /
    port-bind / missing deps exit *before* the run begins — "can't open the spreadsheet," not
    "a cell errored." A running calculation never stops.
 5. **Implicit faults are MODE-INDEPENDENT — and tested via the debug log.** Points 1–2 hold
@@ -1923,11 +1944,11 @@ listening is a primitive; certificate automation is not.
 
 ## C127 — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 
-**Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
+**Catalogue:** @F4 (width integers), @F1 (null model). Refines [@C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
 
 ### Question
 
-C85 keeps a wide `integer`'s overflow as the `i64::MIN` sentinel, which reads null, because
+@C85 keeps a wide `integer`'s overflow as the `i64::MIN` sentinel, which reads null, because
 `i64::MIN` genuinely is not a valid `integer`.  A NARROW declared range is different: some
 ranges leave a code spare inside their storage width and some do not, purely as arithmetic.
 `limit(-100, 100) size(1)` is 201 values in 256; `limit(-128, 127) size(1)` is 256 in 256.
@@ -1954,7 +1975,7 @@ type's DEFAULT — zero where the range contains it, the bound nearest zero othe
 what `?` and a declared field default already answer.
 
 The scope is the declaration: `limit(lo, hi)` and the aliases `u8`/`i8`/`u16`/`i16` built on
-one.  The plain `integer` and `i32` TEMPLATES keep C85's sentinel.
+one.  The plain `integer` and `i32` TEMPLATES keep @C85's sentinel.
 
 **That exemption is PRAGMATIC, not principled, and the difference is the part to remember.**
 The principle above reaches `i32` perfectly well — it is a narrow type without a `?`, and by
@@ -1974,7 +1995,7 @@ So the reasons NOT to read into it:
   4294967294) size(4)`, its top one, and `default/01_code.loft` calls it *"the same
   reservation"* — and `u32` takes the DEFAULT.  Two four-byte aliases, one reserved code each,
   different answers, and that is admitted rather than justified;
-* it is REVISITABLE in a way the rest of C127 is not.  If the cost assessment changes — a
+* it is REVISITABLE in a way the rest of @C127 is not.  If the cost assessment changes — a
   program that needs the whole 32-bit range, a use where the lost value bites — this is the
   clause to move, and moving it is one predicate.  `tests/scripts/1615-…`'s `templates()` row
   is pinned across `integer` / `i32` / `u32` × local / field / element precisely so that the
@@ -1992,7 +2013,7 @@ language would hide.
 The rules already said this and the code did not.  `(N-Reserve)`'s *"a null cannot sit in a
 non-null narrow slot"* and `(E-Uncomp-NN)`'s *"the next best thing is τ's DEFAULT"* are the
 same sentence read from the type side and the evaluation side; the spare-code encodings were
-a deviation from both that nothing had written down.  C85 is unchanged for wide `integer`,
+a deviation from both that nothing had written down.  @C85 is unchanged for wide `integer`,
 where the sentinel is not a value the type can hold.
 
 ### Consequence
@@ -2015,13 +2036,13 @@ the default without one of the two.  Guards: `tests/scripts/c127-*.loft`.
 
 ## C85 — Overflow arithmetic types NON-null; the game keeps running (don't force `integer?` on every `*`/`+`/`-`)
 
-**Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).
+**Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [@C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).
 
 ### Question
 
 @PLN25/DN3 types a fit-failing op as `τ?` so an un-discharged null can't reach a non-null
 slot: `a / b` and `v[i]` are `integer?`, forcing a `?? d` / guard / `τ?` declaration. Integer
-overflow (`a*b`, `a+b`, `a-b` exceeding i64) is *also* a fit-failing op — per C80 it yields
+overflow (`a*b`, `a+b`, `a-b` exceeding i64) is *also* a fit-failing op — per @C80 it yields
 `null` at runtime. So should `a * b` type `integer?` too, i.e. should EVERY multiply/add/subtract
 return a nullable integer?
 
@@ -2039,9 +2060,9 @@ reachability vs. op frequency*, and overflow is the one place they're badly mism
   are far rarer, so their `τ?` doesn't metastasize.
 - **Traps are OFF the table** (a firm maker rule): a running program NEVER halts because a
   calculation faulted — a player does not want the game to stop because the compiler decided
-  stopping was better than continuing (C80, the spreadsheet). So overflow → `null` + continue,
+  stopping was better than continuing (@C80, the spreadsheet). So overflow → `null` + continue,
   never a trap and never a silent two's-complement wrap (which would be a wrong value, violating
-  C80's honesty).
+  @C80's honesty).
 - **Range-tracking keeps the safe cases exact for free** — `u8*u8` (→ 40000), `i32*i32` (fits
   i64), `limit(...)`-bounded operands are provably-fit → non-null. Only the default
   `integer*integer` is even in question.
@@ -2055,7 +2076,7 @@ genuinely runs in the extraordinary regime (`(a*b) ?? d` fires on the sentinel).
 ### Decision
 
 `a*b` / `a+b` / `a-b` type **non-null** `integer` (range-tracking narrows the provably-fit cases).
-Overflow yields the `null` sentinel at runtime and execution continues (C80) — no trap, no wrap.
+Overflow yields the `null` sentinel at runtime and execution continues (@C80) — no trap, no wrap.
 This is a **deliberate exception** to DN3's "fit-failing ops yield `τ?`": that rule stays for the
 *reachable-fault* ops (`/`, `%`, `v[i]`, `s[i]`, and text→int **parse**, which SHOULD be `τ?`);
 overflow-arith is a decided edge, not a deviation to close. Forcing nullability on every
@@ -2072,7 +2093,7 @@ valid value"). The owner's ruling closes it as **accepted**:
 
 - **Semantically it is just an overflow.** The contract is "don't rely on it; the program may
   malfunction" — identical to what a programmer already owes any overflow. It is not a new hazard
-  class beyond the arithmetic edge C85 already accepts.
+  class beyond the arithmetic edge @C85 already accepts.
 - **It is strictly BETTER than the two's-complement alternative.** A wrapped `i64::MIN` is a value
   that looks completely valid, so it corrupts silently and unrecoverably. The null bit-pattern is
   **detectable and handleable** — `x ?? d`, `if x == null`, null-propagation through the rest of the
@@ -2084,7 +2105,7 @@ valid value"). The owner's ruling closes it as **accepted**:
   the same "know your representation" territory as one relying on wrap.
 
 So the collision is **not** an error to add and **not** a flip blocker — it is the consistent,
-already-decided consequence of the C80 total-null model and this C85 rule. (Same shape for the other
+already-decided consequence of the @C80 total-null model and this @C85 rule. (Same shape for the other
 in-band sentinels: `NaN` for `float`/`single`, `255` for `u8`/`bool`, disc-0 for enums, `"\0"` for
 `text` — each reserves one value so the null rule stays total.)
 
@@ -2131,11 +2152,11 @@ A variable's semantics should not depend on its construction provenance — `af 
 behaves like `b = x` behaves like `p = o`: you own what you bound, full stop.  The
 alias is the compiler's business (elision on provable last-use), never the
 programmer's memory burden.  This serves the fun-on-pickup goal
-([GOALS.md](GOALS.md)) the same way the no-traps rule (C80) does: fewer rules to
+([GOALS.md](GOALS.md)) the same way the no-traps rule (@C80) does: fewer rules to
 carry, no spooky action at a distance.  The principle's one deliberate boundary is
 projection reads (`a = vv[0]` views, #426): an element read is understood as
 *reaching into* the container rather than *taking* from it — if that distinction ever
-proves a recurring source of user surprise, that is a #426 revisit, not a C86 one.
+proves a recurring source of user surprise, that is a #426 revisit, not a @C86 one.
 
 **Guarded (2026-08-05, @PLN130 F7).** The whole boundary — B-Copy, B-View and `&` — is pinned
 cell by cell on both backends by `tests/scripts/201-bind-copies-projection-views.loft`. It was
@@ -2189,7 +2210,7 @@ semantics, always; a "link" (shared store) is either the compiler's TRANSPARENT 
 (realized only where a link is safe AND unobservable) or the programmer's EXPLICIT `&`.** So the
 design widens `ElidePlan` to link in more of the safe + unobservable set (byte-value-identical, no
 contract-key), and the `th = t.tr_h; th[i]=v` lost-write case is NOT silently linked (that link would
-be observable — the spooky action C86 forbids); it is surfaced by the dead-store lint pointing at `&`.
+be observable — the spooky action @C86 forbids); it is surfaced by the dead-store lint pointing at `&`.
 `#415`'s UAF cannot return (the safety gate) and nothing a program observes changes.
 
 ## C87 — `#rust"..."` template path is KEPT; do NOT migrate it away to per-Op emitters (@PLN81 closed)
@@ -2329,7 +2350,7 @@ against "reads like grammar" in
 [plans/35-match-peg/FORMAL-DESIGN.md](plans/35-match-peg/FORMAL-DESIGN.md).
 ## C90 — Each nullable scalar reserves ONE bit-pattern for null (the in-band sentinel residual; accepted, frozen)
 
-**Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
+**Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [@C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [@C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
 
 ### Question
 
@@ -2341,7 +2362,7 @@ The reserved value per type (frozen by this decision):
 |---|---|
 | `integer` (8-byte) | `i64::MIN` (`-9223372036854775808`); the value range is `[i64::MIN+1, i64::MAX]` |
 | narrow `u8`/`i8`/`u16`/`i16`/`i32` | the top stored width value (`u8?` → `255`), excluded from the `τ?` non-null range |
-| `boolean` | `255` (three-state false/true/null — [C73](#c73--boolean-is-three-state-false--true--null--is-raw-truthiness-coerces)) |
+| `boolean` | `255` (three-state false/true/null — [@C73](#c73--boolean-is-three-state-false--true--null--is-raw-truthiness-coerces)) |
 | `character` | codepoint `0` (NUL, `'\0'`) |
 | `float` / `single` | a reserved `NaN` (`+inf`/`-inf` are **real** values) |
 | a reference | out-of-band `nullref` — **no** collision (a reserved `DbRef`) |
@@ -2355,7 +2376,7 @@ The reserved value per type (frozen by this decision):
 - **The lost value is one extreme, unreachable in normal data.** `i64::MIN` (use `long`/full-range or the sentinel is off by one from your data), NUL as a data character, a `u8?` needing to store exactly `255` — all rare; the everyday range is intact. `not null` reclaims the value where a field genuinely needs it.
 - **The three silent hazards the sentinel *could* cause are now guarded**, which is what makes the residual merely a *storage* limitation rather than a correctness one: null comparison is uniform across every scalar (D-op-null-1 — `null == null` true, null orders low); an op whose result *lands on* the sentinel reports rather than silently masking (D-op-null-2 — shift/cast collisions raise `Shift/CastOutOfRange` like `÷0`); and the stdlib functions that can legitimately produce null on a reachable path are typed `τ?` so the type does not lie (`find`/`rfind`/`min_of`/`max_of` — keystone step 4).
 
-This is the same taste as C85: pay a bounded, documented soundness edge to keep the common path zero-overhead, rather than tax every value to erase an extreme almost no program stores.
+This is the same taste as @C85: pay a bounded, documented soundness edge to keep the common path zero-overhead, rather than tax every value to erase an extreme almost no program stores.
 
 ### Decision
 
@@ -2363,11 +2384,11 @@ This is the same taste as C85: pay a bounded, documented soundness edge to keep 
 
 ## C91 — `==` is value-by-value / reference-by-identity (bounded, never a reference-chase); `===` reserved for opt-in deep equality
 
-**Catalogue:** @F1 (null / equality), @F2 (operators). Closes the @PLN102 pre-freeze **F7** ("`ref ==` is identity, not structural — a decision"). Sibling of [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
+**Catalogue:** @F1 (null / equality), @F2 (operators). Closes the @PLN102 pre-freeze **F7** ("`ref ==` is identity, not structural — a decision"). Sibling of [@C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [@C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
 
 ### Question
 
-`==` on two struct references is **identity**, not structural, and it composes with C86 (whole-value bind COPIES) into two footguns:
+`==` on two struct references is **identity**, not structural, and it composes with @C86 (whole-value bind COPIES) into two footguns:
 
 ```loft
 struct P { x: integer, y: integer }
@@ -2396,8 +2417,8 @@ The deciding constraints (owner, 2026-07-13): **`==` must be quick — never an 
 
 
 **Amended 2026-09-28 (owner): content everywhere, and identity is spelled `&a == &b`.**  Walking
-C91 under @PLN175 found `===` was never reserved (`a === b` lexed as `==` then `=` and failed
-naming `OpEqInt`) and measured what the identity `==` did under C86's copy semantics, on both
+@C91 under @PLN175 found `===` was never reserved (`a === b` lexed as `==` then `=` and failed
+naming `OpEqInt`) and measured what the identity `==` did under @C86's copy semantics, on both
 backends: `b = a; a == b` answered **false**, two equal plain structs answered false, two equal
 `value struct`s answered true, and vectors had no `==` at all.  So `==` reported how a value is
 stored, and a layout keyword changed a program's meaning.  The owner's rulings, in order: `===`
@@ -2438,7 +2459,7 @@ Evaluation count of the place is observable semantics, so it freezes at contract
 
 ## C93 — A `par` worker's captured parent state is read-only; a write to it is a compile error
 
-**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
+**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [@C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
 
 ### Question
 
@@ -2455,7 +2476,7 @@ Today this does not race cleanly and it is not cleanly rejected: it falls throug
 
 ### Evaluation
 
-A data race is the single fault loft cannot resolve to a defined value: unlike an out-of-range read (→ null, C80) or an overflow (→ sentinel, C85), a race yields nondeterministic corruption that no null can stand in for. So the *"make it work in a lesser state"* half of the platform rule does not apply — the only faithful option is *"do not allow it,"* a compile error. And the signal is already present: the compiler knows which workers write captured state (`ParentWrite`). The cleanest expression is **data-centric, not analysis-centric**: the state a `par` worker captures from its parent is **read-only inside the worker, from the start** — the same principle by which host data and parameters are read-only unless explicitly update-linked (the sandbox model), applied to a second place. Then a write to it is a plain compile error *at the write* — `s.n = …` reports "cannot write `s` inside a `par` worker; it is read-only here" — and the race becomes **unexpressible**, not merely detected. The worker stays free to *read* captured state, read the element, compute, and *return* a value (folded sequentially); only writes to captured parent state are forbidden. This must land pre-freeze: it is an error-ADD, and the error surface can only shrink after contract 1 ([COMPATIBILITY.md](COMPATIBILITY.md) § the error surface).
+A data race is the single fault loft cannot resolve to a defined value: unlike an out-of-range read (→ null, @C80) or an overflow (→ sentinel, @C85), a race yields nondeterministic corruption that no null can stand in for. So the *"make it work in a lesser state"* half of the platform rule does not apply — the only faithful option is *"do not allow it,"* a compile error. And the signal is already present: the compiler knows which workers write captured state (`ParentWrite`). The cleanest expression is **data-centric, not analysis-centric**: the state a `par` worker captures from its parent is **read-only inside the worker, from the start** — the same principle by which host data and parameters are read-only unless explicitly update-linked (the sandbox model), applied to a second place. Then a write to it is a plain compile error *at the write* — `s.n = …` reports "cannot write `s` inside a `par` worker; it is read-only here" — and the race becomes **unexpressible**, not merely detected. The worker stays free to *read* captured state, read the element, compute, and *return* a value (folded sequentially); only writes to captured parent state are forbidden. This must land pre-freeze: it is an error-ADD, and the error surface can only shrink after contract 1 ([COMPATIBILITY.md](COMPATIBILITY.md) § the error surface).
 
 ### Decision
 
@@ -2495,14 +2516,14 @@ The load-bearing fact is that **`/` and `%` are a matched pair**: the identity `
 ### Decision
 
 - **Integer `/` truncates toward zero** (`-7 / 2 == -3`), and **`%` returns the remainder with the sign of the dividend** (`-7 % 2 == -1`, `7 % -2 == 1`) — the C/Rust convention. `a == (a / b) * b + a % b` holds for all non-zero `b`. Part of the contract-1 freeze.
-- **`/` or `%` by zero is a null** (C80 — an undefined value is a null, never a fault), dischargeable with `?? default`. Unchanged; recorded here for completeness.
+- **`/` or `%` by zero is a null** (@C80 — an undefined value is a null, never a fault), dischargeable with `?? default`. Unchanged; recorded here for completeness.
 - **`floor_mod(both: integer, divisor: integer) -> integer?`** is the wrap-around helper: the remainder with the sign of the **divisor**, landing in `[0, divisor)` for a positive divisor (`(-1).floor_mod(3) == 2`). Pure stdlib (`default/01_code.loft`), integer-only, `floor_mod(x, 0)` is null like `%`. Use it for circular indexing (`grid[(i - 1).floor_mod(w)]`).
 - **Rejected:** switching the operators themselves to floor semantics — makes `/` surprising (`-7 / 2 == -4`) to serve the cyclic case a helper serves cleanly, and a truncating-`/`-with-floor-`%` hybrid is incoherent (the two operators would disagree on the quotient). Also rejected: leaving wrap-around indexing to open-coded `((i % w) + w) % w` (the footgun stays un-named at every call site).
 - Owner ruling 2026-07-15 — the split is decided by the use cases (signed-magnitude decomposition vs cyclic-domain representative), not by matching C/Rust; "keep truncate but add a floor-mod helper".
 
 ## C95 — A definition a same-named method would silently shadow is a compile error (no silent redefinition)
 
-**Catalogue:** @F2 (operators) / naming. Instances the platform rule *no runtime errors, ever* ([C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)) at its **compile-time valve**: what cannot work is *disallowed*, not run into a silent-wrong result. Surfaced by C94 (adding stdlib `floor_mod` collided with an existing library helper).
+**Catalogue:** @F2 (operators) / naming. Instances the platform rule *no runtime errors, ever* ([@C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)) at its **compile-time valve**: what cannot work is *disallowed*, not run into a silent-wrong result. Surfaced by @C94 (adding stdlib `floor_mod` collided with an existing library helper).
 
 ### Question
 
@@ -2562,33 +2583,33 @@ The maintainer's only irreducibly-human steps become **policy**: admit a namespa
 
 ### Question
 
-A library's `pub fn clamp` registers as the **global** `n_clamp` — the same namespace as the stdlib (that is why [C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition)'s redefinition error fired on it). So library public symbols **leak into the global namespace**. The consequence surfaced at once: adding a stdlib `floor_mod` ([C94](#c94--integer--truncates-toward-zero-and--takes-the-dividends-sign-floor_mod-is-the-wrap-around-helper)) **broke already-shipped libraries** that defined the same name — `shapes` (`clamp`) and `time` (`floor_mod`) both stopped compiling. Post-freeze, with an absolute-compat stdlib we still want to grow, this is a contradiction: any stdlib addition might collide with a name some published, immutable library already ships. Should library public symbols share the global namespace, or live strictly under their module?
+A library's `pub fn clamp` registers as the **global** `n_clamp` — the same namespace as the stdlib (that is why [@C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition)'s redefinition error fired on it). So library public symbols **leak into the global namespace**. The consequence surfaced at once: adding a stdlib `floor_mod` ([@C94](#c94--integer--truncates-toward-zero-and--takes-the-dividends-sign-floor_mod-is-the-wrap-around-helper)) **broke already-shipped libraries** that defined the same name — `shapes` (`clamp`) and `time` (`floor_mod`) both stopped compiling. Post-freeze, with an absolute-compat stdlib we still want to grow, this is a contradiction: any stdlib addition might collide with a name some published, immutable library already ships. Should library public symbols share the global namespace, or live strictly under their module?
 
 ### Evaluation
 
 The `shapes`/`time` break is proof this is real, not hypothetical — and unshippable at contract 1. Two directions:
 
 - **(a) Keep global-namespace library symbols.** Then the stdlib effectively **cannot grow** post-freeze: every addition is a potential compat break, so either it is forbidden (a frozen-forever stdlib) or it forces a coordinated republish of every colliding library — which we just did by hand for two libs, and which absolute-compat forbids post-freeze (a shipped program importing the old lib must keep working).
-- **(b) Namespace library public symbols.** `shapes::clamp` never enters the global unqualified namespace, so stdlib `clamp` and `shapes::clamp` coexist and a stdlib addition can **never** collide with a library symbol. The stdlib grows additively forever, absolute-compat holds, and C95's error narrows to its correct scope — guarding a *program's own* top-level redefinitions, not library-vs-stdlib.
+- **(b) Namespace library public symbols.** `shapes::clamp` never enters the global unqualified namespace, so stdlib `clamp` and `shapes::clamp` coexist and a stdlib addition can **never** collide with a library symbol. The stdlib grows additively forever, absolute-compat holds, and @C95's error narrows to its correct scope — guarding a *program's own* top-level redefinitions, not library-vs-stdlib.
 
 Only (b) is compatible with an absolute-compat stdlib that still grows. The stdlib stays the one shared namespace every program imports (it is the library every program uses); everything else is qualified. The cost: unqualified access to a library symbol now needs an explicit import (`use lib::name`) rather than leaking globally — a migration that must land **pre-freeze**, since the resolution rule freezes with the contract.
 
 ### Decision
 
 - **A library's public symbols are addressed under its module** (`lib::name`, or brought into scope with an explicit `use lib::{name}`), and are NOT injected into the global unqualified namespace. The **stdlib is the sole global namespace** — the library every program imports.
-- Therefore **the stdlib may grow additively without ever colliding with a shipped library**, and C95's no-silent-redefinition error applies to a program's own top-level definitions (its intended scope), not to a library duplicating a stdlib name.
-- This retires the class of break C94→C95 exercised (a language addition retro-breaking shipped libs); `revalidate-libs.yml` is the pre-freeze guard that proves it while the change lands.
-- **IMPLEMENTED (free-fn case) 2026-07-15** in `src/data.rs::add_fn`: a definition in a LIBRARY source (source ≥ 2 — not the STD prelude, not the user's MAIN program) is registered **scoped to its own source** (`source_nr(self.source, …)` instead of the STD-fallback `def_nr`), so a library name that exists only in the stdlib is not a redefinition — it coexists (`lib::clamp` beside the stdlib `clamp`). STD and MAIN keep the global-scope C95 check (a MAIN top-level def a stdlib method would silently shadow still errors). Verified both backends: a library `clamp` resolves as `lib::clamp` while the bare `clamp` stays the stdlib's; a library's OWN duplicate still errors; test `pln102_c97_library_may_define_a_stdlib_name` (`tests/imports.rs`). **Residual:** a library `both:`/`self:` METHOD colliding with a stdlib method still errors — methods register as attributes on a shared (global) type, which module-scoping can't cleanly cover; the real cases (`shapes` `clamp`, `time` `floor_mod`) are free fns, so this is a rare, accepted limitation.
+- Therefore **the stdlib may grow additively without ever colliding with a shipped library**, and @C95's no-silent-redefinition error applies to a program's own top-level definitions (its intended scope), not to a library duplicating a stdlib name.
+- This retires the class of break @C94→@C95 exercised (a language addition retro-breaking shipped libs); `revalidate-libs.yml` is the pre-freeze guard that proves it while the change lands.
+- **IMPLEMENTED (free-fn case) 2026-07-15** in `src/data.rs::add_fn`: a definition in a LIBRARY source (source ≥ 2 — not the STD prelude, not the user's MAIN program) is registered **scoped to its own source** (`source_nr(self.source, …)` instead of the STD-fallback `def_nr`), so a library name that exists only in the stdlib is not a redefinition — it coexists (`lib::clamp` beside the stdlib `clamp`). STD and MAIN keep the global-scope @C95 check (a MAIN top-level def a stdlib method would silently shadow still errors). Verified both backends: a library `clamp` resolves as `lib::clamp` while the bare `clamp` stays the stdlib's; a library's OWN duplicate still errors; test `pln102_c97_library_may_define_a_stdlib_name` (`tests/imports.rs`). **Residual:** a library `both:`/`self:` METHOD colliding with a stdlib method still errors — methods register as attributes on a shared (global) type, which module-scoping can't cleanly cover; the real cases (`shapes` `clamp`, `time` `floor_mod`) are free fns, so this is a rare, accepted limitation.
 - **Rejected:** global-namespace library symbols (makes stdlib growth a permanent compat hazard — proven by `shapes`/`time`; incompatible with the freeze); per-collision coordinated republish (does not scale, and absolute-compat forbids it post-freeze).
-- Owner-directed 2026-07-15 (the direction reached across the shapes/time ship work). Trigger: C94 `floor_mod` broke shipped `shapes`/`time` via C95. Companion: [library-ship-validation.md](plans/102-stability-contract/library-ship-validation.md).
+- Owner-directed 2026-07-15 (the direction reached across the shapes/time ship work). Trigger: @C94 `floor_mod` broke shipped `shapes`/`time` via @C95. Companion: [library-ship-validation.md](plans/102-stability-contract/library-ship-validation.md).
 
 ## C98 — `use lib;` binds only the `lib` namespace; unqualified access is an EXPLICIT `use lib::*` / `use lib::(…)`, where the imported name wins
 
-**Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
+**Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
 
 ### Question
 
-C97 makes a library's public symbols module-scoped. But loft also has wildcard import. If a bare `use lib;` (or a wildcard) brought a library's names into the **unqualified** namespace, a later stdlib addition of the same name re-creates the C95 collision one level up — and *any* resolution of it (imported wins / stdlib wins / ambiguity error) either re-opens the silent-shadow class or **breaks an existing program when the stdlib grows** (violating absolute compat). How does unqualified access to a library's symbols work?
+@C97 makes a library's public symbols module-scoped. But loft also has wildcard import. If a bare `use lib;` (or a wildcard) brought a library's names into the **unqualified** namespace, a later stdlib addition of the same name re-creates the @C95 collision one level up — and *any* resolution of it (imported wins / stdlib wins / ambiguity error) either re-opens the silent-shadow class or **breaks an existing program when the stdlib grows** (violating absolute compat). How does unqualified access to a library's symbols work?
 
 ### Evaluation
 
@@ -2602,12 +2623,12 @@ So absolute compat holds both ways — bare-`use` programs qualify (no collision
 ### Decision
 
 - **`use lib;`** introduces exactly one name, `lib` (the namespace); members are `lib::fn` / `lib::Type`. **No** unqualified leakage.
-- **`use lib::*;`** (wildcard) and **`use lib::(a, b, c);`** (selective) explicitly bind those names into the unqualified namespace; an explicitly-imported name **wins** over a stdlib name of the same spelling — the author's owned choice, so the C95 silent-shadow concern does not apply.
-- Because bare `use lib;` never imports unqualified and an explicit import keeps its binding across stdlib growth, **no program breaks when the stdlib grows**, and no ambiguity-error is needed — the C97 guarantee holds.
-- **Intended asymmetry with [C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition):** *defining* your own top-level free fn that a stdlib method would silently shadow is a C95 error (the def was silently dead); *explicitly importing* a library name unqualified is allowed and wins — the line is exactly **silent vs explicit**.
+- **`use lib::*;`** (wildcard) and **`use lib::(a, b, c);`** (selective) explicitly bind those names into the unqualified namespace; an explicitly-imported name **wins** over a stdlib name of the same spelling — the author's owned choice, so the @C95 silent-shadow concern does not apply.
+- Because bare `use lib;` never imports unqualified and an explicit import keeps its binding across stdlib growth, **no program breaks when the stdlib grows**, and no ambiguity-error is needed — the @C97 guarantee holds.
+- **Intended asymmetry with [@C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition):** *defining* your own top-level free fn that a stdlib method would silently shadow is a @C95 error (the def was silently dead); *explicitly importing* a library name unqualified is allowed and wins — the line is exactly **silent vs explicit**.
 - **Collision resolver — aliased import (ALREADY in loft, @PLN22 P3/P4):** `use lib::(a as x, b);` imports `a` locally as `x` (plus namespace/type/fn aliases: `use lib as el;`, `use lib::Status as St;`, `use lib::make as mk;`). So any clash — two libraries exporting the same name, or an import you want to keep distinct — is resolved by binding it under a chosen local name. This also resolves the two-explicit-imports edge below: `use a::(x); use b::(x as bx);`. **Syntax — keep `as` (owner 2026-07-15):** the resolver already exists and `original as alias` is uniform across all four alias forms, so no new syntax is added (a proposed `alias = original` was declined — it would fragment the shipped alias grammar and break existing `use` statements for a cosmetic disambiguation; the `as` overload with the type-cast `as` is unambiguous inside a `use` group).
 - **Open edges (not ruled here):** an explicitly-imported name vs the program's own top-level def — resolve when specced.
-- Owner ruling 2026-07-15. Companion: [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib). **Already shipped (@PLN22 P1–P4):** the whole `use` surface — bare `use lib;` = prefix-required namespace bind, `use lib::*;` = wildcard, `use lib::(a, b, c)` = selective, `use lib::(a as x, b)` / `use lib as el` / `use lib::T as St` = aliasing. So C98 needs **no new syntax**; the only residual is the C97 internal change (a library's `pub` symbol must stop registering as global `n_<name>` — the dual registration that still collides with the stdlib during the library's own compile, per C95 — and be module-scoped only, which the shipped `use` machinery already brings into scope). Import-wins precedence for an explicit `::*` / `::(…)` binding is the one resolution rule to confirm against that change.
+- Owner ruling 2026-07-15. Companion: [@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib). **Already shipped (@PLN22 P1–P4):** the whole `use` surface — bare `use lib;` = prefix-required namespace bind, `use lib::*;` = wildcard, `use lib::(a, b, c)` = selective, `use lib::(a as x, b)` / `use lib as el` / `use lib::T as St` = aliasing. So @C98 needs **no new syntax**; the only residual is the @C97 internal change (a library's `pub` symbol must stop registering as global `n_<name>` — the dual registration that still collides with the stdlib during the library's own compile, per @C95 — and be module-scoped only, which the shipped `use` machinery already brings into scope). Import-wins precedence for an explicit `::*` / `::(…)` binding is the one resolution rule to confirm against that change.
 
 ⚠ **The shipped `use lib;` is NOT the bind this ruling describes — re-measured 2026-09-01.** A
 bare `use lib;` wildcard-imports every `pub` name into the unqualified namespace, which is what
@@ -2626,7 +2647,7 @@ current behaviour) or by superseding the ruling (loft#1094's position) is an own
 the one thing here that is still open. The reference now describes the language that runs.
 
 
-**Amended 2026-09-28 (owner): the code moves, with the rustc rule and `pub use`.**  Walking C98
+**Amended 2026-09-28 (owner): the code moves, with the rustc rule and `pub use`.**  Walking @C98
 under @PLN175 measured the shipped language against this ruling with `loft --check` on every
 reachable `.loft` (this repo, the libraries, the consumer checkouts): making a bare `use lib;`
 bind only the qualifier broke 46 files here, 34 in the libraries and about 31 in consumers.
@@ -2653,14 +2674,14 @@ The proposed fix is **incoherent once you look at the whole subscript surface.**
 
 - `s[20]` → the element with **key** 20 (a key lookup) — **not** position 20 (which would be null).
 - `s[1]` → **null** (no key 1) — **not** position 1.
-- `s[key] = null` → removes the element with that **key** ([C68](#c68--keyed-collections-dedup-on-insert--and-collkeyvalue), documented).
+- `s[key] = null` → removes the element with that **key** ([@C68](#c68--keyed-collections-dedup-on-insert--and-collkeyvalue), documented).
 - `s[a..b]` → the **key-range** query (`sorted_range_positions`), the natural extension of the single-key lookup.
 
 So `s[i]` single-subscript is *already* a key lookup — the core, documented sorted API nobody proposes removing. Rejecting only the *range* form `s[a..b]` while keeping `s[i]`/`s[key]` key-addressed would make the subscript surface **less** consistent, not more, and it would break `spatial<T[x,y]>`, which **deliberately reuses the same range-slice syntax** for proximity queries (`xs[(x,y)..(x2,y2)]`, @PLN48). The visual similarity to vector's positional `v[a..b]` is a **cross-type** footgun that is *inherent to having key-addressed collections at all* — it applies equally to `s[key]`, which is not up for removal. You cannot remove the footgun without removing key-addressing.
 
 ### Decision
 
-- **Keep the uniform key-addressed subscript.** For every keyed collection (`sorted` / `index` / `hash` / `spatial`), `coll[k]` is a **key lookup**, `coll[k] = null` a **key removal**, and (where ordered — `sorted`/`spatial`) `coll[lo..hi]` a **key-range / proximity query**. None is positional. This is deliberate and matches [C68](#c68--keyed-collections-dedup-on-insert--and-collkeyvalue) (keyed insert) and the `spatial` proximity API.
+- **Keep the uniform key-addressed subscript.** For every keyed collection (`sorted` / `index` / `hash` / `spatial`), `coll[k]` is a **key lookup**, `coll[k] = null` a **key removal**, and (where ordered — `sorted`/`spatial`) `coll[lo..hi]` a **key-range / proximity query**. None is positional. This is deliberate and matches [@C68](#c68--keyed-collections-dedup-on-insert--and-collkeyvalue) (keyed insert) and the `spatial` proximity API.
 - **Consciously ACCEPTED, not fixed** — the design is internally consistent and defensible; the audit's "reject positional-shaped slices" was based on treating `[a..b]` as a special case, but the single subscript is already key-addressed, so there is no inconsistency *within* sorted to fix.
 - **Freeze guards:** the key-range semantics are golden-locked in `tests/expressions.rs` (`sorted_range_iteration` — `sum_range(2,4)` over keys `1..4` = `50`, i.e. keys 2,3, *not* positions 2,3 = `70`), and made un-missable by `sorted_subscript_is_key_addressed_not_positional` (keys far from positions). Documented as a Gotcha in `LOFT_DATA.md § Key-based collections` and `INCONSISTENCIES.md #2`.
 - Owner-reviewable; reverses the lib-audit's H8 lean on the strength of the `s[i]`-is-already-key-addressed finding. Reversible at contract 0 if the owner prefers the reject-and-add-`.range()` path (which would then also have to re-home `s[key]` for coherence and carve out `spatial`).
@@ -2737,13 +2758,13 @@ reversing the no-variadics stance and is not on the table for contract 1.
 ## C101 — `std`/`core` are reserved package names; `std::name` is the stdlib's qualified form (the shadow escape hatch)
 
 **Catalogue:** @F2 (operators) / modules + naming. The pre-freeze completion of the
-[C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)/[C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) namespace model — sealing the one global namespace's own
+[@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)/[@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) namespace model — sealing the one global namespace's own
 qualified name before the resolution rule freezes with contract 1. Closes @PLN13 phase 6.
 
 ### Question
 
-[C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) made the stdlib the sole global unqualified namespace and libraries
-module-scoped (`lib::name`); [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) makes `use lib::*` / `use lib::name` bring a
+[@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) made the stdlib the sole global unqualified namespace and libraries
+module-scoped (`lib::name`); [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) makes `use lib::*` / `use lib::name` bring a
 library name into unqualified scope, where the imported name **wins** over the stdlib.
 Two loose ends the freeze must close: (1) when an imported (or user-defined) name shadows
 a stdlib name, is the stdlib symbol still reachable, and under what spelling? (2) nothing
@@ -2772,19 +2793,19 @@ before they freeze:
 - **`std::name` is the stdlib's permanent qualified form** and the escape hatch for a
   shadowed bare name (a user def or a `use lib::*` import shadowing a stdlib name — the
   original stays reachable as `std::name`). It mirrors `lib::name`; bare-unqualified
-  remains the beginner default ([C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)) and `std::` stays opt-in, never required.
+  remains the beginner default ([@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)) and `std::` stays opt-in, never required.
 - **`std` and `core` are reserved package names** — refused by `loft new` and not
   admissible to the registry (`core` held for a possible future stdlib-core split).
   Canonical list + predicate: `libscan::RESERVED_PACKAGE_NAMES` /
   `is_reserved_package_name`; guard test in `tests/imports.rs`.
-- **Not fixed by this:** the [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) residual stands — a library `self:`/`both:`
+- **Not fixed by this:** the [@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) residual stands — a library `self:`/`both:`
   *method* named like a stdlib method still errors at definition (methods register as
   attributes on a shared global type, which module-scoping and `std::` cannot cover).
   Free-fn collisions are the real cases and are covered. The path for use-free *library*
   calls is the existing lazy-load trigger surface (`derive_triggers` — method/type
   triggers, @I87), grown by adoption and by completing under-covered trigger kinds
-  (e.g. operator overloads), **not** bare free-fn resolution (which C97/C98 declined).
-- Owner-directed 2026-07-24. Companion: [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)/[C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins); closes @PLN13 phase 6.
+  (e.g. operator overloads), **not** bare free-fn resolution (which @C97/@C98 declined).
+- Owner-directed 2026-07-24. Companion: [@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)/[@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins); closes @PLN13 phase 6.
 
 ## C102 — a release binary says nothing when it falls back to the interpreter
 
@@ -2818,6 +2839,17 @@ puts writable state on a path that must work with `$HOME` unset or read-only.
 - Sites: `src/main.rs` (rustc-mismatch, rustc-not-found, rustc-launch-failure,
   toolchain-not-usable). Owner-directed 2026-07-24; T0.1 of the first-contact work
   ([FIRST_CONTACT.md](FIRST_CONTACT.md)).
+
+### Revised 2026-10-08 — the developer learns at their own moments
+
+Silence on a program run left one gap: a developer who never reads `--help` never learned
+that their machine could not build native, and `loft test`'s summary told them to run
+`loft test --native`, which cannot help without `rustc`.  The owner asked for a clean,
+non-intrusive moment.  Three were chosen, each a command only a developer runs and none a
+new line on a program run: `loft --version` gains a `native:` line naming the toolchain (or
+its absence), the `loft test` summary names the missing `rustc` where it named the command,
+and `loft new --native` lists it first in its next steps, since `native/` is a Rust crate.
+One text, `native_lib::NO_RUSTC`, says it in all three.
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 
@@ -3008,11 +3040,11 @@ removed working programs to fix a problem that a loosening fixes for free.
 - **32 has a reason, not a roundness.** A ladder cannot be unbounded, so past 32 an ANSI-C
   shim is the answer — the stopping point is chosen, not accidental.
 
-  > **The sizing arithmetic here was wrong, and C107 corrected it.** This entry justified 32
+  > **The sizing arithmetic here was wrong, and @C107 corrected it.** This entry justified 32
   > by "`dgemm_`'s 13 by-reference arguments cost TWO slots each, so it needs 26". The
   > premise was that a `vector` always carries a count. It does not, and more to the point a
   > Fortran routine *takes* no count — measured after this decision closed, `dgemm_` was not
-  > bindable at ANY ceiling. Under C107 it costs **13** slots, not 26. The number 32 does not
+  > bindable at ANY ceiling. Under @C107 it costs **13** slots, not 26. The number 32 does not
   > change and neither does the decision; the margin is simply far larger than this text
   > claimed.
 - **The tightening half is real but theoretical.** A binding of 33+ C slots that compiled
@@ -3066,7 +3098,7 @@ declaration failed:
 
 So no real Fortran routine was bindable, at any arity ceiling. This was not visible from the
 fixture, whose C functions were written to loft's shape and therefore held the one axis that
-mattered fixed. C106's sizing arithmetic ("`dgemm_` needs 26 slots") is the same mistake
+mattered fixed. @C106's sizing arithmetic ("`dgemm_` needs 26 slots") is the same mistake
 written down.
 
 ### The rejected options
@@ -3122,7 +3154,7 @@ written down.
 
 ### Context
 
-C107 made the C signature the authority on whether a `vector` carries a count.  It left the
+@C107 made the C signature the authority on whether a `vector` carries a count.  It left the
 other half of the same declaration unchecked: **what the pointer points AT**.  A `vector`
 reaches C as a pointer into loft's own element bytes, with no conversion on either backend —
 `dispatch` hands over the store address and the `--native` emission passes the same one — so
@@ -3204,7 +3236,7 @@ Arc E is what made the cost visible.  Bound against real OpenBLAS, every level-1
 *function* — `ddot_`, `dnrm2_`, `dasum_` — and every LAPACK auxiliary that answers a number
 (`dlange_`, `dlamch_`) was refused, and the cure the refusal named was an ANSI-C shim per
 routine: a C toolchain in the build of every numeric package, to work around a boundary that
-can just be correct.  That is the trade C107 had already declined for arguments.
+can just be correct.  That is the trade @C107 had already declined for arguments.
 
 ### Decision
 
@@ -3223,7 +3255,7 @@ can just be correct.  That is the trade C107 had already declined for arguments.
   is spelled in `call_ladder` and the return type is what varies — because a rung whose
   function type and index list disagree transmutes to the wrong arity with nothing to catch it.
 - **Revisit when** someone needs a float argument badly enough to pay for an SSE-aware ladder;
-  it moves for both backends at once, as C106 requires.
+  it moves for both backends at once, as @C106 requires.
 
 ---
 
@@ -3231,7 +3263,7 @@ can just be correct.  That is the trade C107 had already declined for arguments.
 
 **Catalogue:** @F26 (interfaces & bounded generics) · @F94 (type-directed interpolation)
 
-> **Revised by [C126](#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set)
+> **Revised by [@C126](#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set)
 > (2026-09-21, owner).**  Both restrictions on a type variable are LIFTED: it may appear in any
 > parameter, and a generic may declare several.  The new evidence: the monomorph's key is
 > built from what `T` binds to and not from the first argument, three of the four readers named
@@ -3267,7 +3299,7 @@ POSITION a single type variable may occupy, (b) is about how MANY there may be.
 is named `t_<LEN><Type>_<fn>` from the FIRST argument's type, and that name is load-bearing in
 four places: `find_fn` locates a method by it, native emits it as the symbol, `original_name`
 parses it back, and the H5 two-pass guard recognises a legal lazy bound stub by it. Lifting the
-rule means the name must encode a second type and every back-parsing site follows. C95 already
+rule means the name must encode a second type and every back-parsing site follows. @C95 already
 anticipated this ("when mangling extends beyond the first parameter, this predicate follows it
 automatically"), so the cost is understood — it has simply never been worth paying.
 
@@ -3288,9 +3320,9 @@ three counts:
   `h["a"] = Count { word: "b", … }` and nothing objects;
 - a compound key is `[c, t]` by field NAME, not a tuple whose element order must be remembered;
 - it is the SAME model across `hash` / `sorted` / `index` / `trie` / `spatial` — one concept
-  behind five collections, per C99's uniform key-addressing.
+  behind five collections, per @C99's uniform key-addressing.
 
-Adding `hash<K, V>` would give one idea two spellings, which is the shape C103 already
+Adding `hash<K, V>` would give one idea two spellings, which is the shape @C103 already
 refused for type names. The dominant real use — a keyed collection as an INDEX
 into a store, pointing at records that hold their own key — is exactly what the record set is for.
 
@@ -3340,7 +3372,7 @@ day), `t = s; return t` three times.  `scopes::copy_moves_drop_from` is the one 
 a parameter leaves the caller as the owner.  Guard:
 `tests/scripts/a-whole-value-copy-of-a-droppable-releases-once.loft`.
 
-**Revised 2026-09-15 by C121.**  Only a MOVE — a copy whose source value is not used after it —
+**Revised 2026-09-15 by @C121.**  Only a MOVE — a copy whose source value is not used after it —
 hands the release on.  A copy whose value is still used makes a second structure, which takes
 its own lease through `OpCopy` or is refused at compile time.  The move-on-construction above
 stands for a source that dies at the copy.
@@ -3404,7 +3436,7 @@ monomorphised call, not a re-entry into an interpreter.
 
 ## C112 — a binding position mints a local whatever else carries that name; the function stays reachable as a call
 
-**Catalogue:** @F2 (operators) / modules + naming · [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756
+**Catalogue:** @F2 (operators) / modules + naming · [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756
 
 ### Question
 
@@ -3414,8 +3446,8 @@ verb to a library was a breaking change for every consumer that already used tha
 crawler's gate went red across 109 rows, on a commit crawler did not make, when `engine_host` gained
 `pub fn turn()`.
 
-[C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) and [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) exist to make exactly this impossible for the *stdlib*: the stdlib may
-grow additively forever because a library's symbols are module-scoped. The question C98 left is the
+[@C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) and [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) exist to make exactly this impossible for the *stdlib*: the stdlib may
+grow additively forever because a library's symbols are module-scoped. The question @C98 left is the
 same hazard one level up, and it is worse there — a package ecosystem has no chokepoint weighing each
 new name, and nothing announces "this release claims the word `turn`".
 
@@ -3442,7 +3474,7 @@ clean workaround for the instance. It is not an answer to the class: the cost la
 with no local change, and it is not available in advance. You find out which words are forbidden by
 compiling against each new library release.
 
-**This does not re-open [C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition).** C95 refuses a top-level *function definition* that a method
+**This does not re-open [@C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition).** @C95 refuses a top-level *function definition* that a method
 would silently shadow, because that definition is dead code the author believes runs. A local binding
 is scoped to one function body, re-points no other call site, and is not silent — the author wrote
 the name. The three forms that never refused are the proof that the language already accepted that
@@ -3455,7 +3487,7 @@ reasoning.
   variable, a struct field.
 - **The function stays reachable as a call in the same scope** — `chr = 65` beside `chr(65)` — and a
   bare mention reads the local once one is bound. Parentheses pick the namespace.
-- **A library's new `pub fn` therefore cannot break a consumer's locals**, which is C97's guarantee
+- **A library's new `pub fn` therefore cannot break a consumer's locals**, which is @C97's guarantee
   extended from the stdlib to packages, where the argument for it is stronger.
 - **Rejected:** keeping the refusal (makes every short verb a library exports a word its consumers
   may not use, revoked on someone else's release); a diagnostic naming the collision instead (loft#756
@@ -3472,10 +3504,10 @@ reasoning.
 
 Measured while fixing this, and unchanged by it: **a bare `use lib;` still wildcard-imports every
 public name into the unqualified namespace** (`src/parser/mod.rs`, `None => Some(ImportSpec::Wildcard)`),
-so `turn(3)` is callable unqualified after `use mylib;`. C98 rules that it must bind only the `lib`
+so `turn(3)` is callable unqualified after `use mylib;`. @C98 rules that it must bind only the `lib`
 handle. That migration is mechanical for a consumer (`use lib;` → `use lib::*;`) but it is a
 **breaking** resolution change, it must land pre-freeze, and it breaks out-of-repo consumers on the
-day it lands — so it is owner-timed work, not a fix to fold into a bug. C112 is independent of it and
+day it lands — so it is owner-timed work, not a fix to fold into a bug. @C112 is independent of it and
 forward-compatible with it: once a bare `use` stops importing, a local named after a library function
 is legal for a second reason as well.
 
@@ -3604,7 +3636,7 @@ is a feature with a design, not a missing arm.
 Nothing to keep. No program could fill one, so no program depends on the behaviour; a
 sweep of `default/`, `lib/`, `tests/` and `doc/` found no declaration of the shape outside
 the issue that reported it. The refusal converts a compiler panic and a rustc error into a
-compile error that names the cure — the same trade [C113](#c113--two-index-collections-over-one-element-type-and-key-are-refused-not-made-to-work) makes.
+compile error that names the cure — the same trade [@C113](#c113--two-index-collections-over-one-element-type-and-key-are-refused-not-made-to-work) makes.
 
 ### Decision
 
@@ -3679,7 +3711,7 @@ a capture mechanism the language does not have, not an arm someone forgot to wri
 ### Compatibility
 
 Nothing correct depended on either shape: both compiled to an answer the rules call wrong, so the
-refusal converts a silent wrong answer into a compile error. This is C79's
+refusal converts a silent wrong answer into a compile error. This is @C79's
 *decline-what-we-cannot-implement-safely* revisit applied twice, and its forward-compatibility
 reason holds here too — an error can be dropped later, a silently different semantics cannot.
 
@@ -3741,8 +3773,8 @@ closure record" the old message deferred to) would widen every fn-typed collecti
 case that captures, and would make the environment a record the COLLECTION owns — freed on
 element removal, copied on vector copy, moved on sort — a second ownership discipline for one
 element kind. A struct field has none of that: its closure record is co-located in the struct
-(C75), so the state travels with the value that reads it. The refusal converts a runtime crash
-(*"Write to read-only store"*, the path the old comment recorded) into a compile error — C79's
+(@C75), so the state travels with the value that reads it. The refusal converts a runtime crash
+(*"Write to read-only store"*, the path the old comment recorded) into a compile error — @C79's
 *decline-what-we-cannot-implement-safely* again, and forward-compatible in the same direction:
 an error can be dropped later, a silently different semantics cannot.
 
@@ -3909,7 +3941,7 @@ closes stays closed: no declaration, scope or type licenses the processor's arit
 and the checked semantics stay the default for everyone.  What the owner keeps open is
 an eventual OPT-IN code-generation TIER for a whole program that has already proven to
 run fine with the checks on — licensed by the evidence of its own fault-free runs under
-the checked tier — recorded under C120 and NATIVE.md § Optimisation tiers, and not
+the checked tier — recorded under @C120 and NATIVE.md § Optimisation tiers, and not
 built.
 
 ## C120 — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
@@ -3920,7 +3952,7 @@ arithmetic compiles to plain (or overflow-checked-only) machine operations?  Mea
 the graphics package's Lanczos resample, the last unit standing between three bench rows
 and the plan's 4× bar: −17 % with the checked family, −50 % with plain operators.
 
-**What it changes.** Nothing before a fault.  C85 makes an integer overflow a reported
+**What it changes.** Nothing before a fault.  @C85 makes an integer overflow a reported
 fault whose result is null, and the sentinel test on every operand carries that null
 through everything after it — on both backends alike.  Under the closure a native
 program that has overflowed goes on computing with numbers where the interpreter goes
@@ -3962,7 +3994,7 @@ already PROVEN to run fine with the checks on: the evidence is the program's own
 under the checked tier with no fault noted (the fault ledger `note_integer_overflow` and
 `LOFT_DEV_SOFT_HALT` already count and name them), never a declaration and never a
 default.  It is not in @PLN157's scope and nothing is built for it; NATIVE.md §
-Optimisation tiers names it as the tier that does not exist yet, and C129 keeps every
+Optimisation tiers names it as the tier that does not exist yet, and @C129 keeps every
 machine-dependent SCOPE or TYPE closed.  And it is heavier than a switch, which is the
 second half of the same day's ruling: *"I will never want to publish a binary without the
 added protection layer"* — a LIBRARY published to the registry always carries the
@@ -3983,11 +4015,11 @@ in the loop can overflow; the checked loop is its `else`.  The values are the la
 path (the interpreter is the oracle for the cells; a stored null, a product that overflows, an
 accumulator near the maximum all DECLINE and answer null as before).  Measured: `render_marks`
 6.11× → 2.69× its Rust reference, `render_lock` 4.87× → 2.76×, `resize` 5.37× → 2.42× — the
-−54 % the § V-aj hand patch priced, without moving the C85 line.
+−54 % the § V-aj hand patch priced, without moving the @C85 line.
 
 ## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
 
-**Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises C111's whole-value extension
+**Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises @C111's whole-value extension
 
 ### Question
 
@@ -3996,7 +4028,7 @@ bind, a field, an element, a return — which copy releases it?
 
 ### Context
 
-C111 moved the release with a copy into a container, and on 2026-09-04 extended that to every
+@C111 moved the release with a copy into a container, and on 2026-09-04 extended that to every
 whole-value copy: the copy owns, the source stops dropping.  The drop gate then measured 94
 cells releasing wrongly, and cure after cure met a shape where the compiler could not tell which
 copy should release (`formal/heap-history.md` D-heap-1, D-heap-7).  On the morning of 2026-09-15 the
@@ -4042,7 +4074,7 @@ of what the function owns, a block yielding its own variable.  So `x = a`, `x = 
 a droppable member never silently becomes a copy.  A droppable is a corner of the language with
 clean workarounds — build the value where it lives, pass it, borrow it — so the strict local
 rule costs little.  Sharing a store stays an optimisation that may elide a copy together with
-its drop (C86).  loft is at contract 0 and no published package declares
+its drop (@C86).  loft is at contract 0 and no published package declares
 `OpDrop`, so the refusal lands without a deprecation window (COMPATIBILITY.md § The error
 surface is one-directional).
 
@@ -4113,7 +4145,7 @@ never reach), the live-reload arm, a stored record's layout, and a PLACED librar
 library's own published cdylib is the one build where its API must keep the promised
 representation for callers it will never see.
 
-**What it does not change.**  C120 stands untouched, because it was never about
+**What it does not change.**  @C120 stands untouched, because it was never about
 representation: a value after a fault IS the contract, and a rewrite that changes it
 changes semantics.  The two rulings are one principle read from both sides — everything
 the program cannot observe is the compiler's, everything it can is the language's.
@@ -4142,8 +4174,8 @@ dispatcher.
 when `x.doit()` and `doit(x)` differ, reading a line needs knowing how loft resolves it.  A
 method (`self` or `both`) and a plain-parameter function of one name whose first parameter has
 the same type are refused at whichever is declared second, in either order and at any arity,
-within one source; a program's function beside a stdlib method is the same refusal (C95), and a
-library's beside a stdlib method stays C97's module-scoped warning.  A function on another type
+within one source; a program's function beside a stdlib method is the same refusal (@C95), and a
+library's beside a stdlib method stays @C97's module-scoped warning.  A function on another type
 is an overload and stays legal.
 
 When both spellings are wanted, `fn doit(both: Pt)` declares ONE body for both — in a program
@@ -4174,7 +4206,7 @@ version declares it.
 
 ## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 
-**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads C121 and C122
+**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads @C121 and @C122
 
 ### Question
 
@@ -4213,9 +4245,9 @@ parameter never.  `text` and scalar parameters take their own copy and are
 not affected.  The standard library declares every read-only heap parameter `const`, so a reading
 call such as `len(ps)` stays legal.
 
-This is C121's rule read at a call: what a line MEANS is decided by what is written on it and in
+This is @C121's rule read at a call: what a line MEANS is decided by what is written on it and in
 the signatures it names, never by what the compiler can prove about code elsewhere.  And it is
-C122's freedom kept whole: that a callee does not write a parameter is a fact the compiler may
+@C122's freedom kept whole: that a callee does not write a parameter is a fact the compiler may
 still prove and use — to elide a copy, to share a store — as an optimisation, because an
 optimisation changes no answer.  The same proof may license a rewrite; it may not license a call.
 
@@ -4280,7 +4312,7 @@ not accept it — that is a gap in `const`'s syntax to close, not a reason to re
 
 ## C125 — The store model stays simple: performance work removes objects, it does not add a second kind of object
 
-**Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads C122 · `formal/ownership.md` `(O-Buffer)`
+**Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads @C122 · `formal/ownership.md` `(O-Buffer)`
 
 **Asked (2026-09-17, @PLN164 E1):** the plan's tier 1 put every hidden buffer of an activation
 into ONE store, released to a mark at exit, to save the store mint and free each temporary
@@ -4315,7 +4347,7 @@ arena's residual domain was ≈ 1.5 % of the row against the widest change in th
 
 **What it does not change.**  A result that may be the caller's argument or a fresh record
 (`Own::Join`) keeps today's runtime identity test — that is the existing model, not a new
-one.  A published library API keeps the record form (C122, `(R-Escape)`).  The interpreter
+one.  A published library API keeps the record form (@C122, `(R-Escape)`).  The interpreter
 keeps the record form; it is the values oracle, not the performance lane.
 
 ### Revisit when
@@ -4330,17 +4362,17 @@ percent — measured on the release binary with `perf`, not from a count.
 ## C126 — a generic's type variables are unrestricted; a keyed collection stays a record set
 
 **Catalogue:** @F25 (generics) · @F26 (interfaces & bounded generics) · @F94 (type-directed
-interpolation) · @PLN165 · revises C110
+interpolation) · @PLN165 · revises @C110
 
 ### Question
 
-C110 kept a generic to ONE type variable, in its FIRST parameter, and kept keyed collections
+@C110 kept a generic to ONE type variable, in its FIRST parameter, and kept keyed collections
 record sets.  Do its reasons still hold?
 
 ### Context
 
 The owner asked on 2026-09-21, with three reasons of their own, none of which is the consumer
-C110's revisit clause asked for:
+@C110's revisit clause asked for:
 
 1. **loft carries no random-feeling restriction.**  *"One type variable, and only in the first
    parameter"* is a rule a reader meets with no way to derive it.
@@ -4348,28 +4380,28 @@ C110's revisit clause asked for:
    admits programs and could land later; what it stands on cannot (below).
 3. **The fallout must not become a long-lived branch.**
 
-Each of C110's reasons was then run against `main` (`9f5cf6a96`).  The programs, with the
+Each of @C110's reasons was then run against `main` (`9f5cf6a96`).  The programs, with the
 answer each gave, are in
 [plans/165-flexible-generics/probes/](plans/165-flexible-generics/probes/); the full
-measurement is [DESIGN.md § C110, evaluated](plans/165-flexible-generics/DESIGN.md#c110-evaluated).
+measurement is [DESIGN.md § @C110, evaluated](plans/165-flexible-generics/DESIGN.md#c110-evaluated).
 
 ### Evaluation
 
-| C110's reason | Verdict | Measured |
+| @C110's reason | Verdict | Measured |
 |---|---|---|
 | The monomorph's name is its identity, built *"from the FIRST argument's type"*, and four readers must follow a second type | **no longer holds** | The name is built from what `T` BINDS to: `first<T>(v: vector<T>)` at `integer` is `t_7integer_first`.  `find_fn` looks under the first argument (`vector`) and never finds it — both calls of `first(a)` resolve through the template, as they do for all three stdlib generics.  The H5 splitter reads only the function-name half, and native emits whatever the key is.  Where `find_fn` DOES find an instance it is a defect: `count_of<T>(v: vector<T>)` at `Cat` is keyed as the method `count_of` on `Cat`, takes that method for its own instance, and two definitions that are legal together are refused |
 | *"The cost is understood — it has simply never been worth paying"* | **overtaken** | @PLN162 extended mangling beyond the first parameter on 2026-09-14, for another reason: every overload key carries every parameter's type (`f_10Rock#Paper_beat`) |
 | The sole consumer is harmed: *"a generic `hole<T>` accepts every type by construction"* | **false as stated; stands on narrower ground** | `hole<T: SqlHole>(v: T)` called with a type that has not opted in is refused *"'Raw' does not satisfy interface 'SqlHole': missing sql_hole"* — the compile error naming the method to add.  A BOUND is a per-kind opt-in.  What it changes is who owns the list: the target's author today, anyone who implements the interface under a bound |
 | `hash<K, V>` would be a second spelling of a keyed collection, and a worse one | **holds in full** | nothing has changed |
 
-**The consumer C110 asked for is the language itself.**  `map` is
+**The consumer @C110 asked for is the language itself.**  `map` is
 `vector<T> × fn(T) -> U → vector<U>` and `reduce` is `vector<T> × U × fn(U, T) -> U`: two type
 variables each, shipped as compiler special forms because a library cannot say `U`.  A program
 can write the `T → T` half as a library generic today and cannot write `T → U`.  Under the
 rule *no observable special names* (2026-09-15) these two cannot be retired without a second
 variable.  No LIBRARY consumer exists: the published libraries declare no generic at all.
 
-**What C110 never decided.**  Its reasons against several variables are all about keyed
+**What @C110 never decided.**  Its reasons against several variables are all about keyed
 collections, and its decision set multi-parameter generics aside (*"must argue for itself"*)
 rather than weighing them.  A generic struct with one variable is named nowhere in this
 register: it was unbuilt, never declined.
@@ -4377,7 +4409,7 @@ register: it was unbuilt, never declined.
 **Why before contract 1.**  Lifting the rule stands on changes a freeze would pin: the keys
 definitions are found by (they are native symbols, and the library path decodes them), the IR
 schema (a type template; an instance recording its template and arguments), which definition
-a call reaches where a generic shares a name with a method, and new refusals — C95's rule is
+a call reaches where a generic shares a name with a method, and new refusals — @C95's rule is
 that the error surface can only shrink after contract 1.  Measured window: the published
 libraries declare 0 generics and 0 free overload sets, so today the fallout is this
 repository's corpus alone.
@@ -4394,7 +4426,7 @@ repository's corpus alone.
   takes an argument list, and a rule that stops at the second variable is one no reader could
   derive.
 - **Unchanged — keyed collections stay record sets.**  No `hash<K, V>`, no `sorted<K, V>`;
-  C110's three counts stand, and a keyed collection over a type variable stays refused at its
+  @C110's three counts stand, and a keyed collection over a type variable stays refused at its
   declaration.
 - **Unchanged — the `hole_*` family stays per-kind,** on the narrower ground above: a bound
   would keep the compile error and hand the opt-in list to every implementor, and the audit
@@ -4404,7 +4436,7 @@ repository's corpus alone.
   The fallout is worked on `main` behind switches, never on a long-lived branch
   ([DESIGN.md § How it lands](plans/165-flexible-generics/DESIGN.md#how-it-lands--never-a-long-lived-branch)).
 - **Revisit when** — for what stands: a keyed type has a use a record set genuinely cannot
-  express (C110's own trigger, unchanged); or a target wants an OPEN set of hole kinds, with
+  express (@C110's own trigger, unchanged); or a target wants an OPEN set of hole kinds, with
   third parties opting their own types in, and says so.
 
 ---
@@ -4449,13 +4481,13 @@ corpus program did.
 ## C130 — A store carries its own failure arm: else after the assignment
 
 **Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](https://github.com/loft-lang/plans/issues/178) ·
-refines [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) · `formal/heap.md`
+refines [@C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) · `formal/heap.md`
 `(H-WriteOOB)` / `(H-WriteNull)`, `formal/operational.md` `(E-Uncomp-Seen)` / `(E-Report)`.
 
 ### Question
 
 `(H-WriteOOB)` makes a write to an absent element a no-op the program continues past: `v[5748] = 2`
-on a shorter vector changes nothing, and the owner keeps it so (2026-09-28).  C80 says every
+on a shorter vector changes nothing, and the owner keeps it so (2026-09-28).  @C80 says every
 fault answers a value the programmer MAY inspect on that expression — but a dropped write is
 the one fault whose expression has no value to inspect.  Production code that needs to know
 whether a store took has no way to ask.  What is the syntax?
@@ -4479,7 +4511,7 @@ Four spellings were weighed:
   VALUE for the right-hand side, so `v[i] = 2 ?? x` reads as "2, or x when 2 is null", and an
   action-on-failure operator beside it is one more thing to learn.
 - **A result wrapper** (`Result`/`Option`) — declined at the root by
-  [C89](#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced).
+  [@C89](#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced).
 
 ### Decision (owner ruling, 2026-09-28)
 
@@ -4505,18 +4537,18 @@ health += 10 else { seen = "the boost did not fit"; }
    (`if place = v`) is a compile-time refusal, not a boolean.  There is no success arm: the
    code after the line is the success path, and `else { dropped = true; }` carries the status
    where someone needs it later.
-4. **The value written is the author's; nothing is unwrapped.**  C89's objection to
+4. **The value written is the author's; nothing is unwrapped.**  @C89's objection to
    `let-else` — mitigation for a wrapper that must be opened to read a value — does not apply:
    this block is the failure arm of a store that has no value at all.
 5. **One idiom for both fault kinds.**  `else` supersedes `if !place` as the taught form of
    `(E-Uncomp-Seen)`; the fused `if !place` stays accepted, because it shipped
    ([COMPATIBILITY.md](COMPATIBILITY.md)), and the manual stops teaching it.
 6. **A dropped write nobody guarded logs ONE Warn line, in every build kind** — the place, the
-   index or key, and the length — refining C80 point 1 the way `(E-Report)` already does for
+   index or key, and the length — refining @C80 point 1 the way `(E-Report)` already does for
    an unguarded divide-by-zero.  A store with an `else` is guarded and silent.  An
    out-of-range READ stays silent, because `v[i] ?? d` is idiomatic and the null is its
    signal; a dropped WRITE is almost never intended, so the line is signal, not spam.  It is
-   mode-independent (C80 point 5): a write dropped in a player's game is logged there, which is
+   mode-independent (@C80 point 5): a write dropped in a player's game is logged there, which is
    the only trace the developer will get from that machine.
 7. **This is the auto resolution, and it needs no declaration.**  The owner asked whether a
    programmer may state "just log every case I did not handle": that is what writing nothing
@@ -4541,7 +4573,7 @@ by reading two lines.
   emission for every store without an `else`.
 - **The grammar slot is free.**  `else` is read at exactly one parser site, after an `if`'s
   true block (`src/parser/control.rs`), so a trailing `else` on an assignment is unclaimed.
-- **It is the spreadsheet model completed.**  C80 keeps the run going; this is the cell's
+- **It is the spreadsheet model completed.**  @C80 keeps the run going; this is the cell's
   own "did that take" that a robust program checks at its boundaries, in the words a game
   developer already has, and with the log line as the default when nobody asked.
 
@@ -4610,3 +4642,286 @@ existed only inside interface declarations.  The 2026.10 cycle's user-operator d
 kept open and declined: allowing `op <` for user definitions — readable, but it keeps the
 machinery those defects came from.  2026.10 ships unchanged; the work is loft#1833.
 
+## C135 — loft has no unsafe construct; representation is observable only at a native boundary or a file-backed store
+
+Decided 2026-10-04 by the owner, while reviewing the apart-values proposal (APART_VALUES.md):
+"this is partly why I love that we have the rustc guarantees under the hood but no unsafe loft
+command", and on the boundary: "the store model is clearly observable though the memory mapped
+files we use.  But that is part of our framing of what we optimize in the first place."  The
+question was why rustc, despite exclusive-access rules, rarely removes heap allocations: a
+`Vec`'s layout is part of Rust's contract because `unsafe` code may take its pointer, so heap
+elision happens only where inlining puts the allocation and the free in one function (measured:
+a summed vector temp 1 ns, a `Vec` returned from a non-inlined function 20 ns).  Loft has no
+such construct — `#rust` in a program was already refused (@C87), `unsafe` is not a keyword — but
+nothing recorded it, while @C122, `(R-Escape)`, `(R-ValueRecord)` and every store rewrite depend
+on it.  Recorded so a future proposal that opens a representation door has to name the rewrites
+it invalidates.
+
+## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
+
+Decided 2026-10-04 by the owner, while planning how slow routines become ordinary bugs (@PLN185):
+"the 3x limit versus 4x is from my observation that we are not inherently slower than rustc.  Yes
+we do some more validation and have slower allocation/free but we also have some inherent
+benefits to it due to our type system and inherent ordering of data structures", and "I chose
+the 3x, not because I accept a median of 3x but because it probably exposes a fundamental
+problem.  And with those problems gone and not worked around, the rest of the loft routines will
+benefit also".  @PLN157 had worked to 4×.  The class split comes from the 2026-10-02 macOS portal
+run: 85 of 182 routines over 3×, 7 of 15 class medians over it — filing all 85 would have been
+noise, while the 23 outliers in healthy classes are individual bugs.
+
+The release clause was added 2026-10-11 by the owner: "even though I do want to reach 3x
+performance of rustc code I am also realistic enough that it will take a long time to reach so
+I am willing to settle for 5x for a stable loft release, because optimizing will continue to
+destabilize the loft code too and I want to reach stability in the next months".  Clarified
+the same day: "It is not that we do only low-risk changes now, but this work is inherently not
+stable, and that is not a problem for now", and "We do have to find a way to reduce risks after
+the contract=1 stability though, just running the tests then will not be enough, but that is for
+when we hit that".
+
+## C137 — A claim promises no value; a slot is read only after it is written
+
+Owner, 2026-10-05, while pricing graphics' `filled` as `[value; count]`: *"if a type assumes
+zero fill that type is wrong"* — and the only legitimate zero fills are `[0; n]` and a record
+whose defaults are all zero written in place.  The poisoned suite (`LOFT_POISON_CLAIM=1`, every
+subject) then found the reliers: the JSON constructors' unwritten fields, a null copied into a
+fresh element, the nullable-slot writer releasing a slot the construction had just minted, a
+comprehension's element copy, the text parser's collection field, the interpreter's stack push
+assigning (dropping) into fresh memory, and on native the par workers — one of them a real
+overrun: the text worker's output record written from its own size header.  Each was fixed to
+write what it had assumed; a test that pinned the exact garbage a deliberately restored stale
+read returned was loosened to pin where it fails.
+
+## C138 — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
+
+Decided 2026-10-06 by the owner, in steps: "evaluate how fields in records are stored, they
+adhere to alignment", "continue with a more strict alignment model", "this is a design
+decision", and then "can we move to more strict rust pointer handling too?" with the concern
+"the possible problem here is the bytecode".  The measurement that opened it: with
+`LOFT_TRACE_ALIGN` every corpus program carried misaligned fields, because the standard
+library's own types (`StructField`, `File`) did — records were packed with no tail padding, a
+tuple group was packed tight, and an inlined record could push the next field off its boundary.
+Padding cost, measured over the corpus's types: 1069 types grew, median +33 %, worst 9 → 16
+bytes; standalone records cost nothing because a claim is whole words.  The owner approved
+rounding in the layout routine rather than in each collection, and asked for every reader of
+stored bytes to be covered — persisted images (the layout identity changes, so `(L-Sound)`
+rebuilds), binary file I/O (kept at the wire width), remote and lazy stores (they verify the
+same identity) — and for the strict access to stop at the bytecode, whose operands stay packed.
+
+**Amended 2026-10-06 — the check moved from the access to the compiler.**  As first built,
+`Store::read` / `Store::write` were aligned `ptr::read` / `ptr::write` behind a per-access
+alignment test that panicked in every build.  A renewed portal run measured that test at 11–13 %
+on native store-heavy routines (gridmesh `build_index` 18.0 → 20.6 ms, cbor `encode_bytes` 760 →
+880 µs, Rust twins unchanged): it kept `read` from inlining into the keyed and vector paths.  The
+owner's ruling: "Introducing runtime overhead for validation is not a good idea. Those should be
+done compile time and certainly out of optimized pathes."  So `Stores::validate_all_layouts` now
+reports a misaligned place as a compile-time `type layout:` error, and `read` / `write` claim no
+alignment (`read_unaligned` / `write_unaligned`, defined at any offset).  A first draft asserted
+it in `Stores::finish`, which the emitted native `init()` also runs at startup, so it moved to the
+compiler's own layout validation.  The layout guarantee itself is unchanged.
+
+## C139 — A tuple IS a record; foreign data is value-const and never presented as writable
+
+Decided 2026-10-06 by the owner, in the discussion of loft#1875 (a `&` link to a narrow or text
+tuple member is refused).  The question as it arrived was a choice of storage for the two
+members; the owner reframed it: a tuple is just a record with fixed field names, its layout is
+no different from any record's, and it should be able to live on the stack and interact well with
+rustc — rustc's own types and field order are an optimisation that can be read from the record
+layout, or kept out of the records entirely where the rewrite rules allow.
+
+Foreign data came up through text: a rustc library returns a string, and loft should read it
+without first copying it into its own structure.  The owner then generalised it — foreign data is
+any structure, traversed and read whole or in parts — and settled writes in two steps.  A first
+reading (a write through a link copies the part and rebinds the name, `c += "!"` ≡
+`c = c + "!"`) was reconsidered the same day: foreign data is never presented as writable, the
+write is an error, and `c = t.0 + "!"` is the way to get the same result.  Last, the owner pointed
+out that foreign structures are their own type presenting as a normal loft structure, and loft
+already has read-only (value-const) structures, so the compiler refuses the write with no runtime
+check.  Measured while writing it down: `file_map`'s read-only vector is refused at run time
+today (loft#1897).
+
+The last question — whether a stored tuple keeps its written member order (`(L-Tuple)` as it
+read) or packs by descending alignment like a struct — the owner settled the same day: a stored
+tuple is nothing other than a record, so its fields may change order with the larger aligned ones
+first, with no effect on their names or their text presentation.  Measured: `(u8, u32, u16)` is
+12 bytes today against 8 for the equivalent struct (loft#1898).
+
+## C140 — private by default, `pub` is consent: fields, literals and variants
+
+**Question.** A library's struct fields were readable and writable by every importer (`pub` on a
+field was parsed and discarded), so no library could change a record's representation without
+breaking a consumer, and a `pub fn` returning a non-`pub` type handed its caller a value whose
+type it could not name (OCaml_BAR H3: no abstract type).  **Measured** (d364c4fb2): type names
+were already private by default and enforced; no field anywhere carried `pub` (stdlib 47 fields,
+libraries 956, tests 4395); `pub` on a variant field did not parse.  **Decided** 2026-10-06 (owner,
+@PLN187): private by default with three type levels (invisible / name only / `pub`), name only
+decided by the file's own `pub` signatures; enum variant fields follow the struct rule; a
+non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
+**Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
+contract 1 because it adds refusals.
+## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
+
+Asked 2026-10-07 while working the worst native routines: `pluginabi`'s `check_request` (12.0×
+Rust) spends half of `decode` claiming, zeroing, copying and freeing the texts and byte strings
+of a CBOR frame it reads one key out of, and the analysis named one form that reaches 6×
+against an aligned twin — a decoded value whose text and byte fields are views into the frame —
+which the memory model did not have (a borrowed field inside a store record).  Presented as
+three options: views where the compiler proves confinement, a view as a run-time state of a
+field copied on escape, or no views and the levers that need no decision (≈ 5.5×).  The owner:
+*"In the optimizations everything is possible as long as the semantics of the original program
+is kept.  So giving a view with operations per character is fine."*
+
+## C142 — A null inside a `{…}` hole renders plain `null`, never the reason it is null
+
+Decided 2026-10-08 by the owner: *"I do not want to see the reason of null in {} expressions"*.
+Since plan-07 phase 4e.3 (2026-05-11) a hole whose own fault-prone operation faulted rendered
+`null(/0)`, `null(%0)` or `null(oob)`, and `(F-FaultSafe)` stated it as a rule.  Keeping that
+true took a parse-time arm (`OpTagFault`), a per-thread cause every fault-prone nullable peer
+wrote, and a renderer per type that took it back — and four fixes in five months, each where
+the cause was shown, lost or worn by the wrong hole: loft#1169 (a null that only passed through
+an op wore its cause), loft#1478 (a cause only under a dividing operator), loft#1920 (a cause
+left armed for the next hole) and loft#1939 (only integer holes showed one; the day before this
+decision).  The @PLN102 formal audit had already listed the suffix as an open question —
+*"Format-null render is syntactic: `c=a/b; "{c}"` → `null` but `"{a/b}"` → `null(/0)` … Carry
+the tag on the value or drop it — don't freeze the syntactic split"* — and the owner dropped it.
+The fault-to-null semantics were not in question and did not change; neither did the silent
+nullable rewrite of a hole (@C66).
+
+## C143 — A rendered record shows its null fields
+
+Decided 2026-10-08 by the owner — *"show them then"* — after a survey showing that every common
+language's debug print lists null fields and most JSON libraries emit `"key":null` by default.
+Until then the record walker skipped a field whose slot read null, so
+`Point { x: 3, y: null, label: null }` rendered `{x:3}` and `{"x":3}` under `:j`, and a guard
+family (loft#1269, loft#1270, loft#1437, the narrow-width and character JSON guards) had pinned
+the omission as the convention every type followed.  No opt-out was wanted.  Writing the null
+made one reader defect reachable from loft's own output: a JSON `null` for a nullable COLLECTION
+field wrote its absent marker on the record's first field (loft#1947), fixed with it.  The
+walker also printed a plain enum's `0xFF` null as `?`; it renders `null` now, as the cast to
+text does.
+
+## C144 — A nullable value record carries a presence word; an absent one holds its fields' nulls
+
+Decided 2026-10-09 while closing loft#1952, the last `--native`-only divergence in loft#1934's
+road pairs.  Two spellings were weighed: a presence word, and a sentinel in one field.  The
+sentinel was ruled out because a present record may hold null fields, so no field's null can
+mean "absent".  Placing the word LAST keeps every field at its dense tuple index, so the field
+reads, the field index map and the live-reload arm are shared with the dense layout.  Measured on
+the issue's 10M-call loop, lean tier (`--native-release`, median of five, the base build
+alongside): the nullable spelling went from 0.482 s (a buffer and a heap store per result) to
+0.065 s, beside 0.069 s for the dense one on both builds.
+
+## C145 — No back references inside a store: what a reference points at never moves under it
+
+Stated 2026-10-10 by the owner while the worst native routines were priced: `mesh_to_floats`
+and `pack_instances` both read record views (`mf_v`, `n`) while appending to their return
+buffer, and `(R-RecPtr)` declined to hold the views' addresses because the buffer could live in
+the same store.  The owner, in four steps: *"on long term (from another store) references into a
+store there are limitations: only records and fields in records can be references (strings and
+vectors can get moved inside the store)   short term variable & parameter references can be made
+but the store itself cannot be changed then (no addition to strings & additions to vectors)"*;
+*"this is because I do not want back references inside stores"*; *"a long term string reference
+is possible but it should be to a field holding the string"*; *"records can live inside a vector
+itself and the vector can relocate or move its own content on a sorted vector.  This is fixed in
+known links inside a store to move to the Array structure that pushes out the records."*
+
+The by-reference layout the last remark names was already built (`Stores::is_linked`, loft#903,
+loft#1670); the short-term clause was nowhere written and nothing checked it.  Measured against
+it, `(R-Place)` hands a callee a return buffer claimed in the caller's store and the callee grows
+it while holding short-term references there — recorded as `D-heap-47`, whose closing is what
+would let `(R-RecPtr)` keep those views (−13 % on a `mesh_to_floats` probe).
+
+The removal clause was added the same day, as the design call loft#1969 asked for (a removed
+record's position was reused by the next claim, so a stored reference read a different
+record): *"a removed record space cannot directly be reused by a store but a reference can see
+that this space is now not a record anymore"*.  Of the three closings the issue offered —
+refuse the removal, a generation tag, a tombstone — this is the tombstone, kept to the header
+word: the position is never reused, the rest of the record is.  Written as `(H-Removed)`.
+
+## C146 — A hash table's bucket count is a power of two
+
+Decided 2026-10-11 by the owner while the keyed rows of the release cut were priced.  The
+analysis had declined removing the division in `hash::home_bucket` as a store-format break,
+offering a multiply-shift reduction or a per-table reciprocal; the owner answered: *"But the
+hash bucket size should be a size that is cheap to divide anyway"* and *"So make them a power
+of two again, make that a rule"*.  The counts had drifted: a table started at 16, but grew by
+claiming `2·room − 1` words (38, 78, … slots) and a `reserve` sized it to the load trigger
+exactly.  For a power of two `digest % count` is `digest & (count − 1)`, so the formula and every
+stored entry stay where they are.
+
+## C147 — An `index` is a B+tree of key parts and record numbers, kept apart from the records
+
+Decided 2026-10-12 by the owner (@PLN190) while the keyed rows of the release cut were priced:
+`index_fill_find` stood at 5.6× its Rust twin, with the red-black tree's `put` and `balance` 45 %
+of it.  Asked whether a B-tree would be quicker *"because the records in the B-tree are already
+there with their keys"*, Rust stand-ins priced three node layouts (key inline, ref only, an 8-byte
+key part + ref); the part won on text keys and matched inline on integers.  The owner said *"build
+your recommendation"*.  A probe over loft's own `Store` measured 3.0–3.6× over the red-black tree;
+the built tree measured, ns per key fill · find, integer 5k 154·80 → 69·43 and 1M 250·131 →
+87·61, text 1M 418·236 → 158·118.  The first walk by record re-descended each step at 52–70 ns
+against the red-black tree's 6–9; the verified hint brought it to 9.  Text keys of the shape
+`key_<digits>` at 1M first measured 0.9× the red-black lookup — every level tied on the leading
+eight bytes — which is what the node prefix answers.  C113's rationale was restated the same day:
+its storage argument went with the link triple.
+
+## C148 — A parsed value carries its own parse errors, wherever the whole value goes
+
+Decided 2026-10-12 by the owner, in two rulings the same day: *"make it a vector<text> and stop
+clearing on read"*, then *"make it per-record"*.  Until then `record#errors` read one register
+for the whole program (`Stores::last_parse_errors`), joined into one text that the read
+cleared (QUALITY-history.md § JSON cluster holds the first ruling's measurements).
+
+**The question the second ruling left open** was what "per record" means once a record moves.
+A compile-time companion per variable was ruled out first: whether `u` was bound from a parse
+is not visible from the line `len(u#errors)` and its declared types, and a helper that returns
+a parsed record would hand back one that silently reports no errors.  So the errors live with
+the VALUE at run time — a store's content, beside its root type — and the open part was which
+writes carry them.
+
+**Decided from the programs**, one file per shape, each run on both backends: a parse asked
+at once; two and four live parses; a helper returning a parse from its tail, from a local and
+from `if` arms, and two helpers deep; a plain, a `const` and a `&` parameter; a rebind from a
+parse, from a variable and from a constructor; a copy; the same for a vector; a struct-enum, a
+`value struct` and a `text as T` cast; a value built by a constructor after twenty failed
+parses were freed; a part read as a view and a part copied out.  Store identity alone answered
+the parameter and the bind and lost the helper's return, the rebind from a variable and the
+copy — each a copy into another store.  Since whether a delivery moves or copies is the
+compiler's choice, the copy has to carry them: the cells were run again with the store
+exchange switched off (`LOFT_NO_STORE_SWAP`, `LOFT_NO_SWAP_REBIND`, `LOFT_NO_REFILL_BUFFER`,
+`LOFT_NO_NULLABLE_RETBUF`) and answer the same.
+
+**Where the line is.**  A write of a store's whole root takes the incoming value's errors, or
+none; a root is `1@8` of the store's own root type, the test `(H-SwapIn)` already makes, so a
+first field that shares that address is a part.  For a vector the root is the store's one
+vector, by record number, because the interpreter's buffer holds its slot at offset 12 where
+`--native`'s holds it at 8.  Three choices were made at the edges and can move with a use case:
+a view of a part answers for the whole it lies in, since it reads that store; an append into an
+EMPTY vector no parse built, from a whole parsed one, counts as the copy it is lowered from
+(`t = s` is a fresh store and an append); and a parse that reads no vector at all answers a
+null one, so `v += [x]` on it starts a new vector without the errors.
+
+**Found on the way, each on `main`, filed and since fixed:** a helper that binds `vector<T>.parse(t)` to a
+local and returns the local hands back a vector whose store it freed (loft#1985);
+`fn mk(t: text) -> E { E.parse(t) }` for a struct-enum `E` cannot be bound (*"cannot change
+type from E to E"*, loft#1986); and a vector-returning call inside an expression is evaluated
+ahead of an earlier operand that writes its argument (loft#1987).
+
+## C149 — one structural limit, 300, for every count a program has — a function's variables included
+
+Decided 2026-10-12 by the owner.  PR #1967 had replaced four separate bounds (256, 128 in a
+sandbox, 499, 999) by one, 300, and with it a function's variables were counted for the first
+time.  The consumer-main-health nightly then went red on crawler: `sim_new_gen_s` in
+`src/sim.loft`, one function of 1436 lines binding more than 340 names, had compiled before.
+The question put to the owner was whether to drop the count for variables, on the ground that a
+variable costs no recursion depth and the 64 KiB frame cap already bounds what is unsafe.
+
+The answer: *"keep the count for variables"*; *"I want a clean number for programmers here, it
+should be so low we do not suddenly get into the frame cap unreliably"*; *"I want the same
+number in all cases so a programmer can know what the limit is"*; and of the consumer, *"when
+the crawler has put all their code in a single function that is their fault"*.
+
+Measured the same day, on both backends, at the limit of 300 bound variables: 300 `text`
+parameters with 300 `text` variables fit the frame; 299 struct, vector and
+`(text, integer, float)` variables fit; 299 tuples of 27 integers fit and 299 of 28 are the
+frame refusal — 65536 / 300 is 218 bytes a variable.  The count therefore arrives before the
+frame cap for every ordinary variable, which is the property the entry states and
+`the-variable-limit-arrives-before-the-frame-cap.loft` holds.

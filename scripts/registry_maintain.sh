@@ -220,7 +220,7 @@ while IFS=$'\t' read -r name ver repo libdir _why; do
     tag="$name-v$ver"
     # V2/V3 gate — the lib must parse/type/test against THIS loft before it can be
     # published + signed (the same gate library-ci + revalidate-libs run; catches a
-    # lib a language change broke, e.g. C95, before it reaches the signed index).
+    # lib a language change broke, e.g. @C95, before it reaches the signed index).
     if [ -d "$libdir/tests" ] \
        && ! ( cd "$libdir" && LOFT_TIMEOUT=180 "$LOFT" --interpret --tests tests ) > "$tmp/gate_$name.log" 2>&1; then
         {
@@ -266,7 +266,7 @@ mv "$tmp/work_ok.tsv" "$tmp/work.tsv"
 n_own=$(wc -l < "$tmp/work.tsv")
 n_prs=$(wc -l < "$tmp/prs.tsv")
 n_blocked=$(grep -c '✗' "$tmp/blocked.txt" 2>/dev/null || true); n_blocked=${n_blocked:-0}
-# C96 key-absent path: versions STAGED under submissions/ (via a PR that does NOT
+# @C96 key-absent path: versions STAGED under submissions/ (via a PR that does NOT
 # touch index.json).  Peek at the count before cloning so a submissions-only run
 # still proceeds; the drain (post-clone) vets + folds each one.
 n_subs=$(gh api "repos/$ORG/registry/contents/submissions" \
@@ -601,7 +601,7 @@ EOF
     if [ -e "$tmp/meta_$name" ]; then META_EXPECTS+=("$name"); fi
 done < "$tmp/work.tsv"
 
-# ── submissions/ drain (C96 key-absent path) ─────────────────────────────────
+# ── submissions/ drain (@C96 key-absent path) ─────────────────────────────────
 # A key-absent contributor stages a version by adding submissions/<name>-<ver>.json
 # (name, version, repo, tag, subpath, entry) via a PR that does NOT touch index.json,
 # so it can't race the signed index.  Here — on the key-present machine — each staged
@@ -712,7 +712,9 @@ if [ -n "$ONLY" ]; then
         exit 0
     fi
     for e in "${EXPECTS[@]}"; do sign_args+=(--expect "$e"); done
-    for m in "${META_EXPECTS[@]}"; do sign_args+=(--expect-meta "$m"); done
+    # `${a[@]+…}`: bash 3.2 (macOS's /usr/bin/env bash) treats an EMPTY array as unbound
+    # under `set -u`, and the run died here after publishing, before it signed.
+    for m in ${META_EXPECTS[@]+"${META_EXPECTS[@]}"}; do sign_args+=(--expect-meta "$m"); done
 elif [ "$YES" = 1 ]; then
     sign_args+=(--yes)
 fi

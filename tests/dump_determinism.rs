@@ -19,7 +19,6 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     std::env::var_os("LOFT_DUMP_DETERMINISM_BIN")
@@ -27,7 +26,7 @@ fn loft_bin() -> PathBuf {
 }
 
 fn dump(file: &str) -> String {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_TIMEOUT", "60")

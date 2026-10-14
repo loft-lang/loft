@@ -64,7 +64,7 @@ FAMILIES = [
     ('checked arithmetic', {
         'op_add_int', 'op_add_long_nn', 'op_add_long', 'op_mul_long', 'op_sub_long',
         'op_neg_long_nn', 'op_mul_int', 'op_sub_int', 'op_div_long', 'op_rem_long',
-        'note_format_fault', 'op_cast_int_from_float', 'op_conv_float_from_int'}),
+        'op_cast_int_from_float', 'op_conv_float_from_int'}),
     ('text', {
         'text_character', 'set_str', 'OpGetTextSub', 'text_byte_at_native', 'append_text',
         'OpAppendText', 'get_str'}),

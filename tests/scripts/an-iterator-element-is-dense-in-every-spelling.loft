@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An `iterator<τ>` element is dense: `?` on it is refused (`(G-Yield)` — a yield is a store
+// into a slot that cannot be declared nullable), in every spelling.  `iterator<u8?>`,
+// `iterator<integer?>`, `iterator<S?>` were refused; a `?` written after the element's own
+// range, `iterator<integer limit(0, 1000)?>`, was read by the type parser past the
+// element test and admitted, so one spelling of the same element typed it nullable.
+//
+// `main` comes first so the expectation belongs to its function rather than to the file.
+//
+// @falsified-at: 029c50d4d — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1
+//   -> 1/1.
+// @falsified-by: tests/falsified/an-iterator-element-is-dense-in-every-spelling.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   029c50d4d is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+fn main() {
+  for y in ranged(3) {
+    println("{y}");
+  }
+}
+
+// @EXPECT_ERROR: `?` (nullable element) is only valid on `vector` — `iterator` elements are always dense
+fn ranged(a: integer) -> iterator<integer limit(0, 1000)?> {
+  yield a;
+}

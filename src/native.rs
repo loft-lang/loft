@@ -6,7 +6,6 @@ use crate::database::Stores;
 use crate::keys::{DbRef, Str};
 use crate::logger::Severity;
 use crate::parallel::{WorkerProgram, run_parallel_text};
-use crate::platform::sep;
 use crate::state::{Call, State};
 use crate::vector;
 use std::sync::Arc;
@@ -95,6 +94,7 @@ fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
 pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_assert", n_assert),
     ("n_panic", n_panic),
+    ("n_exit", n_exit),
     ("n_log_info", n_log_info),
     ("n_log_warn", n_log_warn),
     ("n_log_error", n_log_error),
@@ -148,7 +148,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_ymd_days_ago_dest", n_ymd_days_ago_dest),
     ("n_store_memory_dest", n_store_memory_dest),
     // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
-    ("i_parse_errors_dest", i_parse_errors_dest),
     ("n_struct_to_json_dest", n_struct_to_json_dest),
     ("n_struct_to_json_pretty_dest", n_struct_to_json_pretty_dest),
     ("t_9character_is_lowercase", t_9character_is_lowercase),
@@ -462,7 +461,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_reflect_field", n_reflect_field),
     ("n_reflect_field_path", n_reflect_field_path),
     ("n_path_sep", n_path_sep),
-    ("i_parse_error_push", i_parse_error_push),
+    ("n_parse_errors_of", n_parse_errors_of),
     ("n_hash_sorted", n_hash_sorted),
     ("n_vector_sum_int", n_vector_sum_int),
     ("n_radix_sorted", n_radix_sorted),
@@ -851,12 +850,12 @@ fn trace_assert_site(file: &str, line: i64) {
     static SINK: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
     let sink = SINK.get_or_init(|| {
         std::env::var("LOFT_TRACE_ASSERTS").ok().and_then(|path| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-                .map(std::sync::Mutex::new)
+            crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            )
+            .ok()
+            .map(std::sync::Mutex::new)
         })
     });
     if let Some(m) = sink
@@ -887,7 +886,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     if v_test {
         return;
     }
-    // Production mode logs and continues (C66).  The decision is
+    // Production mode logs and continues (@C66).  The decision is
     // `runtime_error::logged_in_production`, shared with the body the
     // native generator emits, because the two backends have to answer
     // this identically and once did not (loft#1263).
@@ -909,7 +908,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     stores.raise_runtime_error(Box::new(
         crate::runtime_error::RuntimeError::assertion_failed(
             v_message.str().to_string(),
-            v_file.str().to_string(),
+            v_file.str(),
             v_line as u32,
         ),
     ));
@@ -934,9 +933,18 @@ fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
     // variant.  See `RuntimeError::user_panic` for the constructor.
     stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::user_panic(
         v_message.str().to_string(),
-        v_file.str().to_string(),
+        v_file.str(),
         v_line as u32,
     )));
+    stores.had_fatal = true;
+}
+
+/// `exit(code)`: halt the dispatch loop through the runtime-error path with an `Exit`
+/// kind, which `main.rs` turns into the process status in silence.  Not through
+/// `logged_in_production`: ending the program is what was asked for, in every mode.
+fn n_exit(stores: &mut Stores, stack: &mut DbRef) {
+    let v_code = stores.get::<i64>(stack);
+    stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::exit(v_code)));
     stores.had_fatal = true;
 }
 
@@ -1260,7 +1268,7 @@ fn n_store_memory_dest(stores: &mut Stores, stack: &mut DbRef) {
 
 fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let result = Stores::os_mtime_native(v_path.str());
+    let result = stores.fs_mtime_at(v_path.str());
     stores.put(stack, result);
 }
 
@@ -1269,7 +1277,7 @@ fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
 /// then stats it.
 fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let new_value = crate::codegen_runtime::fs_is_dir(&stores.resolve_path(v_path.str()));
+    let new_value = stores.fs_is_dir_at(v_path.str());
     stores.put(stack, new_value);
 }
 
@@ -1277,7 +1285,7 @@ fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
 /// `default/02_files.loft`.
 fn n_is_symlink(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let new_value = crate::codegen_runtime::fs_is_symlink(&stores.resolve_path(v_path.str()));
+    let new_value = stores.fs_is_symlink_at(v_path.str());
     stores.put(stack, new_value);
 }
 
@@ -1285,7 +1293,7 @@ fn n_is_symlink(stores: &mut Stores, stack: &mut DbRef) {
 /// `default/02_files.loft`.
 fn n_is_file(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let new_value = crate::codegen_runtime::fs_is_file(&stores.resolve_path(v_path.str()));
+    let new_value = stores.fs_is_file_at(v_path.str());
     stores.put(stack, new_value);
 }
 
@@ -1682,7 +1690,8 @@ fn n_program_directory_dest(stores: &mut Stores, stack: &mut DbRef) {
 // buffer instead of `stores.scratch`.  Routed by `is_text_dest_native`.
 fn n_source_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = stores.source_dir.clone();
+    // `@FR-Path-Sep` — the directory is given in the portable form.
+    let v = crate::file_access::given(&stores.source_dir);
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
@@ -1867,6 +1876,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                const_refs: Arc::clone(&ctx.const_refs),
                 frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },
@@ -2046,6 +2056,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
             data_ptr: ctx.data.clone(),
             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+            const_refs: Arc::clone(&ctx.const_refs),
             frame_headroom: Arc::clone(&ctx.frame_headroom),
             line_numbers: Arc::new(std::collections::BTreeMap::new()),
         };
@@ -2291,6 +2302,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                const_refs: Arc::clone(&ctx.const_refs),
                 frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },
@@ -2877,7 +2889,7 @@ pub fn type_named_in(stores: &mut Stores, name: &str) -> DbRef {
 /// **The position is checked, never trusted.**  Only a field the descriptor says
 /// BEGINS at `position` — and that [`LayoutField::is_data`] admits — is read.  A
 /// hand-made offset, a position belonging to a different type, the interior of a
-/// wider field, or an index node's `#left_1` bookkeeping all answer `OtherKind`
+/// wider field, or a `#`-prefixed synthetic field all answer `OtherKind`
 /// with no read at all, so there is no argument a caller can pass that addresses
 /// bytes the layout did not name.
 ///
@@ -3398,7 +3410,7 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
     // Keys — a keyed collection only. The descriptor holds them as INDICES into
     // the element record's field list, so they are resolved here rather than
     // published raw: an index is meaningless to a caller that also has to skip
-    // the synthetic fields (`#left_1` and friends), and the byte position is the
+    // the `#`-prefixed synthetic fields, and the byte position is the
     // one number that identifies a field in both lists.
     if let Some(LayoutNode::Iterated(it)) = &node {
         let keys = reflect_keys(it);
@@ -3584,30 +3596,18 @@ fn populate_frame_variables(
     }
 }
 
-/// Return the platform path separator as a loft `character`.
-/// `'\\'` on Windows filesystems, `'/'` everywhere else.
+/// The separator of a loft path, as a loft `character`: `'/'` on every platform
+/// (`@FR-Path-Sep`).
 fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
-    stores.put(stack, sep());
+    stores.put(stack, '/');
 }
 
-/// Return the error text from the last `Type.parse()` call.
-/// Empty string means the parse succeeded.
-fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
-    let msg = stores.get::<Str>(stack);
-    stores.last_parse_errors.push(msg.str().to_owned());
-}
-
-// @PLN10 Phase 1 — destination-passing variant of `i_parse_errors`.
-// Always-non-null (the joined error text, possibly empty); no stack args.
-// Routed by `is_text_dest_native`.
-fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = stores.get::<DbRef>(stack);
-    let msg = stores.last_parse_errors.join("\n");
-    stores.last_parse_errors.clear();
-    stores
-        .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&msg);
+/// `record#errors`: the errors of the parse that built the record, as a fresh
+/// `vector<text>`; mirrors the `#rust` template in `default/06_json.loft`.
+fn n_parse_errors_of(stores: &mut Stores, stack: &mut DbRef) {
+    let v_r = stores.get::<DbRef>(stack);
+    let new_value = stores.parse_errors_vector(&v_r);
+    stores.put(stack, new_value);
 }
 
 // HTTP client glue removed — n_http_do and n_http_body are now auto-marshalled.
@@ -3730,14 +3730,19 @@ pub(crate) const JV_DISCR_INT: i32 = 7;
 
 /// Allocate a fresh `JsonValue` record in its own store and return
 /// the DbRef.  Caller writes the discriminant byte at pos+0 and any
-/// variant payload at pos + position(variant_tp, field_name).
+/// variant payload at pos + position(variant_tp, field_name).  `@FR-H-Claim`: the payload is
+/// WRITTEN all-zero first — the empty value of every variant field a caller leaves
+/// (an empty `JArray`'s items, an empty `JObject`'s fields): a claimed record is not
+/// zero by any promise.
 pub(crate) fn jv_alloc(stores: &mut Stores) -> DbRef {
     let jv_tp = stores.name("JsonValue");
     let size_bytes = u32::from(stores.size(jv_tp));
     // database(n) → claim(n) which expects 8-byte words; round up
     // and add 1 word for the record header.
     let words = size_bytes.div_ceil(8) + 1;
-    stores.database(words.max(2))
+    let r = stores.database(words.max(2));
+    stores.store_mut(&r).zero_range(r.rec, r.pos, size_bytes);
+    r
 }
 
 /// Shared `JsonValue::JNull` sentinel used by `n_field` / `n_item` fallback
@@ -4242,7 +4247,7 @@ fn n_as_bool(stores: &mut Stores, stack: &mut DbRef) {
         let b = u8::from(stores.store(&v).get_byte(v.rec, value_pos, 0) != 0);
         stores.put(stack, b);
     } else {
-        // The tri-state null byte (C73 / @PLN17) the `boolean?` declaration promises — not
+        // The tri-state null byte (@C73 / @PLN17) the `boolean?` declaration promises — not
         // `false`, which a caller cannot tell from a field that really says false.
         stores.put(stack, 255u8);
     }
@@ -4433,7 +4438,7 @@ fn n_struct_from_jsonvalue(stores: &mut Stores, stack: &mut DbRef) {
 /// `dest.pos = 8`) from the JsonValue at `src`.  Walks every declared
 /// field via `Stores::types[struct_kt].parts`, looks up each field by
 /// name in `src` (which must be a `JObject` for any field lookup to
-/// succeed — wrong-kind sources leave every field at zero-init), and
+/// succeed — wrong-kind sources leave every field absent), and
 /// dispatches on the field's declared type.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn populate_struct_from_jsonvalue(
@@ -4593,20 +4598,37 @@ pub(crate) fn populate_struct_from_jsonvalue(
                     if inner_name == "JsonValue" {
                         let jv_size = u32::from(stores.size(content_kt));
                         copy_bytes(stores, &sub, dest, dest_field_pos, jv_size);
+                    } else {
+                        // Any other enum keeps the all-zero value it always answered — WRITTEN
+                        // here: a claimed record's bytes are not zero by any promise.
+                        let size = u32::from(stores.size(content_kt));
+                        stores
+                            .store_mut(dest)
+                            .zero_range(dest.rec, dest_field_pos, size);
                     }
                 }
                 Parts::Vector(elem_kt) => {
                     // Vector field: the handle is a 4-byte rec-nr at
                     // `dest_field_pos`.  Iterate the JArray items and
                     // append per element via the existing
-                    // `vector_append` machinery.
+                    // `vector_append` machinery — into an EMPTY vector, written first: the
+                    // claimed record holds no handle until this field writes one, and a source
+                    // that is not an array leaves it empty.
+                    stores
+                        .store_mut(dest)
+                        .set_u32_raw(dest.rec, dest_field_pos, 0);
                     populate_vector_from_jarray(stores, &slot, elem_kt, &sub);
                 }
                 _ => {
-                    // Hash, Sorted, Index, Radix, Array and Base fields have no JSON
-                    // form here yet, so the zero-init default stands.  Unlike the narrow
-                    // integers that used to share this arm, none of them can be spelled
-                    // in the document at all, so nothing is being dropped silently.
+                    // Hash, Sorted, Index, Radix, Array and Base fields have no JSON form here
+                    // yet, so the field is the EMPTY collection — written, not inherited from
+                    // the claim.  None of them can be spelled in a JSON document at all, so
+                    // nothing is dropped silently (a narrow integer can be, and takes its own
+                    // arm above).
+                    let size = u32::from(stores.size(content_kt));
+                    stores
+                        .store_mut(dest)
+                        .zero_range(dest.rec, dest_field_pos, size);
                 }
             }
         }
@@ -4768,7 +4790,7 @@ fn unwrap_float(
 
 /// `None` as in [`unwrap_long`].  It used to answer `0` here, which made an absent
 /// nullable boolean read back as the VALUE `false` instead of null — a boolean stores
-/// tri-state and 255 is its null (@PLN17 C73), and only the declaration knows whether
+/// tri-state and 255 is its null (@PLN17 @C73), and only the declaration knows whether
 /// this slot may carry it.
 fn unwrap_bool(
     stores: &mut Stores,

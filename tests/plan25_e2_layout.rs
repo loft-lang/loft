@@ -15,6 +15,7 @@
 extern crate loft;
 
 use loft::data::Type;
+use loft::file_access as fa;
 use loft::parser::Parser;
 
 /// `item: Row?` — the `?` is the whole trigger, and it is the point of the probe. The field
@@ -40,9 +41,9 @@ fn nullable_some_carries_a_dense_row_payload() {
     // Parse a real FILE (source = MAIN_SOURCE) rather than `parse_str` (which
     // leaves source at 0 = STD_SOURCE, which the scaffolding pass skips).
     let dir = std::env::temp_dir().join("loft_e2_probe");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join("e2.loft");
-    std::fs::write(&path, SRC).expect("write probe");
+    fa::write(&path, SRC).expect("write probe");
     let mut p = Parser::new();
     p.parse_dir("default", true, false).expect("stdlib");
     p.parse(&path.to_string_lossy(), false);

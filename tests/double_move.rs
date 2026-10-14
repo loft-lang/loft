@@ -31,6 +31,7 @@
 //! Binary-level, because the lint runs post-`scopes::check` from `main` (beside the dead-store
 //! lint) and only a real invocation reaches it.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -47,7 +48,7 @@ fn loft_bin() -> std::path::PathBuf {
 /// Measured with them off, these cells are what the release machinery the errors replace is
 /// held to, as the drop gate's are.
 fn lint_command() -> Command {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_NO_LEASE_REFUSE", "1");
     cmd
 }
@@ -61,15 +62,15 @@ fn the_lease_errors_refuse_a_double_move_first() {
          println(\"{{s1.h.id}}{{s2.h.id}}\"); }}\n"
     );
     let path = std::env::temp_dir().join("loft_pln139_dm_default.loft");
-    std::fs::write(&path, &src).expect("write temp script");
-    let out = Command::new(loft_bin())
+    fa::write(&path, &src).expect("write temp script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--check")
         .arg("--interpret")
         .arg(&path)
         .env_remove("LOFT_NO_LEASE_REFUSE")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -105,14 +106,14 @@ fn ran(name: &str, out: &std::process::Output) {
 fn cell(name: &str, body: &str) -> (usize, usize) {
     let src = format!("{PRELUDE}\nfn main() {{ {body} }}\n");
     let path = std::env::temp_dir().join(format!("loft_pln139_dm_{name}.loft"));
-    std::fs::write(&path, &src).expect("write temp script");
+    fa::write(&path, &src).expect("write temp script");
     let out = lint_command()
         .arg("--interpret")
         .arg(&path)
         .env_remove("LOFT_NO_DOUBLE_MOVE")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     ran(name, &out);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -324,14 +325,14 @@ fn m13_conditional_second_handoff() {
 fn cell_prog(name: &str, decls: &str, body: &str) -> (usize, usize) {
     let src = format!("{PRELUDE}\n{decls}\nfn main() {{ {body} }}\n");
     let path = std::env::temp_dir().join(format!("loft_pln139_dm_{name}.loft"));
-    std::fs::write(&path, &src).expect("write temp script");
+    fa::write(&path, &src).expect("write temp script");
     let out = lint_command()
         .arg("--interpret")
         .arg(&path)
         .env_remove("LOFT_NO_DOUBLE_MOVE")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     ran(name, &out);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -916,14 +917,14 @@ fn opt_out_silences_without_changing_behaviour() {
          println(\"{{s1.h.id}}{{s2.h.id}}\"); }}\n"
     );
     let path = std::env::temp_dir().join("loft_pln139_dm_optout.loft");
-    std::fs::write(&path, &src).expect("write temp script");
+    fa::write(&path, &src).expect("write temp script");
     let out = lint_command()
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_NO_DOUBLE_MOVE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(

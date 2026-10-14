@@ -43,6 +43,11 @@ A lane that "wins" by computing less has measured nothing.
                  The `--native` bar is 3× the reference for each routine, and
                  the MEDIAN over every judged routine is held at 2×.
                  Drift against a previous loft release satisfies nothing here.
+                 RELEASE CLAUSE: the stable release is held to 5× per routine.  A
+                 routine between 3× and 5× still fails the bar and stays a defect
+                 (C136), worked after the release; one over 5× blocks it.  The
+                 clause sets where the release cuts, not which cure (Perf-Cure)
+                 is admissible.
 ```
 
 **In words.** The comparison target is the INDUSTRY, not the previous release. In-language
@@ -62,7 +67,10 @@ is read as that — informational, outside the median — because nobody's progr
 recursive Fibonacci.  The drawing library is the first library measured: on that day its
 fourteen routines read a median of 2.01×, with six at or over 3×.  A per-routine bar in
 `bench/ratio_oracle.tsv` is a ratchet DOWN toward 3×, recorded where a routine starts above
-it, and never a licence to stay there.
+it, and never a licence to stay there.  The release clause is the owner's (C136): every optimisation also moves code a
+release has to hold still, so the release takes the cut where the remaining excess is
+large, and the 3× work continues after it.  The work toward the cut is not restricted to
+low-risk changes: optimising is inherently unstable, and that is accepted while it runs.
 
 ### A reference twin is created where it matters, not everywhere
 
@@ -119,6 +127,28 @@ routine, with the reason recorded beside it — an exception with a receipt, not
 loft#1426 is the rule applied: the profiler showed the loft hot loop matching the
 reference's, so the deviation is filed against the ENGINE (N1 class), and the drawing
 library's source does not change.
+
+### What to optimise is read off broad evidence, and new operators come last
+
+```
+  (Perf-Order)   the engine is optimised in this order: the IR first — remove
+                 the work and the objects the natural spelling causes, so both
+                 backends gain — and an interpreter operator built for speed
+                 (a fused or specialised op) only after that, designed from
+                 what many programs share, never from one slow row.  The
+                 evidence that decides what to optimise is the scripts written
+                 IN loft, weighed above the benchmark routines: a routine that
+                 lives in a library runs compiled, so a cost only its
+                 interpreted form pays is not the user's cost.
+```
+
+**In words** (owner's ruling).  New operators are not refused; the error was their ORDER.
+Operators built before the memory model settled and before the IR was reduced were designed
+against IR that was still about to change.  An operator
+is therefore designed after the IR work, against what a broad set of programs still runs, and
+the bench routines are one input to that, not the source of it.  Example: special float
+operators for geometry buy little, because geometry routines live in libraries and run
+compiled.  The interpreter's cost that matters is the code a user writes and runs directly.
 
 ### An advantage the twin's language holds is a missing abstraction, not a caveat
 

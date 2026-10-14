@@ -1,0 +1,49 @@
+diff --git a/src/data.rs b/src/data.rs
+index 132a6e970..0a3b1af65 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -12937,7 +12937,7 @@
+     /// above its declaration was refused where a `pub` one compiled (loft#1856).
+     fn passes_on(&self, d_nr: u32) -> bool {
+         let d = &self.definitions[d_nr as usize];
+-        d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
++        d.pub_visible || self.is_name_only(d_nr)
+     }
+ 
+     /// @PLN187 (@C140, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9f0a3619b..8e8ac9eca 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -19268,7 +19268,6 @@
+         loop {
+             let is_pub = std::mem::take(&mut self.pub_taken) || self.lexer.has_token("pub");
+             let before = self.data.definitions();
+-            let adopted_before = self.data.adopted_stub_count();
+             if self.lexer.diagnostics().level() == Level::Fatal
+                 || (!self.parse_capability()
+                     && !self.parse_enum()
+@@ -19280,21 +19279,11 @@
+             {
+                 break;
+             }
+-            // @FR-F-Surface: what is `pub` is what a declaration DECLARES, never where the
+-            // item was first named.  A type named above its declaration is a stub created
+-            // inside the declaration that NAMED it, so the range below holds stubs this
+-            // declaration only USED (still `Unknown`, not its to publish) and misses the one
+-            // it ADOPTED (created earlier, by a user; `note_stub_adopted` records each).  The
+-            // adopting declaration decides, either way (loft#1856).
++            // mark newly created definitions as pub-visible.
+             if is_pub {
+                 for d_nr in before..self.data.definitions() {
+-                    if self.data.def_type(d_nr) != DefType::Unknown {
+-                        self.data.def_mut(d_nr).pub_visible = true;
+-                    }
++                    self.data.def_mut(d_nr).pub_visible = true;
+                 }
+-            }
+-            for d_nr in self.data.adopted_since(adopted_before).to_vec() {
+-                self.data.def_mut(d_nr).pub_visible = is_pub;
+             }
+         }
+         let res = self.lexer.peek().clone();

@@ -9,8 +9,8 @@
 
 #![cfg(feature = "mmap")]
 
+use loft::file_access as fa;
 use loft::store::{DurabilityMode, Store};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,8 +23,8 @@ fn scratch(test_name: &str) -> PathBuf {
     let dir = std::env::temp_dir()
         .join("loft-store-durable-tier1")
         .join(test_name);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -76,7 +76,7 @@ fn fresh_path_triggers_callback_and_subsequent_open_is_clean() {
 
     // Sidecar must now exist.
     assert!(
-        dmeta_path(&main).exists(),
+        fa::exists(dmeta_path(&main)),
         "sidecar should exist after clean drop"
     );
 
@@ -159,7 +159,7 @@ fn deleted_sidecar_triggers_callback() {
     counter.store(0, Ordering::SeqCst); // Reset.
 
     // Wipe the sidecar — simulates someone deleting `.dmeta` between runs.
-    fs::remove_file(dmeta_path(&main)).expect("remove sidecar");
+    fa::remove_file(dmeta_path(&main)).expect("remove sidecar");
 
     let _store2 = Store::open_durable(
         &main,
@@ -197,9 +197,9 @@ fn corrupted_sidecar_triggers_callback() {
     // changing payload_crc bytes 32..36 doesn't invalidate the header_crc;
     // it invalidates the CRC-vs-main-file comparison).
     let meta = dmeta_path(&main);
-    let mut bytes = fs::read(&meta).expect("read sidecar");
+    let mut bytes = fa::read(&meta).expect("read sidecar");
     bytes[32] ^= 0xFF;
-    fs::write(&meta, &bytes).expect("write corrupted sidecar");
+    fa::write(&meta, &bytes).expect("write corrupted sidecar");
 
     let _store2 = Store::open_durable(
         &main,
@@ -266,9 +266,9 @@ fn callback_that_leaves_main_file_unrecoverable_hits_recursion_cap() {
 
     // Step 2: corrupt the sidecar.
     let meta = dmeta_path(&main);
-    let mut bytes = fs::read(&meta).expect("read sidecar");
+    let mut bytes = fa::read(&meta).expect("read sidecar");
     bytes[32] ^= 0xFF; // corrupt payload_crc
-    fs::write(&meta, bytes).expect("write corrupted sidecar");
+    fa::write(&meta, bytes).expect("write corrupted sidecar");
 
     // Step 3: open with a callback that DELETES the main file rather
     // than rebuilding it.  The post-callback `has_main` check skips
@@ -281,7 +281,7 @@ fn callback_that_leaves_main_file_unrecoverable_hits_recursion_cap() {
         DurabilityMode::IntegrityOnly {
             on_corruption: Box::new(move |_path: &Path| {
                 cb_count_clone.fetch_add(1, Ordering::SeqCst);
-                let _ = fs::remove_file(&main_clone);
+                let _ = fa::remove_file(&main_clone);
                 Ok(())
             }),
         },
@@ -307,8 +307,8 @@ fn legacy_file_opened_via_open_durable_migrates_via_callback() {
     {
         let _legacy = Store::open(main.to_str().unwrap());
     }
-    assert!(main.exists(), "legacy main file should exist");
-    assert!(!dmeta_path(&main).exists(), "no sidecar yet");
+    assert!(fa::exists(&main), "legacy main file should exist");
+    assert!(!fa::exists(dmeta_path(&main)), "no sidecar yet");
 
     let counter = Arc::new(AtomicUsize::new(0));
     let _store = Store::open_durable(
@@ -324,7 +324,7 @@ fn legacy_file_opened_via_open_durable_migrates_via_callback() {
         "callback fires once to materialise the sidecar"
     );
     assert!(
-        dmeta_path(&main).exists(),
+        fa::exists(dmeta_path(&main)),
         "sidecar created during migration"
     );
 }

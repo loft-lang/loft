@@ -1,2 +1,2 @@
-pub struct Sess { s_a: integer, s_c: Colour, s_b: integer }
+pub struct Sess { pub s_a: integer, s_c: Colour, pub s_b: integer }
 pub fn mk() -> Sess { return Sess { s_a: 1, s_c: Colour.Green, s_b: 2 }; }

@@ -7,6 +7,7 @@
     scripts/rewrite_census.py --bless    # …and write what it counted as the new baseline
     scripts/rewrite_census.py --only 12_drawing,drawing
     scripts/rewrite_census.py --verbose  # also list every rise and new row
+    LOFT_BIN=<loft> scripts/rewrite_census.py   # census another build (default target/release/loft)
 
 Why
 ---
@@ -25,6 +26,14 @@ Each program is compiled to native Rust only (`--native-emit --lean`, no rustc, 
 checkout exists (`bench/portal/libs.tsv`, `checkout_libs.sh`).  A library row carries the
 checkout's commit; when the checkout has moved since the baseline, its rows are not judged —
 the library changed, not the compiler.
+
+Every `use`d library is compiled INTO the program (`LOFT_NO_NATIVE_LIBS=1`), so each program counts
+the rewrites of every library function it reaches.  A library may otherwise run from a compiled
+library of its own, valid only for the loft build that made it: a program emitted while that
+library existed called into it and counted none of its functions, one emitted after a rebuild
+counted them all, so a rule's count moved between programs from build to build with the total
+unchanged (loft#1886).  With the libraries in the program, the count depends on the compiler and
+the sources alone.
 
 Each program is emitted TWICE and the two sources must be the same bytes: the census needs a
 deterministic emitter, and so does every native cache keyed on the source (a hash-ordered walk
@@ -76,7 +85,8 @@ def census(loft, prog):
             proc = subprocess.run(
                 [loft, "--native-emit", str(out), "--lean", *argv],
                 cwd=cwd, capture_output=True, text=True, timeout=300,
-                env={**os.environ, "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else ""},
+                env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1",
+                     "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else ""},
             )
             if proc.returncode != 0 or not out.exists() or (i == 0 and not tsv.exists()):
                 return name, commit, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
@@ -139,7 +149,7 @@ def main() -> int:
     only = None
     if "--only" in args:
         only = set(args[args.index("--only") + 1].split(","))
-    loft = str(ROOT / "target" / "release" / "loft")
+    loft = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
     progs = [p for p in programs() if only is None or p[0] in only]
     warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:

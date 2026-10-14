@@ -185,6 +185,71 @@ impl Parser {
         None
     }
 
+    /// @C112 — a local that carries a function's name hides the function from a bare mention.
+    /// That is the rule (a binding position mints a local), but an author who passes the name
+    /// where a function is expected meant the function.  When `arg` is such a local and a
+    /// function of its name exists, the words that say so and name what reaches the function:
+    /// a lambda around it and, for a standard-library function, its `std::` name.  Where the
+    /// position takes no `|x| { … }` lambda (`lambda_ok` false: `par_fold`, `parallel_for`), the
+    /// cure is to rename the local.  `None` for any other argument, so a caller appends this only where it
+    /// explains the refusal.
+    pub(crate) fn shadowed_function_hint(&self, arg: &Value, lambda_ok: bool) -> Option<String> {
+        let Value::Var(v) = arg.unspan() else {
+            return None;
+        };
+        let nm = self.vars.name(*v);
+        let d_nr = self.data.def_nr(&format!("n_{nm}"));
+        if d_nr == u32::MAX || !matches!(self.data.def_type(d_nr), DefType::Function) {
+            return None;
+        }
+        let line = self.vars.var_source(*v).0;
+        if !lambda_ok {
+            return Some(format!(
+                "`{nm}` here is the local bound on line {line}, which hides the function `{nm}` — \
+                 rename the local"
+            ));
+        }
+        let params = (0..self.fn_ref_arg_types(d_nr).len())
+            .map(|i| {
+                ["x", "y", "z", "w"]
+                    .get(i)
+                    .map_or_else(|| format!("a{i}"), |s| (*s).to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let std = if self.data.def(d_nr).is_stdlib() {
+            format!(", or name it `std::{nm}`")
+        } else {
+            String::new()
+        };
+        Some(format!(
+            "`{nm}` here is the local bound on line {line}, which hides the function `{nm}` — \
+             pass the function as `|{params}| {{ {nm}({params}) }}`{std}"
+        ))
+    }
+
+    /// The refusal for a builtin's argument that must be a function: when the author passed a
+    /// local that hides a function of its name (@C112), say so and how to reach the function;
+    /// otherwise `plain`, the builtin's own wording.  `which` names the argument
+    /// (`map: second argument`).
+    pub(crate) fn refuse_function_argument(
+        &mut self,
+        which: &str,
+        arg: Option<&Value>,
+        lambda_ok: bool,
+        plain: &str,
+    ) {
+        if let Some(hint) = arg.and_then(|a| self.shadowed_function_hint(a, lambda_ok)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "{which} is not a function: {hint}"
+            );
+        } else {
+            diagnostic!(self.lexer, Level::Error, "{plain}");
+        }
+    }
+
     fn fn_ref_arg_types(&self, fn_d_nr: u32) -> Vec<Type> {
         self.fn_ref_visible_args(fn_d_nr)
             .into_iter()
@@ -358,40 +423,92 @@ impl Parser {
             return;
         }
         if !visible && !self.first_pass {
-            diagnostic_at!(
-                self.lexer,
-                name_pos,
-                Level::Error,
-                code = "local-out-of-scope",
-                "`{name}` was bound inside a block that has ended, so it does not exist here — \
-                 bind it before the block, or give the block a value: \
-                 `{name} = if … {{ … }} else {{ … }}`"
-            );
-            self.lexer.fix_last(crate::diagnostics::Fix {
-                kind: crate::diagnostics::FixKind::Conditional,
-                title: format!("bind `{name}` before the block and assign it inside"),
-                condition: Some(
-                    "if every path should leave a value behind; the binding before the block \
-                     is the value on a path that assigns nothing"
-                        .to_string(),
-                ),
-                edit: None,
-                concept: "`if` as an expression",
-                concept_ref: "@F27",
-            });
-            self.lexer.fix_last(crate::diagnostics::Fix {
-                kind: crate::diagnostics::FixKind::Conditional,
-                title: format!(
-                    "make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"
-                ),
-                condition: Some(
-                    "if each arm computes the value, so the `if` itself can answer it".to_string(),
-                ),
-                edit: None,
-                concept: "`if` as an expression",
-                concept_ref: "@F27",
-            });
+            self.report_out_of_scope(name, name_pos);
         }
+    }
+
+    /// `local-out-of-scope` — `name` is read where the binding it names has ended.
+    fn report_out_of_scope(&mut self, name: &str, name_pos: &Position) {
+        diagnostic_at!(
+            self.lexer,
+            name_pos,
+            Level::Error,
+            code = "local-out-of-scope",
+            "`{name}` was bound inside a block that has ended, so it does not exist here — \
+             bind it before the block, or give the block a value: \
+             `{name} = if … {{ … }} else {{ … }}`"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind `{name}` before the block and assign it inside"),
+            condition: Some(
+                "if every path should leave a value behind; the binding before the block \
+                 is the value on a path that assigns nothing"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "`if` as an expression",
+            concept_ref: "@F27",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"),
+            condition: Some(
+                "if each arm computes the value, so the `if` itself can answer it".to_string(),
+            ),
+            edit: None,
+            concept: "`if` as an expression",
+            concept_ref: "@F27",
+        });
+    }
+
+    /// `@FR-B-Scope` — a binding starts when the statement that binds it COMPLETES, so a
+    /// read of the variable on that statement's right-hand side reads nothing: on its first
+    /// binding no value was ever written, and after its block ended the old one is gone.
+    /// `p = P { a: 1, z: p.a }` is refused; `p = P { a: 2, z: p.a }` over an existing `p`
+    /// reads the old value and stays legal.
+    fn check_read_in_own_binding(&mut self, var: u16, name: &str, name_pos: &Position) {
+        if self.first_pass || self.at_binding_name() {
+            return;
+        }
+        let Some(&(_, _, after_end)) = self
+            .binding_starts
+            .iter()
+            .find(|(c, v, _)| (*c, *v) == (self.context, var))
+        else {
+            return;
+        };
+        if after_end {
+            self.report_out_of_scope(name, name_pos);
+            return;
+        }
+        diagnostic_at!(
+            self.lexer,
+            name_pos,
+            Level::Error,
+            code = "read-in-own-binding",
+            "`{name}` is read in the statement that binds it, before it holds a value — \
+             compute the value from other variables, or bind `{name}` first and change it after"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("compute the value without reading `{name}`"),
+            condition: Some(
+                "if the part that reads it can be written from the values it was built from"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "declarations",
+            concept_ref: "@F16",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind `{name}` first, then assign the part that reads it"),
+            condition: Some("if the value refers to another part of itself".to_string()),
+            edit: None,
+            concept: "declarations",
+            concept_ref: "@F16",
+        });
     }
 
     /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
@@ -493,6 +610,11 @@ impl Parser {
             return Type::Reference(self.context, crate::data::Deps::none());
         }
         let mut source = u16::MAX;
+        // Where the NAME of a call stands: `name_pos` for a bare `f(…)`, the token after `::`
+        // for a qualified `lib::f(…)` — the occurrence a hover or a rename resolves, and where
+        // a diagnostic about the call points (@PLN183: hovering `dbl` in `demo::dbl(2)` found
+        // nothing, the recorded span covering `dem` instead).
+        let mut call_pos = *name_pos;
         let qualified = self.lexer.has_token("::");
         let nm = if qualified {
             source = self.data.get_source(name);
@@ -504,7 +626,15 @@ impl Parser {
             if source == u16::MAX && self.own_lib.as_deref() == Some(name) {
                 source = self.data.source;
             }
-            if let Some(id) = self.lexer.has_identifier() {
+            if let Some((id, id_pos)) = self.lexer.has_identifier_pos() {
+                call_pos = id_pos;
+                // loft#1848 — `lib::name` reaches only what `use lib::*` would.
+                if source != u16::MAX
+                    && source != self.data.source
+                    && let Some(msg) = self.data.qualified_refusal(source, name, &id)
+                {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
                 id
             } else {
                 diagnostic!(self.lexer, Level::Error, "Expecting identifier after ::");
@@ -680,7 +810,7 @@ impl Parser {
             && self.type_arguments_then_call()
         {
             if !self.first_pass {
-                let at = self.lexer.peek_pos().clone();
+                let at = *self.lexer.peek_pos();
                 diagnostic_at!(
                     self.lexer,
                     &at,
@@ -724,19 +854,20 @@ impl Parser {
                 });
                 *code = Value::Int(i32::from(tp));
             } else {
-                t = self.parse_call(code, source, &nm, name_pos);
+                t = self.parse_call(code, source, &nm, &call_pos);
             }
         } else if self.closure_param != u16::MAX
             && !self.first_pass
             && self.data.def(self.context).closure_record() != u32::MAX
-            && self
-                .data
-                .attr(self.data.def(self.context).closure_record(), name)
-                != usize::MAX
+            && self.capture_attr(
+                self.context,
+                self.data.def(self.context).closure_record(),
+                name,
+            ) != usize::MAX
         {
             // A5.3/A5.4: redirect captured variable reads to closure record field.
             let closure_d_nr = self.data.def(self.context).closure_record();
-            let fnr = self.data.attr(closure_d_nr, name);
+            let fnr = self.capture_attr(self.context, closure_d_nr, name);
             *code = self.closure_capture_read(closure_d_nr, fnr);
             // @PLN93 (#511): a collection capture's stored attr is a `Reference` DbRef,
             // but the body must see the ORIGINAL collection type (from capture_context)
@@ -791,6 +922,7 @@ impl Parser {
             self.bind_after_end = (self.at_binding_name() && self.binding_ended(index_var))
                 .then(|| (index_var, self.binding_loop(index_var)));
             self.check_block_scope(index_var, name, name_pos);
+            self.check_read_in_own_binding(index_var, name, name_pos);
             // on pass 2, if a variable has Unknown type, it may be a pass-1
             // placeholder for a forward-declared function. Try fn-ref resolution.
             //
@@ -838,11 +970,27 @@ impl Parser {
             if self.lexer.has_token("#") {
                 self.var_usages(index_var, true);
                 if self.lexer.has_keyword("errors") {
-                    // s#errors — return the parse errors from the last Type.parse() call.
-                    let fn_nr = self.data.def_nr("i_parse_errors");
+                    // @C148: s#errors — the errors of the parse that built the value `s` holds,
+                    // one element per error; a fresh vector the caller owns.  Only a record
+                    // or a vector comes out of a parse, so nothing else has errors to ask.
+                    let asked = self.vars.tp(index_var).clone();
+                    if !self.first_pass
+                        && !matches!(
+                            asked.peel_link(),
+                            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+                        )
+                    {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{name}#errors` asks a parsed record or vector for the errors of its parse, and `{name}` is {}",
+                            self.data.written_type_name(&asked)
+                        );
+                    }
+                    let fn_nr = self.data.def_nr("n_parse_errors_of");
                     if fn_nr != u32::MAX {
-                        *code = Value::Call(fn_nr, vec![]);
-                        t = Type::Text(crate::data::Deps::none());
+                        *code = Value::Call(fn_nr, vec![Value::Var(index_var)]);
+                        t = self.data.def(fn_nr).returned.clone();
                     }
                     return t;
                 }
@@ -995,7 +1143,7 @@ impl Parser {
             let fnr = if closure_d_nr == u32::MAX {
                 usize::MAX
             } else {
-                self.data.attr(closure_d_nr, name)
+                self.capture_attr(self.context, closure_d_nr, name)
             };
             if fnr == usize::MAX {
                 // First pass, no closure param, or field not found — placeholder variable.
@@ -1041,11 +1189,79 @@ impl Parser {
             let dnr = self.data.source_nr(source, &nm);
             self.data.def_used(dnr);
             t = self.data.def(dnr).returned().clone();
+        } else if qualified && source != u16::MAX {
+            // A library-qualified FUNCTION in value position is a function value, exactly
+            // as its bare spelling is under a glob import: `apply(ml::twice, 4)` beside
+            // `apply(twice, 4)`.  A function is stored `n_<name>`, so the definition lookup
+            // above never sees it, and the spelling fell through to the unknown-variable arm,
+            // which named the LIBRARY — *"Unknown variable 'ml'"* — and left a plain `use
+            // ml;`, the import a library's own rules ask for (C98), with no way to pass a
+            // library function at all.  A generic is refused as its bare spelling is, and a
+            // name the library does not have says so rather than calling the library unknown.
+            let fq = self.data.source_nr(source, &format!("n_{nm}"));
+            let lib = name.to_string();
+            match (fq != u32::MAX).then(|| self.data.def_type(fq)) {
+                Some(DefType::Function) => {
+                    *code = Value::Int(fq as i32);
+                    self.data.def_used(fq);
+                    self.record_sandbox_fn_ref(fq);
+                    let arg_types = self.fn_ref_arg_types(fq);
+                    let ret_type = self.data.def(fq).returned().clone();
+                    t = Type::Function(
+                        arg_types,
+                        Box::new(ret_type),
+                        crate::data::Deps::none(),
+                        self.fn_ref_consts(fq),
+                    );
+                }
+                Some(DefType::Generic) => {
+                    if !self.first_pass {
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "`{lib}::{nm}` is a generic function, and a generic is not a function \
+                             VALUE — it has no single body until a call fixes its type variables. \
+                             Wrap one call of it in a lambda that names the types: \
+                             `fn(x: integer) -> integer {{ {lib}::{nm}(x) }}`"
+                        );
+                    }
+                    t = if self.first_pass {
+                        Type::Unknown(0)
+                    } else {
+                        Type::Never
+                    };
+                }
+                _ => {
+                    let receivers = self.method_receivers_named(&nm);
+                    if self.first_pass {
+                    } else if receivers.is_empty() {
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "library `{lib}` has no `{nm}`"
+                        );
+                    } else {
+                        // The name exists as a METHOD, which is the bare spelling's answer too.
+                        let on = receivers.join("`, `");
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "`{lib}::{nm}` is a method on `{on}`, and a method is not a function \
+                             VALUE — there is nothing to pass here. Wrap it: `|x| {{ x.{nm}(…) }}`"
+                        );
+                    }
+                    t = if self.first_pass {
+                        Type::Unknown(0)
+                    } else {
+                        Type::Never
+                    };
+                }
+            }
         } else if self.data.def_nr(name) != u32::MAX
             && !self.at_binding_name()
-            // A default-file `<T>` placeholder is invisible here (loft#1049): it is an
-            // internal construct, and letting it resolve is what blocked a user `enum T`.
-            && !self.stdlib_type_var_placeholder(self.data.def_nr(name))
             && !matches!(
                 self.data.def_type(self.data.def_nr(name)),
                 // @PLN22 Phase 1 — exclude EnumValue: a bare variant used as a
@@ -1164,7 +1380,7 @@ impl Parser {
                     t = Type::Never;
                 }
             } else {
-                // loft#1008 — the OTHER half. A `both` receiver (deprecated, C123) registers a
+                // loft#1008 — the OTHER half. A `both` receiver (deprecated, @C123) registers a
                 // dispatch entry under the PLAIN name (which is what makes the free-call
                 // spelling `f(x)` work), so unlike a `self` method the bare name is FOUND
                 // here — as a `Dynamic` def — and fell through to a silent null. `x = f` bound null with
@@ -1186,7 +1402,7 @@ impl Parser {
                         // A fn-typed PARAMETER seeds `expected` for its argument (`parse_call`),
                         // so there the name is being passed; anywhere else it is being bound.
                         // A `self` method reaches this branch too since it registers its bare
-                        // name (C123), and the argument site's wording is the one it had.
+                        // name (@C123), and the argument site's wording is the one it had.
                         let verb = if matches!(self.expected.base(), Type::Function(..)) {
                             "pass"
                         } else {
@@ -1398,13 +1614,17 @@ impl Parser {
                     // imports or qualifies is the declaration's, `Slot`.  This recovery also
                     // runs in pass 1, so the message is built only for a file that imports.
                     let declared = enum_name.split('<').next().unwrap_or(&enum_name);
-                    let import_cure =
-                        if variant_enums.len() == 1 && self.data.imports_into(self.data.source) {
-                            let what = format!("bare variant '{name}' has no type here; its enum");
-                            self.data.import_cure(&what, declared, self.data.source)
-                        } else {
-                            None
-                        };
+                    // The import cures answer a name that does NOT resolve here; an enum this
+                    // file already sees is refused for want of a type, not of an import.
+                    let import_cure = if variant_enums.len() == 1
+                        && self.data.imports_into(self.data.source)
+                        && self.data.source_nr(self.data.source, declared) == u32::MAX
+                    {
+                        let what = format!("bare variant '{name}' has no type here; its enum");
+                        self.data.import_cure(&what, declared, self.data.source)
+                    } else {
+                        None
+                    };
                     if let Some(msg) = import_cure {
                         diagnostic!(self.lexer, Level::Error, "{msg}");
                     } else if variant_enums.len() == 1 {
@@ -1537,11 +1757,7 @@ impl Parser {
                         && !name.contains('_'))
                         || (name.starts_with(char::is_uppercase) && self.lexer.peek_token("."));
                     if looks_like_a_type {
-                        // A hidden default-file `<T>` placeholder does not count as "the
-                        // name is taken" — without this the forward-reference stub is never
-                        // registered and pass 2 has nothing to adopt (loft#1049).
-                        let taken = self.data.def_nr(name);
-                        if taken == u32::MAX || self.stdlib_type_var_placeholder(taken) {
+                        if self.data.def_nr(name) == u32::MAX {
                             self.speculative_type_refs.insert(self.data.add_def(
                                 name,
                                 name_pos,
@@ -1618,7 +1834,7 @@ impl Parser {
         }
         let value_tp = value_attr.typedef.clone();
         let pos = Value::Int(0);
-        // `.base()`: a nullable cell's `value` is stored in-band (C90), so the READ op is its
+        // `.base()`: a nullable cell's `value` is stored in-band (@C90), so the READ op is its
         // dense twin's.  `value_tp` itself is returned unpeeled, so the expression keeps the
         // `?` and the ordinary discharge rules apply to it (loft#1408).
         let (op_name, is_bool) = match value_tp.base() {
@@ -1788,9 +2004,11 @@ impl Parser {
                         } else if matches!(tp, Type::Text(_)) {
                             None
                         } else {
+                            // The WIRE width, not the padded store size (@C138).
                             let db_sz = self
                                 .database
-                                .size(self.data.def(self.data.type_elm(&tp)).known_type());
+                                .binary_size(self.data.def(self.data.type_elm(&tp)).known_type())
+                                as u16;
                             if db_sz == 0 {
                                 None
                             } else {
@@ -1827,9 +2045,13 @@ impl Parser {
                     if packed > 0 {
                         Some(i64::from(packed))
                     } else {
+                        // The WIRE width — the fields walked one after another, as `#write` and
+                        // `read_data` lay them out — not the record's size in the store, which
+                        // carries `@FR-L-Align`'s padding (@C138).
                         let db_sz = self
                             .database
-                            .size(self.data.def(self.data.type_elm(&hint)).known_type());
+                            .binary_size(self.data.def(self.data.type_elm(&hint)).known_type())
+                            as u16;
                         if db_sz == 0 {
                             None
                         } else {
@@ -1894,7 +2116,8 @@ impl Parser {
                 && matches!(read_type, Type::Vector(_, _))
                 && let Value::Int(n) = n_code
             {
-                let elem = i32::from(self.database.size(self.database.content(db_tp)));
+                // The element's WIRE width, not its padded stride in the store (@C138).
+                let elem = self.database.binary_size(self.database.content(db_tp)) as i32;
                 if elem > 1 && n % elem != 0 {
                     diagnostic!(
                         self.lexer,
@@ -2228,7 +2451,7 @@ impl Parser {
         // @PLN165 D8 — a unit variant of an OPEN instance (`Hole` in a template returning
         // `Slot<T>`) has no layout: built by each monomorph, as a literal of one is.
         if variant_nr != u32::MAX && self.data.is_open_instance(variant_nr) {
-            let pos = self.lexer.pos().clone();
+            let pos = *self.lexer.pos();
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
@@ -2353,14 +2576,6 @@ impl Parser {
         } else {
             self.data.source_nr(source, name)
         };
-        // loft#1049 — a default-file `<T>` placeholder is invisible from a user file, so it
-        // is not "the name is taken" here either.  Without this the qualified form `T.N`
-        // resolved against the stdlib placeholder, consumed the `.` on its way to a variant
-        // that does not exist, and left the fallback looking at `N` with the qualifier
-        // already gone — which is why the user saw `Expect token ;` at the `;`.
-        if self.stdlib_type_var_placeholder(d_nr) {
-            d_nr = u32::MAX;
-        }
         // @PLN22 Phase 1 — a qualified `Enum::Variant` resolves WITHIN the
         // qualifier enum via the variant_of chokepoint, NOT the first-wins flat
         // key (which may point at a different enum's same-named variant).
@@ -2588,7 +2803,7 @@ impl Parser {
                 // * not a `Reference` — that struct-valued kind is refused at the
                 //   declaration with a message that names the real limitation, and one
                 //   rule keeps one home.
-                let decl_pos = self.data.def(d_nr).position().clone();
+                let decl_pos = *self.data.def(d_nr).position();
                 let use_pos = self.lexer.pos();
                 let reads_above_its_declaration = use_pos.file == decl_pos.file
                     && (use_pos.line, use_pos.pos) < (decl_pos.line, decl_pos.pos);
@@ -2617,7 +2832,21 @@ impl Parser {
                     // will be deep-copied at the call site — the caller's
                     // gen_set_first_ref_call_copy handles the CopyRecord.
                     *code = self.cl("OpConstRef", &[Value::Int(d_nr as i32)]);
-                    return const_tp;
+                    // The declaration's deps name variables of the context that BUILT the
+                    // constant; read here they point at an unrelated local of this function,
+                    // or past its table — the ownership oracle then indexed the table with
+                    // them and the compiler panicked (loft#1936, loft#666's class).  The read
+                    // is a BORROW of the constant store, which nothing in this frame owns: it
+                    // depends on a skip-free anchor of this function's own, never assigned,
+                    // so every reader of the dep finds a real variable and no free follows.
+                    let anchor =
+                        self.vars
+                            .unique("const_view", &const_tp.without_deps(), &mut self.lexer);
+                    self.vars.set_skip_free(anchor);
+                    // A constant returned whole is COPIED into the caller's buffer: the
+                    // return ladder binds an anchor (`classify_ret_promotion_inner`), never
+                    // renames it into the buffer, which would return the constant itself.
+                    return const_tp.without_deps().depending(anchor);
                 }
                 // A text constant builds its value in a buffer whose NUMBER is only
                 // valid where the constant was parsed — re-point it at one this
@@ -2667,7 +2896,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position.clone();
+                let before = self.lexer.peek().position;
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -2754,7 +2983,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position.clone();
+                let before = self.lexer.peek().position;
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -3024,7 +3253,14 @@ impl Parser {
                 );
             }
         }
-        Type::Reference(d_nr, crate::data::Deps::none())
+        // The parse answers a value of the type it was asked for, in that type's own
+        // spelling: a struct-enum is `Type::Enum`, and typed as a bare record it could not
+        // be bound, stored or returned where its own type was declared (loft#1986).
+        if self.data.def_type(d_nr) == DefType::Enum {
+            Type::Enum(d_nr, true, crate::data::Deps::none())
+        } else {
+            Type::Reference(d_nr, crate::data::Deps::none())
+        }
     }
 
     /// Parse `vector<T>.parse(text)` — parse a JSON array into a vector of T.
@@ -3034,7 +3270,15 @@ impl Parser {
         let mut text_expr = Value::Null;
         let tp = self.expression(&mut text_expr);
         self.lexer.token(")");
-        let elem_tp = Type::Reference(elem_d_nr, crate::data::Deps::none());
+        // The element is a value of the named type, in that type's own spelling: a struct is
+        // a record, and `text`, a number or an enum is what its definition answers.  Typed as
+        // a record whatever it named, a `vector<integer>.parse` had elements no operator
+        // took and a `vector<text>.parse` rendered its texts quoted (loft#1985).
+        let elem_tp = if self.data.def_type(elem_d_nr) == DefType::Struct {
+            Type::Reference(elem_d_nr, crate::data::Deps::none())
+        } else {
+            self.data.def(elem_d_nr).returned().without_deps()
+        };
         let vec_type = Type::Vector(Box::new(elem_tp.clone()), crate::data::Deps::none());
         if !self.first_pass {
             if !matches!(tp, Type::Text(_)) {
@@ -3047,15 +3291,13 @@ impl Parser {
                 "OpCastVectorFromText",
                 &[text_expr, Value::Int(i32::from(vec_kt))],
             );
-            // The parse returns a DbRef to the wrapper struct main_vector<T>.
-            // Extract the vector field (at position 0) so the result is directly iterable.
-            let wrapper_name = format!("main_vector<{}>", self.data.def(elem_d_nr).name());
-            let wrapper_d_nr = self.data.def_nr(&wrapper_name);
-            if wrapper_d_nr == u32::MAX {
-                *code = parse_call;
-            } else {
-                *code = self.get_field(wrapper_d_nr, 0, parse_call);
-            }
+            // `@FR-H-View` — the parse answers the vector itself, the one field of the store
+            // it minted, at that store's root: the call IS the value and whoever binds it
+            // owns the store.  Read as field 0 of the call instead, the same address was a VIEW of a
+            // lifted temporary that nothing recorded: a local bound to it and returned, or
+            // bound inside a block and read after it, named a store already freed
+            // (loft#1985).
+            *code = parse_call;
         }
         // Ensure the vector def exists for type resolution.
         self.data.vector_def(&mut self.lexer, &elem_tp);
@@ -3105,35 +3347,12 @@ impl Parser {
                 self.expression(&mut format)
             };
             self.in_format_expr = saved_in_fmt;
-            // Plan-07 phase 4e.1 — format strings are the user's
-            // observability surface and must NEVER halt, log, or warn
-            // (per C66 + DESIGN_DECISIONS 2026-05-11).  Walk the
-            // interpolated expression tree and swap every fault-prone
-            // op to its Nullable peer so `println("{a / b}")` /
-            // `println("{user.name}")` / `println("{v[i]}")` always
-            // render the silent sentinel ("null") instead of taking
-            // out the print statement that the developer is using to
-            // diagnose the problem in the first place.
-            //
-            // Phase 4e.3 — when the OUTERMOST swapped op is
-            // fault-prone (div / mod / vector-index / text-index),
-            // append an `OpTagFault(kind)` SIBLING statement to the
-            // statement list BEFORE the format-conversion op so the
-            // conversion op sees the tag and renders `null(<reason>)`
-            // instead of bare `null` on the null sentinel.  Inner
-            // faults (`"{a + v[i] / b}"`) get their Nullable peer
-            // swap from the recursion but do NOT tag — there's no
-            // renderer to consume their tag in mid-expression.
-            let outer_fault_kind = if self.first_pass {
-                None
-            } else {
-                Self::rewrite_subtree_to_nullable_kind(&mut format, &self.data)
-            };
-            if let Some(kind) = outer_fault_kind
-                && self.data.def_nr("OpTagFault") != u32::MAX
-            {
-                let tag_call = self.cl("OpTagFault", &[Value::Int(i32::from(kind))]);
-                list.push(tag_call);
+            // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
+            // hole is swapped to its silent nullable peer (@C66), so `"{a / b}"`, `"{v[i]}"`
+            // and `"{user.name}"` yield the null VALUE and the hole renders it as a plain
+            // `null`, never the fault's cause.
+            if !self.first_pass {
+                Self::rewrite_subtree_to_nullable(&mut format, &self.data);
             }
             self.un_ref(&mut tp, &mut format);
             // @P376 — the format expression resolved to `Unknown`: a directly
@@ -3157,13 +3376,15 @@ impl Parser {
             // of the numeric width/radix grammar (which rejects `date`/`dollars`
             // as an "Unknown variable" width expression). Pass-stable: the
             // `t_<len><Type>_to_text` def is collected in both parser passes, so
-            // both take this branch.
-            let custom_fmt = if let Type::Reference(fd, _) = &tp {
+            // both take this branch.  `@FR-N-Shape` — a nullable value (`D?`, a keyed
+            // element's field) owns the same DSL: the shape is asked of the peeled type,
+            // and an absent value renders `null` before the hook would run
+            // (`append_user_text_unless_null`).
+            let custom_fmt = if let Type::Reference(fd, _) = tp.base() {
                 self.data.def_type(*fd) == DefType::Struct && {
-                    let nm = self.data.def(*fd).name().to_string();
-                    self.data
-                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"))
-                        != u32::MAX
+                    let m = self.type_method(*fd, "to_text");
+                    // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
+                    m != u32::MAX && self.data.def(m).operator_form()
                 }
             } else {
                 false
@@ -3471,10 +3692,7 @@ impl Parser {
         if text.is_empty() {
             return;
         }
-        let nm = self.data.def(target).name();
-        let d_nr = self
-            .data
-            .def_nr(&crate::data::Data::mangle_method(nm, "lit"));
+        let d_nr = self.type_method(target, "lit");
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             return;
         }
@@ -3550,10 +3768,7 @@ impl Parser {
             );
         }
         let nm = self.data.def(target).name().to_string();
-        let d_nr = self.data.def_nr(&crate::data::Data::mangle_method(
-            &nm,
-            &format!("hole_{kind}"),
-        ));
+        let d_nr = self.type_method(target, &format!("hole_{kind}"));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             if !self.first_pass {
                 diagnostic!(
@@ -4106,6 +4321,19 @@ impl Parser {
         // no longer moves the end (`loop-source-written`).  A slice clamps and binds its own
         // bounds below.
         if *data == Value::Null {
+            // `@FR-I-RangeNull` — a bound that is `null` where it is WRITTEN can never yield a
+            // round, so it is refused here rather than lowered: the loop it spells never runs.
+            // Judged on the second pass only: on the first, a call to a function declared
+            // further down the file (`0..layer_count(ly)`) parses as a `Null` placeholder.
+            if !self.first_pass
+                && (matches!(expr.unspan(), Value::Null) || matches!(till.unspan(), Value::Null))
+            {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a range bound is `null`, so this loop never runs"
+                );
+            }
             for bound in [&*expr, &till] {
                 self.record_source_places(bound);
             }
@@ -4125,6 +4353,60 @@ impl Parser {
             if !matches!(till.unspan(), Value::Int(_) | Value::Long(_)) {
                 let hi = self.create_unique("range_end", &till_tp);
                 iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+            }
+            // `@FR-I-RangeNull` — a bound only known at run time that turns out `null` makes
+            // the range EMPTY.  Without this a null start never advances (`null + 1` is null,
+            // and `null` orders below every end) and the loop runs forever — or, on native,
+            // counts up from the null sentinel.  A null END already gives zero rounds under
+            // the order, so only a start that is not a literal needs the guard, and it runs
+            // ONCE, before the first round: a null bound resets the pair to `1` and `0`, which
+            // is empty in every form (`a..b`, `a..=b`, `a..`, and each reversed).  A literal
+            // end below the type's maximum keeps its literal — the start is moved past it
+            // instead — so a counted loop keeps its literal-end lowering.
+            if let Value::Var(lo) = *expr.unspan() {
+                let lit = |tp: &Type, n: i64| -> Value {
+                    match tp.base() {
+                        Type::Integer(spec) if spec.max > i64::from(i32::MAX) => Value::Long(n),
+                        _ => Value::Int(i32::try_from(n).unwrap_or(i32::MAX)),
+                    }
+                };
+                let past_end = match till.unspan() {
+                    Value::Int(t) => Some(i64::from(*t) + i64::from(incl)),
+                    _ => None,
+                };
+                // The guard is ONE statement, a block named `Range null guard`, so a rewrite
+                // that matches this prelude by its shape (`compact::match_loop`) can step over
+                // it rather than decline the loop.
+                let mut guard = Vec::new();
+                if let Some(past) = past_end {
+                    let start_null = self.single_op("!", Value::Var(lo), in_type.clone());
+                    guard.push(v_if(
+                        start_null,
+                        v_set(lo, lit(&in_type, past)),
+                        Value::Null,
+                    ));
+                } else {
+                    if !matches!(till.unspan(), Value::Var(_)) {
+                        let hi = self.create_unique("range_end", &till_tp);
+                        iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+                    }
+                    if let Value::Var(hi) = *till.unspan() {
+                        for bound in [lo, hi] {
+                            let tp = if bound == lo { &in_type } else { &till_tp };
+                            let is_null = self.single_op("!", Value::Var(bound), tp.clone());
+                            guard.push(v_if(
+                                is_null,
+                                v_block(
+                                    vec![v_set(lo, lit(&in_type, 1)), v_set(hi, lit(&till_tp, 0))],
+                                    Type::Void,
+                                    "empty range",
+                                ),
+                                Value::Null,
+                            ));
+                        }
+                    }
+                }
+                iter_prelude.push(v_block(guard, Type::Void, crate::data::RANGE_NULL_GUARD));
             }
         }
         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must
@@ -4760,6 +5042,9 @@ impl Parser {
             return false;
         }
         let nr = self.data.attr(td_nr, &field);
+        if nr != usize::MAX {
+            self.check_visibility("literal-field", td_nr, nr);
+        }
         if nr == usize::MAX {
             if let Some(s) = self.suggest_field_name(td_nr, &field) {
                 diagnostic!(
@@ -4897,9 +5182,9 @@ impl Parser {
                 // fix can spell `{}` -> `[]` as an edit.  Both are needed: `{ }` is the same
                 // construct with a gap, and a length assumed from the opener would leave the
                 // `}` behind.
-                let open = self.lexer.peek_pos().clone();
+                let open = *self.lexer.peek_pos();
                 let empty = self.lexer.has_token("{") && {
-                    let close = self.lexer.peek_pos().clone();
+                    let close = *self.lexer.peek_pos();
                     self.lexer.has_token("}") && {
                         braces_span = (open.line == close.line && close.pos >= open.pos)
                             .then(|| (open.line, open.pos, close.pos + 1 - open.pos));
@@ -4988,7 +5273,7 @@ impl Parser {
                         std::mem::replace(&mut self.rebuild_watch_hit, false),
                     )
                 });
-                let value_pos = self.lexer.peek_pos().clone();
+                let value_pos = *self.lexer.peek_pos();
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 if let Some((w, hit)) = outer_watch {
                     if self.rebuild_watch_hit {
@@ -5374,7 +5659,7 @@ impl Parser {
         self.lexer.token("}");
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
-        let pos = self.lexer.pos().clone();
+        let pos = *self.lexer.pos();
         fields.insert(1, Value::Text(pos.file.to_string()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
@@ -5399,8 +5684,14 @@ impl Parser {
 
     /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
     /// concrete instance it mints on pass 2 laid out as [`Parser::instance_def`] lays one out.
-    pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
-        let pairs = self.data.open_instance_bindings(&mut self.lexer, bindings);
+    pub(crate) fn open_instance_bindings(
+        &mut self,
+        bindings: &[(u32, Type)],
+        template: u32,
+    ) -> Vec<(u32, Type)> {
+        let pairs = self
+            .data
+            .open_instance_bindings(&mut self.lexer, bindings, template);
         for (_, bound) in &pairs {
             if let Type::Reference(d, _) = bound.base() {
                 self.lay_out_instance(*d);
@@ -5438,7 +5729,7 @@ impl Parser {
                 if self.cyclic_instances.insert(inst) {
                     let shown =
                         Type::Reference(inst, crate::data::Deps::none()).source_name(&self.data);
-                    let at = self.data.def(inst).position().clone();
+                    let at = *self.data.def(inst).position();
                     self.lexer.pos_diagnostic(
                         Level::Error,
                         &at,
@@ -5551,8 +5842,27 @@ impl Parser {
             && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// A struct or variant literal: one level of depth (`crate::limits`), since its field
+    /// values are parsed without passing through `expression`, so a literal nested in a field
+    /// counts here.
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        if !self.enter_depth() {
+            return Type::Unknown(0);
+        }
+        let t = self.parse_object_inner(td_nr, code);
+        self.leave_depth();
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_object_inner(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        let built = if self.data.def_type(td_nr) == DefType::EnumValue {
+            "variant"
+        } else {
+            "literal"
+        };
+        self.check_visibility(built, td_nr, usize::MAX);
+        self.refuse_building_a_name_only_type(td_nr);
         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
         // Allocate the `Some` record, set the discriminant present, and parse the body as a
@@ -5577,7 +5887,7 @@ impl Parser {
         // the cursor sits past the closing `}` — on the next statement for a one-line literal.
         // Keep the opening brace's position to point the caret at the literal it names
         // (DIAGNOSTICS.md § Adding a code, step 4).
-        let literal_pos = self.lexer.pos().clone();
+        let literal_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;
@@ -5632,7 +5942,7 @@ impl Parser {
             // ⚠ @FR-N-Shape / @FR-N-Road (@PLN160) — this names ONE spelling: `x: S?` is
             // `Optional(Reference(S))` and does not match, so every nullable local bound from a
             // struct literal declines the in-place hint and builds into a work-ref instead,
-            // while its dense twin builds in place.  C90 makes the two the same slot, so the
+            // while its dense twin builds in place.  @C90 makes the two the same slot, so the
             // divergence is an accident of this test and the cure is `var_tp.base()`, which
             // peels the `?` and not the `&`.
             //
@@ -5804,7 +6114,7 @@ impl Parser {
             }
         } else if !self.first_pass
             && !self.is_field(code)
-            && !self.is_captured_dbref(code)
+            && (!self.is_captured_dbref(code) || self.reads_a_pointer_field(code))
             && !self.builds_into_element(code, td_nr)
         {
             new_object = true;
@@ -6442,6 +6752,10 @@ impl Parser {
         true
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over a struct literal's fields and the defaults of those it omits"
+    )]
     pub(crate) fn object_init(
         &mut self,
         list: &mut Vec<Value>,
@@ -6554,6 +6868,18 @@ impl Parser {
                 && deps.contains(&u16::MAX)
                 && default == Value::Null
             {
+                // `@FR-D-NoRef` — a bare pointer has no default: the null sentinel is the
+                // default of `reference<T>?` only, and an omitted bare one read back null
+                // with no diagnostic (loft#1931).  The `S{}` half of the rule `x?` enforces.
+                if !self.first_pass {
+                    let tn = format!("reference<{}>", tp.base().source_name(&self.data));
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "field `{nm}: {tn}` is a pointer with no default — set it in the \
+                         constructor, or make it `{tn}?` (defaults null)"
+                    );
+                }
                 let sentinel = self.cl("OpNullRefSentinel", &[]);
                 list.push(self.set_field_no_check(td_nr, aid, pos, code.clone(), sentinel));
                 continue;
@@ -6684,7 +7010,7 @@ impl Parser {
     // `list` / `sinks`, of which `sinks` is itself the bundle for the literal-level
     // accumulators).  There is exactly ONE call site, so a further struct would be packed
     // once and unpacked once and name nothing that these parameters do not — the same trade
-    // `tree::range_cursors` records for its own list.
+    // `btree::range_cursors` records for its own list.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn handle_field(
@@ -6783,7 +7109,7 @@ impl Parser {
                 "OpGetField",
                 &[code.clone(), Value::Int(item_pos), Value::Int(enum_kt)],
             );
-            let write = self.emit_nullable_slot_write(syn, &field_ref, value.clone());
+            let write = self.emit_nullable_slot_write(syn, &field_ref, value.clone(), false);
             list.extend(write);
             return None;
         }
@@ -6830,7 +7156,7 @@ impl Parser {
                     // `vector<float>` field — was copied at the wrong width and read back as
                     // garbage here, where `g.c = v` refuses it.
                     if self.field_store_mismatch("=", u16::MAX, &td, exp_tp) {
-                        self.field_store_refusal(exp_tp, &td);
+                        self.field_store_refusal(exp_tp, &td, None);
                     }
                     let pos = self
                         .database
@@ -6868,6 +7194,21 @@ impl Parser {
                     } else {
                         "OpAppendVector"
                     };
+                    // `@FR-R-Place` — "the buffer IS the place": the literal's field exists (the
+                    // header prime wrote its empty handle) and a call that fills its buffer is
+                    // handed the field itself, so the result is built where it lives and the
+                    // bulk copy, with the buffer's mint and free, is gone.  The assignment's
+                    // twin is `buffer_is_the_place`; a `?` field keeps the replace, which is
+                    // what leaves it absent.
+                    if whole == "OpAppendVector"
+                        && let Some(vr) = self.place_buffer_of(&field_ref, value)
+                    {
+                        self.vars.mark_inline_ref(vr);
+                        self.vars.set_skip_free(vr);
+                        list.push(v_set(vr, field_ref.clone()));
+                        list.push(value.clone());
+                        return Some(field_ref);
+                    }
                     list.push(self.cl(
                         whole,
                         &[
@@ -7002,15 +7343,9 @@ impl Parser {
                 || !(crate::data::Data::type_has_unresolved(exp_tp)
                     || crate::data::Data::type_has_unresolved(&td))
             {
-                // A FIELD STORE: a literal that fits the type but lands on the
-                // reserved null sentinel of a nullable narrow field is rejected
-                // here too (not just on `obj.f = …`), so `U8N { x: 255 }` doesn't
-                // silently store null.  The sentinel reservation is store-only —
-                // it is NOT applied to the `convert` type-fit (params/casts).
-                let dst_name = self.int_type_name(&td);
-                if let Some(hint) = self.nullable_sentinel_hint(value, &td, &dst_name) {
-                    diagnostic!(self.lexer, Level::Error, "{hint}");
-                } else if !self.convert_store(value, exp_tp, &td, "the field", None) {
+                // A constant that lands on a nullable narrow field's null code is refused
+                // by the store face (`nullable_narrow_constant_refusal`, loft#1796).
+                if !self.convert_store(value, exp_tp, &td, "the field", None) {
                     // @FR-N-Store is asked inside the store face; this arm is the plain
                     // type mismatch.
                     // Plan-07 phase 6 (partial) — name the value side first
@@ -7020,22 +7355,8 @@ impl Parser {
                     // as "field declared as <value_type>" — backwards.
                     // A function type is rendered as the author spells it (`fn(const T)`), since
                     // the `const` of a parameter can be the whole difference (loft#1540).
-                    let (got, want) = if matches!(exp_tp.base(), Type::Function(..))
-                        || matches!(td.base(), Type::Function(..))
-                    {
-                        (exp_tp.source_name(&self.data), td.source_name(&self.data))
-                    } else {
-                        (
-                            exp_tp.show(&self.data, &self.vars),
-                            td.show(&self.data, &self.vars),
-                        )
-                    };
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "Cannot assign {got} to field {}.{field} of type {want}",
-                        self.data.def(td_nr).name()
-                    );
+                    let named = format!("{}.{field}", self.data.def(td_nr).name());
+                    self.field_store_refusal(exp_tp, &td, Some(&named));
                 }
             }
             list.push(self.set_field_no_check(td_nr, nr, 0, code.clone(), value.clone()));

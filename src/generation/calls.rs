@@ -160,6 +160,85 @@ impl Output<'_> {
         crate::generation::ops::emit_op(&mut ctx, &name, vals)
     }
 
+    /// `@FR-R-AppendTwin` — does this call of `d` go to its append twin?  The caller-side
+    /// rewrite's own call (matched by callee and argument slice), or — inside a twin — a call
+    /// handed the twin's buffer, or a view of it, as the callee's buffer.  Either records the
+    /// request for the twin.
+    fn append_call(&mut self, d: u32, vals: &[Value]) -> bool {
+        let site = self
+            .ap_site_next
+            .is_some_and(|(c, at)| c == d && at == vals.as_ptr() as usize);
+        let handed = !site
+            && self.append_twin_buf.is_some()
+            && self
+                .data
+                .def(d)
+                .hidden_return_buffer_attr()
+                .and_then(|at| vals.get(at))
+                .is_some_and(
+                    |a| matches!(a.unspan(), Value::Var(x) if self.append_twin_views.contains(x)),
+                );
+        if !site && !handed {
+            return false;
+        }
+        if site {
+            self.ap_site_next = None;
+        }
+        if !self.ap_requests.contains(&d) {
+            self.ap_requests.push(d);
+        }
+        crate::rewrite_census::fired("R-AppendTwin", 1);
+        true
+    }
+
+    /// `@FR-R-Destination` — the caller-side rewrite's call, matched by callee and argument
+    /// slice: it calls the destination twin, which no other twin form applies to.  Records the
+    /// request for the twin.
+    fn dest_call(&mut self, vals: &[Value]) -> bool {
+        let dest = self
+            .dest_site_next
+            .is_some_and(|(c, at, _)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        if dest && let Some((c, _, vo)) = self.dest_site_next.take() {
+            if !self.dest_requests.contains(&(c, vo)) {
+                self.dest_requests.push((c, vo));
+            }
+            crate::rewrite_census::fired("R-Destination", 1);
+        }
+        dest
+    }
+
+    /// `@FR-R-ViewReturn` — the call its buffer prep was dropped for: the twin, which
+    /// answers the record and whether it is owned; the flag goes to the site's local.
+    /// Answers whether the call was emitted.
+    fn vr_call(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+    ) -> std::io::Result<bool> {
+        let vr = self
+            .vr_site_next
+            .is_some_and(|(c, at)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        if !vr {
+            return Ok(false);
+        }
+        self.vr_site_next = None;
+        let callee_nr = self.current_call_def;
+        if !self.vr_requests.contains(&callee_nr) {
+            self.vr_requests.push(callee_nr);
+        }
+        crate::rewrite_census::fired("R-ViewReturn", 1);
+        let flag = self.vr_flag_pending.take().unwrap_or_default();
+        write!(w, "{{ let __vr = {}__vr(cell", self.fn_ident(def_fn))?;
+        self.vr_drop_buf = true;
+        let r = self.emit_user_call_args(w, def_fn, vals, false);
+        self.vr_drop_buf = false;
+        r?;
+        self.current_call_def = callee_nr;
+        write!(w, "); {flag} = __vr.1; __vr.0 }}")?;
+        Ok(true)
+    }
+
     /// Internal helper: emits the user-fn / Op-stub call body.  Reachable
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
@@ -190,7 +269,20 @@ impl Output<'_> {
         // is a local the enclosing frames hold for the argument variable.  The definition
         // number comes from `output_call_inner`; the identity check keeps a stale one from
         // naming another function's twin.
-        let twin_args = if (self.current_call_def as usize) < self.data.definitions.len()
+        // `@FR-R-AppendTwin` — the call appends into a destination: the caller-side rewrite's
+        // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
+        // calls the plain-bodied twin, so no other twin form applies to it.
+        let dest = self.dest_call(vals);
+        if !dest && self.vr_call(w, def_fn, vals)? {
+            return Ok(());
+        }
+        let append = !dest
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && self.append_call(self.current_call_def, vals);
+        let twin_args = if !append
+            && !dest
+            && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
             self.twin_call_inputs(self.current_call_def, vals)
@@ -210,58 +302,37 @@ impl Output<'_> {
         if forward.is_some() {
             write!(w, "{{ let __vt = ")?;
         }
+        // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
+        // within its bound.  Not for a forward site, which spells its own call shape.
+        let ranged = forward.is_none()
+            && !append
+            && !dest
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
+        let (released_first, refill_twin) = self.refill_text_call(
+            w,
+            def_fn,
+            vals,
+            twin_args.is_some() || ranged || forward.is_some() || append || dest,
+        )?;
         write!(
             w,
-            "{}{}(",
+            "{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
-            if twin_args.is_some() { "__inv" } else { "" }
+            if twin_args.is_some() { "__inv" } else { "" },
+            if ranged { "__rg" } else { "" },
+            if refill_twin { "__rt" } else { "" },
+            if append { "__ap" } else { "" },
+            if dest { "__d" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
             write!(w, "cell")?;
             first_arg = false;
         }
-        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted callee has no return buffer
-        // parameter, so the site must not pass one: the buffer argument is the attribute
-        // the signature dropped, in the same position.
-        // The callee's NUMBER, not a name lookup: `def_nr(name)` resolves for the
-        // current source, so a library function called from another module answered a
-        // different definition (measured: `n_path_at` kept its buffer argument while its
-        // signature had dropped it).  `current_call_def` is what `output_call_inner`
-        // threads here for exactly this reason.
         let callee_nr = self.current_call_def;
-        let drop_buf = self
-            .value_records
-            .fns
-            .contains_key(&callee_nr)
-            .then(|| super::hoist::ret_buffer_attr(def_fn))
-            .flatten();
-        for (idx, v) in vals.iter().enumerate() {
-            if drop_buf == Some(idx) {
-                continue;
-            }
-            if !first_arg {
-                write!(w, ", ")?;
-            }
-            first_arg = false;
-            // @PLN164 E-2 — a call-filled temp's buffer is the element's field: the call
-            // builds there, and the buffer itself is never minted.
-            if let Value::Var(b) = v.unspan()
-                && let Some(&(elm, off)) = self.elem_first.buf_place.get(b)
-            {
-                let elmn = super::sanitize(self.data.def(self.def_nr).variables().name(elm));
-                write!(
-                    w,
-                    "DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {off} }}"
-                )?;
-                continue;
-            }
-            self.emit_call_arg(w, def_fn, idx, v)?;
-            // An argument that is itself a call leaves `current_call_def` naming ITS callee;
-            // the next argument's questions (`(R-ValueLocal)`'s tuple parameter, the `&`
-            // parameter forms) are about this call, so it is restored per argument.
-            self.current_call_def = callee_nr;
-        }
+        self.emit_user_call_args(w, def_fn, vals, first_arg)?;
         if let Some(extra) = &twin_args {
             for e in extra {
                 write!(w, ", {e}")?;
@@ -298,7 +369,107 @@ impl Output<'_> {
             self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
             write!(w, "__vd }}")?;
         }
+        if released_first {
+            write!(w, " }}")?;
+        }
         Ok(())
+    }
+
+    /// The arguments of a user-fn call, after `cell` when `first_arg` is false: each through
+    /// [`Self::emit_call_arg`], an element-placed buffer as its element's field, and an
+    /// admitted value-record callee's dropped buffer left out.
+    fn emit_user_call_args(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+        mut first_arg: bool,
+    ) -> std::io::Result<()> {
+        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted callee has no return buffer
+        // parameter, so the site must not pass one: the buffer argument is the attribute
+        // the signature dropped, in the same position.
+        // The callee's NUMBER, not a name lookup: `def_nr(name)` resolves for the
+        // current source, so a library function called from another module answered a
+        // different definition (measured: `n_path_at` kept its buffer argument while its
+        // signature had dropped it).  `current_call_def` is what `output_call_inner`
+        // threads here for exactly this reason.
+        let callee_nr = self.current_call_def;
+        let drop_buf = (self.vr_drop_buf || self.value_records.fns.contains_key(&callee_nr))
+            .then(|| super::hoist::ret_buffer_attr(def_fn))
+            .flatten();
+        for (idx, v) in vals.iter().enumerate() {
+            if drop_buf == Some(idx) {
+                continue;
+            }
+            if !first_arg {
+                write!(w, ", ")?;
+            }
+            first_arg = false;
+            // @PLN164 E-2 — a call-filled temp's buffer is the element's field: the call
+            // builds there, and the buffer itself is never minted.
+            if let Value::Var(b) = v.unspan()
+                && let Some(&(elm, off)) = self.elem_first.buf_place.get(b)
+            {
+                let elmn = super::sanitize(self.data.def(self.def_nr).variables().name(elm));
+                write!(
+                    w,
+                    "DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {off} }}"
+                )?;
+                continue;
+            }
+            self.emit_call_arg(w, def_fn, idx, v)?;
+            // An argument that is itself a call leaves `current_call_def` naming ITS callee;
+            // the next argument's questions (`(R-ValueLocal)`'s tuple parameter, the `&`
+            // parameter forms) are about this call, so it is restored per argument.
+            self.current_call_def = callee_nr;
+        }
+        Ok(())
+    }
+
+    /// `@FR-R-RefillText` — the call its pool statement left the release to: the refill twin
+    /// where the plain callee would be called; before any other twin (`other_twin`), the
+    /// release the pool statement did not emit, opened here and closed after the call.
+    /// Answers whether that release was opened, and whether the call takes the refill twin.
+    fn refill_text_call(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+        other_twin: bool,
+    ) -> std::io::Result<(bool, bool)> {
+        let refill = match (
+            self.refill_text_pending,
+            self.refill_text.calls.get(&(vals.as_ptr() as usize)),
+        ) {
+            (Some((buf, tp, _)), Some(&(site_buf, _))) if buf == site_buf => {
+                self.refill_text_pending = None;
+                Some((buf, tp))
+            }
+            _ => None,
+        };
+        let Some((buf, tp)) = refill else {
+            return Ok((false, false));
+        };
+        // The vector clause: the callee empties each vector field of the buffer in place
+        // (`(R-RefillBuffer)`) — and any emission of it that does not mints over the live
+        // buffer, which clears its store — so neither a twin nor the release is owed.
+        if self.refill_text.vectors.contains(&(vals.as_ptr() as usize)) {
+            crate::rewrite_census::fired("R-RefillText", 1);
+            return Ok((false, false));
+        }
+        let twin = !other_twin
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
+        crate::rewrite_census::fired("R-RefillText", usize::from(twin));
+        if twin {
+            if !self.rt_requests.contains(&self.current_call_def) {
+                self.rt_requests.push(self.current_call_def);
+            }
+            return Ok((false, true));
+        }
+        let name = super::sanitize(self.data.def(self.def_nr).variables().name(buf));
+        write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
+        Ok((true, false))
     }
 
     /// Emit ONE call argument (no leading separator) — the argument at
@@ -321,6 +492,22 @@ impl Output<'_> {
         idx: usize,
         v: &Value,
     ) -> std::io::Result<()> {
+        // The call-site location the parser hands `assert` / `panic` / `log_*` (a parameter
+        // named `file`): when it is the program's own path, a test/semantics build reads it at
+        // run time like every other mention (`codegen_runtime::main_file_or`), so the binary
+        // holds no path and two copies of one program at different paths are one binary.  Only
+        // that parameter — a user's own string literal is never rewritten.
+        if self.reads_main_file_at_run_time()
+            && def_fn
+                .attributes()
+                .get(idx)
+                .is_some_and(|a| a.name == "file")
+            && let Value::Text(t) = v.unspan()
+            && !t.is_empty()
+            && *t == self.main_file()
+        {
+            return write!(w, "main_file_or(\"\")");
+        }
         // `(R-ValueLocal)` (`@FR-R-ValueLocal`) — a TUPLE PARAMETER takes the tuple: a value
         // local or an admitted call is one already (`hoist::tuple_arg_ready`, the same
         // question the site gate asked); any other record expression is read field by
@@ -329,7 +516,15 @@ impl Output<'_> {
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && let Some(tp) = self.value_records.param_type(self.current_call_def, idx)
         {
-            if super::hoist::tuple_arg_ready(v, &self.value_records.fns, &self.value_record_locals)
+            // A fn-ref dispatch's arm is handed `_farg_N`, which the dispatch already bound to
+            // the tuple (`@FR-R-FnRefValue`).
+            if matches!(v.unspan(), Value::RawExpr(_))
+                || super::hoist::tuple_arg_ready(
+                    v,
+                    tp,
+                    &self.value_records.fns,
+                    &self.value_record_locals,
+                )
             {
                 return self.output_code_inner(w, v);
             }
@@ -354,11 +549,12 @@ impl Output<'_> {
         let raw_param = idx < def_fn.attributes().len()
             && crate::generation::is_raw_scalar_ref(&def_fn.attributes()[idx].typedef);
         if let Some(vr) = self.create_stack_var(v) {
-            let name = sanitize(self.data.def(self.def_nr).variables().name(vr));
+            // The variable's PLACE: a generator's local is its struct field (loft#1899).
+            let place = self.var_place(vr);
             if raw_param {
-                write!(w, "std::ptr::addr_of_mut!(var_{name})")?;
+                write!(w, "std::ptr::addr_of_mut!({place})")?;
             } else {
-                write!(w, "&mut var_{name}")?;
+                write!(w, "&mut {place}")?;
             }
         } else if raw_param
             && let Value::Call(d_nr, _) = v.unspan()
@@ -374,6 +570,19 @@ impl Output<'_> {
             write!(w, "unsafe {{ ")?;
             self.output_place_pointer(w, v, &base)?;
             write!(w, " }}")?;
+        // `@FR-B-Ref-Lvalue` — a tuple local's MEMBER handed to a `&` parameter: a pointer
+        // into the Rust tuple's field, as a local link to it holds.
+        } else if let Value::Call(d_nr, args) = v.unspan()
+            && self.data.def(*d_nr).name() == "OpCreateStack"
+            && let [arg] = args.as_slice()
+            && let Value::TupleGet(t, i) = arg.unspan()
+        {
+            let place = self.tuple_member_place(*t, *i);
+            if raw_param {
+                write!(w, "unsafe {{ std::ptr::addr_of_mut!({place}) }}")?;
+            } else {
+                write!(w, "unsafe {{ &mut *std::ptr::addr_of_mut!({place}) }}")?;
+            }
         // OpCreateStack wrapping an addressable expression
         // (e.g. v[i] as & param).  Emit a temporary + &mut so the
         // callee can write through the DbRef into the store.
@@ -402,7 +611,12 @@ impl Output<'_> {
                 // An argument RefVar is already &mut DbRef — pass it
                 // directly instead of dereferencing with *var_name.
                 write!(w, "var_{name}")?;
-            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr) {
+            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr)
+                || matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
+                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
+            {
+                // A `&`-bound RECORD local (`b: &P = a`, and every `&(…)` since loft#1883) is
+                // the `*mut DbRef` its bind took of the source's slot, re-borrowed the same way.
                 // A `&`-bound tuple LOCAL holds a raw `*mut (…)`, so `&mut var_b` would
                 // hand the callee a reference to the POINTER.  Re-borrow through it to
                 // give the `&(…)` parameter the `&mut (…)` it declares — the caller's
@@ -557,14 +771,8 @@ impl Output<'_> {
                                     param_elems,
                                 ) =>
                             {
-                                let name = self
-                                    .data
-                                    .def(self.def_nr)
-                                    .variables()
-                                    .name(*var)
-                                    .to_string();
                                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
-                                    &format!("var_{name}"),
+                                    &self.var_place(*var),
                                     param_elems,
                                 ))
                             }
@@ -663,6 +871,73 @@ impl Output<'_> {
             && matches!(vals.get(vi), Some(Value::Null))
         {
             res = "{{let db = @v1; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), 0u32); }}}}".to_string();
+        }
+        // `OpSetText` copies its value into a fresh `String` before `set_str` because the value
+        // may BORROW store memory (a field read, a slice of a text parameter) that the claim
+        // can move.  A literal and an owned `String` local borrow no store: their bytes are
+        // read where they are, one allocation and one copy fewer per write.
+        if def_fn.name() == "OpSetText"
+            && !self.text_set_copy_kept
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+            && match vals.get(vi).map(Value::unspan) {
+                Some(Value::Text(_)) => true,
+                Some(Value::Var(v)) => self.text_owned(*v),
+                _ => false,
+            }
+        {
+            res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
+        }
+        // `@FR-R-RefillText` — in a refill twin, the literal's text sets into its own buffer
+        // refill the slot: written over the block the slot owns when the text fits, released
+        // and claimed anew when it does not; a null releases the block the slot held.
+        // `@FR-H-TextReplace` — an assignment's write is the same refill, at every site.
+        if (def_fn.name() == "OpSetTextReplace"
+            || (def_fn.name() == "OpSetText"
+                && self.refill_twin_buf.is_some_and(|b| {
+                    vals.first()
+                        .is_some_and(|t| super::hoist::path_offset(t, b, self.data).is_some())
+                })))
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+        {
+            let borrowed = !self.text_set_copy_kept
+                && match vals.get(vi).map(Value::unspan) {
+                    Some(Value::Text(_)) => true,
+                    Some(Value::Var(v)) => self.text_owned(*v),
+                    _ => false,
+                };
+            res = if matches!(vals.get(vi), Some(Value::Null)) {
+                "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
+            } else if borrowed {
+                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), s_val); }}}}"
+            } else {
+                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
+            }
+            .to_string();
+            res = with_drop_report(&res);
+        }
+        // `@FR-R-RefillText`'s collection clause — a text set into an element the build
+        // appended: a slot under the kept length refills the block it owns, a slot past it
+        // claims (fresh capacity holds no block).
+        if def_fn.name() == "OpSetText"
+            && let Some(k) = &self.refill.keep
+            && matches!(vals.first().map(Value::unspan), Some(Value::Var(e)) if k.elems.contains(e))
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+        {
+            let borrowed = !self.text_set_copy_kept
+                && match vals.get(vi).map(Value::unspan) {
+                    Some(Value::Text(_)) => true,
+                    Some(Value::Var(v)) => self.text_owned(*v),
+                    _ => false,
+                };
+            res = if matches!(vals.get(vi), Some(Value::Null)) {
+                "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
+            } else if borrowed {
+                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, s_val); }} else {{ let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+            } else {
+                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+            }
+            .to_string();
+            res = with_drop_report(&res);
         }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.
@@ -1000,7 +1275,7 @@ impl Output<'_> {
         // Stores-side helpers use `position: None`).  Phase 4g (backtrace
         // + polish) will thread codegen-time positions through.
         res = res.replace("s.raise(", "stores.raise_runtime(");
-        // C80 / E-Uncomp — div-by-zero templates now `raise_recoverable`
+        // @C80 / E-Uncomp — div-by-zero templates now `raise_recoverable`
         // (null-and-continue) instead of `raise`.  `s.raise(` above does NOT
         // match inside `s.raise_recoverable(` (an `_` follows `s.raise`, not
         // `(`), so this is an independent substitution; the `_runtime` suffix
@@ -1037,6 +1312,21 @@ impl Output<'_> {
             write!(w, "{res}")
         }
     }
+}
+
+/// A native text-write body — the `(R-RefillText)` forms above, which replace the
+/// `OpSetText` / `OpSetTextReplace` templates — given the setters' cold branch: a write whose
+/// place names no record reports `write_dropped` unless that absence is already accounted
+/// for (`@FR-E-Report`, `DbRef::absence_unreported`).  Every body ends by closing its
+/// `if db.rec != 0 {{ … }}` and then its own block, so the branch goes between the two.
+fn with_drop_report(body: &str) -> String {
+    let Some(head) = body.strip_suffix("}}}}") else {
+        return body.to_string();
+    };
+    format!(
+        "{head}}}}} else if db.absence_unreported() {{{{ \
+         s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}}}}}"
+    )
 }
 
 #[cfg(test)]

@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic calling a generic at its OWN variable (`relay<U>` calling `hole(u)`) runs on both
+// backends, and the answer is the one the concrete twins give (@FR-G-Mono, loft#1841).
+//
+// The call is parsed inside `relay`'s template, where `u` is typed `U`, so it binds `hole`'s
+// `T` to `U` and mints an instance at that VARIABLE (`i_1U_n_hole`).  That instance stands
+// for its template: each monomorph of `relay` re-aims the call at `hole`'s instance at its
+// own concrete type, and nothing ever calls it.  `(G-Mono)` specialises at concrete types
+// only, so it is no code on either backend.  `--native` generated every function anyway and
+// stopped with an internal error formatting the variable (`Could not parse [Var(1), …]`);
+// a body that only stores or sizes the variable generated Rust nothing called.
+//
+// The cells vary what the placeholder's body does with the variable (formats, sizes,
+// stores in a record), how many variables it binds (two, swapped), how deep the chain is
+// (three templates with three spellings, so a placeholder mints its own placeholder), where
+// the call sits (a lambda), and how many concrete types reach it (four).  Spelled alike
+// (`same<T>` calling `hole<T>`) no placeholder is minted — that is the control.
+//
+// @falsified-at: a80e26737 — native exit 101 -> 0, native panicked -> clean; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1841-a-generic-called-at-a-variable-is-no-code-of-its-own.patch — native exit 101 -> 0, native panicked -> clean; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: panic on --native — the control's generator stops at src/generation/text.rs.
+//   ARMED: nothing.
+//   WITNESS: on the control "Could not parse [Var(1), Var(0), Int(0), …]" from `format_text`.
+//   HOLDS: every cell's answer on both backends; the interpreter already gave them.
+
+struct Box<T> { item: T }
+
+fn hole<T: Printable>(v: T) -> text { "[{v}]" }
+fn relay<U: Printable>(u: U) -> text { hole(u) + "!" }
+fn same<T: Printable>(u: T) -> text { hole(u) + "=" }
+
+fn pair<A: Printable, B: Printable>(a: A, b: B) -> text { "{a}/{b}" }
+fn swap<X: Printable, Y: Printable>(x: X, y: Y) -> text { pair(y, x) }
+
+fn wrap<T>(v: T) -> vector<T> { [v, v, v] }
+fn boxit<T>(v: T) -> Box<T> { Box { item: v } }
+fn sized<U>(u: U) -> integer { len(wrap(u)) }
+fn unboxed<U>(u: U) -> U { boxit(u).item }
+
+fn deep_c<T: Printable>(v: T) -> text { "<{v}>" }
+fn deep_b<S: Printable>(v: S) -> text { deep_c(v) + "b" }
+fn deep_a<R: Printable>(v: R) -> text { deep_b(v) + "a" }
+
+fn apply(f: fn(integer) -> text, x: integer) -> text { f(x) }
+
+fn main() {
+  assert(relay(5) == "[5]!", "format at a variable, integer: {relay(5)}");
+  assert(relay("t") == "[t]!", "format at a variable, text: {relay(\"t\")}");
+  assert(relay(2.5) == "[2.5]!", "format at a variable, float: {relay(2.5)}");
+  assert(relay(true) == "[true]!", "format at a variable, boolean: {relay(true)}");
+  assert(same(41) == "[41]=", "the control, spelled alike: {same(41)}");
+  assert(swap(3, "w") == "w/3", "two variables, swapped: {swap(3, \"w\")}");
+  assert(swap(1.5, 8) == "8/1.5", "two variables, other types: {swap(1.5, 8)}");
+  assert(sized(7) == 3, "a vector of the variable: {sized(7)}");
+  assert(sized("x") == 3, "a vector of the variable, text: {sized(\"x\")}");
+  assert(unboxed(93) == 93, "a record of the variable: {unboxed(93)}");
+  assert(unboxed("qq") == "qq", "a record of the variable, text: {unboxed(\"qq\")}");
+  assert(deep_a(41) == "<41>ba", "three deep: {deep_a(41)}");
+  assert(deep_a("zq") == "<zq>ba", "three deep, text: {deep_a(\"zq\")}");
+  assert(
+    apply(fn(x: integer) -> text { relay(x) }, 77) == "[77]!",
+    "inside a lambda: {apply(fn(x: integer) -> text { relay(x) }, 77)}"
+  );
+}

@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Alt` inside a TUPLE ELEMENT — `(Circle { r } | Square { r }, k) => r * 10.0 + k`: the
+// element matches when any alternative's tag does, and each name is read from whichever variant
+// matched (the slice element's alternation, without its parentheses).  A name only some
+// alternatives bind is `τ?`, null in the others (s2, `@FR-P-Alt-Diff`).  Element alternatives
+// compose with whole-tuple alternatives (s4, step 3), and the arm's end restores what a name meant
+// before it (s5: an outer `r` keeps 99).  Values computed by hand, both backends; every body is
+// order-sensitive.
+//
+// @falsified-at: da7ce7230 — interpret exit 1 -> 0, native exit 1 -> 0
+//   Before step 4 a `|` inside a tuple element did not parse.
+//   CHANNEL: a refusal (*"expected ',' between tuple pattern elements"*), on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: exit 1 with the parse error at the element's `|`.
+//   HOLDS: nothing runs; every cell is unreached.
+// @falsified-by: tests/falsified/a-tuple-element-lists-alternatives.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   Step 4 reverted in its current form (the durable receipt): `parse_field_sub_pattern`
+//   skips its alternation branch for a tuple element (a `TupleGet` value), keeping a struct
+//   field's (step 5).  The same refusal.
+//   CHANNEL: a refusal, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+enum Sh { Circle { r: float }, Square { r: float }, Named { n: text }, Label { n: text }, Dot }
+
+fn s1(a: Sh, k: float) -> float { match (a, k) { (Circle { r } | Square { r }, k) => r * 10.0 + k, _ => -1.0 } }
+fn s2(a: Sh, k: float) -> float { match (a, k) { (Circle { r } | Dot, k) => (r ?? -1.0) * 10.0 + k, _ => -9.0 } }
+fn s3(a: Sh, b: Sh) -> text { match (a, b) { (Named { n } | Label { n }, _) => "{n}!", _ => "none" } }
+fn s4(a: Sh, b: Sh) -> float {
+  match (a, b) {
+    (Circle { r } | Square { r }, Dot) | (Dot, Circle { r } | Square { r }) => r,
+    _ => -2.0
+  }
+}
+fn s5(a: Sh) -> float {
+  r = 99.0;
+  x = match (a, 1) { (Circle { r } | Square { r }, _) => r, _ => 0.0 };
+  r * 1000.0 + x
+}
+
+fn main() {
+  assert(s1(Circle { r: 2.0 }, 3.0) == 23.0, "s1 a {s1(Circle { r: 2.0 }, 3.0)}");
+  assert(s1(Square { r: 4.0 }, 5.0) == 45.0, "s1 b {s1(Square { r: 4.0 }, 5.0)}");
+  assert(s1(Sh.Dot, 5.0) == -1.0, "s1 none");
+  assert(s2(Circle { r: 2.0 }, 3.0) == 23.0, "s2 a {s2(Circle { r: 2.0 }, 3.0)}");
+  assert(s2(Sh.Dot, 3.0) == -7.0, "s2 null {s2(Sh.Dot, 3.0)}");
+  assert(s2(Square { r: 2.0 }, 3.0) == -9.0, "s2 none");
+  assert(s3(Named { n: "left" }, Sh.Dot) == "left!", "s3 a {s3(Named { n: "left" }, Sh.Dot)}");
+  assert(s3(Label { n: "lbl" }, Sh.Dot) == "lbl!", "s3 b {s3(Label { n: "lbl" }, Sh.Dot)}");
+  assert(s3(Sh.Dot, Named { n: "x" }) == "none", "s3 none");
+  assert(s4(Square { r: 6.0 }, Sh.Dot) == 6.0, "s4 a {s4(Square { r: 6.0 }, Sh.Dot)}");
+  assert(s4(Sh.Dot, Circle { r: 7.0 }) == 7.0, "s4 b {s4(Sh.Dot, Circle { r: 7.0 })}");
+  assert(s4(Sh.Dot, Square { r: 8.0 }) == 8.0, "s4 c {s4(Sh.Dot, Square { r: 8.0 })}");
+  assert(s4(Sh.Dot, Sh.Dot) == -2.0, "s4 none");
+  assert(s5(Square { r: 3.0 }) == 99003.0, "s5 {s5(Square { r: 3.0 })}");
+  println("all ok");
+}

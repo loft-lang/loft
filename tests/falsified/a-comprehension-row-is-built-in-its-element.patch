@@ -1,0 +1,14 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 403c75548..f2bbf52d9 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -913,7 +913,8 @@ impl Output<'_> {
+                         }
+                         continue;
+                     }
+-                    if !self.elem_first.pairs.is_empty()
++                    if false
++                        && !self.elem_first.pairs.is_empty()
+                         && self.elem_first_override(w, &lp.operators, at, v)?
+                     {
+                         continue;

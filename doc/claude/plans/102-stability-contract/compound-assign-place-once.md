@@ -9,7 +9,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > A code-eval sweep found the original hoist fired ONLY when the field offset was the literal
 > `Int(0)` — so a compound write to a struct field at a NONZERO offset (`w[idx()].y += 5`) still
 > emitted the index call twice and, with a divergent index, wrote one element's field from a value
-> read at another (the exact C92 corruption, both backends). A second facet: the hoist rewrote the
+> read at another (the exact @C92 corruption, both backends). A second facet: the hoist rewrote the
 > place to a temp BEFORE `validate_write`, silently bypassing #584's value-const / const-field
 > enforcement (`r.v[idx()] += 9` on a `const` field was accepted). Both closed: the hoist now fires
 > for ANY offset (rebuilding `OpGet(elem_ref, offset)` on a once-evaluated element ref for the
@@ -17,7 +17,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > `skip_validate` flag to avoid a double-fire). Regression extended with a struct-field-at-offset
 > case. Verified both backends.
 > Owner ruling: evaluate the place
-> exactly once. Decision record: [DESIGN_DECISIONS.md C92](../../DESIGN_DECISIONS.md). Fix in
+> exactly once. Decision record: [DESIGN_DECISIONS.md @C92](../../DESIGN_DECISIONS.md). Fix in
 > `src/parser/expressions.rs` (`ir_has_user_call` + the `_place` hoist in `parse_assign`, now
 > offset-general + const-check-preserving);
 > regression `tests/scripts/pln102-f2-place-once.loft`. Validated per the loft-codegen method:
@@ -117,7 +117,7 @@ unless the owner rules F4 too.
 
 ## See also
 
-- [DESIGN_DECISIONS.md C92](../../DESIGN_DECISIONS.md) — the decision.
+- [DESIGN_DECISIONS.md @C92](../../DESIGN_DECISIONS.md) — the decision.
 - [formal-audit.md](formal-audit.md) F2 / F4 — the audit rows.
 - [COMPATIBILITY.md](../../COMPATIBILITY.md) § the error surface — "a would-be-error is first a
   rewrite-to-correct-function," the principle this fix instances.

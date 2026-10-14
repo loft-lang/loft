@@ -27,8 +27,8 @@
 //! control here is for the harness — a script whose assertion is deliberately false must
 //! fail, otherwise "the script printed OK" proves nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -54,7 +54,7 @@ fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, St
         backend.trim_start_matches('-'),
         env.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("_")
     );
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "180")
@@ -87,7 +87,7 @@ fn assert_cells_green(backend: &str, env: &[(&str, &str)], tag: &str) {
 /// itself, visible in the IR without needing the freed bytes to have been disturbed.
 #[test]
 fn publishes_are_witness_freed() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg("--show-ownership")
         .arg("--show-bytecode")
@@ -163,9 +163,9 @@ fn main() {\n\
 #[test]
 fn harness_can_fail() {
     let path = std::env::temp_dir().join(format!("loft_759_control_{}.loft", std::process::id()));
-    std::fs::write(&path, WRONG_EXPECTATION).expect("write control probe");
+    fa::write(&path, WRONG_EXPECTATION).expect("write control probe");
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

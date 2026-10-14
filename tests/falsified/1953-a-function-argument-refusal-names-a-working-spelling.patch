@@ -1,0 +1,129 @@
+diff --git b/src/parser/builtins.rs a/src/parser/builtins.rs
+index d1310c782..d7803d4af 100644
+--- b/src/parser/builtins.rs
++++ a/src/parser/builtins.rs
+@@ -689,7 +689,7 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "parallel_for requires at least 3 arguments: worker, input_vector, threads"
++                "parallel_for requires at least 3 arguments: fn worker, input_vector, threads"
+             );
+             return Type::Unknown(0);
+         }
+@@ -699,7 +699,7 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "parallel_for: first argument must be a function — pass its name"
++                "parallel_for: first argument must be a function reference (use fn <name>)"
+             );
+             return Type::Unknown(0);
+         };
+@@ -829,7 +829,7 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "par_fold requires exactly 4 arguments: items, init, fold, threads"
++                "par_fold requires exactly 4 arguments: items, init, fn fold, threads"
+             );
+             return Type::Unknown(0);
+         }
+@@ -870,7 +870,7 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "par_fold: third argument must be a function — pass its name, or a lambda with typed parameters `fn(acc: integer, x: integer) -> integer {{ … }}`"
++                "par_fold: third argument must be a function reference (use `fn <name>`)"
+             );
+             return Type::Unknown(0);
+         };
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index e5eabe08f..574bc4b3f 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6654,7 +6654,7 @@ use #count instead"
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "map requires 2 arguments: map(vector, f)"
++                "map requires 2 arguments: map(vector, fn f)"
+             );
+             return placeholder;
+         }
+@@ -6700,7 +6700,7 @@ use #count instead"
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "map: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"
++                "map: second argument must be a function reference (use fn <name>)"
+             );
+             return placeholder;
+         };
+@@ -6856,7 +6856,7 @@ use #count instead"
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "filter requires 2 arguments: filter(vector, pred)"
++                "filter requires 2 arguments: filter(vector, fn pred)"
+             );
+             return Err(placeholder);
+         }
+@@ -6883,7 +6883,7 @@ use #count instead"
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "filter: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"
++                "filter: second argument must be a function reference (use fn <name>)"
+             );
+             return Err(placeholder);
+         };
+@@ -7949,7 +7949,7 @@ use #count instead"
+                 diagnostic!(
+                     self.lexer,
+                     Level::Error,
+-                    "{name} requires 2 arguments: {name}(vector, pred)"
++                    "{name} requires 2 arguments: {name}(vector, fn pred)"
+                 );
+             }
+             return None;
+@@ -7992,7 +7992,7 @@ use #count instead"
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "{name}: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"
++                "{name}: second argument must be a function reference (use fn <name>)"
+             );
+             return None;
+         }
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 1bd629d99..6f0a3ba8a 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -21259,7 +21259,7 @@ impl Parser {
+     //
+     // The parser intercepts calls by name "parallel_for" before normal overload
+     // resolution.  Compile-time checks performed here:
+-    // - First arg must be `Type::Function(args, ret)` (a function's bare name or a lambda).
++    // - First arg must be `Type::Function(args, ret)` (produced by `fn <name>` expression).
+     // - Second arg must be `Type::Vector(T, _)`.
+     // - Worker's first parameter must be a reference to T (type checked by name).
+     // - Return type must be a primitive: integer, long, float, or boolean.
+@@ -21299,7 +21299,7 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "reduce requires 3 arguments: reduce(vector, init, f)"
++                "reduce requires 3 arguments: reduce(vector, init, fn f)"
+             );
+             return Type::Unknown(0);
+         }
+@@ -21319,7 +21319,7 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "reduce: third argument must be a function — pass its name, or a lambda `|acc, x| {{ … }}`"
++                "reduce: third argument must be a function reference (use fn <name>)"
+             );
+             return Type::Unknown(0);
+         };

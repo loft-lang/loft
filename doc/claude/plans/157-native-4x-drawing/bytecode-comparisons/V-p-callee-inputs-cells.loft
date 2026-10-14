@@ -60,7 +60,8 @@ fn c3() { cv = grid(); s = 0; for i in 0..3 { cv.width = i + 2; s += cv.getp(1, 
 // c4 — a callee writing the field through ANOTHER parameter name evicts it: plain calls.
 // width 4 → 50, then 2 → 30, then 3 → 40; final width 4.
 fn c4() { cv = grid(); s = 0; for i in 0..3 { s += cv.getp(1, 1); setw(cv, i + 2); } println("c4 {s} {cv.width}"); }
-// c5 — the argument is a field PATH, not a variable: a plain call.  3 × getp(1,0) of a 2×2 = 3 × 2.
+// c5 — the argument is a field PATH (`h.cv`): the twin, its scalars keyed on the root and the
+// summed offset (`hoist::path_scalar`).  3 × getp(1,0) of a 2×2 = 3 × 2.
 fn c5() { h = H { cv: Cv { width: 2, height: 2, data: [1, 2, 3, 4] } }; s = 0; for _k in 0..3 { s += getp(h.cv, 1, 0); } println("c5 {s}"); }
 // c6 — the argument is an OPTIONAL element view (`cvs[k]?`): not a plain record, a plain call.  2 + 6.
 fn c6() {

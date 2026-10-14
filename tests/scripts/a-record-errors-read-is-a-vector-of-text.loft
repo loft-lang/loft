@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `record#errors` is a `vector<text>` the reader owns: it is indexed, passed, returned,
+// stored and appended to like any other, and what the reader does to its copy does not reach
+// the entries the next read answers.
+//
+// Axes it MOVES: the position of the read (a loop element, an index, a format, an argument,
+// a return, a struct field, a local that is appended to, a loop body's local, an `if` arm, an
+// element of a vector of vectors), the document (malformed, a field of the wrong type), and
+// whether another parse ran in between.  The entry texts are checked by
+// their documented `line N:M path:X` shape, not by a column.
+//
+// @falsified-at: 1895c78f0 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-record-errors-read-is-a-vector-of-text.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the control refuses the file at compile time, so no cell runs there.
+//   WITNESS: the control reports *expected vector<text>, got text on return from block* at
+//   `errors_of`'s tail and *on argument 1 of call to entries*.
+//   HOLDS: leak, panic and free-refusal are clean on both trees; the counts the control CAN
+//   compile are scored in the sibling file, on the assertion channel.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct ErrShape { val: integer }
+struct ErrField { a: integer, b: integer }
+struct ErrHolder { items: vector<text> }
+
+fn entries(v: vector<text>) -> integer { len(v) }
+
+fn errors_of(doc: text) -> vector<text> {
+  r = ErrShape.parse(doc);
+  r#errors
+}
+
+fn main() {
+  bad = ErrShape.parse(`not_json`);
+
+  seen = "";
+  for e in bad#errors { seen += "<{e}>"; }
+  assert(seen.starts_with("<line 1:") and seen.ends_with("path:>"), "a loop element is one whole entry: {seen}");
+
+  first = bad#errors[0];
+  assert_eq("<{first}>", seen, "the first index is that entry");
+  assert_eq("{bad#errors}", "[\"{first}\"]", "a format shows the vector");
+  assert_eq(entries(bad#errors), 1, "an argument is the vector");
+
+  wrong = ErrField.parse(`{{"a":"x","b":2}}`);
+  assert(wrong#errors[0].ends_with("path:a"), "the entry names the field: {wrong#errors[0]}");
+
+  mine = wrong#errors;
+  mine += ["extra"];
+  assert_eq(len(mine), 2, "the reader's copy grew");
+  assert_eq(mine[1], "extra", "by the element it appended");
+  assert_eq(len(wrong#errors), 1, "and the next read is untouched");
+
+  held = ErrHolder { items: wrong#errors };
+  assert_eq(len(held.items), 1, "a field holds the entries");
+  assert(held.items[0].ends_with("path:a"), "the field's entry is the same one: {held.items[0]}");
+
+  grown = 0;
+  for round in 0..3 {
+    each = wrong#errors;
+    each += ["round {round}"];
+    grown += len(each);
+  }
+  assert_eq(grown, 6, "a loop body takes a fresh read each round and grows only its own");
+
+  picked = if len(wrong#errors) > 0 { wrong#errors } else { mine };
+  assert_eq(len(picked), 1, "an if arm answers the read");
+  other = if len(wrong#errors) == 0 { wrong#errors } else { mine };
+  assert_eq(len(other), 2, "and the arm not taken leaves the other value");
+
+  rounds: vector<vector<text>> = [];
+  rounds += [wrong#errors];
+  rounds += [wrong#errors];
+  assert_eq(len(rounds) * 10 + len(rounds[1]), 21, "a vector of vectors holds each read as an element");
+  assert(rounds[1][0].ends_with("path:a"), "and the element's entry is whole: {rounds[1][0]}");
+
+  returned = errors_of(`nope`);
+  assert_eq(len(returned), 1, "a function returns the entries of its own parse");
+  assert_eq("<{returned[0]}>", seen, "the same entry the first document gave");
+  assert_eq(len(errors_of(`{{"val":1}}`)), 0, "and none for a good document");
+  assert_eq(len(held.items), 1, "the field kept its entries across those parses");
+  assert_eq(len(mine), 2, "and so did the local");
+
+  println("record#errors shapes ok");
+}

@@ -281,7 +281,7 @@ fn main() {
   assert(len(idc.path) == 1 && (idc.path[0] ?? -9) == idc.position,
     "S7b direct path [{len(idc.path)}]");
 
-  spots: spatial<Person[id, score]> = [];
+  spots: spatial<Person[id]> = [];
   ti_spots = type_of(spots);
   ts = derive(ti_spots);
   assert(!ts.table_ok(), "a spatial collection has no SQL shape");

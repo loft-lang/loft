@@ -72,7 +72,11 @@ The runner:
    single `vector<text>` parameter when `@ARGS` provides argv).
 3. Applies the optional `::name` or `::{a,b}` filter to select specific functions.
 4. Runs each test function independently.  A failed `assert` marks the test as
-   failed but does not abort the run.
+   failed but does not abort the run.  The file is compiled ONCE and each test gets a
+   fresh runtime over it (`State::fork_program`): its own heap, the compiled constants
+   shared read-only, so a test's time does not grow with the number of tests beside it.
+   `LOFT_TEST_RECOMPILE=1` recompiles per test instead (an A/B switch); a `LOFT_LOG` dump
+   always does.
 5. Reports per-file and per-directory summaries.
 6. Exits with code 0 if all tests pass, 1 if any fail.
 
@@ -122,7 +126,8 @@ test result: FAILED. 1 failed; 5 passed; 6 total; 2 files  [ran on the interpret
 **The result line names the backend it came from.**  `loft test` and `loft test
 --native` each exercise exactly ONE backend, and a bare `ok` cannot tell a clean other backend
 from one never compiled.  The note rides on the DEFAULT path, because that is the run people
-read as covering both.
+read as covering both.  On a machine with no `rustc`, where `loft test --native` cannot run, it
+names that instead: `native not exercised: no rustc on PATH, …` (@C102).
 
 Under `--native` the note also reports `N skipped` — tests counted as passing
 that never ran on that backend (`@EXPECT_FAIL` / `@IGNORE`, or a file with no

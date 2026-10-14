@@ -1,0 +1,178 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-RefHome`, `@FR-H-RefSet`, `@FR-H-Removed` — the stored references `(H-RefHome)`
+// admits read the record they name, and a reassignment empties rather than frees.  The refused
+// shapes are `a-stored-reference-cannot-outlive-the-record-it-names.loft`.  Each cell holds a
+// distinctive value behind the reference and checks it, the collection and its neighbours:
+//
+// - REASSIGNED (loft#1973): a local vector a reference names into is emptied in place when
+//   reassigned — by a literal, a copy of another vector, a call, `[]`, or 200 times in a loop —
+//   so the reference reads null, the local holds its new elements, and a vector made after it
+//   is not read through the reference; a `hash` and a `sorted` local the same, through their
+//   keyed clear.  A loop that reassigns and then re-points keeps the last
+//   pass's record (2).  A local nothing references is reassigned as before.
+// - RE-POINTED: assigning a record literal to a reference field points it at a new record, on a
+//   null holder (5) and on one that named a vector element, whose value stays 1; a variable
+//   assigned to it is aliased (6, then 7 after a write through the variable).
+// - ADMITTED: the holder beside the record's local (22), a literal at function level (5), a
+//   parameter's record stored into a parameter (7), both inside one loop pass (0 + 1 + 2), the
+//   holder an element of the collection holding the record (4), a call result at function
+//   level (7), one reference set from another (3), and a holder copied beside it (8).
+//
+// The REASSIGNED cells read a record of the vector made after the reassignment on the control,
+// and the RE-POINTED literal cells wrote the literal into the record named before.
+//
+// @falsified-at: 081adedbf — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the asserts — the first REASSIGNED cell ends the run on both backends.
+//   WITNESS: after `items = [P { k: 5 }]` the reference was not null: it read a record of the
+//   vector made after the reassignment.
+//   HOLDS: a variable assigned to the field was aliased on the control as well (6, then 7),
+//   probed apart on the interpreter, since the first failing cell ends the control's run.
+
+struct P { k: integer }
+struct H { r: reference<P>? }
+struct K { k: integer, v: integer }
+struct HK { r: reference<K>? }
+struct Bag { items: vector<P>, hs: vector<H> }
+fn mkv(k: integer) -> vector<P> { [P { k: k }, P { k: k + 1 }] }
+fn mk(k: integer) -> P { P { k: k } }
+fn link(h: H, b: Bag) { h.r = b.items[0]; }
+
+fn reassigned_by_literal() {
+  items: vector<P> = [P { k: 1 }, P { k: 22 }];
+  h = H { r: items[1] };
+  items = [P { k: 5 }];
+  other: vector<P> = [P { k: 6 }, P { k: 7 }];
+  assert(h.r == null, "literal: the removed record reads null, got {h.r.k}");
+  assert(len(items) == 1 && items[0].k == 5 && other[1].k == 7, "literal: the vectors");
+  assert("{h}" == "{{r:null}}", "literal: formatted {h}");
+}
+
+fn reassigned_by_copy() {
+  items: vector<P> = [P { k: 1 }, P { k: 22 }];
+  src: vector<P> = [P { k: 8 }, P { k: 9 }, P { k: 10 }];
+  h = H { r: items[1] };
+  items = src;
+  assert(h.r == null && len(items) == 3 && items[2].k == 10, "copy: {len(items)}");
+  src[0].k = 80;
+  assert(items[0].k == 8, "copy: the copy is independent, got {items[0].k}");
+}
+
+fn reassigned_by_call() {
+  items: vector<P> = [P { k: 1 }, P { k: 22 }];
+  h = H { r: items[0] };
+  items = mkv(40);
+  other = mkv(50);
+  assert(h.r == null && len(items) == 2 && items[1].k == 41 && other[0].k == 50, "call");
+}
+
+fn reassigned_empty() {
+  items: vector<P> = [P { k: 1 }, P { k: 22 }];
+  h = H { r: items[1] };
+  items = [];
+  other: vector<P> = [P { k: 6 }, P { k: 7 }];
+  assert(h.r == null && len(items) == 0 && other[1].k == 7, "empty");
+}
+
+fn reassigned_then_repointed_in_a_loop() {
+  items: vector<P> = [];
+  h = H {};
+  for i in 0..3 { items = [P { k: i }]; h.r = items[0]; }
+  assert(h.r.k == 2 && len(items) == 1, "loop: {h.r.k}");
+}
+
+fn reassigned_often() {
+  items: vector<P> = [P { k: 1 }, P { k: 22 }];
+  h = H { r: items[1] };
+  for _ in 0..200 { items = [P { k: 5 }, P { k: 6 }]; }
+  assert(h.r == null && len(items) == 2 && items[1].k == 6, "often: {len(items)}");
+}
+
+fn keyed_reassigned() {
+  s: hash<K[k]> = [K { k: 1, v: 10 }, K { k: 2, v: 20 }];
+  h = HK { r: s[2] };
+  s = [K { k: 5, v: 50 }];
+  o: hash<K[k]> = [K { k: 6, v: 60 }, K { k: 7, v: 70 }];
+  assert(h.r == null && s[5].v == 50 && o[7].v == 70, "hash: {h.r.v}");
+  t: sorted<K[k]> = [K { k: 1, v: 10 }, K { k: 2, v: 20 }];
+  g = HK { r: t[2] };
+  assert(g.r.v == 20, "sorted: before {g.r.v}");
+  t = [K { k: 5, v: 50 }];
+  p: sorted<K[k]> = [K { k: 6, v: 60 }, K { k: 7, v: 70 }];
+  assert(g.r == null && t[5].v == 50 && p[7].v == 70, "sorted: {g.r.v}");
+}
+
+fn unreferenced_reassigned() {
+  items: vector<P> = [P { k: 1 }];
+  assert(items[0].k == 1, "unreferenced: first");
+  items = [P { k: 3 }, P { k: 4 }];
+  assert(len(items) == 2 && items[1].k == 4, "unreferenced");
+}
+
+fn literal_into_a_null_holder() {
+  f = H {};
+  f.r = P { k: 5 };
+  assert(f.r.k == 5, "null holder: {f.r.k}");
+}
+
+fn literal_repoints() {
+  items: vector<P> = [P { k: 1 }, P { k: 2 }];
+  f = H { r: items[0] };
+  f.r = P { k: 5 };
+  assert(f.r.k == 5 && items[0].k == 1, "repoint: r={f.r.k} items0={items[0].k}");
+}
+
+fn variable_aliases() {
+  p = P { k: 6 };
+  f = H {};
+  f.r = p;
+  assert(f.r.k == 6, "variable {f.r.k}");
+  p.k = 7;
+  assert(f.r.k == 7, "variable alias {f.r.k}");
+}
+
+fn admitted() {
+  items: vector<P> = [P { k: 1 }, P { k: 22 }];
+  a = H { r: items[1] };
+  assert(a.r.k == 22, "beside: {a.r.k}");
+  b = H { r: P { k: 5 } };
+  assert(b.r.k == 5, "literal: {b.r.k}");
+  bag = Bag { items: [P { k: 7 }], hs: [] };
+  c = H {};
+  link(c, bag);
+  assert(c.r.k == 7, "parameters: {c.r.k}");
+  t = 0;
+  for i in 0..3 { inner: vector<P> = [P { k: i }]; d = H { r: inner[0] }; t += d.r.k; }
+  assert(t == 3, "one pass: {t}");
+  own = Bag { items: [P { k: 4 }], hs: [] };
+  own.hs += [H { r: own.items[0] }];
+  assert(own.hs[0].r.k == 4, "own collection: {own.hs[0].r.k}");
+  e = H {};
+  e.r = mk(7);
+  assert(e.r.k == 7, "call: {e.r.k}");
+  g = H { r: items[0] };
+  f = H {};
+  f.r = g.r;
+  assert(f.r.k == 1, "from a reference: {f.r.k}");
+  cp: vector<P> = [P { k: 8 }];
+  ch = H { r: cp[0] };
+  side = Bag { items: [], hs: [] };
+  side.hs += [ch];
+  assert(side.hs[0].r.k == 8, "copied beside: {side.hs[0].r.k}");
+}
+
+fn main() {
+  reassigned_by_literal();
+  reassigned_by_copy();
+  reassigned_by_call();
+  reassigned_empty();
+  reassigned_then_repointed_in_a_loop();
+  reassigned_often();
+  keyed_reassigned();
+  unreferenced_reassigned();
+  literal_into_a_null_holder();
+  literal_repoints();
+  variable_aliases();
+  admitted();
+}

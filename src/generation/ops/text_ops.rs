@@ -139,3 +139,123 @@ impl OpEmitter for TextDispatchEmitter {
         emitted
     }
 }
+
+/// `@FR-R-FoldCompare` — a text predicate (`starts_with`, `ends_with`, `==`, `!=`) one of
+/// whose operands is a case fold the program builds only to compare: the fold's argument
+/// and the other operand go to `codegen_runtime::fold_compare`, which answers byte by byte
+/// while both are ASCII and builds the fold only where they are not.  Any other shape —
+/// no fold operand, or the rule off (`LOFT_NO_FOLD_COMPARE`) — is the template.
+pub struct FoldCompareEmitter {
+    /// The predicate, a `codegen_runtime::fold_op` constant.
+    pub op: u8,
+}
+
+/// The fold a predicate operand is, when it is one the predicate is its only reader of: a
+/// bare `to_lowercase` / `to_uppercase` call, or the parser's `synth text dest` block that
+/// fills a work buffer with one and answers that buffer.  Answers the fold's argument and
+/// whether it is the upper fold.  The fallback is `None` — the operand is built as written,
+/// which costs the rewrite and never a value.
+pub(crate) fn case_fold_operand<'a>(
+    data: &crate::data::Data,
+    v: &'a Value,
+) -> Option<(&'a Value, bool)> {
+    let call = match v.unspan() {
+        Value::Block(bl) if bl.name == "synth text dest" && bl.operators.len() == 2 => {
+            let (Value::Set(w, rhs), Value::Var(r)) =
+                (bl.operators[0].unspan(), bl.operators[1].unspan())
+            else {
+                return None;
+            };
+            if w != r {
+                return None;
+            }
+            rhs.unspan()
+        }
+        other => other,
+    };
+    let Value::Call(d, args) = call else {
+        return None;
+    };
+    let [arg] = args.as_slice() else {
+        return None;
+    };
+    if (*d as usize) >= data.definitions.len() {
+        return None;
+    }
+    match data.def(*d).name() {
+        "t_4text_to_lowercase" => Some((arg, false)),
+        "t_4text_to_uppercase" => Some((arg, true)),
+        _ => None,
+    }
+}
+
+pub(crate) fn fold_compare_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_NO_FOLD_COMPARE").map_or(true, |v| v == "0"))
+}
+
+impl OpEmitter for FoldCompareEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(site) = ctx.output.fold_compare_site(args) {
+            crate::rewrite_census::fired("R-FoldCompare", 1);
+            if std::env::var_os("LOFT_TRACE_FOLD_COMPARE").is_some() {
+                eprintln!(
+                    "[fold-compare] {}: `{}` over the {} fold",
+                    ctx.output.data.def(ctx.output.def_nr).name(),
+                    ctx.def_fn.name(),
+                    if site.upper { "upper" } else { "lower" }
+                );
+            }
+            let (op, fold_right, upper) = (self.op, site.fold_right, site.upper);
+            write!(
+                ctx.w,
+                "loft::codegen_runtime::fold_compare({op}, {fold_right}, {upper}, &*("
+            )?;
+            ctx.emit(site.arg)?;
+            write!(ctx.w, "), &*(")?;
+            ctx.emit(site.other)?;
+            return write!(ctx.w, "))");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
+/// A `@FR-R-FoldCompare` site: the fold's argument, the other operand, and where the fold
+/// stood.
+pub(crate) struct FoldSite<'a> {
+    pub arg: &'a Value,
+    pub other: &'a Value,
+    pub fold_right: bool,
+    pub upper: bool,
+}
+
+impl crate::generation::Output<'_> {
+    /// The `@FR-R-FoldCompare` site a predicate's `args` are, when the rule is on, one
+    /// operand is a fold the predicate alone reads, and neither the fold's argument nor the
+    /// other operand holds work a `let _pre_N` would lift: then the emitter reads both
+    /// inline, in either order, and the fold is never built.  ONE question for the two
+    /// sides — `pre_eval` must not lift the fold the emitter does not read, or it is built
+    /// in front of the statement for nothing.  `None` keeps the template and its lifts.
+    pub(crate) fn fold_compare_site<'a>(&self, args: &'a [Value]) -> Option<FoldSite<'a>> {
+        if !fold_compare_on() {
+            return None;
+        }
+        let [left, right] = args else {
+            return None;
+        };
+        for (fold_right, (folded, other)) in [(false, (left, right)), (true, (right, left))] {
+            if let Some((arg, upper)) = case_fold_operand(self.data, folded)
+                && self.plain_operand(arg)
+                && self.plain_operand(other)
+            {
+                return Some(FoldSite {
+                    arg,
+                    other,
+                    fold_right,
+                    upper,
+                });
+            }
+        }
+        None
+    }
+}

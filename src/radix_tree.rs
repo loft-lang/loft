@@ -794,9 +794,32 @@ pub fn rtree_len(store: &Store, tree: u32) -> u32 {
     store.get_u32_raw(tree, LEN)
 }
 
+/// The tree's own footprint: its node array, room included (`CAP` nodes of `NODE_SIZE`
+/// bytes), the header word left out — what `size` reports, allocation-local as a hash's
+/// bucket table is.
+#[must_use]
+pub fn rtree_bytes(store: &Store, tree: u32) -> u32 {
+    store.get_u32_raw(tree, CAP) * NODE_SIZE
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+
+/// A test's collection field: a one-word host record in store 0 whose slot at offset 4 names
+/// the EMPTY tree.  The slot is WRITTEN, as a record's construction writes a collection
+/// field's default — a claim promises no value (`@FR-H-Claim`), so a fixture that only
+/// claims hands `add` whatever bytes the block held.
+#[cfg(test)]
+pub(crate) fn empty_collection(store: &mut Store) -> crate::keys::DbRef {
+    let rec = store.claim(1);
+    store.set_u32_raw(rec, 4, 0);
+    crate::keys::DbRef {
+        store_nr: 0,
+        rec,
+        pos: 4,
+    }
+}
 
 /// Claim an empty tree with room for `initial` nodes; returns its record id.
 ///

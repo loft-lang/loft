@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1985, `@FR-H-View` — `vector<T>.parse(text)` answers the vector itself, so the variable
+// it is bound to owns the store.  Read as a field of the call instead, the same address was
+// a view of a lifted temporary that nothing recorded: a local bound to it and returned, or
+// bound inside a block and read after it, named a store that was already freed.
+//
+// Axes it MOVES: where the bound local goes (returned, returned after growing, returned
+// through `if` arms, returned as a nullable, returned two functions deep, stored into a
+// record that is returned), where it is bound (a function's body, a block whose variable
+// outlives it, a loop body copied out, a `&` parameter), the caller's use (read, rebound,
+// two thousand calls), the growth after a parse that read nothing, and the spelling (the
+// method, the `as` cast).  Every value is hand-computed.
+//
+// @falsified-at: 5bfcbdf83 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1985-a-parsed-vector-is-owned-by-what-binds-it.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the control compiles this file and reads freed stores.
+//   WITNESS: the control fails *returned through `if` arms: got 1 7 1 7, want 2 42 1 7*.  The
+//   cells before it pass there by reading a freed store whose bytes are still in place:
+//   under `LOFT_STRICT_STORES=1` the first one is reported as a use after free, and
+//   `--native` answers `0 0` for the block and the nullable cells.
+//   HOLDS: a parse returned as a function's tail, the cast spelling, a `&` parameter and a
+//   loop's local copied out answer the same on both trees.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct OwnItem { v: integer }
+struct OwnBox { items: vector<OwnItem>, n: integer }
+
+fn own_total(v: vector<OwnItem>) -> integer {
+  n = 0;
+  for e in v { n += e.v; }
+  n
+}
+
+fn own_local(t: text) -> vector<OwnItem> {
+  s = vector<OwnItem>.parse(t);
+  s
+}
+
+fn own_grown(t: text) -> vector<OwnItem> {
+  s = vector<OwnItem>.parse(t);
+  s += [OwnItem { v: 9 }];
+  s
+}
+
+fn own_block(c: boolean) -> vector<OwnItem> {
+  s: vector<OwnItem> = [];
+  if c { s = vector<OwnItem>.parse(`[{{"v":41}},{{"v":1}}]`); }
+  s
+}
+
+fn own_arms(c: boolean) -> vector<OwnItem> {
+  a = vector<OwnItem>.parse(`[{{"v":41}},{{"v":1}}]`);
+  b = vector<OwnItem>.parse(`[{{"v":7}}]`);
+  if c { a } else { b }
+}
+
+fn own_maybe(t: text) -> vector<OwnItem>? {
+  if len(t) == 0 { return null; }
+  s = vector<OwnItem>.parse(t);
+  s
+}
+
+fn own_outer(t: text) -> vector<OwnItem> {
+  r = own_local(t);
+  r
+}
+
+fn own_cast(t: text) -> vector<OwnItem> {
+  s = t as vector<OwnItem>;
+  s
+}
+
+fn own_boxed(t: text) -> OwnBox {
+  s = vector<OwnItem>.parse(t);
+  OwnBox { items: s, n: 1 }
+}
+
+fn own_fill(v: &vector<OwnItem>, t: text) { v = vector<OwnItem>.parse(t); }
+
+fn a_returned_local_owns_its_elements() {
+  s = own_local(`[{{"v":41}},{{"v":1}}]`);
+  assert_eq("{len(s)} {own_total(s)}", "2 42", "a local, returned");
+  g = own_grown(`[{{"v":41}},{{"v":1}}]`);
+  assert_eq("{len(g)} {own_total(g)}", "3 51", "grown, then returned");
+  d = own_outer(`[{{"v":41}},{{"v":1}}]`);
+  assert_eq("{len(d)} {own_total(d)}", "2 42", "two functions deep");
+  c = own_cast(`[{{"v":41}},{{"v":1}}]`);
+  assert_eq("{len(c)} {own_total(c)}", "2 42", "the cast spelling");
+  w = own_boxed(`[{{"v":41}},{{"v":1}}]`);
+  assert_eq("{len(w.items)} {own_total(w.items)} {w.n}", "2 42 1", "stored into a returned record");
+}
+
+fn a_branch_or_a_block_does_not_end_the_vector() {
+  taken = own_arms(true);
+  other = own_arms(false);
+  assert_eq("{len(taken)} {own_total(taken)} {len(other)} {own_total(other)}", "2 42 1 7", "returned through `if` arms");
+  full = own_block(true);
+  empty = own_block(false);
+  assert_eq("{len(full)} {own_total(full)} {len(empty)}", "2 42 0", "bound inside a block, returned after it");
+  s: vector<OwnItem> = [];
+  if len("a") == 1 { s = vector<OwnItem>.parse(`[{{"v":41}},{{"v":1}}]`); }
+  assert_eq("{len(s)} {own_total(s)}", "2 42", "bound inside a block, read after it");
+  some = own_maybe(`[{{"v":41}},{{"v":1}}]`);
+  none = own_maybe(``);
+  a = if some != null { own_total(some) } else { -1 };
+  b = if none != null { own_total(none) } else { -1 };
+  assert_eq("{a} {b}", "42 -1", "a nullable return");
+  keep: vector<OwnItem> = [];
+  for doc in [`[{{"v":41}},{{"v":1}}]`, `[{{"v":7}}]`] {
+    r = vector<OwnItem>.parse(doc);
+    keep = r;
+  }
+  assert_eq("{len(keep)} {own_total(keep)}", "1 7", "a loop's local, copied out");
+}
+
+fn the_caller_may_rebind_and_repeat() {
+  s = own_local(`[{{"v":41}},{{"v":1}}]`);
+  first = own_total(s);
+  s = own_local(`[{{"v":7}}]`);
+  assert_eq("{first} {len(s)} {own_total(s)}", "42 1 7", "rebound from a second call");
+  n = 0;
+  for _ in 0..2000 {
+    again = own_local(`[{{"v":41}},{{"v":1}}]`);
+    n += own_total(again);
+  }
+  assert_eq(n, 84000, "two thousand calls, each freed");
+  target = [OwnItem { v: 3 }];
+  own_fill(target, `[{{"v":41}},{{"v":1}}]`);
+  assert_eq("{len(target)} {own_total(target)}", "2 42", "written through a `&` parameter");
+}
+
+fn a_parse_that_read_nothing_still_grows() {
+  s = vector<OwnItem>.parse(`nope`);
+  before = len(s);
+  s += [OwnItem { v: 5 }];
+  assert_eq("{before} {len(s)} {own_total(s)}", "0 1 5", "a failed parse, then a push");
+  p = vector<OwnItem>.parse(`[{{"v":41}},{{"v":1}}]`);
+  p += [OwnItem { v: 9 }];
+  assert_eq("{len(p)} {own_total(p)}", "3 51", "a good parse, then a push");
+}
+
+fn main() {
+  a_returned_local_owns_its_elements();
+  a_branch_or_a_block_does_not_end_the_vector();
+  the_caller_may_rebind_and_repeat();
+  a_parse_that_read_nothing_still_grows();
+  println("parsed vector ownership ok");
+}

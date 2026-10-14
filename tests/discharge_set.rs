@@ -10,22 +10,25 @@
 //! itself keeps them (c2), a callee that sets a text into an ELEMENT of the walked vector
 //! keeps nothing (c3), and the switch (`LOFT_NO_NULL_BUFFER_HOIST=1`, which covers the mint
 //! and the set) empties c1.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft";
 
 /// `(function, push headers, vector headers)` — predictions written beside the cells.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    ("n_c1", 1, 2), // out's push header; st.nodes and st.seqs read through headers
+    // out's push header; st.nodes and st.seqs read through headers — in each of the two copies
+    // `@FR-R-Alias`'s versioned clause emits (`n`'s address held where `out` is apart)
+    ("n_c1", 2, 4),
     ("n_c2", 0, 2), // no push; the two headers, the fallback discharged in the body
     ("n_c3", 0, 0), // rename grows an element's text: the walk reads through the runtime
     ("n_c4", 0, 1), // the callee misses on every call: the loop keeps its one header
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -35,12 +38,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(push headers, vector headers)`.
@@ -81,7 +84,7 @@ fn each_loop_keeps_exactly_the_headers_predicted() {
             "{name}: (push headers, vector headers)"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -92,5 +95,5 @@ fn the_switch_declines_the_discharging_callees_loop() {
         got["n_c1"].0, 0,
         "with the allowance off, c1's loop holds no push header"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

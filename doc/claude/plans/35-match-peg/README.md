@@ -29,7 +29,7 @@ corrects several assumptions.  The examples further down use the idealized shape
 - **No tuple-style enum variants.**  loft has only STRUCT variants: write `Num { v: integer }`,
   not `Num(integer)`; `Neg { inner: … }`, not `Neg(Expr)`.  Every `Num(n)` / `Ident(name)`
   example below is shorthand for `Num { v: n }` / `Ident { name }`.  (Decision **D5** /
-  [C89](../../DESIGN_DECISIONS.md): tuple variants are a PERMANENT non-goal — they force
+  [@C89](../../DESIGN_DECISIONS.md): tuple variants are a PERMANENT non-goal — they force
   match-to-read plus a mitigation-syntax sprawl; loft reads enum payloads by name.)
 - **Recursion goes through a collection, not an inline field.**  `Neg { inner: Expr }` fails
   type-layout (an inline self-reference has no size); an AST enum uses

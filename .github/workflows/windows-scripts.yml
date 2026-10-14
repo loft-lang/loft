@@ -1,0 +1,53 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# @PLN184 D4 — every script with a listed invocation runs on windows-latest, nightly: the
+# cheapest call that still loads it (`--help` of an argparse script, a shell script's own
+# `--help`).  A script that cannot even start on Windows shows here before anyone needs it.
+# The list is scripts/windows_smoke.tsv; a script missing from it is counted by the platform
+# census.  Porting a script to loft is @PLN179's (a port runs wherever loft runs).
+name: windows-scripts
+
+on:
+  schedule:
+    - cron: '20 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
+jobs:
+  smoke:
+    name: scripts start on Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run each listed invocation
+        shell: bash
+        run: |
+          fail=0; n=0
+          while IFS=$'\t' read -r script args; do
+            case "$script" in ''|'#'*) continue ;; esac
+            n=$((n + 1))
+            case "$script" in
+              *.py) cmd=(python "$script") ;;
+              *)    cmd=(bash "$script") ;;
+            esac
+            if out=$(timeout 60 "${cmd[@]}" $args 2>&1); then
+              echo "ok    $script $args"
+            else
+              rc=$?; fail=$((fail + 1))
+              echo "::error file=$script::$script $args exited $rc on Windows"
+              printf '%s\n' "$out" | tail -5
+            fi
+          done < scripts/windows_smoke.tsv
+          echo "$n invocations, $fail failed"
+          [ "$fail" -eq 0 ]

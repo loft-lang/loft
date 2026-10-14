@@ -1,6 +1,7 @@
 //! Validation for the `loft::host` Rust→loft call API (P1).
 //! The load-bearing check: a host `call(f, args)` equals an in-language call of `f`.
 
+use loft::file_access as fa;
 use loft::host::{LoftError, Program, Value};
 
 const SRC: &str = r#"
@@ -176,7 +177,7 @@ fn runtime_error_surfaces() {
 #[test]
 fn formatter_dogfood() {
     // The driver: call the loft-written formatter's `format(text) -> text`.
-    let src = std::fs::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
     let mut p = Program::from_source(&src).expect("formatter compiles");
     let input = "struct P{x:integer,y:integer}\n";
     let out = p
@@ -198,7 +199,7 @@ fn formatter_enum_variant_if_body_is_a_block() {
     // loft.  The formatter mirrors the compiler here: a dotted name (`Format.Directory`)
     // is an enum-value access, never a struct construction (see objects.rs::parse_object,
     // gated on `Name` being a Struct/EnumValue type + the next token being `{`).
-    let src = std::fs::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
     let mut p = Program::from_source(&src).expect("formatter compiles");
     let input =
         "enum E { A, B }\nfn f(m: E) {\n  if m == E.A {\n    x = 1;\n    print(\"{x}\");\n  }\n}\n";
@@ -238,7 +239,7 @@ fn formatter_qualified_variant_before_block_is_not_a_struct_lit() {
     // wrapping body was then rendered as comma-separated "elements", emitting invalid `;,`.  The
     // fix confirms against the body: a struct/variant literal holds `field:` pairs and never a
     // statement, so a `;`-bearing body is a block whatever precedes the brace.
-    let src = std::fs::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
     let mut p = Program::from_source(&src).expect("formatter compiles");
     // a long body so a mis-rendered container WRAPS and exposes the `;,` (an inline one hides it).
     let input = "enum Light { Point }\nfn f(lt: Light) -> text {\n  out = \"\";\n  if lt == Light::Point { aaaaaa = 111111; bbbbbb = 222222; cccccc = 333333; out += \"translation data here\"; }\n  out\n}\n";
@@ -271,7 +272,7 @@ fn formatter_width_counts_characters_not_bytes() {
     // one line. When width was measured with `size(text)` (which became the BYTE count
     // at the flip), the formatter over-measured multi-byte lines and wrapped ones that
     // visually fit — the fix uses `len` (characters) for column/width math.
-    let src = std::fs::read_to_string("tools/fmt/whole.loft").expect("formatter source");
+    let src = fa::read_to_string("tools/fmt/whole.loft").expect("formatter source");
     let mut p = Program::from_source(&src).expect("formatter compiles");
     let input = "fn f(a: integer, b: integer) {\n  assert(a == b, \"mismatch —  —  —  —  —  —  — end padding to reach target length here\");\n}\n";
     let out = p

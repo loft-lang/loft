@@ -70,6 +70,8 @@ permissions:
   actions: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # Harden crate downloads against the transient crates.io HTTP/2 flake
@@ -117,6 +119,7 @@ jobs:
   # name, so without the shim the three required contexts never appear and the
   # PR sits BLOCKED forever.
   changes:
+    # @windows-exempt: platform-free — classifies the diff
     name: Classify diff
     runs-on: ubuntu-latest
     outputs:
@@ -194,8 +197,10 @@ jobs:
             # The limit is not the lever (the owner, 2026-09-24: never raise it); the legs are.
             # Each leg pays the ~17 min build, and the tests divide.  Branch protection's
             # `Test (windows-latest)` is the PR-path placeholder job, unaffected by the names
-            # these legs carry.
-            echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            # these legs carry.  Ubuntu is sharded the same way: unsharded, the whole suite on
+            # one runner filled its disk (`No space left on device`, the runner lost mid-Test,
+            # on every push to main from 2026-10-07).
+            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           fi
       - id: diff
         shell: bash
@@ -226,6 +231,7 @@ jobs:
   # the `mergeable into main` context to branch protection's required checks so
   # a red here blocks merge.
   mergeable:
+    # @windows-exempt: platform-free — asks git whether the branch merges
     name: mergeable into main
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -260,6 +266,7 @@ jobs:
   # publish and registry-merge would be red for hours after each release, across work
   # that has nothing to do with it — which teaches everyone to merge past a red check.
   release-published:
+    # @windows-exempt: platform-free — reads the registry
     name: previous release reached the registry
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -278,6 +285,7 @@ jobs:
   # see the `on:` comment), so there is nothing to shim for it.  Both legs run on
   # ubuntu: the matrix value names the check, never runs anything OS-specific.
   test-skip:
+    # @windows-exempt: platform-free — reports a docs-only skip for every matrix leg
     name: Test (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.code == 'false'
@@ -297,6 +305,7 @@ jobs:
   # remove `Test (windows-latest)` from branch protection's required contexts —
   # a repo-settings change; left required here so this needs no settings change.
   windows-pr-placeholder:
+    # @windows-leg: reports the daily windows-latest Test run on a PR
     name: Test (windows-latest)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -311,6 +320,7 @@ jobs:
   # push-to-main and daily.  Left required here so no branch-protection change is
   # needed; drop the context from the required set to retire this job.
   macos-pr-placeholder:
+    # @windows-exempt: platform-free — reports the macOS run
     name: Test (macos-latest)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -318,6 +328,7 @@ jobs:
       - run: echo "macOS full suite runs on push-to-main + daily (off the PR matrix). Per-PR macOS coverage is Miri-macOS + the ASan-macOS UAF/OOB sweep. This required context is a non-blocking placeholder on PRs."
 
   test:
+    # @windows-leg: the legs come from changes.outputs.legs: windows-latest on push to main and daily
     name: Test (${{ matrix.os }})${{ matrix.shard && format(' [{0}]', matrix.shard) || '' }}
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -457,7 +468,7 @@ jobs:
       # 2106 KB on the run that caught this) and the name section never appears.
       - name: Install mold + ALSA + headless GL + sqlite + binaryen (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
 
       # The repo's cache budget is 10 GB, evicted least-recently-used, and it is
       # the binding constraint on everything below.  Measured 2026-09-28: one run
@@ -676,12 +687,15 @@ jobs:
       - name: Install wasm target (for html_wasm tests)
         run: rustup target add wasm32-unknown-unknown
 
+      # Built into the `--html` shape's own directory, `target/loft/html` — the rlib `loft
+      # --html` links and the surface probe reads, where `make wasm`'s wasm-bindgen build cannot
+      # overwrite it.  A copy built anywhere else is a second build of the same rlib: the warm
+      # step below builds this one regardless (~40 s of the same compile).
       - name: Build wasm rlib (for html_wasm tests)
-        run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
+        run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html
 
-      # The `--html` runtime rlib is a DIFFERENT artifact from the one above: the Html shape
-      # builds into its own target dir (`target/loft/html`) and is keyed on loft's build
-      # fingerprint, which moves on every commit.  Unwarmed, the first `--html` test in each
+      # The `--html` runtime rlib is keyed on loft's build fingerprint, which moves on every
+      # commit; the warm step stamps the rlib built above with it.  Unwarmed, the first `--html` test in each
       # shard built it inside the parallel suite, contended by every other test's rustc, and
       # the rest queued on the global build lock: `html_gl_imports` took 257 s and then 307 s,
       # past the duration gate's 300 s.  Built here alone it is ~1 min; this is the step
@@ -778,17 +792,10 @@ jobs:
           # the `heavy-serial` membership straight out of .config/nextest.toml
           # rather than restating it.
           FILTER="$(python3 scripts/ci_test_filter.py "${{ github.event_name }}" ${{ matrix.shard }})"
-          # A PR run is FEEDBACK — stop at the first failure, the author fixes it
-          # and pushes again, and the runner minutes go to the next PR.  The
-          # nightly and push-to-main runs are REPORTS: they are nobody's inner
-          # loop, and fail-fast makes them surface at most ONE break per run.
-          # Windows pays for that worst of all — it runs on these events only, so
-          # every Windows bug costs a whole night, and the 2026-07-21 nightly
-          # stopped with 875 of 3029 tests unrun.  Drain the whole set instead.
-          FAILFAST=""
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            FAILFAST="--no-fail-fast"
-          fi
+          # Every run drains the whole set, a PR's included: fail-fast surfaces at
+          # most ONE break per shard per run, so a PR with several breaks is fixed
+          # one push at a time while the rest sit unrun behind the first.
+          FAILFAST="--no-fail-fast"
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}"
           # `rest-a/b/c` are one filterset split by nextest's own partitioner: the shard
           # letter picks the slice.  Partitioning is over TESTS, so a single long binary
@@ -812,7 +819,17 @@ jobs:
             rest-c) PART="--partition slice:3/3" ;;
           esac
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}${PART:+ }$PART"
-          cargo nextest run --profile ci $FAILFAST $PART -E "$FILTER"
+          #
+          # Two passes, as `make ci` runs them: the main pass without the starvation victims
+          # (the rustc-storm makers run wide in the `ci` profile), then the victims ALONE in
+          # `ci-victims`, after every storm has ended.  They live in the `heavy` shard; on the
+          # others their pass selects nothing.  Its junit lands in target/nextest/ci-victims/,
+          # so the duration and speed gates below still read the main pass's report.
+          VICTIMS="$(python3 scripts/ci_test_filter.py victims)"
+          rc=0
+          cargo nextest run --profile ci $FAILFAST $PART -E "($FILTER) - ($VICTIMS)" || rc=$?
+          cargo nextest run --profile ci-victims $FAILFAST --no-tests=pass -E "($FILTER) & ($VICTIMS)" || rc=$((rc + $?))
+          exit $rc
 
       # Every test finishes inside HALF its per-test limit (the `ci` profile's slow-timeout).
       # The limit is a hang guard, and a healthy test that reaches half of it is one noisy
@@ -852,6 +869,17 @@ jobs:
         with:
           name: nextest-junit-${{ matrix.os }}-${{ matrix.shard || 'full' }}
           path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
+      # The timing ledger every loft process the tests started wrote: phases, the program's own
+      # compile, build steps, each row naming its test — what `scripts/timing_compare.py
+      # run:<id>` compares between two runs (PERFORMANCE.md § Front-end speed).
+      - name: Keep the timing ledger
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-ledger-${{ matrix.os }}-${{ matrix.shard || 'full' }}
+          path: ${{ env.LOFT_TIMING_LEDGER }}
           retention-days: 14
           if-no-files-found: ignore
       # The GL gold's own screenshot, when the test step went red: the gold is compared on the
@@ -907,7 +935,7 @@ jobs:
       - name: Browser asyncify (nightly — off the flaky PR path)
         if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         shell: bash
-        run: cargo nextest run --profile ci -E 'binary(html_asyncify)'
+        run: cargo nextest run --profile ci --test html_asyncify
 
       # @PLN89 differential oracle (formal/operational.md D-op-1/2): the full
       # cross-backend agreement sweep — every `tests/oracle/*.loft` run on BOTH
@@ -1121,6 +1149,7 @@ jobs:
   # condition so it stays mutually exclusive with the `test-skip` shim, which
   # publishes this same context on a docs-only diff.
   test-pr-gate:
+    # @windows-exempt: platform-free — aggregates the Test legs
     name: Test (ubuntu-latest)
     needs: [changes, test]
     if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
@@ -1141,6 +1170,7 @@ jobs:
   # wasm / html tests spawn, so running those here would add cost without
   # coverage.
   guard:
+    # @windows-exempt: a platform-independent invariant sweep (stack alignment); the corpus runs on windows-latest daily
     name: stack_align_guard sweep (ubuntu)
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1150,7 +1180,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1216,6 +1246,7 @@ jobs:
   # a doc ref/link breaks) but never blocks the merge.  The authoritative daily
   # catch runs nightly (miri.yml).
   index-hygiene:
+    # @windows-exempt: platform-free — checks the tracker index text
     name: doc index hygiene (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1223,7 +1254,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache (saved on main): this job builds the
       # same release `loft`, so a cache of its own only competed for the 10 GB budget.
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
@@ -1251,7 +1282,7 @@ jobs:
         # panics with `make index exited 2 / host loft binary missing`.
         run: cargo build --release --bin loft
       - name: Index hygiene (broken @-tags + markdown links)
-        run: cargo nextest run --profile ci -E 'binary(index_hygiene)'
+        run: cargo nextest run --profile ci --test index_hygiene
       - name: Feature-catalogue shadow in sync (@PLN92 strand 3)
         # Regenerates doc/features/ + tests/docs/features/ from the committed
         # index/features.json snapshot and fails on any diff — the no-drift
@@ -1271,6 +1302,7 @@ jobs:
   # `oracle_leak_scan_ratchet`.  ADVISORY (not in required-status-checks): red on a PR that adds
   # a finding, never blocking the merge.
   leak-scan:
+    # @windows-exempt: a platform-independent invariant sweep (ownership leaks); the corpus runs on windows-latest daily
     name: ownership leak scan (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1278,7 +1310,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache, as `index-hygiene` does: the path list must stay
       # IDENTICAL to that job's, or the restore never matches.
       - name: Restore cargo registry and build (the test job's, read-only)
@@ -1300,6 +1332,64 @@ jobs:
       - name: Leak scan over tests/scripts (0 findings)
         run: cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored
 
+  # The front end's allocation pins (`tests/frontend_counts.rs`, `bench/frontend/allocations.tsv`):
+  # an exact count per compile that may only fall.  ADVISORY (not in required-status-checks): a
+  # moved count is a measurement to explain or re-pin, so it shows red HERE and does not fail
+  # a test leg or the merge.  Both rows, release and debug, since each is pinned.
+  frontend-pins:
+    # @windows-exempt: a per-platform allocation pin; rows for other platforms report unpinned by design
+    name: front-end allocation pins (ubuntu, advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
+      # Read-only, from the `test` job's cache, as `leak-scan` does: the path list must stay
+      # IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      - name: Release row
+        env:
+          LOFT_FRONTEND_REPORT: ${{ runner.temp }}/frontend.tsv
+        run: cargo test --release --test frontend_counts -- --ignored
+      - name: Debug row
+        if: always()
+        env:
+          LOFT_FRONTEND_REPORT: ${{ runner.temp }}/frontend.tsv
+        run: cargo test --test frontend_counts -- --ignored
+      # The counts this runner measured, in bench/frontend/allocations.tsv's own form, beside
+      # what is pinned: a re-pin is a paste of these rows, so it never rests on one box's numbers.
+      - name: Measured counts (paste into bench/frontend/allocations.tsv to re-pin)
+        if: always()
+        run: |
+          f="${{ runner.temp }}/frontend.tsv"
+          {
+            echo "### Front-end allocations measured on this runner"
+            echo
+            echo "measured (paste these rows to re-pin):"
+            echo '```'
+            sort "$f" 2>/dev/null || echo "(no counts — the test did not run)"
+            echo '```'
+            echo "pinned:"
+            echo '```'
+            grep -v '^#' bench/frontend/allocations.tsv
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   # WASM node bridge — build the wasm-pack nodejs bundle and RUN the binary-I/O
   # bridge tests (tests/wasm/bridge.test.mjs).  The per-platform `Test` job's
   # `wasm_compile_and_run_smoke` self-SKIPS whenever tests/wasm/pkg/ is absent —
@@ -1314,6 +1404,7 @@ jobs:
   # stable.  (The seeded-`rand` case was dropped — `rand` moved to the `random`
   # library, @PLAN12, and is not in the core bundle these tests drive.)
   wasm-bridge:
+    # @windows-exempt: platform-free — runs the wasm bundle under node
     name: wasm node bridge (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1348,6 +1439,7 @@ jobs:
   # an admin promotes it to required.  Catches staleness a change INTRODUCES; the
   # existing stale-bundle debt is a one-off rebuild (release checklist item B).
   bundle-fresh:
+    # @windows-exempt: platform-free — compares a stamp
     name: browser bundle freshness (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1372,6 +1464,7 @@ jobs:
   # renderer regression shows red without blocking the merge (the rendering logic
   # is also covered by the lib/markdown unit tests in the required `Test` job).
   viewer-smoke:
+    # @windows-exempt: platform-free — the markdown viewer renders HTML
     name: markdown viewer smoke (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1379,7 +1472,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache (saved on main): this job builds the
       # same release `loft`, so a cache of its own only competed for the 10 GB budget.
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
@@ -1403,9 +1496,10 @@ jobs:
       - name: Build release loft binary
         run: cargo build --release --bin loft
       - name: Markdown viewer smoke (isolated — no native-build contention)
-        run: cargo nextest run --profile ci -E 'binary(viewer_markdown)'
+        run: cargo nextest run --profile ci --test viewer_markdown
 
   fixtures-check:
+    # @windows-exempt: platform-free — compares fixture trees with pinned tags
     name: lib fixtures vs pinned tags (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1420,6 +1514,7 @@ jobs:
         run: scripts/sync-fixtures.sh --check
 
   fixtures-unreleased:
+    # @windows-exempt: platform-free — compares fixture files with their repositories
     name: fixture files the canonical repo lacks (ubuntu, GATED)
     runs-on: ubuntu-latest
     steps:
@@ -1444,6 +1539,7 @@ jobs:
         run: scripts/sync-fixtures.sh --check-unreleased
 
   registry-coverage:
+    # @windows-exempt: platform-free — reads the registry index
     name: library registry coverage (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1459,6 +1555,7 @@ jobs:
         run: scripts/check_registry_coverage.sh
 
   comment-quality:
+    # @windows-exempt: platform-free — lints comment text
     name: comment quality vs baseline (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1477,6 +1574,7 @@ jobs:
   # status word in a contract doc — so the regrowth is seen on the PR that brings it rather
   # than found at release.  Not a required check; `advisory-failures.yml` files it as an issue.
   doc-timeline:
+    # @windows-exempt: platform-free — reads doc history
     name: documentation timeline (ubuntu, advisory)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1500,6 +1598,7 @@ jobs:
   # generated-code-freshness meta-tests (ci.yml validates those on stable).
   # detect_leaks=0 until the LeakSanitizer live-at-exit baseline is triaged.
   asan:
+    # @windows-exempt: a Linux-only tool (AddressSanitizer); the defect class is platform-independent memory safety
     name: ASan UAF/OOB gate (ubuntu)
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1512,7 +1611,7 @@ jobs:
         with:
           toolchain: nightly-2026-05-28
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1551,6 +1650,11 @@ jobs:
         env:
           RUSTFLAGS: '-Zsanitizer=address'
           ASAN_OPTIONS: 'detect_leaks=0'
+          # ASan's redzones make every frame several times larger, so the corpus's
+          # deepest expressions (250 levels, just under the parser's 256 bound) overflow
+          # the CLI-sized 8 MiB script thread (tests/wrap.rs reads this floor); release
+          # builds keep 8 MiB.
+          RUST_MIN_STACK: '134217728'
         run: >
           cargo +nightly-2026-05-28 nextest run --profile sanitizer --release
           --target x86_64-unknown-linux-gnu
@@ -1585,6 +1689,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   clippy:
+    # @windows-leg: the cross-target Windows clippy step (x86_64-pc-windows-msvc) in this job
     name: Clippy
     runs-on: ubuntu-latest
 
@@ -1601,7 +1706,7 @@ jobs:
       # this even though it doesn't link the final binary — cargo
       # still compiles + links build scripts.
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo
@@ -1622,6 +1727,13 @@ jobs:
 
       - name: Clippy (all targets, all features, deny warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
+      # @PLN184 E1 — the Windows leg of this job: lint the code `cfg(windows)` hides from the
+      # Linux run, cross-target on this runner (no Windows runner needed for a lint).  Without
+      # default features: `ring` (registry, remote-store) needs a Windows C toolchain to build.
+      - name: Clippy (the Windows target, deny warnings)
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo clippy --lib --bins --no-default-features --features mmap,native-extensions,threading,random --target x86_64-pc-windows-msvc -- -D warnings
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
@@ -1633,6 +1745,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   fmt:
+    # @windows-exempt: platform-free — formatting is text
     name: Format
     runs-on: ubuntu-latest
 
@@ -1647,6 +1760,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
+      # The compiled stdlib (src/compiled_stdlib_gen.rs, @PLN181) is DERIVED from default/*.loft.
+      # A stale one still builds, but every compiled stdlib routine is then interpreted (5-23x
+      # slower on text), and `main` would ship it to every source build.  Checked here, in a
+      # required job, so it cannot merge; the cure is one command, which the local gate's
+      # pre-flight and `join.py rederive` already run automatically.
+      - name: Compiled stdlib is current
+        run: python3 scripts/compiled_stdlib_fresh.py || { echo "::error::src/compiled_stdlib_gen.rs is stale — run \`make compiled-stdlib\` and commit it"; exit 1; }
+
   # Prevent browser-side "Failed to grow table" / "import mismatch"
   # errors from reaching the deployed site by rebuilding BOTH browser
   # artefacts — the wasm-pack-based gallery+playground bundle and the
@@ -1655,6 +1776,7 @@ jobs:
   # that must agree; a partial rebuild silently breaks runtime loading.
   # Keeping them in one job reuses the wasm target cache for speed.
   gallery:
+    # @windows-exempt: platform-free — builds and probes the browser bundle
     name: Browser build + probe
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1682,7 +1804,7 @@ jobs:
       # `assertion failed: pack_atlas: could not write assets/bb`, which names
       # neither GL nor ALSA.
       - name: Install mold + binaryen (wasm-opt) + GL/ALSA headers
-        run: sudo apt-get update && sudo apt-get install -y mold binaryen libgl-dev libasound2-dev
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen libgl-dev libasound2-dev
 
       - name: Install wasm-pack
         run: |
@@ -1771,7 +1893,7 @@ jobs:
 
       - name: Browser render (nightly — off the flaky PR path)
         if: github.event_name != 'pull_request'
-        run: cargo nextest run --profile ci -E 'binary(html_render)'
+        run: cargo nextest run --profile ci --test html_render
 
       # NOTE: we deliberately do NOT byte-compare the CI rebuild to
       # the committed doc/pkg/ + doc/brick-buster.html.  Different
@@ -1813,6 +1935,7 @@ jobs:
   # surfaces the failure earlier (8s job) and explains it more
   # clearly than the test panic.
   doc-check:
+    # @windows-exempt: platform-free — checks documentation text
     name: Doc hygiene
     runs-on: ubuntu-latest
 
@@ -1873,6 +1996,7 @@ jobs:
   #     number with no catalogue entry (a typo or stale number).
   # Both are pure shell — no build needed.
   feature-catalogue:
+    # @windows-exempt: platform-free — checks the catalogue text
     name: Feature catalogue
     runs-on: ubuntu-latest
     steps:
@@ -1893,6 +2017,7 @@ jobs:
   # conclusion) so the toolchain matrix's `continue-on-error` can't hide a red
   # beta/nightly behind a green run.
   nightly-status:
+    # @windows-exempt: platform-free — reports the nightly
     name: Nightly health (informational)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'

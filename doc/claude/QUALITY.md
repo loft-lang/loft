@@ -27,12 +27,9 @@ cited as `QUALITY.md § B6m` or similar lives there.
 
 ## Open programmer-biting issues
 
-Programmer-facing defects are GitHub issues.  This table holds only what is open and is not a
-defect: a behaviour a program can depend on, waiting for a decision.
-
-| # | Issue | Severity | Status |
-|---|-------|----------|--------|
-| `#errors` | `record#errors` returns one newline-separated text, and reading it clears it; `for e in r#errors` therefore iterates nothing, and bound to a variable first it iterates CHARACTERS. The docs show the shape that works (read it into a variable, then test it) | Medium | **OPEN — a compatibility decision** ([COMPATIBILITY.md](COMPATIBILITY.md)): keep the text, or make the accessor a `vector<text>` with one entry per error. `tests/scripts/197-struct-json-parse-errors-dest.loft` depends on the text shape and on clear-on-read. Measured: [QUALITY-history.md § JSON cluster](QUALITY-history.md#json-cluster) |
+Programmer-facing defects are GitHub issues.  This section holds only what is open and is not
+a defect: a behaviour a program can depend on, waiting for a decision.  None is open; the
+decided ones are in [QUALITY-history.md § JSON cluster](QUALITY-history.md#json-cluster).
 
 ---
 
@@ -50,7 +47,7 @@ value (`@FR-N-Shape`).  The ratchet is the count of such functions, and it must 
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **290** |
+| **278** |
 
 `python3 scripts/ir_walker_audit.py optional` reports it (the fourth figure);
 `make optional-ratchet` fails when it grows; `quality_optional_table_matches_the_audit` holds
@@ -77,7 +74,7 @@ resolves it by op name sees only the first.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **18** |
+| **19** |
 
 `python3 scripts/ir_walker_audit.py spellings` prints three figures — functions resolving a
 projection by op name, those also handling `TupleGet`, those seeing only the call spelling.

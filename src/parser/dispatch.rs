@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Selection over a name's OVERLOAD SET (@PLN162): which of several definitions a call
-//! reaches, decided from the argument types alone.
+//! reaches, decided from the argument types alone.  The rules: `formal/dispatch.md`.
 //!
-//! `Disp-Applicable` — a definition takes the call when every argument may satisfy its
+//! `@FR-Disp-Applicable` — a definition takes the call when every argument may satisfy its
 //! parameter, which is the parser's own [`Parser::can_convert`] and not a second spelling of
-//! it.  `Disp-Specific` — per position, an exact spelling beats a widening (a variant to its
+//! it.  `@FR-Disp-Specific` — per position, an exact spelling beats a widening (a variant to its
 //! enum, `τ` into `τ?`), which beats a lossy discharge (`τ?` into `τ`, `(N-Store)`), which
 //! beats any other conversion; one definition is more specific than another when it is no
-//! worse at every position and better at one.  `Disp-Select` — the unique most-specific
-//! applicable definition.  `Disp-Ambiguous` — two minimal ones that nothing ranks are refused
-//! naming both; `Disp-Exhaustive` — none applicable is refused naming what was passed and what
+//! worse at every position and better at one.  `@FR-Disp-Select` — the unique most-specific
+//! applicable definition.  `@FR-Disp-Ambiguous` — two minimal ones that nothing ranks are refused
+//! naming both; `@FR-Disp-Exhaustive` — none applicable is refused naming what was passed and what
 //! is declared.  The nullability routing of `(F-Recv)`'s argument clause runs FIRST
 //! ([`crate::data::Data::routed_types`]), so a nullable argument anywhere reaches the `τ?`
 //! overload where one is declared.
@@ -32,7 +32,7 @@ const EXACT: Rank = 0;
 const WIDENED: Rank = 1;
 const LOSSY: Rank = 2;
 const CONVERTED: Rank = 3;
-/// `D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
+/// `@FR-D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
 /// variable binds.  Worse than `EXACT`, `WIDENED` and `LOSSY`: a concrete definition that
 /// takes the argument as it is wins.  Apart from the concrete ranks' sums (a conversion with
 /// a nullability step on top reaches 5), so no concrete rank ever reads as this one.
@@ -99,7 +99,7 @@ impl Parser {
         {
             // @FR-C-Var — a variant satisfies its enum: the one widening the enum lattice has.
             WIDENED
-        } else if self.can_convert(a, p) {
+        } else if self.can_convert(a, p) || self.converts_implicitly(a, p) {
             CONVERTED
         } else {
             return None;
@@ -110,6 +110,28 @@ impl Parser {
             _ => EXACT,
         };
         Some(base.saturating_add(step))
+    }
+
+    /// `@FR-Disp-Applicable` — does a call's argument of type `arg` reach a `param` slot through
+    /// one of the stdlib's implicit conversions (`integer` into `float`, `single` or
+    /// `character`, a value into `boolean`, …)?  [`Parser::can_convert`] answers the
+    /// conversions that emit nothing; these are the ones `convert` emits an `OpConv…` for, and a
+    /// lone definition takes them, so a member of a set must too.  Asked through the same
+    /// predicate `convert` scans with ([`crate::data::Data::converts_with`]), the handle and
+    /// plain-enum flattening included, so the two cannot disagree about which conversion exists.
+    fn converts_implicitly(&self, arg: &Type, param: &Type) -> bool {
+        let check = match arg.base() {
+            Type::Reference(_, _) => Type::Reference(self.data.def_nr("reference"), Deps::none()),
+            Type::Enum(_, false, _) => Type::Enum(0, false, Deps::none()),
+            _ => arg.clone(),
+        };
+        self.data
+            .get_possible("OpConv", &self.lexer)
+            .iter()
+            .any(|&d| {
+                !self.data.def(d).name().ends_with("FromNull")
+                    && self.data.converts_with(d, &check, arg, param)
+            })
     }
 
     /// Every overload of `name` that takes the routed argument types, with its rank vector,
@@ -198,7 +220,7 @@ impl Parser {
         }
         // `Box<T>` ranks as the instance the binding names (@PLN165 D5).
         let mut bindings = bindings;
-        let open = self.open_instance_bindings(&bindings);
+        let open = self.open_instance_bindings(&bindings, r);
         bindings.extend(open);
         let declared: Vec<Type> = self
             .data
@@ -327,7 +349,7 @@ impl Parser {
         // it binds and its bounds hold.
         d != u32::MAX
             && matches!(self.data.def_type(d), DefType::Function | DefType::Generic)
-            && !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
+            && !crate::file_access::is_stdlib_source(self.data.def(d).position().file.as_str())
             && self.definition_ranks(d, &routed).is_some()
     }
 
@@ -341,7 +363,7 @@ impl Parser {
         self.data.definitions.iter().any(|d| {
             matches!(d.def_type, DefType::Function | DefType::Generic)
                 && d.original_name().as_str() == name
-                && !crate::portable_path::is_stdlib_source(&d.position().file)
+                && !crate::file_access::is_stdlib_source(d.position().file.as_str())
         })
     }
 
@@ -435,15 +457,15 @@ impl Parser {
     /// — the words in a comment, a `fn(…)` type — only defers the special form to pass 2;
     /// the stdlib's own files are never scanned.
     pub(crate) fn file_has_pending_fn(&mut self, name: &str) -> bool {
-        let file = self.lexer.pos().file.clone();
-        if crate::portable_path::is_stdlib_source(&file) {
+        let file = self.lexer.pos().file;
+        if crate::file_access::is_stdlib_source(file.as_str()) {
             return false;
         }
-        if !self.declared_fn_names.contains_key(&*file) {
+        if !self.declared_fn_names.contains_key(file.as_str()) {
             let text = self
                 .lexer
-                .source_text(&file)
-                .map_or_else(|| Self::read_source(&file), str::to_string);
+                .source_text(file.as_str())
+                .map_or_else(|| Self::read_source(file.as_str()), str::to_string);
             let mut counts: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             let mut after_fn = false;
@@ -460,7 +482,7 @@ impl Parser {
         }
         let declared = self
             .declared_fn_names
-            .get(&*file)
+            .get(file.as_str())
             .and_then(|counts| counts.get(name))
             .copied()
             .unwrap_or(0);
@@ -633,6 +655,41 @@ impl Parser {
         out
     }
 
+    /// `@FR-Disp-Hint` — the definitions a call of `name` parses its arguments WITHOUT a hint
+    /// for, as a refusal names them: those of a free overload set, or the members of a set
+    /// that take the call's `receiver` when several do ([`crate::data::Data::receiver_shared_in_set`]).
+    /// `None` when one definition steers the arguments.
+    pub(crate) fn unhinted_set_names(&self, name: &str, receiver: Option<&Type>) -> Option<String> {
+        let main = match receiver {
+            Some(r) if self.data.receiver_shared_in_set(name, r) => {
+                let source = self.data.receiver_overload_source(name, r);
+                self.data.source_nr(source, name)
+            }
+            _ if self.data.has_overload_set(name) => self.data.def_nr(name),
+            _ => return None,
+        };
+        let shown: Vec<String> = self
+            .data
+            .def(main)
+            .attributes
+            .iter()
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
+            })
+            .filter(|&r| {
+                receiver.is_none_or(|rt| {
+                    self.data
+                        .visible_params(r)
+                        .first()
+                        .is_some_and(|p| self.data.param_fits(rt, p))
+                })
+            })
+            .map(|r| self.data.overload_signature(name, r))
+            .collect();
+        (shown.len() > 1).then(|| format!("`{name}` is {}", shown.join(" and ")))
+    }
+
     /// The two refusals selection can end in, worded once for both call spellings.
     pub(crate) fn report_selection(
         &mut self,
@@ -642,6 +699,9 @@ impl Parser {
         at: Option<&crate::lexer::Position>,
     ) {
         let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
+        // `@FR-Disp-Ambiguous` is the one refusal of the two with a frozen code: a tie is
+        // where a program that compiled under a coarser rule meets this one.
+        let ambiguous = matches!(sel, Selection::Ambiguous(_));
         let text = match sel {
             Selection::Ambiguous(taken) => {
                 let by: Vec<String> = taken
@@ -675,11 +735,29 @@ impl Parser {
             }
             _ => return,
         };
-        match at {
-            Some(pos) => {
-                crate::diagnostic_at!(self.lexer, pos, crate::diagnostics::Level::Error, "{text}")
+        let level = crate::diagnostics::Level::Error;
+        match (at, ambiguous) {
+            (Some(pos), true) => {
+                crate::diagnostic_at!(self.lexer, pos, level, code = "ambiguous-call", "{text}");
             }
-            None => crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}"),
+            (None, true) => {
+                crate::diagnostic!(self.lexer, level, code = "ambiguous-call", "{text}")
+            }
+            (Some(pos), false) => crate::diagnostic_at!(self.lexer, pos, level, "{text}"),
+            (None, false) => crate::diagnostic!(self.lexer, level, "{text}"),
+        }
+        if ambiguous {
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "convert the argument to the type one definition declares (`i as float`)"
+                    .to_string(),
+                condition: Some(
+                    "that definition is the one meant — the compiler cannot tell which".to_string(),
+                ),
+                edit: None,
+                concept: "multiple dispatch",
+                concept_ref: "@F122",
+            });
         }
     }
 }
@@ -790,7 +868,7 @@ impl Parser {
     /// over a type parameter is the wrong shape (measured: the stdlib's `len(both: vector)`
     /// refused its own stub, *expected vector<T>, got vector<T>*).
     fn stub_admissible(&self, main: u32) -> bool {
-        if crate::portable_path::is_stdlib_source(&self.data.def(main).position().file) {
+        if crate::file_access::is_stdlib_source(self.data.def(main).position().file.as_str()) {
             return false;
         }
         if self.context == u32::MAX || self.data.def_type(self.context) == DefType::Generic {
@@ -1030,8 +1108,8 @@ impl Parser {
         // The dispatcher is built as its own function: the caller's parsing context is put
         // aside and restored, whatever the outcome.
         let saved_context = self.context;
-        let file = self.lexer.pos().file.clone();
-        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, &file));
+        let file = self.lexer.pos().file;
+        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, file.as_str()));
         let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
         let fn_nr = self.data.add_fn(&mut self.lexer, dyn_name, &args);
         let built = if fn_nr == u32::MAX {
@@ -1148,8 +1226,8 @@ impl Parser {
                 call_types.push(t.clone());
             }
         }
-        let at = self.lexer.pos().clone();
-        let arg_pos = vec![at.clone(); call_args.len()];
+        let at = *self.lexer.pos();
+        let arg_pos = vec![at; call_args.len()];
         let mut code = Value::Null;
         self.call_nr(
             &mut code,

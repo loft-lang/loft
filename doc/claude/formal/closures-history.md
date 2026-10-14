@@ -55,7 +55,7 @@ fixed here, and the guard runs under `LOFT_STRICT_SCHEMA_IDS`.
 **D-clo-18 left the register on 2026-09-03 without being fixed**, which is why the count fell to
 2 with no code change: a `&` scalar parameter written from inside a closure is permanently
 REFUSED, so per [ROADMAP.md](ROADMAP.md) it is a decided edge
-([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)) rather than distance from the spec. Its record,
+([DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)) rather than distance from the spec. Its record,
 and `D-clo-20`'s, are below.
 
 ⚠ **A rebind is not a mutation, and a capture is the one place the code could not tell them
@@ -74,7 +74,7 @@ reads its own slot directly (`t_6vector_len(p(0))`, not a read through the closu
 Two readers, one binding: a repoint moves the wrong answer from the caller to the callee
 rather than removing it. Making it mean what it says needs the binding reachable from inside
 the closure plus a write-back, which is precisely what `D-clo-18` (now a decided edge,
-[DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)) records as unavailable for the `&`-scalar shape — the cell machinery that gives a mutated captured SCALAR that channel
+[DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)) records as unavailable for the `&`-scalar shape — the cell machinery that gives a mutated captured SCALAR that channel
 cannot serve a heap value, because reads in the enclosing body would then see the cell while
 the caller still sees its own slot. Same wall, one rule over, so the same answer.
 
@@ -210,9 +210,9 @@ capturing lambda passed INLINE to `map` and returning text faulted on `--interpr
 > days while the refusal it describes was already permanent, so the count read one higher than
 > the distance actually was. [ROADMAP.md](ROADMAP.md) already says what to do with that: a row
 > that turns out **spec-may-adjust** leaves `formal/` and becomes a decided edge. It is
-> [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md), which carries both halves — this one and
+> [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md), which carries both halves — this one and
 > `D-clo-20`, the heap twin below, whose refusal is the same answer one rule over. The rule keeps
-> the carve-out in its own text: `(L-CapRef)` now states the refusal and cites C115 instead of a
+> the carve-out in its own text: `(L-CapRef)` now states the refusal and cites @C115 instead of a
 > deviation number.
 >
 > Guard `tests/scripts/1276-reject-a-ref-parameter-a-closure-cannot-write.loft`
@@ -255,7 +255,7 @@ capturing lambda passed INLINE to `map` and returning text faulted on `--interpr
 > three right-hand sides × vector, hash, struct); the shapes it must NOT reach are
 > `tests/scripts/1281-a-closure-cannot-replace-a-captured-parameter.loft`, which cannot hold the
 > refused spelling because the fixed compiler will not parse it. Both halves are recorded as one
-> decided edge, [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md).
+> decided edge, [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md).
 
 > **D-clo-19 — OPENED AND CLOSED (2026-09-01, loft#1279): `=` on a captured collection was two
 > other operations, decided by the SOURCE of the right-hand side.**
@@ -1246,18 +1246,95 @@ base — and D-clo-7's remaining half is exactly the case where it does not.
 and refusing is deliberate: `(L-CapScalar)` gives the closure a COPY of the caller's value, so
 there is no shared record for the write to land in and no code change closes it. Per
 [ROADMAP.md](ROADMAP.md), a row that turns out **spec-may-adjust** leaves `formal/` and becomes a
-decided edge — it is [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md), together with `D-clo-20`,
+decided edge — it is [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md), together with `D-clo-20`,
 its heap twin, which took the same refusal for the same reason one rule over. Counting a
 permanent refusal as distance from the spec overstates the register by one.
 
 ### the status line formal/README.md's area table carried until 2026-09-04
 
-**2 open** (D-clo-7, D-clo-14 — one `??`-default leak in two positions: the borrow arm's witness cannot be NAMED, so the mint arm's store leaks; they are the SAME missing per-execution ownership witness as ownership.md's D-own-16, and QUALITY.md carries them as one cluster. D-clo-18 and D-clo-20 left as REFUSALS, DESIGN_DECISIONS C115) — the `fn(){}` and `\|…\|` forms capture IDENTICALLY (pure sugar, D-clo-1); first-class (store/pass/return/escape); scalar-by-value / heap-shared capture; a stored un-inferrable short lambda in `map` is now a clean diagnostic, not a crash (D-clo-2). `L-Escape`'s STORAGE half is complete (D-clo-3, opened and closed 2026-08-22 by re-measuring the previous zero): a place that already holds a fn-ref — a local, a tuple member, a struct field, a vector element, a `&`-parameter's field — now takes a new one, releasing the closure record the old one owned, and a source the LITERAL refuses is refused identically
+**2 open** (D-clo-7, D-clo-14 — one `??`-default leak in two positions: the borrow arm's witness cannot be NAMED, so the mint arm's store leaks; they are the SAME missing per-execution ownership witness as ownership.md's D-own-16, and QUALITY.md carries them as one cluster. D-clo-18 and D-clo-20 left as REFUSALS, DESIGN_DECISIONS @C115) — the `fn(){}` and `\|…\|` forms capture IDENTICALLY (pure sugar, D-clo-1); first-class (store/pass/return/escape); scalar-by-value / heap-shared capture; a stored un-inferrable short lambda in `map` is now a clean diagnostic, not a crash (D-clo-2). `L-Escape`'s STORAGE half is complete (D-clo-3, opened and closed 2026-08-22 by re-measuring the previous zero): a place that already holds a fn-ref — a local, a tuple member, a struct field, a vector element, a `&`-parameter's field — now takes a new one, releasing the closure record the old one owned, and a source the LITERAL refuses is refused identically
+
+## Deviations carried by closures.md until 2026-10-06
+
+Opened and closed in the same change, by the `(T-Chk-Lam)` walk; the chapter's `OPEN:` line
+never carried it.
+
+* **D-clo-51** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(L-Apply)` / `(L-FnAbsent)` on
+  `--native`: calling a function VALUE whose result is itself a function did not compile.
+  `output_call_ref` set `fn_ref_context` for an argument whose parameter is a function and left
+  every other argument with the CALLER's context — and a call whose result is a function is
+  emitted inside that context, so `f(3)` spelled its `3` as `(3_i32 as u32, DbRef::NULL)`; and
+  the absent arm answered `()`, because `write_typed_null_in` had no function arm.  The
+  interpreter answered every cell.  **Fix.**  Each argument takes exactly its own parameter's
+  context; the typed null of a function is `(0_u32, DbRef::NULL)`, as `default_native_value`
+  spells it.  Guard
+  `tests/scripts/a-function-value-that-returns-a-function-compiles-natively.loft`.
+
+The walk's negative result: `(T-Chk-Lam)` held at every position an expected type reaches — the
+body converts into τ (an integer into `float`, a variant into its enum, `null` into `τ?`, a narrow
+tuple member, an early `return`) and refuses what a named return refuses.  Guards
+`tests/scripts/a-lambda-body-converts-into-its-expected-return.loft`,
+`tests/scripts/a-lambda-body-refuses-what-a-return-refuses.loft`.
 
 ## Deviations carried by closures.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **D-clo-48** *(opened 2026-10-05, CLOSED 2026-10-06; loft#1869)* — `(L-Fn)`: a closure could
+  not capture a fn-ref local holding a CAPTURING closure — refused with the fn-ref struct-field
+  message, since the closure record is the struct the capture lands in — and a captured fn-ref
+  PARAMETER holding one lost its closure half and crashed.  Closed by storing a captured fn-ref
+  as its d_nr plus a `<name>__clos` capture of its record: a shared heap capture, adopted or
+  borrowed by `(L-CapOwn)` like a struct.  An adopted record runs its own cascade first (typed
+  where the lambda is known, dispatched on the d_nr where it is a run-time fact); a record held
+  through a captured fn-ref leaves with the record holding it, including each arm's record of a
+  branch; pass confinement follows the capture.  The same arc routed a zero-argument call of a
+  captured fn-ref through the call path every other arity takes (it was `Unknown function`).
+- **D-clo-50** *(opened and CLOSED 2026-10-06; loft#1874)* — `(L-Escape)`: a fn-typed struct
+  field held only ONE capturing lambda in the whole program — a second was refused (*"heterogeneous
+  capture shapes per fn-ref struct field"*), even with the same captured shape — because the
+  field's child record is laid out with one closure record's schema.  Closed by a UNION closure
+  record per field: every lambda written into it shares it (its attributes are all their
+  captures, a name captured as two types gets a slot per lambda), each build fills only its own
+  lambda's slots and starts the rest empty, and a rebuild with another lambda releases what the
+  old one held.  The same arc made native emit a fn-field read whose halves carry statements
+  between them, which a field called straight off a call (`mk(5).f(1)`) produces once the
+  struct owns a release.
+- **D-clo-49** *(opened 2026-10-05, CLOSED 2026-10-06; loft#1877)* — `(L-Escape)` for a
+  struct that holds a capturing closure, placed into another struct's field as a VALUE.  It was
+  refused (*"field `h` would store a value of a type that holds a capturing closure"*).  Placing
+  one was already sound once the closure record lived in its host's store (D-clo-47): a fresh
+  or owned value moves its records into the field's store, and a copy of one the function does
+  not own is refused by `(H-Copy-Refuse)`.  The OVERWRITE lost the displaced closure's adopted
+  captures; it now binds the field's old records (`___oldrec_N`) after the right-hand side is
+  computed and runs their cascades before the copy replaces them — closure releases only, the
+  hooks staying `(H-Drop-Not)`'s.
+- **D-clo-47** *(opened 2026-10-05, CLOSED 2026-10-05; loft#1867)* — `(L-Escape)` through a
+  struct field.  A function could not return a struct whose field holds a CAPTURING closure: it
+  was refused at compile time, while the same closure returned BARE kept its captures through the
+  record's adoption (`(L-CapOwn)`).  Closed by building the closure record IN PLACE in the host's
+  child-record slot (`OpChildRec`): the record lives in the struct's store, adopts its captures
+  when the struct leaves the frame, and the struct's synthesized cascade runs the record's, so the
+  struct owns what the closure adopted.  The same build serves a closure written into a struct
+  received as an ARGUMENT: the record lands in the caller's store and leaves with it, so that
+  refusal (#318's sink R2 for a fn field) went too.  A copy of such a struct is then judged by
+  `(H-Copy-Refuse)` and a move by `(H-Spent)`, as for any type that owns a release.  Every
+  release is emitted code: the runtime's own closure cascade was removed in the same arc
+  (CODEGEN_METHOD.md § Ownership and copy semantics are emitted code).
+- **D-clo-46** *(opened 2026-10-05, CLOSED 2026-10-05; loft#1862)* — `(L-CapRebind)` for the
+  keyed kinds.  Every keyed whole-value rebind but a non-empty literal (loft#1447's mint) cleared
+  and refilled the local's store IN PLACE, which the record read too: a closure built over
+  `c = mk(5)` answered 9 after `c = mk(9)` on all five keyed kinds, both backends, for a call, a
+  variable, a branch, a field, `[]` and a right-hand side reading `c`; and once `(O-Latest)` let
+  the frame free the store the local named last, a record that left the frame read a released
+  store.  The literal mint itself leaked: one store per extra rebind (it minted again over its
+  own fresh store) and one per loop pass (a pass-confined record adopts nothing and is rebuilt
+  without releasing a collection it displaces).  Closed by `Parser::keyed_rebind_mint` at every
+  rebind spelling — asked by store identity against the records built so far, so only a store a
+  record shares is left — and `rebound_capture_slots`, which releases a pass-confined record's
+  build-time store at the local's scope end.  84 cells (6 shapes × 7 spellings × 2 backends),
+  under strict stores and poison; loft2's 392-cell control for the five kinds and the pre-build
+  half.  Guard `a-captured-keyed-local-keeps-its-store-through-every-rebind.loft`.
 - **D-clo-45** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1725)* — `(L-CapHeap)` with
   `(O-Latest)` for a capture bound from a JOIN (`c = f() ?? []`, a value branch) and ASSIGNED
   again after the build, in a closure that leaves the frame.  loft#1721 releases each arm by
@@ -1330,7 +1407,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   text and integer arguments and results, 0 mismatches on both backends.  Guard
   `tests/scripts/1658-a-native-called-through-a-function-value-runs.loft`.
 
-- **D-clo-40** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1642)* — `(L-FnAbsent)`, and C66: a
+- **D-clo-40** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1642)* — `(L-FnAbsent)`, and @C66: a
   production program never aborts on a user-attributable edge.  Calling a `vector<fn(…)>`
   element read out of range panicked the interpreter (`fn_call_ref: d_nr=… is negative`) and hit
   `unreachable!` on `--native`, with or without `??`.  And the two ways to ask about the absence
@@ -1659,3 +1736,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   that is a RETURN SOURCE as handed out, and the ownership question reads
   `returned_closure_records` — the records named in RETURN POSITION, off the tail and off every
   `return`.  Guard `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`.
+
+## The closure record closures.md's OPEN line carried until 2026-10-05
+
+`D-clo-50` (opened and CLOSED 2026-10-06, loft#1874); `D-clo-48` (opened 2026-10-05, CLOSED 2026-10-06, loft#1869); `D-clo-49` (opened 2026-10-05, CLOSED 2026-10-06, loft#1877); `D-clo-47` (opened and CLOSED 2026-10-05, loft#1867); `D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).

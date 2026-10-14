@@ -69,6 +69,6 @@ and creating it taxes every read in every program.
 ## See also
 
 - [LAZY_STORES.md](../../LAZY_STORES.md) — the reference doc this plan produced.
-- [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) § C104 — why a slice on a
+- [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) § @C104 — why a slice on a
   lazily-bound collection does not fetch.
 - [loft-lang/plans#129](https://github.com/loft-lang/plans/issues/129).

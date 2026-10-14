@@ -179,9 +179,13 @@ impl OpEmitter for OpCoroutineNextEmitter {
                     ctx.w,
                     "loft::codegen_runtime::coroutine_next_i64({gen_code}, stores)"
                 )?,
+                // `boolean`: the transport carries its storage byte, and `255` is its null — a
+                // `!= 0` test read a yielded null as `true` (`(G-Next)`).  The value is only
+                // ever stored into a `u8` slot (the `for` binding, a delegation's item), so
+                // the byte goes through as it is.
                 1 => write!(
                     ctx.w,
-                    "(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) != 0)"
+                    "(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as u8)"
                 )?,
                 // size_of::<DbRef>() == 12 — Reference-yielding generator (@P326).
                 12 => write!(

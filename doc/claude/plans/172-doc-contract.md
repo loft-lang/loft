@@ -7,7 +7,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Active — Phases 1–3 done; Phase 4 (the burn-down, one doc per `[mid]`) is the standing work.**
+**Finished (2026-10-06).  Phases 1–3 shipped; Phase 4, the burn-down, is no longer plan work: it is
+the release checklist's `M-doc-review` row (one maintainer doc per cycle, the top of `make
+docs-lint`'s worklist), beside `A-docs-lint` (the count does not grow).  The rules live in
+[DOC_CONTRACT.md](../DOC_CONTRACT.md); the method in [DOC_QUALITY.md](../DOC_QUALITY.md) and the
+`doc-quality` skill.  What follows is the record.**
+
+**Phase 4 at close — six docs brought under the contract** (DEVELOPMENT, TESTING, DESIGN_DECISIONS,
+PERFORMANCE, QUALITY, RELEASE), each recorded below; the lint baseline fell several times along
+the way, against the new docs it also had to absorb.
 
 **Phase 4, the 2026-10 cycle's D-review — DEVELOPMENT.md (2026-09-28):**
 - **Size:** 1565 → 452 lines; lint findings 24 → 1 (a literal `FIXED` in quoted runner output).
@@ -57,15 +65,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **Phase 4 — DESIGN_DECISIONS.md, register and record (2026-09-28).**
 - **4381 → 966 lines.**  Every entry keeps its heading, so every anchor and every
-  "DESIGN_DECISIONS.md C86" citation still resolves.  Each entry now states the decision, its
+  "DESIGN_DECISIONS.md @C86" citation still resolves.  Each entry now states the decision, its
   reason and what would reopen it; the question, evaluation and amendments moved verbatim to
   DESIGN_DECISIONS-history.md under the same heading.
-- **Folded in:** amendments that changed a decision (C68 reversed, C77 superseded by C86, C110
-  by C126), so the register states what holds now.
-- **Defects fixed:** two entries shared C67; the processor-arithmetic one is now C129 and its five
-  citations moved.  C91 carried a placeholder link to C101 from before C101 existed.
-- **Open, found here:** C98 is not what ships — a bare `use lib;` wildcard-imports; the entry
-  records the owner call as open.  C124's warning → error step has no tracker.
+- **Folded in:** amendments that changed a decision (@C68 reversed, @C77 superseded by @C86, @C110
+  by @C126), so the register states what holds now.
+- **Defects fixed:** two entries shared @C67; the processor-arithmetic one is now @C129 and its five
+  citations moved.  @C91 carried a placeholder link to @C101 from before @C101 existed.
+- **Open, found here:** @C98 is not what ships — a bare `use lib;` wildcard-imports; the entry
+  records the owner call as open.  @C124's warning → error step has no tracker.
 
 **Plan docs are out of the burn-down (owner, 2026-09-28).**  A plan's docs are kept under the
 contract by that plan's own agent, so `make docs-lint`'s report, baseline and worklist and
@@ -395,6 +403,8 @@ bypass.
 - DOC_CONTRACT.md exists, under 80 lines, and CLAUDE.md points to it in one line.
 - The hook fires on a doc edit and is silent on a clean file.
 - `make docs-lint` has a committed baseline and the `[mid]` view shows D-lint and D-review.
-- The `doc-quality` skill is loaded by the reviewer session and by nothing else.
+- The `doc-quality` skill is loaded by the reviewer session and by nothing else.  *Changed by the
+  owner after this plan was written: every WRITER loads it too (CLAUDE.md § Documentation index —
+  its two hard rules, history out and the 1000-line ceiling, apply at every edit).*
 - Three cycles later, three docs are under the contract and the baseline count has fallen
   three times.

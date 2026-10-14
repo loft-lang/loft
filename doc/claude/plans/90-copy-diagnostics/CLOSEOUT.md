@@ -120,7 +120,7 @@ exposure sweep broke `tests/scripts/85-store-lifetime-field-read-copy.loft` — 
 #415** regression guard whose header states the contract verbatim: *"binding or returning a heap
 vector FIELD must **COPY** (establish a new owner), not alias the field's store"* and asserts
 `ag = getv(by); by.v += [9]; assert(len(ag)==3, "must COPY")` for `fn getv(b) { b.v }` — **A2's exact
-target**. The C86 register confirms it: *"whole-value heap binds COPY by contract (`af=bx.v`) — #415
+target**. The @C86 register confirms it: *"whole-value heap binds COPY by contract (`af=bx.v`) — #415
 is the SEMANTIC not a stopgap."* So a struct-field return **must** copy so the caller's result is an
 independent owner; **aliasing it violates value semantics** (the mutated source would change the
 result). A2's framing as an "avoidable copy optimisation" mis-reads a **required** copy. **Closed:
@@ -165,10 +165,10 @@ green. **But the flag-on exposure sweep failed on `wrap` + `native`:** 3 `@PLN85
 tests — `85_store_lifetime_field_read_copy`, `85_store_lifetime_implicit_param_return_copy`,
 `85_store_lifetime_borrowed_view_query` — **assert the COPY** and now break (native UAF panics +
 value asserts). So A2 changes documented field-return semantics from **copy → view**: the
-C86 "projections stay views (#426)" position vs the `@PLN85` "field-read copies for lifetime safety"
+@C86 "projections stay views (#426)" position vs the `@PLN85` "field-read copies for lifetime safety"
 contract those tests pin. Reverted clean (three attempts, tree unaffected). **UPDATE — the decision
 is ALREADY MADE (see the resolution at the top of this section): reading the #415 guard's header +
-the C86 register settles it — field-return MUST copy (#415 IS the semantic). A2 is invalid; not a
+the @C86 register settles it — field-return MUST copy (#415 IS the semantic). A2 is invalid; not a
 pending decision. The `*_copy` tests are correct and stay.**
 
 Earlier notes preserved for the record — **Second attempt (2026-07-06) — the
@@ -386,7 +386,7 @@ a close gate.**
 | W4 O-Complete | — | — | ✅ DONE — already CLOSED 2026-07-04 (formal D-own-2, oracle green) |
 | W7 Phase 3 syntax | — | — | ✅ RESOLVED — DEFERRED (the not-yet-active final phase; premise reduced by A2/#415/C86) |
 | W8 empty-arm parse | S–M | low | ✅ DONE (empty `[]` arm materialises a real empty vector; suite green) |
-| W9 drain bucket 2 | L | — | not a close gate — remaining Avoidable are C86-contract copies (per the A2 finding), no safe drain |
+| W9 drain bucket 2 | L | — | not a close gate — remaining Avoidable are @C86-contract copies (per the A2 finding), no safe drain |
 
 ---
 

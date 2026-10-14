@@ -278,6 +278,14 @@ impl SqlConn {
         })
     }
 
+    /// Whether `self` and `other` drive the same open database handle — what a second
+    /// `open` of one target answers, since connections are cached per target and never
+    /// closed, and what a fresh open never does.
+    #[must_use]
+    pub fn same_connection(&self, other: &SqlConn) -> bool {
+        self.db == other.db
+    }
+
     /// Run `sql`, binding `args` positionally, and return every row.
     ///
     /// Rows come back whole rather than through a cursor: a keyed fault wants

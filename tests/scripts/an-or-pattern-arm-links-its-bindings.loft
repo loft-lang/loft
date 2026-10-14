@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Multi` — `|` and `,` both list the patterns of one match arm, whether the variants bind
+// fields or not, and a name the patterns bind is ONE variable linked across them:
+// `@FR-P-Alt-Same` joins its types (`integer` and `u8` give `integer`), `@FR-P-Alt-Diff` makes a
+// name only some patterns bind nullable.  Each cell's value is computed by hand, on both
+// backends; c1 also has no `_`, so the union of its patterns must cover the enum (`@FR-M-Total`).
+//
+// What can go wrong is a name read from the wrong variant's offset (c2's rename reads `w` for
+// Rect), a nullable name that is not null for the pattern lacking it (c4, c5), a guard that sees
+// another pattern's bindings (c6), a text payload written back to the first pattern's field
+// (c11, #673), and a bare variant after `|` swallowing the next pattern's braces (c4's `Dot |`).
+//
+// The other positions have guards of their own: `name: pattern` at the arm root is
+// `a-match-arm-captures-its-subject.loft`'s; a tuple subject's alternatives are
+// `a-tuple-or-pattern-arm-links-its-bindings.loft`'s, an alternative inside a tuple element
+// `a-tuple-element-lists-alternatives.loft`'s, inside a field `a-field-sub-pattern-lists-
+// alternatives.loft`'s, a plain-struct subject's `a-struct-or-pattern-arm-links-its-bindings.loft`'s.
+//
+// @falsified-at: a2e060c6f — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   The control does not merely refuse the file: c4's `Dot | Circle { r }` sent the bare `|`
+//   loop past `Circle` and read `{ r }` as `Dot`'s fields — an internal compiler error
+//   (`src/parser/control.rs:7775`) on both backends.  The other `|` arms read "Expect token =>".
+//   CHANNEL: a compiler panic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: `fatal: internal compiler error` then `panicked at src/parser/control.rs:7775`.
+//   HOLDS: nothing else moves; every value cell passes here.
+// @falsified-by: tests/falsified/an-or-pattern-arm-links-its-bindings.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   The step reverted whole (the durable receipt): the same panic.
+//   CHANNEL: a compiler panic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+enum Shape { Circle { r: integer }, Square { r: integer }, Rect { w: integer, h: integer }, Dot }
+enum Num { I { v: integer }, B { v: u8 }, F { f: float } }
+enum Label { Txt { s: text }, Lbl { s: text }, None }
+
+fn c1(s: Shape) -> integer { match s { Circle { r } | Square { r } => r, Rect { w, h } => w * h, Dot => 0 } }
+fn c2(s: Shape) -> integer { match s { Circle { r } | Square { r } | Rect { w: r, h } => r, Dot => -1 } }
+fn c3(s: Shape) -> integer { match s { Circle { r }, Square { r } | Rect { w: r, h } => r * 10, Dot => -1 } }
+fn c4(s: Shape) -> integer { match s { Dot | Circle { r } => r ?? -7, Square { r } => r, Rect { w, h } => w } }
+fn c5(s: Shape) -> integer { match s { Circle { r } | Dot => r ?? -7, Square { r } => r, Rect { w, h } => w } }
+fn c6(s: Shape) -> integer { match s { Circle { r } | Square { r } if r > 5 => r, _ => 0 } }
+fn c8(n: Num) -> integer { match n { I { v } | B { v } => v, F { f } => f as integer } }
+fn c10(s: Shape) -> integer { match s { Circle | Square => 1, Rect { w, h } => w * h, Dot => 0 } }
+fn c11(l: Label) -> integer { match l { Txt { s } | Lbl { s } => len(s), None => -1 } }
+
+fn main() {
+  assert(c1(Circle { r: 3 }) == 3 && c1(Square { r: 7 }) == 7 && c1(Rect { w: 2, h: 5 }) == 10 && c1(Dot) == 0, "c1");
+  assert(c2(Circle { r: 3 }) == 3 && c2(Square { r: 7 }) == 7 && c2(Rect { w: 4, h: 9 }) == 4 && c2(Dot) == -1, "c2");
+  assert(c3(Circle { r: 3 }) == 30 && c3(Square { r: 7 }) == 70 && c3(Rect { w: 4, h: 9 }) == 40, "c3");
+  assert(c4(Dot) == -7 && c4(Circle { r: 3 }) == 3 && c4(Square { r: 8 }) == 8, "c4 {c4(Dot)} {c4(Circle { r: 3 })}");
+  assert(c5(Dot) == -7 && c5(Circle { r: 3 }) == 3, "c5 {c5(Dot)}");
+  assert(c6(Circle { r: 9 }) == 9 && c6(Square { r: 2 }) == 0 && c6(Rect { w: 1, h: 1 }) == 0, "c6");
+  assert(c8(B { v: 200 }) == 200 && c8(I { v: -3 }) == -3 && c8(F { f: 2.5 }) == 2, "c8");
+  assert(c10(Square { r: 7 }) == 1 && c10(Rect { w: 2, h: 3 }) == 6, "c10");
+  assert(c11(Txt { s: "abc" }) == 3 && c11(Lbl { s: "hello" }) == 5 && c11(None) == -1, "c11");
+  println("ok");
+}

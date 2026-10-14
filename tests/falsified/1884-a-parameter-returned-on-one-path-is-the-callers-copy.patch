@@ -1,0 +1,25 @@
+diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+index ae7f5c557..74ce6c0f6 100644
+--- a/src/use_analysis.rs
++++ b/src/use_analysis.rs
+@@ -2123,7 +2123,6 @@ impl Own {
+             // one of several bases, which no single witness names (loft#1884: `if c { return
+             // a; } b` read as a `Join` witnessed by `a`, so the run that answered `b` adopted
+             // the caller's record and freed it).  Every reader copies that on every run.
+-            (Own::Borrowed { .. }, Own::Borrowed { .. }) => Own::Borrowed { base: u16::MAX },
+             _ => Own::Join {
+                 base: self.base().or_else(|| other.base()).unwrap_or(u16::MAX),
+             },
+@@ -2566,11 +2565,7 @@ impl<'a> Ownership<'a> {
+         // its parameter on one path and a fresh value on the other, and read off the tail alone
+         // it was owned, the caller adopted the parameter's store, and its free released the
+         // caller's own record.  Joined, the bind copies the borrowed arm (`OpBindOrCopy`).
+-        let early = self.early_return_values(d_nr);
+-        let class = self
+-            .classify_sites(&early, d_nr, &defs)
+-            .into_iter()
+-            .fold(class, Own::join);
++
+         self.visiting_vars = outer_vars;
+         self.frames.pop();
+         self.visiting.remove(&d_nr);

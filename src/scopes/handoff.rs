@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `None` where the copy moves nothing.  `@FR-H-Drop`: responsibility moves with a copy.
 ///
 /// `t = s` deep-copies (`@FR-B-Copy`) and leaves two records holding one resource — the
-/// failure C111 names for a container and answers with a MOVE — so the copy owns the
+/// failure @C111 names for a container and answers with a MOVE — so the copy owns the
 /// resource and the SOURCE stops dropping.  Only the drop moves; both stores are still freed
 /// by the ordinary sweep.  A copy off a PARAMETER runs the other way: the caller owns the
 /// resource (calls.md F-ParamHeap — the parameter aliases it), so it is the callee's copy,
@@ -252,11 +252,14 @@ fn collection_copy_ends(
     data: &Data,
 ) -> Option<(u16, u16)> {
     if d_nr == data.def_nr("OpAppendVector") || d_nr == data.def_nr("OpReplaceVector") {
-        let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan())
-        else {
+        // `@FR-H-Move` — a FIELD destination (`T { v: u }`, `o.v += u`, an enum payload) is named by its root
+        // record, whose cascade releases what the copy placed there.  Read as no hand-off, the
+        // source kept its release too and every element was released twice.
+        let Value::Var(src) = args.get(1)?.unspan() else {
             return None;
         };
-        return Some((*dst, *src));
+        let dst = accessor_root_var(args.first()?, data)?;
+        return Some((dst, *src));
     }
     if d_nr == data.def_nr("OpCopyRecord")
         && let (Value::Var(src), Value::Var(dst)) = (args.first()?.unspan(), args.get(1)?.unspan())
@@ -620,7 +623,13 @@ fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Opti
     // (@PLN163: a leased capture copy returned from a lambda was released twice).
     if let Some(src) = drop_bearing_source(&args[0], function)
         && let Value::Var(dst) = args[1].unspan()
-        && (function.name(*dst).starts_with("__ref") || function.name(*dst) == "__retbuf")
+        && (function.name(*dst).starts_with("__ref")
+            || function.name(*dst) == "__retbuf"
+            // A local PROMOTED onto the return buffer is that buffer under its own name, so
+            // a copy into it moves the release the same way (loft#1934: `return b` of a
+            // `-> S?` whose other local took the buffer copied `b` into it and still ran
+            // `b`'s drop).
+            || promoted_ret_buffer(data, data.def_nr(&function.name), function, *dst))
     {
         let src = match function.tp(src).depend().as_slice() {
             [w] if *w != src
@@ -635,14 +644,23 @@ fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Opti
             return Some(moved);
         }
     }
-    let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
-    if !moved
-        && !copy_hands_off(&args[1], function, data)
-        && !appends_to_element(&args[1], function, data)
-    {
+    if !copy_record_moves_source(args, function, data) {
         return None;
     }
     drop_bearing_source(&args[0], function)
+}
+
+/// Does `OpCopyRecord(src, dest, tp)` hand its SOURCE's release over to the destination?  The
+/// `0x8000` move into a collection element, a destination that is a container FIELD, or one that
+/// is an element being appended — each is released by the container's cascade.  One home for the
+/// collector ([`copy_record_handoff`]) and the lift site (`Scopes::scan_args`), which meets the
+/// same copy after its source call became a `__lift_N`: asked at two sites, the lift once missed
+/// the appended element and the temp dropped the resource the element now holds (loft#1934).
+pub(super) fn copy_record_moves_source(args: &[Value], function: &Function, data: &Data) -> bool {
+    matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0)
+        || args.get(1).is_some_and(|d| {
+            copy_hands_off(d, function, data) || appends_to_element(d, function, data)
+        })
 }
 
 /// The hand-offs ONE node makes, added to `out` — the body of [`collect_drop_transferred`],

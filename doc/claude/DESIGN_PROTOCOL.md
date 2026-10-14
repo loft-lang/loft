@@ -113,4 +113,4 @@ trusting the rule's premise.
 - **`engineering-rigor` skill** — the synthesis + router; this protocol is its DESIGN-mode depth.
 - [DESIGN_VERIFICATION.md § C1](DESIGN_VERIFICATION.md) — the incubator this graduated from.
 - [GOALS.md](GOALS.md) Goal E — robustness by subtraction, the deep reason the short version is usually the robust one.
-- [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) — where a decided meaning is recorded (C86 is a bind-semantics example).
+- [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) — where a decided meaning is recorded (@C86 is a bind-semantics example).

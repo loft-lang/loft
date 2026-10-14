@@ -1,0 +1,81 @@
+// @FR-N-Coal checks a `??` default against the value's type and @FR-C-Never makes every jump a
+// `Never` that fits any type, so `x = e ?? break` / `x = e ?? continue` leave or skip the loop
+// on a null exactly as `?? return` leaves the function, and `x` is the present value.  A
+// labelled `i#break` / `i#continue` is the same `Never`, and so is a bare `return` in a void
+// function's match arm.  Outside a loop each is refused as the bare word is
+// (tests/error_messages/cases/59*).
+// @falsified-at: d84ebf7bb — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-null-can-leave-the-loop-through-a-coalesce.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+// CHANNEL: the exit — the control refuses `?? break` / `?? continue` / `i#break` as a default.
+
+struct Part { x: integer, s: text }
+
+fn part(k: integer) -> Part? { if k < 3 { Part { x: k * 10, s: "p{k}" } } else { null } }
+fn name(k: integer) -> text? { if k % 2 == 0 { "n{k}" } else { null } }
+
+// A bare `return` before the arm's `,` carries no value, in a void function too.
+fn return_in_void_arm(n: integer, out: &vector<integer>) {
+  k = match n { 4 => return, _ => n };
+  out += [k * 10]
+}
+
+fn until_null(v: vector<integer?>) -> integer {
+  s = 0;
+  for k in 0..len(v) { x = v[k] ?? break; s += x }
+  s
+}
+
+fn skip_null(v: vector<integer?>) -> integer {
+  s = 0;
+  for k in 0..len(v) { x = v[k] ?? continue; s += x }
+  s
+}
+
+fn skip_text() -> text {
+  out = "";
+  for k in 0..6 { t = name(k) ?? continue; out += t }
+  out
+}
+
+fn until_record() -> integer {
+  s = 0;
+  for k in 0..9 { p = part(k) ?? break; s += p.x + p.s.len() }
+  s
+}
+
+fn skip_in_while() -> integer {
+  s = 0;
+  k = 0;
+  while k < 9 { k += 1; x = name(k) ?? continue; s += x.len() }
+  s
+}
+
+fn labelled() -> integer {
+  s = 0;
+  for i in 0..3 { for k in 0..9 { p = part(k + i) ?? i#break; s += p.x } }
+  s
+}
+
+fn labelled_as_arm() -> integer {
+  s = 0;
+  for i in 0..4 { for k in 0..3 { x = if i == 2 { i#continue } else { i * 10 + k }; s += x } }
+  s
+}
+
+fn main() {
+  got: vector<integer> = [];
+  return_in_void_arm(3, got);
+  return_in_void_arm(4, got);
+  return_in_void_arm(5, got);
+  assert(got == [30, 50], "a bare return in a void function's arm: {got}");
+  assert(until_null([1, 2, null, 4]) == 3, "?? break stops at the first null: {until_null([1, 2, null, 4])}");
+  assert(skip_null([1, null, 4, null, 8]) == 13, "?? continue skips each null: {skip_null([1, null, 4, null, 8])}");
+  assert(skip_text() == "n0n2n4", "?? continue on a text: {skip_text()}");
+  assert(until_record() == 36, "?? break on a record: {until_record()}");
+  assert(skip_in_while() == 8, "?? continue in a while: {skip_in_while()}");
+  // i#break leaves the OUTER loop: i = 0 adds the parts 0, 10, 20 and part(3) is null.
+  assert(labelled() == 30, "?? i#break: {labelled()}");
+  // i = 0: 0+1+2, i = 1: 10+11+12, i = 2 skipped, i = 3: 30+31+32
+  assert(labelled_as_arm() == 3 + 33 + 93, "i#continue as an arm: {labelled_as_arm()}");
+}

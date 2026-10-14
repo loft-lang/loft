@@ -33,6 +33,7 @@
 //! - [`disturbance`] — what code grows, removes from or reshapes, directly or through a callee
 //! - [`view_walk`] — which view bindings must be copied out because their container is disturbed
 //! - [`reshape_refusals`] — the shapes refused because a callee reshapes what an argument points into
+//! - [`stored_refs`] — the stored references whose holder outlives the record they name: the home moved out, the record built in the holder's store or copied there before the free, or refused
 //! - [`handoff`] — which side of a copy keeps the drop, and the per-path hand-off flags
 //! - [`handles`] — generator handles: owned, viewed, and retained while shared
 //! - [`backings`] — the hidden store a collection's elements live in
@@ -77,6 +78,7 @@ mod args;
 mod arm_lift;
 mod backings;
 mod branches;
+mod buffer_detach;
 mod buffers;
 mod capture_adoption;
 mod capture_builds;
@@ -104,6 +106,8 @@ mod reshape_refusals;
 mod returns;
 mod scan;
 mod scan_set;
+mod stored_refs;
+mod text_replace;
 mod text_return_check;
 mod tuple_members;
 mod value_struct;
@@ -139,6 +143,10 @@ pub(crate) use places::value_view_places;
 pub use places::{ParamPlace, call_arg_place, compose_param_place, same_place};
 pub use reshape_refusals::{ReshapeRefusal, reshape_refusals};
 pub(crate) use returns::return_has_null_arm;
+pub use stored_refs::{
+    Evacuation, Hoist, Place, PlaceOps, apply_places, borrowing, insert_evacuations, insert_hoists,
+    keep_placed_results, stored_reference_homes,
+};
 use value_struct::value_struct_copy;
 pub(crate) use view_walk::link_set_repoints;
 
@@ -288,6 +296,11 @@ struct Scopes<'s> {
     /// The locals whose one real bind follows an enclosing null on every path and every pass
     /// ([`null_led_first_binds_in`]): that bind displaces no store.
     null_led_first: HashSet<u16>,
+    /// The scope pass's SPLIT COPIES (`var_mapping`) — each copy to the variable it was split
+    /// from — with how many source binds each copy took.  The whole-body counts above are
+    /// keyed by the ORIGINAL variable, so a copy is never in them; a question about the copy's
+    /// own binds reads it here (loft#1954).
+    split_binds: HashMap<u16, (u16, usize)>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -384,6 +397,10 @@ struct Scopes<'s> {
     /// itself is never freed.  Keyed on every id the local is known by (the original and
     /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
     owner_witness: HashMap<u16, u16>,
+    /// `@FR-L-CapRebind` — the closure records the statement being scanned releases in its
+    /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
+    /// snapshot (`displaced_drop`) skips them: one release per displaced record.
+    prefix_released: Vec<u16>,
     /// @PLN85 `local_source` over-free fix (gated by `LOFT_JOIN_OWN`): heap slots
     /// that hold an OWNED store displaced by a later `Borrowed`/`Join` reassignment
     /// (`use_analysis::displaced_owned_slots`). For these, `scan_set` strips the
@@ -556,6 +573,8 @@ struct Scopes<'s> {
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+    // `@FR-R-PureReuse` — on the parser's bodies, before any of this pass's own rewrites.
+    crate::pure_reuse::rewrite_program(data);
     // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
     // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
     crate::spent::record_all(data);
@@ -614,6 +633,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     let disturbed =
         crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
     let disturbed = disturbed.as_ref();
+    // The functions this call checks: `text_replace::admit` decides only theirs.
+    let fresh: Vec<u32> = (0..data.definitions())
+        .filter(|&d| {
+            matches!(data.def(d).def_type, DefType::Function) && !data.def(d).variables.done
+        })
+        .collect();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
@@ -741,10 +766,22 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // @PLN164 B2 (`@FR-R-Place`, `@FR-R-MoveLast`) — a call result built where it will
         // live: decided here, after the scan has settled the function's frees and before the
         // slot intervals are computed off the final IR.  One home for both backends.
+        // `@FR-H-RefHome` — a call result built in a stored reference's holder's store is not
+        // the caller's to free: decided on the settled IR, where the pass lifted the call.
+        keep_placed_results(data, d_nr);
+        // `@FR-H-RefHome` — a record a parameter's reference names is copied out before its
+        // home's store is freed: decided on the settled IR, where the pass placed the frees.
+        insert_evacuations(data, d_nr);
         crate::place_result::rewrite(data, d_nr);
         // `(R-ExitVector)` — a local vector returned inside the exit literal is built in the
         // return buffer's store: decided on the same IR, after the placements it may host.
         crate::exit_vector::rewrite(data, d_nr);
+        // `(R-ForwardResult)` — a returned local bound from a call is built in the return
+        // buffer: the call is handed the buffer the delivery copied into.
+        crate::forward_result::rewrite(data, d_nr);
+        // `(R-LiteralAppend)` — a record literal bound to a local whose one use is the append
+        // of it is built in its element.
+        crate::literal_append::rewrite(data, d_nr);
         // `(R-ReturnField)` — the returned field of an owned local is the local's store handed
         // over at the field's position: decided on the same settled IR, after the exit vector
         // a decoder's tree may have been built in.
@@ -766,7 +803,10 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         crate::loop_kernels::rewrite(data, d_nr);
         // `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is one
         // append behind an in-range guard: decided on the same settled IR.
-        crate::byte_copy::rewrite(data, d_nr);
+        crate::byte_copy::rewrite(data, database, d_nr);
+        // `@FR-R-RepeatRun` — equal constant pushes into one target are one repeat fill:
+        // decided on the same settled IR.
+        crate::repeat_run::rewrite(data, database, d_nr);
         // `@FR-R-VecCopy` — a vector copied into an exclusive one element at a time is one
         // append: decided on the same settled IR.
         crate::vec_copy::rewrite(data, database, d_nr);
@@ -827,6 +867,11 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // @PLN94 C.0 (DEV tier) — the POST-codegen free-based checks (over-free / under-free), now that
     // `get_free_vars` has inserted the frees into `def.code` above. Self-gates on
     // `LOFT_OWN_ORACLE=check-dev`; observer only (SI-1), a no-op on the default `check` path.
+    // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now
+    // that the deps say who owns and the frees say who releases.
+    if crate::keys::buffer_detach_enabled() {
+        buffer_detach::detach_owned_buffers(data);
+    }
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the
@@ -835,6 +880,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     mark_borrowed_captures(data, database);
     // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
     crate::use_analysis::lease_calls(data);
+    // `@FR-H-TextReplace` — an assignment to a text field releases the text it replaces only
+    // where no borrow of that text can be live; every other site writes without releasing.
+    text_replace::admit(data, &fresh);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
@@ -902,13 +950,15 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
     // keeps the frame base (args_base) 8-aligned.  Identity when off.
     let local_start: u16 = {
         let vars = &data.definitions[d_nr as usize].variables;
-        let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s)) as u16;
-        let arg_size: u16 = vars
+        let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s));
+        let arg_size: u32 = vars
             .arguments()
             .iter()
             .map(|&a| step(size(vars.var_type(a), &Context::Argument)))
             .sum();
-        arg_size + step(4) // return-address slot
+        // return-address slot
+        u16::try_from(arg_size + step(4))
+            .unwrap_or_else(|_| crate::limits::frame_too_large(data, d_nr))
     };
     // @PLAN53 — the aligned V2 allocator is the ONLY allocator.  Compute the
     // V2 layout from the (immutable) function intervals, reset stale local
@@ -920,6 +970,9 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
         let d = &data.definitions[d_nr as usize];
         crate::variables::assign_slots_v2(&d.variables, local_start, &aliases)
     };
+    if result.frame_end > u32::from(u16::MAX) {
+        crate::limits::frame_too_large(data, d_nr);
+    }
     {
         let d = &mut data.definitions[d_nr as usize];
         d.variables.reset_local_slots();

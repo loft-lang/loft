@@ -6,9 +6,10 @@
 //! steps through the non-null add.  `LOFT_NO_BASE_RECPTR=1` restores `vector::rec_ptr`.
 //! The cell corpus (`tests/scripts/158-iteration-base.loft`) says the VALUES hold on both
 //! backends, in every switch state and under the falsifiers; this pins what is emitted.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-iteration-base.loft";
 
@@ -53,7 +54,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     // `e = v[i]?` binds by explicit index.  In `for i in 0..len(v)` the `?` is dropped
     // (`@FR-R-InRange`), so the binding is the plain element read and takes its address from
     // the held base (`hoist::element_binding`); `LOFT_NO_IN_RANGE=1` gives `rec_ptr` again.
-    ("n_w15", 1, 0, 0, 0),
+    // The second walk's `e = v[i]` is tested against null, which reads the reference and
+    // leaves the view where it was (`hoist::REF_COMPARE_OPS`), so it takes its address too.
+    ("n_w15", 2, 0, 0, 0),
 ];
 
 const SWITCHES: [&str; 5] = [
@@ -65,7 +68,8 @@ const SWITCHES: [&str; 5] = [
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args).env("LOFT_TIMEOUT", "300");
     for s in SWITCHES {
         cmd.env_remove(s);
@@ -95,13 +99,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         env,
     );
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

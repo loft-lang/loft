@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A library whose functions are passed as VALUES under their qualified names
+// (`tests/scripts/a-library-function-is-a-value-under-its-qualified-name.loft`).
+
+pub fn twice(x: integer) -> integer { x * 2 }
+pub fn greet(s: text) -> text { "hi {s}" }
+pub fn ident<T>(x: T) -> T { x }
+pub const SEVEN = 7;

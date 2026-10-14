@@ -33,12 +33,14 @@ pub fn source_run_lock(source: &std::path::Path) -> Option<std::fs::File> {
     let abs = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
     let mut h = std::collections::hash_map::DefaultHasher::new();
     abs.hash(&mut h);
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join(format!("loft-run-{:016x}.lock", h.finish())))
-        .ok()?;
+    let lock = fa::open_with(
+        std::env::temp_dir().join(format!("loft-run-{:016x}.lock", h.finish())),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false),
+    )
+    .ok()?;
     lock.lock().ok()?;
     Some(lock)
 }
@@ -75,6 +77,30 @@ pub fn file_url(p: &std::path::Path) -> String {
 pub fn deadline_scale() -> u64 {
     let shared = std::env::var_os("CI").is_some() || std::env::var_os("NEXTEST").is_some();
     if shared { 3 } else { 1 }
+}
+
+/// Run `f` on a thread with the `loft` CLI's own stack: 8 MiB, or `RUST_MIN_STACK` when a
+/// sanitizer job raises it.  A test thread has 2 MiB on Linux and less on Windows, and the
+/// front end spends ~22 KiB of stack per nesting level of an expression, so a corpus program
+/// the CLI compiles (the 100-term sum in `a-frame-never-pushes-past-the-room-its-entry-made`)
+/// overflowed a test that walked the corpus on its own thread.  A panic re-raises here, so the
+/// test fails exactly as it would have.
+#[allow(dead_code)]
+pub fn on_cli_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    let stack = std::env::var("RUST_MIN_STACK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(8 << 20, |v| v.max(8 << 20));
+    std::thread::scope(|sc| {
+        let run = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(sc, f)
+            .expect("spawn the CLI-stack thread");
+        match run.join() {
+            Ok(v) => v,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
 }
 
 /// A server-test port, isolated PER CHECKOUT.  The engine-host / wasm-relay tests bind FIXED
@@ -184,6 +210,7 @@ fn pivot_anchor(canonical: u16) -> u16 {
 /// through `/proc/<pid>/exe`, and kills with `kill(2)`.  Windows has none of the three, so
 /// the port there is simply pivoted around instead — which is what the caller already does
 /// for a port that is not ours.
+// approved exemption: `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
 #[cfg(unix)]
 #[allow(dead_code)]
 fn reap_our_leaked_holders(port: u16) -> bool {
@@ -209,6 +236,7 @@ fn reap_our_leaked_holders(port: u16) -> bool {
 
 /// Windows has no `lsof`, no `/proc` and no `kill(2)`, so there is nothing to reap — the
 /// caller pivots to another port, exactly as it does for a holder that is not ours.
+// approved exemption: `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
 #[cfg(not(unix))]
 #[allow(dead_code)]
 fn reap_our_leaked_holders(_port: u16) -> bool {
@@ -222,7 +250,7 @@ fn reap_our_leaked_holders(_port: u16) -> bool {
 /// the documented way to read this file.
 #[allow(dead_code)]
 fn is_orphan(pid: i32) -> bool {
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+    let Ok(stat) = fa::read_to_string(format!("/proc/{pid}/stat")) else {
         return false;
     };
     let Some(rest) = stat.rsplit_once(')').map(|(_, r)| r) else {
@@ -247,7 +275,7 @@ fn is_orphan(pid: i32) -> bool {
     // under this tree as its parent; a leaked one has init or a subreaper.  Unreadable
     // is not an orphan: the conservative direction is to decline the kill.
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    match std::fs::read_link(format!("/proc/{ppid}/exe")) {
+    match fa::read_link(format!("/proc/{ppid}/exe")) {
         Ok(parent_exe) => !parent_exe.starts_with(&root),
         Err(_) => false,
     }
@@ -285,7 +313,7 @@ fn pivot_port(anchor: u16) -> Option<u16> {
 /// above this can be taken from under a test between the check and the bind.
 #[allow(dead_code)]
 fn ephemeral_floor() -> u16 {
-    std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+    fa::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
         .ok()
         .and_then(|s| s.split_whitespace().next()?.parse().ok())
         .unwrap_or(32768)
@@ -306,7 +334,7 @@ fn ephemeral_floor() -> u16 {
 /// test that is still running.
 #[allow(dead_code)]
 fn holders_owned_by_this_checkout(port: u16) -> Option<Vec<i32>> {
-    let out = std::process::Command::new("lsof")
+    let out = loft::platform::process::harness_command("lsof")
         .arg("-ti")
         .arg(format!("tcp:{port}"))
         .output()
@@ -315,7 +343,7 @@ fn holders_owned_by_this_checkout(port: u16) -> Option<Vec<i32>> {
     let mut ours = Vec::new();
     for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
         let pid: i32 = pid.parse().ok()?;
-        let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+        let exe = fa::read_link(format!("/proc/{pid}/exe")).ok()?;
         if !exe.starts_with(&root) {
             return None; // a foreign holder — the whole port is off limits
         }
@@ -403,6 +431,7 @@ fn posix_cksum(bytes: &[u8]) -> u32 {
 
 use loft::data::Data;
 use loft::database::Stores;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -416,17 +445,13 @@ use std::sync::OnceLock;
 ///
 /// `rlib` is `target/<profile>/libloft.rlib` or `target/<profile>/deps/libloft-*.rlib`.
 #[allow(dead_code)]
-#[cfg(not(windows))]
-pub fn native_lib_search_dirs(_rlib: &std::path::Path) -> Vec<PathBuf> {
-    Vec::new()
-}
-
-#[allow(dead_code)]
-#[cfg(windows)]
 pub fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<PathBuf> {
+    if loft::platform::host_lib_os() != loft::platform::LibOs::Windows {
+        return Vec::new();
+    }
     // Walk up to the profile dir (release/ or debug/), then scan `build/<crate>-<hash>/`.
     let Some(profile_dir) = rlib.parent().and_then(|p| {
-        if p.file_name().is_some_and(|n| n == "deps") {
+        if fa::file_name(p).is_some_and(|n| n == "deps") {
             p.parent()
         } else {
             Some(p)
@@ -434,34 +459,34 @@ pub fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<PathBuf> {
     }) else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) else {
+    let Ok(entries) = fa::read_dir(profile_dir.join("build")) else {
         return Vec::new();
     };
     let mut dirs = Vec::new();
-    for entry in entries.filter_map(|e| e.ok()) {
-        let build_entry = entry.path();
+    for entry in entries {
+        let build_entry = entry.os_spelling();
         // `out/` and its immediate subdirs (libs generated into OUT_DIR).
         let out = build_entry.join("out");
-        if out.is_dir() {
+        if fa::is_dir(&out) {
             dirs.push(out.clone());
-            if let Ok(subs) = std::fs::read_dir(&out) {
+            if let Ok(subs) = fa::read_dir(&out) {
                 dirs.extend(
-                    subs.filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| p.is_dir()),
+                    subs.into_iter()
+                        .map(|e| e.os_spelling())
+                        .filter(|p| fa::is_dir(p)),
                 );
             }
         }
         // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
         // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
-        if let Ok(content) = std::fs::read_to_string(build_entry.join("output")) {
+        if let Ok(content) = fa::read_to_string(build_entry.join("output")) {
             for line in content.lines() {
                 if let Some(p) = line
                     .strip_prefix("cargo:rustc-link-search=native=")
                     .or_else(|| line.strip_prefix("cargo:rustc-link-search="))
                 {
                     let p = PathBuf::from(p);
-                    if p.is_dir() && !dirs.contains(&p) {
+                    if fa::is_dir(&p) && !dirs.contains(&p) {
                         dirs.push(p);
                     }
                 }
@@ -529,7 +554,7 @@ pub fn record_env_skips(suite: &str, reason: &str, skips: &[(String, String)]) {
     let Ok(dir) = std::env::var("LOFT_SKIP_LEDGER") else {
         return;
     };
-    if std::fs::create_dir_all(&dir).is_err() {
+    if fa::create_dir_all(&dir).is_err() {
         return;
     }
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -541,17 +566,42 @@ pub fn record_env_skips(suite: &str, reason: &str, skips: &[(String, String)]) {
             format!("{suite}\t{reason}\t{}\t{}\n", clean(entry), clean(detail))
         })
         .collect();
-    let _ = std::fs::write(path, body);
+    let _ = fa::write(path, body);
 }
 
 #[allow(dead_code)]
 static DEFAULT_PARSED: OnceLock<(Data, Stores)> = OnceLock::new();
 
-/// Parse the default library once per test binary and cache the result.
-/// Each test clones the schema cheaply instead of re-parsing three files.
+#[allow(dead_code)]
+static DEFAULT_FROM_SOURCE: OnceLock<(Data, Stores)> = OnceLock::new();
+
+/// The standard library a test starts from, once per process: warm-loaded from the startup
+/// cache's stdlib bundle when one is current, else parsed and saved for the next process.
+///
+/// Under nextest every test is its own process, so a parse here is paid per TEST (~50 ms,
+/// most of what a typical `code!` test costs).  The bundle's key covers the stdlib's content,
+/// this binary's build and the semantics switches (`cache::stdlib_cache_key`), so an edited
+/// `default/` or another build lands at a fresh key and is parsed; `save_bundle` publishes by
+/// rename, so concurrent tests never read a partial file.  `LOFT_NO_CACHE` turns it off.
 #[allow(dead_code)]
 pub fn cached_default() -> (Data, Stores) {
     let (data, db) = DEFAULT_PARSED.get_or_init(|| {
+        let mut p = Parser::new();
+        if loft::startup_cache::warm_load_stdlib(&mut p, "default") {
+            return (p.data, p.database);
+        }
+        p.parse_dir("default", true, false).unwrap();
+        loft::startup_cache::save_stdlib_cache(&p, "default");
+        (p.data, p.database)
+    });
+    (data.clone(), db.clone())
+}
+
+/// The standard library PARSED from source, never read back from a bundle — for a test of
+/// the bundle codec itself, whose oracle must not be the codec's own output.
+#[allow(dead_code)]
+pub fn parsed_default() -> (Data, Stores) {
+    let (data, db) = DEFAULT_FROM_SOURCE.get_or_init(|| {
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         (p.data, p.database)
@@ -670,7 +720,7 @@ pub struct LearnSample {
 /// [`check_learn_sample`].
 #[allow(dead_code)]
 pub fn learn_loft_samples() -> Vec<LearnSample> {
-    let page = std::fs::read_to_string("doc/learn-loft.md").expect("doc/learn-loft.md");
+    let page = fa::read_to_string("doc/learn-loft.md").expect("doc/learn-loft.md");
     let lines: Vec<&str> = page.lines().collect();
     let fence_end = |from: usize| (from..lines.len()).find(|&j| lines[j].trim() == "```");
     let mut out = Vec::new();
@@ -714,11 +764,11 @@ pub fn check_learn_sample(sample: &LearnSample, mode: &str, timeout: &str) -> Re
         std::process::id(),
         mode.trim_start_matches('-')
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fa::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let name = format!("learn_loft_line_{}.loft", sample.line);
     let path = dir.join(&name);
-    std::fs::write(&path, &sample.code).map_err(|e| e.to_string())?;
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&path, &sample.code).map_err(|e| e.to_string())?;
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg(mode)
         .arg(&path)
         .env("LOFT_TIMEOUT", timeout)
@@ -726,7 +776,7 @@ pub fn check_learn_sample(sample: &LearnSample, mode: &str, timeout: &str) -> Re
         .map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let at = format!("doc/learn-loft.md:{} on {mode}", sample.line);
     if !out.status.success() {
         return Err(format!("{at} failed ({}):\n{stdout}{stderr}", out.status));

@@ -12,9 +12,8 @@
 
 #![cfg(feature = "mmap")]
 
-use std::fs;
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -34,8 +33,8 @@ fn scratch(test_name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-store-durable-loft").join(test_name);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -43,7 +42,7 @@ fn scratch(test_name: &str) -> PathBuf {
 /// `LOFT_DURABLE_TEST_MODE=<mode>` set, returning stdout + the exit
 /// code as `(stdout, code)`.
 fn run_smoke(main: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(smoke_script())
         .env("LOFT_DURABLE_TEST_PATH", main)
@@ -69,7 +68,7 @@ fn dmeta_path(main: &Path) -> PathBuf {
 
 /// Write a deterministic main file (so CRCs are stable across runs).
 fn write_main_file(path: &Path) {
-    fs::write(path, b"some durable store payload content of length 48").unwrap();
+    fa::write(path, b"some durable store payload content of length 48").unwrap();
 }
 
 // ── full lifecycle ──────────────────────────────────────────────────────────
@@ -89,7 +88,7 @@ fn check_then_seal_then_recheck_loop() {
 
     // Sidecar must exist after the seal call.
     assert!(
-        dmeta_path(&main).exists(),
+        fa::exists(dmeta_path(&main)),
         "sidecar should exist after store_durable_seal"
     );
 }
@@ -109,9 +108,9 @@ fn corrupted_sidecar_detected_via_loft_binding() {
 
     // XOR a byte in the sidecar's payload_crc field (offset 32-35).
     let meta = dmeta_path(&main);
-    let mut bytes = fs::read(&meta).expect("read sidecar");
+    let mut bytes = fa::read(&meta).expect("read sidecar");
     bytes[32] ^= 0xFF;
-    fs::write(&meta, bytes).expect("write corrupted sidecar");
+    fa::write(&meta, bytes).expect("write corrupted sidecar");
 
     // Now the smoke script's corrupt path must observe check==false.
     let (stdout, code) = run_smoke(&main, "corrupt");

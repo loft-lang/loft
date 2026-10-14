@@ -4,22 +4,22 @@
 
 // Global hex address: (q, r) in world coordinates plus vertical layer.
 pub struct HexAddress {
-  ha_q:  integer not null,
-  ha_r:  integer not null,
-  ha_cy: integer not null,
+  pub ha_q:  integer not null,
+  pub ha_r:  integer not null,
+  pub ha_cy: integer not null,
 }
 
 // A single hex cell.
 // h_item_rotation packs rotation (bits 0-4), spawn_flag (bit 5),
 // waypoint_flag (bit 6).
 pub struct Hex {
-  h_height:        integer not null,
-  h_material:      integer not null,
-  h_item:          integer not null,
-  h_item_rotation: integer not null,
-  h_wall_n:        integer not null,
-  h_wall_ne:       integer not null,
-  h_wall_se:       integer not null,
+  pub h_height:        integer not null,
+  pub h_material:      integer not null,
+  pub h_item:          integer not null,
+  pub h_item_rotation: integer not null,
+  pub h_wall_n:        integer not null,
+  pub h_wall_ne:       integer not null,
+  pub h_wall_se:       integer not null,
 }
 
 // Extract the 5-bit rotation (0-23) from the packed item_rotation field.
@@ -34,8 +34,8 @@ pub fn hex_waypoint_flag(h: Hex) -> boolean { (h.h_item_rotation >> 6) & 1 == 1 
 // A 32x32 grid of hexes at chunk coordinates (cx, cy, cz).
 // Index into ck_hexes: hx * 32 + hz.
 pub struct Chunk {
-  ck_cx:    integer not null,
-  ck_cy:    integer not null,
-  ck_cz:    integer not null,
-  ck_hexes: vector<Hex>,
+  pub ck_cx:    integer not null,
+  pub ck_cy:    integer not null,
+  pub ck_cz:    integer not null,
+  pub ck_hexes: vector<Hex>,
 }

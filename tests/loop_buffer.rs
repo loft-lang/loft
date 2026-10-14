@@ -6,8 +6,8 @@
 //! emitted; a `text` vector keeps the re-mint; `LOFT_NO_LOOP_BUFFER_REUSE=1` restores the
 //! re-mint everywhere.  The cell corpus (`bytecode-comparisons/V-al-loop-buffer-cells.loft`)
 //! says the VALUES hold on both backends; this pins what is emitted.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-al-loop-buffer-cells.loft";
@@ -17,7 +17,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // One file per TEST: the tests run on threads of one process.
     let out =
         std::env::temp_dir().join(format!("loft_loop_buffer_{}_{tag}.rs", std::process::id()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -28,13 +29,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

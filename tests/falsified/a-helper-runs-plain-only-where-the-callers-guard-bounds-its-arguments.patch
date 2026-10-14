@@ -1,0 +1,13 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index ec5cb267e..864a3d934 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -736,7 +736,7 @@ impl Output<'_> {
+             Value::Block(bl) if bl.name == "For block" && !self.in_range_copy => {
+                 if let Some((test, facts)) = self.range_guard_for(bl) {
+                     let declared_before = self.declared.clone();
+-                    writeln!(w, "if {test} {{ //@FR-R-RangedCall guarded copy")?;
++                    writeln!(w, "if true || {test} {{ //@FR-R-RangedCall guarded copy")?;
+                     self.in_range_copy = true;
+                     self.range_override.push(std::rc::Rc::new(facts));
+                     self.indent(w)?;

@@ -8,7 +8,7 @@
 // `vector<integer>` field was copied one byte wide and read back eight wide —
 // `[151521030, 0, 4294967202, 0]` for `[0, 1, 2, 3]`, silently, on both backends.
 // The cure the message names is the declared type on the source's binding.
-// @EXPECT_ERROR: Cannot assign vector<integer(-6, 6)> to a field of type vector<integer>
+// @EXPECT_ERROR: Cannot assign vector<integer limit(-6, 6)> to a field of type vector<integer>
 // @falsified-at: cc67bbe71 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/a-struct-literal-refuses-a-vector-of-another-element-width.patch
 //   — the same channels as the control above; score it with `scripts/falsify.sh <this file>

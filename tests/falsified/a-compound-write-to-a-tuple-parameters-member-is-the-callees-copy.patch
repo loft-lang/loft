@@ -1,0 +1,17 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..fc13e6501 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -9085,12 +9085,6 @@
+         let mut to = code.clone();
+         for op in ["=", "+=", "-=", "*=", "%=", "/="] {
+             if self.lexer.has_token(op) {
+-                // loft#1278's promotion for the routes past the member-assignment branch above:
+-                // a compound write to a parameter tuple's member (`t.0 += "!"`) writes it too.
+-                // The second pass reads `t` as the shadow, so the answer is not needed here.
+-                if let Value::TupleGet(root, _) = to.unspan() {
+-                    let _ = self.promote_written_tuple_param(*root);
+-                }
+                 // @PLN167 C1 — `t = &…` BINDS the link: its target is the variable itself,
+                 // not the text field every other mention of a store-kind link is spelled as.
+                 if op == "="

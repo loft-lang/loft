@@ -1,0 +1,118 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1934, `@FR-N-Road` — a `-> S?` return takes the caller-allocated buffer its `-> S` twin
+// takes, so the two spellings are one lowering and a `null` answer is the only thing the `?`
+// adds.  The buffer was withheld from a nullable record (`ret_promo_base` peeled
+// `Optional(Vector)` only), and every delivery, bind and free was then posed twice.  Giving it
+// the buffer surfaced the places the record road had assumed a dense return: a `null` arm folded
+// onto a promoted local answered the caller's live buffer, a `Bind` delivery skipped the `?`, a
+// `match` arm ending in a nullable local was copied whole, a lambda grew its buffer under the
+// `?`-wrapped type, a generic `-> Self?` stub reserved none, and a promoted buffer was counted as
+// the caller's store at a null-arm return.
+//
+// Axes it MOVES: the tail (a mint, a view of an argument, a promoted local beside a `null` arm, a
+// nullable field read through a `match`), the caller (a bind, a loop of binds, an inline read),
+// the callee kind (a free function, a method, a generic through an interface `-> Self?`, a
+// lambda through a fn-ref), and the answer (present, absent).  Each cell checks the value, and
+// that the caller's own record is unchanged where the callee viewed it; the leak gate checks that
+// a loop of calls releases what each minted.  Values are hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1934-a-nullable-record-return-takes-its-dense-twins-buffer.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The patch reverts ONE of the sites the record buffer surfaced: a lambda's own return buffer
+//   read as a closure borrow (`fnref_return_borrows_closure`), which declined the call's copy.
+//   CHANNEL: the VALUE — the fn-ref call's result aliases the caller's element.
+//   WITNESS: `assertion failed: lambda: 99 99` where the cell expects `99 8`, on the control.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct S1934 { a: integer, t: text }
+struct H1934 { s: S1934?, v: vector<S1934> }
+interface Pick1934 { fn pick(self: Self, keep: boolean) -> Self? }
+
+fn mint1934(n: integer) -> S1934? { S1934 { a: n, t: "m" } }
+fn first1934(h: H1934) -> S1934? { h.v[0] }
+fn kept1934(p: S1934, c: boolean) -> S1934? {
+  d: S1934? = p;
+  if c { d = mint1934(9); }
+  return if c { d } else { null };
+}
+enum W1934 { Has1934 { p: S1934? }, None1934 }
+fn field1934(w: W1934) -> S1934? { match w { Has1934 { p } => p, _ => S1934 { a: 0, t: "d" } } }
+fn bump(self: S1934, d: integer) -> S1934? { if d > 0 { S1934 { a: self.a + d, t: "b" } } else { null } }
+fn pick(self: S1934, keep: boolean) -> S1934? { if keep { self } else { null } }
+fn via1934<T: Pick1934>(x: T, keep: boolean) -> T? { x.pick(keep) }
+
+fn h1934() -> H1934 { H1934 { s: S1934 { a: 3, t: "s" }, v: [S1934 { a: 7, t: "v" }] } }
+
+fn test_a_mint_and_a_view_of_an_argument() {
+  m = mint1934(5);
+  assert(m != null && m.a == 5 && m.t == "m", "mint: {m.a ?? -1}");
+  h = h1934();
+  f = first1934(h);
+  f.a = 99;
+  assert(f.a == 99 && h.v[0].a == 7, "view copied: {f.a ?? -1} {h.v[0].a}");
+}
+
+fn test_a_promoted_local_beside_a_null_arm() {
+  base = S1934 { a: 4, t: "p" };
+  present = kept1934(base, true);
+  absent = kept1934(base, false);
+  assert(present != null && present.a == 9, "present: {present.a ?? -1}");
+  assert(absent == null, "the null arm answers null");
+  assert(base.a == 4, "the caller's record: {base.a}");
+}
+
+fn test_a_nullable_field_through_a_match() {
+  g = field1934(Has1934 { p: S1934 { a: 3, t: "s" } });
+  assert(g != null && g.a == 3, "present field: {g.a ?? -1}");
+  n = field1934(Has1934 { p: null });
+  assert(n == null, "an absent field answers null");
+  d = field1934(None1934);
+  assert(d != null && d.a == 0, "the other arm: {d.a ?? -1}");
+}
+
+fn test_a_method_and_a_generic_through_an_interface() {
+  s = S1934 { a: 10, t: "s" };
+  b = s.bump(2);
+  z = s.bump(0);
+  assert(b != null && b.a == 12 && z == null, "method: {b.a ?? -1}");
+  k = via1934(s, true);
+  k.a = 77;
+  n = via1934(s, false);
+  assert(k != null && k.a == 77 && s.a == 10 && n == null, "generic: {k.a ?? -1} {s.a}");
+}
+
+fn test_a_lambda_through_a_fn_ref() {
+  f = fn(p: vector<S1934>) -> S1934? { match p { [a, ..] => a, _ => null } };
+  q: vector<S1934> = [S1934 { a: 8, t: "q" }];
+  r = f(q);
+  r.a = 99;
+  e: vector<S1934> = [];
+  assert(r.a == 99 && q[0].a == 8 && f(e) == null, "lambda: {r.a ?? -1} {q[0].a}");
+}
+
+fn test_a_loop_releases_every_minted_record() {
+  base = S1934 { a: 1, t: "b" };
+  minted = 0;
+  absent = 0;
+  for i in 0..200 {
+    r = kept1934(base, i % 2 == 0);
+    if r == null { absent += 1; } else { minted += r.a; }
+    m = mint1934(i);
+    minted += m.a ?? 0;
+  }
+  // 100 present answers of 9, plus 0 + 1 + … + 199 = 19900.
+  assert(minted == 900 + 19900 && absent == 100 && base.a == 1, "loop: {minted} {absent}");
+}
+
+fn main() {
+  test_a_mint_and_a_view_of_an_argument();
+  test_a_promoted_local_beside_a_null_arm();
+  test_a_nullable_field_through_a_match();
+  test_a_method_and_a_generic_through_an_interface();
+  test_a_lambda_through_a_fn_ref();
+  test_a_loop_releases_every_minted_record();
+}

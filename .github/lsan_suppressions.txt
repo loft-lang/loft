@@ -119,3 +119,18 @@ leak:nw_context
 # `addTermFunc`-only line missed the 6984-byte indirect `instantiateVariable`). Absent on
 # the Linux leg (different TLS impl), so this line is a macOS-only no-op there.
 leak:ThreadLocalVariables
+
+# macOS TLS trust settings: the first certificate verification reads the system's trust
+# settings through `Security.framework`, which builds its keychain singletons
+# (`ModuleNexus<KeychainCore::Globals>`, the MDS directory, an autorelease-pool page, CF
+# thread-specific tables) on a libdispatch worker thread inside `dispatch_once` — so no loft
+# or HTTP frame is on the stack and `http_get_bytes` above cannot reach them.  Process-
+# lifetime state Apple never frees, reachable at exit; Linux verifies with no such framework,
+# so this line is a macOS-only no-op there.  First seen on lib/audience_crystal's
+# 01-editor-helpers.loft (nightly run 37767550180, 14 of its 15 allocations).
+leak:__SecTrustSettingsCopyCertificates
+
+# macOS CoreAnalytics' at-exit barrier: `CoreAnalytics::Client::sendExitBarrierWithTimeoutSync`
+# `dispatch_async`s one 64-byte block from Apple's own `atExitHandler`, after which nothing
+# runs to free it.  Allocated during exit by the OS, not by loft (the 15th allocation above).
+leak:sendExitBarrierWithTimeoutSync

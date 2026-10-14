@@ -326,7 +326,7 @@ impl Stores {
         | Parts::Sorted(c, _)
         | Parts::Ordered(c, _)
         | Parts::Hash(c, _)
-        | Parts::Index(c, _, _)
+        | Parts::Index(c, _)
         | Parts::Trie(c, _)
         | Parts::Radix(c, _) = self.types[content as usize].parts
         {
@@ -509,7 +509,7 @@ impl Stores {
             | Parts::Array(c)
             | Parts::Ordered(c, _)
             | Parts::Sorted(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Hash(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _) => c,
@@ -531,12 +531,16 @@ impl Stores {
             Parts::Sorted(_, _)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Trie(_, _)
                 | Parts::Radix(_, _)
         )
     }
 
+    /// `@C145`, `@FR-H-LongRef` — a type some link reaches (a keyed collection of it, anywhere
+    /// in the program): every collection of it is laid out by reference, its records pushed out
+    /// to homes of their own, because a record inline in a vector moves when the vector grows
+    /// or re-sorts and nothing in the store could tell its referrers.
     pub fn is_linked(&self, tp: u16) -> bool {
         tp != u16::MAX && self.types[tp as usize].linked
     }
@@ -658,6 +662,7 @@ impl Stores {
         // two or more collections over one element type in one struct, auto-linked
         // by `add_field` into several routes to a SINGLE record set (loft#843).
         let mut grouped = Vec::new();
+        let mut referenced = Vec::new();
         for t_nr in 0..self.types.len() {
             if let Parts::Struct(fields) | Parts::EnumValue(_, fields) = &self.types[t_nr].parts {
                 for f in fields {
@@ -666,11 +671,31 @@ impl Stores {
                         Parts::Hash(r, _)
                         | Parts::Radix(r, _)
                         | Parts::Trie(r, _)
-                        | Parts::Index(r, _, _) => linked.insert(r),
+                        | Parts::Index(r, _) => linked.insert(r),
                         _ => false,
                     };
                     if !f.other_indexes.is_empty() {
                         grouped.push(f.content);
+                    }
+                    // `@C145`, `@FR-H-LongRef` — a stored `reference<T>` is a long-term link:
+                    // its target needs a home that never moves, which a record inline in a
+                    // `vector<T>` lacks (growth relocates it, so the reference read the old
+                    // place).  Linked, the type's collections are laid out by reference.
+                    // Only a field the program declares, naming a record it declares: a
+                    // closure's capture fields hold a captured value or collection through its
+                    // slot (which `(H-LongRef)` allows) and name `integer`, `text` or a
+                    // `__tuple` there — linking those would lay every vector of them out by
+                    // reference.
+                    if matches!(self.types[f.content as usize].parts, Parts::DbRef)
+                        && f.target != u16::MAX
+                        && matches!(
+                            self.types[f.target as usize].parts,
+                            Parts::Struct(_) | Parts::EnumValue(_, _)
+                        )
+                        && !self.types[t_nr].name.starts_with("__closure_")
+                        && !self.types[f.target as usize].name.starts_with("__")
+                    {
+                        referenced.push(f.target);
                     }
                 }
             }
@@ -681,7 +706,7 @@ impl Stores {
         // loft#901 — every member of a group names its elements by a 4-byte record
         // id: a hash slot encodes `rec.rec` (`hash::SLOT_RECORD`), an `array` /
         // `ordered` slot stores it raw and reads it back at a hard-coded payload
-        // start, and an `index` keeps its red-black links in FIELDS of the record.
+        // start, and an `index` node holds the record number beside a key part.
         // None of them can express a position INSIDE a record, so an element that
         // does not own one is unaddressable through its siblings.  Two shapes made
         // elements that do not:
@@ -705,12 +730,59 @@ impl Stores {
                 self.types[elem as usize].linked = true;
             }
         }
+        for t in referenced {
+            linked.insert(t);
+            self.types[t as usize].linked = true;
+        }
         let mut in_progress = HashSet::new();
         for t_nr in 0..self.types.len() {
             self.finish_type(&linked, t_nr, &mut in_progress);
         }
         self.determine_keys();
+        if crate::env_once!(std::env::var("LOFT_TRACE_ALIGN").is_ok()) {
+            for v in self.alignment_violations() {
+                crate::loft_eprintln!("[align] {v}");
+            }
+        }
         // self.dump_types();
+    }
+
+    /// `@FR-L-Align` — every place in a finished record where a scalar would sit at an address
+    /// its natural alignment does not divide: a field whose offset its type's alignment does
+    /// not divide, and a record whose size its own alignment does not divide (the stride of
+    /// that record as a collection element).  A record starts on a word boundary, so these
+    /// two are the whole question.  Empty when the layout is aligned.
+    #[must_use]
+    pub fn alignment_violations(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for t in &self.types {
+            let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &t.parts else {
+                continue;
+            };
+            if t.size == u16::MAX {
+                continue;
+            }
+            for f in fields {
+                let Some(ft) = self.types.get(f.content as usize) else {
+                    continue;
+                };
+                let al = u16::from(ft.align.max(1));
+                if f.position % al != 0 {
+                    out.push(format!(
+                        "{}.{}: offset {} is not a multiple of its alignment {al}",
+                        t.name, f.name, f.position
+                    ));
+                }
+            }
+            let al = u16::from(t.align.max(1));
+            if t.size % al != 0 {
+                out.push(format!(
+                    "{}: size {} is not a multiple of its alignment {al}",
+                    t.name, t.size
+                ));
+            }
+        }
+        out
     }
 
     /// @PLN25 — lay out a SINGLE synth `__nullable<S>` enum + its `Some` variant on demand
@@ -814,6 +886,8 @@ impl Stores {
                     self.finish_type(linked, c_nr, in_progress);
                 }
                 sizes.push((self.types[c_nr].size, self.types[c_nr].align));
+                // `@C145`, `@FR-H-LongRef` — a linked element type is laid out by reference:
+                // `vector` → `array`, `sorted` → `ordered`, its records pushed out.
                 if let Parts::Vector(c) = self.types[c_nr].parts
                     && linked.contains(&c)
                 {
@@ -850,36 +924,27 @@ impl Stores {
             .field_groups
             .iter()
             .map(|g| {
-                // @PLN114 — a TUPLE group is a record of its elements, and records
-                // pack TIGHT: `struct { a: u8, b: u32, c: u16 }` is 1+4+2 = 7 bytes,
-                // no padding, because store access is unaligned-tolerant.  Honouring
-                // each DB type's natural alignment here padded `(u8, u16)` to 4 where
-                // the identical record is 3.  Index groups keep their alignment —
-                // only the tuple kind mirrors the record.
-                let tight = matches!(g.kind, crate::data::LinkedFieldKind::Tuple);
-                let member_sa: Vec<(u16, u8)> = g
-                    .field_indices
-                    .iter()
-                    .map(|&i| {
-                        let (sz, al) = sizes[i as usize];
-                        // Narrow members pack tight (the record does); an 8-aligned
-                        // member keeps its boundary — a fn-ref's 8-byte `d_nr` is
-                        // read as an i64 and truncates to 4 without it (#493).
-                        //
-                        // Keying on the member's `Parts` kind was tried and is WORSE
-                        // (29 divergent shapes vs 19): `Parts::Base` covers plain
-                        // `integer` AND `character` / `single` / `float`, so it pads
-                        // members the record packs tight.  The remaining 19 shapes
-                        // need the fn-ref's READER converted off the stack-view
-                        // offsets, not a better discriminator here.
-                        (sz, if tight { 1 } else { al })
-                    })
-                    .collect();
-                let offsets = crate::data::LinkedFieldGroup::group_member_offsets(&member_sa);
+                // `@FR-L-Align` (@C138) — a tuple group's members keep their natural
+                // alignment, as a struct's fields do: `group_member_offsets` pads each to its
+                // boundary.  A tuple cannot reorder its members, so `(text, integer)` takes 4
+                // bytes of padding before the `integer`; packed tight it put the `integer` at 4,
+                // where a native `&integer` link could not point.
+                let member_sa: Vec<(u16, u8)> =
+                    g.field_indices.iter().map(|&i| sizes[i as usize]).collect();
                 let storage_alignment = crate::data::LinkedFieldGroup::group_alignment(
                     &member_sa.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
                 );
-                let storage_size = crate::data::LinkedFieldGroup::group_size(&member_sa);
+                // A stored tuple packs as a record (`@FR-L-Tuple`); an index group keeps its
+                // written order.
+                let (offsets, storage_size) =
+                    if matches!(g.kind, crate::data::LinkedFieldKind::Tuple) {
+                        crate::data::LinkedFieldGroup::record_member_offsets(&member_sa)
+                    } else {
+                        (
+                            crate::data::LinkedFieldGroup::group_member_offsets(&member_sa),
+                            crate::data::LinkedFieldGroup::group_size(&member_sa),
+                        )
+                    };
                 (
                     g.field_indices.clone(),
                     storage_size,
@@ -957,14 +1022,11 @@ impl Stores {
         content
     }
 
-    /// Where an `index`'s red-black bookkeeping (`#left_N` / `#right_N` / `#color_N`) lives for
-    /// an element type — the RECORD that a tree node actually is.
+    /// The RECORD type an `index` over element type `content` actually files — what its
+    /// layout is validated and dumped against.
     ///
     /// For a dense element that is the element struct itself.  For a synth `__nullable<S>` the
-    /// stored record is the `Some` variant (discriminant plus the inline payload), and the enum
-    /// has no field list to append to at all — so the bookkeeping belongs on `Some`.  Every
-    /// reader of `Parts::Index`'s `left_field_nr` resolves through here, so the append and the
-    /// byte offset `tree` descends from cannot disagree.
+    /// stored record is the `Some` variant (discriminant plus the inline payload).
     pub(crate) fn index_owner(&self, content: u16) -> u16 {
         self.nullable_some_variant(content).unwrap_or(content)
     }
@@ -1186,7 +1248,7 @@ impl Stores {
             }
             Parts::Ordered(c, key_fields)
             | Parts::Sorted(c, key_fields)
-            | Parts::Index(c, key_fields, _) => {
+            | Parts::Index(c, key_fields) => {
                 self.types[t_nr].keys.clear();
                 for (key_field, asc) in &key_fields {
                     if let Some((content, position)) = self.key_field(c, *key_field) {
@@ -1239,9 +1301,8 @@ impl Stores {
     /// size, and content type.  Fields are sorted by position so gaps
     /// and overlaps are visually obvious.
     ///
-    /// Useful for diagnosing layout bugs (e.g. tree::add writing
-    /// at wrong offsets when bookkeeping fields land at non-contiguous
-    /// positions per `calc::calculate_positions`'s alignment-aware
+    /// Useful for diagnosing layout bugs (fields placed at unexpected
+    /// positions by `calc::calculate_positions`'s alignment-aware
     /// reordering).
     ///
     /// For Sorted/Hash/Index/Radix: also shows the content struct's
@@ -1278,7 +1339,7 @@ impl Stores {
             Parts::Sorted(_, _) => "sorted",
             Parts::Ordered(_, _) => "ordered",
             Parts::Hash(_, _) => "hash",
-            Parts::Index(_, _, _) => "index",
+            Parts::Index(_, _) => "index",
             Parts::Radix(_, _) => "spatial",
             Parts::Trie(_, _) => "trie",
             _ => "<other>",
@@ -1311,29 +1372,19 @@ impl Stores {
             ) {
                 out += &self.debug_layout_by_nr(c, indent + 4);
             }
-        } else if let Parts::Index(c, _, left_field_nr) = t.parts {
+        } else if let Parts::Index(c, _) = t.parts {
             let _ = writeln!(
                 out,
-                "{pad}  content → [{c}] {} (size={}, align={}); bookkeeping starts at field index {left_field_nr}",
+                "{pad}  content → [{c}] {} (size={}, align={})",
                 self.types[c as usize].name,
                 self.types[c as usize].size,
                 self.types[c as usize].align,
             );
-            // Compute the byte offset where tree::add expects to find
-            // RB_LEFT — this is `database.fields(tp)`'s return value.
             let c = self.index_owner(c);
-            if let Parts::Struct(fs) | Parts::EnumValue(_, fs) = &self.types[c as usize].parts {
-                if (left_field_nr as usize) < fs.len() {
-                    let left = &fs[left_field_nr as usize];
-                    let _ = writeln!(
-                        out,
-                        "{pad}  tree::add starts at byte offset = 8 + {} (= field[{}] '{}' position) = {}",
-                        left.position,
-                        left_field_nr,
-                        left.name,
-                        8 + left.position,
-                    );
-                }
+            if matches!(
+                self.types[c as usize].parts,
+                Parts::Struct(_) | Parts::EnumValue(_, _)
+            ) {
                 out += &self.debug_layout_by_nr(c, indent + 4);
             }
         }
@@ -1426,7 +1477,7 @@ impl Stores {
                 | Parts::Sorted(_, _)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _) => {
                     self.validate_layout_by_nr(tp as u16, &mut visited, &mut issues);
@@ -1434,6 +1485,9 @@ impl Stores {
                 _ => {}
             }
         }
+        // `@FR-L-Align` (@C138) — checked here, at compile time, and nowhere at run time:
+        // `Store::read` / `Store::write` claim no alignment and do not re-test it per access.
+        issues.extend(self.alignment_violations());
         // Dedup — recursion can produce the same issue multiple times
         // when a struct is referenced from many places.
         issues.sort();
@@ -1445,7 +1499,6 @@ impl Stores {
     /// `visited` prevents infinite recursion through cyclic
     /// references (e.g. struct containing a vector of itself).
     #[allow(dead_code, clippy::many_single_char_names)]
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn validate_layout_by_nr(
         &self,
         tp: u16,
@@ -1514,76 +1567,12 @@ impl Stores {
             | Parts::Trie(c, _) => {
                 self.validate_layout_by_nr(*c, visited, issues);
             }
-            Parts::Index(c, _, left_field_nr) => {
-                // Validate the record that carries the bookkeeping (`index_owner` —
-                // the `Some` variant for a synth `__nullable<S>` element).  Also verify
-                // the bookkeeping field index is in range and points at a `#left_*`
-                // field, since `database.fields(tp)` reads
-                // `fields[left_field_nr].position` and a wrong index
-                // would silently corrupt tree::add's offsets.
+            Parts::Index(c, _) => {
+                // The record type the index's B+tree points at (`index_owner` — the
+                // `Some` variant for a synth `__nullable<S>` element).
                 let owner = self.index_owner(*c);
-                if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-                    &self.types[owner as usize].parts
-                {
-                    if (*left_field_nr as usize) >= fields.len() {
-                        issues.push(format!(
-                            "{}: Parts::Index left_field_nr={} out of range (content has {} fields)",
-                            t.name,
-                            left_field_nr,
-                            fields.len()
-                        ));
-                    } else {
-                        let f = &fields[*left_field_nr as usize];
-                        if !f.name.starts_with("#left_") {
-                            issues.push(format!(
-                                "{}: Parts::Index left_field_nr={} points at field '{}' (expected '#left_*')",
-                                t.name, left_field_nr, f.name
-                            ));
-                        }
-                        // Bookkeeping must be 3 contiguous fields:
-                        // #left (4B), #right (4B), #color (1B).  Their
-                        // positions can be anywhere (alignment may
-                        // reorder them) but tree::add reads them at
-                        // [pos, pos+4, pos+8] — so the LAYOUT must
-                        // place them contiguously.
-                        if (*left_field_nr as usize + 2) < fields.len() {
-                            let l = &fields[*left_field_nr as usize];
-                            let r = &fields[*left_field_nr as usize + 1];
-                            let cf = &fields[*left_field_nr as usize + 2];
-                            if l.position != u16::MAX
-                                && r.position != u16::MAX
-                                && cf.position != u16::MAX
-                            {
-                                let mut had = false;
-                                if r.position != l.position + 4 {
-                                    had = true;
-                                    issues.push(format!(
-                                        "{}: tree bookkeeping not at expected offsets — '{}'@{} '{}'@{} (tree::add expects right at left+4=int4 but layout has left as {}-byte content '{}')",
-                                        t.name,
-                                        l.name,
-                                        l.position,
-                                        r.name,
-                                        r.position,
-                                        self.types[l.content as usize].size,
-                                        self.types[l.content as usize].name,
-                                    ));
-                                }
-                                if cf.position != l.position + 8 {
-                                    had = true;
-                                    issues.push(format!(
-                                        "{}: tree bookkeeping not at expected offsets — '{}'@{} '{}'@{} (tree::add expects color at left+8 but layout disagrees)",
-                                        t.name, l.name, l.position, cf.name, cf.position
-                                    ));
-                                }
-                                if had {
-                                    issues.push(format!(
-                                        "  content layout: {}",
-                                        self.layout_summary(*c)
-                                    ));
-                                }
-                            }
-                        }
-                    }
+                if owner != *c {
+                    self.validate_layout_by_nr(owner, visited, issues);
                 }
                 self.validate_layout_by_nr(*c, visited, issues);
             }
@@ -1735,10 +1724,18 @@ impl Stores {
     }
 
     pub fn vector(&mut self, content: u16) -> u16 {
+        // The content's CONSTRUCTOR spelling: `finish` renames a linked element's `vector<T>`
+        // to `array<T>` (`promoted_lookup_key`), and a nested vector named after the renamed
+        // content (`vector<array<T>>`) missed the `vector<vector<T>>` registered before it —
+        // a second type for one collection, minted after `finish`, which the runtime table
+        // did not carry: `vv[0] += [x]` on a `vector<vector<T>>` of a linked `T` indexed past
+        // it and panicked, on both backends.
         let name = if content == u16::MAX {
             "vector".to_string()
         } else {
-            format!("vector<{}>", self.types[content as usize].name)
+            let t = &self.types[content as usize];
+            let inner = Self::promoted_lookup_key(t).unwrap_or_else(|| t.name.clone());
+            format!("vector<{inner}>")
         };
         mint_trace(
             "vector",
@@ -1859,6 +1856,41 @@ impl Stores {
     /// `__nullable<S>` element keeps S's keys inside the `Some` variant's inline payload, so
     /// indexing the enum's own field list finds none of them.  Same rule as [`Self::hash`] and
     /// [`Self::create_key`] — one question, one answer, whichever kind asks it.
+    /// The registered database type of a keyed collection, or `u16::MAX` when this program
+    /// never registered it.  ONE home for the names [`Parser::get_type`] registers under
+    /// (`hash<T[k]>`, `spatial<T[k]>`, `trie<T[k]>`, `sorted<…>` or its `ordered<…>` spelling,
+    /// `index<…>`), so the parser's lookup and the native `par` emitter, which sizes a
+    /// worker's keyed result by it, cannot disagree.
+    ///
+    /// [`Parser::get_type`]: crate::parser::Parser
+    #[must_use]
+    pub fn keyed_type(&self, data: &crate::data::Data, tp: &crate::data::Type) -> u16 {
+        use crate::data::Type;
+        let tp = tp.base();
+        match tp {
+            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
+                let kind = if matches!(tp, Type::Hash(..)) {
+                    "hash"
+                } else {
+                    "spatial"
+                };
+                let mut name = format!("{kind}<{}[", data.def(*d).name());
+                self.field_name(data.def(*d).known_type(), key, &mut name);
+                self.name(&name)
+            }
+            Type::Trie(d, key, _) => self.name(&format!("trie<{}[{key}]>", data.def(*d).name())),
+            Type::Sorted(d, key, _) => {
+                let r = self.name(&keyed_name("sorted", data.def(*d).name(), key));
+                if r != u16::MAX {
+                    return r;
+                }
+                self.name(&keyed_name("ordered", data.def(*d).name(), key))
+            }
+            Type::Index(d, key, _) => self.name(&keyed_name("index", data.def(*d).name(), key)),
+            _ => u16::MAX,
+        }
+    }
+
     pub fn field_name(&self, content: u16, key: &[String], name: &mut String) -> Vec<u16> {
         let owner = self.key_owner(content);
         let mut key_nrs = Vec::new();
@@ -1928,10 +1960,8 @@ impl Stores {
         // Dedup early.  Post-Category-D native codegen can call `db.index`
         // for the same content/keys combination twice (once in Phase 1a's
         // bare-io registration, once more during struct-field emission).
-        // The field appending below must run exactly ONCE per unique
-        // index type — otherwise the content struct accumulates stale
-        // `#left_N / #right_N / #color_N` triples that push real user
-        // fields to unexpected positions and break tree traversal.
+        // The B+tree's nodes live in their own arena (`btree.rs`), so an index
+        // adds nothing to its content's layout.
         mint_trace(
             "index",
             &name,
@@ -1941,97 +1971,9 @@ impl Stores {
         if let Some(nr) = self.names.get(&name) {
             return *nr;
         }
-        // P191: bookkeeping fields must be 4-byte ints to match
-        // tree::add's hardcoded RB_LEFT=0 / RB_RIGHT=4 offsets, which
-        // use set_i32_raw / get_i32_raw exclusively.  Using 8-byte
-        // `integer` here makes alignment-aware packing place them 8
-        // bytes apart, corrupting tree::add's writes.
-        let int4 = self.int(0, false);
-        let bool_c = self.name("boolean");
-        // The tree node is the stored RECORD, which for a synth `__nullable<S>` element is the
-        // `Some` variant rather than the enum — see `index_owner`.
-        let host = self.index_owner(content);
-        let mut nr = 1;
-        if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-            &self.types[host as usize].parts
-        {
-            for f in fields {
-                if f.name.starts_with("#left_") {
-                    nr += 1;
-                }
-            }
-        }
-        let left = if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-            &mut self.types[host as usize].parts
-        {
-            let left = fields.len();
-            fields.push(Field {
-                name: format!("#left_{nr}"),
-                content: int4,
-                position: 0,
-                default: None,
-                nullable: false,
-                target: u16::MAX,
-                other_indexes: Vec::new(),
-            });
-            fields.push(Field {
-                name: format!("#right_{nr}"),
-                content: int4,
-                position: 0,
-                default: None,
-                nullable: false,
-                target: u16::MAX,
-                other_indexes: Vec::new(),
-            });
-            fields.push(Field {
-                name: format!("#color_{nr}"),
-                content: bool_c,
-                position: 0,
-                default: None,
-                nullable: false,
-                target: u16::MAX,
-                other_indexes: Vec::new(),
-            });
-            left as u16
-        } else {
-            u16::MAX
-        };
-        // Register the bookkeeping triple as a linked field group on
-        // the content type — `[left, left+1, left+2] = [#left_N,
-        // #right_N, #color_N]` for index instance N.  Used by codegen
-        // / runtime to walk index bookkeeping without string-prefix
-        // matching on field names.
-        //
-        // Alignment is 4 (max of int4 align 4, int4 align 4, bool align 1).
-        // Size is 9 bytes (4 + 4 + 1; no internal padding — bool is last
-        // and 1-byte aligned).
-        if left != u16::MAX {
-            let int4_size = self.types[int4 as usize].size;
-            let int4_align = self.types[int4 as usize].align;
-            let bool_size = self.types[bool_c as usize].size;
-            let bool_align = self.types[bool_c as usize].align;
-            let members = [
-                (int4_size, int4_align),
-                (int4_size, int4_align),
-                (bool_size, bool_align),
-            ];
-            let alignment = crate::data::LinkedFieldGroup::group_alignment(
-                &members.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
-            );
-            let size = crate::data::LinkedFieldGroup::group_size(&members);
-            self.types[host as usize]
-                .field_groups
-                .push(crate::data::LinkedFieldGroup {
-                    kind: crate::data::LinkedFieldKind::Index,
-                    instance: nr,
-                    field_indices: vec![left, left + 1, left + 2],
-                    alignment,
-                    size,
-                });
-        }
         let num = self.types.len() as u16;
         self.types
-            .push(Type::new(&name, Parts::Index(content, key_nrs, left), 4));
+            .push(Type::new(&name, Parts::Index(content, key_nrs), 4));
         self.names.insert(name, num);
         num
     }
@@ -2287,10 +2229,14 @@ impl Stores {
         }
         self.types.truncate(keep as usize);
         // A surviving row's facts were derived over rows that may now be gone
-        // (a forward reference into the batch being rolled back).
+        // (a forward reference into the batch being rolled back), and its `parents`
+        // may name one: a rolled-back struct is registered as the parent of each
+        // field type it holds, and a stale entry indexes past the table (loft#1853).
         for t in &mut self.types {
             t.facts.forget();
             t.prefill.forget();
+            t.heap_slots.forget();
+            t.parents.retain(|&p| p < keep);
         }
         self.names.retain(|_, &mut nr| nr < keep);
     }
@@ -2693,7 +2639,7 @@ impl Stores {
                 | Parts::Array(_)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Radix(_, _)
         ) {
             // @P375's rule still holds and is the first half: zero is the EMPTY
@@ -2892,7 +2838,7 @@ impl Stores {
                 Parts::Sorted(e, _)
                 | Parts::Ordered(e, _)
                 | Parts::Hash(e, _)
-                | Parts::Index(e, _, _)
+                | Parts::Index(e, _)
                 | Parts::Radix(e, _)
                 | Parts::Trie(e, _) => refs.push(*e),
                 Parts::ChildRec(c) => refs.push(*c),
@@ -2968,9 +2914,9 @@ impl Stores {
                     crate::placement::tag(crate::placement::HASH)
                 )
             }
-            Parts::Index(e, keys, left) => {
+            Parts::Index(e, keys) => {
                 format!(
-                    "index<{}>(keys={keys:?},left={left},elem_size={}{})",
+                    "index<{}>(keys={keys:?},elem_size={}{})",
                     name(*e),
                     self.size(*e),
                     crate::placement::tag(crate::placement::INDEX)
@@ -3349,6 +3295,8 @@ pub struct TypeFacts(std::sync::atomic::AtomicU8);
 const FACTS_KNOWN: u8 = 1;
 const FACTS_OWNS_HEAP: u8 = 2;
 const FACTS_ZERO_DEFAULT: u8 = 4;
+const FILE_KNOWN: u8 = 8;
+const HOLDS_FILE: u8 = 16;
 
 impl TypeFacts {
     /// `(owns_heap, zero_default)` when derived already.
@@ -3363,7 +3311,19 @@ impl TypeFacts {
         let bits = FACTS_KNOWN
             | if owns_heap { FACTS_OWNS_HEAP } else { 0 }
             | if zero_default { FACTS_ZERO_DEFAULT } else { 0 };
-        self.0.store(bits, std::sync::atomic::Ordering::Relaxed);
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a value of the type can hold a `File` record, when derived already.
+    #[inline]
+    pub(super) fn holds_file(&self) -> Option<bool> {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & FILE_KNOWN != 0).then_some(bits & HOLDS_FILE != 0)
+    }
+
+    pub(super) fn set_holds_file(&self, holds: bool) {
+        let bits = FILE_KNOWN | if holds { HOLDS_FILE } else { 0 };
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(super) fn forget(&self) {
@@ -3452,6 +3412,57 @@ impl std::fmt::Debug for PrefillImage {
     }
 }
 
+/// One place in a record that can own heap, by its byte offset from the record's position:
+/// a text slot, a collection slot, or a struct-enum's tag (with the enum's type, to read
+/// which variant it names).  `@FR-H-ClearRelease`'s empty test reads only these.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum HeapSlot {
+    Text(u32),
+    Collection(u32),
+    Tag(u32, u16),
+}
+
+/// The HEAP SLOTS of a record of this type — every place a value of it can own heap,
+/// nested inline records flattened — derived from `parts` on the first ask
+/// ([`Stores::holds_no_heap_fast`](super::Stores::holds_no_heap_fast)).  `None` inside
+/// means the type has a field the plan cannot express, and the full walk answers.
+/// Derived, like [`PrefillImage`]: no part in equality or in the stored form, and a table
+/// rollback forgets it.
+#[derive(Default, Clone)]
+pub struct HeapSlots(std::sync::OnceLock<Option<Box<[HeapSlot]>>>);
+
+impl HeapSlots {
+    #[inline]
+    pub(super) fn get(&self) -> Option<&Option<Box<[HeapSlot]>>> {
+        self.0.get()
+    }
+
+    pub(super) fn set(&self, slots: Option<Box<[HeapSlot]>>) {
+        let _ = self.0.set(slots);
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal slots.
+impl PartialEq for HeapSlots {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for HeapSlots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(Some(s)) => write!(f, "HeapSlots({})", s.len()),
+            Some(None) => f.write_str("HeapSlots(walk)"),
+            None => f.write_str("HeapSlots(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3469,15 +3480,15 @@ pub struct Type {
     pub(super) linked: bool,
     pub(super) size: u16,
     pub(super) align: u8,
-    /// Linked-field groups appended to this type's `Parts::Struct` /
-    /// `Parts::EnumValue` field list.  Used **exclusively** for index
-    /// bookkeeping triples (`#left_N` / `#right_N` / `#color_N`) per
-    /// `index<T[key]>` instance.  Empty for plain user structs.
+    /// Linked-field groups on this type's `Parts::Struct` /
+    /// `Parts::EnumValue` field list — a tuple's elements.  Empty for plain
+    /// user structs.
     /// Tuple element groups live on the parser-side
     /// `Definition::field_groups` instead.
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
     pub(super) facts: TypeFacts,
     pub(super) prefill: PrefillImage,
+    pub(super) heap_slots: HeapSlots,
 }
 
 impl Type {
@@ -3534,6 +3545,7 @@ impl Type {
             field_groups,
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3541,6 +3553,55 @@ impl Type {
     /// store-reloaded schema against a fresh parse, which carries `parents`).
     pub(crate) fn clear_parents(&mut self) {
         self.parents.clear();
+    }
+
+    /// Rebuild the derived `parents` index of a schema that was read back rather than
+    /// registered (`ir_read::read_schema`), with exactly the links registration writes: a
+    /// record field's struct, enum or variant content, and a collection field's element, name
+    /// the record; each variant names its enum.  `enum_parent_size` reads the variant links to
+    /// size a variant's record, so a cache-loaded schema without them allocated a variant at
+    /// its own size instead of its enum's — 8 where 16 is right for `#fields`' `FvInt`,
+    /// visible only to the debug oracle beside the lookup, on every warm run.
+    pub(crate) fn rebuild_parents(types: &mut [Type]) {
+        let n = types.len();
+        let mut links: Vec<(u16, u16)> = Vec::new();
+        for (p, t) in types.iter().enumerate() {
+            let p = p as u16;
+            match &t.parts {
+                Parts::Enum(variants) => links.extend(variants.iter().map(|(v, _)| (*v, p))),
+                Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                    for f in fields {
+                        let Some(content) = types.get(f.content as usize) else {
+                            continue;
+                        };
+                        match content.parts {
+                            Parts::Struct(_) | Parts::EnumValue(_, _) | Parts::Enum(_) => {
+                                links.push((f.content, p));
+                            }
+                            Parts::Array(e)
+                            | Parts::Vector(e)
+                            | Parts::Sorted(e, _)
+                            | Parts::Ordered(e, _)
+                            | Parts::Hash(e, _)
+                            | Parts::Index(e, _)
+                            | Parts::Trie(e, _)
+                            | Parts::Radix(e, _)
+                                if (e as usize) < n =>
+                            {
+                                links.push((e, p));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (child, parent) in links {
+            if (child as usize) < n {
+                types[child as usize].parents.insert(parent);
+            }
+        }
     }
 
     pub(super) fn new(name: &str, parts: Parts, size: u16) -> Type {
@@ -3558,6 +3619,7 @@ impl Type {
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3576,6 +3638,7 @@ impl Type {
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3588,25 +3651,30 @@ impl Type {
             | Parts::Sorted(c, _)
             | Parts::Ordered(c, _)
             | Parts::Hash(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::ChildRec(c)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _) => c == tp,
             _ => false,
         }
     }
+}
 
-    /// Iterate every index-bookkeeping group on this type.  Each yields
-    /// `(instance_nr, [left_idx, right_idx, color_idx])` — the field
-    /// indices of the bookkeeping triple appended for one
-    /// `index<T[key]>` registration.  Replaces ad-hoc
-    /// `f.name.starts_with("#left_")` scans on `Parts::Struct` /
-    /// `Parts::EnumValue` field lists.
-    pub fn index_groups(&self) -> impl Iterator<Item = &crate::data::LinkedFieldGroup> {
-        self.field_groups
-            .iter()
-            .filter(|g| matches!(g.kind, crate::data::LinkedFieldKind::Index))
+/// `<kind><T[k1,-k2]>` — the spelling an ordered keyed collection is registered under: each
+/// key field by name, a descending one prefixed `-`.
+pub(crate) fn keyed_name(kind: &str, content: &str, key: &[(String, bool)]) -> String {
+    let mut name = format!("{kind}<{content}[");
+    for (k_nr, (k, asc)) in key.iter().enumerate() {
+        if k_nr > 0 {
+            name += ",";
+        }
+        if !asc {
+            name += "-";
+        }
+        name += k;
     }
+    name += "]>";
+    name
 }
 
 #[cfg(test)]
@@ -3718,6 +3786,35 @@ mod layout_tests {
         let s = Stores::new();
         let unexpected = s.validate_all_layouts();
         assert!(unexpected.is_empty(), "{unexpected:?}");
+    }
+
+    /// `@FR-L-Align` (@C138) — the compiler's layout check reports a field the layout left
+    /// off its natural boundary.  `Store::read` / `Store::write` do not re-test alignment at
+    /// run time, so this is where a misaligned layout is caught.
+    #[test]
+    fn validate_all_layouts_reports_a_misaligned_field() {
+        let mut s = Stores::new();
+        let int_c = s.name("integer");
+        let bool_c = s.name("boolean");
+        let pair = s.structure("Pair", 0);
+        s.field(pair, "b", bool_c);
+        s.field(pair, "n", int_c);
+        s.finish();
+        let clean = s.validate_all_layouts();
+        assert!(clean.is_empty(), "{clean:?}");
+        // The plant: `n` one byte off its 8-byte boundary.
+        let Parts::Struct(fields) = &mut s.types[pair as usize].parts else {
+            panic!("Pair is a struct");
+        };
+        let n = fields.iter_mut().find(|f| f.name == "n").expect("Pair.n");
+        n.position += 1;
+        let issues = s.validate_all_layouts();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.starts_with("Pair.n: offset") && i.contains("alignment 8")),
+            "{issues:?}"
+        );
     }
 
     /// Build the shape that makes `finish()` promote: `Node` is the content of an
@@ -3925,62 +4022,6 @@ mod layout_tests {
     }
 
     #[test]
-    fn validate_all_layouts_index_bookkeeping_after_p191_fix_no_issues() {
-        // P191 fix: `database.index` now appends 4-byte int<0,false>
-        // bookkeeping fields (`#left_N`, `#right_N`) so they land
-        // contiguously at [pos, pos+4, pos+8] and match tree::add's
-        // hardcoded RB_LEFT=0, RB_RIGHT=4, RB_FLAG=8 offsets.  This
-        // test guards against regressing back to 8-byte `integer`
-        // bookkeeping (which would resurface the corruption).
-        let mut s = Stores::new();
-        let score_tp = score_struct(&mut s);
-        let _index_tp = s.index(score_tp, &[("name".to_string(), true)]);
-        s.finish();
-        let issues = s.validate_all_layouts();
-        assert!(
-            issues.is_empty(),
-            "expected no layout issues after P191 fix, got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn validate_layout_index_left_field_nr_out_of_range() {
-        let mut s = Stores::new();
-        let score_tp = score_struct(&mut s);
-        let index_tp = s.index(score_tp, &[("name".to_string(), true)]);
-        s.finish();
-        // Force `Parts::Index`'s left_field_nr to point past the end.
-        if let Parts::Index(_, _, left) = &mut s.types[index_tp as usize].parts {
-            *left = 9999;
-        }
-        let issues = s.validate_layout("index<Score[name]>");
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.contains("Parts::Index left_field_nr=9999 out of range")),
-            "expected out-of-range issue, got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn validate_layout_index_left_field_nr_points_at_wrong_field() {
-        let mut s = Stores::new();
-        let score_tp = score_struct(&mut s);
-        let index_tp = s.index(score_tp, &[("name".to_string(), true)]);
-        s.finish();
-        // Force `Parts::Index` to point at field 0 (the user `name`
-        // field, not `#left_*`).
-        if let Parts::Index(_, _, left) = &mut s.types[index_tp as usize].parts {
-            *left = 0;
-        }
-        let issues = s.validate_layout("index<Score[name]>");
-        assert!(
-            issues.iter().any(|i| i.contains("expected '#left_*'")),
-            "expected wrong-field-name issue, got: {issues:?}"
-        );
-    }
-
-    #[test]
     fn layout_summary_contains_size_align_and_field_byte_ranges() {
         let mut s = Stores::new();
         let tp = score_struct(&mut s);
@@ -4045,19 +4086,6 @@ mod layout_tests {
     }
 
     #[test]
-    fn debug_layout_index_includes_bookkeeping_fields() {
-        let mut s = Stores::new();
-        score_struct(&mut s);
-        let score_tp = s.name("Score");
-        s.index(score_tp, &[("name".to_string(), true)]);
-        s.finish();
-        let dump = s.debug_layout("Score");
-        assert!(dump.contains("#left_1"), "missing #left_1 in: {dump}");
-        assert!(dump.contains("#right_1"), "missing #right_1 in: {dump}");
-        assert!(dump.contains("#color_1"), "missing #color_1 in: {dump}");
-    }
-
-    #[test]
     fn validate_layout_default_constructed_field_compiles() {
         // Construct a Field directly via struct literal — guards
         // against future reorderings that would break test setup.
@@ -4082,24 +4110,6 @@ mod layout_tests {
             "expected no issues for Manual struct, got: {issues:?}"
         );
     }
-
-    // ───────────────────────────────────────────────────────────────
-    // Linked-field-group layout tests
-    //
-    // Verify that the `LinkedFieldGroup` infrastructure registered by
-    // `Stores::index` keeps the bookkeeping triple
-    // (`#left_N` / `#right_N` / `#color_N`) coherent through
-    // `finish_type`'s alignment-aware packing — the 3 fields stay
-    // associated as a group, and each field lands at an offset that
-    // respects its declared alignment (4-byte int4 fields on a 4-byte
-    // boundary, 1-byte bool on any boundary).
-    //
-    // These cover the index pattern.  Tuple linked-field-group tests
-    // live in `src/data.rs::linked_field_tests` since tuples are a
-    // parser-side concept (`Definition::field_groups`).
-    // ───────────────────────────────────────────────────────────────
-
-    use crate::data::LinkedFieldKind;
 
     /// Build a struct with one user field of a given content type and
     /// finish it.  Returns the type id and the field's content id.
@@ -4152,262 +4162,6 @@ mod layout_tests {
         );
     }
 
-    #[test]
-    fn index_group_registered_with_three_field_indices() {
-        // One index → exactly one Index-kind LinkedFieldGroup with
-        // three field indices [left, right, color].
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemA", int_c);
-        let _idx = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let groups: Vec<_> = s.types[tp as usize].index_groups().collect();
-        assert_eq!(
-            groups.len(),
-            1,
-            "expected exactly one Index group, got {groups:?}"
-        );
-        assert_eq!(groups[0].kind, LinkedFieldKind::Index);
-        assert_eq!(
-            groups[0].field_indices.len(),
-            3,
-            "Index triple must have 3 fields"
-        );
-        assert_eq!(groups[0].instance, 1, "first index gets instance=1");
-    }
-
-    #[test]
-    fn index_group_field_names_are_left_right_color_in_order() {
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemB", int_c);
-        let _idx = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let group = s.types[tp as usize].index_groups().next().expect("group");
-        let names: Vec<&str> = if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            group
-                .field_indices
-                .iter()
-                .map(|&i| fields[i as usize].name.as_str())
-                .collect()
-        } else {
-            panic!("not a struct")
-        };
-        assert_eq!(names, vec!["#left_1", "#right_1", "#color_1"]);
-    }
-
-    #[test]
-    fn index_group_int_fields_are_4byte_aligned() {
-        // Bookkeeping #left and #right are 4-byte ints (P191).  After
-        // finish, their positions must be 4-byte aligned and they must
-        // be exactly 4 bytes apart so `tree::add`'s hardcoded
-        // `RB_LEFT=0` / `RB_RIGHT=4` arithmetic works.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemC", int_c);
-        let _idx = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let left = field_by_name(&s, tp, "#left_1");
-        let right = field_by_name(&s, tp, "#right_1");
-        let color = field_by_name(&s, tp, "#color_1");
-
-        assert_eq!(
-            left.position % 4,
-            0,
-            "#left_1 not 4-byte aligned (pos={})",
-            left.position
-        );
-        assert_eq!(
-            right.position,
-            left.position + 4,
-            "#right_1 must be at left+4"
-        );
-        // #color is 1 byte — alignment 1, so any byte boundary is fine.
-        // It must be at left+8 per tree::add's RB_COLOR=8 expectation.
-        assert_eq!(
-            color.position,
-            left.position + 8,
-            "#color_1 must be at left+8"
-        );
-    }
-
-    #[test]
-    fn index_group_offsets_with_8byte_user_field() {
-        // `value: integer` is 8 bytes / 8-byte aligned.  After packing,
-        // bookkeeping (4+4+1) must still be contiguous and aligned.
-        // Calculate_positions packs largest-first, so integer at 0,
-        // then the two 4-byte ints, then the byte.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemD", int_c);
-        let _idx = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let left = field_by_name(&s, tp, "#left_1");
-        let right = field_by_name(&s, tp, "#right_1");
-        let color = field_by_name(&s, tp, "#color_1");
-
-        // 4-byte alignment for the two int fields, contiguous +4 +8 spacing.
-        assert_eq!(left.position % 4, 0);
-        assert_eq!(right.position, left.position + 4);
-        assert_eq!(color.position, left.position + 8);
-    }
-
-    #[test]
-    fn multiple_indexes_register_distinct_groups() {
-        // Two indexes on the same struct → two Index groups with
-        // instance=1 and instance=2.  Each group's three fields must
-        // be its own #left_N / #right_N / #color_N triple.
-        let mut s = Stores::new();
-        let txt_c = s.name("text");
-        let int_c = s.name("integer");
-        let tp = s.structure("ItemE", 0);
-        s.field(tp, "name", txt_c);
-        s.field(tp, "value", int_c);
-        let _idx_name = s.index(tp, &[("name".to_string(), true)]);
-        let _idx_value = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let groups: Vec<_> = s.types[tp as usize].index_groups().collect();
-        assert_eq!(groups.len(), 2, "expected two Index groups");
-        assert_eq!(groups[0].instance, 1);
-        assert_eq!(groups[1].instance, 2);
-
-        // Each group's 3 field indices point to that instance's triple.
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            for group in &groups {
-                let triple_names: Vec<&str> = group
-                    .field_indices
-                    .iter()
-                    .map(|&i| fields[i as usize].name.as_str())
-                    .collect();
-                let suffix = format!("_{}", group.instance);
-                assert!(triple_names[0].ends_with(&suffix));
-                assert!(triple_names[1].ends_with(&suffix));
-                assert!(triple_names[2].ends_with(&suffix));
-                assert!(triple_names[0].starts_with("#left_"));
-                assert!(triple_names[1].starts_with("#right_"));
-                assert!(triple_names[2].starts_with("#color_"));
-            }
-        }
-    }
-
-    #[test]
-    fn multiple_index_groups_atomic_placement_keeps_each_triple_contiguous() {
-        // With group-aware packing
-        // (`calculate_positions_with_groups`), each index triple is
-        // placed as ONE atomic block — `#left_N`, `#right_N`,
-        // `#color_N` stay contiguous regardless of other fields'
-        // sizes, and tree::add's `right = left+4`, `color = left+8`
-        // invariants both hold for every group instance.
-        let mut s = Stores::new();
-        let txt_c = s.name("text");
-        let int_c = s.name("integer");
-        let tp = s.structure("ItemF", 0);
-        s.field(tp, "name", txt_c);
-        s.field(tp, "value", int_c);
-        let _ = s.index(tp, &[("name".to_string(), true)]);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let l1 = field_by_name(&s, tp, "#left_1").position;
-        let r1 = field_by_name(&s, tp, "#right_1").position;
-        let c1 = field_by_name(&s, tp, "#color_1").position;
-        let l2 = field_by_name(&s, tp, "#left_2").position;
-        let r2 = field_by_name(&s, tp, "#right_2").position;
-        let c2 = field_by_name(&s, tp, "#color_2").position;
-
-        // Each triple's left+4=right and left+8=color invariants hold.
-        assert_eq!(l1 % 4, 0, "#left_1 4-byte aligned");
-        assert_eq!(r1, l1 + 4, "#right_1 = left_1 + 4");
-        assert_eq!(c1, l1 + 8, "#color_1 = left_1 + 8 (atomic group)");
-        assert_eq!(l2 % 4, 0, "#left_2 4-byte aligned");
-        assert_eq!(r2, l2 + 4, "#right_2 = left_2 + 4");
-        assert_eq!(c2, l2 + 8, "#color_2 = left_2 + 8 (atomic group)");
-
-        // Triples don't overlap as ranges.
-        let triple1 = l1..(c1 + 1);
-        let triple2 = l2..(c2 + 1);
-        assert!(
-            triple1.end <= triple2.start || triple2.end <= triple1.start,
-            "triples must not overlap: {triple1:?} vs {triple2:?}",
-        );
-    }
-
-    #[test]
-    fn index_group_with_byte_user_field_keeps_color_at_left_plus_8() {
-        // **Atomicity verified**: even with a 1-byte user field
-        // (which used to disrupt largest-first packing and pull the
-        // bool #color_N to the trailing 1-byte fill region), the
-        // group-aware packer reserves the entire 9-byte triple as
-        // ONE atomic block at a 4-byte-aligned position.
-        // tree::add's `color = left + 8` invariant holds.
-        let mut s = Stores::new();
-        let byte_c = s.byte(0, false);
-        let tp = s.structure("ItemG", 0);
-        s.field(tp, "flag", byte_c);
-        let _idx = s.index(tp, &[("flag".to_string(), true)]);
-        s.finish();
-
-        let left = field_by_name(&s, tp, "#left_1");
-        let right = field_by_name(&s, tp, "#right_1");
-        let color = field_by_name(&s, tp, "#color_1");
-
-        assert_eq!(left.position % 4, 0, "#left_1 4-byte aligned");
-        assert_eq!(
-            right.position,
-            left.position + 4,
-            "#right_1 follows #left_1 by 4"
-        );
-        assert_eq!(
-            color.position,
-            left.position + 8,
-            "#color_1 must be at left+8 — atomicity ensures the bool stays \
-             with its triple even when user struct has 1-byte fields",
-        );
-    }
-
-    #[test]
-    fn index_group_field_indices_match_actual_field_positions() {
-        // The LinkedFieldGroup's `field_indices` are indices into the
-        // type's `Parts::Struct(fields)`.  This test verifies that
-        // those indices, when used to look up fields, return EXACTLY
-        // the bookkeeping triple.  Catches any off-by-one in the
-        // group registration.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = s.structure("ItemH", 0);
-        s.field(tp, "value", int_c);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        // Resolve the int4 / bool DB type ids before borrowing `s.types`
-        // immutably for the group lookup (`s.int` / `s.name` need &mut).
-        let int4 = s.int(0, false);
-        let bool_c = s.name("boolean");
-
-        let indices = s.types[tp as usize]
-            .index_groups()
-            .next()
-            .expect("group")
-            .field_indices
-            .clone();
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            // The three indexed fields must be #left, #right, #color in order.
-            assert_eq!(fields[indices[0] as usize].name, "#left_1");
-            assert_eq!(fields[indices[1] as usize].name, "#right_1");
-            assert_eq!(fields[indices[2] as usize].name, "#color_1");
-            // And those same indices must point to fields with the right widths.
-            // #left/#right are 4-byte int4, #color is 1-byte bool.
-            assert_eq!(fields[indices[0] as usize].content, int4);
-            assert_eq!(fields[indices[1] as usize].content, int4);
-            assert_eq!(fields[indices[2] as usize].content, bool_c);
-        }
-    }
-
     // ───────────────────────────────────────────────────────────────
     // Group-alignment verification
     //
@@ -4450,342 +4204,5 @@ mod layout_tests {
         assert_eq!(LinkedFieldGroup::group_size(&[(8, 8), (1, 1)]), 9);
         // Tuple (byte, single): byte at 0, padding 1..3, single at 4 → total 8
         assert_eq!(LinkedFieldGroup::group_size(&[(1, 1), (4, 4)]), 8);
-    }
-
-    #[test]
-    fn index_group_carries_correct_alignment_metadata() {
-        // After registering an index, the group's `alignment` field
-        // must be 4 (max of int4=4, int4=4, bool=1).
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemJ", int_c);
-        let _idx = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let group = s.types[tp as usize].index_groups().next().expect("group");
-        assert_eq!(
-            group.alignment, 4,
-            "index group alignment must be 4 (max of int4, int4, bool)"
-        );
-        assert_eq!(
-            group.size, 9,
-            "index group atomic size must be 9 bytes (4 + 4 + 1, no internal padding)"
-        );
-    }
-
-    #[test]
-    fn index_group_alignment_drives_first_field_position() {
-        // Verify that the first field of the group (after `finish`)
-        // lands on a position divisible by `group.alignment`.
-        // This is the LAYOUT INVARIANT the routine must honour:
-        // **the group's alignment is the max member alignment**.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemK", int_c);
-        let _idx = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let indices = s.types[tp as usize]
-            .index_groups()
-            .next()
-            .expect("group")
-            .field_indices
-            .clone();
-        let group = s.types[tp as usize]
-            .index_groups()
-            .next()
-            .expect("group")
-            .clone();
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            let first_pos = fields[indices[0] as usize].position;
-            assert_eq!(
-                first_pos as u8 % group.alignment,
-                0,
-                "group's first field at position {} must be aligned to {}",
-                first_pos,
-                group.alignment,
-            );
-        }
-    }
-
-    #[test]
-    fn index_group_with_byte_user_field_alignment_metadata_unchanged() {
-        // Mixed-alignment user fields don't affect the GROUP's
-        // declared alignment — it's still 4 because the int4 members
-        // need 4-byte boundaries.  The layout routine MUST honour
-        // this even when other small-aligned fields are present.
-        let mut s = Stores::new();
-        let byte_c = s.byte(0, false);
-        let tp = s.structure("ItemL", 0);
-        s.field(tp, "flag", byte_c);
-        let _idx = s.index(tp, &[("flag".to_string(), true)]);
-        s.finish();
-
-        let group = s.types[tp as usize].index_groups().next().expect("group");
-        // Group's declared alignment is 4 regardless of user field size.
-        assert_eq!(group.alignment, 4);
-        // First member (#left_1) lands on a 4-byte boundary.
-        let l_idx = group.field_indices[0];
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            assert_eq!(
-                fields[l_idx as usize].position as u8 % 4,
-                0,
-                "#left_1 must be 4-byte aligned even when user struct has 1-byte fields",
-            );
-        }
-    }
-
-    #[test]
-    fn multiple_index_groups_each_aligned_independently() {
-        // Each registered group keeps its own alignment metadata,
-        // and each group's first member must land on its declared
-        // alignment boundary.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let txt_c = s.name("text");
-        let tp = s.structure("ItemM", 0);
-        s.field(tp, "name", txt_c);
-        s.field(tp, "value", int_c);
-        let _ = s.index(tp, &[("name".to_string(), true)]);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let groups: Vec<_> = s.types[tp as usize].index_groups().cloned().collect();
-        assert_eq!(groups.len(), 2);
-        for group in &groups {
-            assert_eq!(group.alignment, 4, "every index group has alignment 4");
-            assert_eq!(group.size, 9, "every index group has size 9");
-            if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-                let l_idx = group.field_indices[0];
-                let pos = fields[l_idx as usize].position;
-                assert_eq!(
-                    pos as u8 % group.alignment,
-                    0,
-                    "group instance {} #left at position {} not aligned to {}",
-                    group.instance,
-                    pos,
-                    group.alignment,
-                );
-            }
-        }
-    }
-
-    // ───────────────────────────────────────────────────────────────
-    // Safe member access — the new infrastructure must let consumers
-    // walk every member of a registered group via
-    // `member_field_index(i)` → host fields → `fields[idx].position`,
-    // returning a valid offset for every member after `finish`.  No
-    // string-prefix matching, no ad-hoc index arithmetic.
-    // ───────────────────────────────────────────────────────────────
-
-    #[test]
-    fn safe_member_access_via_member_field_index_returns_all_fields() {
-        // Walk every member of an index group via the public API,
-        // verify each yields a real field with a valid position.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemSafe1", int_c);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let group = s.types[tp as usize]
-            .index_groups()
-            .next()
-            .expect("group")
-            .clone();
-
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            // Every group member must yield a valid field.
-            for member_idx in 0..group.arity() {
-                let field_idx = group
-                    .member_field_index(member_idx)
-                    .expect("member index in range");
-                let field = &fields[field_idx as usize];
-                assert_ne!(
-                    field.position,
-                    u16::MAX,
-                    "member {member_idx} (field '{}') has no position assigned",
-                    field.name,
-                );
-                assert!(
-                    field.name.starts_with('#'),
-                    "member {member_idx} should be bookkeeping, got '{}'",
-                    field.name,
-                );
-            }
-            // Out-of-range member returns None — no panic.
-            assert!(group.member_field_index(group.arity()).is_none());
-            assert!(group.member_field_index(usize::MAX).is_none());
-        }
-    }
-
-    #[test]
-    fn safe_access_member_positions_respect_first_field_alignment() {
-        // The first member's position must be aligned to the group's
-        // alignment.  Subsequent members are at consecutive ascending
-        // positions per `calculate_positions`'s assignment.  Test
-        // verifies the GROUP's claimed alignment is honoured for the
-        // anchor point.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemSafe2", int_c);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let group = s.types[tp as usize]
-            .index_groups()
-            .next()
-            .expect("group")
-            .clone();
-
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            let first_idx = group.member_field_index(0).unwrap();
-            let first_pos = fields[first_idx as usize].position;
-            assert_eq!(
-                first_pos as u8 % group.alignment,
-                0,
-                "first member at position {first_pos} not aligned to group.alignment={}",
-                group.alignment,
-            );
-        }
-    }
-
-    #[test]
-    #[allow(clippy::many_single_char_names)]
-    fn safe_access_yields_distinct_non_overlapping_positions() {
-        // Every member's position must be DISTINCT from every other
-        // member's, AND no two members can share bytes in the
-        // host struct.  This guards against off-by-one in
-        // `field_indices` registration.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = struct_with_single_field(&mut s, "ItemSafe3", int_c);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let group = s.types[tp as usize]
-            .index_groups()
-            .next()
-            .expect("group")
-            .clone();
-
-        // Resolve each member's (position, content_size) for byte-range comparison.
-        let int4 = s.int(0, false);
-        let int4_size = s.types[int4 as usize].size;
-        let bool_c = s.name("boolean");
-        let bool_size = s.types[bool_c as usize].size;
-
-        let ranges: Vec<(u16, u16)> = if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            (0..group.arity())
-                .map(|i| {
-                    let idx = group.member_field_index(i).unwrap();
-                    let pos = fields[idx as usize].position;
-                    let sz = if fields[idx as usize].content == bool_c {
-                        bool_size
-                    } else {
-                        int4_size
-                    };
-                    (pos, pos + sz)
-                })
-                .collect()
-        } else {
-            panic!("not a struct")
-        };
-
-        // No range overlaps any other.
-        for i in 0..ranges.len() {
-            for j in (i + 1)..ranges.len() {
-                let (a, b) = ranges[i];
-                let (c, d) = ranges[j];
-                assert!(
-                    b <= c || d <= a,
-                    "members {i}={:?} and {j}={:?} overlap",
-                    ranges[i],
-                    ranges[j],
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn safe_access_through_multiple_index_groups() {
-        // With two indexes, every member of every group must be
-        // independently accessible and yield a valid distinct
-        // position.  6 distinct positions total (3 per group × 2
-        // groups), all accessible without name-string parsing.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let txt_c = s.name("text");
-        let tp = s.structure("ItemSafe4", 0);
-        s.field(tp, "name", txt_c);
-        s.field(tp, "value", int_c);
-        let _ = s.index(tp, &[("name".to_string(), true)]);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        let groups: Vec<_> = s.types[tp as usize].index_groups().cloned().collect();
-        assert_eq!(groups.len(), 2);
-
-        let mut all_positions: Vec<u16> = Vec::new();
-        if let Parts::Struct(fields) = &s.types[tp as usize].parts {
-            for group in &groups {
-                for member_idx in 0..group.arity() {
-                    let idx = group
-                        .member_field_index(member_idx)
-                        .expect("member in range");
-                    let field = &fields[idx as usize];
-                    assert_ne!(field.position, u16::MAX);
-                    // Verify the field's name carries the group's instance
-                    // suffix — sanity check that field_indices points where
-                    // we think.
-                    assert!(
-                        field.name.ends_with(&format!("_{}", group.instance)),
-                        "field '{}' should end with '_{}'",
-                        field.name,
-                        group.instance,
-                    );
-                    all_positions.push(field.position);
-                }
-            }
-        }
-        // 2 groups × 3 members = 6 positions, all distinct.
-        all_positions.sort_unstable();
-        let original_len = all_positions.len();
-        all_positions.dedup();
-        assert_eq!(
-            all_positions.len(),
-            original_len,
-            "all 6 member positions must be distinct, got duplicates",
-        );
-    }
-
-    #[test]
-    fn index_groups_iterator_excludes_non_index_groups() {
-        // `index_groups()` filter must ignore any future Tuple-kind
-        // entries on Type::field_groups.  Today no Tuple groups land
-        // there (tuples live on Definition::field_groups), but this
-        // test guards the filter against accidental contamination.
-        let mut s = Stores::new();
-        let int_c = s.name("integer");
-        let tp = s.structure("ItemI", 0);
-        s.field(tp, "value", int_c);
-        let _ = s.index(tp, &[("value".to_string(), true)]);
-        s.finish();
-
-        // Inject a fake Tuple group to confirm the filter excludes it.
-        s.types[tp as usize]
-            .field_groups
-            .push(crate::data::LinkedFieldGroup {
-                kind: crate::data::LinkedFieldKind::Tuple,
-                instance: 0,
-                field_indices: vec![0],
-                alignment: 1,
-                size: 0,
-            });
-        let total = s.types[tp as usize].field_groups.len();
-        let index_only: Vec<_> = s.types[tp as usize].index_groups().collect();
-        assert_eq!(total, 2, "should have one Index + one Tuple group");
-        assert_eq!(index_only.len(), 1, "index_groups() must filter out Tuple");
-        assert_eq!(index_only[0].kind, LinkedFieldKind::Index);
     }
 }

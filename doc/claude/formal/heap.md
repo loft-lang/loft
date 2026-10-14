@@ -51,7 +51,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   is `H` updated at `r`.
 - `store(r)` is `r.store_nr`; `H ⊢ r live` means `store(r) ∈ dom(H)` and that store is not
   freed. `fresh(H)` is a `store_nr` not in `dom(H)`.
-- `⊥` is the faulting configuration **only** where noted; per operational.md's C80, most
+- `⊥` is the faulting configuration **only** where noted; per operational.md's @C80, most
   "can't" cases are the value `null` + continue, **not** a halt (see `H-ReadNull`).
 
 ---
@@ -72,20 +72,31 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 value (a reference that points at nothing), not a separate error state — the reference-typed
 analogue of `integer`'s `i64::MIN` null.
 
-### Allocation — a fresh store, zero-initialised
+### Allocation — a fresh store, every field written
 
 ```
   (H-Alloc)    ⟨alloc τ, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ, H'⟩⟩
                  where s = fresh(H),  r = (s, 0, 0),
-                       H' = H[s ↦ zeroed Store for τ]      (every field/element is its type's null/zero)
+                       H' = H[s ↦ Store for τ, every field/element WRITTEN to its type's default]
   (H-NewRec)   ⟨new-record r_v, ⟨ρ, H⟩⟩ → ⟨r_e, ⟨ρ, H'⟩⟩
                  a fresh record inside the vector/collection store r_v; r_e points at it,
-                 its fields zero/null-initialised, the container's length grown by one.
+                 its fields written before any read, the container's length grown by one.
+  (H-Claim)    the bytes of a claimed block are UNDEFINED until something writes them: a
+                 claim promises no value, zero included.  Every field a construction does not
+                 write from its source is written to the type's default (H-Alloc); a slot
+                 read before it is written is a defect of the code that reads it, never of
+                 the claim.  A zeroed claim is legitimate only as the implementation of a
+                 write the program makes anyway — `[0; n]`, and a record whose every field's
+                 default is zero built in place — and is requested at that site.  (@C137)
 ```
 
 **In words.** Allocating a struct/vector reserves a **fresh** store slot (`OpDatabase`) whose
-content starts fully null/zero — a fresh `store_nr` distinct from every live store, so a new
-value can never coincide with an existing one. Appending an element (`OpNewRecord` /
+fields are WRITTEN to their defaults — a fresh `store_nr` distinct from every live store, so a
+new value can never coincide with an existing one.  The defaults are a write, not the memory's
+state: a type, a constructor or a release walk that reads a slot its own code has not written
+relies on bytes nothing promised (H-Claim), and `LOFT_POISON_CLAIM=1` — which fills every claim
+with 0xDEADBEEF — is the instrument that makes such a read fail; the nightly runs the suite
+under it on both backends. Appending an element (`OpNewRecord` /
 `OpFinishRecord`) claims a record inside the container's store. Construction is a pure
 extension of `H`: it frees nothing and aliases nothing (this is why *constructing* a host
 value is unrestricted under [capabilities.md](capabilities.md)'s `Cap-Own`).
@@ -123,16 +134,7 @@ does so consistently enough to look correct: the wide default and every non-inte
 agree with it.
 
 This has been re-derived wrongly **six** times, in five modules, which is why it is a rule and
-not a comment: the vector element WRITE (loft#1378, narrow elements written eight bytes wide
-into a one-byte slot), the dense REMOVAL (loft#1412, the tail slid eight bytes per element on
-both spellings, `len` staying right throughout), a closure's captured cell (loft#1409), and
-three more found together (loft#1420) — the vector STRIDE (`element_store_size`, whose narrow
-branch asked `forced_size(type_elm(elm))`, a test that can never pass because `type_elm` maps
-every `Type::Integer` to the one `integer` def: a dead branch, so `reverse` on a `vector<u8>`
-answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_val` through
-`get_field(_, usize::MAX, _)`, whose `attr_type` answers `def.returned`, so `[a, .., z]`
-answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
-the type the same way and zeroing the successors it wrote over).
+not a comment; the six are in [heap-history.md](heap-history.md#the-stride-rules-six-re-derivations).
 
 The shape is worth naming, because it is what makes this rule so easy to violate: each of these
 sites converts a TYPE to a definition and back — `type_elm`, `type_def_nr`, `attr_type(_,
@@ -176,8 +178,22 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                  the END (H-Index), and the write LANDS there.
   (H-WriteLocked)  a write to a read_only store is a STATIC reject where provable; else a
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
-                   write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
+                   write and DISCARDS it — the store keeps its bytes (@C80).  Never a silent
                    successful write.
+  (H-Write-Else)  an assignment STATEMENT may end in `else { B }`: `place = v else { B }`
+                   (and `place op= v else { B }`).  The place and `v` are each evaluated
+                   ONCE, the write is attempted, and B runs exactly when it did NOT take —
+                   (H-WriteNull) or (H-WriteOOB) at the element, an absent key or a null view
+                   at any step of the place's path, a value the slot cannot hold
+                   ((E-Uncomp-NN), a narrow non-nullable slot), or a write (H-WriteLocked)
+                   discards.  A write that landed never runs B, whatever it wrote (a stored
+                   null is a landed write).  `else` belongs to the nearest statement that can
+                   take one: in `x = if c { 1 } else { 2 }` it is the `if`'s.  A store in
+                   CONDITION position (`if place = v`) is refused, naming the cure.
+  (H-TextReplace)  an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`)
+                   releases the text the slot held, or writes `t` over its block when `t`
+                   fits, once no borrow of that text is live.  A record LITERAL's write is
+                   an initialisation: it never reads the slot it fills.
 ```
 
 **In words.** A write updates the byte(s) at the target and yields the written value. A write
@@ -185,12 +201,8 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
 (it must never scribble on an arbitrary address — the null discipline extends to the write
 side). Both are the SAME test at the same place: an out-of-range index produces `nullref`, and
 every typed setter refuses to resolve a store for it, so `v[9] = x` on a three-element vector
-and `absent.f = x` through a keyed miss take the identical step (measured on both backends —
-value, length and the neighbouring records all unchanged; the standing guard is
-`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`, which also pins that a
-heap-owning literal written there is released and its source untouched, and that every
-native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
-fill, the record-view address, the guarded index chain — answers the same). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
+and `absent.f = x` through a keyed miss take the identical step
+(`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
 not own (`file_map`) — is refused, never silently applied: a development run halts with the
 report, a production run logs it and discards it, so the program continues on the old bytes.
 Discarding is a property of every write route, not of the op that started it: the value
@@ -199,8 +211,30 @@ can reach, and never grows, moves or frees one the store holds) and the `--nativ
 writers all consult the same lock (`tests/locked_writes.rs`). The hoisted writers consult it
 ONCE per loop, not once per element: no loop the hoist admits can lock or unlock a store (every
 op that does is a writer it refuses), so the lock state is read with the vector header, the push
-window or the record address the loop holds, and a window over a locked store has no capacity —
-every push through it takes the runtime's refusing append. Crucially, a write's target ROOT decides whose state it touches: a
+window or the record address the loop holds.  A locked store then has no room on any fast path —
+a window over it has no capacity, a header over it no writable element, a record address in it
+leaves the fast path by the same test as a null one — so every write to it takes the runtime's
+refusing path, and the fast path carries no lock test of its own. An assignment to a text field frees what it replaces (`H-TextReplace`): the text a field held
+belongs to that field alone, so nothing else is left pointing at it — except a BORROW.  A
+`text` parameter is handed the field's bytes rather than a copy, and so is a walk over the
+field's characters, so `g(r.a, r)` whose body writes `q.a` would read its own parameter
+overwritten.  The release therefore waits for the borrows: it is taken where no borrow can be
+live in this frame — no text variable of the frame borrows from the record's owner, and the
+write is not inside another call's arguments — and in no frame above it.  The owner is then a
+local of this function, or a parameter whose every caller is a visible direct call that keeps
+the same property: every `text` parameter of the writer is only the value written, and at each
+call the argument is not inside another call's arguments and is owned there by a local no text
+variable borrows, or by a parameter of a caller that holds the same (a greatest fixpoint over
+the program's calls, so recursion is covered).  A text VARIABLE is no borrow: a local `text`
+is an owned copy (`x = r.a`, a `??` discharge, a `for c in r.a` walk temporary), and a native
+slice of a store's text (`(R-TextBorrow)`) is declined over any block a release can run in.  So
+an argument already evaluated is a borrow only when it can answer a text — a field read, a
+slice, a call answering text, a `text` parameter.  The initialisation is a
+different write because the slot it fills can hold bytes that are not a block: a record minted
+without zero-filling (`(R-CompleteWrite)`) or an element slot handed to a callee
+(`(R-Place)`).  The guard is
+`tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft`.
+Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
 `Cap-Own`/raw-write admission rests on.
@@ -211,9 +245,9 @@ only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](
   (H-Copy)   ⟨x = r, ⟨ρ, H⟩⟩ → ⟨r', ⟨ρ[x ↦ r'], H'⟩⟩            when x = r is a PLAIN bind of a
                WHOLE VALUE — a local variable, or a VECTOR-typed projection (`fv = e.items`) —
                where r' = (fresh(H),0,0) and H'[store(r')] := deep-copy of the record graph at r.
-               x and the source are then INDEPENDENT (C86, #415).
+               x and the source are then INDEPENDENT (@C86, #415).
   (H-Ref)    ⟨x = &r, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ[x ↦ r], H⟩⟩              an EXPLICIT `&`-bind aliases: x
-               shares r's backing (NO fresh store), so `x[0] = 99` mutates r (C77).  This is the
+               shares r's backing (NO fresh store), so `x[0] = 99` mutates r (@C77).  This is the
                vector twin of a parameter — both reach the source; only a plain bind copies.
   (H-View)   ⟨x = r, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ[x ↦ r], H⟩⟩               when r is a STRUCT-TYPED PROJECTION
                — a struct FIELD (`c = o.i`) or a struct ELEMENT of a vector (`s = v[0]`).  x is a
@@ -247,7 +281,7 @@ agree exactly (verified):
   **vector-typed** projection (`fv = e.items`). A fresh store is allocated and the graph
   duplicated, so the two are independent: `fv = e.items; fv[0] = 99` leaves `e.items[0] == 1`;
   `c = o; c.v = 9` leaves `o.v == 1`.
-- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
+- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([@C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
   NOT a copy: `r = &v; r[0] = 99` makes `v[0] == 99` (verified both backends). This is why a `&`
   is written — to share the backing, not duplicate it. (A vector **parameter** likewise aliases
   the caller — see the invariant below.)
@@ -262,7 +296,7 @@ agree exactly (verified):
   `v[0].n == 11`. Order matters: `c = v[0]; c.n = 99; v.remove(2)` keeps the alias and lands the
   99, because the view is dead before the container changes.
 
-This is the [DESIGN_DECISIONS.md C86](../DESIGN_DECISIONS.md) (`#415`) copy vs [ownership.md](ownership.md)
+This is the [DESIGN_DECISIONS.md @C86](../DESIGN_DECISIONS.md) (`#415`) copy vs [ownership.md](ownership.md)
 `#426` view boundary, and it is **exactly** the struct-vs-vector split
 [capabilities.md](capabilities.md)'s raw-write rule (D-cap-3) already encodes: a **vector** local is
 owned (copies, so writing it is `Cap-Own`), a **struct-typed** local may be a view of host data (so
@@ -272,6 +306,142 @@ write reaches another binding's state only when its root is a **parameter**, an 
 parameter), OR a **struct-typed view** of one — never a plain copy. The capability gate
 (D-cap-3) enforces this by **following the vector's dep chain**: a local vector that aliases a
 parameter (via `&`) is host, a genuinely-copied one is script-owned.
+
+### References — what a reference may point at, and what it holds still (C145)
+
+```
+  (H-LongRef)   a reference held in a store's record names a record with a home of its own,
+                or a field of one.  A string or a vector is named by the field that holds it,
+                never by its content.  A record inline in a `vector` or `sorted` has no home of
+                its own; a link over its type (a keyed collection of it, anywhere in the
+                program) lays every collection of that type out by reference — `array` /
+                `ordered`, each element a record id, the records pushed out
+                (`Stores::is_linked`, H-Stride's four-byte layout).
+  (H-ShortRef)  a variable or a parameter may name string or vector content, or a record
+                inline in a collection.  While it lives, the store it names into takes no
+                addition to a string or a vector, and the collection no reordering.  A
+                user-written view whose container is disturbed materialises or the disturbance
+                is refused instead (binding.md B-Disturb, H-Materialise).  The exception is a
+                call's return buffer, which `(R-Place)` may claim in a store a parameter names
+                into and the callee may grow: a rewrite relies on this rule for a parameter's
+                store only where it tested that store apart from the buffer's at run time
+                (`(R-Alias)`'s versioned clause).
+  (H-Removed)   removing a record a stored reference has named ends the record, not its
+                position: the header word stays behind outside every claim, and no claim reuses
+                it.  A stored reference to it reads null; the rest of the record is freed.
+                Emptying a collection removes each of its records: a clear of a linked vector
+                releases them one by one, and a store minted again in place keeps the marks.
+  (H-RefElem)   a reference is a struct field, never a collection's element: `vector`,
+                `sorted` and the keyed kinds refuse `reference<T>` elements.  Wrapped in a
+                struct (`struct Ref { r: reference<T> }`, `vector<Ref>`) it is a field again.
+  (H-RefHome)   a record a stored reference names lives as long as the store of its holder.
+                Where the record's home — the variable holding it — would end first, a named
+                local held from an enclosing block moves out to that block (a loop pass
+                refilling it removes its records, H-Removed); a literal, a call result whose
+                callee builds into the record it is offered, or a refilled local's own record
+                is built in the holder's store; and a record a parameter or the returned value
+                names is copied into that holder's store just before its home is freed, one
+                copy per record and store.  What none of these keeps is refused where the
+                reference is written, copied, or handed to a callee that links it: an element
+                of a parameter's collection or a copy into one, two parameters naming one
+                record, a record holding a stored reference, a callee answering a local.  A
+                record reached through a parameter has its home in the caller.  A local
+                collection a stored reference names into is emptied in place when reassigned.
+  (H-RefSet)    assigning to a `reference<T>` field re-points it: `h.r = x` makes the field
+                name `x`'s record, whether `x` is a place, a variable, a record literal or a
+                call, and never writes into the record the field named before.
+```
+
+**In words.** A store keeps no back references: nothing records who points at what, so the
+layout itself guarantees that a referenced thing does not move — a record keeps its home, a
+field keeps its offset, and only content (a string's bytes, a vector's elements, an inline
+record) moves, which no long-term reference names.  `(H-ShortRef)` is what lets a short-term
+reference name content directly, and what a rewrite may rely on: a function's parameters name
+stores that take no string or vector addition during the call.  `(H-Removed)` is the same
+no-back-references rule applied to removal: nothing can tell a reference that its record is
+gone, so the record leaves a mark where it was, and the reference checks the mark when it is
+read.  The mark costs one word per removed record that a reference named.  A whole store freed
+under a stored reference is no removal, so it may not happen: `(H-RefHome)` keeps the record
+where its holder lives, or refuses.  It follows the reference through copies of its holder and
+through calls: what it cannot see, no `deps` can.
+
+**Where `(H-LongRef)` holds in the code.**
+- *The link.* `Stores::finish` links the element type of every keyed collection field (`hash`,
+  `radix`, `trie`, `index`), of every field group, and the target of every stored
+  `reference<T>` (recorded by `typedef::record_reference_targets` / `set_field_target`);
+  `finish_type` lays a linked type's `vector` / `sorted` out as `array` / `ordered`.  The
+  native `init()` replays the reference targets before its own `finish`, so both backends lay
+  the type out alike.
+- *The record id.* `Stores::record_new` claims a record of its own for a linked element;
+  `insert_record`'s array and ordered arms store its id (`array_add`, `vector::ordered_finish`);
+  `remove_vector_at` unlinks an id where an inline element would be shifted.
+- *The stride.* `Parser::element_store_size` and `vector_elem_read` read a linked element as a
+  4-byte id through `OpVectorRef` (H-Stride); `vector_slice` and `vector_keep_range` refuse one.
+- *The field, not the content.* A field value is a `DbRef` to its slot (`get_field`,
+  `Store::collection_rec`); `vector_append` and `vector_reserve` rewrite the owner slot when
+  growth moves the vector's record; `set_text` and `refill_str` replace a text's block and
+  write the slot.
+- *The cross-store pointer.* A stored `reference<T>` is a 12-byte `DbRef` field
+  (`typedef::fill_database`).
+- *The one place records move:* `compact_slot`, on the load path only, where no reference into
+  the store can be live yet.
+
+**Where `(H-Removed)` holds in the code.**
+- *The mark.* `Stores::set_db_ref` (`OpSetDbRef`, both backends) records the record a stored
+  reference names in its store's `referenced` set (`Store::note_referenced`).  The set only
+  grows: with no back references nothing can say when the last reference went.
+- *The removal.* `Store::delete` entombs a record in that set (`Store::entomb`): the header
+  word becomes a one-word block in `removed` and out of `claims`, and the rest of the record is
+  freed as a record of its own.  Every removal reaches it: `remove_vector_at`, the keyed
+  removals, a parent's release (`remove_claims`), and a clear of a linked vector:
+  `Parser::clear_vector_at` is the one home of `v.clear()`, `clear(v)` and `v = …`, and
+  `Parser::linked_clear_release` puts `OpKeepVectorRange(v, T, 0, 0)` before the length reset,
+  which sends each record through `Store::delete` (`Stores::keep_vector_range`).  A group's
+  view releases nothing (`Stores::clear_releases_records`).  `OpDatabase` on a live store keeps
+  its marks: `Stores::clear` answers `Store::kept_positions`, which the mint marks removed after
+  the root's claim (`Store::entomb_kept`).  `claims_rebuild` and `Store::usage` skip them.
+- *The read.* `Stores::get_db_ref` (`OpGetDbRef`) and the formatter answer null for a removed
+  record (`Stores::reference_removed`).
+- `LOFT_NO_TOMBSTONE=1` frees such a record like any other: the bisect step
+  ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
+
+**Where `(H-RefHome)` holds in the code.**
+- *The analysis.* `scopes::stored_reference_homes` (`src/scopes/stored_refs.rs`), run after
+  pass 2 by `Parser::check_reshape_under_reference`, compares at every `OpSetDbRef` into a
+  user's `reference<T>` field the holder's life with the record's home (`Walk::holder_life`,
+  `Walk::home_life`), through copies of the holder and calls (a per-callee summary, `ParamPair`).
+  `Walk::resolve` keeps an outlived home (`hoist`, `place`, `place_own`, `evacuate`) or refuses it.
+- *The placement.* `scopes::apply_places` claims the record in the holder's store
+  (`OpPlaceRecord`) for a variable borrowing the holder; `scopes::keep_placed_results` drops the
+  free of a placed call result (callee test: `place_result::callee_keeps_an_offered_record`).
+- *The copy-out.* `scopes::insert_evacuations` puts `OpEvacuate` (`Stores::evacuate`) before
+  each free of the home's owner; `(R-Place)` and `(R-ExitVector)` leave such an owner unplaced.
+- *The move.* The parser marks each store owner on the home's dep chain (`mark_ref_home`),
+  which store confinement and last-use reclaim leave in place, and null-inits one assigned
+  deeper in the holder's block (`scopes::insert_hoists`), where the scope pass then scopes it.
+- *The reassignment.* `Parser::referenced_locals` records, on both passes, the local vectors and
+  keyed collections a stored reference was set into; `parse_assign_op_inner` lowers a
+  reassignment of one as its clear (`Parser::referenced_local_clear`: `clear_vector_at`, or
+  `OpClearKeyed`) followed by the `+=` lowering.
+- `LOFT_NO_REF_HOME=1` withholds all four: the bisect step ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
+
+**Where `(H-RefSet)` holds in the code.** `Parser::towards_set` lowers an assignment to a
+pointer field as `OpSetDbRef`.  A record literal reaches it as a record of its own:
+`Parser::reads_a_pointer_field` keeps `(R-InPlaceLiteral)` off a pointer field, whose read is
+the record it points at, not a place of the holder's.
+
+**Where `(H-ShortRef)` holds in the code.**
+- *User views.* The scope pass finds the views live across a disturbance
+  (`scopes/view_walk.rs` `collect_views_to_materialise`, `scopes/disturbance.rs`) and
+  materialises them or refuses the disturbance (`scopes/reshape_refusals.rs`: B-Ref-Reshape,
+  H-View-Drop).
+- *Compiler-held addresses.* `(R-Base)`, `(R-RecPtr)` and the push windows hold a vector base,
+  a record address or a header only while no store they read from grows
+  (`generation::hoist` `growth_free`, `StoreFacts::distinct`, `view_extent_verdict`);
+  `(R-TextBorrow)`'s borrowed text holds on the same terms (`Store::text_span`).
+- *The return buffer.* `Output::distinct_version` tests a loop's parameter stores apart from the
+  return buffer's (and a result local that adopts it, `hoist::RetAdopt`), and passes the
+  pairs it tested to `record_ptr_gains` as assumed distinct inside the versioned copy only.
 
 ### Free — release the store a reference NAMES, once, never the stack
 
@@ -295,8 +465,9 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  danger it averts is slot REUSE: a freed slot is handed out again, so a second
                  free would release someone else's store.
   (H-FreeAll)    every store is freed exactly ONCE, by program exit.  The residue is reported
-                 (`N stores not freed at program exit`) — a warning ordinarily and an ERROR
-                 under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
+                 (`N stores not freed at program exit`; a `File` handle still open is one
+                 more entry, `open File handles×N`, (H-Handle)) — a warning ordinarily and an
+                 ERROR under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
                  both halves: a store used after its free, and a store never freed at all.
   (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
                  `OpDatabase` mints holds NOTHING ELSE: every record in it was
@@ -332,7 +503,10 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  wrapper (what `OpDatabase` mints — asking the shape, never a byte
                  offset, is what keeps the two backends together: the field sits at
                  8 on `--native` and 12 on the interpreter) and the element type
-                 OWNS HEAP.  A no-heap element pays exactly the old reset; a field
+                 OWNS HEAP.  A no-heap element pays exactly the old reset — for a
+                 field vector the emitter decides that from `OpGetField`'s vector
+                 type, since asking the layout at run time searched the record's
+                 fields per clear; a field
                  vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak
                  rule, not a semantics rule.  The release is ONE STORE RESET, not a
@@ -354,7 +528,12 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  a reset; it walks the record's own type, or a struct-enum's
                  PARENT type, so it follows the variant the buffer HOLDS rather
                  than the one about to be written.  A record of scalars has
-                 nothing to release and emits nothing.
+                 nothing to release and emits nothing.  A record whose every
+                 heap slot is EMPTY at the release — each text and collection
+                 slot zero, each struct-enum tag absent or naming a variant that
+                 owns no heap, read from the type's cached slot list — releases
+                 nothing and skips the walk; any slot the list cannot read takes
+                 the walk.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
@@ -395,7 +574,103 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  and the layout is unchanged; what changes is that the claim costs no
                  tree delete, insert or rebalance.  A remainder under n words, or
                  under the tree's minimum, takes the delete and the insert.
+  (H-LazyFree)   inside one store, a delete of a SMALL block (at most 64 words) during
+                 the store's LAZY phase merges with its free neighbours in O(1) as the
+                 exact delete does — forward by header, backward by a footer CONFIRMED
+                 by the phase's record of lazily freed block starts (claimed data can
+                 spell a footer, and that record cannot lie) — and inserts the merged
+                 block into no tree; a block that ends the store becomes the wilderness.
+                 A larger block (a vector rung, a hash table) is tracked at its delete
+                 as ever, the tree's insert being nothing beside the block's own copy.
+                 So a claim in the phase finds what the tree holds (the wilderness, the
+                 large blocks, the remainders claims leave) or an untracked block the
+                 chain walk meets, and a scratch freed each round leaves the layout as
+                 it found it.  The count the phase is judged by is the untracked words
+                 held NOW: a claim, a resize or a merge that consumes such a block takes
+                 it off, and a tree rebuild clears the record whole.  The phase ends at the
+                 first claim once the untracked words reach a floor (256) AND a fifth of
+                 the extent written so far, whatever the wilderness holds: ONE sweep
+                 merges every free block and rebuilds the tree, and from then on each
+                 delete is tracked at its site as before; an explicit reclaim ends it
+                 the same way.  A fresh or reset store starts the phase again; a store
+                 bound to a file never enters it, because a file is read, reclaimed and
+                 paged by its layout.  Every block is still free or claimed by its
+                 header, so the usage walk, an image and the open walk read the same
+                 store; what changes is WHEN the tree learns of a free.  A store built
+                 once and released whole never pays for its deletes, a tree whose dead
+                 words stay a small share of its live ones stays lazy however big it
+                 grows, and a vector ladder — dead about half of what it wrote — sweeps
+                 within its first rungs, so the working set never doubles.  Below the
+                 bound a claim the wilderness cannot hold grows the store, or takes an
+                 untracked block the chain walk meets on its way to growing.
+  (H-ReadSurface) a store opened from a file only to be READ — a cached stdlib or program
+                 image — writes nothing into the file: its free-block tree and footers
+                 (`H-FreeFooter`, `H-Wilderness`) are left unbuilt, since a read surface
+                 claims and frees nothing.  The file's mapping is shared by every process
+                 that opens it, so a rebuild in place is a write another start reads.
+  (H-SwapIn)     the deep copy of a store's ROOT record into the root of another store
+                 that holds nothing else, the source store given up after it (the copy's
+                 free-source form — the rebind `x = f(…, x, …)` from a callee that minted
+                 its result), is an EXCHANGE of the two stores' contents followed by the
+                 release of the slot that ends up holding the destination's empty root.
+                 A root is a record at `1@8` OF THE STORE'S OWN ROOT TYPE — a record's
+                 first field shares its root's address, and only the type says the copy is
+                 of the whole record.  Each slot keeps its number, so every reference to
+                 the destination reads the source's records as it would read their copy,
+                 and the released slot holds what the copy would have released.  Exact
+                 only when the copied type keeps every pointer as a record number inside
+                 its own store (scalars, texts, enums, inline structs and enum values,
+                 vectors of those): a stored reference names a slot and keeps the copy, as
+                 do the keyed collections, arrays and child records.  A store pinned to its
+                 slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
+                 a lazy binding, the interpreter's stack — keeps the copy; a free
+                 protection refuses only the side the exchange releases.
+  (H-SwapRebind) on `--native`, the rebind `x = f(…)` whose copy would follow a reset of
+                 `x`'s store is the exchange of `(H-SwapIn)` WITHOUT the reset: `x`'s
+                 previous tree moves to the released slot with the rest of `x`'s store
+                 and is freed with it, which is what the reset releases.  Every other
+                 condition is the exchange's; where one fails, the reset and the copy run.
+  (H-SwapKeyed)  a keyed LOCAL rebound from a call that gave its collection up (`h =
+                 build(…)`, `OpReplaceKeyed`'s free-source form) is `(H-SwapRebind)`'s
+                 exchange on both backends: a keyed local is a dedicated store with its
+                 header at `1@8`, so the source's whole store is the value the copy would
+                 rebuild.  A keyed collection's own pointers are record numbers inside its
+                 store, so they survive; what keeps the copy is a stored reference in the
+                 ELEMENT tree, which could name the source slot.  The released slot holds
+                 the old collection and is freed, never parked for a buffer refill.
 ```
+
+**`H-SwapIn` is the copy's own answer, delivered without the copy.** The copy it replaces
+resets the destination to an empty root, rebuilds the source's tree inside it, and releases
+the source store; the exchange ends in the same two states — the destination's slot holding
+that tree, the released slot gone — and skips the rebuild.  Its conditions are the copy's
+facts made checkable: "the destination holds nothing else" is `holds_only_root`, "the source
+is given up" is the free-source flag the caller set, "nothing outside the tree points into it"
+is the type walk.  `LOFT_NO_STORE_SWAP=1` keeps the copy; `LOFT_TRACE_STORE_SWAP=1` names
+each exchange.  Site: `Stores::try_swap_in`, called by both backends' `OpCopyRecord`.  Guard
+`tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft`, pin
+`tests/store_swap.rs`.
+
+**`H-ReadSurface` is why a cache can be shared.** The tree's links live in the free blocks'
+own bodies, so building it is a write to the store's bytes, and for a mapped file those bytes
+are the file's.  One start alone rewrites the same links each time, which is why the image
+reads byte-identical after a run; two starts at once each read a link the other is halfway
+through writing, as a record number.  The rule is a property of the OPEN, not of the caller:
+`Store::open_read_surface` builds the in-memory claims set from the headers and nothing else,
+and every cache loader goes through it (`ir_read::adopt_read_surface`).  A writable file store
+opens with `Store::open` and rebuilds as before.  Guard `tests/concurrent_warm_start.rs`.
+
+**`H-SwapRebind` is the same exchange, one statement earlier.** A reset clears the destination
+store and claims a fresh root, and the exchange that follows moves that root out again: the
+only thing the reset changed is what the released slot holds when it is freed — an empty root
+instead of `x`'s previous tree.  Both are freed, so skipping the reset changes no reachable
+value.  The source must still be given up and must not be a store the last fn-ref call
+borrowed; a witnessed destination is reset as before, since its old store has to survive.
+`LOFT_NO_SWAP_REBIND=1` keeps the reset.  Site: `codegen_runtime::OpRebindRecord` over
+`Stores::try_swap_rebind`, emitted for a call-return rebind's copy arm
+(`generation/dispatch.rs`).  Guard
+`tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`, pin
+`tests/swap_rebind.rs`.
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
 reach everything the cleared elements own, and it can do that two ways: walk the elements and
@@ -453,19 +728,17 @@ installed, which the frame does own.
                  place, a call result, a rebind to null — after the new value has been
                  computed and before anything after the statement runs (loft#1362);
                - a CONTAINER's death for what it holds, its own hook first and then its
-                 members, through the synthesized cascade (C111).
+                 members, through the synthesized cascade (@C111).
              ⚠ **A DROP HAS NO SAFE DIRECTION, and a cure discussion that assumes one is
              already wrong.**  For a FREE there is one: never free what might still be held,
              because a leak costs memory and a double free corrupts.  A drop's two failures
              are not ordered that way — a hook that does not run leaves the resource open,
              and a hook that runs twice closes a handle the author already closed, which is
              the author's own use-after-free.  So a change that converts one into the other
-             is not progress and must not be landed as an improvement (measured on
-             loft#1515's shared-destination shape: giving `drop_transferred` a per-path merge
-             turns every lost hook in that family into a doubled one).  The consequence for
-             the cures below is that "err toward the safe side while the real fix is designed"
-             is not available here: a drop's fix has to be RIGHT on every path, which is why
-             `(O-Complete)`'s per-path clause and this rule meet so often.
+             is not progress and must not be landed as an improvement.  The cures below
+             cannot "err toward the safe side while the real fix is designed": a drop's fix
+             has to be RIGHT on every path, which is why `(O-Complete)`'s per-path clause and
+             this rule meet so often.
   (H-Lease)  a structure whose type OWNS a droppable — the type declares `OpDrop`, or holds
              a member that does, at any depth — holds its OWN lease on the resource, and
              two structures are two drops.  A copy makes a second structure, so it takes a
@@ -535,12 +808,23 @@ installed, which the frame does own.
              disturbance and naming the view — (B-Ref-Reshape), for a view the author did
              not spell with `&`.
   (H-Elide)  the compiler may elide a copy of a type with `OpCopy` together with the drop
-             of the structure the copy would have made, where C86's transparent-link
+             of the structure the copy would have made, where @C86's transparent-link
              conditions hold.  Neither hook may rely on running for an elided copy.
   (H-Drop-Not) the OLD value of an overwritten FIELD or ELEMENT (`o.s = other`,
              `v[i] = other`), an element taken OUT (`v.remove(i)`), and a keyed
              collection's records are NOT released by the language — the author releases
              them (INTERFACES.md § `OpDrop`, the documented boundary).
+  (H-Handle) a `File` holds a resource the RUNTIME declares — the OS handle its first read
+             or write opened — and every `File` record that names the handle holds a lease
+             on it (H-Lease): the record that opened it, and each deep copy of a record
+             that names it.  A record returns its lease ONCE, at its death: its store
+             freed, re-minted in place or parked for reuse, or the record released inside
+             a store that lives on — and unlike (H-Drop-Not), that includes an overwritten
+             field or element, an element taken out and a keyed collection's record, since
+             the runtime releases the record's claims there too.  The handle closes when
+             the last lease returns, so a `File` placed where it MOVES (H-Move) keeps the
+             handle open for the structure that holds it, and a handle still open at exit
+             is a residue (H-FreeAll).
 ```
 
 **In words.** A drop is not a destructor of loft-side data — the ownership model pays for
@@ -569,14 +853,11 @@ value where it belongs, pass it, borrow it — so the strict rule costs little. 
 library that holds a connection readable: every use of `self.db` is a borrow in plain sight, and
 the one line that would duplicate it is the line the error names.
 
-**Why a refusal, and not a moved release, a warning or a mark.**  The earlier rule moved the
-release along with a copy and warned where the owner was unclear.  Wherever both structures
-lived on, that left a gotcha: the release went with one of them, and the program closed a
-handle the other was still using, or closed it twice.  A mark inside a structure recording
-which member was moved out, or a static fact deciding which copy owns, would each leave the
-programmer guessing which structure still works.  Refusing the copy leaves no guess, because a
-program that compiles has one structure per lease.  Decided with the owner 2026-09-15 from the
-use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
+**Why a refusal, and not a moved release, a warning or a mark.**  A release moved with a copy
+goes with one structure while the other still uses the handle; a mark recording which member
+moved out, or a static fact deciding which copy owns, leaves the programmer guessing which
+structure still works.  Refusing the copy leaves no guess: a program that compiles has one
+structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-history.md).
 
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
@@ -588,10 +869,20 @@ copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D
 cell that disagrees to its deviation; `tests/copy_lease.rs` holds the leasing cells.  Sites: the
 deaths are `scopes::displaced_drop` and `scopes::scope_end_drop`; a release moves across a copy
 only where `(H-Move)` moves the value — `scopes::copy_moves_drop_from` and `copy_hands_off` for a
-source the function owns, per path through the hand-off flags.  The reverse hand-off for a copy
-of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed by @PLN163 P5 and
-P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
-result is a view of the call's record.
+source the function owns, per path through the hand-off flags.
+
+**The built-in `File` (`(H-Handle)`).**  A `File` declares no `OpDrop`; the runtime keeps its
+rule.  Sites: a copy leases in `Stores::copy_claims` (`lease_if_file`); a death releases in
+`Stores::free_named` and the two in-place re-mints (`Stores::clear`, `OpClearVector`'s root
+path) through `release_file_leases`, which walks the store from its root, in `park_spare`, and
+in `remove_claims` for a record dying inside a living store; `release_file_handle` detaches the
+record as it releases, so a second walk over the same bytes returns nothing twice; the exit
+residue is `open_file_handles_entry`.  Guards, both backends:
+`a-file-local-moved-into-a-structure-keeps-its-handle.loft` (a moved `File` keeps its handle)
+and `a-file-dying-anywhere-releases-its-handle.loft` (each death releases — the leak report is
+its channel).  `(H-Copy-Refuse)` and `(H-Spent)` reach declared droppables only, so a `File`
+copy whose two structures both stay in use compiles, and the two share one handle and one
+position; whether that copy is refused is with the owner.
 
 ### The soundness bridge — a well-typed program never faults a free
 
@@ -620,10 +911,12 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **0**.  Every entry the register has carried is CLOSED; the entries and the story of how each
-closed are in [heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every
-generated cell a lease verdict and ties each cell that must release once, and does not, to exactly
-one open entry.
+OPEN: **0**.  The entries the register closed, and how each closed, are in
+[heap-history.md](heap-history.md).
+
+No entry is open.  `tests/ownership_drop_gate.rs` gives every generated cell
+a lease verdict and ties each cell that must release once, and does not, to exactly one open
+entry.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written
@@ -649,20 +942,37 @@ The rules are checkable directly, and every check is a program both backends mus
 - **Copy vs alias vs view (`H-Copy` / `H-Ref` / `H-View`)** — proven both backends: a PLAIN
   whole-value / vector bind COPIES — `c = o; c.v = 9` ⇒ `o.v == 1`; `fv = e.items; fv[0] = 99` ⇒
   `e.items[0] == 1`. An EXPLICIT `&`-bind ALIASES — `r = &v; r[0] = 99` ⇒ `v[0] == 99` (a live
-  reference, C77; the vector twin of a parameter). A STRUCT-typed projection is a VIEW —
+  reference, @C77; the vector twin of a parameter). A STRUCT-typed projection is a VIEW —
   `c = o.i; c.v = 9` ⇒ `o.i.v == 9`; `s = v[0]; s.v = 9` ⇒ `v[0].v == 9` (a struct element of a
   vector). capabilities.md's raw-write rule encodes this: a plain-copied vector is owned, a
   `&`-aliased or parameter-rooted vector is host (D-cap-3 follows the dep chain), a struct is a
   possible host view.  The guard: `tests/scripts/201-bind-copies-projection-views.loft`, which
   reads every SOURCE back after the write (an unread source cannot tell a copy from an elided
   one), on both backends.
+- **An elided copy is unobservable (`H-Elide`)** — a copy off a parameter is elided only where
+  no write can reach a store the caller holds while the copy lives.  An aliasing parameter, a
+  view of one, a closure capture, a function reference and a generator's suspension each keep
+  the copy (`use_analysis::caller_stores_stable`), and an elided copy skips its `OpCopy` and its
+  drop together.  Guards: `tests/copy_lease.rs`
+  `an_elided_copy_reads_its_own_value_when_the_callers_store_is_written` (the value, with
+  controls that still elide) and `an_elided_copy_skips_its_hook_and_its_drop_together` (the
+  hooks), on both backends.
+- **The soundness bridge, on both backends (`H-Sound`, `H-FreeAll`)** — `tests/heap_sound.rs`
+  runs each cell on both backends under `LOFT_POISON`, with either `LOFT_STRICT_STORES` (no slot
+  is reused, so a read of a freed store is named and a store left at exit fails the run) or with
+  slots reused and the exit leak check (the only way to see a free decided by a slot NUMBER a
+  newer store now carries).  Its cells are the shapes that read or leaked a store on `--native`:
+  a caller's buffer released by a rebind or an adopt, a loop buffer kept while a binder frees
+  its store, a store handed up through a generic instance, a vector buffer bound to a forwarding
+  call, a lifted result beside a value record, a copied result later rebound, and a minted store
+  in a reused slot.  The nightly `native-poison` job sweeps the `--native` corpus the same way.
 - **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
   a GROWTH of the container while the view is live take the copy step, in this frame
   (`tests/scripts/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame
   down (`tests/scripts/164-callee-disturb.loft`, every cell paired with its inline twin).
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md
-  C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
+  @C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
   at EITHER layout — is `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout.loft`;
   no guard is dedicated to the read's null answer itself, which every `??` cell in the corpus
   exercises without naming it.

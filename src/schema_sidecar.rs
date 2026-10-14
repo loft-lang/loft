@@ -231,21 +231,18 @@ impl LayoutIdentity {
     fn write_to(&self, path: &Path) -> std::io::Result<()> {
         use std::io::Write as _;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            crate::file_access::create_dir_all(parent)?;
         }
-        let mut tmp = path.to_path_buf();
-        let mut name = tmp
-            .file_name()
-            .map(std::ffi::OsString::from)
-            .unwrap_or_default();
-        name.push(".tmp");
-        tmp.set_file_name(name);
+        // `<path>.tmp` beside it, as `dschema_path` spells a sidecar.
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let tmp = PathBuf::from(tmp);
         {
-            let mut f = std::fs::File::create(&tmp)?;
+            let mut f = crate::file_access::create(&tmp)?;
             f.write_all(self.to_sidecar().as_bytes())?;
             f.sync_all()?;
         }
-        std::fs::rename(&tmp, path)
+        crate::file_access::rename(&tmp, path)
     }
 }
 
@@ -310,7 +307,7 @@ pub fn verdict_for_sidecar_text(text: &str, current: &LayoutIdentity) -> SchemaV
 /// # Errors
 /// Propagates an `io::Error` reading the file (other than not-found → `Fresh`).
 pub fn check_file(path: &Path, current: &LayoutIdentity) -> std::io::Result<SchemaVerdict> {
-    let text = match std::fs::read_to_string(path) {
+    let text = match crate::file_access::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SchemaVerdict::Fresh),
         // On a browser target `std::fs` is the TARGET declining, not the file being
@@ -528,7 +525,7 @@ pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
                 // them via the user types that use them, so they aren't roots.
                 && !def.name.starts_with("__")
                 && !def.name.contains('<')
-                && !crate::compile::is_default_file(&def.position.file)
+                && !crate::compile::is_default_file(def.position.file.as_str())
                 && def.known_type != u16::MAX
         })
         .map(|def| def.known_type)
@@ -690,7 +687,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let store = dir.join(format!("loft_dschema_test_{}.store", std::process::id()));
         let side = dschema_path(&store);
-        let _ = std::fs::remove_file(&side);
+        let _ = crate::file_access::remove_file(&side);
 
         let a = id(111, "W\tsize=4\tstruct{x@0:integer}\n");
         // No sidecar yet → Fresh (a brand-new / legacy store).
@@ -699,7 +696,7 @@ mod tests {
         // Persist the identity beside the store.
         a.write_beside(&store).unwrap();
         assert!(
-            side.exists(),
+            crate::file_access::exists(&side),
             "the .dschema sidecar was written beside the store"
         );
 
@@ -715,12 +712,12 @@ mod tests {
         assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 
         // A garbage sidecar → Unreadable → reject (layout unknown).
-        std::fs::write(&side, "corrupt").unwrap();
+        crate::file_access::write(&side, "corrupt").unwrap();
         let v = check_beside(&store, &a).unwrap();
         assert_eq!(v, SchemaVerdict::Unreadable);
         assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 
-        let _ = std::fs::remove_file(&side);
+        let _ = crate::file_access::remove_file(&side);
     }
 
     fn diff(added: &[&str], dropped: &[&str], changed: &[&str]) -> LayoutDiff {
@@ -755,7 +752,7 @@ mod tests {
     #[test]
     fn baseline_accept_and_recheck() {
         let dir = std::env::temp_dir().join(format!("loft_baseline_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
         let a = id(7, "W\tsize=4\tstruct{x@0:integer}\n");
 
         // First build — no baseline yet.
@@ -765,7 +762,7 @@ mod tests {
         );
         // Accept: record the baseline.
         a.write_baseline(&dir).unwrap();
-        assert!(baseline_path(&dir).exists());
+        assert!(crate::file_access::exists(baseline_path(&dir)));
         // Unchanged → Match; a reshape → Changed (the compiler would aid).
         assert_eq!(
             check_against_baseline(&dir, &a).unwrap(),
@@ -777,6 +774,6 @@ mod tests {
             SchemaVerdict::Changed(_)
         ));
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }

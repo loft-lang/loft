@@ -1,37 +1,19 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN99 Arc A — direct concrete operator dispatch on a user struct. A user
-// `fn Op<Name>(self: T, other: T)` must bind in a DIRECT `a < b` / `a - b`
-// expression (not only inside a `<T: Ordered>` generic body), resolving via
-// `find_fn` in `call_op` the same way the generic path already does. All three
-// backends. Before this, `a < b` on a concrete struct errored "No matching
-// operator '<' on 'Money' and 'Money'".
+// @PLN99 Arc A — direct concrete operator dispatch on a user struct.  `operator compare` and
+// `operator minus` bind in a DIRECT `a < b` / `a - b` expression, not only inside a
+// `<T: Ordered>` generic body; `==` and `!=` compare the fields (C132).  All three backends.
 
 struct Money {
   cents: integer not null,
 }
 
-fn OpLt(self: Money, other: Money) -> boolean {
-  self.cents < other.cents
+operator compare(self: Money, other: Money) -> Ordering {
+  self.cents.compare(other.cents)
 }
-fn OpLe(self: Money, other: Money) -> boolean {
-  self.cents <= other.cents
-}
-fn OpGt(self: Money, other: Money) -> boolean {
-  self.cents > other.cents
-}
-fn OpGe(self: Money, other: Money) -> boolean {
-  self.cents >= other.cents
-}
-fn OpMin(self: Money, other: Money) -> integer {
+operator minus(self: Money, other: Money) -> integer {
   self.cents - other.cents
-}
-fn OpEq(self: Money, other: Money) -> boolean {
-  self.cents == other.cents
-}
-fn OpNe(self: Money, other: Money) -> boolean {
-  self.cents != other.cents
 }
 
 fn main() {
@@ -42,15 +24,13 @@ fn main() {
   assert(a <= a, "direct <=");
   assert(b > a, "direct >");
   assert(b >= b, "direct >=");
-  assert((b - a) == 350, "direct - (OpMin)");
+  assert((b - a) == 350, "direct - (operator minus)");
   assert(a == a, "direct ==");
   assert(a != b, "direct !=");
-  // The DISTINGUISHING case: two DISTINCT structs with EQUAL field values. `==` must
-  // dispatch the user OpEq (field-wise), NOT built-in reference identity (which would
-  // make these unequal — different stores). This is what call_op's method-first
-  // precedence guarantees; without it `a == c` is false.
+  // The DISTINGUISHING case: two DISTINCT structs with EQUAL field values.  `==` compares
+  // the fields, NOT reference identity (which would make these unequal — different stores).
   c = Money { cents: 150 };
-  assert(a == c, "user OpEq on distinct equal-valued structs");
-  assert(!(a != c), "user OpNe on distinct equal-valued structs");
+  assert(a == c, "field-wise == on distinct equal-valued structs");
+  assert(!(a != c), "field-wise != on distinct equal-valued structs");
   println("first-grade ops ok");
 }

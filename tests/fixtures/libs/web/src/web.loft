@@ -6,8 +6,8 @@
 
 // The result of an HTTP request.
 pub struct HttpResponse {
-  status: integer,
-  body: text
+  pub status: integer,
+  pub body: text
 }
 
 // Returns true when the status code is in the 200-299 range.
@@ -108,7 +108,7 @@ pub fn http_delete_h(url: text, headers: vector<text>) -> HttpResponse {
 // style.
 
 pub struct WsHandler {
-  id: integer            // Rust-side connection slot
+  pub id: integer            // Rust-side connection slot
 }
 
 // --- Internal natives (lifecycle primitives) ---

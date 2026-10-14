@@ -63,15 +63,15 @@ keep things *correct* — manual memory, lifetime puzzles, null checks,
 `try`/`catch`/`finally`, "what if this fails" — is a unit stolen from the creative
 work. So an early, generating choice: loft **carries the correctness load itself,
 instead of handing it to the programmer.** That one intent produces the design
-decisions — ownership is internal ([DESIGN_DECISIONS.md C79](DESIGN_DECISIONS.md): the
+decisions — ownership is internal ([DESIGN_DECISIONS.md @C79](DESIGN_DECISIONS.md): the
 compiler finds a valid free/copy, never a borrow error to answer); a fault degrades to
-null and the program keeps running ([C80](DESIGN_DECISIONS.md): no exception machinery
+null and the program keeps running ([@C80](DESIGN_DECISIONS.md): no exception machinery
 to get right); null is implicit, not a `Result` to thread. The language holds the
 invariants; the developer builds the game. **Fun is what a low correctness-load feels
 like from the inside.**
 
 **It is *timing*, not the mere presence of load.** What the principle forbids is load at
-the **wrong moment**: at *runtime* (the running game must not stop — C80's whole job) or in
+the **wrong moment**: at *runtime* (the running game must not stop — @C80's whole job) or in
 the *common path* (the ordinary code you write all day). A rare, deliberate **write-time**
 acknowledgement — `x as u8` at the point you *choose* to throw bits away — is fine: you are
 in the editor, with the headspace, doing it on purpose. The test is **frequency in idiomatic
@@ -110,7 +110,13 @@ loft's bet is to win that reliability back **without the cage.** The AS/400 boug
 its stability partly with lock-in — closed, proprietary, conservative. The hard,
 unsolved problem is to keep the dependability of the integrated machine while being
 **open, statically typed, and live-editable**: the heap *is* the database, the
-language woven through the store, and it still does not fall over. (That integration
+language woven through the store, and it still does not fall over.  A loft program is at
+once a database-like script that defines how data is stored safely and a technical
+description of an algorithm, and the two are deliberately indistinguishable: one notation,
+so the programmer never decides which kind of structure a value is
+([@C125](DESIGN_DECISIONS_OWNERSHIP.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object)),
+and the compiler, which knows every type, owner and lifetime outright, chooses the
+representation ([APART_VALUES.md](APART_VALUES.md)). (That integration
 is the same one the next subsection argues from the live-migration side.) Only one
 method earns it, and it is the one this document describes — reliability **by
 construction, not by testing**: find the one invariant, enforce it at the
@@ -159,8 +165,8 @@ have to think about* is the release that moved furthest.
 It follows from the deeper aim rather than being a separate idea. Software you can
 forget about is, by definition, software that does not ask for attention — and every
 mechanism above is already this principle in another form: a fault degrades to null and
-the program keeps running ([C80](DESIGN_DECISIONS.md)) instead of demanding a handler;
-ownership is internal ([C79](DESIGN_DECISIONS.md)) instead of asking you to prove
+the program keeps running ([@C80](DESIGN_DECISIONS.md)) instead of demanding a handler;
+ownership is internal ([@C79](DESIGN_DECISIONS.md)) instead of asking you to prove
 lifetimes; the correctness load sits in the compiler instead of in your head. Each one
 removes an occasion for loft to be interesting at you.
 
@@ -688,7 +694,7 @@ backend divergence — interp says one thing, `--native` another, no error. The 
 identity from a counter) that surfaced as a full parity break (`inline=true` vs `false`).
 The small disagreement *was* the large one — fixing the sub-derivation restored parity.
 
-The **native-library work** (`@PLN11` "Data as a store" + store-backed IR; the C71
+The **native-library work** (`@PLN11` "Data as a store" + store-backed IR; the @C71
 shared-store dispatch in [NATIVE.md § N9](NATIVE.md#n9--native-library-shared-store-dispatch-c71))
 is this same arc applied to the substrate, not a one-off fix:
 
@@ -732,6 +738,16 @@ refuses the first step: **rather miss a feature than add friction.** This is pai
 for by Goal E's bet — safety from a runtime discipline, not a static proof. No
 static proof means **no proof obligations to put on the user**. E removes the
 machinery from the *model*; F removes it from the *syntax* — the same coin.
+
+**The program is presumed right.** Code is the programmer's expression of intent, so loft
+assumes it is correct and makes it work.  A refusal is justified only when the construct cannot be
+implemented SOUNDLY — never because the implementation finds it inconvenient, and never because an
+internal representation made an exception easier.  Three decisions are this rule applied: a link to a
+stored tuple works like a link to a struct, because the rule that refused it rested only on how
+tuples were stored (`(B-Ref-Lvalue)` holds for every place); a type the program defines wins over a standard-library type of the
+same name wherever it is written (@C101); and a type a `pub fn` hands out is usable by its
+caller without extra ceremony, while nothing else leaves its file without `pub` (@PLN187).  Before
+shipping a refusal, ask *can this be implemented soundly?* — if it can, the refusal is the defect.
 
 **The friction test.** For any syntax or error, ask: *does this serve the
 programmer or the compiler?*

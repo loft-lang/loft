@@ -19,7 +19,7 @@ value struct P {
 
 // Tail `if` with BARE LITERAL arms — no work buffer, so the hook is exactly
 // `(self, spec)`: the #533 shape.
-fn to_text(self: P, spec: text) -> text {
+operator to_text(self: P, spec: text) -> text {
   if spec == "date" { "A" } else { "B" }
 }
 
@@ -32,7 +32,7 @@ fn label(k: integer) -> text {
 }
 
 // Tail `if` whose arms are FN CALLS — also no work buffer.
-fn to_text(self: Q, spec: text) -> text {
+operator to_text(self: Q, spec: text) -> text {
   if spec == "count" { label(self.n) } else { "?" }
 }
 
@@ -41,7 +41,7 @@ value struct R {
 }
 
 // No-spec, tail-`if`, bare literals — the `(self)` path must stay intact.
-fn to_text(self: R) -> text {
+operator to_text(self: R) -> text {
   if self.n == 1 { "single" } else { "multiple" }
 }
 

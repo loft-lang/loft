@@ -90,6 +90,8 @@ fn main() {
   // No nullable type anywhere: this is the `??` operator on its own, which the type
   // failures above were masking.
   ok("c-operator-alone", "fn f(a: integer) -> integer {{ a ?? 0 }}");
+  // `operator` in `fn`'s place (@PLN182): the definition `a < b` reaches.
+  ok("operator-compare", "struct P {{ v: integer }} pub operator compare(self: P, other: P) -> Ordering {{ self.v.compare(other.v) }}");
   ok("c-after-binary", "fn f(a: integer, b: integer) -> integer {{ a + b ?? 0 }}");
 
   // --- format literals -----------------------------------------------------------------

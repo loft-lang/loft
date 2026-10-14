@@ -57,7 +57,7 @@ current `main` tip before working the list.
      Fixed → geometry draws. Guard `tests/html_gl_imports.rs` + `tools/wasm_imports.mjs`
      (browser-free import-table check).
   2. **Canvas mutations lost** (the "6-colour" residual) — root-caused with a direct GL
-     texture probe: every `Canvas` draw method did `d = self.data; d[i]=…`, which C86
+     texture probe: every `Canvas` draw method did `d = self.data; d[i]=…`, which @C86
      H-Copy COPIES, so the whole software rasterizer silently drew nothing (the atlas /
      text textures were blank). The maker surfaced a formal contradiction (binding.md
      `B-HeapAlias` "heap aliases" vs heap.md `H-Copy` "heap copies"); a both-backends

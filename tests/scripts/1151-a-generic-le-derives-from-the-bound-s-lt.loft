@@ -31,7 +31,8 @@
 //   those is clean on both. The native side was not scored in this sweep.
 
 struct Le1151P { le_v: integer }
-fn OpLt(self: Le1151P, other: Le1151P) -> boolean { self.le_v < other.le_v }
+// C132 — a user type meets `Ordered` with `operator compare`; the four forms read it (`@FR-Op-Order`).
+operator compare(self: Le1151P, other: Le1151P) -> Ordering { self.le_v.compare(other.le_v) }
 
 fn le1151_le<T: Ordered>(le_a: T, le_b: T) -> boolean { le_a <= le_b }
 fn le1151_ge<T: Ordered>(le_a: T, le_b: T) -> boolean { le_a >= le_b }

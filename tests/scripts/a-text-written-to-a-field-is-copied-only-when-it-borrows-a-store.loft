@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A TEXT WRITTEN TO A FIELD IS COPIED FIRST ONLY WHEN IT MAY BORROW A STORE.  `set_str` claims
+// room in the record's store, which can move the store's bytes, so a value that is a view into
+// store memory (a field read, a slice of a parameter that is itself a field) is copied before
+// the claim; a literal and an owned text local are read where they are.  Every cell writes
+// while the store grows, so a value read through a moved buffer would come back wrong.
+//
+// Expected values by hand: 40 rounds each append "r<i>" records and rewrite the fields, so
+// the final record carries the last round's values — "lit", "own39", the slice "cde" of
+// "abcdefgh", the match binding "m39", and `copy` holding `name`'s value "own39".
+//
+// @falsified-at: none — the borrowed forms are the ones that cannot alias; the cells pin the
+// copied forms (a field of the same record, a slice of a field) against a rewrite that would
+// borrow them too.
+
+struct R { name: text, other: text, copy: text, part: text, tag: text }
+enum E { M { s: text }, N }
+struct Log { rows: vector<R> }
+fn write(r: R, src: text, e: E, i: integer) {
+  r.tag = "lit";
+  own = "own{i}";
+  r.name = own;
+  r.part = src[2..5];
+  match e {
+    M { s } => { r.other = s; },
+    N => { r.other = "none"; },
+  }
+  r.copy = r.name;
+}
+fn main() {
+  lg = Log { rows: [] };
+  lg.rows += [R { name: "", other: "", copy: "", part: "", tag: "" }];
+  holder = R { name: "abcdefgh", other: "", copy: "", part: "", tag: "" };
+  for i in 0..40 {
+    lg.rows += [R { name: "r{i}", other: "", copy: "", part: "", tag: "" }];
+    write(lg.rows[0], holder.name, M { s: "m{i}" }, i);
+  }
+  r = lg.rows[0];
+  assert(r.tag == "lit", "a literal");
+  assert(r.name == "own39", "an owned local");
+  assert(r.part == "cde", "a slice of a field handed in");
+  assert(r.other == "m39", "a match binding");
+  assert(r.copy == "own39", "a field of the same record");
+  assert(lg.rows[40].name == "r39" && len(lg.rows) == 41, "the growth happened");
+}

@@ -1,0 +1,14 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 5e66fea46..5b2957413 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -2415,6 +2415,9 @@ pub fn param_view_ptr(
+     if matches!(tp, Type::Optional(_)) || plain_record_type(data, tp).is_none() {
+         return Err("not a plain record");
+     }
++    if true {
++        return Ok(p);
++    }
+     view_extent_verdict(
+         stmts,
+         p,

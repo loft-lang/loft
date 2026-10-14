@@ -26,7 +26,7 @@ fn fb_same(a: const vector<u8>, b: const vector<u8>) -> boolean {
   for i in 0..len(a) { if a[i] != b[i] { return false; } }
   true
 }
-fn fb_wrap(n: integer) -> vector<u8> { ext_make_bytes_foreign(n) }
+fn fb_wrap(n: integer) -> const vector<u8> { ext_make_bytes_foreign(n) }
 
 fn main() {
   c = ext_make_bytes(300);
@@ -60,12 +60,12 @@ fn main() {
   k[0] = 7;
   k += [9];
   assert(k[0] == 7 && f[0] == 0 && len(k) == 301 && len(f) == 300, "b7 {k[0]} {f[0]} {len(k)}");
-  // b8: a rebind in a loop releases each block; an empty answer; a rebind to a literal
+  // b8: a rebind in a loop releases each block; an empty answer; an owned vector beside it
   for i in 0..2000 { f = ext_make_bytes_foreign(16); assert(f[15] == 15, "b8 {i}"); }
   e = ext_make_bytes_foreign(0);
   assert(len(e) == 0, "b8 empty {len(e)}");
-  f = [1, 2, 3];
-  f += [4];
-  assert(len(f) == 4 && f[3] == 4, "b8 literal {len(f)}");
+  o = [1, 2, 3];
+  o += [4];
+  assert(len(o) == 4 && o[3] == 4, "b8 owned {len(o)}");
   println("foreign bridge ok");
 }

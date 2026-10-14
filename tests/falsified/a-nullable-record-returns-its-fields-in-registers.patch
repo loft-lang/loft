@@ -1,0 +1,19 @@
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index f6a22b21e..269d26de0 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -11375,11 +11375,11 @@ impl ValueTuple {
+             .fields
+             .iter()
+             .map(|(_, rt)| match *rt {
+-                "f64" => "f64::NAN",
+-                "f32" => "f32::NAN",
++                "f64" => "0.0f64",
++                "f32" => "0.0f32",
+                 "bool" => "false",
+                 VIEW_LEAF_PART => "DbRef::NULL",
+-                _ => "i64::MIN",
++                _ => "0i64",
+             })
+             .collect();
+         if self.nullable {

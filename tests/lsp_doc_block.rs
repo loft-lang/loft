@@ -13,12 +13,10 @@
 //! heading swept into a block becomes the first sentence of one arbitrary member's docs, and
 //! a block of only blank comment lines would count as documentation that is not there.
 
-use std::process::Command;
-
 /// The plain `loft def` rendering: the signature line, then any doc lines indented under it,
 /// then a `→ file:line`.  Read as text rather than JSON so this test needs no extra crate.
 fn def_output(name: &str, file: &str) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["def", name, file])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()

@@ -84,6 +84,24 @@ Home · Language: vs Rust · Keywords · … · Library: Types · Math · … [s
 
 ---
 
+## One renderer for a documented item
+
+`src/doc_render.rs` is the one place "a signature and its doc comment", and a feature
+entry's Markdown body, become text.  It owns the reader-visible rules — a paragraph is
+blank-line separated with its lines joined; a worked-example citation line is bookkeeping and
+dropped; `` `spans` `` are code, and an unclosed backtick stays a backtick — and writes them
+three ways: HTML (`item_html`, `blocks_html`), Markdown (`item_markdown`, `blocks_markdown`) for
+a hover or the IDE overview, and terminal text (`item_text`, `blocks_text`) for the REPL.  The
+stdlib section pages, the print sheet, the library API pages and `loft doc`'s API pages all go
+through it (the PDF keeps its own Typst loop).  `tests/doc_render.rs` pins the rules once for
+all three back-ends, and that the HTML and the terminal text show a reader the same words for
+every documented stdlib item.
+
+`src/doc_catalogue.rs` embeds `index/features.json`, so the REPL and the language server read
+the feature catalogue — each entry's group, keys, summary and runnable example — with no
+network and no checkout of this repository.  An entry's example is the first `loft` fence,
+the same program `tests/docs/features/<tag>.loft` runs.
+
 ## Syntax highlighting classes
 
 | Class | Meaning |
@@ -128,12 +146,9 @@ be kept in step with the library.
 | `doc/lib-<name>-src.html` | package | `src/` + `tests/` in the extracted tarball | *how is it built?* |
 
 Two of those need the package EXTRACTED in `~/.loft/registry/`, not just listed in the index
-— the guide and the source browser. A package that is not in the cache at all gets a page that
-says so, and `scripts/fetch-doc-packages.sh` (`make doc`) is what fills the cache before a
-build.  `gendoc` refuses, before writing a page, a build that would turn a page rendered from a
-package into that stub, naming the packages (a bare `cargo run --bin gendoc` once stubbed 37 of
-them).  **`LOFT_DOC_ALLOW_UNCACHED=1`** lifts the refusal for a render that does not read the
-library pages — `doc_hygiene`'s drift test, which runs on boxes without the cache, CI included.
+— the guide and the source browser. A build box without that cache says so on the page
+rather than reporting an empty library as a library with nothing in it, and
+`scripts/fetch-doc-packages.sh` (`make doc`) is what fills it before a release build.
 
 **A guide reaches a reader only through a RELEASE.** `gendoc` reads it out of the extracted
 tarball, so writing `docs/01-getting-started.loft` is half of shipping one and bumping the

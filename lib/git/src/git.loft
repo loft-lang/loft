@@ -24,30 +24,30 @@ capability git
 
 // One commit, as the log reports it.
 pub struct Commit {
-  const sha: text,
-  const date: text,
-  const subject: text,
+  pub const sha: text,
+  pub const date: text,
+  pub const subject: text,
 }
 
 // One file's state — a path plus git's own status letter(s).  `status` is what
 // git printed: `M`, `A`, `D`, `??`, `R100`, and so on.
 pub struct Change {
-  const status: text,
-  const path: text,
+  pub const status: text,
+  pub const path: text,
 }
 
 // How far apart two refs are.
 pub struct Counts {
-  const ahead: integer,
-  const behind: integer,
+  pub const ahead: integer,
+  pub const behind: integer,
 }
 
 // One file's contribution to a commit.  `adds` and `dels` are -1 for a binary
 // file, which is what git reports as `-`.
 pub struct Stat {
-  const adds: integer,
-  const dels: integer,
-  const path: text,
+  pub const adds: integer,
+  pub const dels: integer,
+  pub const path: text,
 }
 
 // The mechanics.  `kind` selects a question whose argv is built in Rust — this

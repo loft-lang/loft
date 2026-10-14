@@ -44,12 +44,21 @@ pub type i32 = integer size(4);
 /// numbers, counts, tick fields) where the byte width is the load-bearing property; plain
 /// `integer` holds the whole 0..2^32-1 range and more.
 pub type u32 = integer limit(0, 4294967294) size(4);
+/// Where one value stands against another: what `compare` answers.  An enum rather than a
+/// signed number, so a comparison cannot be written as a subtraction that overflows.
+pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}
+
 // --- Interfaces ---
 /// Standard interfaces for bounded generic functions.
-/// A type satisfies an interface by defining the required operator or method.
+/// A type satisfies an interface by defining the `operator` method or the method it names —
+/// a built-in type by the stdlib's own, a program's type by its own (`formal/operators.md`).
 
 /// Types that support the `<` comparison operator.
-/// Satisfied by integer, single, float, text, and any user type defining OpLt.
+/// Satisfied by integer, single, float, text, and any type defining `operator compare`.
 ///
 /// `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no
 /// ordering, so `false < true` is a refusal rather than a convention the language picks
@@ -57,57 +66,54 @@ pub type u32 = integer limit(0, 4294967294) size(4);
 /// same line bounds how null is ordered: that applies to the ordered types only, and a
 /// boolean null still compares with `==` like every other scalar.
 ///
-/// ONE method is all a type has to define: inside a generic bounded by this, `>`, `<=` and
-/// `>=` all derive from `<` — `a > b` is `b < a`, `a <= b` is `!(b < a)`, `a >= b` is
-/// `!(a < b)`.  Each evaluates its operands exactly once.
+/// ONE method is all a type has to define: inside a generic bounded by this, `<`, `<=`, `>`
+/// and `>=` all read it, each evaluating its operands exactly once.
 pub interface Ordered {
-  op < (self: Self, other: Self) -> boolean
+  operator compare(self: Self, other: Self) -> Ordering
 }
 
-/// Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
-/// A tuple compares element by element, as its concrete `==` does.
+/// Types that support the `==` equality operator: every type, compared by content at every
+/// depth (@C91).  `==` is always structural and no type redefines it, so this declares
+/// nothing; a deep comparison of a type's own is a named method.  A tuple compares element by
+/// element, as its concrete `==` does.
 ///
-/// `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
+/// `!=` derives from it (`a != b` is `!(a == b)`).
 pub interface Equatable {
-  op == (self: Self, other: Self) -> boolean
 }
 
 /// Types that support the `+` addition operator, returning the same type.
-/// Satisfied by integer, single, float, and user types defining OpAdd.
+/// Satisfied by integer, single, float, and any type defining `operator plus`.
 pub interface Addable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 
 /// Types that support `*` and `-` (unary negation).
 /// Separate from `Addable` so a generic can ask for the fewest operators it needs.
-/// Satisfied by integer, single, float, and user types defining OpMul and OpMin.
+/// Satisfied by integer, single, float, and any type defining `operator times` and
+/// `operator negate`.
 ///
 /// Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN
 /// declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction
-/// away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
-/// release may not do.
+/// away from every type that meets it, which a compatible release may not do.
 pub interface Numeric {
-  op * (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator times(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 
 /// Types that support binary `-` (subtraction), returning the same type.
-/// Satisfied by integer, single, float, and user types defining a two-operand OpMin.
+/// Satisfied by integer, single, float, and any type defining `operator minus`.
 ///
-/// A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
-/// one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
-/// so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
-/// interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a
-/// user type that defines `OpMin` at both arities, in either order — as pinned by
-/// `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
+/// A bound of its own rather than a third requirement on `Numeric`, so `<T: Numeric +
+/// Subtractable>` gets negation and subtraction together from two interfaces.  The built-in
+/// number types satisfy both.
 pub interface Subtractable {
-  op - (self: Self, other: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
 }
 
 /// Types that support integer scaling via a `scale` method.
-/// Uses a method (not `op *`): inside a `<T: Numeric + …>` body, `*` already means
+/// Uses a method (not `operator times`): inside a `<T: Numeric + …>` body, `*` already means
 /// Numeric's `Self * Self`, so `x * 2` there is refused ("operator '*' requires a concrete
-/// type") even when another bound declares `op * (self: Self, f: integer)`.
+/// type") even when another bound declares `operator times(self: Self, f: integer)`.
 /// Two SEPARATE generics may each bound their own `T` by an interface declaring the same
 /// method differently — a header binds its own type variable.
 /// User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -> integer`.
@@ -116,9 +122,9 @@ pub interface Scalable {
 }
 
 /// Types that can be converted to text via a `to_text` method.
-/// User types satisfy Printable by defining `fn to_text(self: T) -> text`.
+/// User types satisfy Printable by defining `operator to_text(self: T) -> text`.
 pub interface Printable {
-  fn to_text(self: Self) -> text
+  operator to_text(self: Self) -> text
 }
 
 // General operations
@@ -141,9 +147,9 @@ fn OpGotoFalseWord(step: const i32, if_false: boolean);
 #rust"if @if_false != 1 {{s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;}}"
 fn OpCall(d_nr: const integer, args_size: const u16, to: const integer);
 #rust"s.fn_call(@d_nr as u32, @args_size, @to);"
-fn OpReturn(ret: const u16, value: const u8, discard: const u16);
+fn OpReturn(ret: const u16, value: const u16, discard: const u16);
 #rust"s.fn_return(@ret, @value, @discard);"
-fn OpFreeStack(value: const u8, discard: const u16);
+fn OpFreeStack(value: const u16, discard: const u16);
 #rust"s.free_stack(@value, @discard);"
 fn OpReserveFrame(size: const u16);
 #rust"s.reserve_frame(@size);"
@@ -154,9 +160,11 @@ fn OpConstTrue() -> boolean;
 fn OpConstFalse() -> boolean;
 #hot
 #rust"false"
+// A null boolean casts to the null TEXT (`STRING_NULL`), which a hole renders as `null`: the
+// null stays a null.  The word itself would be a present text no reader can tell from the null.
 fn OpCastTextFromBool(v1: boolean) -> text;
 #cold
-#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"null\"}} else {{\"false\"}}"
+#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"\\0\"}} else {{\"false\"}}"
 fn OpVarBool(pos: const u16) -> boolean;
 #hot
 #rust"s.get_var::<u8>(@pos)"
@@ -291,10 +299,9 @@ fn OpMinIntNullable(v1: integer, v2: integer) -> integer;
 fn OpMulIntNullable(v1: integer, v2: integer) -> integer;
 #rust"ops::op_mul_int_nullable(@v1, @v2)"
 fn OpDivIntNullable(v1: integer, v2: integer) -> integer;
-// loft#1169 — a null that only PASSES THROUGH this op must not wear its fault tag.
-#rust"{{ let r = ops::op_div_int_nullable(@v1, @v2); ops::note_format_fault(1, r == i64::MIN && @v1 != i64::MIN && @v2 != i64::MIN); r }}"
+#rust"ops::op_div_int_nullable(@v1, @v2)"
 fn OpRemIntNullable(v1: integer, v2: integer) -> integer;
-#rust"{{ let r = ops::op_rem_int_nullable(@v1, @v2); ops::note_format_fault(2, r == i64::MIN && @v1 != i64::MIN && @v2 != i64::MIN); r }}"
+#rust"ops::op_rem_int_nullable(@v1, @v2)"
 fn OpLandInt(v1: integer, v2: integer) -> integer;
 #hot
 #rust"ops::op_logical_and_int(@v1, @v2)"
@@ -399,10 +406,10 @@ fn OpRemSingle(v1: single, v2: single) -> single;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
 fn OpDivSingleNullable(v1: single, v2: single) -> single;
 #cold
-#rust"{{ let r = @v1 / @v2; ops::note_format_fault(1, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 / @v2"
 fn OpRemSingleNullable(v1: single, v2: single) -> single;
 #cold
-#rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 % @v2"
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
 #cold
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f32::NAN }}"
@@ -741,10 +748,10 @@ fn OpRemFloat(v1: float, v2: float) -> float;
 // IEEE-behaviour peers — emitted only when defended.
 fn OpDivFloatNullable(v1: float, v2: float) -> float;
 #hot
-#rust"{{ let r = @v1 / @v2; ops::note_format_fault(1, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 / @v2"
 fn OpRemFloatNullable(v1: float, v2: float) -> float;
 #cold
-#rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 % @v2"
 fn OpEqFloat(v1: float, v2: float) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
 fn OpNeFloat(v1: float, v2: float) -> boolean;
@@ -809,6 +816,84 @@ pub fn max(self: float, b: float) -> float {
 pub fn clamp(self: float, lo: float, hi: float) -> float {
   min(max(self, lo), hi)
 }
+#pure
+
+
+/// This answer, or `next` when this one is `Equal`: compares by several fields in turn,
+/// `a.year.compare(b.year).then(a.month.compare(b.month))`.
+pub fn then(self: Ordering, next: Ordering) -> Ordering {
+  if self == Equal { next } else { self }
+}
+#pure
+
+/// Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `<` uses.
+pub operator compare(self: integer, other: integer) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// Where `self` stands against `other`, in the order `<` uses.
+pub operator compare(self: single, other: single) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// Where `self` stands against `other`, in the order `<` uses.
+pub operator compare(self: float, other: float) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// `+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+pub operator plus(self: integer, other: integer) -> integer { self + other }
+#pure
+/// `-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+pub operator minus(self: integer, other: integer) -> integer { self - other }
+#pure
+/// `*` as the method `Numeric` names: `a.times(b)` is `a * b`.
+pub operator times(self: integer, other: integer) -> integer { self * other }
+#pure
+/// The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+pub operator negate(self: integer) -> integer { 0 - self }
+#pure
+/// `/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.
+pub operator divided_by(self: integer, other: integer) -> integer? { self / other }
+#pure
+/// `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+pub operator remainder(self: integer, other: integer) -> integer? { self % other }
+#pure
+/// `+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+pub operator plus(self: single, other: single) -> single { self + other }
+#pure
+/// `-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+pub operator minus(self: single, other: single) -> single { self - other }
+#pure
+/// `*` as the method `Numeric` names: `a.times(b)` is `a * b`.
+pub operator times(self: single, other: single) -> single { self * other }
+#pure
+/// The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+pub operator negate(self: single) -> single { 0.0f - self }
+#pure
+/// `/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.
+pub operator divided_by(self: single, other: single) -> single? { self / other }
+#pure
+/// `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+pub operator remainder(self: single, other: single) -> single? { self % other }
+#pure
+/// `+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+pub operator plus(self: float, other: float) -> float { self + other }
+#pure
+/// `-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+pub operator minus(self: float, other: float) -> float { self - other }
+#pure
+/// `*` as the method `Numeric` names: `a.times(b)` is `a * b`.
+pub operator times(self: float, other: float) -> float { self * other }
+#pure
+/// The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+pub operator negate(self: float) -> float { 0.0 - self }
+#pure
+/// `/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.
+pub operator divided_by(self: float, other: float) -> float? { self / other }
+#pure
+/// `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+pub operator remainder(self: float, other: float) -> float? { self % other }
 #pure
 /// Approximate equality: true when a and b differ by at most eps (inclusive).
 /// `==` on float/single is EXACT IEEE equality — use `approx` when you want a
@@ -885,7 +970,7 @@ fn OpTextCharacter(v1: text, v2: integer) -> character;
 // char as its end-of-iteration signal.  Mirrors the
 // OpGetVector / OpGetVectorNullable split.
 fn OpTextCharacterNullable(v1: text, v2: integer) -> character;
-#rust"{{ let ch = ops::text_character(@v1, @v2); ops::note_format_fault(3, ch == char::from(0) && @v2 != i64::MIN && !@v1.is_empty()); ch }}"
+#rust"ops::text_character(@v1, @v2)"
 fn OpConvBoolFromCharacter(v1: character) -> boolean;
 #rust"ops::op_conv_bool_from_character(@v1)"
 fn OpClearText(pos: const u16);
@@ -906,6 +991,17 @@ fn OpCastCharacterFromInt(v1: i32) -> character;
 #rust"if let Some(c) = char::from_u32(@v1 as u32) {{ c }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); char::from(0) }}"
 fn OpConvIntFromCharacter(v1: character) -> i32;
 #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
+// `compare` for text and character sits here, after the operators `<` reads for them.
+/// Where `self` stands against `other`, in the order `<` uses: by bytes, as `<` compares text.
+pub operator compare(self: text, other: text) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// Where `self` stands against `other`, by code point, in the order `<` uses.
+pub operator compare(self: character, other: character) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
 type enumerate size(1);
 fn OpVarEnum(pos: const u16) -> enumerate;
 #rust"s.get_var::<u8>(@pos)"
@@ -924,9 +1020,10 @@ fn OpPutEnum(pos: const u16, value: enumerate);
 // variant of any enum.
 fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 #rust"@v1 != 255 && @v1 != 0"
+// The absent discriminant casts to the null TEXT, as `OpCastTextFromBool` does and for its reason.
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
-#rust"Str::new(s.database.enum_val(@enum_tp, @v1))"
+#rust"Str::new(if @v1 == 0 || @v1 == 255 {{\"\\0\"}} else {{s.database.enum_val(@enum_tp, @v1)}})"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #cold
 #rust"s.database.to_enum(@enum_tp, @v1)"
@@ -1035,15 +1132,15 @@ fn OpNeContent(v1: reference, v2: reference, tp: const u16) -> boolean;
 fn OpGetRef(v1: reference, fld: const u16) -> reference[v1];
 #rust"stores.get_ref(&@v1, u32::from(@fld))"
 fn OpSetRef(v1: reference, fld: const u16, val: reference);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v.rec); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v.rec); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // Plan-06 phase 4d.C step 2 — full 12-byte DbRef store/load.  Used by
 // the closure half of `Type::Function = (u32, DbRef)` slots when stored
 // in vector elements / struct fields.  Layout: u32 store_nr | u32 rec |
 // u32 pos.  Null is encoded as rec == 0 (other words irrelevant).
 fn OpSetDbRef(v1: reference, fld: const u16, val: reference);
-#rust"{{let db = @v1; let r = @val; if db.rec != 0 {{ let off = db.pos + u32::from(@fld); let store = stores.store_mut(&db); store.set_u32_raw(db.rec, off, u32::from(r.store_nr)); store.set_u32_raw(db.rec, off + 4, r.rec); store.set_u32_raw(db.rec, off + 8, r.pos); }}}}"
+#rust"{{let db = @v1; let r = @val; if !stores.set_db_ref(&db, u32::from(@fld), r) && db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetDbRef(v1: reference, fld: const u16) -> reference;
-#rust"{{let db = @v1; if db.rec == 0 {{ DbRef::NULL }} else {{ let store = stores.store(&db); let off = db.pos + u32::from(@fld); let store_nr = store.get_u32_raw(db.rec, off) as u16; let rec = store.get_u32_raw(db.rec, off + 4); let pos = store.get_u32_raw(db.rec, off + 8); DbRef {{ store_nr, rec, pos }} }}}}"
+#rust"stores.get_db_ref(&@v1, u32::from(@fld))"
 // Get a direct field reference for a structure: vector, index, hash or spatial
 // These always point to a field what value can change depending on the content.
 fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
@@ -1055,7 +1152,11 @@ fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
 // SAME test, `rec == 0`, because a target that names no live cell has one spelling: an index
 // out of range answers `nullref` (@FR-H-Index) and so does a keyed miss or an unfilled field.
 // A getter answers its type's null sentinel; a setter does nothing and the program continues,
-// so a write can never resolve a store for an absent target and scribble at record 0.  These
+// so a write can never resolve a store for an absent target and scribble at record 0.  The
+// dropped write reports `write_dropped` (@FR-E-Report) unless its null is already accounted
+// for (`DbRef::absence_unreported`): an out-of-range index reported where it was found, or a
+// store whose `else` arm owns the failure (@FR-H-Write-Else).  The report is the cold branch of
+// the test every setter already makes, so a write that lands pays nothing for it.  These
 // bodies are the SHARED half of the two backends — the interpreter's `fill.rs` arm and the
 // native emitter both carry this text — which is why the two agree here by construction
 // rather than by test.  (The lock half of the write rule, @FR-H-WriteLocked, is not tested
@@ -1095,7 +1196,7 @@ fn OpGetEnum(v1: reference, fld: const u16) -> enumerate;
 // instead of absent.  Disc 0 = absent (variants start at 1).
 #rust"{{let db = @v1; if db.rec == 0 {{ 0u8 }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), 0); if r < 0 {{ 255u8 }} else {{ r as u8 }} }}}}"
 fn OpSetEnum(v1: reference, fld: const u16, val: enumerate);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // @PLN17: boolean field/element storage is byte-stored with the u8 form
 // (0=false, 1=true, 255=null) — identical to a plain enum, so it inherits
 // enum's end-to-end null handling (incl. serialization).  Replaces the old
@@ -1103,32 +1204,32 @@ fn OpSetEnum(v1: reference, fld: const u16, val: enumerate);
 fn OpGetBoolean(v1: reference, fld: const u16) -> boolean;
 #rust"{{let db = @v1; if db.rec == 0 {{ 255u8 }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), 0); if r < 0 {{ 255u8 }} else {{ r as u8 }} }}}}"
 fn OpSetBoolean(v1: reference, fld: const u16, val: boolean);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetShort(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_short(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpGetText(v1: reference, fld: const u16) -> text[v1];
 #rust"{{let db = @v1; if db.rec == 0 {{ Str::new(crate::state::STRING_NULL) }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
 fn OpSetInt(v1: reference, fld: const u16, val: integer);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetCharacter(v1: reference, fld: const u16, val: character);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v as u32); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v as u32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetSingle(v1: reference, fld: const u16, val: single);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_single(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_single(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetFloat(v1: reference, fld: const u16, val: float);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_float(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_float(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetByte(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), (@min), v as i32); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), (@min), v as i32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetByteNullable(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_byte_nullable(&db, db.pos + u32::from(@fld), (@min), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_byte_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetShort(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_short_nullable(&db, db.pos + u32::from(@fld), (@min), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_short_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // 4-byte integer field read/write (post-2c `integer size(4)` subtypes).
 // Raw i32 storage with i32::MIN as the null sentinel; the stack value
 // stays i64 (widen on load, narrow on store).
 fn OpGetInt4(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i32_raw(db.rec, db.pos + u32::from(@fld)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetInt4(v1: reference, fld: const u16, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i32_raw(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i32_raw(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // 4-byte UNSIGNED read/write, for a `size(4)` type whose range runs past `i32::MAX`
 // (`u32`, or any `integer limit(0, N) size(4)` with N > 2147483647).  The signed pair
 // above cannot express those at all: it sign-extends on load, so a `u32` of 4000000000
@@ -1145,7 +1246,7 @@ fn OpSetInt4(v1: reference, fld: const u16, val: integer);
 fn OpGetInt4Raw(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld)); if r == u32::MAX {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetInt4Raw(v1: reference, fld: const u16, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ u32::MAX }} else {{ @val as u32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ u32::MAX }} else {{ @val as u32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetInt4Full(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld))) }} }}"
 // 2-byte narrow-vector-element read/write for `vector<u16>` /
@@ -1158,7 +1259,7 @@ fn OpGetInt4Full(v1: reference, fld: const u16) -> integer;
 fn OpGetShortRaw(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i16_raw(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetShortRaw(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i16_raw(db.rec, db.pos + u32::from(@fld), (@min), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i16_raw(db.rec, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // NOT-NULL `u16`/`i16` struct fields: direct `(val - min)` encoding with NO null
 // sentinel, so the full 65536-value range round-trips (`OpGetShort`'s `+1` and
 // `OpGetShortRaw`'s `u16::MAX` both swallow the max value as null).  The write
@@ -1174,7 +1275,14 @@ fn OpGetShortSpare(v1: reference, fld: const u16, min: const i32) -> integer;
 fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), (@min))) }} }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
-#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}"
+#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+// `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`):
+// the slot already holds 0 or a text block it owns, so the block is written over when `t`
+// fits its claim and released and claimed anew when it does not.  `OpSetText` stays the
+// INITIALISING write — a record literal into a fresh, possibly unfilled record — and never
+// reads the slot, because there it can hold bytes that are not a block.
+fn OpSetTextReplace(v1: reference, fld: const u16, val: text);
+#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // --- Collections ---
 /// Operations on vector<T> — the primary ordered collection type.
 /// Vectors are grown by appending with += and elements are accessed by index.
@@ -1185,18 +1293,6 @@ type sorted size(4);
 // All vectors are referenced by the field that points towards them.
 fn OpVarVector(pos: const u16) -> vector;
 #rust"s.get_var::<DbRef>(@pos)"
-// Plan-07 phase 4e.3 — tag the next format-string null render with a
-// fault-kind label.  Emitted by 4e.1's format-scope swap immediately
-// before each fault-prone Nullable peer so the format conversion op
-// renders `null(/0)` / `null(oob)` / etc. instead of bare `null` —
-// genuine null values stay bare (no tag set).  Numeric kind id keeps
-// the IR stable across label-string changes (Stores::set_format_fault
-// owns the id → label mapping).  See doc/claude/plans/07-error-messages.
-fn OpTagFault(kind: const u8);
-#cold
-// loft#1169 — ARMS the hole; the op that actually faults records the cause.  `kind`
-// is kept in the signature so the IR is unchanged and the emitter needs no edit.
-#rust"{{ let _ = @kind; ops::arm_format_fault(); }}"
 // The length of vectors is written at the start of their allocation.
 fn OpLengthVector(r: vector) -> integer;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
@@ -1217,6 +1313,12 @@ fn OpRefIsNull(r: reference) -> boolean;
 // store and a local that holds none read as one and release nothing.
 fn OpDistinctStore(a: reference, b: reference) -> boolean;
 #rust"@a.store_nr != @b.store_nr"
+// `@FR-L-CapOwn` — is the store `r` names still allocated?  The guard of a closure record's
+// cascade at a release: the release protocol frees some stores twice (a branch join frees per
+// arm, `@FR-H-FreeTwice`), so the cascade runs with the free that actually releases — the
+// question `Stores::free_named` asks before it frees, and `OpDropFnRef` asks before it runs one.
+fn OpStoreLive(r: reference) -> boolean;
+#rust"s.database.store_live(&@r)"
 // A reference as a VALUE: `w = OpRefAlias(v)` makes `w` name the store `v` names, where
 // the plain bind `w = v` COPIES the record (@FR-B-Copy).  Emitted only for the compiler's
 // own owner witness, which has to point at the local's store rather than own a second one.
@@ -1318,12 +1420,9 @@ fn OpVectorRef(r: vector, index: integer) -> reference[r];
 // or an explicit user expression (raising).  Mirrors the
 // OpDivInt / OpDivIntNullable C54.G-hybrid pattern.
 fn OpGetVectorNullable(r: vector, size: const u16, index: integer) -> reference[r];
-// loft#1169 — see OpDivIntNullable.  A SUCCESSFUL read (rec != 0) did not fault, so an
-// element that is itself null renders bare; a null vector or a null index is an
-// inherited null, not an out-of-bounds one.
-#rust"{{ let el = vector::get_vector(&@r, u32::from(@size), @index, &s.database.allocations); ops::note_format_fault(3, el.rec == 0 && @index != i64::MIN && !@r.is_null()); el }}"
+#rust"vector::get_vector(&@r, u32::from(@size), @index, &s.database.allocations)"
 fn OpVectorRefNullable(r: vector, index: integer) -> reference[r];
-#rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); ops::note_format_fault(3, el.rec == 0 && @index != i64::MIN && !@r.is_null()); stores.get_ref(&el, 0) }}"
+#rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); stores.get_ref(&el, 0) }}"
 fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 #cold
 #rust"s.db_from_text(@val, @db_tp)"
@@ -1376,6 +1475,11 @@ fn OpSliceVector(r: vector, src: vector, lo: integer, hi: integer, tp: const u16
 // span when `src` is a foreign store (read-only bytes, no copy), the block copy otherwise.
 fn OpSliceView(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
 #rust"s.database.vector_slice_view(&@r, &@src, @lo, @hi, @tp);"
+// `r = r[lo..hi]` for a SCALAR element kind: `r` keeps that range in place — the span moves
+// to the front of its own record and the length is set — where the self-slice copied the
+// span out, released `r` and copied it back.  The bounds arrive clamped by the slice prelude.
+fn OpKeepRange(r: vector, lo: integer, hi: integer, tp: const u16);
+#rust"s.database.vector_keep_range(&@r, @lo, @hi, @tp);"
 // @PLN174 F5 — a local takes a `#native` call's vector answer as its own: a VIEW of the
 // whole when the answer is a foreign store (a library's buffer, no copy), the element copy
 // otherwise (the #409/#410 delivery, unchanged).
@@ -1441,6 +1545,15 @@ fn OpClaimChildRec(field: reference, src: reference, tp: const u16);
 fn OpRefFromChildRec(field: reference) -> reference[field];
 #rust"s.database.ref_from_child_rec(&@field)"
 #pure
+// `@FR-L-Escape`, `@FR-L-CapOwn` — build a closure record IN PLACE in a host's child-record
+// field (loft#1867): a fresh `tp` record in the field's store, filled with the type's
+// defaults, its rec-id written into the field, answered.  The record is the host's own: its
+// captures are written straight into it, and its adopted captures are released by the host's
+// drop cascade — no separate record, no copy, no move.  The bytes of a record the field held
+// before are released here; what that record ADOPTED is released by the emitted code first.
+fn OpChildRec(field: reference, tp: const u16) -> reference[field];
+#rust"s.database.new_child_rec(&@field, @tp)"
+#impure(parent_write)
 // Get a record from a structure. This operator also reads a dynamic key from stack (not shown here)
 fn OpGetRecord(data: reference, db_tp: const u16, no_keys: const u8) -> reference[data];
 fn OpValidate(data: reference, db_tp: const u16);
@@ -1537,13 +1650,23 @@ pub fn size(self: const hash) -> integer {
 }
 #pure
 
-// P192: index<T[key]> red-black tree walk.  `fields` is the
-// per-record bookkeeping byte offset (database.fields(tp));
-// the parser fills this constant when generating `len(ix)` for
-// `ix: index<T[key]>` — see parser/mod.rs `call()` special-case.
-fn OpLengthIndex(r: index, fields: const u16) -> integer;
+// P192: `len(ix)` of an index<T[key]>: the B+tree keeps its length in its header
+// (`btree::count`, O(1)).  The parser emits it for `len(ix)` / `ix.len()` — see
+// parser/mod.rs `index_len`.
+fn OpLengthIndex(r: index) -> integer;
 #cold
-#rust"i64::from(tree::count(&@r, @fields, &s.database.allocations))"
+#rust"i64::from(btree::count(&@r, &s.database.allocations))"
+fn OpSizeIndex(r: index) -> integer;
+#cold
+#rust"i64::from(btree::table_bytes(&@r, &s.database.allocations))"
+/// The byte footprint of an index: its B+tree's node arena, room included.
+/// Allocation-local, as `size` of a hash: the element records live in separate
+/// allocations and are not counted.  Grows in steps as the arena doubles.  0 for an
+/// empty (unallocated) index.
+pub fn size(self: const index) -> integer {
+  OpSizeIndex(self)
+}
+#pure
 
 fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
 #rust"@v1 == @v2"
@@ -1564,6 +1687,13 @@ pub fn assert(test: boolean, message: text, file: text, line: integer);
 /// In production mode (--production), logs a fatal entry and execution continues.
 /// The file and line are injected by the compiler; do not pass them manually.
 pub fn panic(message: text, file: text, line: integer);
+#impure(host_io)
+/// Ends the program at once with exit status `code`, as a shell's `exit` does: what was
+/// printed is flushed, nothing more is printed, and no diagnostic names the line — a
+/// script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a
+/// message).  Under `loft test` it ends the test instead, as a failure that names the code.
+pub fn exit(code: integer);
+#rust"loft::runtime_error::exit_program(@code)"
 #impure(host_io)
 /// Write a structured log record at the chosen severity.
 /// The file and line are injected by the compiler; do not pass them manually.
@@ -1639,6 +1769,13 @@ fn OpCopyRecord(data: reference, to: reference, tp: const u16);
 // fresh-store buffer instead, which `OpFreeRecordIn` releases whole.
 fn OpPlaceRecord(host: reference, tp: const u16) -> reference;
 #rust"stores.place_record_prefilled(&@host, @tp)"
+#impure(parent_write)
+// `@FR-H-RefHome` — the store `home` names is about to be freed: when the stored reference at
+// byte `fld` of `holder` names a record of it, the record is copied as a `tp` record into the
+// holder's own store and the reference names the copy.  Anything else is left as it is.
+fn OpEvacuate(holder: reference, fld: const u16, home: reference, tp: const u16);
+#cold
+#rust"stores.evacuate(&@holder, u32::from(@fld), &@home, @tp);"
 #impure(parent_write)
 // @PLN164 B2 (`@FR-R-MoveLast`) — the last-use store of an owned record local into a
 // field, consuming the source: within one store the bytes relocate (the heap handles keep
@@ -1751,6 +1888,16 @@ pub fn len(self: const spatial) -> integer {
   OpLengthSpatial(self)
 }
 #pure
+fn OpSizeSpatial(r: spatial) -> integer;
+#cold
+#rust"i64::from(codegen_runtime::spatial_bytes(&@r, &s.database.allocations))"
+/// The byte footprint of a spatial index: its tree's node array, room included.
+/// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
+/// an empty (unallocated) one.
+pub fn size(self: const spatial) -> integer {
+  OpSizeSpatial(self)
+}
+#pure
 // Number of elements in a trie.  Same cached length word as `len(spatial)` —
 // the tree is shared, only the key oracle above it differs.
 fn OpLengthTrie(r: trie) -> integer;
@@ -1759,6 +1906,16 @@ fn OpLengthTrie(r: trie) -> integer;
 /// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
   OpLengthTrie(self)
+}
+#pure
+fn OpSizeTrie(r: trie) -> integer;
+#cold
+#rust"i64::from(codegen_runtime::trie_bytes(&@r, &s.database.allocations))"
+/// The byte footprint of a trie: its tree's node array, room included.
+/// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
+/// an empty (unallocated) one.
+pub fn size(self: const trie) -> integer {
+  OpSizeTrie(self)
 }
 #pure
 // Call a predefined system function (but not an operator).
@@ -2082,6 +2239,16 @@ fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
 #cold
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
 // --- Vector aggregates ---
+/// Does the vector hold `value`?  Compared by content, as `==` compares every type; the
+/// empty vector holds nothing.  The membership test a script asks of a list of names —
+/// `changed.contains(path)` — beside `text`'s own `contains`.
+pub fn contains < T: Equatable > (self: const vector<T>, value: T) -> boolean {
+  for x in self {
+    if x == value { return true }
+  };
+  false
+}
+#pure
 /// Smallest element in a vector, or null when the vector is empty (the type is
 /// honest about the empty case).  Works on any Ordered type (op <).
 /// Example: @STD-004
@@ -2175,6 +2342,85 @@ pub fn sort < T: Ordered > (self: vector<T>) {
   self += src;
 }
 #builtin
+
+/// Sort a vector in place by a key, ascending: `v.sort_by(fn(d: Date) -> integer { d.ms })`.
+/// The key is any `Ordered` value — a number or a `text` — so this is how a struct sorts
+/// (C132).  Stable, like `sort`: elements with equal keys keep their order.  `key` is called
+/// once per element.
+pub fn sort_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) {
+  // Each key once, then `sort`'s bottom-up merge over the keys, carrying each key's element
+  // POSITION beside it; the elements move once, at the end.
+  n = len(self);
+  if n < 2 { return; }
+  keys: vector<K> = [];
+  for x in self { keys += [key(x)]; }
+  pos: vector<integer> = [];
+  for i in 0..n { pos += [i]; }
+  width = 1;
+  while width < n {
+    kd: vector<K> = [];
+    pd: vector<integer> = [];
+    lo = 0;
+    while lo < n {
+      mid = min(lo + width, n);
+      hi = min(lo + 2 * width, n);
+      i = lo;
+      j = mid;
+      while i < mid || j < hi {
+        if j >= hi || (i < mid && !(keys[j] < keys[i])) {
+          kd += keys[i..i + 1];
+          pd += pos[i..i + 1];
+          i += 1;
+        } else {
+          kd += keys[j..j + 1];
+          pd += pos[j..j + 1];
+          j += 1;
+        }
+      }
+      lo = hi;
+    }
+    keys = kd;
+    pos = pd;
+    width *= 2;
+  }
+  out: vector<T> = [];
+  for p in pos { out += self[p..p + 1]; }
+  clear(self);
+  self += out;
+}
+
+/// The element with the smallest key, or null when the vector is empty:
+/// `v.min_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.
+pub fn min_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T? {
+  at = -1;
+  keys: vector<K> = [];
+  for x in self {
+    keys += [key(x)];
+    if at < 0 || keys[x#index] < keys[at] { at = x#index; }
+  }
+  self[at]
+}
+
+/// The element with the largest key, or null when the vector is empty:
+/// `v.max_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.
+pub fn max_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T? {
+  at = -1;
+  keys: vector<K> = [];
+  for x in self {
+    keys += [key(x)];
+    if at < 0 || keys[at] < keys[x#index] { at = x#index; }
+  }
+  self[at]
+}
+
+/// The sum of a key over the elements: `v.sum_by(fn(o: Order) -> float { o.price })`.  The
+/// key is any `Addable` value; `init` is the identity to start from, and left out it is the
+/// key type's own zero (0, 0.0), so an empty vector sums to it.
+pub fn sum_by < T, K: Addable > (self: vector<T>, key: fn(T) -> K, init: K? = null) -> K {
+  result = init?;
+  for x in self { result = result + key(x) };
+  result
+}
 
 /// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
 pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T> {
@@ -2305,8 +2551,8 @@ pub enum FieldValue {
 
 /// Represents a single struct field during compile-time iteration.
 pub struct StructField {
-  name: text,
-  value: FieldValue,
+  pub name: text,
+  pub value: FieldValue,
   // Was the field DECLARED nullable (`text?` rather than `text`)?
   //
   // The payload variants above are typed non-null, and `τ?` shares `τ`'s
@@ -2317,33 +2563,33 @@ pub struct StructField {
   //
   // Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:
   // the two field lists describe the same declaration and must agree.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 
 /// Converts an integer to its decimal text. Built-in types define `to_text` so
 /// they satisfy the `Printable` interface (used by `print`, format strings, …).
-pub fn to_text(self: integer) -> text {
+pub operator to_text(self: integer) -> text {
   // These built-in impls sit after every OpFormat* / OpAppend* declaration above so
   // format-string interpolation in the bodies resolves to the relevant built-in.
   "{self}"
 }
 /// Converts a float to its text representation.
-pub fn to_text(self: float) -> text {
+pub operator to_text(self: float) -> text {
   "{self}"
 }
 /// Converts a single-precision float to its text representation.
-pub fn to_text(self: single) -> text {
+pub operator to_text(self: single) -> text {
   "{self}"
 }
 /// Converts a boolean to "true" or "false".
-pub fn to_text(self: boolean) -> text {
+pub operator to_text(self: boolean) -> text {
   "{self}"
 }
 /// Converts a character to a one-character text.
-pub fn to_text(self: character) -> text {
+pub operator to_text(self: character) -> text {
   "{self}"
 }
 /// Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.
-pub fn to_text(self: text) -> text {
+pub operator to_text(self: text) -> text {
   self
 }

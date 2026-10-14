@@ -45,7 +45,7 @@ OUT = ROOT / "index" / "target_surface.json"
 TARGETS = {
     "wasm-browser": {
         "triple": "wasm32-unknown-unknown",
-        "rlib": "target/wasm32-unknown-unknown/release",
+        "rlib": "target/loft/html/wasm32-unknown-unknown/release",
         "describe": "the browser target (`loft --html`)",
     },
 }
@@ -59,7 +59,7 @@ RUST_RE = re.compile(r'^#rust\s*"(.*)"\s*$', re.S)
 def extract() -> dict[str, list[str]]:
     """Map each builtin to the runtime methods its `#rust` body calls."""
     out: dict[str, list[str]] = {}
-    for path in sorted((ROOT / "default").glob("*.loft")):
+    for path in sorted(p for p in (ROOT / "default").glob("*.loft") if p.is_file()):
         # `.loft/` is a cache DIRECTORY and this glob matches it: `pathlib.glob` has no
         # leading-dot exclusion, so `default/.loft` (gitignored, created by any run in that
         # directory) arrives here and `read_text` raises IsADirectoryError.  The same guard
@@ -94,8 +94,12 @@ def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
     # same path with the `wasm` feature, whose `cfg`s differ (`Stores::load_url` exists only
     # without it), so reading whichever was built last recorded the gallery's surface as
     # `--html`'s.  Cargo makes this a no-op when the `--html` build is already current.
+    # Into the directory it is READ from: without `--target-dir` cargo writes
+    # `target/<triple>/`, and this read whatever an earlier `--html` build left in
+    # `target/loft/html/` — nothing on a clean runner, a stale rlib on a box.
+    target_dir = ROOT / target["rlib"].split("/" + target["triple"] + "/")[0]
     build = ["cargo", "build", "--release", "--target", target["triple"], "--lib",
-             "--no-default-features", "--features", "random"]
+             "--target-dir", str(target_dir), "--no-default-features", "--features", "random"]
     if subprocess.run(build, cwd=ROOT).returncode != 0 or not rlib.exists():
         sys.exit(f"could not build {rlib}:  {' '.join(build)}")
     src = ["#![allow(unused)]", "use loft::database::Stores;"]

@@ -53,7 +53,7 @@ backends — a data race is the one fault loft cannot null-out, so the gate *is*
 
 ## Why it is safe to share — the proof already exists
 
-A par worker's captured parent state is **read-only** by @PLN102 **C93**: a
+A par worker's captured parent state is **read-only** by @PLN102 **@C93**: a
 `ParentWrite` from inside a worker is a *compile error* (`scopes.rs`; "par() worker …
 captured state is READ-ONLY"). So every parent store a worker sees is **provably
 unwritten for the lifetime of the par**. The current per-worker byte-copy is therefore
@@ -93,7 +93,7 @@ access is read-only** (workers call `addr()` only, `store.rs:2350`); the write-p
 guard is the runtime backstop.
 
 - **Cost:** small — wire an existing path; no `Store` representation change.
-- **Risk:** safety is *contract-carried* (the `unsafe` borrow trusts C93 + `thread::scope`
+- **Risk:** safety is *contract-carried* (the `unsafe` borrow trusts @C93 + `thread::scope`
   + read-only), not *type-carried*. A future edit that mutates a parent mid-par, or lets
   a worker outlive the scope, reintroduces UAF/race silently. Mitigated by the write-panic
   guard + the ASan/TSan gates — but it is trust, not proof.
@@ -138,7 +138,7 @@ Make a parent store's buffer **`Arc`-shareable**, so sharing is safe *by constru
 
 ## Invariants the change must not break (acceptance checklist)
 
-- A worker **never writes** a parent store (C93 compile error + `read_only` runtime panic).
+- A worker **never writes** a parent store (@C93 compile error + `read_only` runtime panic).
 - Parent `Stores` **outlive** every worker (`thread::scope` join before drop) — no dangling borrow.
 - No **double-free** of a shared buffer (`borrowed:true` ⇒ `Drop` skips dealloc; Option B: `Arc`).
 - No dispatcher **mutates a parent** between spawn and join (step-4 audit).
@@ -154,13 +154,13 @@ Make a parent store's buffer **`Arc`-shareable**, so sharing is safe *by constru
 ## Cross-arc dependencies
 
 - **@PLN54** (sanitizer coverage) — supplies the ASan + TSan gates this plan's acceptance rests on.
-- **@PLN102 C93** (captured state is read-only) — the compiler-enforced invariant the whole safety argument rests on.
+- **@PLN102 @C93** (captured state is read-only) — the compiler-enforced invariant the whole safety argument rests on.
 
 ## See also
 
 - [`finished/06-typed-par/05-auto-light.md`](../finished/06-typed-par/05-auto-light.md) — the shipped phase-5 auto-light heuristic (the sibling this completes).
 - [`finished/06-typed-par/DESIGN.md`](../finished/06-typed-par/DESIGN.md) — the plan's store-per-worker model.
 - [THREADING.md](../../THREADING.md) § Multi-threading Safety — now describes this intended model (read-only shared, the deep-copy conservative).
-- [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) C93 — captured state is read-only (the proof).
+- [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) @C93 — captured state is read-only (the proof).
 - [`54-sanitizer-coverage-expansion`](../54-sanitizer-coverage-expansion/README.md) — the ASan/TSan gates this depends on.
 - Tracker: [@PLN108](https://github.com/loft-lang/plans/issues/108).

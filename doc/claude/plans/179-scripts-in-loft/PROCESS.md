@@ -71,6 +71,22 @@ stderr nobody reads is bounded by an option (`Streams.Collect | Inherit | Discar
 `run(c, input: text)` feeds stdin from a value.  A capability group `process#update` (running a program acts on the world; the right vocabulary is read, update, append) keeps a
 sandboxed script from running anything ungranted (SANDBOX.md S1).
 
+**Built (2026-10-08): `lines()` / `err_lines()` → `Lines`, `operator next`, `done()`,
+`stop()`** (`src/process_run.rs` § cursor, `lib/process/src/process.loft`): one reader
+thread per pipe from the moment the child exists, the chosen stream through a channel of
+256 lines, the other collected for `done()`.  Two cursors rather than a `Stream` argument,
+because the `for` walks a COPY of the iterator value (LOFT_CONTROL.md § Custom iterators),
+so a per-line "which stream" field on the cursor could not be read from the body; `Both`
+waits for a port that wants it.  There is no drop hook in the language, so a loop left early
+leaves the program running until `stop()` or the end of this program, which takes every
+tree it started; the design's "the drop ends the child" is therefore `stop()`, explicit.
+The probes' answers, `lib/process/tests/lines.loft` on both backends: (2) the first line of
+`echo first; sleep 1; echo second` arrives in well under 700 ms; (3) 50 MB in 704 226 lines
+streams through a counting loop at 29 MB maximum resident interpreted (2.0 s; collecting it
+would hold 50 MB); (4) a `break` after one line then `stop()` — the pid is gone within 2 s;
+(5) the OK notice, `c.run()` of `true` ×100: 15 ms interpreted, 13 ms native, against
+Python's `subprocess.run` at 19 ms on the same box.
+
 **Gate, before any port calls it** — the probes that can fail, on both backends: (1) a child
 writing 1 MiB to stderr while the parent reads stdout by line, against the same child under
 `subprocess.Popen(...).stdout.read()`, which hangs; (2) the first line of a 10-second
@@ -79,12 +95,25 @@ through `lines()` with flat RSS (the back-pressure claim); (4) a `break` after o
 leaves no child behind and returns within the grace; (5) the OK notice, `c.run()` of `true`,
 timed against Python's `subprocess.run` — the performance axis on the cheapest call.
 
-**4c — recording (S).**  `LOFT_RUN_RECORD=<dir>` records each `run` by its argv and
-input, and `LOFT_RUN_REPLAY=<dir>` answers from the recording — inside `run`, so every port
-is twin-able offline without a per-tool shim.  The Python side reads the same directory
-through one small shim.
+**4c — recording (S) — BUILT (2026-10-08, `src/process_run.rs` § recording).**
+`LOFT_RUN_RECORD=<dir>` writes each collecting run as `<dir>/<NNN>-<program>/{argv, stdin,
+stdout, stderr, code}` — `argv` one word per line, numbered in the order the runs happened —
+and `LOFT_RUN_REPLAY=<dir>` answers each run from the first unused entry whose `argv` and
+`stdin` match (a repeated call walks its entries in order and stays on the last; a call with
+no entry answers -1 and says so on stderr, so a twin goes red rather than running the live
+tool).  Inside `run`, so every port is twin-able offline; `start()` is never recorded.  The
+original's side reads the same directory through `tests/comparisons/scripts/replay_tool.sh`,
+one bash shim installed under each tool's name in `tests/comparisons/scripts/bin/`, and
+`script_twin.sh --replay <dir>` arms both sides at once.  The format is plain files on
+purpose: a recording is a committed fixture, read and refreshed by hand — by running the
+ORIGINAL through the shim in record mode against a scratch repository, which is how
+`check_bundle_fresh`'s four cases were made.
 
-**4d — the tools, in the order the work list ranks them.**  `git` first (`lib/git` rewritten
+**4d — the tools, in the order the work list ranks them.**  The first port over `run` is
+`scripts/check_bundle_fresh` (2026-10-08): `git diff --name-only {base}...HEAD` as a
+`Command`, twinned on four recordings, both backends, faster than the bash original.  `c: Command = "…"` loads the library with nothing in the script naming it (the type
+trigger, finding 018, closed 2026-10-08); until `process` is published,
+`scripts/loft.toml` names the library by path.  `git` first (`lib/git` rewritten
 over `run`, twinned against its natives, which then retire); `gh` and `cargo` as the
 originals call them; `curl` through the `web` library where the script already speaks
 JSON.  Each lands with its first consumer ported and twinned; an interface nobody calls is

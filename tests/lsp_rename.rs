@@ -5,20 +5,20 @@
 // `prepare_rename` / `is_valid_identifier`).  SAFE by default: refuses stdlib
 // symbols, stdlib-file edits, and invalid new names.
 
-use std::fs;
+use loft::file_access as fa;
 use std::path::PathBuf;
 
 use loft::lsp::{WorkspaceIndex, is_valid_identifier, plan_rename, prepare_rename};
 
 fn ws(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
+    fa::create_dir_all(&dir).unwrap();
+    fa::write(
         dir.join("a.loft"),
         "fn area(w: integer) -> integer { w * w }\n",
     )
     .unwrap();
-    fs::write(dir.join("b.loft"), "fn main() { print(area(3)) }\n").unwrap();
+    fa::write(dir.join("b.loft"), "fn main() { print(area(3)) }\n").unwrap();
     dir
 }
 
@@ -66,14 +66,14 @@ fn rename_a_user_symbol_and_refuse_the_unsafe() {
 #[test]
 fn prepare_rename_gates_stdlib_symbols() {
     let dir = ws("renprep");
-    let a = fs::read_to_string(dir.join("a.loft")).unwrap();
+    let a = fa::read_to_string(dir.join("a.loft")).unwrap();
     // `area` at col 4 is renamable → its 0-based span (cols 3..7).
     assert_eq!(
         prepare_rename(&a, 1, 4, "default"),
         Some(("area".to_string(), 3, 7))
     );
     // `print` (a stdlib fn) in b.loft is NOT renamable → the editor offers no box.
-    let b = fs::read_to_string(dir.join("b.loft")).unwrap();
+    let b = fa::read_to_string(dir.join("b.loft")).unwrap();
     assert!(
         prepare_rename(&b, 1, 13, "default").is_none(),
         "a stdlib symbol is not renamable"

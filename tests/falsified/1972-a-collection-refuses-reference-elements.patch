@@ -1,0 +1,13 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index fae28b447..a9f972c4e 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -5125,7 +5125,7 @@ impl Parser {
+             // a collection's element it had no meaning of its own and was read as the record
+             // type, so the collection held COPIES and a write through either side never
+             // reached the other — silently, on both backends (loft#1972).
+-            if sub_name == "reference"
++            if false && sub_name == "reference"
+                 && matches!(
+                     type_name,
+                     "vector" | "sorted" | "hash" | "index" | "radix" | "spatial" | "trie"

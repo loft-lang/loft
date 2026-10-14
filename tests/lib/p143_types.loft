@@ -8,12 +8,12 @@
 // resolution rather than a direct import.
 
 pub struct Hex {
-  h_material: integer
+  pub h_material: integer
 }
 
 pub struct Chunk {
-  ck_cx: integer,
-  ck_cy: integer,
-  ck_cz: integer,
-  ck_hexes: vector<Hex>
+  pub ck_cx: integer,
+  pub ck_cy: integer,
+  pub ck_cz: integer,
+  pub ck_hexes: vector<Hex>
 }

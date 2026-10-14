@@ -33,7 +33,7 @@
 > record counts).
 >
 > **D-col-4 — OPENED AND CLOSED (2026-09-21, loft#1572) — a `sorted` stored by reference kept a
-> repeated key.**  `(Col-Insert)` and C68 keep one record per key, latest insert wins.  A
+> repeated key.**  `(Col-Insert)` and @C68 keep one record per key, latest insert wins.  A
 > `sorted<T[k]>` whose element type any `hash` / `index` in the program also holds is the
 > `ordered` layout, and `vector::ordered_finish` kept only the POSITION of its search, so the
 > repeated key was shifted in beside the older record: an unrelated declaration changed what
@@ -214,7 +214,7 @@ where the group would form (`Parser::refuse_mixed_nullability_group`, in the par
 either membership derivation runs, so the `Stores::field` / `Parser::collection_groups`
 agreement census is untouched).  The message names both cures.  `(Col-Group)` now states the
 layout condition rather than leaving it to be re-derived, and the declined alternative — the
-group adopting the tagged layout with tag-aware dense reads — is registered as C117 in
+group adopting the tagged layout with tag-aware dense reads — is registered as @C117 in
 DESIGN_DECISIONS.md so it is not re-derived either.  Fires in all four declaration orders.
 Guards: `1385-a-group-cannot-hold-one-element-two-ways.loft` and its controls twin
 `1385b-a-group-agreeing-on-nullability-still-forms.loft`.  `Contract: strained` — a rule gained
@@ -260,6 +260,33 @@ rule already said the set; the test asked about a pair.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **`D-col-20`** — opened and CLOSED 2026-10-07 (loft#1915): **`ix.len()` was refused on an
+  `index`** ("Unknown field index<E[id]>.len") against `(Col-Len)`, while `len(ix)` answered:
+  the length op takes the record-link offset, a constant only the parser knows, so no stdlib
+  method carries it, and only the free spelling was routed.  Both now go through
+  `Parser::index_len`.  Guard `1915-an-index-answers-len-in-both-spellings.loft`.
+- **`D-col-19`** — opened and CLOSED 2026-10-07 (loft#1914): **`trie +=` of a held key kept both
+  records**, so `len` counted the duplicate and a lookup answered whichever the tree's shape put
+  first.  `(Col-Insert)` now states the repeated-key rule @C68 decided — a key names one record at
+  hash, sorted, index and trie; a spatial keeps every record at a point — and the trie insert
+  displaces first, as a hash's does.  Guard `1914-a-trie-key-names-one-record.loft`.
+- **`D-col-18`** — opened and CLOSED 2026-10-07 (loft#1913): **a `float`, `single` or `character`
+  spatial axis was accepted**, against `(Col-Spatial)`'s integer-not-null coordinates; the
+  encoding then missed the collection's own records (`(Col-Axis)`) and a float box query did not
+  compile on `--native`.  The declaration refuses it.  Guard `1913-a-spatial-axis-is-an-integer.loft`.
+- **`D-col-17`** — opened and CLOSED 2026-10-07 (loft#1912): **a keyed collection with an EMPTY key
+  list compiled** (`hash<Q[]>`, `sorted<Q[]>`, `index<Q[]>`, `spatial<Q[]>`) and every insert
+  replaced the last.  `parse_fields` refuses the empty list for every kind.  Guard
+  `1912-a-keyed-collection-without-a-key-is-refused.loft`.
+- **`D-col-16`** — opened and CLOSED 2026-10-07 (loft#1911): **an `index` element with a 2-byte
+  field was refused** ("offset 17 is not a multiple of its alignment 2"): the packer placed the
+  field after the 9-byte link triple without aligning it.  An appended field now starts on its
+  boundary; every layout this changes was refused before.  Guard
+  `1911-an-index-element-may-hold-a-two-byte-field.loft`.
+- **`D-col-15`** — opened and CLOSED 2026-10-07 (loft#1910): **an `index` dropped records past tree
+  depth 30**, silently, on both backends — the red-black descent bound answered a duplicate key,
+  and sorted-order inserts lost every record from 98,303 on.  The bound is 64, the depth no tree
+  of `u32`-addressed records reaches.  Guard `1910-an-index-holds-every-record-past-tree-depth-thirty.loft`.
 - **`D-col-14`** — opened and CLOSED 2026-09-30 (loft#1760): **an absent keyed FIELD was followed as a
   record by nearly every reader**, against `(Col-Len)`, `(Col-Cons)` and `(Col-Copy)`.  `D-col-13`
   made the counts test the value-level null — what an absent LOCAL is — and its guard binds every

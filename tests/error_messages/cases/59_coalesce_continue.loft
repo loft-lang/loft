@@ -1,9 +1,9 @@
-// `?? continue` is refused, and the refusal names the rule (`??` takes a value or `return`)
-// and the spelling that skips a null.
+// `?? continue` skips to the loop's next turn on a null; outside a loop it is refused as a
+// bare `continue` is, at the word itself.
+fn first(v: vector<integer>) -> integer {
+  x = v[0] ?? continue;
+  x
+}
 fn main() {
-  v = [1, 2];
-  for i in 0..3 {
-    x = v[i] ?? continue;
-    println("{x}");
-  }
+  println("{first([1, 2])}");
 }

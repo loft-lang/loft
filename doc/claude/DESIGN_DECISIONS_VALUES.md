@@ -93,8 +93,8 @@ sentinel at run time and execution continues — no trap, no wrap.  The reachabl
 detectable null beats a plausible wrapped value.
 
 **Revisit when.** No trigger recorded; the wide-`integer` sentinel is part of the contract-1
-freeze, and narrow declared ranges follow [C127](#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so).  Ratified 2026-07-13 — [record](DESIGN_DECISIONS-history.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--).
-**Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).
+freeze, and narrow declared ranges follow [@C127](#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so).  Ratified 2026-07-13 — [record](DESIGN_DECISIONS-history.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--).
+**Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [@C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).
 
 ## C90 — Each nullable scalar reserves ONE bit-pattern for null (the in-band sentinel residual; accepted, frozen)
 
@@ -107,7 +107,7 @@ its reserved value cannot be stored as data.  **Why.** A tagged representation w
 collision sites are guarded.
 
 **Revisit when.** No trigger recorded; frozen with contract 1.  Decided 2026-07-13 — [record](DESIGN_DECISIONS-history.md#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen).
-**Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
+**Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [@C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [@C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
 **Holds at:** `tests/scripts/pln102-null-residual-golden.loft`.
 
 ## C91 — `==` compares content for every type, cycles included; `&a == &b` asks identity
@@ -119,7 +119,7 @@ as equal).  Identity is asked in the source: `&a == &b` / `&a != &b` compare whe
 same record; `&` on only one side is refused, and a scalar or `text` has no record to name.  That
 two operands are one record is only the fast path of content equality, never its meaning, and a
 `value struct` is a layout choice with the same `==`.  Key comparison and hashing in keyed
-collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (C86), so an
+collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (@C86), so an
 identity `==` would answer by where a value is stored.  What `==` means is
 decided by what is written; how fast it is, by the compiler.
 
@@ -129,7 +129,7 @@ collections, vectors, identity, keys, generics) and `tests/store_content_eq.rs`,
 **Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
 identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
 and `&a == &b` 2026-09-28 (owner) — [record](DESIGN_DECISIONS-history.md#c91---is-value-by-value--reference-by-identity-bounded-never-a-reference-chase--reserved-for-opt-in-deep-equality).
-**Catalogue:** @F1 (null / equality), @F2 (operators). Sibling of [C86](DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
+**Catalogue:** @F1 (null / equality), @F2 (operators). Sibling of [@C86](DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [@C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
 
 ## C94 — Integer `/` truncates toward zero and `%` takes the dividend's sign; `floor_mod` is the wrap-around helper
 
@@ -189,13 +189,13 @@ the range holds it, else the bound nearest zero — for a local, field, element,
 alike.  Where the author can be made to choose, the narrowing is refused (`?`, `?? d` or `as T?`
 cures it) — a local, a parameter, a field, an element, a cast; the one shape it cannot ask about,
 a compound step (`x += 10`), carries the advice `narrow-fallback` — advice, because the default IS
-the promised answer (the two-tier rule).  Plain `integer` and `i32` keep C85's sentinel — a
+the promised answer (the two-tier rule).  Plain `integer` and `i32` keep @C85's sentinel — a
 PRAGMATIC exemption, not a line to extend.  **Why.** Null-on-overflow depended on whether the range
 left a spare code, so two non-nullable declarations behaved oppositely.
 
 **Revisit when.** The `i32` exemption's cost changes (a program needs the full 32-bit range); that
 clause is one predicate.  Decided 2026-09-23 — [record](DESIGN_DECISIONS-history.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so).
-**Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
+**Catalogue:** @F4 (width integers), @F1 (null model). Refines [@C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
 **Holds at:** `@C127` — `./scripts/idx tag:@C127`; `IntegerSpec::non_null_reads_null`;
 `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft`.
 
@@ -203,10 +203,53 @@ clause is one predicate.  Decided 2026-09-23 — [record](DESIGN_DECISIONS-histo
 
 **Decision.** No declaration, scope, type or mode licenses wrapping integers or IEEE `inf`/`NaN`
 as values; the sentinel checks are the semantics.  A check is retired only where the compiler
-PROVES the value cannot be the sentinel.  The one opening kept is C120's evidence-licensed
+PROVES the value cannot be the sentinel.  The one opening kept is @C120's evidence-licensed
 release tier.  **Why.** Machine-dependent arithmetic makes one program answer differently per
 target, silently; a value-range proof is portable by construction.
 
 **Revisit when.** Never for the machine-dependent form.  Decided 2026-09-08, amended 2026-09-15
-(renumbered from a duplicate C67) — [record](DESIGN_DECISIONS-history.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type).
+(renumbered from a duplicate @C67) — [record](DESIGN_DECISIONS-history.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type).
 **Catalogue:** @F38 (arithmetic safety).
+
+## C139 — A tuple IS a record; foreign data is value-const and never presented as writable
+
+**Decision.** A tuple is a record whose fields are named `0` … `n`: its layout is that record's,
+each member is what a field of its type is, and a `&` link names a member as it names a field.
+It may live on the stack.  Stored, it packs like any record, largest alignment first, which
+changes neither a member's name (`t.0` stays the written first member) nor the text a tuple
+prints as.  A native representation — a Rust tuple of native types in rustc's
+order — is an optimisation derived from the record layout, kept only where no program can tell
+it apart.  FOREIGN data — any structure whose bytes loft does not own: a native library's text,
+record, tuple or vector, a mapped file — presents as an ordinary loft type that is value-const
+(`const T`, declared by its producer).  It is read in place, whole or in parts, without a copy;
+a `&` link to a part is a read-only view; every write is a compile-time error whose cure is a
+copy (`c = t.0 + "!"`).  **Why.** One layout for a tuple wherever it lives leaves nothing to
+special-case in a link, a copy or a release, and rustc still gets its own representation where
+it is unobservable.  A library's string read without being copied into loft's structure is the
+point of foreign data, and making it value-const reuses a check loft already has, at compile
+time, instead of a runtime refusal (@C80).
+
+**Revisit when.** A foreign producer needs its data written in place by loft.  Decided
+2026-10-06 (loft#1875, loft#1897, loft#1898) — [record](DESIGN_DECISIONS-history.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable).
+Holds at `(T-Record)`, [formal/tuples.md](formal/tuples.md), `(L-Tuple)`,
+[formal/layout.md](formal/layout.md), and `(Const-Foreign)`, [formal/binding.md](formal/binding.md);
+the guards land with loft#1875, loft#1897 and loft#1898.
+
+## C143 — A rendered record shows its null fields
+
+**Decision.** A record's rendering lists every field it declares, a null one included:
+`Point { x: 3, y: null, label: null }` renders `{x:3,y:null,label:null}`, and under `:j`
+`{"x":3,"y":null,"label":null}`.  Nested records and records inside a vector follow the same
+rule; inside a record every null is the word `null` (JSON `null` under `:j`).  The fields left
+out are only the ones that are not values of the record — a variant's `enum` discriminator, an
+internal `#`-named field, a secondary view of records a sibling field owns.  There is no switch.
+**Why.** A rendering that drops a null field cannot be told apart from one whose type has no such
+field; every common language's debug print lists null fields, and most JSON libraries write
+`"key":null` by default.
+
+**Revisit when.** A consumer needs the compact form — the answer is an opt-in, never a change of
+the default.  Decided 2026-10-08 (owner) — [record](DESIGN_DECISIONS-history.md#c143--a-rendered-record-shows-its-null-fields).
+**Holds at:** `@C143` — `./scripts/idx tag:@C143`: the record walker (`src/database/format.rs`,
+both backends render through it), `formal/formatting.md` `(F-Render-Fields)`, guard
+`tests/scripts/a-record-renders-its-null-fields.loft`.
+**Catalogue:** @F1 (null model) · `formal/formatting.md` `(F-Render)`.

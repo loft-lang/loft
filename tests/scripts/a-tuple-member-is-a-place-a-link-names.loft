@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Ref-Lvalue` — the linked source is an lvalue, and a member of a tuple LOCAL is one
+// (`t.0 = 5` assigns it).  A `&` bind of it (`c = &t.0`) was refused as "not an addressable
+// operand", and a `&` argument (`bump(t.0)`) as "a literal or expression", while the same member
+// reached through a field or an element linked.  The link is now the tuple's frame slot at the
+// member's offset, and the tuple outlives it like any linked local (`@FR-O-Borrow-Scalar`): the
+// later locals in each cell are there to take a slot that was let go too early.
+//
+// Every wide scalar member type is crossed with a bind, a write through it, a compound write, a
+// link to the link, an argument, and a loop.  The field and element spellings are the controls
+// and must not move.  Narrow and text members are still refused by name (D-bind-70, loft#1875);
+// their pins are in `tests/issues.rs`, since a refusal stops a file.  A `&(…)`-reached member is
+// `a-member-of-a-linked-tuple-is-a-place.loft`.
+//
+// @falsified-at: 22a136711 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `c = &t.0`: "`&` requires an addressable operand").
+// @falsified-by: tests/falsified/a-tuple-member-is-a-place-a-link-names.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once 22a136711 is out of reach.
+// HOLDS: leak, panic and asserts are clean on both trees and both backends.
+
+enum Col { Red, Green }
+
+struct H { pair: (integer, integer) }
+
+fn bump(p: &integer) {
+  p += 1;
+}
+
+fn dbl(p: &float) {
+  p = p * 2.0;
+}
+
+fn main() {
+  t = (250, 1);
+  c = &t.0;
+  u = 7;
+  v = 8;
+  r = "{c}";
+  c = 9;
+  assert("{r} {t.0} {t.1} {u}{v}" == "250 9 1 78", "bind, read, write: got {r} {t.0} {t.1}");
+  s = (1, 250);
+  d = &s.1;
+  d += 5;
+  assert("{s.0} {s.1}" == "1 255", "a compound write to the second member: got {s.1}");
+  f = (3, 1.25);
+  g = &f.1;
+  g = 9.5;
+  dbl(f.1);
+  assert("{f.0} {f.1}" == "3 19", "a float member, bound and handed on: got {f.1}");
+  bc = (true, 'q', 3);
+  b = &bc.0;
+  k = &bc.1;
+  b = false;
+  k = 'z';
+  assert("{bc.0} {bc.1} {bc.2}" == "false z 3", "boolean and character members");
+  e = (Col.Red, 4);
+  ec = &e.0;
+  ec = Col.Green;
+  assert("{e.0} {e.1}" == "Green 4", "an enum member");
+  sg = (1.5f, 2);
+  sc = &sg.0;
+  sc = 3.5f;
+  assert("{sg.0}" == "3.5", "a single member");
+  n: (integer?, integer) = (250, 1);
+  nc = &n.0;
+  nc = null;
+  assert("{n.0} {n.1}" == "null 1", "a nullable member set to null through the link");
+  ch = (250, 1);
+  l1 = &ch.0;
+  l2 = &l1;
+  w = 7;
+  l2 = 9;
+  assert("{ch.0} {w}" == "9 7", "a link to the member's link");
+  a = (250, 1);
+  bump(a.0);
+  bump(a.1);
+  bump(a.1);
+  assert("{a.0} {a.1}" == "251 3", "members as & arguments");
+  acc = 0;
+  for i in 0..3 {
+    lt = (100 + i, 0);
+    lc = &lt.0;
+    kk = 7;
+    lc += 1;
+    bump(lt.1);
+    acc += lt.0 + lt.1 + kk - kk;
+  }
+  assert(acc == 309, "a member linked and passed on every loop pass: got {acc}");
+  x = a.0;
+  bump(x);
+  assert(a.0 == 251 && x == 252, "a member bound by value is a copy");
+  h = H { pair: (250, 1) };
+  bump(h.pair.0);
+  hv = [(250, 1)];
+  bump(hv[0].0);
+  assert(h.pair.0 == 251 && hv[0].0 == 251, "the field and element members still link");
+}

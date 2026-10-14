@@ -40,7 +40,7 @@ pub(crate) fn stdlib() -> (Data, Stores) {
     let (data, db) = STDLIB.get_or_init(|| {
         let mut p = Parser::new();
         // cwd is the repo root under `cargo test`, but `fuzz/` under cargo-fuzz.
-        let dir = if std::path::Path::new("default").is_dir() {
+        let dir = if crate::file_access::is_dir("default") {
             "default"
         } else {
             "../default"
@@ -122,14 +122,14 @@ pub fn classify_source_with(src: &[u8], poison: bool) -> Outcome {
         std::process::id(),
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    if std::fs::write(&tmp, text).is_err() {
+    if crate::file_access::write(&tmp, text).is_err() {
         return Outcome::IoError;
     }
     let path = tmp.to_string_lossy().to_string();
 
     // Site 5: no panic gate — a parser panic on malformed input is the finding.
     p.parse(&path, false);
-    let _ = std::fs::remove_file(&tmp);
+    let _ = crate::file_access::remove_file(&tmp);
 
     // A graceful diagnostic rejection is the common, clean case (F1 feeds
     // garbage). Warning/Debug lines are not rejections.
@@ -280,14 +280,14 @@ mod tests {
     }
 
     fn collect_loft(root: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(root) else {
+        let Ok(rd) = crate::file_access::read_dir(root) else {
             return;
         };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in rd {
+            let p = e.os_spelling();
+            if crate::file_access::is_dir(&p) {
                 collect_loft(&p, out);
-            } else if p.extension().is_some_and(|x| x == "loft") {
+            } else if crate::file_access::extension(&p).is_some_and(|x| x == "loft") {
                 out.push(p);
             }
         }
@@ -330,6 +330,25 @@ mod tests {
     #[test]
     #[ignore = "F1 seed-corpus replay — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored`"]
     fn seed_corpus_replay() {
+        // On the `loft` CLI's own stack — 8 MiB, or `RUST_MIN_STACK` when a sanitizer job
+        // raises it — as `tests/wrap.rs` runs the corpus: the front end spends ~22 KiB of
+        // stack per nesting level of an expression, so a test thread's 2 MiB overflowed on
+        // the 100-term sum in `a-frame-never-pushes-past-the-room-its-entry-made.loft`,
+        // which the CLI runs (loft#1863).  A panic re-raises here, failing the test as before.
+        let stack = std::env::var("RUST_MIN_STACK")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(8 << 20, |v| v.max(8 << 20));
+        let run = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn(replay_seed_corpus)
+            .expect("spawn the replay thread");
+        if let Err(panic) = run.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    fn replay_seed_corpus() {
         use std::fmt::Write as _;
         let base = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
@@ -357,7 +376,7 @@ mod tests {
         // target. Default off keeps the replay on F1's front-end-panic remit.
         let poison = std::env::var_os("LOFT_F1_POISON").is_some();
         for f in &files {
-            let Ok(bytes) = std::fs::read(f) else {
+            let Ok(bytes) = crate::file_access::read(f) else {
                 continue;
             };
             if trace {

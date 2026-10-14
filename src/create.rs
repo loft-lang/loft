@@ -20,8 +20,8 @@
 //! `substitute_template_body`.
 
 use crate::data::{Context, Data, OP_HOT, OP_NORMAL, Type};
+use crate::platform::process::{Program, Spawn};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::Write;
 
 fn operator_name(operator: &str) -> String {
@@ -52,7 +52,7 @@ fn operator_name(operator: &str) -> String {
     When the file cannot be written correctly.
 */
 pub fn generate_lib(data: &Data) -> std::io::Result<()> {
-    let mut into = File::create("tests/generated/text.rs")?;
+    let mut into = crate::file_access::create("tests/generated/text.rs")?;
     writeln!(
         into,
         "#![allow(clippy::cast_possible_wrap)]
@@ -111,7 +111,7 @@ pub fn init(state: &mut State) {{
         writeln!(into, "}}")?;
     }
     drop(into);
-    let _ = std::process::Command::new("rustfmt")
+    let _ = Spawn::new(Program::search("rustfmt"))
         .args(["--edition", "2024", "tests/generated/text.rs"])
         .status();
     Ok(())
@@ -141,13 +141,13 @@ pub fn generate_code(data: &Data) -> std::io::Result<()> {
 /// # Errors
 /// When the file cannot be written.
 pub fn generate_code_to(data: &Data, path: &str) -> std::io::Result<String> {
-    let mut into = File::create(path)?;
+    let mut into = crate::file_access::create(path)?;
     generate_code_into(data, &mut into)?;
     drop(into);
-    let _ = std::process::Command::new("rustfmt")
+    let _ = Spawn::new(Program::search("rustfmt"))
         .args(["--edition", "2024", path])
         .status();
-    std::fs::read_to_string(path)
+    crate::file_access::read_to_string(path)
 }
 
 /// `@FR-R-OpPriority` — the operators in slot order: the `#hot` ones first, then those with no priority, then the
@@ -231,12 +231,12 @@ pub fn generate_code_into(data: &Data, into: &mut dyn Write) -> std::io::Result<
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
+use crate::btree;
 use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{{DbRef, Str}};
 use crate::ops;
 use crate::state::{{Hot, Regs, State}};
-use crate::tree;
 use crate::vector;
 
 pub static OPERATORS: &[fn(&mut State)] = &["
@@ -319,7 +319,7 @@ pub static OPERATORS: &[fn(&mut State)] = &["
             .def(d_nr)
             .attributes
             .iter()
-            .filter(|a| !(a.name.starts_with('_') || res.is_empty()) && !a.mutable)
+            .filter(|a| !(a.name.starts_with('_') || res.is_empty() || a.mutable))
             .map(|a| {
                 (
                     a.name.as_str(),
@@ -426,6 +426,7 @@ pub static OPERATORS: &[fn(&mut State)] = &["
         into,
         "\n/// The lean loop's dispatch: a `#hot` operator runs inline on the loop's registers\n\
          /// ([`Hot`]), every other one through [`OPERATORS_REG`].\n\
+         #[expect(\n    clippy::too_many_lines,\n    reason = \"one arm per #hot operator: the table IS the dispatch, and splitting it adds a call the inline arms exist to avoid\"\n)]\n\
          #[inline(always)]\n\
          pub(crate) fn dispatch_lean(s: &mut State, opcode: u16, r: Regs) -> Regs {{\n    match opcode {{"
     )?;

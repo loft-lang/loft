@@ -7,7 +7,6 @@
 //! either form, so only this pin sees an admission drift — above all the `&` destination,
 //! whose admission is value-identical until a caller hands the source in twice.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-vector-copied-element-by-element-is-one-append.loft";
 
@@ -39,7 +38,8 @@ const EXPECTED: &[(&str, usize)] = &[
 
 fn introspect(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

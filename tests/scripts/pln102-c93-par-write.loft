@@ -21,7 +21,7 @@
 // @EXPECT_ERROR: worker writevec writes captured `v`
 // @EXPECT_ERROR: worker outer → bump writes captured `s`
 // @EXPECT_ERROR: worker ret_outer → bump_ret writes captured `s`
-// @EXPECT_ERROR: worker appendfield → OpPushInt
+// @EXPECT_ERROR: worker appendfield writes captured `e`
 
 struct S {
   n: integer,

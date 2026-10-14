@@ -15,11 +15,16 @@ on:
 permissions:
   issues: write
   contents: read
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   apply:
     uses: loft-lang/.github/.github/workflows/apply-fixed-pending-merge.yml@main
 
   contract:
+    # @windows-exempt: platform-free — sets issue labels
     # `Contract: settled|strained` beside `Fixes #N` → the `contract:` label
     # (.github/LABELS.md § contract:). The fix commit is the only moment that
     # answer exists, so this is the moment to record it; absence stays UNJUDGED

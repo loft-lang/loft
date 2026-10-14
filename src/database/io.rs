@@ -8,9 +8,7 @@ use crate::keys::DbRef;
 use crate::store::Store;
 use crate::vector;
 #[cfg(not(host_fs))]
-use std::collections::BTreeMap;
-#[cfg(not(host_fs))]
-use std::io::Write as _;
+use std::io::{Seek as _, SeekFrom, Write as _};
 
 enum Format {
     TextFile = 1,
@@ -36,10 +34,10 @@ fn fill_absent(store: &mut Store, file: &DbRef) {
 }
 
 #[cfg(not(host_fs))]
-fn fill_file(path: &std::path::Path, store: &mut Store, file: &DbRef) -> bool {
+fn fill_file(path: &crate::file_access::PathText, store: &mut Store, file: &DbRef) -> bool {
     store.set_long(file.rec, file.pos + 8, i64::MIN); // current
     store.set_long(file.rec, file.pos + 16, i64::MIN); // next
-    if let Ok(data) = path.metadata() {
+    if let Ok(data) = crate::file_access::metadata(path) {
         store.set_long(file.rec, file.pos, i64::MIN); // no size
         let tp = if data.is_dir() {
             Format::Directory
@@ -58,6 +56,62 @@ fn fill_file(path: &std::path::Path, store: &mut Store, file: &DbRef) -> bool {
 }
 
 impl Stores {
+    /// The width of a value of type `tp` when [`Self::read_data`] writes exactly the bytes
+    /// the store holds for it, in the host's byte order — a plain 8-byte `integer`, `long`
+    /// or `float`, a 4-byte `single` or `character`, and a 4-byte sized integer read raw.
+    /// `None` for every type whose file form differs from its stored form: a byte or short
+    /// stored with an offset, a boolean, text, a record, a collection.
+    fn raw_file_width(&self, tp: u16) -> Option<u32> {
+        match tp {
+            0 | 1 | 3 => Some(8),
+            2 | 6 => Some(4),
+            4 | 5 => None,
+            _ => match &self.types[tp as usize].parts {
+                Parts::Int(_, _) | Parts::IntRaw(_, _) => Some(4),
+                _ => None,
+            },
+        }
+    }
+
+    /// Append the `length` elements of the vector record `v_rec` (store `store_nr`) to
+    /// `data` in file form — the one walk every vector write takes, a whole vector written
+    /// by either backend and a vector field inside a record alike.  Elements whose stored
+    /// bytes ARE their file bytes ([`Self::raw_file_width`], in the host's byte order) go out
+    /// as one copy of the payload; every other element through [`Self::read_data`].
+    pub fn write_vector_payload(
+        &self,
+        store_nr: u16,
+        v_rec: u32,
+        length: u32,
+        elem_tp: u16,
+        little_endian: bool,
+        data: &mut Vec<u8>,
+    ) {
+        if v_rec == 0 || length == 0 {
+            return;
+        }
+        let elem_size = u32::from(self.size(elem_tp));
+        if little_endian == cfg!(target_endian = "little")
+            && crate::keys::slice_write_enabled()
+            && self.raw_file_width(elem_tp) == Some(elem_size)
+        {
+            let bytes = self.allocations[store_nr as usize].bytes_of(v_rec);
+            let want = (length as usize) * (elem_size as usize);
+            if bytes.len() >= want {
+                data.extend_from_slice(&bytes[..want]);
+                return;
+            }
+        }
+        for i in 0..length {
+            let elem = DbRef {
+                store_nr,
+                rec: v_rec,
+                pos: 8 + elem_size * i,
+            };
+            self.read_data(&elem, elem_tp, little_endian, data);
+        }
+    }
+
     /// # Panics
     /// If `tp` refers to a type that is not implemented for file reading.
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -200,16 +254,14 @@ impl Stores {
                         let store = &self.allocations[r.store_nr as usize];
                         store.get_u32_raw(v_rec, 4)
                     };
-                    let elem_size = u32::from(self.size(elem_tp));
-                    let store_nr = r.store_nr;
-                    for i in 0..length {
-                        let elem = DbRef {
-                            store_nr,
-                            rec: v_rec,
-                            pos: 8 + elem_size * i,
-                        };
-                        self.read_data(&elem, elem_tp, little_endian, data);
-                    }
+                    self.write_vector_payload(
+                        r.store_nr,
+                        v_rec,
+                        length,
+                        elem_tp,
+                        little_endian,
+                        data,
+                    );
                 }
                 Parts::Array(elem_tp) => {
                     let store_nr = r.store_nr;
@@ -236,7 +288,7 @@ impl Stores {
                 Parts::Sorted(_, _)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _) => panic!(
                     "binary I/O not supported for type '{}': it contains a collection field \
@@ -270,7 +322,7 @@ impl Stores {
 
     /// Return the number of bytes that `read_data` will append for the given type.
     /// Returns 0 for types whose binary size is variable (text) or unsupported (collections).
-    fn binary_size(&self, tp: u16) -> usize {
+    pub(crate) fn binary_size(&self, tp: u16) -> usize {
         match tp {
             2 | 6 => 4,     // single, character
             0 | 1 | 3 => 8, // integer (post-2c i64), long, float
@@ -416,14 +468,21 @@ impl Stores {
                     store.set_u32_raw(r.rec, r.pos, v);
                 }
                 Parts::Vector(elem_tp) => {
+                    // Two widths (@C138): the STRIDE in the store, which carries
+                    // `@FR-L-Align`'s padding, and the element's WIRE width, its fields one
+                    // after another.  They agree for a scalar and differ for a padded record.
                     let elem_size = u32::from(self.size(elem_tp));
+                    let wire = match self.binary_size(elem_tp) {
+                        0 => elem_size as usize,
+                        w => w,
+                    };
                     if elem_size == 0 {
                         return;
                     }
-                    let n_elems = data.len() / elem_size as usize;
+                    let n_elems = data.len() / wire;
                     for i in 0..n_elems {
                         let elem_ref = vector::vector_append(r, elem_size, &mut self.allocations);
-                        let slice = &data[i * elem_size as usize..(i + 1) * elem_size as usize];
+                        let slice = &data[i * wire..(i + 1) * wire];
                         self.write_data(&elem_ref, elem_tp, little_endian, slice);
                         vector::vector_finish(r, &mut self.allocations);
                     }
@@ -432,7 +491,7 @@ impl Stores {
                 | Parts::Sorted(_, _)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _) => panic!(
                     "binary I/O not supported for type '{}': it contains a collection field \
@@ -483,10 +542,13 @@ impl Stores {
                 .get_str(store.get_u32_raw(file.rec, file.pos + 24))
                 .to_owned()
         };
-        let resolved = self.resolve_path(&raw);
+        // `@FR-Path-Refuse` — a refused path is absent.
+        let Some(resolved) = self.resolve_path(&raw) else {
+            fill_absent(self.store_mut(file), file);
+            return false;
+        };
         let store = self.store_mut(file);
-        let path = std::path::Path::new(&resolved);
-        fill_file(path, store, file)
+        fill_file(&crate::file_access::at(&resolved), store, file)
     }
 
     /// FS-E: ask the JS host for the metadata.  Both browser shells arrive
@@ -531,32 +593,37 @@ impl Stores {
         }
     }
 
+    /// The size of a `File` record as the layout assigns it — the stride of a `files()` listing.
+    /// Read from the type table rather than written down: `@FR-L-Align` (@C138) pads a record
+    /// to its alignment, and a stride copied by hand went stale the day the layout changed.
+    fn file_record_size(&self) -> u32 {
+        u32::from(self.size(self.name("File")))
+    }
+
     #[cfg(not(host_fs))]
     pub fn get_dir(&mut self, file_path: &str, result: &DbRef) -> bool {
         // #255 / @PLN9: re-home a relative dir path against the program anchor.
-        let resolved = self.resolve_path(file_path);
-        let path = std::path::Path::new(&resolved);
-        if let Ok(iter) = std::fs::read_dir(path) {
+        let Some(resolved) = self.resolve_path(file_path) else {
+            return false;
+        };
+        if let Ok(entries) = crate::file_access::read_dir(crate::file_access::at(&resolved)) {
             let vector = DbRef {
                 store_nr: result.store_nr,
                 rec: result.rec,
                 pos: result.pos,
             };
-            let mut res = BTreeMap::new();
-            for entry in iter.flatten() {
-                if let Some(name) = entry.path().to_str() {
-                    // Normalise to forward slashes so loft paths are consistent on
-                    // all platforms (Windows returns backslash-separated paths).
-                    // Through the shared helper, so a Unix filename that legitimately
-                    // contains a backslash is not split into a fake two-segment path —
-                    // this listing is data a loft program reads back.
-                    res.insert(crate::portable_path::portable_str(name), entry);
-                }
-                // A non-UTF-8 name degrades that ENTRY (skipped), never the
-                // listing: aborting here returned a silently truncated vector.
-            }
+            // `@FR-Path-Sep` — the portable form, as every path loft gives a program: parsed by
+            // the host's rules, so a Unix filename that legitimately holds a backslash is not
+            // split into a fake two-segment path.  `@FR-Path-Utf8` — a name that is not text
+            // is listed with U+FFFD, and two such names that show alike are two entries, so
+            // the listing is a list (already sorted), never a map keyed by the shown name.
+            let res: Vec<(String, crate::file_access::PathText)> = entries
+                .into_iter()
+                .map(|entry| (entry.for_program().portable(), entry))
+                .collect();
             for (name, entry) in res {
-                let elm = vector::vector_append(&vector, 33, &mut self.allocations);
+                let elm =
+                    vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
                 let store = self.store_mut(result);
                 let name_pos = store.set_str(&name) as i32;
                 store.set_u32_raw(elm.rec, elm.pos + 24, name_pos as u32);
@@ -570,7 +637,7 @@ impl Stores {
                 // well-formed `NotExists` element by `fill_file`'s own error
                 // path; keep listing — a mid-loop abort silently dropped every
                 // entry sorting after it.
-                fill_file(&entry.path(), store, &elm);
+                fill_file(&entry, store, &elm);
             }
         }
         true
@@ -588,7 +655,8 @@ impl Stores {
         };
         for name in entries {
             let full = format!("{file_path}/{name}");
-            let elm = vector::vector_append(&vector, 33, &mut self.allocations);
+            let elm =
+                vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
             let store = self.store_mut(result);
             let name_pos = store.set_str(&full) as i32;
             store.set_u32_raw(elm.rec, elm.pos + 24, name_pos as u32);
@@ -623,11 +691,13 @@ impl Stores {
     pub fn get_png(&mut self, file_path: &str, result: &DbRef) -> bool {
         // #255 / @PLN9: re-home against the program anchor.  Outside the project
         // reads as absent, like any other file (loft#708).
-        let resolved = self.resolve_path(file_path);
+        let Some(resolved) = self.resolve_path(file_path) else {
+            return false;
+        };
         let store = self.store_mut(result);
         if let Ok((img, width, height)) = crate::png_store::read(&resolved, store) {
-            if let Some(name) = std::path::Path::new(&resolved).file_name() {
-                let name_pos = store.set_str(name.to_str().unwrap());
+            if let Some(name) = crate::file_access::at(&resolved).file_name() {
+                let name_pos = store.set_str(name);
                 store.set_u32_raw(result.rec, result.pos, name_pos);
                 store.set_int(result.rec, result.pos + 4, i64::from(width));
                 store.set_int(result.rec, result.pos + 8, i64::from(height));
@@ -673,11 +743,25 @@ impl Stores {
                 let raw = s.get_str(s.get_u32_raw(file.rec, file.pos + 24)).to_owned();
                 self.resolve_path(&raw)
             };
-            let resolved_name = resolved;
+            // `@FR-Path-Refuse` — a refused path is not created.
+            let Some(resolved_name) = resolved else {
+                return false;
+            };
             let s = self.store_mut(file);
             let mut file_ref = s.get_i32_raw(file.rec, file.pos + 28);
+            let raw_next = s.get_long(file.rec, file.pos + 16);
             if file_ref == i32::MIN {
-                match std::fs::File::create(&resolved_name) {
+                // Read-write, so a read through the same `File` after it sees what was
+                // written (loft#1861: `File::create` opened it write-only, and the read
+                // answered nothing on both backends).
+                match crate::file_access::open_with(
+                    crate::file_access::at(&resolved_name),
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .truncate(true),
+                ) {
                     Ok(f) => {
                         s.set_i32_raw(file.rec, file.pos + 28, f_nr);
                         self.files
@@ -691,17 +775,30 @@ impl Stores {
                         // Warn and skip the write (the recoverable-fault
                         // posture); the next write retries the create.
                         crate::loft_eprintln!(
-                            "loft: cannot create {resolved_name} for writing: {e} — write skipped"
+                            "loft: cannot create a file for writing: {e} — write skipped"
                         );
                         return false;
                     }
                 }
             }
-            if let Some(Some(f)) = self.files.get_mut(file_ref as usize) {
-                f.write_all(v.as_bytes()).is_ok()
-            } else {
-                false
+            let Some(Some(f)) = self.files.get_mut(file_ref as usize) else {
+                return false;
+            };
+            // The write lands where the program's position is (`f#next`), as `+=` and a
+            // read do, and leaves `#index`/`#next` around what it wrote.
+            if raw_next != i64::MIN && f.seek(SeekFrom::Start(raw_next as u64)).is_err() {
+                return false;
             }
+            let Ok(start) = f.stream_position() else {
+                return false;
+            };
+            if f.write_all(v.as_bytes()).is_err() {
+                return false;
+            }
+            let s = self.store_mut(file);
+            s.set_long(file.rec, file.pos + 8, start as i64);
+            s.set_long(file.rec, file.pos + 16, (start + v.len() as u64) as i64);
+            true
         }
     }
 
@@ -715,7 +812,9 @@ impl Stores {
         // #255 / @PLN9: re-home a relative dir path against the program anchor.
         // Outside the project reads as absent — the same NULL a missing
         // directory gives (loft#708).
-        let resolved = self.resolve_path(path);
+        let Some(resolved) = self.resolve_path(path) else {
+            return DbRef::NULL;
+        };
         // @PLN102 H4 — a MISSING / non-directory path lists as NULL (the null
         // vector), distinct from an EMPTY-but-present directory (a length-0 vector).
         #[cfg(host_fs)]
@@ -729,20 +828,17 @@ impl Stores {
             }
         };
         #[cfg(not(host_fs))]
-        let names: Option<Vec<String>> = match std::fs::read_dir(std::path::Path::new(&resolved)) {
-            Ok(iter) => {
-                let mut v = Vec::new();
-                for entry in iter.flatten() {
-                    // Keep only the final path component; skip non-UTF-8 names
-                    // (that ENTRY degrades, never the whole listing).
-                    if let Some(name) = entry.file_name().to_str() {
-                        v.push(name.to_owned());
-                    }
-                }
-                Some(v)
-            }
-            Err(_) => None,
-        };
+        // Only the final path component; `@FR-Path-Utf8` — a name that is not text is listed
+        // with U+FFFD in its place.
+        let names: Option<Vec<String>> =
+            crate::file_access::read_dir(crate::file_access::at(&resolved))
+                .ok()
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|e| e.file_name().map(str::to_owned))
+                        .collect()
+                });
         let Some(mut names) = names else {
             return DbRef::NULL;
         };
@@ -760,7 +856,9 @@ impl Stores {
         // #255 / @PLN9: re-home against the program anchor.  Outside the
         // project reads as absent — the same NULL a missing file gives
         // (loft#708).
-        let resolved = self.resolve_path(path);
+        let Some(resolved) = self.resolve_path(path) else {
+            return DbRef::NULL;
+        };
         // @PLN102 H4 — a MISSING / unreadable file reads as NULL (the null vector),
         // distinct from an EMPTY-but-present file (a length-0 vector).  `None` is the
         // absent case; `Some(v)` (possibly empty) is a real read.
@@ -773,7 +871,8 @@ impl Stores {
         #[cfg(host_fs)]
         let data: Option<Vec<u8>> = crate::wasm::host_fs_read_binary(&resolved);
         #[cfg(not(host_fs))]
-        let data: Option<Vec<u8>> = std::fs::read(std::path::Path::new(&resolved)).ok();
+        let data: Option<Vec<u8>> =
+            crate::file_access::read(crate::file_access::at(&resolved)).ok();
         let Some(data) = data else { return DbRef::NULL };
         // Owning field is a 4-byte vector pointer; the inner record holds the
         // bytes one-per-element (length at offset 4, payload at offset 8).
@@ -797,8 +896,10 @@ impl Stores {
     pub fn fs_file_map(&mut self, path: &str) -> DbRef {
         #[cfg(all(feature = "mmap", not(host_fs)))]
         {
-            let resolved = self.resolve_path(path);
-            let Ok(file) = std::fs::File::open(std::path::Path::new(&resolved)) else {
+            let Some(resolved) = self.resolve_path(path) else {
+                return DbRef::NULL;
+            };
+            let Ok(file) = crate::file_access::open(crate::file_access::at(&resolved)) else {
                 return DbRef::NULL;
             };
             let Ok(meta) = file.metadata() else {
@@ -830,7 +931,9 @@ impl Stores {
         // #255 / @PLN9: re-home against the program anchor.  A path `file()`
         // reports absent must not be creatable here (loft#708); `false` is the
         // documented failure answer.
-        let resolved = self.resolve_path(path);
+        let Some(resolved) = self.resolve_path(path) else {
+            return false;
+        };
         // Read the byte payload out of the `vector<u8>` (same layout
         // `text_from_bytes_native` reads): inner record at (bytes.rec,
         // bytes.pos), live length at offset 4, payload from offset 8.
@@ -858,7 +961,7 @@ impl Stores {
         }
         #[cfg(not(host_fs))]
         {
-            std::fs::write(std::path::Path::new(&resolved), &data).is_ok()
+            crate::file_access::write(crate::file_access::at(&resolved), &data).is_ok()
         }
     }
 }

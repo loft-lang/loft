@@ -19,8 +19,8 @@
 //! The corpus-scale version of the same idea, over `bench/`, is
 //! `scripts/profile_corpus.sh` and `bench/profile_oracle.tsv`.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -29,15 +29,15 @@ fn loft_bin() -> PathBuf {
 /// Run `body` under the interpreter with `envs` set, returning stdout+stderr.
 fn run(name: &str, body: &str, envs: &[(&str, &str)]) -> String {
     let path = std::env::temp_dir().join(format!("loft_prof_{name}.loft"));
-    std::fs::write(&path, body).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&path, body).expect("write probe");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret").arg(&path);
     cmd.env("LOFT_TIMEOUT", "120");
     for (k, v) in envs {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -196,7 +196,7 @@ fn main() {
 fn allocation_paths_report_both_paths_at_their_true_ratio() {
     let root =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bench/profile_oracle/alloc_paths.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&root)
         .env("LOFT_TIMEOUT", "120")
@@ -273,11 +273,11 @@ fn test_b() { assert(work_b(200000) > 0); }
 /// Write the two-file suite into a fresh directory and run `--tests` over it.
 fn run_tests_dir(name: &str, envs: &[(&str, &str)], extra_args: &[&str]) -> String {
     let dir = std::env::temp_dir().join(format!("loft_prof_tests_{name}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create suite dir");
-    std::fs::write(dir.join("a_file.loft"), TEST_FILE_A).expect("write a");
-    std::fs::write(dir.join("b_file.loft"), TEST_FILE_B).expect("write b");
-    let mut cmd = Command::new(loft_bin());
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create suite dir");
+    fa::write(dir.join("a_file.loft"), TEST_FILE_A).expect("write a");
+    fa::write(dir.join("b_file.loft"), TEST_FILE_B).expect("write b");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--tests");
     for a in extra_args {
         cmd.arg(a);
@@ -288,7 +288,7 @@ fn run_tests_dir(name: &str, envs: &[(&str, &str)], extra_args: &[&str]) -> Stri
         cmd.env(k, v);
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -393,12 +393,12 @@ fn alloc_sites_refuses_a_test_run_instead_of_going_quiet() {
 #[test]
 fn a_native_run_says_the_sampler_cannot_follow_it() {
     let path = std::env::temp_dir().join("loft_prof_865.loft");
-    std::fs::write(&path, "fn main() { println(\"x\"); }\n").expect("write probe");
+    fa::write(&path, "fn main() { println(\"x\"); }\n").expect("write probe");
     // Both spellings: the explicit flag, and the DEFAULT, which is the same backend
     // reached without typing anything. They were silent for the identical reason, so
     // fixing only the explicit one would leave the common case broken.
     for args in [vec!["--native"], vec![]] {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         for a in &args {
             cmd.arg(a);
         }
@@ -419,7 +419,7 @@ fn a_native_run_says_the_sampler_cannot_follow_it() {
              name the cure (args: {args:?}):\n{text}"
         );
     }
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// The blind spot moros measured, and the reason it is worse than silence: the report
@@ -432,22 +432,22 @@ fn a_native_run_says_the_sampler_cannot_follow_it() {
 #[test]
 fn a_profile_says_when_a_used_library_is_invisible_to_it() {
     let root = std::env::temp_dir().join("loft_prof_libblind");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("hotlib/src")).expect("lib dir");
-    std::fs::create_dir_all(root.join("app")).expect("app dir");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("hotlib/src")).expect("lib dir");
+    fa::create_dir_all(root.join("app")).expect("app dir");
+    fa::write(
         root.join("hotlib/loft.toml"),
         "[package]\nname = \"hotlib\"\nversion = \"0.0.0\"\nloft = \">=0.8\"\n\n\
          [library]\nentry = \"src/hotlib.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         root.join("hotlib/src/hotlib.loft"),
         "pub fn lib_grind(n: integer) -> integer {\n  acc = 0;\n  \
          for i in 0..n { acc = acc + i % 7; }\n  acc\n}\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         root.join("app/prog.loft"),
         "use hotlib::*;\n\nfn app_bit(n: integer) -> integer {\n  t = 0;\n  \
          for i in 0..n { t = t + i % 3; }\n  t\n}\n\n\
@@ -457,7 +457,7 @@ fn a_profile_says_when_a_used_library_is_invisible_to_it() {
     .unwrap();
 
     let run = |no_native: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(&root)
@@ -501,7 +501,7 @@ fn a_profile_says_when_a_used_library_is_invisible_to_it() {
         "…and without it, the CALLER is what the table shows, which is the whole \
          hazard.\nGot: {blind_top}\n{blind}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// A program that never finishes on its own — a server's shape, without the sockets.
@@ -535,8 +535,8 @@ fn main() {
 #[test]
 fn a_program_that_never_exits_still_reports_its_profile() {
     let path = std::env::temp_dir().join("loft_prof_periodic.loft");
-    std::fs::write(&path, RUNS_UNTIL_STOPPED).expect("write probe");
-    let out = Command::new(loft_bin())
+    fa::write(&path, RUNS_UNTIL_STOPPED).expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_PROFILE", "1")
@@ -545,7 +545,7 @@ fn a_program_that_never_exits_still_reports_its_profile() {
         .env("LOFT_TIMEOUT", "5")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -578,8 +578,8 @@ fn a_program_that_never_exits_still_reports_its_profile() {
 #[test]
 fn an_unprofiled_run_installs_no_signal_handlers() {
     let path = std::env::temp_dir().join("loft_prof_no_handlers.loft");
-    std::fs::write(&path, RUNS_UNTIL_STOPPED).expect("write probe");
-    let out = Command::new(loft_bin())
+    fa::write(&path, RUNS_UNTIL_STOPPED).expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "3")
@@ -588,7 +588,7 @@ fn an_unprofiled_run_installs_no_signal_handlers() {
         .env_remove("LOFT_ALLOC_PATHS")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -679,8 +679,8 @@ fn op_census_keys_each_op_to_its_line_of_main_and_counts_the_bytes_copied() {
         &[("LOFT_OP_CENSUS", tsv.to_str().expect("utf-8 temp path"))],
     );
     assert!(out.contains("55 1007"), "the program's own answer:\n{out}");
-    let census = std::fs::read_to_string(&tsv).expect("the census file");
-    let _ = std::fs::remove_file(&tsv);
+    let census = fa::read_to_string(&tsv).expect("the census file");
+    let _ = fa::remove_file(&tsv);
     let rows: Vec<Vec<&str>> = census
         .lines()
         .filter(|l| !l.starts_with('#'))

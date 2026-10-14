@@ -17,7 +17,6 @@
 //! not skip the re-parse (and thus the diagnostic).
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -34,7 +33,7 @@ fn corpus() -> PathBuf {
 const LINT_MSG: &str = "walks `0..len(text)`";
 
 fn run(backend: &str, opt_out: bool) -> (String, String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(corpus())
         .env("LOFT_TIMEOUT", "180")

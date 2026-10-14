@@ -93,7 +93,8 @@ enum NarrowWrap {
     /// `OpConvBoolFromInt` has null-check semantics (v != i64::MIN),
     /// not value semantics (v != 0) — the buf_get always returns
     /// 0 or 1, never i64::MIN, so the conv would yield true for
-    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping.
+    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping;
+    /// the row byte 255 — a boolean's in-band null — reads back as null.
     NeZero,
     /// ARC.md A3.6 — use a different buf_get fn-name instead of
     /// `n_parallel_buf_get_narrow`, and skip the wrap (the named
@@ -176,6 +177,28 @@ struct NarrowRoute {
 /// (wide u64 rows; Float reads via `parallel_buf_get_float`).
 /// Single routes here with `TypedBufGet` — its f32 bit pattern fits
 /// stride 4 and `parallel_buf_get_single` recovers the typed value.
+fn narrow_route_for_declared(declared: &Type) -> Option<NarrowRoute> {
+    let (shape, nullable) = declared.peel_optional();
+    // A narrow lane packs a row to the integer's STORED width, and a nullable narrow
+    // integer's null is `i64::MIN` on the stack — packing it kept the low bytes and read
+    // back `0` (loft#1948).  Its packed form has no null either: a `u8?` reserves its
+    // top value in a store (types.md § representation), which the lane does not encode.
+    // So it rides the wide lane, which carries the stack value whole.  Every other
+    // narrow shape holds its null in the packed bytes (boolean 255, character 0, enum
+    // 255, single NaN), and takes the narrow lane alike for `τ` and `τ?` (@FR-N-Shape).
+    if nullable && matches!(shape, Type::Integer(_)) {
+        return None;
+    }
+    narrow_route_for(shape)
+}
+
+/// Does a worker declared to return `declared` ride the narrow-Queue lane?  The ONE
+/// answer, read by this parser's lowering and by the native emitter's helper choice —
+/// two copies of the type list disagreed the moment one of them learnt about `?`.
+pub(crate) fn par_rides_narrow_lane(declared: &Type) -> bool {
+    narrow_route_for_declared(declared).is_some()
+}
+
 fn narrow_route_for(ret_type: &Type) -> Option<NarrowRoute> {
     match ret_type {
         Type::Integer(spec) => match spec.byte_width(true) {
@@ -439,6 +462,17 @@ impl Parser {
     /// that are 4-byte handles.  It agreed with the storage side only while the
     /// storage side made the same mistake; reading both from one derivation is
     /// what keeps reader and writer in step (loft#624 nested).
+    /// How a monomorph reads an element of `vector<T>` once `T` is bound to `vtp`: the stride,
+    /// and whether the vector holds record ids (`Stores::is_linked`), in which case the read
+    /// dereferences (`OpVectorRef`) as the concrete path's does.
+    pub(crate) fn vector_elem_read(&mut self, vtp: &Type) -> crate::parser::ElemRead {
+        let db_tp = self.data.def(self.data.type_def_nr(vtp)).known_type();
+        crate::parser::ElemRead {
+            stride: i32::from(self.vector_elem_iter_stride(vtp)),
+            linked: self.database.is_linked(db_tp),
+        }
+    }
+
     pub(crate) fn vector_elem_iter_stride(&mut self, vtp: &Type) -> u16 {
         let vec_tp = self.data.type_def_nr(vtp);
         let db_tp = self.data.def(vec_tp).known_type();
@@ -650,8 +684,11 @@ impl Parser {
                     let db_tp = self.data.def(vec_tp).known_type();
                     let size = self.vector_elem_iter_stride(vtp);
                     // A type variable's element names its variable (@PLN165 C2).
-                    let stride = match vtp.base() {
-                        Type::Reference(tv, _) | Type::Enum(tv, _, _)
+                    // A tuple of a type variable names its open tuple (loft#1868).
+                    let open_tuple = self.open_tuple_of(vtp);
+                    let stride = match (open_tuple, vtp.base()) {
+                        (Some(open), _) => Self::type_var_stride(open),
+                        (_, Type::Reference(tv, _) | Type::Enum(tv, _, _))
                             if (size == 0 && self.data.is_type_var_placeholder(*tv))
                                 || self.data.is_open_instance(*tv) =>
                         {
@@ -862,6 +899,18 @@ impl Parser {
                     // @F32 — custom iterators via fn next(self) -> T?
                     // I13: custom iterator protocol — check for fn next(&T) -> Item?
                     let next_d_nr = self.data.find_fn(u16::MAX, "next", is_type);
+                    // `@FR-Op-Mark` (@PLN182) — `for` reaches only an `operator next`; a
+                    // plain `fn next` is an ordinary method, and the loop is refused naming it.
+                    if next_d_nr != u32::MAX && !self.data.def(next_d_nr).operator_form() {
+                        let t = is_type.base().source_name(&self.data);
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{t}` has a method `next`, but `for` reaches only one written with \
+                             `operator`: declare it `operator next(self: {t}) -> …`"
+                        );
+                        return Value::Null; // refused once, without "cannot iterate" after it
+                    }
                     if next_d_nr != u32::MAX {
                         // A type's own `next()` yields values, not positions: there is no
                         // `v[i]` for `x#index`.
@@ -987,7 +1036,7 @@ impl Parser {
                 && matches!(
                     self.database.types[*db_tp_val as usize].parts,
                     Parts::Hash(_, _)
-                        | Parts::Index(_, _, _)
+                        | Parts::Index(_, _)
                         | Parts::Sorted(_, _)
                         | Parts::Ordered(_, _)
                         | Parts::Radix(_, _)
@@ -1275,7 +1324,7 @@ impl Parser {
         self.database.keyed_group_members(struct_tp, byte_off).len() >= 2
     }
 
-    fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
+    pub(crate) fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
         let Value::Call(gf_nr, gf_args) =
             crate::use_analysis::through_null_arm(&self.data, coll).unspan()
         else {
@@ -1469,7 +1518,7 @@ impl Parser {
                     // collection stayed empty — in a program that never used the struct
                     // whose second field caused the promotion.
                     | Parts::Ordered(_, _)
-                    | Parts::Index(_, _, _)
+                    | Parts::Index(_, _)
                     | Parts::Radix(_, _)
                     | Parts::Trie(_, _)
             )
@@ -1685,12 +1734,12 @@ impl Parser {
         {
             let syn = *syn;
             if let Some(ops) = self.group_elem_write(to, f_type.base(), true, |p, t, _| {
-                let write = p.emit_nullable_slot_write(syn, &t, val.clone());
+                let write = p.emit_nullable_slot_write(syn, &t, val.clone(), false);
                 v_block(write, Type::Void, "nullable_elem_convert")
             }) {
                 return Value::Insert(ops);
             }
-            let write = self.emit_nullable_slot_write(syn, to, val.clone());
+            let write = self.emit_nullable_slot_write(syn, to, val.clone(), false);
             return v_block(write, Type::Void, "nullable_elem_convert");
         }
         // loft#1529 — the writer half of `(L-Null)` for a nullable struct-enum slot.  A source
@@ -1733,7 +1782,7 @@ impl Parser {
         // 'OpGetVector'" (loft#1819).  A `&`-linked local names a place too (loft#1376), so
         // `q = &vs[1]; q -= 2` writes the element rather than re-pointing `q`.
         //
-        // The place is read once and written once, so its addressing must run ONCE (C92): a
+        // The place is read once and written once, so its addressing must run ONCE (@C92): a
         // place whose address calls a function (`vs[next(c)] -= 1`) is bound to a `_place`
         // view first — the element's own record, which both the read and the copy reach.
         if op != "="
@@ -1925,7 +1974,13 @@ impl Parser {
                     // freshly claimed record whose pointer is already zero, so the
                     // literal's emit stays exactly what it was.
                     let mut ops = Vec::new();
+                    // `@FR-L-CapOwn` (loft#1867) — a CAPTURING source builds its record in this
+                    // slot (`OpChildRec`), which replaces the old one there, after releasing
+                    // what the old one captured by reading it out of the field.  Cleared first,
+                    // that read would find nothing.
+                    let in_place = super::find_capturing_fn_ref(&self.data, val).is_some();
                     if split
+                        && !in_place
                         && let Ok(crec_off) = u16::try_from(offset + 4)
                         && let Some(crec_tp) = self
                             .database
@@ -1936,6 +1991,27 @@ impl Parser {
                             "OpGetField",
                             &[host.clone(), Value::Int(offset + 4), tp_val.clone()],
                         );
+                        // The old record's cascade releases what it adopted before the clear
+                        // frees its bytes: bound here, run by the scope pass once adoption is
+                        // decided (`capture_adoption::cascade_before_record_frees`).
+                        let lambda = self.data.def(d_nr).attributes()[f_nr].assigned_lambda_d_nr;
+                        let record = if lambda == u32::MAX {
+                            u32::MAX
+                        } else {
+                            self.data.def(lambda).closure_record()
+                        };
+                        if record != u32::MAX && !self.first_pass {
+                            let old = self.create_unique(
+                                "__oldrec",
+                                &Type::Reference(record, crate::data::Deps::none()),
+                            );
+                            self.vars.set_skip_free(old);
+                            let read = self.cl(
+                                "OpGetField",
+                                &[host.clone(), Value::Int(offset + 4), Value::Int(0)],
+                            );
+                            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[read])));
+                        }
                         ops.push(self.cl("OpClearKeyed", &[field, tp_val]));
                     }
                     let write = self.set_field(d_nr, f_nr, 0, host, val.clone());
@@ -2115,6 +2191,30 @@ impl Parser {
         // becomes a backstop that this path can no longer trip, since the value reaching
         // it is already in range — clamping is idempotent, and `set_byte`'s out-of-range
         // return is discarded, so nothing is judged or reported twice.
+        // `@FR-I-Join` — an INFERRED local's type is the join of EVERY write, a compound step
+        // included: `m = x % 7; m += 1000` widened nothing, so the step took the narrow
+        // range's default and answered 0, where `m = m + 1000` widened `m` and answered 1005
+        // (loft#1944).  A DECLARED local stays its declaration (`(N-Decl)`, C127's guard).
+        let widened;
+        let f_type = if op != "="
+            && let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+            && !self.vars.is_annotated(*v)
+            && !self.vars.is_argument(*v)
+            && matches!(self.vars.tp(*v).base(), Type::Integer(_))
+            && matches!(composed.base(), Type::Integer(_))
+        {
+            // `change_var_type` cannot do it: `is_equal` collapses every integer width.  The
+            // `=` path widens with `widen_int` for the same reason (`parse_assign_op_inner`).
+            let before = self.vars.tp(*v).clone();
+            if Self::is_narrowing_int(&composed, &before) && !self.int_value_fits(&code, &before) {
+                self.vars.widen_int(*v, &crate::data::I64);
+            }
+            widened = self.vars.tp(*v).clone();
+            &widened
+        } else {
+            f_type
+        };
         if op != "=" && !self.first_pass {
             // A compound step through a link steps the linked slot (loft#1604).
             let f_type = crate::parser::expressions::linked_store_target(f_type, src_tp);
@@ -2138,7 +2238,7 @@ impl Parser {
                         place: to.clone(),
                         spec: *spec,
                         fit_var: None,
-                        at: self.lexer.pos().clone(),
+                        at: *self.lexer.pos(),
                     }),
                     _ => None,
                 },
@@ -2368,7 +2468,7 @@ use #count instead"
             }
         } else if self.lexer.has_token("break") {
             if !self.in_loop {
-                diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
+                diagnostic!(self.lexer, Level::Error, "Cannot break outside a loop");
             }
             // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
             // is not one has no level to jump. `Value::Null` rather than a level: every
@@ -2379,7 +2479,10 @@ use #count instead"
                 Some(lv) => Value::Break(lv),
                 None => self.not_a_loop_variable(name, "break"),
             };
-            *t = Type::Void;
+            // A labelled jump leaves as the plain word does, so it is the same `Never` and fits
+            // wherever a value is expected (@FR-C-Never): typed `void`, `p = f() ?? i#break`
+            // was refused as a default of the wrong type.
+            *t = Type::Never;
         } else if self.lexer.has_token("continue") {
             if !self.in_loop {
                 diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
@@ -2388,7 +2491,7 @@ use #count instead"
                 Some(lv) => Value::Continue(lv),
                 None => self.not_a_loop_variable(name, "continue"),
             };
-            *t = Type::Void;
+            *t = Type::Never;
         } else if self.lexer.has_keyword("count") {
             self.iter_op_count_or_first(code, name, t, false, index_var);
         } else if self.lexer.has_keyword("first") {
@@ -2691,6 +2794,60 @@ use #count instead"
         ));
     }
 
+    /// `@FR-F-FaultSafe` (@C142) — a hole whose value is null renders `null`, and a type's own
+    /// `operator to_text` is never called with a null `self`: it was, and a body like
+    /// `"T{self.x}"` printed `Tnull` for an absent `T?` on both backends.  The null test
+    /// stands BEFORE the call, so the user function does not run at all; the subject is read
+    /// once — a non-repeatable one (a call result) is bound to a local first.  Null is the
+    /// handle's store-number sentinel or a `rec` of 0 (`nullref`, `DbRef::or_null`).
+    fn append_user_text_unless_null(
+        &mut self,
+        list: &mut Vec<Value>,
+        start: &str,
+        var: Value,
+        format: &Value,
+        mut text_call: Value,
+        state: OutputState,
+    ) {
+        let subject = if Self::is_repeatable_place(&self.data, format) {
+            format.clone()
+        } else {
+            let tp = self.data.attr_type(
+                match text_call.unspan() {
+                    Value::Call(stub, _) => *stub,
+                    _ => unreachable!("try_bound_to_text_call answers a call"),
+                },
+                0,
+            );
+            let holder = self.create_unique("hole_subject", &tp);
+            self.vars.defined(holder);
+            list.push(v_set(holder, format.clone()));
+            if let Value::Call(_, args) = &mut text_call {
+                args[0] = Value::Var(holder);
+            }
+            Value::Var(holder)
+        };
+        let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&subject));
+        let present = self.cl("OpConvBoolFromRef", &[subject]);
+        let no_record = self.cl("OpNot", &[present]);
+        let is_null = v_if(null_handle, Value::Boolean(true), no_record);
+        let null_text = self.cl("OpConvTextFromNull", &[]);
+        let null_arm = self.cl(
+            &(start.to_owned() + "Text"),
+            &[
+                var.clone(),
+                null_text,
+                state.width.clone(),
+                Value::Int(state.dir),
+                Value::Int(i32::from(state.token.as_bytes()[0])),
+            ],
+        );
+        let mut value_arm = Vec::new();
+        self.append_data_text(&mut value_arm, start, var, text_call, state);
+        let value_arm = value_arm.pop().expect("append_data_text pushes one op");
+        list.push(v_if(is_null, null_arm, value_arm));
+    }
+
     /// P242: when `d_nr` is the type variable of the current
     /// generic-function context AND that variable's bound
     /// supplies a `to_text(self: Self) -> text` method, return a
@@ -2754,6 +2911,19 @@ use #count instead"
         // struct's genuine `t_<LEN><Type>_to_text` names itself and still routes; a stub
         // belonging to a same-named type variable does not.
         if !matches!(self.data.attr_type(stub_nr, 0), Type::Reference(r, _) if r == d_nr) {
+            return None;
+        }
+        // `@FR-Op-Mark` (@PLN182) — `"{x}"` reaches only an `operator to_text`; a plain
+        // `fn to_text` is an ordinary method, and formatting the type is refused naming it.
+        // A bound's stub stands for whatever the instance brings, which satisfaction checks.
+        if !self.data.is_type_var_placeholder(d_nr) && !self.data.def(stub_nr).operator_form() {
+            let t = self.data.def(d_nr).name().to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{t}` has a method `to_text`, but `\"{{…}}\"` reaches only one written with \
+                 `operator`: declare it `operator to_text(self: {t}) -> text`"
+            );
             return None;
         }
         // Classify the stub's params by TYPE, not arity.  A `to_text` may or may
@@ -2914,6 +3084,7 @@ use #count instead"
             Type::Optional(inner) => *inner,
             other => other,
         };
+        self.sandbox_read_whole(&tp, format);
         // `@FR-F-Render` — a tuple has no rendering, and that answer holds wherever the walk
         // REACHES one.  The refusal below is the `_` arm of the match on this type, so it
         // caught `"{t}"` and nothing else: a vector of tuples, a tuple FIELD of a struct and a
@@ -3193,7 +3364,7 @@ use #count instead"
                 // path; `re_resolve_call` substitutes it with the
                 // concrete type's impl at instantiation time.
                 if let Some(text_call) = self.try_bound_to_text_call(d_nr, format, state.spec) {
-                    self.append_data_text(list, start, var, text_call, state);
+                    self.append_user_text_unless_null(list, start, var, format, text_call, state);
                 } else if self.data.is_type_var_placeholder(d_nr) {
                     // loft#845 — the same fault P242 fixed for a BOUND type variable, for
                     // an unbounded one, where there is no `to_text` to route through.
@@ -3222,7 +3393,7 @@ use #count instead"
                             "generic type {name} cannot be formatted — `\"{{…}}\"` needs a \
                              bound that renders it; write `<{name}: Printable>` (every \
                              built-in satisfies it, and a user type does by defining \
-                             `fn to_text(self: {name}) -> text`)"
+                             `operator to_text(self: {name}) -> text`)"
                         );
                     }
                 } else {
@@ -3357,14 +3528,46 @@ use #count instead"
     /// program wrote.  They differ only from the second loop over a name onward, and the
     /// two are read for different questions: companions and the binding itself are keyed
     /// off `id`, while the shadow guards ask what `src_id` denotes right now.
+    /// The loop variable of a `for` over a struct VALUE that has no visible `operator next`.
+    /// `for_type` answers the iterable's own type there, which is right for an iterator
+    /// expression (a keyed slice `s[lo..hi]` is already typed by its element) and wrong for a
+    /// struct value: on the first pass its `operator next` may be declared further down, and
+    /// otherwise the iteration refuses the loop naming the cause (`@FR-Op-Mark`).  Typed as
+    /// the struct, the body reported a type error against it first — refusing a valid program
+    /// and hiding the real diagnostic (loft#1950).  A plain `fn next`'s item is what the author
+    /// meant the loop to bind, so it types the body and the refusal stays the one diagnostic;
+    /// with no `next` at all the variable has no type yet.
+    fn struct_value_loop_type(&self, in_type: &Type, expr: &Value, var_tp: Type) -> Type {
+        if matches!(expr, Value::Iter(..)) || var_tp != *in_type {
+            return var_tp;
+        }
+        let Type::Reference(..) = in_type.base() else {
+            return var_tp;
+        };
+        let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
+        if next_d_nr == u32::MAX {
+            return Type::Unknown(0);
+        }
+        if self.data.def(next_d_nr).operator_form() {
+            return var_tp;
+        }
+        match self.data.def(next_d_nr).returned().clone() {
+            Type::Optional(inner) => *inner,
+            other => other,
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
     pub(crate) fn parse_for_iter_setup(
         &mut self,
         id: &str,
         src_id: &str,
         in_type: &Type,
         expr: Value,
-    ) -> (u16, Option<u16>, u16, Value, Value, Value) {
+        destructure_names: Option<&[String]>,
+    ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
         let var_tp = self.for_type(in_type);
+        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
         let (iter_var, pre_var) = if walks_text(in_type) {
             let pos_var = self.create_var(&format!("{id}#next"), &I32);
@@ -3470,9 +3673,14 @@ use #count instead"
         {
             self.vars.set_skip_free(for_var);
         }
-        let if_step = if self.lexer.has_token("if") {
+        // A destructuring header's binders exist before the filter is parsed: it reads them.
+        let mut destructure_setup = match destructure_names {
+            Some(names) => self.destructure_binders(names, for_var, &var_tp),
+            None => Vec::new(),
+        };
+        let mut if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
-            let at = self.lexer.peek().position.clone();
+            let at = self.lexer.peek().position;
             let tp = self.expression(&mut if_expr);
             // The filter is a CONDITION, and it took the expression raw: a store there
             // (`for x in r if n = x`) read a corrupt stack reference and panicked the
@@ -3488,7 +3696,16 @@ use #count instead"
         let mut create_iter = expr;
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let iter_next = self.iterator(&mut create_iter, in_type, &it, iter_var, pre_var);
-        (iter_var, pre_var, for_var, if_step, create_iter, iter_next)
+        Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
+        (
+            iter_var,
+            pre_var,
+            for_var,
+            if_step,
+            create_iter,
+            iter_next,
+            destructure_setup,
+        )
     }
 
     /// `@FR-R-LiteralWalk` — a `for` over a scalar vector literal of constant length walks its
@@ -3679,6 +3896,227 @@ use #count instead"
         ]
     }
 
+    /// The binders of a destructuring loop header `for (a, b, …) in …` — one per name, typed as
+    /// the matching member of the loop variable `for_var` (a tuple, or the `__tuple<…>` record a
+    /// stored tuple is), each a LOOP binding of its own (loft#915).  Answers the `Set`s that
+    /// unpack the loop variable at the start of every iteration: the caller prepends them to the
+    /// body.  Shared by the `for` statement and the comprehension, whose header `(I-Comp)` makes
+    /// the same loop's.
+    pub(crate) fn destructure_binders(
+        &mut self,
+        names: &[String],
+        for_var: u16,
+        var_tp: &Type,
+    ) -> Vec<Value> {
+        // Tuple element types come from one of two shapes:
+        //   - `Type::Tuple([T1, T2, ...])` — direct tuple type
+        //     (uncommon for for-loops: would require iterating
+        //     over a "tuple of …" rather than a vector<tuple>).
+        //   - `Type::Reference(d_nr, _)` where `def(d_nr).name`
+        //     starts with `__tuple<` — synthetic struct created
+        //     by `tuple_def`; element types live as attributes.
+        //     This is the common shape for `vector<(T1, T2)>`
+        //     iteration, mirroring P189b's element-access path
+        //     in `src/parser/operators.rs:608-658`.
+        let (elem_types_opt, ref_def_nr): (Option<Vec<Type>>, u32) = match &var_tp {
+            Type::Tuple(elems) => (Some(elems.clone()), u32::MAX),
+            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => {
+                let elems: Vec<Type> = self
+                    .data
+                    .def(*d_nr)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect();
+                (Some(elems), *d_nr)
+            }
+            _ => (None, u32::MAX),
+        };
+        if let Some(elem_types) = elem_types_opt {
+            if elem_types.len() == names.len() {
+                // Build per-element read.  Two shapes:
+                //   - Direct Tuple: `Value::TupleGet(for_var, i)`
+                //     — reads from the var's stack-resident
+                //     tuple slot.
+                //   - Reference(__tuple<…>): use `get_val` with
+                //     the synthetic struct's per-attribute byte
+                //     offset — same path P189b's `.0` / `.1`
+                //     element access takes.
+                names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| {
+                        let elem_tp = elem_types[i].clone();
+                        // A binder read off the loop variable's member is a VIEW of
+                        // that variable (`(B-View)`), never a second owner: whoever
+                        // owns the element — the collection, or a generator's loop
+                        // variable (`(G-Own)`) — releases the member, once.
+                        let bind_tp = if crate::data::holds_dbref(&elem_tp) {
+                            elem_tp.depending(for_var)
+                        } else {
+                            elem_tp.clone()
+                        };
+                        // A binder is a LOOP binding, keyed by this loop as the loop
+                        // variable is (loft#915): by name, a second `for (a, b)` reused
+                        // the first one's `a` at the first one's type, and read a `text`
+                        // member as an `integer` (`1|p` for `p|3`), or did not compile.
+                        let id = self.vars.loop_binding(name);
+                        let var = if id == "_" {
+                            self.create_unique("_", &bind_tp)
+                        } else {
+                            self.create_loop_var(&id, &bind_tp)
+                        };
+                        if id != *name {
+                            self.vars.set_name(name, var);
+                        }
+                        // A later `for a` over the same name is a sequential loop, not
+                        // a shadow of a local (the guard asks `was_loop_var`).
+                        self.vars.served_as_loop_var(var);
+                        self.vars.defined(var);
+                        self.vars.in_use(var, true);
+                        // Bound by the header, scoped to the body (`@FR-B-Scope`).
+                        self.pending_loop_binders.push(var);
+                        // A generator handle carries no deps to say so: marked instead
+                        // (loft#1585), as a `for` over a vector of handles marks its
+                        // loop variable.
+                        if matches!(elem_tp.base(), Type::Iterator(_, _)) {
+                            self.vars.set_skip_free(var);
+                        }
+                        let read = if ref_def_nr == u32::MAX {
+                            Value::TupleGet(for_var, i as u16)
+                        } else {
+                            self.stored_tuple_member_read(
+                                ref_def_nr,
+                                i,
+                                &elem_types,
+                                Value::Var(for_var),
+                            )
+                        };
+                        v_set(var, read)
+                    })
+                    .collect()
+            } else {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "for-destructure: pattern has {} names but iterated tuple has {} elements",
+                        names.len(),
+                        elem_types.len()
+                    );
+                }
+                Vec::new()
+            }
+        } else {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "for-destructure requires a tuple element type, got {}",
+                    var_tp.source_name(&self.data)
+                );
+            }
+            Vec::new()
+        }
+    }
+
+    /// Prepend a destructuring header's binder `Set`s to the loop body `block`, so each
+    /// iteration unpacks the loop variable before the body runs.  `tp` types a body that was
+    /// not a block.
+    pub(crate) fn prepend_destructure(block: &mut Value, setup: Vec<Value>, tp: &Type) {
+        if setup.is_empty() {
+            return;
+        }
+        if let Value::Block(ref mut bl) = *block {
+            for s in setup.into_iter().rev() {
+                bl.operators.insert(0, s);
+            }
+        } else {
+            let inner = std::mem::replace(block, Value::Null);
+            let mut ops = setup;
+            ops.push(inner);
+            *block = v_block(ops, tp.clone(), "destructure_for_body");
+        }
+    }
+
+    /// A destructuring header's unpack runs BEFORE a filter `if` is tested, because the filter
+    /// reads the binders: with a filter, the binder `Set`s become the statements ahead of its
+    /// condition and `setup` is emptied; without one they are left for the body.
+    pub(crate) fn destructure_into_filter(if_step: &mut Value, setup: &mut Vec<Value>) {
+        if setup.is_empty() || *if_step == Value::Null {
+            return;
+        }
+        // An `Insert`, not a block: a block is a scope, and the binders' scope is the loop body
+        // (`@FR-B-Scope`) — inside one they were freed before the body read them.
+        let mut ops = std::mem::take(setup);
+        ops.push(std::mem::replace(if_step, Value::Null));
+        *if_step = Value::Insert(ops);
+    }
+
+    /// Append a loop's filter step to its step list `lp`: `if cond … else continue`.  A filter that
+    /// carries statements ahead of its condition (`Insert` — a destructuring header's unpack,
+    /// `destructure_into_filter`) has them run as steps of the loop itself, so what they bind is
+    /// the body's as the loop variable is, and no `if` test has to hold a declaration.
+    pub(crate) fn push_filter_step(lp: &mut Vec<Value>, if_step: Value) {
+        if if_step == Value::Null {
+            return;
+        }
+        let cond = if let Value::Insert(ops) = if_step.unspan() {
+            let mut ops = ops.clone();
+            let cond = ops.pop().unwrap_or(Value::Boolean(true));
+            lp.extend(ops);
+            cond
+        } else {
+            if_step
+        };
+        lp.push(v_if(cond, Value::Null, Value::Continue(0)));
+    }
+
+    /// The parenthesised name list of a destructuring loop header — `(a, b, …)`, at least two
+    /// names — or `None` when the header names one variable.  `Err` after a reported syntax
+    /// error.
+    pub(crate) fn parse_destructure_names(&mut self) -> Result<Option<Vec<String>>, ()> {
+        if !self.lexer.peek_token("(") {
+            return Ok(None);
+        }
+        self.lexer.token("(");
+        let mut names = Vec::new();
+        loop {
+            if let Some(n) = self.lexer.has_identifier() {
+                names.push(n);
+            } else {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Expect identifier in for-destructure pattern"
+                );
+                let _ = self.lexer.has_token(")");
+                return Err(());
+            }
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        if !self.lexer.has_token(")") {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Expect ')' to close for-destructure pattern"
+            );
+            return Err(());
+        }
+        if names.len() < 2 {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "for-destructure pattern requires at least 2 names; got {}",
+                names.len()
+            );
+            return Err(());
+        }
+        Ok(Some(names))
+    }
+
     // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_for(&mut self, code: &mut Value) {
@@ -3690,57 +4128,20 @@ use #count instead"
         // non-par destructure with one rewrite (the par variant
         // dispatches into `parse_parallel_for_loop` which inherits
         // `id` from us).
-        let destructure_names: Option<Vec<String>> = if self.lexer.peek_token("(") {
-            self.lexer.token("(");
-            let mut names = Vec::new();
-            loop {
-                if let Some(n) = self.lexer.has_identifier() {
-                    names.push(n);
-                } else {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "Expect identifier in for-destructure pattern"
-                    );
-                    let _ = self.lexer.has_token(")");
-                    return;
-                }
-                if !self.lexer.has_token(",") {
-                    break;
-                }
-            }
-            if !self.lexer.has_token(")") {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Expect ')' to close for-destructure pattern"
-                );
-                return;
-            }
-            if names.len() < 2 {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "for-destructure pattern requires at least 2 names; got {}",
-                    names.len()
-                );
-                return;
-            }
-            Some(names)
-        } else {
-            None
+        let Ok(destructure_names) = self.parse_destructure_names() else {
+            return;
         };
 
         // @PLN115 tail — capture the simple `for id` binder's position before it is
         // consumed, to record its DECLARATION once the loop var exists (only when
         // recording; destructure binders are synthesized, so they are excluded).
         let binder_pos = (destructure_names.is_none() && self.record_resolutions)
-            .then(|| self.lexer.peek_pos().clone());
+            .then(|| *self.lexer.peek_pos());
         // P235: when destructuring, synthesize a loop var name from
         // the source line/column; the user-named binders are defined
         // later as proper variables and prepended to the body.
         let id_opt: Option<String> = if destructure_names.is_some() {
-            let pos = self.lexer.peek().position.clone();
+            let pos = self.lexer.peek().position;
             Some(format!("__destructure_t_{}_{}", pos.line, pos.pos))
         } else {
             self.lexer.has_identifier()
@@ -3788,6 +4189,7 @@ use #count instead"
             // tail after the loop still needs it.
             let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            let iterable_fact = std::mem::take(&mut self.operand_fact);
             self.expected = block_expected;
             self.in_control_head = outer_head;
             // if #fields was detected, take the compile-time unrolling path.
@@ -3965,8 +4367,15 @@ use #count instead"
             // fallback below can tell "there is no iterable here" from "the iterable already
             // said what is wrong with it".
             let errors_before_iterable = self.lexer.diagnostics().error_count();
-            let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
-                self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
+            let (iter_var, pre_var, for_var, if_step, create_iter, iter_next, destructure_setup) =
+                self.parse_for_iter_setup(
+                    &id,
+                    &src_id,
+                    &in_type,
+                    expr,
+                    destructure_names.as_deref(),
+                );
+            self.bind_loop_variable(&iterable_fact, for_var);
             // loft#1540 — a loop variable over a value-const value's elements is a view of it.
             self.mark_const_view(for_var, &orig_coll_expr, true);
             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
@@ -4066,119 +4475,7 @@ use #count instead"
             // Defining the variables BEFORE `parse_block` runs is essential
             // — the body's references to `a` / `b` / etc. resolve through
             // the parser's scope at parse time.
-            let destructure_setup: Vec<Value> = if let Some(names) = &destructure_names {
-                // Tuple element types come from one of two shapes:
-                //   - `Type::Tuple([T1, T2, ...])` — direct tuple type
-                //     (uncommon for for-loops: would require iterating
-                //     over a "tuple of …" rather than a vector<tuple>).
-                //   - `Type::Reference(d_nr, _)` where `def(d_nr).name`
-                //     starts with `__tuple<` — synthetic struct created
-                //     by `tuple_def`; element types live as attributes.
-                //     This is the common shape for `vector<(T1, T2)>`
-                //     iteration, mirroring P189b's element-access path
-                //     in `src/parser/operators.rs:608-658`.
-                let (elem_types_opt, ref_def_nr): (Option<Vec<Type>>, u32) = match &var_tp {
-                    Type::Tuple(elems) => (Some(elems.clone()), u32::MAX),
-                    Type::Reference(d_nr, _)
-                        if self.data.def(*d_nr).name().starts_with("__tuple<") =>
-                    {
-                        let elems: Vec<Type> = self
-                            .data
-                            .def(*d_nr)
-                            .attributes
-                            .iter()
-                            .map(|a| a.typedef.clone())
-                            .collect();
-                        (Some(elems), *d_nr)
-                    }
-                    _ => (None, u32::MAX),
-                };
-                if let Some(elem_types) = elem_types_opt {
-                    if elem_types.len() == names.len() {
-                        // Build per-element read.  Two shapes:
-                        //   - Direct Tuple: `Value::TupleGet(for_var, i)`
-                        //     — reads from the var's stack-resident
-                        //     tuple slot.
-                        //   - Reference(__tuple<…>): use `get_val` with
-                        //     the synthetic struct's per-attribute byte
-                        //     offset — same path P189b's `.0` / `.1`
-                        //     element access takes.
-                        names
-                            .iter()
-                            .enumerate()
-                            .map(|(i, name)| {
-                                let elem_tp = elem_types[i].clone();
-                                // A binder read off the loop variable's member is a VIEW of
-                                // that variable (`(B-View)`), never a second owner: whoever
-                                // owns the element — the collection, or a generator's loop
-                                // variable (`(G-Own)`) — releases the member, once.
-                                let bind_tp = if crate::data::holds_dbref(&elem_tp) {
-                                    elem_tp.depending(for_var)
-                                } else {
-                                    elem_tp.clone()
-                                };
-                                let var = self.create_var(name, &bind_tp);
-                                self.vars.defined(var);
-                                self.vars.in_use(var, true);
-                                // Bound by the header, scoped to the body (`@FR-B-Scope`).
-                                self.pending_loop_binders.push(var);
-                                // A generator handle carries no deps to say so: marked instead
-                                // (loft#1585), as a `for` over a vector of handles marks its
-                                // loop variable.
-                                if matches!(elem_tp.base(), Type::Iterator(_, _)) {
-                                    self.vars.set_skip_free(var);
-                                }
-                                let read = if ref_def_nr == u32::MAX {
-                                    Value::TupleGet(for_var, i as u16)
-                                } else {
-                                    let elem_offset = if let Some(offs) =
-                                        crate::data::stored_tuple_offsets_for_def(
-                                            &self.data,
-                                            &self.database,
-                                            ref_def_nr,
-                                            elem_types.len(),
-                                        ) {
-                                        u32::from(offs[i])
-                                    } else {
-                                        crate::data::element_stack_offsets(&elem_types)[i] as u32
-                                    };
-                                    self.get_val(
-                                        &elem_tp,
-                                        false,
-                                        elem_offset,
-                                        Value::Var(for_var),
-                                        u32::MAX,
-                                    )
-                                };
-                                v_set(var, read)
-                            })
-                            .collect()
-                    } else {
-                        if !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "for-destructure: pattern has {} names but iterated tuple has {} elements",
-                                names.len(),
-                                elem_types.len()
-                            );
-                        }
-                        Vec::new()
-                    }
-                } else {
-                    if !self.first_pass {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "for-destructure requires a tuple element type, got {}",
-                            var_tp.source_name(&self.data)
-                        );
-                    }
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            };
+
             // Extract the generator var (first arg of OpCoroutineNext) before
             // `iter_next` is consumed by `for_next` — @P327 needs it for the
             // tuple-yield exhaustion check below.
@@ -4334,18 +4631,7 @@ use #count instead"
             // P235 step 3: prepend the destructure Set ops so each
             // iteration unpacks the loop var into the user-named binders
             // before the user's body runs.
-            if !destructure_setup.is_empty() {
-                if let Value::Block(ref mut bl) = block {
-                    for s in destructure_setup.into_iter().rev() {
-                        bl.operators.insert(0, s);
-                    }
-                } else {
-                    let inner = std::mem::replace(&mut block, Value::Null);
-                    let mut ops = destructure_setup;
-                    ops.push(inner);
-                    block = v_block(ops, Type::Void, "destructure_for_body");
-                }
-            }
+            Self::prepend_destructure(&mut block, destructure_setup, &Type::Void);
             self.vars.restore_write_state(&loop_write_state);
             let count = self.vars.loop_counter();
             self.in_loop = in_loop;
@@ -4493,7 +4779,7 @@ use #count instead"
                         // an `integer`'s conversion is `!= i64::MIN` and a `text`'s is
                         // out-of-band, so a `0` and an `""` element correctly kept iterating.
                         // A `boolean`'s conversion is the IDENTITY, and its null is the
-                        // three-state `255` (C73), so the loop broke on the first `false`
+                        // three-state `255` (@C73), so the loop broke on the first `false`
                         // element it was handed and yielded nothing at all.
                         let mut t = Value::Var(for_var);
                         self.call_op(
@@ -4510,9 +4796,7 @@ use #count instead"
                     Value::Null,
                 ));
             }
-            if if_step != Value::Null {
-                lp.push(v_if(if_step, Value::Null, Value::Continue(0)));
-            }
+            Self::push_filter_step(&mut lp, if_step);
             lp.push(block);
             if count != u16::MAX {
                 for_steps.insert(0, v_set(count, Value::Int(0)));
@@ -4874,8 +5158,8 @@ use #count instead"
         };
 
         // Allocate wrapper def
-        let wrapper_pos = self.lexer.pos().clone();
-        let wrapper_file = wrapper_pos.file.clone();
+        let wrapper_pos = *self.lexer.pos();
+        let wrapper_file = wrapper_pos.file;
         // Use lexer line:col + work fn name for a stable, unique
         // synthetic name (avoids needing a Parser-level counter).
         let wrapper_name = format!(
@@ -4891,7 +5175,7 @@ use #count instead"
         self.data.set_returned(wrapper_d_nr, ret_type.clone());
 
         // Build wrapper variable table
-        let mut wrapper_vars = Function::new(&wrapper_name, &wrapper_file);
+        let mut wrapper_vars = Function::new(&wrapper_name, wrapper_file.as_str());
         let t_var = wrapper_vars.add_variable("t", tuple_tp, &mut self.lexer);
         wrapper_vars.become_argument(t_var);
         wrapper_vars.defined(t_var);
@@ -5156,6 +5440,8 @@ use #count instead"
             && fn_d_nr != u32::MAX
             && let Some(chain) = crate::scopes::worker_calls_parent_write_deep(&self.data, fn_d_nr)
         {
+            // @C93 — a par worker's captured parent state is read-only; a write to it is refused
+            // here.
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -5204,7 +5490,12 @@ use #count instead"
     /// and `-1` for a heap value (the worker builds it in its own store and the main
     /// thread deep-copies).  One home, because a monomorph re-derives it when it lowers a
     /// clause its template could not (loft#1040).
-    pub(crate) fn par_return_size(&mut self, ret_type: &Type, fn_d_nr: u32) -> i32 {
+    pub(crate) fn par_return_size(&mut self, declared: &Type, fn_d_nr: u32) -> i32 {
+        // @FR-N-Shape — which lane carries a result is a SHAPE question, so `τ?` takes
+        // τ's: the `?` is a marker over τ's own storage, and its null travels in band
+        // (a scalar's sentinel, a text's null string, a reference's `nullref`).  The
+        // refusal below still names the type the program wrote (loft#1948).
+        let ret_type = declared.base();
         if matches!(ret_type, Type::Text(_)) {
             0 // sentinel: text mode — workers collect Strings, main thread stores refs
         } else if crate::data::is_dbref(ret_type) {
@@ -5237,7 +5528,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "Parallel worker return type '{}' (size {sz}) is not supported",
-                    ret_type.source_name(&self.data)
+                    declared.source_name(&self.data)
                 );
             }
             // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
@@ -5366,7 +5657,7 @@ use #count instead"
         code: &mut Value,
         result_name: &str,
         fn_d_nr: u32,
-        ret_type: &Type,
+        declared_ret: &Type,
         elem_size: i32,
         return_size: i32,
         vec_expr: &Value,
@@ -5377,6 +5668,12 @@ use #count instead"
         elem_var: u16,
         elem_tp: &Type,
     ) {
+        // @FR-N-Shape / @FR-N-Road — every LANE decision below (which queue, which reader,
+        // which wrap) is a shape question and reads τ for a `τ?` worker: the `?` is a
+        // marker over τ's storage and its null rides that storage in band.  Only the
+        // result binding keeps the declared type, so `r == null` and `r.a ?? 0` still
+        // read the marker (loft#1948).
+        let ret_type = declared_ret.base();
         let ref_d_nr = self.data.def_nr("reference");
         let results_ref_type = Type::Reference(ref_d_nr, crate::data::Deps::none());
         let par_for_d_nr = self.data.def_nr("n_parallel_for");
@@ -5438,7 +5735,7 @@ use #count instead"
         //   Character — A3.5, wrap with OpConvCharacterFromInt.
         //   Enum (no payload) — A3.5, wrap with OpCastEnumFromInt.
         //   Single / Float — A3.6, deferred (no bit-cast IR Op).
-        let early_narrow_route = narrow_route_for(ret_type);
+        let early_narrow_route = narrow_route_for_declared(declared_ret);
         let early_route_int_queue = early_is_primitive_return
             && fn_d_nr != u32::MAX
             && early_ret_size_8
@@ -5532,9 +5829,15 @@ use #count instead"
             I32.clone()
         } else if let Type::Text(_) = ret_type {
             // Strip worker-internal deps — they reference variables in the worker scope.
-            Type::Text(crate::data::Deps::none())
+            // The marker is kept: a `text?` result is still read as nullable.
+            let bare = Type::Text(crate::data::Deps::none());
+            if declared_ret.peel_optional().1 {
+                Type::optional(bare)
+            } else {
+                bare
+            }
         } else {
-            ret_type.clone()
+            declared_ret.clone()
         };
         // Plan-04 B.3 follow-up v2 (b3-par-inline.md): each par block gets
         // its OWN uniquely-named `b_var`, so two par blocks sharing the
@@ -5792,7 +6095,7 @@ use #count instead"
         // Plan-06 ARC.md A3 / A3.5 — narrow primitive return routing.
         // Mirrors the early-gate logic; see comment above for shape
         // coverage.
-        let narrow_route = narrow_route_for(ret_type);
+        let narrow_route = narrow_route_for_declared(declared_ret);
         // 8b: integer-i64 returns route through `n_parallel_queue` +
         // `par_buffer_stack`.
         // 8c: text returns route through `n_parallel_queue_text` +
@@ -5927,12 +6230,23 @@ use #count instead"
                         }
                     }
                     NarrowWrap::NeZero => {
-                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`.
+                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`, except for the
+                        // row byte `255`, which is a boolean's in-band null (types.md
+                        // § representation) and must read back as null — `OpNeInt`
+                        // alone made a `-> boolean?` worker's null answer `true`
+                        // (loft#1948).  One lowering for `boolean` and `boolean?`
+                        // (@FR-N-Road): a plain `boolean` slot can hold that null too.
                         let ne_d_nr = self.data.def_nr("OpNeInt");
                         if ne_d_nr == u32::MAX {
                             raw_call
                         } else {
-                            Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)])
+                            let is_null = self.cl("OpEqInt", &[raw_call.clone(), Value::Int(255)]);
+                            let null_b = self.cl("OpConvBoolFromNull", &[]);
+                            v_if(
+                                is_null,
+                                null_b,
+                                Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)]),
+                            )
                         }
                     }
                     NarrowWrap::TypedBufGet(_) => unreachable!("handled above"),
@@ -6342,7 +6656,7 @@ use #count instead"
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "map requires 2 arguments: map(vector, fn f)"
+                "map requires 2 arguments: map(vector, f)"
             );
             return placeholder;
         }
@@ -6385,10 +6699,11 @@ use #count instead"
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "map: second argument must be a function reference (use fn <name>)"
+            self.refuse_function_argument(
+                "map: second argument",
+                list.get(1),
+                true,
+                "map: second argument must be a function — pass its name, or a lambda `|x| { … }`",
             );
             return placeholder;
         };
@@ -6544,7 +6859,7 @@ use #count instead"
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "filter requires 2 arguments: filter(vector, fn pred)"
+                "filter requires 2 arguments: filter(vector, pred)"
             );
             return Err(placeholder);
         }
@@ -6568,10 +6883,11 @@ use #count instead"
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "filter: second argument must be a function reference (use fn <name>)"
+            self.refuse_function_argument(
+                "filter: second argument",
+                list.get(1),
+                true,
+                "filter: second argument must be a function — pass its name, or a lambda `|x| { … }`",
             );
             return Err(placeholder);
         };
@@ -7086,7 +7402,8 @@ use #count instead"
         matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
     }
 
-    /// Compute the in-store byte size of a vector element type.
+    /// Compute the in-store byte size of a vector element type.  A linked element is a 4-byte
+    /// record id (`@FR-H-LongRef`: its record has a home of its own; `@FR-H-Stride`).
     pub(crate) fn element_store_size(&mut self, elm: &Type) -> i32 {
         // @FR-H-Stride — a NESTED vector element is the inner vector's handle, the row
         // `vector_element_type` registers the outer storage with (`append_elem_tp` asks it
@@ -7213,8 +7530,9 @@ use #count instead"
             return true;
         };
         // The special form calls a function it names at compile time (`Value::Int(d)`); a
-        // fn-ref VARIABLE or a capturing lambda is the declaration's to call, through its body —
-        // the special form refused them ("function must be a compile-time constant").
+        // function VALUE — a variable, a parameter, a field, a capturing lambda — is the
+        // declaration's to call, through its body.  One the declaration does not take comes
+        // here so `parse_reduce` can name what does not fit (loft#1959).
         let constant_fn = matches!(list.get(2).map(Value::unspan), Some(Value::Int(_)));
         if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
             return false;
@@ -7637,7 +7955,7 @@ use #count instead"
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "{name} requires 2 arguments: {name}(vector, fn pred)"
+                    "{name} requires 2 arguments: {name}(vector, pred)"
                 );
             }
             return None;
@@ -7677,10 +7995,11 @@ use #count instead"
                 );
             }
         } else if !self.first_pass {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "{name}: second argument must be a function reference (use fn <name>)"
+            self.refuse_function_argument(
+                &format!("{name}: second argument"),
+                list.get(1),
+                true,
+                &format!("{name}: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"),
             );
             return None;
         }

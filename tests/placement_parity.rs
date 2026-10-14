@@ -22,18 +22,19 @@
 //
 // Any divergence here falsifies the invariant, which is exactly what it is for.
 
-#![cfg(target_os = "linux")]
+// approved exemption: library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
+#![cfg(unix)]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn scratch(name: &str) -> PathBuf {
     let base = std::env::var_os("TMPDIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-placement-parity").join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -50,8 +51,8 @@ fn scratch_path(name: &str) -> PathBuf {
 /// Write the library with `placement` set to `mode`, leaving its source alone.
 fn write_library(root: &Path, mode: &str, source: &str) {
     let pkg = root.join("libs").join("parity");
-    std::fs::create_dir_all(pkg.join("src")).expect("create package");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("create package");
+    fa::write(
         pkg.join("loft.toml"),
         format!(
             "[package]\nname = \"parity\"\nversion = \"0.1.0\"\n\n\
@@ -59,7 +60,7 @@ fn write_library(root: &Path, mode: &str, source: &str) {
         ),
     )
     .expect("write manifest");
-    std::fs::write(pkg.join("src").join("parity.loft"), source).expect("write source");
+    fa::write(pkg.join("src").join("parity.loft"), source).expect("write source");
 }
 
 struct Run {
@@ -69,7 +70,7 @@ struct Run {
 }
 
 fn run(root: &Path, consumer: &Path) -> Run {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -97,7 +98,7 @@ fn run(root: &Path, consumer: &Path) -> Run {
 fn both_placements(name: &str, source: &str, consumer_src: &str) -> (Run, Run) {
     let root = scratch(name);
     let consumer = root.join("consumer.loft");
-    std::fs::write(&consumer, consumer_src).expect("write consumer");
+    fa::write(&consumer, consumer_src).expect("write consumer");
 
     write_library(&root, "inproc", source);
     let inproc = run(&root, &consumer);
@@ -392,7 +393,7 @@ fn a_warning_in_the_library_does_not_decide_whether_it_can_be_placed() {
 fn placed_and_unplaceable_calls_interleave() {
     let library = "pub fn placed_add(a: integer, b: integer) -> integer { a + b }\n\
                    pub fn version() -> text { \"1.0.0\" }\n\
-                   pub struct Point { x: integer, y: integer }\n\
+                   pub struct Point { pub x: integer, pub y: integer }\n\
                    pub fn make_point(x: integer, y: integer) -> Point { Point { x: x, y: y } }\n\
                    pub fn sum_point(p: Point) -> integer { p.x + p.y }\n\
                    pub fn placed_txt(s: text) -> text { \"<{s}>\" }\n";
@@ -432,9 +433,9 @@ fn placed_and_unplaceable_calls_interleave() {
 /// the same store — so the refusal does not apply, and this is what says so.
 #[test]
 fn compound_values_cross_in_both_directions() {
-    let library = "pub struct P { x: integer, y: integer }\n\
-                   pub struct N { id: integer, label: text }\n\
-                   pub struct O { tag: text, inner: P, tail: vector<integer> }\n\
+    let library = "pub struct P { pub x: integer, pub y: integer }\n\
+                   pub struct N { pub id: integer, pub label: text }\n\
+                   pub struct O { pub tag: text, pub inner: P, pub tail: vector<integer> }\n\
                    pub fn sum_p(p: P) -> integer { p.x + p.y }\n\
                    pub fn make_p(x: integer, y: integer) -> P { P { x: x, y: y } }\n\
                    pub fn describe(n: N) -> text { \"{n.id}:{n.label}\" }\n\
@@ -553,7 +554,7 @@ fn compound_values_cross_in_both_directions() {
 /// rec-id that means something else there.
 #[test]
 fn a_callee_writing_to_a_compound_parameter_is_seen_by_the_caller() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn bump(p: P) -> integer {\n\
                    \x20   p.x = p.x + 100;\n\
                    \x20   p.label = \"{p.label}!\";\n\
@@ -616,7 +617,7 @@ fn a_callee_writing_to_a_compound_parameter_is_seen_by_the_caller() {
 /// a growing file rather than as a wrong value.
 #[test]
 fn a_value_that_outgrows_the_arena_still_crosses() {
-    let library = "pub struct N { id: integer, label: text }\n\
+    let library = "pub struct N { pub id: integer, pub label: text }\n\
                    pub fn range_v(n: integer) -> vector<integer> {\n\
                    \x20   out: vector<integer> = [];\n\
                    \x20   for i in 0..n { out += [i]; }\n\
@@ -686,7 +687,7 @@ fn a_value_that_outgrows_the_arena_still_crosses() {
 /// anything this plan changed.
 #[test]
 fn placement_does_not_change_how_many_stores_a_run_needs() {
-    let library = "pub struct P { x: integer, y: integer }\n\
+    let library = "pub struct P { pub x: integer, pub y: integer }\n\
                    pub fn make_p(x: integer) -> P { P { x: x, y: x * 2 } }\n\
                    pub fn sum_p(p: P) -> integer { p.x + p.y }\n\
                    pub fn range_v(n: integer) -> vector<integer> {\n\
@@ -707,11 +708,11 @@ fn placement_does_not_change_how_many_stores_a_run_needs() {
                     }\n";
     let root = scratch("slots");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
 
     let peak_of = |mode: &str| -> (u32, String) {
         write_library(&root, mode, library);
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("--lib")
             .arg(root.join("libs"))
@@ -766,7 +767,7 @@ fn placement_does_not_change_how_many_stores_a_run_needs() {
 /// identical either way.
 #[test]
 fn a_compound_the_arena_does_not_carry_still_behaves_identically() {
-    let library = "pub struct P { a: integer, b: integer }\n\
+    let library = "pub struct P { pub a: integer, pub b: integer }\n\
                    pub enum Shape { Circle { r: integer }, Square { s: integer } }\n\
                    pub fn area(sh: Shape) -> integer {\n\
                    \x20   match sh { Circle { r } => r * r * 3, Square { s } => s * s }\n\
@@ -804,7 +805,7 @@ fn a_compound_the_arena_does_not_carry_still_behaves_identically() {
 fn native_does_not_place_and_says_so_when_asked_to_insist() {
     let root = scratch("native_require");
     let consumer = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer,
         "use parity::*;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
     )
@@ -815,7 +816,7 @@ fn native_does_not_place_and_says_so_when_asked_to_insist() {
         "pub fn add(a: integer, b: integer) -> integer { a + b }\n",
     );
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -862,10 +863,10 @@ fn a_placed_library_sees_the_same_working_directory() {
                     }\n";
     let root = scratch("cwd");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
     // The marker sits beside the CONSUMER, which is where loft anchors a
     // relative path — and is not the directory the test runner is in.
-    std::fs::write(root.join("marker.txt"), "found-beside-the-program").expect("write marker");
+    fa::write(root.join("marker.txt"), "found-beside-the-program").expect("write marker");
 
     write_library(&root, "inproc", library);
     let inproc = run(&root, &consumer_path);
@@ -903,7 +904,7 @@ fn a_placed_library_sees_the_same_working_directory() {
 ///   clean.
 #[test]
 fn the_ownership_oracle_is_clean_over_a_placed_program() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
                    \x20   out: vector<P> = [];\n\
                    \x20   for i in 0..n { out += [P { x: i, label: \"e{i}\" }]; }\n\
@@ -927,10 +928,10 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
                     }\n";
     let root = scratch("oracle");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
     for mode in ["inproc", "process"] {
         write_library(&root, mode, library);
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("--lib")
             .arg(root.join("libs"))
@@ -979,7 +980,7 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
 /// `RetBuf` (a vector builder) would quietly un-place most of a library.
 #[test]
 fn a_return_that_borrows_its_argument_is_not_placed() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn head(v: vector<P>) -> P { v[0] }\n\
                    pub fn make_p(x: integer) -> P { P { x: x, label: \"m{x}\" } }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
@@ -1029,7 +1030,7 @@ fn a_return_that_borrows_its_argument_is_not_placed() {
 /// the answers must match.
 #[test]
 fn a_const_parameter_crosses_without_a_copy_back() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn read_c(p: const P) -> integer { p.x * 100 + len(p.label) }\n\
                    pub fn read_m(p: P) -> integer { p.x * 100 + len(p.label) }\n\
                    pub fn sum_c(v: const vector<P>) -> integer {\n\
@@ -1084,7 +1085,7 @@ fn a_const_parameter_crosses_without_a_copy_back() {
 /// wrong value.
 #[test]
 fn a_placed_call_from_a_par_arm_is_the_same_call() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn score(p: const P) -> integer { p.x * 11 }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
                    \x20   out: vector<P> = [];\n\
@@ -1102,11 +1103,11 @@ fn a_placed_call_from_a_par_arm_is_the_same_call() {
                     }\n";
     let root = scratch("par");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
     for share in ["0", "1"] {
         let go = |mode: &str| -> Run {
             write_library(&root, mode, library);
-            let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
                 .arg("--lib")
                 .arg(root.join("libs"))
@@ -1148,7 +1149,7 @@ fn a_placed_call_from_a_par_arm_is_the_same_call() {
 /// image of the bug the copy-back fixes.
 #[test]
 fn a_callee_rebinding_its_parameter_changes_nothing_either_way() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn replace_all(v: vector<P>) -> integer {\n\
                    \x20   v = [];\n\
                    \x20   for i in 0..3 { v += [P { x: i * 5, label: \"r{i}\" }]; }\n\
@@ -1207,7 +1208,7 @@ fn a_callee_rebinding_its_parameter_changes_nothing_either_way() {
 fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
     let root = scratch("death_compound");
     let consumer = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer,
         "use parity::*;\n\
          fn main() {\n\
@@ -1222,7 +1223,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
         "process",
         // The argument is a real graph — 2000 records with a text field each —
         // so the arena genuinely carries something when the worker dies.
-        "pub struct P { x: integer, label: text }\n\
+        "pub struct P { pub x: integer, pub label: text }\n\
          pub fn make_v(n: integer) -> vector<P> {\n\
          \x20   out: vector<P> = [];\n\
          \x20   for i in 0..n { out += [P { x: i, label: \"p{i}\" }]; }\n\
@@ -1236,7 +1237,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
          }\n",
     );
 
-    let child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -1263,7 +1264,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
     // Long enough that `grind` is past its argument walk and deep in the loop.
     std::thread::sleep(std::time::Duration::from_millis(600));
     assert!(
-        Command::new("kill")
+        loft::platform::process::harness_command("kill")
             .arg("-KILL")
             .arg(pid.to_string())
             .status()
@@ -1303,7 +1304,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
 
 /// The pid of the `--lib-worker` process `parent` started, if it has one yet.
 fn worker_child_of(parent: u32) -> Option<u32> {
-    let out = Command::new("pgrep")
+    let out = loft::platform::process::harness_command("pgrep")
         .arg("-P")
         .arg(parent.to_string())
         .output()
@@ -1320,7 +1321,7 @@ fn the_gate_can_fail() {
     // notice — this is the control for every assertion above.
     let root = scratch("control");
     let consumer = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer,
         "use parity::*;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
     )

@@ -1,0 +1,17 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..116dcf25e 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4925,12 +4925,6 @@
+         if amp_unlowered {
+             let place = Self::stored_tuple_dest(code).unwrap_or_else(|| code.clone());
+             let record = match (self.vars.tp(var_nr).clone(), s_type.base()) {
+-                (Type::RefVar(inner), _)
+-                    if var_nr != u16::MAX
+-                        && matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)) =>
+-                {
+-                    Some(*inner)
+-                }
+                 (_, Type::Tuple(elems)) if crate::data::ref_tuple_is_record(elems) => {
+                     let elems = elems.clone();
+                     let d = self.data.tuple_def(&mut self.lexer, &elems);

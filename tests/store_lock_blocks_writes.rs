@@ -26,8 +26,8 @@
 //! the control: without it, a lock that blocked writes by breaking writes in general would
 //! pass every other case here.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -36,21 +36,21 @@ fn loft_bin() -> PathBuf {
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path =
         std::env::temp_dir().join(format!("loft_store_lock_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
 /// Run `src` on `backend`; return `(exited_ok, stdout + stderr)`.
 fn run(backend: &str, tag: &str, src: &str) -> (bool, String) {
     let path = write_temp(&format!("{tag}_{backend}"), src);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (
         out.status.success(),
         format!(

@@ -1,0 +1,40 @@
+diff --git a/src/generation/calls.rs b/src/generation/calls.rs
+index e7050622b..a992bb4ea 100644
+--- a/src/generation/calls.rs
++++ b/src/generation/calls.rs
+@@ -717,8 +717,14 @@
+                                     param_elems,
+                                 ) =>
+                             {
++                                let name = self
++                                    .data
++                                    .def(self.def_nr)
++                                    .variables()
++                                    .name(*var)
++                                    .to_string();
+                                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
+-                                    &self.var_place(*var),
++                                    &format!("var_{name}"),
+                                     param_elems,
+                                 ))
+                             }
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 0e8789138..462a4b38c 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -1550,8 +1550,14 @@
+                 )
+                 && crate::generation::dispatch::tuple_has_text_leaf(param_elems)
+             {
++                let name = self
++                    .data
++                    .def(self.def_nr)
++                    .variables()
++                    .name(*var)
++                    .to_string();
+                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
+-                    &self.var_place(*var),
++                    &format!("var_{name}"),
+                     param_elems,
+                 ))
+             } else {

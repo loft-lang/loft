@@ -29,16 +29,16 @@
 //! its record actually keeps it. A future change that drops a field from a layout again
 //! fails here on the answer, whichever way it then surfaces.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A package whose ENTRY declares `Roofs` and pulls in a module that uses it as a field
@@ -50,11 +50,11 @@ fn build_package(root: &Path) {
     );
     write(
         &root.join("fwd/src/fwd.loft"),
-        "pub use inner::*;\npub struct Roofs { items: vector<integer> }\n",
+        "pub use inner::*;\npub struct Roofs { pub items: vector<integer> }\n",
     );
     write(
         &root.join("fwd/src/inner.loft"),
-        "pub struct Sess { s_a: integer, s_roofs: Roofs, s_b: integer }\n\
+        "pub struct Sess { pub s_a: integer, s_roofs: Roofs, pub s_b: integer }\n\
          pub fn mk() -> Sess { return Sess { s_a: 1, s_roofs: Roofs { items: [] }, s_b: 2 }; }\n",
     );
 }
@@ -62,7 +62,7 @@ fn build_package(root: &Path) {
 #[test]
 fn the_reported_package_reads_its_fields_where_they_live() {
     let root = std::env::temp_dir().join("loft_796_field_storage");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     build_package(&root);
     let prog = root.join("use_it.loft");
     write(
@@ -70,7 +70,7 @@ fn the_reported_package_reads_its_fields_where_they_live() {
         "use fwd::*;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--lib")
         .arg(&root)
@@ -98,7 +98,7 @@ fn the_reported_package_reads_its_fields_where_they_live() {
         "a field whose type another module declares must get a slot (loft#797).\n{all}"
     );
     assert!(out.status.success(), "the run must succeed.\n{all}");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
     // declared before it is used must be unaffected.  Without this, a check that
     // refused every cross-module field type would pass the test above.
     let root = std::env::temp_dir().join("loft_796_field_storage_ok");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     write(
         &root.join("okp/loft.toml"),
         "[package]\nname = \"okp\"\nversion = \"0.1.0\"\n[library]\nentry = \"src/okp.loft\"\n",
@@ -116,7 +116,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
     // by the time `inner`'s struct is laid out.
     write(
         &root.join("okp/src/roofs.loft"),
-        "pub struct Roofs { items: vector<integer> }\n",
+        "pub struct Roofs { pub items: vector<integer> }\n",
     );
     write(
         &root.join("okp/src/okp.loft"),
@@ -124,7 +124,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
     );
     write(
         &root.join("okp/src/inner.loft"),
-        "pub use roofs::*;\npub struct Sess { s_a: integer, s_roofs: Roofs, s_b: integer }\n\
+        "pub use roofs::*;\npub struct Sess { pub s_a: integer, s_roofs: Roofs, pub s_b: integer }\n\
          pub fn mk() -> Sess { return Sess { s_a: 1, s_roofs: Roofs { items: [] }, s_b: 2 }; }\n",
     );
     let prog = root.join("use_it.loft");
@@ -133,7 +133,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
         "use okp::*;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--lib")
         .arg(&root)
@@ -152,5 +152,5 @@ fn an_ordinary_cross_module_field_still_compiles() {
         "a field whose type is declared before use must keep its slot.\n{all}"
     );
     assert!(all.contains("12"), "and the program must run.\n{all}");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

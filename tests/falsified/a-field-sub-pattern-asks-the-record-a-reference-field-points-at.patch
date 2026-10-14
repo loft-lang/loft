@@ -1,0 +1,27 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 0fbf8978a..a5c9306ad 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -8201,22 +8201,6 @@
+             && self.data.def_type(*d_nr) == DefType::EnumValue
+         {
+             return Some((self.data.def(*d_nr).parent(), true));
+-        }
+-        // A `reference<E>` to a struct-enum (the recursive shape loft#1579's cycle refusal asks
+-        // for, `Add { l: reference<Expr>, … }`) is a pointer to a record of `E`: its read is
+-        // the record (`OpGetDbRef`), so a variant pattern asks it exactly as it asks an
+-        // inline field.  Unrecognised, `l: Lit { v: 0 }` fell to the scalar path, which built
+-        // a `Lit` and tested THAT: the arm never matched on the interpreter, `--native`
+-        // refused its own output, and the binding form did not parse (loft#1870).
+-        if let Type::Reference(d_nr, _) = tp.peel_link()
+-            && self.data.def_type(*d_nr) == DefType::Enum
+-            && self.data.def(*d_nr).attributes().iter().any(|a| {
+-                matches!(a.value, Value::Enum(_, _))
+-                    && self.data.def_type(self.data.variant_of(*d_nr, &a.name))
+-                        == DefType::EnumValue
+-            })
+-        {
+-            return Some((*d_nr, true));
+         }
+         let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
+             return None;

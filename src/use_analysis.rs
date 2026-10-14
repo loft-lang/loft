@@ -92,6 +92,10 @@ pub struct VerdictRow {
     /// only these; the var-buffer / return-buffer copies (a separate elision/`__retbuf` class,
     /// which is where the stdlib's copies land) stay in the developer dump.
     pub survival: bool,
+    /// The copied value is a FIELD of `source` (`src.f`), not `source` itself.  Its fate
+    /// cannot decide the copy: ending `source`'s life moves nothing out of it, so such a copy
+    /// is forced as written, and the type it copies is not `source`'s.
+    pub projection: bool,
 }
 
 fn def_nrs(data: &Data, names: &[&str]) -> HashSet<u32> {
@@ -317,6 +321,12 @@ enum Ctx {
 }
 
 /// The base variable of a `src` / `src.f` expression, if any.
+/// Is `node` a projection of a variable (`v.f`), as opposed to the variable itself?  The
+/// counterpart of [`base_var`], which answers the same base for both.
+fn is_projection_of_var(node: &Value) -> bool {
+    !matches!(node.unspan(), Value::Var(_))
+}
+
 fn base_var(node: &Value, get_field: u32) -> Option<u16> {
     match node.unspan() {
         Value::Var(s) => Some(*s),
@@ -356,6 +366,17 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
     let mut acc = vec![(0u16, 0u16); func.var_count()];
     let cx = AccessCx {
         data,
+        func,
+        fill_dests: [
+            data.def_nr("OpPreAllocVector"),
+            data.def_nr("OpFinishRecord"),
+            data.def_nr("OpAppendText"),
+            data.def_nr("OpAppendCharacter"),
+        ],
+        copy_fills: [
+            (data.def_nr("OpReplaceVector"), 0),
+            (data.def_nr("OpReplaceKeyed"), 1),
+        ],
         projs: &ops.projections,
         writes: &ops.write_first_arg,
         lens: &ops.lengths,
@@ -366,12 +387,38 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
             .collect(),
     };
     classify_access(body, &cx, &mut acc);
+    // loft#1840 — the program's own `+=` is the mutation an append-family op cannot show: the
+    // ops it lowers to are the ones a copy's fill is made of, so the parser marked the local.
+    // Only into a COPY (`(B-Copy)`): an append into a fresh collection is how it is built, and
+    // a built collection nothing reads is not a write that a source lost.
+    for (v, slot) in acc.iter_mut().enumerate() {
+        if cx.appended_copy(v as u16) {
+            slot.1 = slot.1.saturating_add(1);
+        }
+    }
     acc
 }
 
 /// Shared read-only context for the access walk (op-name sets computed once).
 struct AccessCx<'a> {
     data: &'a Data,
+    /// The locals' marks — which the program's own `+=` wrote into and which a bind copied
+    /// ([`Self::appended_copy`]).
+    func: &'a Function,
+    /// The ops a `+=` lowers to that write into their first argument and observe nothing of
+    /// its content: `OpPreAllocVector` (a capacity hint), `OpFinishRecord` (installs a built
+    /// record into its collection), a text's `OpAppendText` / `OpAppendCharacter`, and every
+    /// `OpFormat*` ([`Self::is_fill_dest`]).  For a copy the program appended to, that
+    /// argument is a write destination, not a read (loft#1840).  Any other local keeps them as
+    /// reads, which is what keeps a fresh literal (`v = [1, 2]`, `t = "{x}"`, filled the same
+    /// way) out of the lint.
+    fill_dests: [u32; 4],
+    /// The whole-value COPY fills that name their destination by position — a nullable
+    /// vector's `OpReplaceVector(dest, src)` and a keyed collection's `OpReplaceKeyed(src,
+    /// dest)` — the twins of the `OpAppendVector` fill the write family above already treats
+    /// as definitional.  Their destination is neither read nor mutated by the program; read
+    /// as a use, it hid every write into a nullable-vector or keyed copy (loft#1840).
+    copy_fills: [(u32, usize); 2],
     /// Projection ops (`OpGetField`/`OpGetVector`/…) — a write through one of these
     /// propagates the write context to arg 0.
     projs: &'a HashSet<u32>,
@@ -394,6 +441,23 @@ struct AccessCx<'a> {
     /// read.  Any other `OpDatabase` keeps its read: a record literal is built into its variable
     /// the same way, and a fresh record is not a lost copy.
     value_struct_copies: HashSet<u16>,
+}
+
+impl AccessCx<'_> {
+    /// A COPY the program's own `+=` wrote into (loft#1840): bound by copying a place
+    /// (`copy_bound`) or a value-struct copy the scope pass made.  Only there is an append
+    /// the mutation the lint reports and its fill ops are no reads — a collection built
+    /// fresh keeps both as they were, so a fresh one nothing reads stays silent.
+    /// One of [`Self::fill_dests`] — or an `OpFormat*`, which renders into its first
+    /// argument; asked by name only once the target is known to be an appended copy.
+    fn is_fill_dest(&self, op: u32) -> bool {
+        self.fill_dests.contains(&op) || self.data.def(op).name().starts_with("OpFormat")
+    }
+
+    fn appended_copy(&self, v: u16) -> bool {
+        self.func.user_appended(v)
+            && (self.func.copy_bound(v) || self.value_struct_copies.contains(&v))
+    }
 }
 
 fn is_setter(op: u32, data: &Data) -> bool {
@@ -451,6 +515,28 @@ fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
                 classify_access(a, cx, acc);
             }
         }
+        Value::Call(op, args)
+            if let Some(&(_, dest)) = cx.copy_fills.iter().find(|(o, _)| o == op)
+                && dest < args.len() =>
+        {
+            for (i, a) in args.iter().enumerate() {
+                if i == dest {
+                    classify_write_base(a, cx, acc, false);
+                } else {
+                    classify_access(a, cx, acc);
+                }
+            }
+        }
+        Value::Call(op, args)
+            if !args.is_empty()
+                && matches!(place_root(&args[0], cx.data), Some(v) if cx.appended_copy(v))
+                && cx.is_fill_dest(*op) =>
+        {
+            classify_write_base(&args[0], cx, acc, false);
+            for a in &args[1..] {
+                classify_access(a, cx, acc);
+            }
+        }
         // Any op that writes through arg 0: arg-0 base is a write-DESTINATION (not a read).
         // Count it as a copy-mutate WRITE-TARGET only for the `OpSet*` family — append/insert/
         // clear are definitional/bulk fills (the `d = s.f` copy-fill lands here) and are neither
@@ -484,6 +570,9 @@ fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
 /// any index expression along the chain is a real read and is classified normally.
 fn classify_length_subject(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
     match node.unspan() {
+        // An append changes the count an element write cannot, so for a local the program
+        // appended to, its `len` is a read of what the append wrote (loft#1840).
+        Value::Var(v) if cx.appended_copy(*v) => bump_read(acc, *v),
         Value::Var(_) => {}
         Value::Call(op, args) if cx.projs.contains(op) && !args.is_empty() => {
             classify_length_subject(&args[0], cx, acc);
@@ -600,18 +689,34 @@ struct Uses {
     /// thing at the USE.
     last_use_loc: HashMap<u16, Option<Position>>,
     /// @PLN90 — field-target appends `OpAppendVector(OpGetField(rec, fld), src)`:
-    /// `(base record var, source base var, copy-site-end pos, loop-survives, source location)`.
+    /// `(base record var, source base var, copy-site-end pos, loop-survives, source location,
+    /// source is a projection)`.
     /// This is the struct/enum-construction copy (`S { f: src }`) and `x.field += src` — the
     /// source is deep-copied into the field, which the var-buffer copy idiom above never sees.
     /// The position (taken AFTER the args are walked) + `loop_survives` (item 4: the source
     /// outlives the enclosing loop) drive the survival split; the location (item 2) is for the
     /// report.
-    construct_copy: Vec<(Option<u16>, Option<u16>, usize, bool, Option<Position>)>,
+    construct_copy: Vec<(
+        Option<u16>,
+        Option<u16>,
+        usize,
+        bool,
+        Option<Position>,
+        bool,
+    )>,
     /// @PLN90 — `OpCopyRecord` deep-copies: `(dest base var, SOURCE base var, copy-site-end pos,
-    /// loop-survives, source location)`. A record copy (`v[i] = e`, a `?? E{…}` default element,
+    /// loop-survives, source location, source is a projection)`. A record copy (`v[i] = e`, a
+    /// `?? E{…}` default element,
     /// a struct copy) — not append-based, so the branches above miss it. The same-var no-op
     /// alias is excluded when recorded.
-    record_copy: Vec<(Option<u16>, Option<u16>, usize, bool, Option<Position>)>,
+    record_copy: Vec<(
+        Option<u16>,
+        Option<u16>,
+        usize,
+        bool,
+        Option<Position>,
+        bool,
+    )>,
     /// Vars that appeared in a non-reader position (⇒ not borrow-eligible). The
     /// copy-fill `OpAppendVector(v, src.f)` is *excluded* — it is the copy machinery,
     /// not a user mutation of `v`.
@@ -648,7 +753,7 @@ pub struct ElidePlan {
 
 /// @PLN90 phase B — a construction / record copy that can be lowered as a MOVE (a store transfer)
 /// instead of a deep copy: the source is a **dead-after owned local**, so its store transfers into
-/// the field/element (C86's last-use elision — the same rule `ElidePlan` runs for the var-buffer
+/// the field/element (@C86's last-use elision — the same rule `ElidePlan` runs for the var-buffer
 /// idiom). Produced only under `LOFT_MOVE_ELIDE`. B1.2 computes + dumps it; the lowering that
 /// consumes it lands in B1.3+ (no codegen change yet — byte-identical off). Design + captured IR:
 /// `doc/claude/plans/90-copy-diagnostics/phase-b-design.md`.
@@ -729,7 +834,7 @@ impl Uses {
         // so the default path pays nothing). A copy op borrows this for its report location.
         if self.track_pos {
             if let Some(p) = node.span_pos() {
-                self.cur_pos = Some(p.clone());
+                self.cur_pos = Some(*p);
             } else if let Value::Line(n) = node {
                 // @PLN90 S5.2 — a bare line marker is a coarse fallback for copies that
                 // sit under no span (an inline construct's `OpAppendVector`, an `[]` fold).
@@ -759,7 +864,7 @@ impl Uses {
                 // @PLN131 Q6.1 — the location moves only when the position does, so the two
                 // never disagree about which use they describe.
                 if pos >= *lu {
-                    self.last_use_loc.insert(*v, self.cur_pos.clone());
+                    self.last_use_loc.insert(*v, self.cur_pos);
                 }
                 *lu = (*lu).max(pos);
                 if ctx != Ctx::ReaderArg {
@@ -857,7 +962,7 @@ impl Uses {
                     {
                         let rec = args.first().and_then(|t| base_var(t, self.get_field));
                         let src = args.get(1).and_then(|s| base_var(s, self.get_field));
-                        Some((rec, src))
+                        Some((rec, src, args.get(1).is_some_and(is_projection_of_var)))
                     } else {
                         None
                     };
@@ -868,14 +973,15 @@ impl Uses {
                     // use of the source AFTER this copy (⇒ the source survives). The copy op
                     // carries no span, so borrow the nearest enclosing one (item 2). `loop_surv`
                     // (item 4) = the source outlives the enclosing loop (copied every iteration).
-                    if let Some((rec, src)) = cc {
+                    if let Some((rec, src, projection)) = cc {
                         let loop_surv = self.loop_survives(src);
                         self.construct_copy.push((
                             rec,
                             src,
                             self.pos,
                             loop_surv,
-                            self.cur_pos.clone(),
+                            self.cur_pos,
+                            projection,
                         ));
                     }
                 }
@@ -900,6 +1006,7 @@ impl Uses {
                 // same-var no-op alias (`OpCopyRecord(x, x)` — the runtime short-circuits it).
                 // The dest's write is recorded by the general write-mark at the top of `visit`.
                 let src = args.first().and_then(|a| base_var(a, self.get_field));
+                let projection = args.first().is_some_and(is_projection_of_var);
                 let dest = args.get(1).and_then(|a| base_var(a, self.get_field));
                 let record = !(dest.is_some() && dest == src);
                 let c = if self.value_readers.contains(d) {
@@ -916,8 +1023,14 @@ impl Uses {
                 // (item 4) = the source outlives the enclosing loop (copied every iteration).
                 if record && !self.in_yield {
                     let loop_surv = self.loop_survives(src);
-                    self.record_copy
-                        .push((dest, src, self.pos, loop_surv, self.cur_pos.clone()));
+                    self.record_copy.push((
+                        dest,
+                        src,
+                        self.pos,
+                        loop_surv,
+                        self.cur_pos,
+                        projection,
+                    ));
                 }
             }
             Value::Call(d, args) => {
@@ -1175,13 +1288,100 @@ pub fn dump_link_observability(data: &Data) {
     }
 }
 
+/// `@FR-H-Elide` — can nothing in this function write a store its CALLER holds, by a route the
+/// per-variable `written` fact does not name?  A copy `u = p.f` off a parameter elides into a
+/// read of `p.f` only where the copy is unobservable (@C86), and `p`'s own name staying unwritten
+/// does not prove that: two parameters are never proven apart (`formal/rewrites.md` R-Hold's
+/// growth clause — a caller can hand one record twice), a closure writes THROUGH to its capture,
+/// a function reference runs code this body cannot see, and a generator lets the caller run
+/// between two resumes.  Each made the elided `u` read the new value instead of its copy.
+///
+/// Answers `false` when the body calls or builds a function reference, yields, or runs a `par`
+/// block; when it writes any non-scalar parameter but the hidden buffers (`written` already
+/// follows a parameter into a mutating callee); or when it field-writes, or hands to a call, a
+/// local whose dep chain reaches a parameter — a view of one (`w = t.inn; w.v[0] = 9`).
+fn caller_stores_stable(
+    d_nr: u32,
+    code: &Value,
+    function: &Function,
+    data: &Data,
+    written: &HashSet<u16>,
+) -> bool {
+    let mut opaque = false;
+    let mut handed: HashSet<u16> = HashSet::default();
+    code.walk(&mut |n| match n {
+        Value::CallRef(..)
+        | Value::FnRef(..)
+        | Value::FnRefDnr(_)
+        | Value::Yield(_)
+        | Value::Parallel(_) => opaque = true,
+        Value::Call(d, args) if !data.def(*d).name().starts_with("Op") => {
+            for a in args {
+                if let Value::Var(v) = a.unspan() {
+                    handed.insert(*v);
+                }
+            }
+        }
+        _ => {}
+    });
+    if opaque {
+        return false;
+    }
+    // The hidden buffers by their attribute FLAG, not their name: a local promoted onto the
+    // return buffer RENAMES that parameter after itself (`out` rather than `__retbuf`), and a
+    // name test then took the frame's own result for a caller's store the body writes.  A
+    // caller never hands a buffer that one of its other arguments reaches (loft#1895 closed
+    // the one rebind that did), so writing it cannot change what a parameter reads.
+    let hidden: HashSet<u16> = if d_nr == u32::MAX {
+        HashSet::default()
+    } else {
+        data.def(d_nr)
+            .attributes()
+            .iter()
+            .filter(|a| a.hidden)
+            .map(|a| function.var(&a.name))
+            .filter(|&v| v != u16::MAX)
+            .collect()
+    };
+    let mut field_written = HashSet::default();
+    crate::parser::find_field_written_vars(code, data, &mut field_written);
+    let reaches_argument = |v: u16| {
+        let mut seen: HashSet<u16> = HashSet::default();
+        let mut todo = function.tp(v).depend();
+        while let Some(d) = todo.pop() {
+            if !seen.insert(d) || d >= function.next_var() {
+                continue;
+            }
+            if function.is_argument(d)
+                && !function.name(d).starts_with("__")
+                && !hidden.contains(&d)
+            {
+                return true;
+            }
+            todo.extend(function.tp(d).depend());
+        }
+        false
+    };
+    !(0..function.next_var()).any(|v| {
+        if function.is_argument(v) {
+            !function.name(v).starts_with("__")
+                && !hidden.contains(&v)
+                && !crate::data::is_scalar(function.tp(v).base())
+                && written.contains(&v)
+        } else {
+            (field_written.contains(&v) || handed.contains(&v)) && reaches_argument(v)
+        }
+    })
+}
+
 fn analyze_fn(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
     max_tier: u8,
 ) -> (Vec<VerdictRow>, Vec<ElidePlan>, Vec<MovePlan>) {
-    analyze_fn_survival(code, function, data, max_tier, false)
+    analyze_fn_survival(d_nr, code, function, data, max_tier, false)
 }
 
 /// [`analyze_fn`] with the survival split forced on.
@@ -1193,6 +1393,7 @@ fn analyze_fn(
 /// `use_analysis` tests pin (4 failures, measured).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn analyze_fn_survival(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
@@ -1216,9 +1417,11 @@ fn analyze_fn_survival(
     // the copy-idiom-aware walk above, which excludes `v`'s def and copy-fill.)
     let written = {
         let mut w = HashSet::default();
-        crate::parser::find_written_vars(code, data, &mut w, &mut HashMap::default());
+        crate::parser::find_written_vars(code, data, function, &mut w, &mut HashMap::default());
         w
     };
+    // A parameter's store may still be written by a route `written` does not name.
+    let caller_stable = caller_stores_stable(d_nr, code, function, data, &written);
 
     let mut vars: Vec<u16> = u.append_src.keys().copied().collect();
     vars.sort_unstable();
@@ -1254,6 +1457,7 @@ fn analyze_fn_survival(
                     loc: None,
                     source_last_use: None,
                     survival: false,
+                    projection: false,
                 });
             }
             continue; // not a single-source local copy — not ours to elide
@@ -1267,7 +1471,7 @@ fn analyze_fn_survival(
         // the first turn).  The verdicts below are for a LOCAL, as their own words say.
         let v_is_local = !function.is_argument(v);
         let src_is_param = src.is_some_and(|s| function.is_argument(s));
-        let src_unmutated = src.is_some_and(|s| !written.contains(&s));
+        let src_unmutated = caller_stable && src.is_some_and(|s| !written.contains(&s));
 
         // TIER 1 (max_tier >= 1): a read-only LOCAL source. The set-based facts
         // can't prove a local unmutated (its construction looks like a write), so
@@ -1303,6 +1507,7 @@ fn analyze_fn_survival(
                     CopyClass::Eliminated,
                 )
             } else if crate::keys::link_widen_enabled()
+                && (caller_stable || !src.is_some_and(|s| function.is_argument(s)))
                 && bind_link_safe(&u, function, v, src)
                 && bind_link_unobservable(&u, function, v, src)
             {
@@ -1363,7 +1568,24 @@ fn analyze_fn_survival(
             let borrowers: Vec<u16> = (0..function.next_var())
                 .filter(|&e| e != v && function.tp(e).base().depend().contains(&v))
                 .collect();
-            if borrowers.iter().all(|e| !u.ineligible.contains(e)) {
+            // …and every borrower of a borrower, at any depth: `s = e.inn; s.x = 9` writes the
+            // element `e` views as surely as `e.x = 9` does.  Asked of the direct borrowers
+            // alone, a write two views deep reached the caller's argument through an elided
+            // `xs = b.items` (`(B-View-Base)`: off a plain parameter that bind is a COPY).
+            // Only the direct ones are re-pointed; a deeper one keeps its own base.
+            let mut reach = borrowers.clone();
+            let mut i = 0;
+            while i < reach.len() {
+                let b = reach[i];
+                for e in 0..function.next_var() {
+                    if e != v && !reach.contains(&e) && function.tp(e).base().depend().contains(&b)
+                    {
+                        reach.push(e);
+                    }
+                }
+                i += 1;
+            }
+            if reach.iter().all(|e| !u.ineligible.contains(e)) {
                 plans.push(ElidePlan {
                     var: v,
                     vdb: *vdb,
@@ -1384,6 +1606,7 @@ fn analyze_fn_survival(
             loc: None,
             source_last_use: None,
             survival: false,
+            projection: false,
         });
     }
 
@@ -1399,7 +1622,7 @@ fn analyze_fn_survival(
         // Flag OFF → the original phase-1 classification verbatim (byte-identical). Flag ON →
         // the bound-vs-unbound survival split.
         let (class, reason) = if survival_on {
-            survival_class(src, copy_end, loop_surv, &u, function, data)
+            survival_class(src, entry.5, copy_end, loop_surv, &u, function, data)
         } else {
             (
                 CopyClass::Implicit,
@@ -1413,9 +1636,10 @@ fn analyze_fn_survival(
             verdict: Verdict::Copy,
             reason,
             class,
-            loc: entry.4.clone(),
-            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).cloned().flatten()),
+            loc: entry.4,
+            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).copied().flatten()),
             survival: true,
+            projection: entry.5,
         });
     }
 
@@ -1428,7 +1652,7 @@ fn analyze_fn_survival(
         // Flag OFF → the original phase-1 classification verbatim (byte-identical). Flag ON →
         // the bound-vs-unbound survival split.
         let (class, reason) = if survival_on {
-            survival_class(src, copy_end, loop_surv, &u, function, data)
+            survival_class(src, entry.5, copy_end, loop_surv, &u, function, data)
         } else {
             (CopyClass::Implicit, "record deep-copy (OpCopyRecord)")
         };
@@ -1439,9 +1663,10 @@ fn analyze_fn_survival(
             verdict: Verdict::Copy,
             reason,
             class,
-            loc: entry.4.clone(),
-            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).cloned().flatten()),
+            loc: entry.4,
+            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).copied().flatten()),
             survival: true,
+            projection: entry.5,
         });
     }
 
@@ -1452,24 +1677,30 @@ fn analyze_fn_survival(
     let mut move_plans: Vec<MovePlan> = Vec::new();
     if crate::keys::move_elide_enabled() {
         for entry in &u.construct_copy {
+            if entry.5 {
+                continue; // a field of a record: nothing to move out of it
+            }
             if let Some(s) = move_elidable_source(entry.1, entry.2, entry.3, &u, function) {
                 move_plans.push(MovePlan {
                     container: entry.0.unwrap_or(u16::MAX),
                     source: s,
                     kind: MoveKind::Construct,
                     copy_end: entry.2,
-                    loc: entry.4.clone(),
+                    loc: entry.4,
                 });
             }
         }
         for entry in &u.record_copy {
+            if entry.5 {
+                continue; // a field of a record: nothing to move out of it
+            }
             if let Some(s) = move_elidable_source(entry.1, entry.2, entry.3, &u, function) {
                 move_plans.push(MovePlan {
                     container: entry.0.unwrap_or(u16::MAX),
                     source: s,
                     kind: MoveKind::Record,
                     copy_end: entry.2,
-                    loc: entry.4.clone(),
+                    loc: entry.4,
                 });
             }
         }
@@ -1548,6 +1779,7 @@ fn copy_allocates_nothing(data: &Data, tp: &Type) -> bool {
 /// phase-1 classification verbatim at the call site, so the default dump stays byte-identical.
 fn survival_class(
     src: Option<u16>,
+    projection: bool,
     copy_end: usize,
     loop_surv: bool,
     u: &Uses,
@@ -1560,6 +1792,24 @@ fn survival_class(
             "born-owned: literal / freshly-built source — no live structure duplicated",
         );
     };
+    // A FIELD of `s` is copied, so `s`'s fate cannot decide this copy: ending `s`'s life moves
+    // nothing out of it (the emitted copy is the same either way), and a field cannot be
+    // borrowed into another owner.  Forced as written.
+    if projection {
+        return (
+            CopyClass::Forced,
+            "a field of a record is copied — the record keeps its own, so no move can take it",
+        );
+    }
+    // A PARAMETER's store is the caller's, so its fate here cannot decide the copy either: the
+    // copy is the same op whether the parameter is read again or not (the move planner below
+    // refuses a parameter for the same reason).  Forced as written.
+    if function.is_argument(s) {
+        return (
+            CopyClass::Forced,
+            "a parameter is copied — its store is the caller's, so no move can take it",
+        );
+    }
     // The copy's OWN read of the source is at a position <= copy_end, so a use strictly after
     // loft#1190 — a source that allocates NOTHING when duplicated is `Implicit` whatever its
     // fate.  The `Avoidable` class is the borrow worklist, and there is no borrow to reach for
@@ -1640,7 +1890,7 @@ fn move_elidable_source(
         return None; // a parameter's store belongs to the caller — not ours to transfer
     }
     // Survival MOVE only: a source that survives (read after) or is copied every loop iteration
-    // must keep its COPY (C86) — never move.
+    // must keep its COPY (@C86) — never move.
     let survives = u.last_use_pos.get(&s).is_some_and(|&p| p > copy_end);
     if survives || loop_surv {
         return None;
@@ -1660,7 +1910,7 @@ fn move_elidable_source(
 #[must_use]
 pub fn move_plans(data: &Data, d_nr: u32) -> Vec<MovePlan> {
     let def = data.def(d_nr);
-    analyze_fn(&def.code, &def.variables, data, env_tier()).2
+    analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).2
 }
 
 /// @PLN90 phase B — dump every move-elidable site when `LOFT_MOVE_ELIDE` is set (the opt-in
@@ -1677,7 +1927,7 @@ pub fn dump_move_plans(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for p in analyze_fn(&def.code, &def.variables, data, env_tier()).2 {
+        for p in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).2 {
             total += 1;
             let at = p
                 .loc
@@ -1730,14 +1980,14 @@ pub fn verdicts_for(data: &Data, d_nr: u32) -> Vec<VerdictRow> {
 #[must_use]
 pub fn verdicts_for_tier(data: &Data, d_nr: u32, max_tier: u8) -> Vec<VerdictRow> {
     let def = data.def(d_nr);
-    analyze_fn(&def.code, &def.variables, data, max_tier).0
+    analyze_fn(d_nr, &def.code, &def.variables, data, max_tier).0
 }
 
 /// The elision plans (Borrow verdicts) for one function — what the borrow rewrite
 /// consumes — at the env-selected tier.
 #[must_use]
-pub fn elision_plans(code: &Value, function: &Function, data: &Data) -> Vec<ElidePlan> {
-    analyze_fn(code, function, data, env_tier()).1
+pub fn elision_plans(d_nr: u32, code: &Value, function: &Function, data: &Data) -> Vec<ElidePlan> {
+    analyze_fn(d_nr, code, function, data, env_tier()).1
 }
 
 // ============================================================================
@@ -1825,6 +2075,24 @@ pub enum Own {
     Unknown,
 }
 
+/// Rounds [`Ownership::return_ownership`]'s fixpoint may take before it keeps the
+/// conservative reading of a self call.
+const FIXPOINT_ROUNDS: usize = 6;
+
+/// What a function's call to ITSELF delivers on the first round of
+/// [`Ownership::return_ownership`]'s fixpoint: nothing yet, the join's identity.
+///
+/// `@FR-F-Ret` — a recursion delivers what one of its other return sites delivers, because
+/// a terminating run ends at one of those, so the function's class is the least fixpoint
+/// of "join every site, the self call answering the class so far".  Read as the
+/// conservative `Borrowed { base: MAX }` instead, the self call joined a `return a` into a
+/// `Join` with NO witness, the caller's bind had no store to guard against and adopted, and
+/// the free released the caller's own record (`fn mx(a, b, n) -> P { if n == 0 { return a;
+/// } if n == 1 { y = b; return y; } mx(a, b, n - 2) }`).  Never returned to a reader: a
+/// function whose every site is the self call answers `Unknown`.  Spelled as a borrow of a
+/// slot no function has, so the lattice keeps its variants.
+const NOT_YET: Own = Own::Borrowed { base: u16::MAX - 1 };
+
 impl Own {
     /// The base var a `Borrowed`/`Join` value aliases, or `None` for `Owned`.
     #[must_use]
@@ -1844,6 +2112,9 @@ impl Own {
     #[must_use]
     fn join(self, other: Own) -> Own {
         match (self, other) {
+            // A self call that has delivered nothing YET is the join's identity: the round
+            // it stands for is counted on the next one (see [`NOT_YET`]).
+            (NOT_YET, o) | (o, NOT_YET) => o,
             // An arm the oracle could not derive makes the JOIN underivable: a `Join`'s
             // whole content is the witness its readers compare against, and an arm with no
             // answer cannot supply or refute one.  Absorbing, so it cannot be lost in a
@@ -1871,6 +2142,11 @@ impl Own {
             (Own::Borrowed { base: a }, Own::Borrowed { base: b }) if a == b => {
                 Own::Borrowed { base: a }
             }
+            // Two borrows of DIFFERENT stores are still a borrow — no arm owns anything — of
+            // one of several bases, which no single witness names (loft#1884: `if c { return
+            // a; } b` read as a `Join` witnessed by `a`, so the run that answered `b` adopted
+            // the caller's record and freed it).  Every reader copies that on every run.
+            (Own::Borrowed { .. }, Own::Borrowed { .. }) => Own::Borrowed { base: u16::MAX },
             _ => Own::Join {
                 base: self.base().or_else(|| other.base()).unwrap_or(u16::MAX),
             },
@@ -1942,6 +2218,12 @@ struct Ownership<'a> {
     /// during COMPILATION, reproducible with `--check` on two lines of valid-looking
     /// source (crawler LOFT-HANDOFF H1).
     visiting_vars: HashSet<u16>,
+    /// The functions whose return sites are being classified, innermost last, and the
+    /// class each one's self call answers on the current round of the fixpoint
+    /// ([`NOT_YET`]).  Only the INNERMOST frame's self call reads it: a back edge to an
+    /// outer frame is mutual recursion, where an inner function's class would be memoised
+    /// off a provisional answer, and that keeps the conservative one.
+    frames: Vec<(u32, Own)>,
 }
 
 /// The tail (value) expression of a function body, or `None` for a native/`#rust`
@@ -2214,6 +2496,7 @@ impl<'a> Ownership<'a> {
             ret_memo: HashMap::default(),
             visiting: HashSet::default(),
             visiting_vars: HashSet::default(),
+            frames: Vec::new(),
         }
     }
 
@@ -2245,12 +2528,49 @@ impl<'a> Ownership<'a> {
             self.ret_memo.insert(d_nr, c);
             return c;
         }
-        if !self.visiting.insert(d_nr) {
-            // Recursion back-edge: conservatively Borrowed (never assume a self-
-            // referential return is freshly owned), base unresolved. Not memoised —
+        if self.visiting.contains(&d_nr) {
+            // Recursion back-edge.  A call to the function being classified answers the
+            // class its sites have reached so far ([`NOT_YET`]); one to an OUTER frame is
+            // mutual recursion and stays conservatively Borrowed (never assume a self-
+            // referential return is freshly owned), base unresolved.  Not memoised —
             // the enclosing frame computes and caches the real class.
-            return Own::Borrowed { base: u16::MAX };
+            return match self.frames.last() {
+                Some(&(f, so_far)) if f == d_nr => so_far,
+                _ => Own::Borrowed { base: u16::MAX },
+            };
         }
+        // The least fixpoint over the self call: each round joins every site with the self
+        // call answering the previous round's class.  The lattice is a few levels high, so
+        // it settles in two or three; one that has not by the cap keeps the conservative
+        // reading of the back edge.
+        let mut so_far = NOT_YET;
+        let mut class = None;
+        for _ in 0..FIXPOINT_ROUNDS {
+            let next = self.return_ownership_round(d_nr, so_far);
+            if next == so_far {
+                class = Some(next);
+                break;
+            }
+            so_far = next;
+        }
+        let class = match class {
+            Some(NOT_YET) => Own::Unknown,
+            Some(c) => c,
+            None => self.return_ownership_round(d_nr, Own::Borrowed { base: u16::MAX }),
+        };
+        self.ret_memo.insert(d_nr, class);
+        class
+    }
+
+    /// One round of [`Self::return_ownership`]: the join of every site `d_nr` delivers from,
+    /// its calls to itself answering `so_far`.
+    fn return_ownership_round(&mut self, d_nr: u32, so_far: Own) -> Own {
+        let def = self.data.def(d_nr);
+        let Some(tail) = fn_body_tail(&def.code) else {
+            return Own::Unknown;
+        };
+        self.visiting.insert(d_nr);
+        self.frames.push((d_nr, so_far));
         let mut defs = Defs::default();
         collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
         // @FR-O-Oracle — the answer must be a function of the VALUE, never of who asked.
@@ -2263,10 +2583,20 @@ impl<'a> Ownership<'a> {
         // The FUNCTION-level guard above is the one that stops genuine recursion; this
         // scoping does not weaken it.
         let outer_vars = std::mem::take(&mut self.visiting_vars);
-        let class = self.classify(tail.unwrap(), &def.variables, &defs);
+        let class = self.classify(tail, &def.variables, &defs);
+        // `@FR-F-Ret`, loft#1884 — every early `return` delivers as the tail does, so the
+        // function's return is the JOIN of all of them: `if c { return p; } F { … }` hands back
+        // its parameter on one path and a fresh value on the other, and read off the tail alone
+        // it was owned, the caller adopted the parameter's store, and its free released the
+        // caller's own record.  Joined, the bind copies the borrowed arm (`OpBindOrCopy`).
+        let early = self.early_return_values(d_nr);
+        let class = self
+            .classify_sites(&early, d_nr, &defs)
+            .into_iter()
+            .fold(class, Own::join);
         self.visiting_vars = outer_vars;
+        self.frames.pop();
         self.visiting.remove(&d_nr);
-        self.ret_memo.insert(d_nr, class);
         class
     }
 
@@ -2291,9 +2621,31 @@ impl<'a> Ownership<'a> {
         // whose real tail forwards a borrow (`text_src(i, tag) { if i == 0 { return
         // null } return tag }`), which is the promotion the framework's own verdict
         // declines.
+        let returned = self.early_return_values(d_nr);
+        if returned.is_empty() || self.visiting.contains(&d_nr) {
+            return Vec::new();
+        }
+        // A self call among them answers the function's converged class — asked first,
+        // because the frame below would otherwise read as that class's own back edge.
+        let so_far = self.return_ownership(d_nr);
+        let mut defs = Defs::default();
+        collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
+        self.visiting.insert(d_nr);
+        self.frames.push((d_nr, so_far));
+        let outer_vars = std::mem::take(&mut self.visiting_vars);
+        let classes = self.classify_sites(&returned, d_nr, &defs);
+        self.visiting_vars = outer_vars;
+        self.frames.pop();
+        self.visiting.remove(&d_nr);
+        classes
+    }
+
+    /// The early `return <e>` values of `d_nr` that deliver a store — a null sentinel
+    /// delivers none (see [`Self::early_return_ownerships`]).
+    fn early_return_values(&self, d_nr: u32) -> Vec<Value> {
         let null_text = self.data.def_nr("OpConvTextFromNull");
         let mut returned: Vec<Value> = Vec::new();
-        def.code.walk(&mut |v| {
+        self.data.def(d_nr).code.walk(&mut |v| {
             if let Value::Return(inner) = v
                 && !matches!(inner.unspan(), Value::Null)
                 && !matches!(inner.unspan(), Value::Call(d, args) if *d == null_text && args.is_empty())
@@ -2301,22 +2653,20 @@ impl<'a> Ownership<'a> {
                 returned.push((**inner).clone());
             }
         });
-        if returned.is_empty() || !self.visiting.insert(d_nr) {
-            return Vec::new();
-        }
-        let mut defs = Defs::default();
-        collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
-        let outer_vars = std::mem::take(&mut self.visiting_vars);
-        let classes = returned
+        returned
+    }
+
+    /// Classify each of `sites` in `d_nr`'s variable space, each with a fresh in-flight
+    /// var set (a site is its own expression, not a definition of another).
+    fn classify_sites(&mut self, sites: &[Value], d_nr: u32, defs: &Defs) -> Vec<Own> {
+        let def = self.data.def(d_nr);
+        sites
             .iter()
             .map(|e| {
                 self.visiting_vars.clear();
-                self.classify(e, &def.variables, &defs)
+                self.classify(e, &def.variables, defs)
             })
-            .collect();
-        self.visiting_vars = outer_vars;
-        self.visiting.remove(&d_nr);
-        classes
+            .collect()
     }
 
     /// Classify a value expression within `func` (using `defs` to resolve local
@@ -2358,7 +2708,15 @@ impl<'a> Ownership<'a> {
                             .iter()
                             .filter(|r| !holds_no_store(self.data, r))
                             .map(|r| {
-                                if minted && matches!(r.unspan(), Value::Var(_)) {
+                                // A bare-`Var` bind the emitters COPY is the local's own store
+                                // (@FR-B-Copy): `record_copy_source` is the one predicate both
+                                // backends copy on, at the first bind and the rebind alike.
+                                // Read as the source's borrow, a generic instance's `y: T = b;
+                                // return y` was a borrow of `b`, never lifted, and the copy the
+                                // bind had made leaked once per inline call (loft#1881).
+                                let copied = matches!(r.unspan(), Value::Var(src)
+                                    if bind_copies(self.data, func, *v, *src));
+                                if (minted && matches!(r.unspan(), Value::Var(_))) || copied {
                                     Own::Owned
                                 } else {
                                     self.classify(r, func, defs)
@@ -2501,6 +2859,9 @@ impl<'a> Ownership<'a> {
                     return Own::Unknown;
                 };
                 let callee_own = self.return_ownership(d);
+                if callee_own == NOT_YET {
+                    return NOT_YET;
+                }
                 let callee_base = match callee_own {
                     // The CALLEE's own summary.  `Owned` there is a real derivation — the
                     // callee mints — and passes straight through; `Unknown` is the callee's
@@ -2548,6 +2909,11 @@ impl<'a> Ownership<'a> {
         defs: &Defs,
     ) -> Own {
         let callee_own = self.return_ownership(callee_d);
+        // A self call that has delivered nothing yet stays that (see [`NOT_YET`]): it is no
+        // borrow of an argument, and mapped as one it would name a witness of its own.
+        if callee_own == NOT_YET {
+            return NOT_YET;
+        }
         let callee_base = match callee_own {
             // The `Call` twin of the `CallRef` arm above, and it must answer alike: a callee
             // whose own summary is underivable does not become an owned result by being
@@ -3448,7 +3814,49 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
     if callref_captures(data, d_nr, call) && capture_can_be_returned(data, d_nr, call) {
         return false;
     }
-    !data.def(fn_nr).returns_borrowed_view() || protectable_ref_args(data, d_nr, call).1
+    !may_return_a_borrow(data, fn_nr) || protectable_ref_args(data, d_nr, call).1
+}
+
+/// Does `v = src` COPY `src` into a store `v` owns?  The one predicate the emitters copy a
+/// whole-record bind on (`Function::record_copy_source`, at the first bind and the rebind, both
+/// backends), asked by every reader that classifies such a bind — the oracle and its
+/// flow-sensitive shadow — so a copy is owned in all of them (@FR-B-Copy).
+#[must_use]
+pub(crate) fn bind_copies(
+    data: &Data,
+    func: &crate::variables::Function,
+    v: u16,
+    src: u16,
+) -> bool {
+    func.tp(v).base().heap_def_nr().is_some() && func.record_copy_source(data, v, src).is_some()
+}
+
+/// May `fn_nr`'s result be a borrow of something the caller holds — the question both the
+/// source-free bit ([`call_return_frees_source`]) and native's argument bracket ask, so they
+/// ask it here and cannot answer it apart.
+///
+/// The return dep is the proxy (`@FR-O-Proxy`) and the oracle reads every return site
+/// (`@FR-O-Oracle`); either saying "borrow" is a borrow.  A `return a` beside a copy the hoist
+/// materialised into the buffer leaves a dep naming only the buffer, so the proxy alone set
+/// the bit on the copy of `a` and the copy freed the caller's record (loft#1884).
+#[must_use]
+pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
+    data.def(fn_nr).returns_borrowed_view() || may_hand_back_a_caller_store(data, fn_nr)
+}
+
+/// Does the oracle say `fn_nr` may hand back a store its CALLER holds — a borrow, on some
+/// path, of a visible parameter, or of a base it cannot name?
+///
+/// A borrow of the callee's own LOCAL (`d = inner(n); v = d.value; return v`, promoted onto
+/// its buffer) or of its hidden buffer is the callee's store going to the caller, which the
+/// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).
+#[must_use]
+pub fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
+    let (Own::Borrowed { base } | Own::Join { base }) = return_ownership(data, fn_nr) else {
+        return false;
+    };
+    let attrs = data.def(fn_nr).attributes();
+    base == u16::MAX || (usize::from(base) < attrs.len() && !attrs[usize::from(base)].hidden)
 }
 
 /// loft#1550 — does `callee`'s return name MORE THAN ONE of its visible parameters?  Then a
@@ -3466,6 +3874,21 @@ pub fn returns_one_of_several_args(data: &Data, callee: u32) -> bool {
         .filter(|&&d| attrs.get(d as usize).is_some_and(|a| !a.hidden))
         .count()
         > 1
+}
+
+/// `@FR-N-Road` (loft#1934) — the shape a FIRST bind of a call's answer is lowered by.  A `τ?`
+/// local is bound as its `τ` twin is: a record callee delivers through the same buffer in either
+/// spelling ([`Type::ret_promo_base`](crate::data::Type::ret_promo_base)), so the copy-or-adopt
+/// split is the same question, and the three sites that decide it (`scan_set`'s dep strips, the
+/// interpreter's and `--native`'s bind arms) read it here.  Under `LOFT_NO_NULLABLE_RETBUF=1` a
+/// `τ?` callee keeps no buffer, so this is the identity and the nullable spelling keeps its own
+/// arm ([`nullable_join_first_bind`]).
+#[must_use]
+pub fn first_bind_shape(tp: &Type) -> &Type {
+    match tp {
+        Type::Optional(inner) if crate::keys::nullable_ret_buffer() => inner,
+        other => other,
+    }
 }
 
 /// loft#1106 — does a FIRST bind of a NULLABLE heap local from this call have to go
@@ -3514,7 +3937,8 @@ pub fn nullable_join_first_bind(
     if !crate::keys::join_own_enabled() {
         return None;
     }
-    if !matches!(tp, Type::Optional(_)) {
+    // The nullable local takes the dense bind (`first_bind_shape`) while `τ?` has a buffer.
+    if !matches!(tp, Type::Optional(_)) || crate::keys::nullable_ret_buffer() {
         return None;
     }
     let (Type::Reference(rec, _) | Type::Enum(rec, true, _)) = tp.base() else {
@@ -3979,8 +4403,13 @@ pub fn binds_the_callees_minted_store(
     // Asked FIRST: the ownership reads below are defined for a heap return only, and a callee
     // returning a closure carries callee-frame deps that `returns_borrowed_view` refuses to
     // read (a lifted `use(mk_closure(), …)` reaches here through `lift_set`).
+    // loft#1934 — and a `-> S?` that takes the buffer its dense twin takes
+    // (`Type::ret_promo_peels`) is the dense case exactly: it may return its promoted local,
+    // and its bind adopts that minted store as the twin's does.
     let (shape, nullable) = def.returned().peel_optional();
-    if nullable || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _)) {
+    if (nullable && !def.returned().ret_promo_peels())
+        || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _))
+    {
         return false;
     }
     if !def.is_loft_defined() || def.return_adopts_fresh_store() || def.returns_borrowed_view() {
@@ -3991,6 +4420,13 @@ pub fn binds_the_callees_minted_store(
     };
     let deps = def.returned().depend();
     if deps.len() != 1 || usize::from(deps[0]) != buf {
+        return false;
+    }
+    // The dep says every return is the buffer; the oracle reads every return SITE
+    // (`@FR-O-Oracle`).  A `return a` beside a copy materialised into the buffer keeps a dep
+    // naming only the buffer, and adopted plainly the caller freed its own record on the run
+    // that answered `a` (loft#1884).  A borrow on any path is the copy-or-adopt split's.
+    if may_hand_back_a_caller_store(data, *fn_nr) {
         return false;
     }
     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
@@ -4438,10 +4874,14 @@ pub fn callee_of(data: &Data, d_nr: u32, value: &Value) -> Option<u32> {
 /// not a caller-supplied store.
 fn fnref_return_borrows_closure(def: &crate::data::Definition) -> bool {
     let visible = def.attributes().iter().filter(|a| !a.hidden).count();
+    // The hidden RETURN BUFFER is past the visible parameters too, and it is the caller's,
+    // not the closure's: a `-> S?` lambda took one once nullable records took the buffer
+    // (loft#1934), and read as a closure borrow its call was declined and aliased.
+    let buffer = def.hidden_return_buffer_attr();
     def.returned()
         .depend()
         .iter()
-        .any(|&a| a == u16::MAX || a as usize >= visible)
+        .any(|&a| a == u16::MAX || (a as usize >= visible && buffer != Some(a as usize)))
 }
 
 /// See [`HeapDelivery`].
@@ -4940,7 +5380,7 @@ pub fn dump_all(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn(&def.code, &def.variables, data, env_tier()).0 {
+        for r in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).0 {
             let bucket = match r.class {
                 CopyClass::Eliminated => "eliminated",
                 CopyClass::Avoidable => {
@@ -5112,7 +5552,7 @@ pub fn drop_copy_census(
         crate::copy_manifest::clear_lease();
     }
     let mut sites = 0;
-    if data.any_drop_hook() {
+    if data.any_release() {
         let copy_d = data.def_nr("OpCopyRecord");
         for d_nr in 0..data.definitions() {
             let def = data.def(d_nr);
@@ -5196,7 +5636,7 @@ pub fn drop_copy_census(
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);
-                raise_spent_reads(def, diags, fallback_file);
+                raise_spent_reads(data, def, diags, fallback_file);
             }
         }
     }
@@ -5214,6 +5654,8 @@ pub fn drop_copy_census(
 /// reported and in what words.  One error per copy, de-duplicated by position and by the value it
 /// names: several sites can share a line (the corpus's 355 refusals fall on 227 lines), and the
 /// same sentence twice on one line is noise, while two DIFFERENT copies there are two findings.
+///
+/// @C121 — a copy of a droppable takes its own lease or is refused.
 fn raise_copy_refusals(
     cx: &mut Census<'_>,
     def: &crate::data::Definition,
@@ -5225,7 +5667,7 @@ fn raise_copy_refusals(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        &*def.position.file
+        def.position.file.as_str()
     };
     let mut seen = HashSet::default();
     for (pos, line, refusal, tp) in std::mem::take(&mut cx.refusals) {
@@ -5236,7 +5678,7 @@ fn raise_copy_refusals(
             continue;
         }
         let (file, line, col) = match &pos {
-            Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, line, 0),
         };
@@ -5282,6 +5724,7 @@ fn raise_copy_refusals(
 /// the value moved on and the cure the rule gives: read it through the structure it moved into,
 /// or give the name a new value first.
 fn raise_spent_reads(
+    data: &Data,
     def: &crate::data::Definition,
     diags: &mut crate::diagnostics::Diagnostics,
     fallback_file: &str,
@@ -5289,11 +5732,14 @@ fn raise_spent_reads(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        &*def.position.file
+        def.position.file.as_str()
     };
     for read in crate::spent::take(def) {
+        if read.tp != u32::MAX && data.drop_cascade_nr(read.tp) == u32::MAX {
+            continue;
+        }
         let (file, line, col) = match &read.pos {
-            Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, read.line, 0),
         };
@@ -5452,7 +5898,7 @@ impl Census<'_> {
         use crate::lease::{Lease, Placement, Refusal};
         if let Some(p) = node.span_pos() {
             self.line = p.line;
-            self.pos = Some(p.clone());
+            self.pos = Some(*p);
         } else if let Value::Line(n) = node {
             self.line = *n;
             self.pos = None;
@@ -5880,7 +6326,7 @@ impl Census<'_> {
                 }
                 _ if crate::keys::lease_refuse_enabled() => {
                     self.refusals
-                        .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+                        .push((self.pos, self.line, r.clone(), tp.to_string()));
                 }
                 _ => {}
             }
@@ -6048,7 +6494,7 @@ pub fn warn_variant_overwritten(
         let file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut hits: Vec<(u16, u16, u32, u32)> = Vec::new();
         find_variant_arms(data, &def.code, &mut |place, tag, arm| {
@@ -6059,7 +6505,7 @@ pub fn warn_variant_overwritten(
                 tag,
                 bound: HashSet::default(),
                 stale: false,
-                at: def.position.clone(),
+                at: def.position,
                 written_at: None,
                 hits: Vec::new(),
             };
@@ -6191,9 +6637,9 @@ impl VariantWatch<'_> {
             }
             return;
         }
-        let outer = self.at.clone();
+        let outer = self.at;
         if let Some(p) = node.span_pos() {
-            self.at = p.clone();
+            self.at = *p;
         }
         self.walk_inner(node);
         self.at = outer;
@@ -6220,8 +6666,8 @@ impl VariantWatch<'_> {
             Value::Var(v) if self.stale && self.bound.contains(v) => {
                 // A position no nearer than the write's own, when the read has none.
                 let at = match &self.written_at {
-                    Some(w) if (self.at.line, self.at.pos) < (w.line, w.pos) => w.clone(),
-                    _ => self.at.clone(),
+                    Some(w) if (self.at.line, self.at.pos) < (w.line, w.pos) => *w,
+                    _ => self.at,
                 };
                 self.hits.push((*v, at));
             }
@@ -6235,7 +6681,7 @@ impl VariantWatch<'_> {
                 {
                     self.stale = true;
                     if self.written_at.is_none() {
-                        self.written_at = Some(self.at.clone());
+                        self.written_at = Some(self.at);
                     }
                 }
             }
@@ -6285,7 +6731,7 @@ pub fn warn_linked_group_append(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut cx = GroupAppends {
             data,
@@ -6311,7 +6757,7 @@ struct GroupAppends<'a> {
 impl GroupAppends<'_> {
     fn scan_block(&mut self, node: &Value, diags: &mut crate::diagnostics::Diagnostics) {
         let mut here: Vec<(u16, usize, Position)> = Vec::new();
-        let saved = self.cur.clone();
+        let saved = self.cur;
         self.collect(node, true, &mut here);
         self.report(&here, diags);
         self.cur = saved;
@@ -6323,7 +6769,7 @@ impl GroupAppends<'_> {
     }
     fn collect(&mut self, node: &Value, top: bool, out: &mut Vec<(u16, usize, Position)>) {
         if let Some(p) = node.span_pos() {
-            self.cur = Some(p.clone());
+            self.cur = Some(*p);
         } else if let Value::Line(n) = node {
             // BOTH carriers. `Span` alone silently degrades every report to the enclosing
             // function's line, because a statement's position rides a `Line` marker —
@@ -6343,7 +6789,7 @@ impl GroupAppends<'_> {
             && let Some(Value::Int(fld)) = args.get(2).map(Value::unspan)
             && *fld >= 0
             && *fld != i32::from(u16::MAX)
-            && let Some(at) = self.cur.clone()
+            && let Some(at) = self.cur
         {
             out.push((*v, *fld as usize, at));
         }
@@ -6392,7 +6838,7 @@ impl GroupAppends<'_> {
                 let file = if at.file.is_empty() {
                     self.file
                 } else {
-                    &*at.file
+                    at.file.as_str()
                 };
                 let holder = filled[0];
                 let others = filled[1..]
@@ -6426,7 +6872,7 @@ impl GroupAppends<'_> {
 /// Is `v` a whole-record COPY of the parameter `base`, though `ownership_of` reads it as a
 /// borrow of that parameter?
 ///
-/// `v = p` from a record parameter — plain or `&` — deep-copies (`@FR-B-Copy`, C86; through a
+/// `v = p` from a record parameter — plain or `&` — deep-copies (`@FR-B-Copy`, @C86; through a
 /// `&` by `@FR-C-Ref`): both emitters copy it, and `v`'s own type carries no dep, which is the
 /// fact they read to free it.  `ownership_of` follows the bind back to the parameter and answers
 /// `Borrowed`, the answer for a PROJECTION off it (`m = w.f`, `(B-View)`), whose type keeps the
@@ -6441,6 +6887,132 @@ fn copies_a_parameter(func: &crate::variables::Function, v: u16, base: u16) -> b
         // rather than viewing the parameter; the emitters copy on the same fact.
         && func.tp(v).depend().is_empty()
         && func.owner_witness(v).is_none()
+}
+
+/// loft#1864 — a copy and the VIEWS bound off it are one value for the dead-store question.
+///
+/// `e = es[0]` binds `e` to an element of `es`'s own storage (`(B-View)`): a write through `e`
+/// is a write into `es`, and a read of `e` is a read of `es`.  So two reads the access walk
+/// counts on their own observe nothing outside the copy: the read of `es` that only BINDS such
+/// a view, and a read of a member — the member itself or a place in it — that only feeds a
+/// record write back INTO the group (`es[0] = e`, `es[1] = es[0]`).  Counted as reads, they hid exactly the read-modify-write of one element
+/// that the lint exists for — `es = w.es; e = es[0]; e.awake = false; es[0] = e;` with `w`
+/// unchanged and nothing reported.
+///
+/// Answers `acc` with each group's ROOT (the one member that is no view) carrying the group's
+/// reads minus those two kinds, and the group's writes.  A view is a local assigned exactly
+/// once, from a projection of another local, whose type keeps that local as a dependency and
+/// which is neither a copy, a `&` link, an argument nor a capture; anything else is left as
+/// the walk counted it.
+fn with_view_groups(
+    body: &Value,
+    func: &Function,
+    data: &Data,
+    mut acc: Vec<(u16, u16)>,
+) -> Vec<(u16, u16)> {
+    let n = func.var_count();
+    let mut binds: Vec<(u16, u16)> = Vec::new();
+    let copy_record = data.def_nr("OpCopyRecord");
+    let mut write_backs: Vec<(u16, u16)> = Vec::new();
+    body.walk(&mut |node| match node.unspan() {
+        // Only a heap local that keeps its base as a dependency can be a view; asked here so
+        // a function without one allocates nothing (the lint runs over every definition).
+        Value::Set(t, rhs) => {
+            if let Some(b) = projection_root(rhs, data)
+                && b != *t
+                && (*t as usize) < n
+                && func.tp(*t).heap_def_nr().is_some()
+                && func.tp(*t).depend().contains(&b)
+            {
+                binds.push((*t, b));
+            }
+        }
+        Value::Call(op, args) if *op == copy_record && args.len() >= 2 => {
+            if let Some(m) = place_root(&args[0], data)
+                && !matches!(args[1].unspan(), Value::Var(_))
+                && let Some(d) = place_root(&args[1], data)
+            {
+                write_backs.push((m, d));
+            }
+        }
+        _ => {}
+    });
+    if binds.is_empty() && write_backs.is_empty() {
+        return acc;
+    }
+    let mut sets = vec![0u16; n];
+    body.walk(&mut |node| {
+        if let Value::Set(t, _) = node.unspan()
+            && let Some(slot) = sets.get_mut(*t as usize)
+        {
+            *slot = slot.saturating_add(1);
+        }
+    });
+    let is_view = |t: u16, b: u16| {
+        (t as usize) < n
+            && sets[t as usize] == 1
+            && !func.is_argument(t)
+            && !func.is_captured(t)
+            && !func.copy_bound(t)
+            // `@FR-N-Shape` — a `&τ?` links exactly as its dense twin does.
+            && !matches!(func.tp(t).base(), crate::data::Type::RefVar(_))
+            && !is_value_struct_local(func.tp(t), data)
+            && func.tp(t).heap_def_nr().is_some()
+            && func.tp(t).depend().contains(&b)
+    };
+    // Each view's base; a view of a view joins the same group.
+    let mut base: Vec<Option<u16>> = vec![None; n];
+    for &(t, b) in &binds {
+        if is_view(t, b) {
+            base[t as usize] = Some(b);
+        }
+    }
+    let root_of = |mut v: u16| {
+        let mut steps = 0;
+        while let Some(b) = base[v as usize] {
+            v = b;
+            steps += 1;
+            if steps > n {
+                break;
+            }
+        }
+        v
+    };
+    let mut internal = vec![0u16; n];
+    let mut writes = vec![0u16; n];
+    let mut grouped = vec![false; n];
+    for t in 0..n as u16 {
+        if base[t as usize].is_some() {
+            let r = root_of(t);
+            grouped[r as usize] = true;
+            // The read of the base that bound this view.
+            internal[r as usize] = internal[r as usize].saturating_add(1);
+        }
+    }
+    for &(m, d) in &write_backs {
+        if (m as usize) < n && (d as usize) < n {
+            let r = root_of(m);
+            if root_of(d) == r {
+                grouped[r as usize] = true;
+                internal[r as usize] = internal[r as usize].saturating_add(1);
+            }
+        }
+    }
+    let mut reads = vec![0u16; n];
+    for v in 0..n as u16 {
+        let r = root_of(v);
+        if grouped[r as usize] {
+            let (rd, wr) = acc[v as usize];
+            reads[r as usize] = reads[r as usize].saturating_add(rd);
+            writes[r as usize] = writes[r as usize].saturating_add(wr);
+        }
+    }
+    for r in 0..n {
+        if grouped[r] && base[r].is_none() {
+            acc[r] = (reads[r].saturating_sub(internal[r]), writes[r]);
+        }
+    }
+    acc
 }
 
 pub fn warn_dead_stores(
@@ -6464,11 +7036,16 @@ pub fn warn_dead_stores(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let func = &def.variables;
         let n = func.var_count();
-        let acc = dead_store_accesses(&def.code, func, data);
+        let acc = with_view_groups(
+            &def.code,
+            func,
+            data,
+            dead_store_accesses(&def.code, func, data),
+        );
         for i in 0..n {
             let v = i as u16;
             let name = func.name(v);
@@ -6508,7 +7085,11 @@ pub fn warn_dead_stores(
             // value-struct test it is a false NEGATIVE. A plain reference `struct` ALIASES (the
             // write propagates) and correctly stays `Borrowed` → silent; `&value struct` is a
             // `RefVar`, already excluded above.
-            let owns = is_value_struct_local(func.tp(v), data)
+            // The parser's own `(B-Copy)` verdict comes first: a bind it lowered as a COPY of a
+            // place owns that copy, whatever dep the local's type keeps for its lifetime — a
+            // text local bound from a field (`t = s.name`) carries the field's base (loft#1840).
+            let owns = func.copy_bound(v)
+                || is_value_struct_local(func.tp(v), data)
                 || match ownership_of(data, d_nr, &Value::Var(v)) {
                     // A LINT screen, not an emitter: `owns` decides whether to look at `v`
                     // at all, so keeping `Owned`'s answer costs at most a diagnostic that is
@@ -6615,7 +7196,7 @@ impl DoubleMove<'_> {
     /// Walk a subtree that is CERTAIN to run, given what `st` has already been handed off.
     fn scan(&mut self, node: &Value, st: &mut Handoffs) {
         if let Some(p) = node.span_pos() {
-            self.cur = Some(p.clone());
+            self.cur = Some(*p);
         } else if let Value::Line(n) = node {
             // A bare line marker is the coarse fallback, exactly as the copy notice uses it:
             // an empty `file` means "borrow the definition's own file" (filled in by the
@@ -6668,7 +7249,7 @@ impl DoubleMove<'_> {
                 if self.ret_cascades
                     && let Some(root) = projection_root(v, self.data)
                     && self.is_caller_owned(root)
-                    && let Some(at) = self.cur.clone()
+                    && let Some(at) = self.cur
                 {
                     self.ret_found.push((root, at));
                 }
@@ -6872,7 +7453,7 @@ impl DoubleMove<'_> {
             && copied_record_releases(self.data, &args[2])
             && self.member_released_elsewhere(root, 0)
         {
-            if let Some(at) = self.cur.clone() {
+            if let Some(at) = self.cur {
                 self.proj.entry(root).or_default().push(at);
             }
             return;
@@ -6912,12 +7493,12 @@ impl DoubleMove<'_> {
         if name.starts_with('_') || name.contains('#') {
             return;
         }
-        let Some(at) = self.cur.clone() else { return };
+        let Some(at) = self.cur else { return };
         if let Some(first) = st.get(&src) {
-            self.found.push((src, first.clone(), at));
+            self.found.push((src, *first, at));
             // Drop the pending entry so a third hand-off reports once more against the
             // second, rather than N-1 times against the first.
-            st.insert(src, self.found.last().expect("just pushed").2.clone());
+            st.insert(src, self.found.last().expect("just pushed").2);
         } else {
             st.insert(src, at);
         }
@@ -6972,7 +7553,7 @@ fn copied_record_releases(data: &Data, tp: &Value) -> bool {
 }
 
 /// The root variable of a PLACE: the variable itself, or a projection's root.
-fn place_root(node: &Value, data: &Data) -> Option<u16> {
+pub(crate) fn place_root(node: &Value, data: &Data) -> Option<u16> {
     match node.unspan() {
         Value::Var(v) => Some(*v),
         _ => projection_root(node, data),
@@ -7082,7 +7663,7 @@ pub fn warn_double_move(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut cx = DoubleMove {
             data,
@@ -7118,7 +7699,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                &*at.file
+                at.file.as_str()
             };
             // Name the FACT, not the cure — the cure is `--explain`'s job. Both positions
             // matter to the reader: the second is where the defect is written, the first is
@@ -7172,7 +7753,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                &*at.file
+                at.file.as_str()
             };
             if cx.is_caller_owned(root) {
                 report_caller_owned_copy(diags, name, def.variables.is_argument(root), file, &at);
@@ -7218,7 +7799,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                &*at.file
+                at.file.as_str()
             };
             report_returned_parameter_member(
                 diags,
@@ -7423,9 +8004,10 @@ pub fn c_binding_call_unsupported(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            &*pos.file
+            pos.file.as_str()
         };
         let why = uncovered(data, d_nr).unwrap_or_default();
+        // @C106 — one `#c` arity ceiling for both backends (`c_signature::MAX_C_ARITY`).
         diags.add_at_coded(
             crate::diagnostics::Level::Error,
             Some("c-binding-not-interpretable"),
@@ -7477,8 +8059,75 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
         func.is_argument(v)
             && !matches!(func.tp(v), Type::RefVar(_))
             && !func.name(v).starts_with("__")
+            && (func.rebind_orig(v).is_none()
+                || written_before_rebind(&def.code, data, v, &mut false))
     });
     written
+}
+
+/// Does the body write through parameter `p` BEFORE it first rebinds `p` (`(F-ParamRebind)`)?
+/// After a rebind the binding may name a store of the callee's own, so a field write there
+/// is not a write-through — `fn bump(p: S) -> S { p = S { x: p.x + 1 }; p }` builds its
+/// literal by field writes into the fresh store, and read as writes through `p` they made
+/// `bump(bump(a))` a lost write.  A rebind counts only where EVERY path rebinds first: an `if`
+/// whose one arm rebinds leaves the other path writing through.  Walked in program order, a
+/// `Set`'s value before the `Set`.
+fn written_before_rebind(code: &Value, data: &Data, p: u16, rebound: &mut bool) -> bool {
+    if *rebound {
+        return false;
+    }
+    let is_p =
+        |a: Option<&Value>| a.is_some_and(|a| matches!(a.unspan(), Value::Var(v) if *v == p));
+    match code {
+        Value::Span(b) => written_before_rebind(&b.1, data, p, rebound),
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .any(|o| written_before_rebind(o, data, p, rebound)),
+        // A loop may run no pass, so a rebind inside it ends the proof only for the rest of
+        // its own body.
+        Value::Loop(bl) => {
+            let mut in_pass = false;
+            bl.operators
+                .iter()
+                .any(|o| written_before_rebind(o, data, p, &mut in_pass))
+        }
+        Value::Insert(list) => list
+            .iter()
+            .any(|o| written_before_rebind(o, data, p, rebound)),
+        Value::If(c, t, e) => {
+            if written_before_rebind(c, data, p, rebound) {
+                return true;
+            }
+            let mut in_then = false;
+            let mut in_else = false;
+            let hit = written_before_rebind(t, data, p, &mut in_then)
+                || written_before_rebind(e, data, p, &mut in_else);
+            *rebound = in_then && in_else;
+            hit
+        }
+        Value::Set(v, body) => {
+            let hit = written_before_rebind(body, data, p, rebound);
+            *rebound |= *v == p;
+            hit
+        }
+        Value::Return(x) | Value::Drop(x) => written_before_rebind(x, data, p, rebound),
+        Value::Call(op, args)
+            if is_p(args.first())
+                && matches!(
+                    data.def(*op).name(),
+                    "OpDatabase" | "OpInitRefSentinel" | "OpFreeRefIfDistinct"
+                ) =>
+        {
+            *rebound = true;
+            false
+        }
+        _ => {
+            let mut w = crate::fxhash::FxHashSet::default();
+            crate::parser::find_field_written_vars(code, data, &mut w);
+            w.contains(&p)
+        }
+    }
 }
 
 /// Is `arg` a call that hands back a COPY of a place the caller can still reach?
@@ -7564,7 +8213,7 @@ fn lifted_call_results(
 ///
 /// `hurt(first(s), 10.0)` and `hurt(s.es[0] ?? E {}, 10.0)` are the same types, the same
 /// call, and the same write — but the first one does nothing. Returning a struct hands back
-/// a COPY (C86), which lives in a temporary that is freed at the end of the statement, so
+/// a COPY (@C86), which lives in a temporary that is freed at the end of the statement, so
 /// `hurt` writes the copy and the element keeps the value it had. Passing the element
 /// directly hands over a view of it, so the same write lands.
 ///
@@ -7607,7 +8256,7 @@ pub fn warn_lost_temp_writes(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut found = Vec::new();
         let lifted = lifted_call_results(data, &def.code, &def.variables);
@@ -7622,7 +8271,7 @@ pub fn warn_lost_temp_writes(
         );
         for (callee, param, at) in found {
             let file = match &at {
-                Some(p) if !p.file.is_empty() => &*p.file,
+                Some(p) if !p.file.is_empty() => p.file.as_str(),
                 _ => def_file,
             };
             let (line, col) = at
@@ -7705,7 +8354,7 @@ fn scan_lost_temp_writes(
                         out.push((
                             *callee,
                             i as u16,
-                            node.span_pos().or(lift_at).or(at).cloned(),
+                            node.span_pos().or(lift_at).or(at).copied(),
                         ));
                     }
                 }
@@ -7739,7 +8388,7 @@ pub fn superseded_fold_diagnostics(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            &*pos.file
+            pos.file.as_str()
         };
         let shown = def.display_name();
         // (a) the successor must resolve — as a free fn `n_<succ>`, or (if X is a
@@ -7864,7 +8513,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn_survival(&def.code, &def.variables, data, env_tier(), true).0 {
+        for r in analyze_fn_survival(d_nr, &def.code, &def.variables, data, env_tier(), true).0 {
             // Only survival-split (source-duplicating) copies are user-facing, and only the
             // Avoidable class is the actionable worklist — mirror `report_copies`'s filter.
             if !r.survival || !matches!(r.class, CopyClass::Avoidable) {
@@ -7891,14 +8540,14 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let def_file = if def.position.file.is_empty() {
                 fallback_file
             } else {
-                &*def.position.file
+                def.position.file.as_str()
             };
             // When even the line is unknown, fall back to line 0 + the fn name.
             let (file, line, col) = r.loc.as_ref().map_or((def_file, 0, 0), |p| {
                 let f = if p.file.is_empty() {
                     def_file
                 } else {
-                    &*p.file
+                    p.file.as_str()
                 };
                 (f, p.line, p.pos)
             });
@@ -8024,7 +8673,7 @@ pub fn report_copies(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn(&def.code, &def.variables, data, env_tier()).0 {
+        for r in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).0 {
             // Only survival-split copies (source duplications) are user-facing; the var-buffer /
             // return-buffer copies are a separate elision class (and where the stdlib's copies
             // land — the survival baseline is 0), kept to the developer dump.
@@ -8052,6 +8701,11 @@ pub fn report_copies(data: &Data) {
             );
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
+            } else if r.projection {
+                format!(
+                    "a field of {}",
+                    data.display_type_name(def.variables.tp(r.source))
+                )
             } else {
                 data.display_type_name(def.variables.tp(r.source))
             };

@@ -1,0 +1,13 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 6b07374..84b7ba0 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -4890,7 +4890,7 @@ impl Stores {
+     #[inline]
+     pub(crate) fn holds_no_heap_fast(&self, rec: &DbRef, tp: u16) -> Option<bool> {
+         let slots = self.heap_slots_of(tp)?;
+-        if slots.is_empty() {
++        if slots.is_empty() || !slots.is_empty() {
+             return Some(true);
+         }
+         let store = self.store(rec);

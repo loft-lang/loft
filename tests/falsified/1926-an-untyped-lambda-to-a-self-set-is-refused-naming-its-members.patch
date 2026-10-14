@@ -1,0 +1,273 @@
+diff --git a/src/data.rs b/src/data.rs
+index 7428d13b3..75099f067 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -8981,40 +8981,6 @@ impl Data {
+     }
+ 
+     /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
+-    /// `@FR-Disp-Hint` — does the call `name(receiver, …)` (either spelling) reach an overload set
+-    /// in which SEVERAL members take `receiver`?  Then no single definition may steer how the
+-    /// arguments parse: an untyped `|x|` lambda, or a literal needing a width, would be typed by
+-    /// whichever member is asked — the first declared — and the call would then select that
+-    /// member because of the type the hint gave it.  A set whose members take DIFFERENT receivers
+-    /// keeps the receiver's own member as its hint: the receiver is typed before the arguments
+-    /// are read (`F-Recv`), so it already names one definition.
+-    #[must_use]
+-    pub fn receiver_shared_in_set(&self, name: &str, receiver: &Type) -> bool {
+-        let source = self.receiver_overload_source(name, receiver);
+-        let main = self.source_nr(source, name);
+-        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+-            return false;
+-        }
+-        let receiver = match receiver.base() {
+-            Type::RefVar(inner) => inner.base().clone(),
+-            other => other.clone(),
+-        };
+-        self.def(main)
+-            .attributes
+-            .iter()
+-            .filter_map(|a| match a.typedef.base() {
+-                Type::Routine(r) => Some(*r),
+-                _ => None,
+-            })
+-            .filter(|&r| {
+-                self.visible_params(r)
+-                    .first()
+-                    .is_some_and(|p| self.param_fits(&receiver, p))
+-            })
+-            .count()
+-            > 1
+-    }
+-
+     pub(crate) fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
+         self.def(d_nr)
+             .attributes
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index f3130d070..0fbf8978a 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -20130,18 +20130,7 @@ impl Parser {
+                             if self.data.def(*t).name().starts_with("__tuple<")))
+             });
+             self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
+-            // `@FR-Disp-Hint` — an argument a set's definitions do not hint is parsed knowing
+-            // which set it is for, so an untyped lambda in it is refused naming them.
+-            self.unhinted_set = if self.first_pass
+-                || fn_def_nr.is_some()
+-                || self.free_call_hint(name, &types) != u32::MAX
+-            {
+-                None
+-            } else {
+-                self.unhinted_set_names(name, types.first())
+-            };
+             let mut t = self.expression(&mut p);
+-            self.unhinted_set = None;
+             self.tuple_place_wanted = prev_place;
+             // A member of a call result handed on as an argument is read where it lives
+             // (`call_member_view`): the argument binds without copying, so the copy the terminal
+@@ -20190,10 +20179,6 @@ impl Parser {
+             }
+         }
+         self.last_called = u32::MAX;
+-        // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
+-        if std::mem::take(&mut self.unhinted_set_refused) {
+-            return Type::Never;
+-        }
+         let ret = self.dispatch_call(
+             val,
+             source,
+@@ -21581,9 +21566,6 @@ impl Parser {
+         let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
+             return u32::MAX;
+         };
+-        if self.data.receiver_shared_in_set(name, receiver) {
+-            return u32::MAX;
+-        }
+         match self.data.candidates(u16::MAX, name, receiver).as_slice() {
+             [one] if self.data.def(*one).name().starts_with("t_") => *one,
+             _ => u32::MAX,
+@@ -21708,11 +21690,8 @@ impl Parser {
+                         // The slot holds the SET itself (a `self` set that dispatches past its
+                         // receiver, with no enum-level definition): there is no routine to
+                         // fall back to, and the answer is the bare spelling's refusal.
+-                        // Nor is there one when several members take this receiver: the
+-                        // slot's routine is only the FIRST of them (`@FR-Disp-Exhaustive`).
+                         if !self.reported_dynamic_refusal
+-                            && (self.data.def(*fallback).def_type == DefType::Dynamic
+-                                || self.data.receiver_shared_in_set(name, dispatch))
++                            && self.data.def(*fallback).def_type == DefType::Dynamic
+                         {
+                             if !self.first_pass {
+                                 self.report_selection(name, &routed, &sel, None);
+@@ -21961,17 +21940,7 @@ impl Parser {
+             arg_pos.push(*self.lexer.peek_pos());
+             let before = self.method_facts.0.clone();
+             self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
+-            // `@FR-Disp-Hint` — as the bare spelling does (`parse_call`).
+-            self.unhinted_set = match select {
+-                MethodSelect::ByName { name, dispatch, .. }
+-                    if !self.first_pass && hint_nr == u32::MAX =>
+-                {
+-                    self.unhinted_set_names(name, Some(dispatch))
+-                }
+-                _ => None,
+-            };
+             let t = self.expression(&mut p);
+-            self.unhinted_set = None;
+             self.expected = Type::Unknown(0);
+             let fact = std::mem::take(&mut self.operand_fact);
+             self.method_facts.0.push(fact);
+@@ -21984,10 +21953,6 @@ impl Parser {
+         self.lexer.token(")");
+         // @PLN187 — what the arguments called is not this call (a special form records none)
+         self.last_called = u32::MAX;
+-        // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
+-        if std::mem::take(&mut self.unhinted_set_refused) {
+-            return Type::Never;
+-        }
+         let selected = self.select_method_def(select, &types);
+         // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
+         // the whole answer, as `Parser::call` makes it for the bare spelling.
+diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
+index e76dea3cb..149bef662 100644
+--- a/src/parser/dispatch.rs
++++ b/src/parser/dispatch.rs
+@@ -655,41 +655,6 @@ impl Parser {
+         out
+     }
+ 
+-    /// `@FR-Disp-Hint` — the definitions a call of `name` parses its arguments WITHOUT a hint
+-    /// for, as a refusal names them: those of a free overload set, or the members of a set
+-    /// that take the call's `receiver` when several do ([`crate::data::Data::receiver_shared_in_set`]).
+-    /// `None` when one definition steers the arguments.
+-    pub(crate) fn unhinted_set_names(&self, name: &str, receiver: Option<&Type>) -> Option<String> {
+-        let main = match receiver {
+-            Some(r) if self.data.receiver_shared_in_set(name, r) => {
+-                let source = self.data.receiver_overload_source(name, r);
+-                self.data.source_nr(source, name)
+-            }
+-            _ if self.data.has_overload_set(name) => self.data.def_nr(name),
+-            _ => return None,
+-        };
+-        let shown: Vec<String> = self
+-            .data
+-            .def(main)
+-            .attributes
+-            .iter()
+-            .filter_map(|a| match a.typedef.base() {
+-                Type::Routine(r) => Some(*r),
+-                _ => None,
+-            })
+-            .filter(|&r| {
+-                receiver.is_none_or(|rt| {
+-                    self.data
+-                        .visible_params(r)
+-                        .first()
+-                        .is_some_and(|p| self.data.param_fits(rt, p))
+-                })
+-            })
+-            .map(|r| self.data.overload_signature(name, r))
+-            .collect();
+-        (shown.len() > 1).then(|| format!("`{name}` is {}", shown.join(" and ")))
+-    }
+-
+     /// The two refusals selection can end in, worded once for both call spellings.
+     pub(crate) fn report_selection(
+         &mut self,
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index 8d0760e3c..c1b976035 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
+@@ -730,11 +730,7 @@ impl Parser {
+             // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
+             // has at this receiver, else under the slot's routine; the definition the call
+             // reaches is selected once the argument types exist (`parse_method_selecting`).
+-            // A set in which several members take this receiver offers no hint at all: the
+-            // slot's routine is its FIRST member, and hinting with it typed an untyped `|x|`
+-            // by declaration order (loft#1926).
+             let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
+-                _ if self.data.receiver_shared_in_set(&field, &dispatch) => u32::MAX,
+                 [one] if self.data.def(*one).name.starts_with("t_") => *one,
+                 _ => r_nr,
+             };
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9740906a6..650be68fa 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -1194,13 +1194,6 @@ pub struct Parser {
+     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
+     /// than falling to the ladder and reporting the same site a second way.
+     pub(crate) reported_dynamic_refusal: bool,
+-    /// `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a
+-    /// hint, the set's definitions as a refusal names them; a short lambda whose parameter
+-    /// thereby has no type takes it and says so, naming them (`parse_lambda_short`).
+-    pub(crate) unhinted_set: Option<String>,
+-    /// That refusal was made: the call it belongs to ends there, so the definitions are not
+-    /// reported a second time against an argument typed `fn(unknown)`.
+-    pub(crate) unhinted_set_refused: bool,
+     /// A call refused because two parameters bind one type variable to two types (@PLN165
+     /// C1, F9): the refusal names both, and `call` answers nothing further for it.
+     pub(crate) reported_binding_clash: bool,
+@@ -1974,8 +1967,6 @@ impl Parser {
+             lambda_counter: 0,
+             expected: Type::Unknown(0),
+             reported_dynamic_refusal: false,
+-            unhinted_set: None,
+-            unhinted_set_refused: false,
+             reported_binding_clash: false,
+             declared_fn_names: HashMap::new(),
+             positionless_loops: HashSet::new(),
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 2c3a88940..5a8fe1ce7 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -1784,10 +1784,7 @@ or build a local and use that."
+         self.lambda_counter += 1;
+         let stored_name = format!("n_{lambda_name}");
+ 
+-        // Capture hint types before entering the new context.  The overload set this lambda is
+-        // a direct argument of (`Self::unhinted_set`) is taken here, so a lambda in its body
+-        // does not read it as its own call's.
+-        let unhinted_set = self.unhinted_set.take();
++        // Capture hint types before entering the new context.
+         let hint_params_ret = self.lambda_hint();
+         let (hint_params, hint_consts): (Vec<Type>, crate::data::ConstParams) =
+             if let Type::Function(pts, _, _, consts) = &hint_params_ret {
+@@ -1852,35 +1849,7 @@ or build a local and use that."
+         // Error on second pass for any parameter whose type is still Unknown.
+         if !self.first_pass {
+             for a in &arguments {
+-                if a.typedef.is_unknown()
+-                    && let Some(set) = unhinted_set.as_ref()
+-                {
+-                    // `@FR-Disp-Hint` — the call is to a name with several definitions, so none
+-                    // of them types the lambda; the refusal names them, as a free set's does.
+-                    self.unhinted_set_refused = true;
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        code = "untyped-lambda-at-overload-set",
+-                        "cannot infer the type of lambda parameter '{}': {set}, so no single \
+-                         definition types the lambda — write its types, `fn({}: <type>) -> <ret> {{ … }}`",
+-                        a.name,
+-                        a.name
+-                    );
+-                    self.lexer.fix_last(crate::diagnostics::Fix {
+-                        kind: crate::diagnostics::FixKind::Conditional,
+-                        title: format!(
+-                            "spell the lambda `fn({}: <type>) -> <ret> {{ … }}` with the types the intended definition takes",
+-                            a.name
+-                        ),
+-                        condition: Some(
+-                            "the type picks the definition the call is meant to reach".to_string(),
+-                        ),
+-                        edit: None,
+-                        concept: "multiple dispatch",
+-                        concept_ref: "@F122",
+-                    });
+-                } else if a.typedef.is_unknown() {
++                if a.typedef.is_unknown() {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,

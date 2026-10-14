@@ -32,8 +32,8 @@
 //! value tests and the interpreter's poison run are green on the broken build, which is the
 //! measurement that says a value-only guard for this defect would be worthless.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -45,7 +45,7 @@ fn probe() -> PathBuf {
 
 /// Run `file` on `backend` with extra env; return `(ok, stdout, stderr)`.
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -81,7 +81,7 @@ fn main() { println(\"{m1235()}\"); }\n";
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_1235_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -117,13 +117,13 @@ fn returned_text_poison_clean_native() {
 #[test]
 fn the_returned_text_is_read_before_the_free() {
     let path = write_temp("static", MINIMAL);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("failed to invoke loft introspect");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(out.status.success(), "introspect must exit 0");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     let body = text
@@ -156,7 +156,7 @@ fn harness_can_fail() {
     );
     let path = write_temp("control", &src);
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

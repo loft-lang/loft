@@ -148,6 +148,12 @@
     <span class="en">East</span> | <span class="en">West</span>   =&gt; <span class="st">"horizontal"</span>,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(axis == <span class="st">"vertical"</span>, <span class="st">"multi-pattern: {axis}"</span>);</code></pre>
+<p><code>|</code> joins variant NAMES.  To bind fields in several variants with one arm, list the whole patterns separated by <code>,</code> instead: each pattern binds from its own variant, and the arm body runs for whichever one matched.  A name every pattern binds must have the same type in each; a name only some patterns bind is nullable in the body, <code>null</code> when a pattern without it matched.</p>
+<pre><code>  long_side = match <span class="en">Rect</span> { w: <span class="nm">3</span>, h: <span class="nm">8</span> } {
+    <span class="en">Circle</span> { radius }, <span class="en">Rect</span> { h: radius } =&gt; radius,
+    _ =&gt; <span class="nm">0</span>,
+  };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(long_side == <span class="nm">8</span>, <span class="st">"a field bound from either variant: {long_side}"</span>);</code></pre>
 <h2 id="tuple-patterns">Tuple patterns</h2>
 <p>A tuple subject matches element by element.  Write <code>_</code> for an element you do not care about.</p>
 <pre><code>  point = (<span class="nm">2</span>, <span class="st">"b"</span>);
@@ -365,6 +371,16 @@ fn main() {
     East | West   =&gt; "horizontal",
   };
   assert(axis == "vertical", "multi-pattern: {axis}");
+  // `|` joins variant NAMES.  To bind fields in several variants with one arm, list the whole
+  // patterns separated by `,` instead: each pattern binds from its own variant, and the arm
+  // body runs for whichever one matched.  A name every pattern binds must have the same type
+  // in each; a name only some patterns bind is nullable in the body, `null` when a pattern
+  // without it matched.
+  long_side = match Rect { w: 3, h: 8 } {
+    Circle { radius }, Rect { h: radius } =&gt; radius,
+    _ =&gt; 0,
+  };
+  assert(long_side == 8, "a field bound from either variant: {long_side}");
   // ## Tuple patterns
   // A tuple subject matches element by element.  Write `_` for an element you
   // do not care about.

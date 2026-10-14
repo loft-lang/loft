@@ -4,7 +4,7 @@
 
 //! @PLN181 — the standard library compiled like any other library.
 //!
-//! A `use`d library is compiled for an interpreted program (C71, "libraries compile, scripts
+//! A `use`d library is compiled for an interpreted program (@C71, "libraries compile, scripts
 //! interpret") and called over the shared-store bridge: `native_gate::shared_store_dispatchable`
 //! picks the functions, `native_lib::generate_shared_cdylib_lib_rs` emits their compiled loft
 //! bodies with one `loft_shared_<fn>` bridge each, `native_lib::mark_exports` routes the calls

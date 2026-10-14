@@ -56,10 +56,10 @@ correct everywhere.  An unknown type is refused, never guessed.
 | `integer`, narrow ints, `boolean`, `character` | one C integer | any width; the value is passed full-width |
 | `text` argument | one `const char*` | **NUL-terminated**, unlike the `#native` path's `ptr, len` |
 | `text` / `text?` RETURN | `char*` | the bytes are **copied** up to the first NUL; loft never frees the pointer |
-| `vector<T>` | **two**: element pointer + count | C carries no length.  The pointer is valid *for the call only* — see the retention hazard below |
+| `vector<T>` | element pointer, plus a count where the C signature has one (@C107) | C carries no length.  The pointer is valid *for the call only* — see the retention hazard below |
 | `vector<float>` | `double*` + count | C may **write through it**; the writes are visible to loft |
 | C-owned handle (`PGconn *`) | `void*` ↔ loft `integer` | the pointer value crosses as an integer |
-| `float` / `single` SCALAR | — | **refused**: floats travel in SSE registers a fixed caller does not touch — pass it by pointer as a 1-element `vector<float>` |
+| `float` / `single` SCALAR argument | — | **refused**: floats travel in SSE registers a fixed caller does not touch — pass it by pointer as a 1-element `vector<float>`.  A scalar RETURN crosses (@C109, below) |
 | a loft record | — | **refused**: records live in a store that may move them |
 | a nullable `τ?` ARGUMENT | — | **refused at compile time**: C has no null model |
 
@@ -75,7 +75,7 @@ requires a discharge (`?? 0`, `x?`, `match`).
 becomes an element pointer **immediately followed by** its count, so `write(fd,
 ptr, n)` binds directly while `memchr(ptr, ch, n)` and `fwrite(ptr, size, n, f)`
 — which separate the pair — need a shim.  And a binding may declare at most **32**
-C parameters: the interpreter calls through a fixed ladder of per-arity
+C parameters (@C106): the interpreter calls through a fixed ladder of per-arity
 trampolines, and that ladder is where the ceiling comes from.
 
 **One ceiling, both backends** (@PLN128 arc C).  It used to be 12 and it was
@@ -154,7 +154,7 @@ and a C library written for loft takes exactly that. Fortran does not. BLAS and
 LAPACK pass **every** argument by reference, so each one is a bare pointer and
 the routine learns the length from a separate `n`, itself a bare pointer.
 
-**Both are supported, and the C signature is what chooses.** Write the signature
+**Both are supported, and the C signature is what chooses** (@C107). Write the signature
 the header shows you and the count appears exactly where the header puts one:
 
 ```loft
@@ -196,7 +196,7 @@ Two things to know before binding real Fortran:
 
 A `vector` reaches C as a pointer into **loft's own element bytes** — nothing is
 converted on the way — so the loft element type and the C pointee are two
-spellings of one layout, and a declaration where they disagree is refused:
+spellings of one layout, and a declaration where they disagree is refused (@C108):
 
 | loft element | write the pointee as |
 |---|---|
@@ -235,7 +235,7 @@ consistently; it cannot tell you which build is on the machine.
 
 ##### A `double` return comes back; a `double` argument still does not
 
-The level-1 BLAS *functions* answer by value — `ddot_`, `dnrm2_`, `dasum_`, and
+The level-1 BLAS *functions* answer by value (@C109) — `ddot_`, `dnrm2_`, `dasum_`, and
 LAPACK's `dlange_` / `dlamch_` — and that binds directly:
 
 ```loft
@@ -381,7 +381,7 @@ if c_library_available("libduckdb.so") { … } else { /* fall back */ }
 Ask it *before* the first call.  A `#c` symbol that cannot be resolved **faults**
 — `#c` is the declared edge of loft's totality, not a null-returning
 computation — so this query is what keeps an optional backend inside the
-no-runtime-errors rule (C80).
+no-runtime-errors rule (@C80).
 
 `c_library_available` answers true when the library loads **and** every `#c`
 symbol attributable to it resolves.  Both halves matter: a library of the wrong

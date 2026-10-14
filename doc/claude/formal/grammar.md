@@ -13,8 +13,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > Rough spot #4 from [FORMALIZATION.md](../FORMALIZATION.md), which the runtime-scoped
 > red-flag map structurally misses.
 >
-> Ground truth: the precedence table `OPERATORS` (`src/parser/mod.rs:375`) and the
-> precedence-climbing walk `parse_operators` (`src/parser/operators.rs:446`). The full
+> Ground truth: the precedence table `OPERATORS` (`src/parser/mod.rs`) and the
+> precedence-climbing walk `parse_operators` (`src/parser/operators.rs`). The full
 > statement/expression shapes stay in [LOFT.md](../LOFT.md); this doc adds the one fact
 > that lives *only* in the parser.
 
@@ -50,7 +50,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ```
   (G-Prec)   for binary operators, level N binds tighter than level N-1.  Parsing is
-             precedence-climbing: `parse_operators(p)` parses operands at level p+1, so a
+             precedence-climbing: `parse_operators(p)` reads an operand, then takes each
+             operator at a level >= p with its right operand parsed one level tighter, so a
              higher level groups deeper.
   (G-Assoc)  binary levels are LEFT-associative, EXCEPT `**` (power = RIGHT-assoc), `??`
              (default-fallback = RIGHT-assoc) and the comparison level 3 (NON-associative —

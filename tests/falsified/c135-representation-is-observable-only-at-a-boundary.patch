@@ -1,0 +1,13 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 923e7cde7..52888e324 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -3722,7 +3722,7 @@ impl Parser {
+                 } else {
+                     diagnostic!(self.lexer, Level::Error, "Expect rust next string");
+                 }
+-            } else if !self.default
++            } else if false && !self.default
+                 && (id == Some("rust".to_string()) || id == Some("iterator".to_string()))
+             {
+                 // @C87 — `#rust` / `#iterator` are the standard library's templates for its own

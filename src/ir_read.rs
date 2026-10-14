@@ -126,7 +126,7 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
         // ── inlined sub-structs ───────────────────────────────────────────────
         ValueType::Span => {
             let position = Position {
-                file: slot.field_str(stores, ds::SPAN_POS_FILE).into(),
+                file: crate::lexer::intern_file(slot.field_str(stores, ds::SPAN_POS_FILE)),
                 line: slot.field_int(stores, ds::SPAN_POS_LINE) as u32,
                 pos: slot.field_int(stores, ds::SPAN_POS_POS) as u32,
             };
@@ -455,6 +455,7 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
         )
     }));
     data.rebuild_indices();
+    data.fn_fields_settled = data.definitions();
     data
 }
 
@@ -507,8 +508,7 @@ pub fn ir_roundtrip_check(data: &Data) -> Result<(), crate::ir_schema::DataDiff>
 /// through it.
 #[cfg(feature = "mmap")]
 fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
-    let mut fstore = crate::store::Store::open(path);
-    fstore.read_only = true;
+    let fstore = crate::store::Store::open_read_surface(path);
     stores.adopt_store(fstore)
 }
 
@@ -523,7 +523,8 @@ fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
 /// file; integrity-checked loading is arc E's drift-detection job (Q4).
 #[cfg(feature = "mmap")]
 pub fn open_data(path: &str) -> std::io::Result<Data> {
-    if !std::path::Path::new(path).exists() {
+    // An empty name names nothing (`file_access` would answer for `.`).
+    if path.is_empty() || !crate::file_access::exists(path) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("IR store not found: {path}"),
@@ -636,7 +637,7 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
 pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
     let name = r.field_str(stores, ds::DEF_NAME).to_string();
     let position = Position {
-        file: r.field_str(stores, ds::DEF_POSITION + ds::POS_FILE).into(),
+        file: crate::lexer::intern_file(r.field_str(stores, ds::DEF_POSITION + ds::POS_FILE)),
         line: r.field_int(stores, ds::DEF_POSITION + ds::POS_LINE) as u32,
         pos: r.field_int(stores, ds::DEF_POSITION + ds::POS_POS) as u32,
     };
@@ -685,6 +686,9 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         null_safe: r.field_bool(stores, ds::DEF_NULL_SAFE), // @PLN46 W2
         op_priority: crate::data::OP_NORMAL,
         builtin: r.field_bool(stores, ds::DEF_BUILTIN), // @PLN165 arc E
+        operator_form: r.field_bool(stores, ds::DEF_OPERATOR_FORM), // @PLN182
+        returned_fact: crate::data::AliasFact::decode(r.field_str(stores, ds::DEF_RETURNED_FACT)),
+        returned_const: r.field_bool(stores, ds::DEF_RETURNED_CONST), // @FR-Const-Foreign
         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
         mutated_captures: read_name_list(
             stores,
@@ -744,10 +748,12 @@ fn read_attribute(stores: &Stores, r: Record) -> Attribute {
         primary: r.field_bool(stores, ds::ATTR_PRIMARY),
         hidden: r.field_bool(stores, ds::ATTR_HIDDEN),
         work_buffer: r.field_bool(stores, ds::ATTR_WORK_BUFFER),
+        pub_field: r.field_bool(stores, ds::ATTR_PUB_FIELD),
         value: read_node_child(stores, r.field_vec(ds::ATTR_VALUE)),
         check: read_node_child(stores, r.field_vec(ds::ATTR_CHECK)),
         check_message: read_node_child(stores, r.field_vec(ds::ATTR_CHECK_MESSAGE)),
         alias_d_nr: r.field_int(stores, ds::ATTR_ALIAS_D_NR) as u32,
+        fact: crate::data::AliasFact::decode(r.field_str(stores, ds::ATTR_FACT)),
         assigned_lambda_d_nr: r.field_int(stores, ds::ATTR_ASSIGNED_LAMBDA_D_NR) as u32,
         // @PLN86 F8b — restore the group#right member links (space-joined; "" = none).
         links: r
@@ -767,11 +773,7 @@ fn read_field_groups(stores: &Stores, parent: Record) -> Vec<LinkedFieldGroup> {
         .map(|i| {
             let r = v.get(i, stores);
             LinkedFieldGroup {
-                kind: if r.field_int(stores, ds::LFG_KIND) == 0 {
-                    LinkedFieldKind::Tuple
-                } else {
-                    LinkedFieldKind::Index
-                },
+                kind: LinkedFieldKind::Tuple,
                 instance: r.field_int(stores, ds::LFG_INSTANCE) as u16,
                 field_indices: read_dep_list(stores, r, ds::LFG_FIELD_INDICES),
                 alignment: r.field_int(stores, ds::LFG_ALIGNMENT) as u8,
@@ -810,7 +812,12 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             linked_narrow: vr.field_bool(stores, ds::VAR_LINKED_NARROW),
             store_text_link: vr.field_bool(stores, ds::VAR_STORE_TEXT_LINK),
             user_named: vr.field_bool(stores, ds::VAR_USER_NAMED),
+            user_appended: vr.field_bool(stores, ds::VAR_USER_APPENDED),
+            copy_bound: vr.field_bool(stores, ds::VAR_COPY_BOUND),
+            buffer_witnessed: vr.field_bool(stores, ds::VAR_BUFFER_WITNESSED),
             owner_witness: vr.field_int(stores, ds::VAR_OWNER_WITNESS) as u16,
+            rebind_orig: vr.field_int(stores, ds::VAR_REBIND_ORIG) as u16,
+            scope: vr.field_int(stores, ds::VAR_SCOPE) as u16,
         });
     }
     let names_vec = parent.field_recvec(base + ds::FN_NAMES, ds::NAMENR_STRIDE);
@@ -875,14 +882,16 @@ fn purity_from_code(c: i64) -> Purity {
 /// Rebuild the database type schema (`Vec<database::Type>`) from the
 /// `vector<DbType>` field at `off` of `parent` — the inverse of
 /// [`crate::ir_store::materialize_schema`].  Each `Type.parents` (a derived
-/// back-reference index, read only by parse-time layout validation + debug
-/// display) is restored empty; the load path skips the validation that uses it.
+/// back-reference index the image does not carry) is rebuilt here, with the links
+/// registration writes: `enum_parent_size` reads it to size a variant's record.
 #[must_use]
 pub fn read_schema(stores: &Stores, parent: Record, off: u32) -> Vec<SchemaType> {
     let v = parent.field_recvec(off, ds::DBTYPE_STRIDE);
-    (0..v.len(stores))
+    let mut schema: Vec<SchemaType> = (0..v.len(stores))
         .map(|i| read_db_type(stores, v.get(i, stores)))
-        .collect()
+        .collect();
+    SchemaType::rebuild_parents(&mut schema);
+    schema
 }
 
 /// Read one `DbType` record into a native `database::Type`.
@@ -952,11 +961,7 @@ fn read_db_parts(stores: &Stores, r: Record) -> Parts {
         ds::PT_SORTED => Parts::Sorted(content(), read_key_fields(stores, r, ds::PTKEYS)),
         ds::PT_ORDERED => Parts::Ordered(content(), read_key_fields(stores, r, ds::PTKEYS)),
         ds::PT_HASH => Parts::Hash(content(), read_dep_list(stores, r, ds::PTFIELDS)),
-        ds::PT_INDEX => Parts::Index(
-            content(),
-            read_key_fields(stores, r, ds::PTKEYS),
-            r.field_int(stores, ds::PTINDEX_LEFT) as u16,
-        ),
+        ds::PT_INDEX => Parts::Index(content(), read_key_fields(stores, r, ds::PTKEYS)),
         ds::PT_RADIX => Parts::Radix(content(), read_dep_list(stores, r, ds::PTFIELDS)),
         ds::PT_TRIE => Parts::Trie(content(), r.field_int(stores, ds::PTTRIE_KEY) as u16),
         ds::PT_DB_REF => Parts::DbRef,
@@ -1044,11 +1049,7 @@ fn read_field_groups_at(stores: &Stores, parent: Record, off: u32) -> Vec<Linked
         .map(|i| {
             let r = v.get(i, stores);
             LinkedFieldGroup {
-                kind: if r.field_int(stores, ds::LFG_KIND) == 0 {
-                    LinkedFieldKind::Tuple
-                } else {
-                    LinkedFieldKind::Index
-                },
+                kind: LinkedFieldKind::Tuple,
                 instance: r.field_int(stores, ds::LFG_INSTANCE) as u16,
                 field_indices: read_dep_list(stores, r, ds::LFG_FIELD_INDICES),
                 alignment: r.field_int(stores, ds::LFG_ALIGNMENT) as u8,
@@ -1070,7 +1071,7 @@ mod tests {
     fn round_trip_value(v: &Value) {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = ValuesVector::new(stores.database(16));
+        let root = ValuesVector::new(stores.vector_buffer(16));
         materialize_node(&mut stores, root, v);
         let back = read_value(&stores, root.get(0, &stores));
         assert_eq!(*v, back, "Value round-trip mismatch");
@@ -1080,7 +1081,7 @@ mod tests {
     fn round_trip_type(t: &Type) {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = RecVector::new(stores.database(16), ds::TYPET_STRIDE);
+        let root = RecVector::new(stores.vector_buffer(16), ds::TYPET_STRIDE);
         materialize_type(&mut stores, root, t);
         let back = read_type(&stores, root.get(0, &stores));
         assert_eq!(*t, back, "Type round-trip mismatch");
@@ -1268,7 +1269,7 @@ mod tests {
     fn integer_forced_size_round_trips_exactly() {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = RecVector::new(stores.database(16), ds::TYPET_STRIDE);
+        let root = RecVector::new(stores.vector_buffer(16), ds::TYPET_STRIDE);
         materialize_type(&mut stores, root, &Type::Integer(IntegerSpec::u8()));
         let Type::Integer(spec) = read_type(&stores, root.get(0, &stores)) else {
             panic!("expected Integer");
@@ -1366,6 +1367,164 @@ mod tests {
         );
     }
 
+    /// The cache's contract (`Function::from_snapshot`): a program decoded from its image
+    /// compiles to the SAME bytecode as the parse it was taken from.  `ir_roundtrip_check`
+    /// compares the fields the image carries; this compares what codegen MAKES of them, so a
+    /// codegen-read fact the image never carried shows up here and nowhere else (loft#1858:
+    /// `rebind_orig` was such a fact, and a warm run freed a caller's vector).
+    ///
+    /// Every `tests/scripts` and `tests/oracle` program that parses clean, after the scope
+    /// pass and `compile::close_program` — the point the program cache snapshots (`main.rs`,
+    /// `save_program`).  `LOFT_DECODE_FILTER=<path part>` narrows the corpus,
+    /// `LOFT_DECODE_TRACE=1` names each program and every function that differs, and
+    /// `LOFT_DECODE_DUMP=<dir>` writes the first differing function's variable tables and
+    /// bytecode, cold and decoded, to `<dir>`.
+    ///
+    /// CHUNKED like `tests/wrap.rs`'s corpus (every [`DECODE_CHUNKS`]-th program from each
+    /// offset): one test over all ~2100 programs parses and compiles each twice in series,
+    /// and under ASan that passed the 600 s per-test limit (loft#1863).
+    fn a_decoded_program_compiles_to_the_bytecode_of_its_parse(chunk: usize) {
+        // The parser recurses as deeply as the CLI's own thread allows.
+        std::thread::Builder::new()
+            .stack_size(512 << 20)
+            .spawn(move || decoded_programs_compile_alike(chunk))
+            .expect("spawn")
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
+    }
+
+    const DECODE_CHUNKS: usize = 8;
+
+    macro_rules! decode_chunks {
+        ($($name:ident = $k:expr),* $(,)?) => {$(
+            #[test]
+            fn $name() {
+                a_decoded_program_compiles_to_the_bytecode_of_its_parse($k);
+            }
+        )*};
+    }
+
+    decode_chunks!(
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_0 = 0,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_1 = 1,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_2 = 2,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_3 = 3,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_4 = 4,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_5 = 5,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_6 = 6,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_7 = 7,
+    );
+
+    /// Every `chunk`-th program of the sorted `tests/scripts` + `tests/oracle` corpus.
+    fn decode_corpus_chunk(chunk: usize) -> Vec<std::path::PathBuf> {
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        for dir in ["tests/scripts", "tests/oracle"] {
+            for path in crate::file_access::read_dir(dir).expect("corpus dir") {
+                if path.extension() == Some("loft") {
+                    files.push(path.os_spelling());
+                }
+            }
+        }
+        files.sort();
+        files
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| i % DECODE_CHUNKS == chunk)
+            .map(|(_, f)| f)
+            .collect()
+    }
+
+    fn decoded_programs_compile_alike(chunk: usize) {
+        let files = decode_corpus_chunk(chunk);
+        let filter = std::env::var("LOFT_DECODE_FILTER").unwrap_or_default();
+        let mut diverged = Vec::new();
+        let mut compared = 0usize;
+        for path in &files {
+            let name = path.to_string_lossy().into_owned();
+            if !name.contains(&filter) {
+                continue;
+            }
+            let src = crate::file_access::read_to_string(path).unwrap_or_default();
+            let mut p = crate::parser::Parser::new();
+            p.parse_dir("default", true, false).expect("parse default/");
+            for line in src.lines().filter(|l| l.contains("@ARGS:")) {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                for w in words.windows(2) {
+                    if w[0] == "--lib" {
+                        p.lib_dirs.push(w[1].to_string());
+                    }
+                }
+            }
+            if std::env::var_os("LOFT_DECODE_TRACE").is_some() {
+                eprintln!("decode: {name}");
+            }
+            p.parse(&name, false);
+            if p.diagnostics.level() >= crate::diagnostics::Level::Error {
+                continue;
+            }
+            crate::scopes::check(&mut p.data, &mut p.database);
+            // As `main.rs` does before `save_program`: the image is the CLOSED program.
+            crate::compile::close_program(&mut p.data, &mut p.database);
+            let mut stores = Stores::new();
+            let root = crate::ir_store::materialize_data(&mut stores, &p.data);
+            let mut loaded = read_data(&stores, root);
+            loaded.program_closed = true;
+            let db = p.database.clone();
+            let mut cold = crate::state::State::new(p.database);
+            crate::compile::byte_code(&mut cold, &mut p.data);
+            let mut warm = crate::state::State::new(db);
+            crate::compile::byte_code(&mut warm, &mut loaded);
+            compared += 1;
+            if cold.bytecode != warm.bytecode {
+                // Name the first function whose code differs.
+                let mut first = String::from("?");
+                let mut all = Vec::new();
+                for d in 0..p.data.definitions() {
+                    let (a, b) = (p.data.def(d), loaded.def(d));
+                    let (pa, pb) = (a.code_position as usize, b.code_position as usize);
+                    let (la, lb) = (a.code_length as usize, b.code_length as usize);
+                    if la == 0 && lb == 0 {
+                        continue;
+                    }
+                    if la != lb || cold.bytecode.get(pa..pa + la) != warm.bytecode.get(pb..pb + lb)
+                    {
+                        if first == "?" {
+                            first = a.name.clone();
+                            if let Ok(dir) = std::env::var("LOFT_DECODE_DUMP") {
+                                let mut ca = Vec::new();
+                                let mut cb = Vec::new();
+                                let _ = cold.dump_code(&mut ca, d, &p.data, false);
+                                let _ = warm.dump_code(&mut cb, d, &loaded, false);
+                                let _ = crate::file_access::write(format!("{dir}/cold_bc.txt"), ca);
+                                let _ = crate::file_access::write(format!("{dir}/warm_bc.txt"), cb);
+                                let _ = crate::file_access::write(
+                                    format!("{dir}/cold.txt"),
+                                    format!("{:#?}\n{:#?}", a.variables, a.code),
+                                );
+                                let _ = crate::file_access::write(
+                                    format!("{dir}/warm.txt"),
+                                    format!("{:#?}\n{:#?}", b.variables, b.code),
+                                );
+                            }
+                        }
+                        all.push(a.name.clone());
+                    }
+                }
+                if std::env::var_os("LOFT_DECODE_TRACE").is_some() {
+                    eprintln!("decode: {} differ: {}", all.len(), all.join(" "));
+                }
+                diverged.push(format!("{name}: first in {first}"));
+            }
+        }
+        assert!(compared > 0, "no program compared");
+        assert!(
+            diverged.is_empty(),
+            "{} of {compared} programs compile differently from their decoded image:\n{}",
+            diverged.len(),
+            diverged.join("\n")
+        );
+    }
+
     /// @PLN11 G2 / M0 — the equivalence harness wrapper (`ir_roundtrip_check`)
     /// the run path invokes under `LOFT_IR_CHECK`.  It materialises + reads back
     /// without registering the IR schema (baked offsets) and returns `Ok` when
@@ -1429,7 +1588,7 @@ mod tests {
 
         let path = std::env::temp_dir().join(format!("loft_ir_mmap_{}.store", std::process::id()));
         let path_str = path.to_str().expect("utf-8 temp path");
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
 
         // ── write: materialize the IR straight into a file-backed store ──
         let root = {
@@ -1459,7 +1618,7 @@ mod tests {
         let loaded = read_data(&s2, root2);
 
         let result = compare_data(&fresh, &loaded);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         if let Err(diff) = result {
             panic!("mmap file round-trip diverged from fresh parse: {diff:?}");
         }
@@ -1486,7 +1645,7 @@ mod tests {
         fresh.save(path_str).expect("Data::save");
         let loaded = Data::open(path_str).expect("Data::open");
         let result = compare_data(&fresh, &loaded);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         if let Err(diff) = result {
             panic!("Data::save/open round-trip diverged: {diff:?}");
         }
@@ -1512,9 +1671,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn capped() -> integer fs#read;\n#native\n";
         let lpath = std::env::temp_dir().join(format!("loft_cap_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         assert_eq!(p.data.def(p.data.def_nr("n_capped")).cap(), "fs#read");
 
         let fresh = p.data;
@@ -1522,7 +1681,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         assert_eq!(
             loaded.def(loaded.def_nr("n_capped")).cap(),
             "fs#read",
@@ -1545,9 +1704,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn optret() -> integer? { null }\n";
         let lpath = std::env::temp_dir().join(format!("loft_opt_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
 
         let nr = p.data.def_nr("n_optret");
         assert!(
@@ -1560,7 +1719,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
 
         let (base, is_opt) = loaded
             .def(loaded.def_nr("n_optret"))
@@ -1590,9 +1749,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "struct Inv { items: integer }\n";
         let lpath = std::env::temp_dir().join(format!("loft_ml_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
 
         // Stamp the F8b carrier directly (the parse→links finalize is the next wiring
         // step); this proves the CODEC round-trips a non-empty link list.
@@ -1605,7 +1764,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
 
         let reloaded_inv = loaded.def_nr("Inv");
         assert_eq!(
@@ -1629,9 +1788,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn tolerant(c: character) -> boolean { c == 'a' }\n#null_safe\n";
         let lpath = std::env::temp_dir().join(format!("loft_ns_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         assert!(
             p.data.def(p.data.def_nr("n_tolerant")).null_safe(),
             "parsed `#null_safe` must set the flag"
@@ -1642,7 +1801,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         assert!(
             loaded.def(loaded.def_nr("n_tolerant")).null_safe(),
             "null_safe must survive the store round-trip"
@@ -1662,9 +1821,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn old_add(a: integer, b: integer) -> integer { a + b }\n#superseded \"new_add\"\nfn new_add(a: integer, b: integer) -> integer { a + b }\n";
         let lpath = std::env::temp_dir().join(format!("loft_sup_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         assert_eq!(
             p.data.def(p.data.def_nr("n_old_add")).superseded(),
             "new_add",
@@ -1676,7 +1835,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         assert_eq!(
             loaded.def(loaded.def_nr("n_old_add")).superseded(),
             "new_add",
@@ -1702,9 +1861,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "pub fn c_len(s: text) -> integer;\n#c \"strlen\" \"size_t(const char*)\"\n";
         let lpath = std::env::temp_dir().join(format!("loft_c_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         let fresh = p.data;
         let d = fresh.def(fresh.def_nr("n_c_len"));
         assert_eq!(d.c_symbol, "strlen", "parsed `#c` must store the symbol");
@@ -1714,7 +1873,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         let d = loaded.def(loaded.def_nr("n_c_len"));
         assert_eq!(
             d.c_symbol, "strlen",
@@ -1980,7 +2139,7 @@ mod tests {
         // Build the .store file once.
         let path = std::env::temp_dir().join(format!("loft_ir_bench_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         let (rec, pos) = {
             let fresh = parse();
             let fstore = Store::open(path_str);
@@ -2026,8 +2185,8 @@ mod tests {
             load_us.push(t.elapsed().as_micros());
         }
 
-        let file_bytes = std::fs::metadata(&path).map_or(0, |m| m.len());
-        let _ = std::fs::remove_file(&path);
+        let file_bytes = crate::file_access::metadata(&path).map_or(0, |m| m.len());
+        let _ = crate::file_access::remove_file(&path);
 
         let (p_min, p_med) = (parse_us.iter().copied().min().unwrap(), median(parse_us));
         let (l_min, l_med) = (load_us.iter().copied().min().unwrap(), median(load_us));
@@ -2059,7 +2218,7 @@ mod tests {
 
         let path = std::env::temp_dir().join(format!("loft_brk_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         let (rec, pos, ndefs, nvars, nnames) = {
             let mut p = crate::parser::Parser::new();
             p.parse_dir("default", true, false).expect("parse default/");
@@ -2131,7 +2290,7 @@ mod tests {
             vt.push(t.elapsed().as_micros());
         }
         let vt = median(vt);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         eprintln!("\n=== read_data breakdown ({iters} iters) ===");
         eprintln!("defs {ndefs}  vars {nvars}  name-entries {nnames}");
         eprintln!("read_data (full)      : {full} us");
@@ -2157,19 +2316,18 @@ mod tests {
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false)
             .expect("parse default/ stdlib");
-        let mut cold = p.database.types.clone();
+        let cold = p.database.types.clone();
         assert!(cold.len() > 50, "stdlib schema small? got {}", cold.len());
 
         let mut ir = Stores::new();
         let _ids = register_ir_schema(&mut ir);
-        let host = Record::new(ir.database(16));
+        let host = Record::new(ir.vector_buffer(16));
         crate::ir_store::materialize_schema(&mut ir, &host, 0, &p.database.types);
 
         let loaded = read_schema(&ir, host, 0);
         assert_eq!(loaded.len(), cold.len(), "type count");
-        for t in &mut cold {
-            t.clear_parents();
-        }
+        // `parents` is not stored but REBUILT on read, with the links registration writes:
+        // compared whole, because `enum_parent_size` sizes a variant's record from it.
         assert_eq!(loaded, cold, "database type schema round-trip mismatch");
     }
 
@@ -2195,18 +2353,15 @@ mod tests {
         save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
 
         let (loaded_data, loaded_types) = open_bundle(path_str).expect("open_bundle");
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
 
         // (1) Data round-trips bit-for-bit.
         if let Err(diff) = compare_data(&p.data, &loaded_data) {
             panic!("bundle Data diverged from fresh parse: {diff:?}");
         }
-        // (2) Schema round-trips (parents are derived, cleared on both sides).
+        // (2) Schema round-trips, the rebuilt `parents` index included.
         assert_eq!(loaded_types.len(), p.database.types.len(), "type count");
-        let mut cold = p.database.types.clone();
-        for t in &mut cold {
-            t.clear_parents();
-        }
+        let cold = p.database.types.clone();
         assert_eq!(
             loaded_types, cold,
             "bundle schema diverged from fresh parse"

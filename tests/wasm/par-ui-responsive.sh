@@ -48,7 +48,7 @@ set -u
 cd "$(dirname "$0")/../.."
 . tests/wasm/gate-lib.sh
 PORT="${PORT:-8764}"; ROOT=tests/wasm; REPORT="$(mktemp)"
-WORK="${UI_WORK:-${WORK:-40000}}"; ELEMS="${ELEMS:-48}"; WINDOW="${UI_WINDOW:-${WINDOW:-3000}}"
+WORK="${UI_WORK:-${WORK:-200000}}"; ELEMS="${ELEMS:-48}"; WINDOW="${UI_WINDOW:-${WINDOW:-3000}}"
 THREADS="${THREADS:-8}"; MIN_BLOCK_RATIO_X10="${MIN_BLOCK_RATIO_X10:-15}"; MIN_FRAMES="${MIN_FRAMES:-5}"
 CHROME="$(command -v chromium || command -v chromium-browser || command -v google-chrome || echo chromium)"
 [ -f "$ROOT/pkg-mt/loft.js" ] || { echo "SKIP: no threaded bundle — run 'make wasm-mt'"; exit 0; }

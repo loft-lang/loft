@@ -46,6 +46,40 @@ impl Output<'_> {
         {
             return self.emit_invariant_use(w, &memo);
         }
+        // `@FR-R-ValueRecord`'s nullable clause — a DENSE leaf at a result position of a
+        // `-> S?` body (`hoist::widened_leaves`) is the present tuple: its own tuple, then
+        // the presence word.  The leaf is emitted once, as itself, inside the widening.
+        if !self.value_leaves.widen.is_empty() {
+            let at = std::ptr::from_ref(code) as usize;
+            if self.value_leaves.widen.contains(&at)
+                && self.widening != Some(at)
+                && let Some(layout) = self.value_records.fn_layout(self.def_nr)
+            {
+                let n = layout.fields.len();
+                let saved = self.widening.replace(at);
+                write!(w, "{{ let __wd = ")?;
+                let r = self.output_code_inner(w, code);
+                self.widening = saved;
+                r?;
+                write!(w, "; (")?;
+                for i in 0..n {
+                    write!(w, "__wd.{i}, ")?;
+                }
+                return write!(w, "true) }}");
+            }
+        }
+        // `@FR-R-ValueRecord`'s nullable clause — a `null` exit of a `-> S?` body admitted to
+        // return its tuple is the ABSENT tuple (`hoist::ValueTuple::absent`).
+        if !self.value_leaves.nulls.is_empty()
+            && self
+                .value_leaves
+                .nulls
+                .contains(&(std::ptr::from_ref(code) as usize))
+            && let Some(layout) = self.value_records.fn_layout(self.def_nr)
+        {
+            let absent = layout.absent();
+            return write!(w, "{absent}");
+        }
         // @PLN167 decision 2 — a store-kind text link IS the slot's `DbRef`, so the link a
         // mention of it names (`OpGetText(OpVarRef(t), 0)`) is the variable itself.
         if let Some(v) = self.store_text_link_ref(code) {
@@ -139,7 +173,11 @@ impl Output<'_> {
             ValueType::Line => {
                 // P198 / DX-source-map: a `// loft:<file>:<line>` comment so
                 // rustc errors trace back to the loft source line.
-                let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // One spelling on every host: the comment is part of generated source that is
+                // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
+                let file = crate::file_access::portable_str(
+                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
+                );
                 // @PLN157 — remember where we are, so an operator checkpoint can name the
                 // loft line it came from.  This stream is the emitter's only notion of
                 // position.
@@ -218,6 +256,19 @@ impl Output<'_> {
                             self.output_code_node(&mut buf, elem)?;
                             let code = String::from_utf8_lossy(&buf).into_owned();
                             let img = super::coroutine::yield_slot_i64(kind, &code)
+                                .expect("eager_tuple_kinds admits only single-slot kinds");
+                            write!(w, "__values.push({img}); ")?;
+                        }
+                    } else {
+                        // Any other tuple-valued yield — a variable, a call — is bound once
+                        // and read member by member: matched on the literal alone, it pushed
+                        // nothing and the consumer read zeros.
+                        let mut buf: Vec<u8> = Vec::new();
+                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        let code = String::from_utf8_lossy(&buf).into_owned();
+                        write!(w, "let __yt = {code}; ")?;
+                        for (i, &kind) in kinds.iter().enumerate() {
+                            let img = super::coroutine::yield_slot_i64(kind, &format!("__yt.{i}"))
                                 .expect("eager_tuple_kinds admits only single-slot kinds");
                             write!(w, "__values.push({img}); ")?;
                         }
@@ -393,6 +444,15 @@ impl Output<'_> {
                     if matches!(variables.tp(var), Type::Text(_)) {
                         return write!(w, "&self.var_{field}");
                     }
+                    // @PLN167 decision 1 — a LINKED narrow field reads as its decoded value.
+                    if let Some(slot) = variables.linked_narrow_slot(var) {
+                        return write!(w, "{}", slot.decode_rust(&format!("self.var_{field}")));
+                    }
+                    // A tuple field read whole is a value: cloned, since a read must not move
+                    // it out of the struct, and rebuilt plain when a link encodes a member.
+                    if matches!(variables.tp(var).base(), Type::Tuple(_)) {
+                        return write!(w, "{}", self.tuple_field_value(var, field));
+                    }
                     return write!(w, "self.var_{field}");
                 } else if self.text_borrowed(var) {
                     // A borrowed text reads as the `&str` it holds.
@@ -454,7 +514,7 @@ impl Output<'_> {
                     }
                     // A link to an ABSENT scalar place (`&v[10]`, a field of an absent record)
                     // holds a null pointer and reads the type's absent value — the one the
-                    // interpreter's `OpGet*` answers for a `rec == 0` reference (C80: nothing
+                    // interpreter's `OpGet*` answers for a `rec == 0` reference (@C80: nothing
                     // stops a running calculation).  A `&boolean` answers its storage byte, so
                     // an absent one reads as null here as it does there.
                     // @PLN167 decision 1 — a link to a NARROW integer place reads the field
@@ -590,11 +650,20 @@ impl Output<'_> {
                 let idx = node.tupleget_idx();
                 let variables = self.data.def(self.def_nr).variables();
                 let (name, deref) = crate::generation::tuple_base(variables, var);
+                // A generator's tuple local is its struct field (loft#1899).
+                let name = if deref { name } else { self.var_place(var) };
                 if deref {
                     // A `&`-bound tuple LOCAL: the element sits behind a raw pointer.
                     // `T-Ref-El` admits only scalars here, so none of the text/borrow
                     // spellings below can apply to this base.
                     return write!(w, "unsafe {{ {name}.{idx} }}");
+                }
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                if let Some(Some(slot)) = self
+                    .linked_tuple_slots(var)
+                    .and_then(|s| s.get(usize::from(idx)).copied())
+                {
+                    return write!(w, "{}", slot.decode_rust(&format!("{name}.{idx}")));
                 }
                 // loft#1038 — one derivation for what the slot holds, shared with the
                 // WRITE arm and with `set_var`'s clone rule (`tuple_elem_is_text`).
@@ -627,6 +696,8 @@ impl Output<'_> {
                 let idx = node.tupleput_idx();
                 let variables = self.data.def(self.def_nr).variables();
                 let (name, deref) = crate::generation::tuple_base(variables, var);
+                // A generator's tuple local is its struct field (loft#1899).
+                let name = if deref { name } else { self.var_place(var) };
                 // A text element is a `String` slot, so the value has to arrive owned —
                 // the same rule the tuple LITERAL arm below obeys through this flag.
                 // Without it `t.0 = "X"` emitted `var_t.0 = "X";` and rustc refused the
@@ -672,6 +743,21 @@ impl Output<'_> {
                     write!(w, "unsafe {{ ")?;
                 }
                 write!(w, "{name}.{idx} = ")?;
+                // `@FR-T-Record` — a narrow member a `&` names takes its value encoded.
+                let narrow = self
+                    .linked_tuple_slots(var)
+                    .and_then(|s| s.get(usize::from(idx)).copied().flatten());
+                let (narrow_open, narrow_close) = match narrow {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both
+                            .split_once('\u{0}')
+                            .expect("the marker is in the template");
+                        (a.to_string(), b.to_string())
+                    }
+                    None => (String::new(), String::new()),
+                };
+                write!(w, "{narrow_open}")?;
                 if bool_cast.is_some() {
                     write!(w, "(")?;
                 }
@@ -681,33 +767,35 @@ impl Output<'_> {
                 if elem_is_fn {
                     self.fn_ref_context = true;
                 }
+                let var_src = matches!(node.tupleput_inner().kind(), ValueType::Var);
+                if elem_is_text && var_src {
+                    write!(w, "(")?;
+                }
                 let r = self.output_code_node(w, node.tupleput_inner());
                 self.fn_ref_context = prev_fn_ref_ctx;
                 self.tuple_text_to_string = prev;
                 // The same conversion the `Tuple` element loop applies, for the same
                 // reason: this position knows the slot is an owned `String` and the
-                // value emitted into it does not.  A `TupleGet`/`Var` source naming an
-                // owned text LOCAL already emitted un-borrowed (the flag above), so for
-                // that one this would only add a copy.
-                //
-                // A text ARGUMENT is the exception, and the carve-out did not know it: a
-                // text parameter arrives BORROWED (`&str`), so the same bare spelling is a
-                // type error at an owned slot — `p.1 = s` on
-                // `fn f(p: (integer, text), s: text)` was rustc E0308 *"expected `String`,
-                // found `&str`"* while the literal `p.1 = "x"` beside it compiled
-                // (loft#1278).  The tuple LITERAL arm has always converted a `Var` here;
-                // only this arm carved it out, so the two spellings of the same write
-                // disagreed about the same source.
-                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var)
-                    && self.text_borrowed(node.tupleput_inner().var_nr());
-                if elem_is_text
-                    && (!matches!(node.tupleput_inner().kind(), ValueType::Var) || borrowed_var_src)
-                {
+                // value emitted into it does not.  A `Var` source is wrapped whole —
+                // `(<source>).to_string()` — because a text variable reads in several
+                // spellings: an owned local's bare name, a borrowed one's `&str`, a `&text`
+                // parameter's or a caller's work buffer's `&*var_x`, a generator field's
+                // `&self.var_x`.  A bare owned `String` is a MOVE, so a loop that reuses
+                // the variable — a compiler work text included — or any later read did not
+                // compile (E0382), and a suffix on a prefixed spelling binds inside it
+                // (`&*var_x.clone()` is a `&str`, E0308) (loft#1901).  A text PARAMETER
+                // arrives borrowed (`&str`), which is why `p.1 = s` on
+                // `fn f(p: (integer, text), s: text)` needs the conversion too (loft#1278).
+                // The member gets its own text either way (`@FR-T-Record`).
+                if elem_is_text && var_src {
+                    write!(w, ").to_string()")?;
+                } else if elem_is_text {
                     write!(w, ".to_string()")?;
                 }
                 if let Some(cast) = bool_cast {
                     write!(w, ") as {cast}")?;
                 }
+                write!(w, "{narrow_close}")?;
                 if deref {
                     write!(w, " }}")?;
                 }
@@ -730,8 +818,80 @@ impl Output<'_> {
             }
         };
         match code {
+            // `@FR-R-RangedCall`'s guarded copy — a counted `For` block whose hoisted integer
+            // fields bound every call it makes: the copy under the guard runs with those
+            // fields ranged (and calls ranged variants), the plain block is the `else` arm.
+            Value::Block(bl) if bl.name == "For block" && !self.in_range_copy => {
+                if let Some((test, facts)) = self.range_guard_for(bl) {
+                    let declared_before = self.declared.clone();
+                    writeln!(w, "if {test} {{ //@FR-R-RangedCall guarded copy")?;
+                    self.in_range_copy = true;
+                    self.range_override.push(std::rc::Rc::new(facts));
+                    self.indent(w)?;
+                    let r = self.output_block(w, IrBlock::Native(bl), false, false);
+                    self.range_override.pop();
+                    self.declared = declared_before;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    writeln!(w, "}} else {{")?;
+                    self.indent(w)?;
+                    let r = self.output_block(w, IrBlock::Native(bl), false, false);
+                    self.in_range_copy = false;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}}")?;
+                } else {
+                    self.output_block(w, IrBlock::Native(bl), false, false)?;
+                }
+            }
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
+            Value::Loop(lp) if self.assumed_distinct.is_empty() && !self.in_distinct_copy => {
+                if let Some((tests, pairs)) = self.distinct_version(lp) {
+                    // `@FR-R-Alias`'s versioned clause — the copy that holds the parameters'
+                    // headers runs only when their stores are apart from the return buffer's.
+                    let vars = self.data.def(self.def_nr).variables();
+                    let test = tests
+                        .iter()
+                        .map(|&(p, rb)| {
+                            format!(
+                                "var_{}.store_nr != var_{}.store_nr",
+                                super::sanitize(vars.name(rb)),
+                                super::sanitize(vars.name(p))
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    writeln!(w, "if {test} {{ //@FR-R-Alias versioned on distinct stores")?;
+                    let declared_before = self.declared.clone();
+                    self.assumed_distinct = pairs;
+                    self.indent(w)?;
+                    self.output_code_inner(w, code)?;
+                    self.assumed_distinct.clear();
+                    self.declared = declared_before;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    writeln!(w, "}} else {{")?;
+                    self.in_distinct_copy = true;
+                    self.indent(w)?;
+                    let r = self.output_code_inner(w, code);
+                    self.in_distinct_copy = false;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}}")?;
+                    crate::rewrite_census::fired("R-AliasVersion", 1);
+                } else {
+                    self.in_distinct_copy = true;
+                    let r = self.output_code_inner(w, code);
+                    self.in_distinct_copy = false;
+                    r?;
+                }
+            }
             Value::Loop(lp) => {
+                // A loop nested inside this one is asked anew (`distinct_version`).
+                self.in_distinct_copy = false;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
                 // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
                 // here instead, so its store survives the iteration: the per-pass mint takes
@@ -841,6 +1001,11 @@ impl Output<'_> {
                         }
                         continue;
                     }
+                    if !self.elem_first.pairs.is_empty()
+                        && self.elem_first_override(w, &lp.operators, at, v)?
+                    {
+                        continue;
+                    }
                     self.indent(w)?;
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
@@ -876,7 +1041,7 @@ impl Output<'_> {
                 }
                 // The window closes after EVERY copy of the loop: the record's length is
                 // written once, whichever arm ran.
-                if let Some(window) = &window {
+                for window in window.iter().rev() {
                     self.push_window_close(w, window)?;
                 }
                 for &v in &loop_recs {
@@ -898,7 +1063,47 @@ impl Output<'_> {
             Value::Set(var, to) => self.output_set(w, *var, to)?,
             Value::If(test, true_v, false_v) => self.output_if(w, test, true_v, false_v)?,
             Value::Call(def_nr, vals) => {
-                self.output_call(w, *def_nr, vals)?;
+                // `@FR-R-Destination` — inside a destination twin, a write to a scalar field
+                // of the return buffer is the tuple element's: the field lies past the
+                // caller's element the buffer stands for.
+                let scalar = self.dest_twin.as_ref().and_then(|dt| {
+                    let [base, off, _] = &vals[..] else {
+                        return None;
+                    };
+                    if !matches!(base.unspan(), Value::Var(b) if *b == dt.rb) {
+                        return None;
+                    }
+                    let Value::Int(off) = off.unspan() else {
+                        return None;
+                    };
+                    let k = dt.scalars.iter().position(|sc| sc.off == i64::from(*off))?;
+                    (dt.scalars[k].setter == self.data.def(*def_nr).name())
+                        .then_some((k, dt.scalars[k].rust))
+                });
+                if let Some((k, rust)) = scalar {
+                    write!(w, "{{ __ds_{k} = (")?;
+                    self.output_code_inner(w, &vals[2])?;
+                    write!(w, ") as {rust}; }}")?;
+                } else {
+                    self.output_call(w, *def_nr, vals)?;
+                }
+            }
+            Value::Return(val)
+                if self
+                    .dest_twin
+                    .as_ref()
+                    .is_some_and(|dt| matches!(val.unspan(), Value::Var(b) if *b == dt.rb)) =>
+            {
+                let n = self.dest_twin.as_ref().map_or(0, |dt| dt.scalars.len());
+                let parts: Vec<String> = (0..n).map(|k| format!("__ds_{k}")).collect();
+                let tail = if n == 1 { "," } else { "" };
+                write!(w, "return ({}{tail})", parts.join(", "))?;
+            }
+            Value::Return(val) if self.vr_twin => {
+                // `@FR-R-ViewReturn`'s twin — every exit but a view answers its own store.
+                write!(w, "return (")?;
+                self.output_code_inner(w, val)?;
+                write!(w, ", true)")?;
             }
             Value::Return(val) => {
                 let returned = self.data.def(self.def_nr).returned();
@@ -1128,7 +1333,7 @@ impl Output<'_> {
                         // (e.g. `stores.vec_ref_or_raise_runtime(...)`,
                         // `stores.text_char_or_raise_runtime(...)`,
                         // and any other `stores.X` call introduced
-                        // by the C66 production-mode helpers) doesn't
+                        // by the @C66 production-mode helpers) doesn't
                         // overlap with the `stores.scratch.push(...)`
                         // borrow.  Without the pre-bind, rustc
                         // rejects with E0499 (`cannot borrow *stores
@@ -1354,10 +1559,23 @@ impl Output<'_> {
         // the value crosses a forwarding frame.  Snapshot the allocation counter here and ask
         // `cr_fnref_minted` afterwards; a CAPTURE's stamp predates this and is left alone.
         // Heap returns only — a text return crosses as an owned `String`.
-        let heap_return = matches!(
-            ret_type.base(),
-            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-        );
+        // `@FR-R-FnRefValue` — every arm of this dispatch answers the record's TUPLE: the arms
+        // are called without a buffer (each is admitted, so `emit_user_call_args` drops it),
+        // nothing is minted, and an absent fn-ref answers the null record's fields.
+        let value_fields: Option<Vec<(i64, &'static str)>> = super::hoist::fnref_value(
+            &self.value_records.fnref_sites,
+            &self.value_records.fns,
+            self.def_nr,
+            v_nr,
+        )
+        .and_then(|rec| self.value_records.types.get(&rec))
+        .map(|t| t.fields.clone());
+        crate::rewrite_census::fired("R-FnRefValue", usize::from(value_fields.is_some()));
+        let heap_return = value_fields.is_none()
+            && matches!(
+                ret_type.base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            );
         write!(w, "{{ ")?;
         if heap_return {
             write!(w, "let __vc_seq = codegen_runtime::cr_alloc_serial(cell); ")?;
@@ -1372,10 +1590,11 @@ impl Output<'_> {
             // right: the pair is then built inside EACH branch.
             let is_fn_arg =
                 i < param_types.len() && matches!(param_types[i].base(), Type::Function(..));
+            // Set either way: an argument takes its OWN parameter's context, never the
+            // caller's — a call whose RESULT is a fn-ref is emitted in that context, and an
+            // integer argument inheriting it was spelled `(3_i32 as u32, DbRef::NULL)`.
             let prev_fn_ref_ctx = self.fn_ref_context;
-            if is_fn_arg {
-                self.fn_ref_context = true;
-            }
+            self.fn_ref_context = is_fn_arg;
             let expr = self.generate_expr_buf(arg)?;
             self.fn_ref_context = prev_fn_ref_ctx;
             // P265: when the fn-ref's parameter at this index is text,
@@ -1405,28 +1624,49 @@ impl Output<'_> {
                 )
                 && crate::generation::dispatch::tuple_has_text_leaf(param_elems)
             {
-                let name = self
-                    .data
-                    .def(self.def_nr)
-                    .variables()
-                    .name(*var)
-                    .to_string();
                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
-                    &format!("var_{name}"),
+                    &self.var_place(*var),
                     param_elems,
                 ))
             } else {
                 None
             };
-            let text_link_arg = i < param_types.len()
+            let link_arg =
+                i < param_types.len() && matches!(param_types[i].base(), Type::RefVar(_));
+            let text_link_arg = link_arg
                 && matches!(param_types[i].base(),
                     Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
+            // `@FR-R-FnRefValue` — a parameter every arm receives as a tuple takes the tuple,
+            // built as a direct call builds it (`emit_call_arg` against one arm).
+            let tuple_param = super::hoist::fnref_param(
+                &self.value_records.fnref_sites,
+                &self.value_records.params,
+                self.def_nr,
+                v_nr,
+                i,
+            )
+            .is_some()
+                && !candidates.is_empty();
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
-            } else if text_link_arg && store_mask & (1 << i) == 0 && !candidates.is_empty() {
-                // A text VARIABLE for a `&text` parameter: the `&mut String` a direct call
-                // hands over, spelled by the one argument emitter (`emit_call_arg`) against a
-                // candidate — every candidate agrees on this parameter's type.
+            } else if tuple_param {
+                let cand = self.data.def(candidates[0].d_nr);
+                self.current_call_def = candidates[0].d_nr;
+                let mut buf = Vec::new();
+                self.emit_call_arg(&mut buf, cand, i, arg)?;
+                let spelled = String::from_utf8(buf).unwrap_or_default();
+                write!(w, "let _farg_{i} = {spelled}; ")?;
+            } else if link_arg
+                && !(text_link_arg && store_mask & (1 << i) != 0)
+                && !candidates.is_empty()
+            {
+                // @FR-L-Apply — a `&` parameter: the `&mut` slot a direct call hands over, spelled by the one
+                // argument emitter (`emit_call_arg`) against a candidate — every candidate
+                // agrees on this parameter's type.  The argument is `OpCreateStack(var)`, which
+                // has no spelling of its own outside that emitter: bound raw, a `&P` parameter
+                // read `let _farg_0 = ;` and the crate did not build (`(L-Apply)` binds the
+                // parameters as a direct call does).  A text FIELD or element for `&text` keeps
+                // its store instance (`store_mask`, below).
                 let cand = self.data.def(candidates[0].d_nr);
                 let mut buf = Vec::new();
                 self.emit_call_arg(&mut buf, cand, i, arg)?;
@@ -1627,6 +1867,10 @@ impl Output<'_> {
                 }
             }
             let _ = has_closure;
+            // The arm's own number, for `emit_user_call_args` (whether it drops a buffer) and
+            // the twin forms (keyed by identity): left as it was, it named whichever call the
+            // argument bindings above emitted last.
+            self.current_call_def = *d_nr;
             // Route through output_call_user_fn → emit_op → custom emitter
             // (or DefaultEmitter::user_fn_call_body when no emitter is
             // registered for this candidate).
@@ -1643,6 +1887,7 @@ impl Output<'_> {
                     )?;
                 } else {
                     let inst_def = self.data.def(inst);
+                    self.current_call_def = inst;
                     self.output_call_user_fn(w, inst_def, &synthetic)?;
                 }
             }
@@ -1678,12 +1923,20 @@ impl Output<'_> {
         }
         // `@FR-L-FnAbsent` — no candidate matches an ABSENT fn-ref (an element read out of
         // range), and the call answers the return type's null, as the interpreter's guard in
-        // `generate_call_ref` does; the program continues (C80).
+        // `generate_call_ref` does; the program continues (@C80).
         write!(w, " _ => ")?;
-        match ret_type.base() {
-            Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
-            Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
-            _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+        if let Some(fields) = &value_fields {
+            write!(
+                w,
+                "{}",
+                super::hoist::tuple_reads(fields, "DbRef::NULL", "stores")
+            )?;
+        } else {
+            match ret_type.base() {
+                Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
+                Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
+                _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+            }
         }
         write!(w, " }}")?;
         if heap_return {
@@ -1865,10 +2118,52 @@ impl Output<'_> {
             .get(&tp)
             .map(|t| t.fields.clone())
             .unwrap_or_default();
+        // `@FR-R-RecPtr`'s tuple clause, the read half: `src` evaluated once and its
+        // address taken once, every field of a kind the address serves one load through it
+        // (the null record's address is null, so each answers its getter's sentinel).
+        // Field by field, each getter resolved the store and bounded the read again — the
+        // seven reads of `map_get_hex`'s `return chunk.hexes[idx]?`.  Nothing between the
+        // address and its last use runs but loads.  A view whose block holds an address
+        // already reads through that one, and a value local or a sub-record of one is a
+        // tuple with no address: its getters name tuple elements.
+        let kinds: Vec<Option<(&str, &str)>> = fields
+            .iter()
+            .map(|(_, rt)| {
+                if super::hoist::is_view_part(rt) {
+                    None
+                } else {
+                    super::hoist::scalar_kind(super::hoist::value_getter(rt))
+                }
+            })
+            .collect();
+        let through = !self.record_ptr_disabled
+            && kinds.iter().any(Option::is_some)
+            && !matches!(src.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
+            && !self.in_value_local(src);
+        let src = if through {
+            write!(w, "{{ let __rt: DbRef = ")?;
+            self.output_code_inner(w, src)?;
+            write!(
+                w,
+                "; let __rp = vector::rec_ptr(&__rt, &stores.allocations); "
+            )?;
+            Value::RawExpr("__rt".to_string())
+        } else {
+            src.clone()
+        };
+        let src = &src;
+        let verify = self.hoist_verify;
         write!(w, "(")?;
         for (i, (off, rt)) in fields.iter().enumerate() {
             if i > 0 {
                 write!(w, ", ")?;
+            }
+            if through && let Some((ty, absent)) = kinds[i] {
+                write!(
+                    w,
+                    "unsafe {{ vector::rec_get::<{ty}>(__rp, &__rt, ({off}_i64) as u32, {absent}, &stores.allocations, {verify}) }}"
+                )?;
+                continue;
             }
             // @PLN164 C5 — a VIEW-LEAF field of a viewed record is its own field SLOT:
             // `OpGetField` answers exactly the reference the leaf delivers, so the view's
@@ -1890,7 +2185,11 @@ impl Output<'_> {
         if fields.len() == 1 {
             write!(w, ",")?;
         }
-        write!(w, ")")
+        write!(w, ")")?;
+        if through {
+            write!(w, " }}")?;
+        }
+        Ok(())
     }
 
     pub(super) fn write_typed_null(w: &mut dyn Write, tp: &Type) -> std::io::Result<()> {
@@ -1927,6 +2226,9 @@ impl Output<'_> {
             // `from_u32_unchecked`, for which `0x8000_0000` is undefined
             // behaviour (loft#1014).
             Type::Character => write!(w, "0"),
+            // The absent fn-ref (`@FR-L-FnAbsent`): no definition, no environment — the spelling
+            // `default_native_value` gives a function slot.
+            Type::Function(..) => write!(w, "(0_u32, DbRef::NULL)"),
             Type::Integer(_) => write!(w, "i64::MIN"),
             Type::Float => write!(w, "f64::NAN"),
             Type::Single => write!(w, "f32::NAN"),
@@ -2218,6 +2520,20 @@ impl Output<'_> {
             }
             _ => false,
         };
+        // A DIVERGING arm (`=> return "other"`, `=> break`) yields `!`, which coerces to what
+        // its sibling yields, so it takes none of the unify wrappers: `&*(return …)` and
+        // `({ return … } as u8)` are not Rust (E0614, E0605), and `.to_string()` on it is dead
+        // code (@FR-C-Never — `Never ⤳ τ` whatever τ the sibling settles).  A `match` arm
+        // reaches here bare, where an `if` arm is a block that already opted out.
+        let unify = |arm: &Value| {
+            if Self::arm_diverges(arm) {
+                (false, false, false)
+            } else {
+                (text_string_unify, text_unify, bool_unify)
+            }
+        };
+        let (text_string_unify, text_unify, bool_unify) = unify(true_v);
+        let (f_text_string_unify, f_text_unify, f_bool_unify) = unify(false_v);
         // For `text_string_unify` we emit `{ (<branch>).to_string() }` around
         // each arm so the if-expression unifies on `String`.  Rust requires
         // braces for if-arms regardless of inner expression form, so even if
@@ -2295,11 +2611,11 @@ impl Output<'_> {
         } else {
             write!(w, "}} else ")?;
         }
-        let (false_braced, false_rest) = if text_string_unify {
+        let (false_braced, false_rest) = if f_text_string_unify {
             (true, "(")
-        } else if text_unify {
+        } else if f_text_unify {
             (true, "&*(")
-        } else if bool_unify {
+        } else if f_bool_unify {
             (true, "({")
         } else if stmt_discard || !b_false {
             (true, "")
@@ -2315,7 +2631,7 @@ impl Output<'_> {
             None
         };
         write!(w, "{false_rest}")?;
-        self.indent += u32::from(!b_false || text_string_unify || bool_unify);
+        self.indent += u32::from(!b_false || f_text_string_unify || f_bool_unify);
         // When the else branch is Null and the true branch returns a value,
         // emit a typed null sentinel instead of () to match the true branch type.
         if matches!(false_v, Value::Null)
@@ -2328,18 +2644,18 @@ impl Output<'_> {
             self.clone_handed_tuple_local = None;
         }
         self.close_arm_pre_evals(false_pre);
-        if text_string_unify {
+        if f_text_string_unify {
             write!(w, ").to_string()}}")?;
-        } else if text_unify {
+        } else if f_text_unify {
             write!(w, ")}}")?;
-        } else if bool_unify {
+        } else if f_bool_unify {
             write!(w, "}} as u8)}}")?;
         } else if stmt_discard {
             write!(w, ";}}")?;
         } else if !b_false {
             write!(w, "}}")?;
         }
-        self.indent -= u32::from(!b_false || text_string_unify || bool_unify);
+        self.indent -= u32::from(!b_false || f_text_string_unify || f_bool_unify);
         if wrap_block {
             write!(w, " }}")?;
         }
@@ -2687,6 +3003,280 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
+    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): reserve the run's bytes
+    /// once and write them through one push window, closed after the last.  A vector with
+    /// no record takes the statements as they stand — the runtime's own refusal.
+    fn output_push_run(
+        &mut self,
+        w: &mut dyn Write,
+        run: &super::hoist::PushRun<'_>,
+        operators: &[Value],
+        at: usize,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(run.vector)?;
+        let min = self.expr_string(run.min)?;
+        let k = run.vals.len();
+        self.hoist_counter += 1;
+        let n = self.hoist_counter;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "if !({vec}).is_null() && ({vec}).rec != 0 {{ //@FR-R-PushFill run of {k}"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations); let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations);"
+        )?;
+        for val in &run.vals {
+            let e = self.expr_string(val)?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "  {{ let __pv = loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32); unsafe {{ stores.push_windowed::<u8, false>(&mut __ph_{n}, &mut __pw_{n}, &({vec}), 1, __pv) }} }};"
+            )?;
+        }
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  stores.push_window_close::<false>(&mut __ph_{n}, __pw_{n}.len, &({vec}));"
+        )?;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        for op in &operators[at..=run.last] {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            self.indent(w)?;
+            self.output_code_inner(w, op)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-PushFill/run", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are one
+    /// fill of the tail; the two statements stand as the fallback for a count or a vector the
+    /// fill refuses.
+    fn output_repeat_literal(
+        &mut self,
+        w: &mut dyn Write,
+        rl: &super::hoist::RepeatLiteral,
+        first: &Value,
+        second: &Value,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(rl.vector)?;
+        let val = self.expr_string(rl.val)?;
+        let ty = rl.rust_type;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "if !{{ let mut __rl = vector::push_header(&({vec}), &stores.allocations); stores.push_fill::<{ty}, false>(&mut __rl, &({vec}), {}_u32, {}_i64, ({val}) as {ty}) }} {{ //@FR-R-PushFill repeat literal",
+            rl.size, rl.count
+        )?;
+        self.indent += 1;
+        for s in [first, second] {
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-InPlaceLiteral`'s keyed clause: the literal's values staged in program order,
+    /// the record under the key taken out and a fresh one claimed, the values written into it,
+    /// then its key written and the record linked.
+    fn output_keyed_place(
+        &mut self,
+        w: &mut dyn Write,
+        ks: &super::keyed_place::Site<'_>,
+    ) -> std::io::Result<()> {
+        self.dest_counter += 1;
+        let site = self.dest_counter;
+        self.indent(w)?;
+        writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
+        let mut writes: Vec<Value> = Vec::new();
+        let mut nth = 0usize;
+        for op in &ks.body {
+            let Value::Call(d, args) = op.unspan() else {
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
+                continue;
+            };
+            if !args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(x) if *x == ks.buf))
+            {
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
+                continue;
+            }
+            let mut staged: Vec<Value> = Vec::with_capacity(args.len());
+            for (i, a) in args.iter().enumerate() {
+                if i == 0 {
+                    staged.push(Value::RawExpr(format!("__kp{site}")));
+                } else if super::keyed_place::constant(a) {
+                    staged.push(a.clone());
+                } else {
+                    self.indent(w)?;
+                    write!(w, "let __kv{site}_{nth} = ")?;
+                    self.output_code_inner(w, a)?;
+                    writeln!(w, ";")?;
+                    staged.push(Value::RawExpr(format!("__kv{site}_{nth}")));
+                    nth += 1;
+                }
+            }
+            writes.push(Value::Call(*d, staged));
+        }
+        let key_types: Vec<i8> = self
+            .stores
+            .types
+            .get(ks.tp as usize)
+            .map(|t| t.keys.iter().map(|k| k.type_nr).collect())
+            .unwrap_or_default();
+        let mut keys = String::from("&[");
+        for (i, key) in ks.keys.iter().enumerate() {
+            if i > 0 {
+                keys.push_str(", ");
+            }
+            let mut buf: Vec<u8> = Vec::new();
+            self.emit_content(&mut buf, key, key_types.get(i).copied().unwrap_or(1))?;
+            keys.push_str(&String::from_utf8_lossy(&buf));
+        }
+        keys.push(']');
+        let coll = self.expr_string(ks.coll)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
+            ks.tp
+        )?;
+        for wr in &writes {
+            self.indent(w)?;
+            self.output_code_inner(w, wr)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(
+            w,
+            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}_u16, {keys});",
+            ks.tp
+        )?;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
+    /// each call into its destination and its `ok` arm with the moves gone — the element
+    /// finished only where the plain form moved every result, and each destination filled so
+    /// far released on a failing path.
+    fn output_destination_site(
+        &mut self,
+        w: &mut dyn Write,
+        site: &super::destination::Site<'_>,
+    ) -> std::io::Result<()> {
+        for m in &site.mint {
+            self.indent(w)?;
+            self.output_code_inner(w, m)?;
+            writeln!(w, ";")?;
+        }
+        let mut names: Vec<usize> = Vec::new();
+        let mut filled: Vec<(Value, u16)> = Vec::new();
+        self.output_destination_level(w, &site.top, &mut names, &mut filled)
+    }
+
+    /// Resolve the chain's `__ds#m#.` placeholders to the tuples already named.
+    fn destination_names(v: &Value, names: &[usize]) -> Value {
+        let mut v = v.clone();
+        v.map_nodes(&mut |n| {
+            if let Value::RawExpr(e) = n
+                && e.contains("__ds#")
+            {
+                for (m, k) in names.iter().enumerate() {
+                    *e = e.replace(&format!("__ds#{m}#."), &format!("__ds{k}."));
+                }
+            }
+        });
+        v
+    }
+
+    fn output_destination_level(
+        &mut self,
+        w: &mut dyn Write,
+        level: &super::destination::Level<'_>,
+        names: &mut Vec<usize>,
+        filled: &mut Vec<(Value, u16)>,
+    ) -> std::io::Result<()> {
+        self.dest_counter += 1;
+        let n = self.dest_counter;
+        let mut args: Vec<Value> = level
+            .call_args
+            .iter()
+            .map(|a| Self::destination_names(a, names))
+            .collect();
+        args[level.at] = level.dest.clone();
+        let call = Value::Call(level.callee, args);
+        if let Value::Call(_, a) = &call {
+            self.dest_site_next = Some((level.callee, a.as_ptr() as usize, level.shape.vo));
+        }
+        self.indent(w)?;
+        write!(w, "let __ds{n} = ")?;
+        self.output_code_inner(w, &call)?;
+        writeln!(w, "; //@FR-R-Destination")?;
+        assert!(
+            self.dest_site_next.take().is_none(),
+            "@FR-R-Destination: the rewritten call of {} was emitted without its twin's name",
+            self.data.def(level.callee).name()
+        );
+        names.push(n);
+        filled.push((level.dest.clone(), level.shape.vt));
+        self.indent(w)?;
+        writeln!(w, "if __ds{n}.{} == 1 {{", level.ok)?;
+        for op in &level.pre {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = Self::destination_names(op, names);
+            self.indent(w)?;
+            self.output_code_inner(w, &op)?;
+            writeln!(w, ";")?;
+        }
+        if let Some(inner) = &level.inner {
+            self.output_destination_level(w, inner, names, filled)?;
+        }
+        for op in &level.post {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = Self::destination_names(op, names);
+            self.indent(w)?;
+            self.output_code_inner(w, &op)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        write!(w, "}} else {{ ")?;
+        for (d, vt) in filled.iter().rev() {
+            write!(w, "stores.remove_claims(&(")?;
+            self.output_code_inner(w, d)?;
+            write!(w, "), ({vt}_u16)); ")?;
+        }
+        self.output_code_inner(w, level.else_v)?;
+        writeln!(w, " }};")?;
+        filled.pop();
+        names.pop();
+        Ok(())
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
@@ -2735,6 +3325,26 @@ impl Output<'_> {
             write!(w, ") as u32, ")?;
             self.output_code_inner(w, &bl.operators[1])?;
             write!(w, ")")?;
+            return Ok(());
+        }
+        // The same pair with statements between its halves: the scope pass places a scope's
+        // exit frees in front of a block's LAST operator, and a read off a call result whose
+        // record type owns a release binds that result through a displaced-record snapshot,
+        // whose frees then land here (loft#1874's inline `mk().f(x)`).  The interpreter runs
+        // the operators in order, so this keeps that order: the d_nr, the statements, the
+        // closure.
+        if bl.name == "fn_ref_field_read" && bl.operators.len() > 2 {
+            let last = bl.operators.len() - 1;
+            write!(w, "{{ let __fn_d = (")?;
+            self.output_code_inner(w, &bl.operators[0])?;
+            write!(w, ") as u32; ")?;
+            for op in &bl.operators[1..last] {
+                self.output_code_inner(w, op)?;
+                write!(w, "; ")?;
+            }
+            write!(w, "(__fn_d, ")?;
+            self.output_code_inner(w, &bl.operators[last])?;
+            write!(w, ") }}")?;
             return Ok(());
         }
         writeln!(
@@ -2957,10 +3567,16 @@ impl Output<'_> {
                     self.output_tuple_part(w, val, kinds.get(i) == Some(&"bool"))?;
                 }
             }
+            // `@FR-R-ValueRecord`'s nullable clause — a `-> S?` body's build is PRESENT: the
+            // presence word follows the fields.
+            let nullable = super::hoist::is_nullable_layout(tp);
+            if nullable {
+                write!(w, ", true")?;
+            }
             // The 1-tuple's trailing comma, matching the signature built in
             // `hoist::value_records` — without it a single-field record returns a bare
             // scalar and the call site's `.0` does not compile.
-            if parts.len() == 1 {
+            if parts.len() == 1 && !nullable {
                 write!(w, ",")?;
             }
             write!(w, ")")?;
@@ -3140,15 +3756,38 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
-        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed.
-        let mut ptr_frames = 0usize;
+        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed, and
+        // at a function body's head the ones its record PARAMETERS take for the whole body.
+        let mut ptr_frames = if is_fn_body {
+            self.bind_param_record_ptrs(w, operators)?
+        } else {
+            0usize
+        };
         // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
         let mut flat_lit_open: Option<(u16, u16)> = None;
         // `@FR-R-GroupPush` — the groups this block opens are closed by index; a nested
         // block's statements are emitted inside a group's range and never reach here.
         self.block_serial += 1;
         let block_serial = self.block_serial;
+        // `@FR-R-PushFill`'s repeat-literal clause — the statement the fill already emitted.
+        let mut repeat_skip: Option<usize> = None;
+        // `@FR-R-RefillText` — the statement holding the call an armed release waits for.
+        let mut rt_call_at: Option<usize> = None;
         for (vnr, v) in operators.iter().enumerate() {
+            if let Some(at) = rt_call_at
+                && vnr > at
+            {
+                self.refill_text_unconsumed()?;
+                rt_call_at = None;
+            }
+            if self
+                .refill_text_pending
+                .is_some_and(|p| p.2 == block_serial)
+                && rt_call_at.is_none()
+                && !matches!(v, Value::Line(_))
+            {
+                rt_call_at = Some(vnr);
+            }
             self.close_groups_before(w, block_serial, vnr)?;
             self.close_ptr_windows_before(block_serial, vnr);
             // DX-source-map: surface line comments at the
@@ -3156,12 +3795,68 @@ impl Output<'_> {
             // source.  Without this, only Value::Line nodes inside an
             // expression context get rendered (rare in practice).
             if let Value::Line(line) = v {
-                let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // One spelling on every host: the comment is part of generated source that is
+                // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
+                let file = crate::file_access::portable_str(
+                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
+                );
                 // @PLN157 — see the sibling in `output_code_node`: the statement-level
                 // half of the same position stream.
                 self.ckpt_cur_line = *line;
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
+                continue;
+            }
+            if repeat_skip.is_some_and(|last| vnr <= last) {
+                continue;
+            }
+            // `@FR-R-RefillText` — an admitted pool statement keeps only its mint: the release
+            // is the call's to emit, which calls the refill twin instead where it can.
+            if let Some(&(b, tp)) = self
+                .refill_text
+                .pools
+                .get(&(std::ptr::from_ref(v.unspan()) as usize))
+            {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(b));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {tp}_i32); }}"
+                )?;
+                self.refill_text_pending = Some((b, tp, block_serial));
+                continue;
+            }
+            // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
+            // one fill of the tail; the two statements stand as the fallback for a count or a
+            // vector the fill refuses.
+            if !self.hoist_disabled
+                && !self.push_fill_disabled
+                && let Some(next) = operators.get(vnr + 1)
+                && let Some(rl) = super::hoist::repeat_literal(v, next, self.data)
+            {
+                self.output_repeat_literal(w, &rl, v, next)?;
+                repeat_skip = Some(vnr + 1);
+                continue;
+            }
+            // `@FR-R-PushFill`'s run clause — a straight-line run of byte appends to one
+            // vector reserves once and writes through one window.
+            if !self.hoist_disabled
+                && !self.push_fill_disabled
+                && !self.push_window_disabled
+                && !self.in_coroutine_body
+                && crate::keys::push_run_enabled()
+                && let Some(run) = super::hoist::push_run(
+                    operators,
+                    vnr,
+                    self.data,
+                    self.data.def(self.def_nr).variables(),
+                )
+                && let Some(path) = super::hoist::vector_path(self.data, run.vector)
+                && self.active_push_header(&path).is_none()
+                && !self.push_windows.iter().any(|(p, _)| *p == path)
+            {
+                self.output_push_run(w, &run, operators, vnr)?;
+                repeat_skip = Some(run.last);
                 continue;
             }
             // loft#1753 — a statement that calls into a frame first records the line it calls
@@ -3213,162 +3908,10 @@ impl Output<'_> {
             // mint, paired handle-zeros and paired copies (scalar sets and the finish
             // stay — the finish is the length bump that keeps the element invisible
             // until the append).
-            if !self.elem_first.pairs.is_empty() {
-                let dvars = self.data.def(self.def_nr).variables();
-                let named = |d: &u32, n: &str| {
-                    (*d as usize) < self.data.definitions.len() && self.data.def(*d).name() == n
-                };
-                let uv = |x: Option<&Value>| match x.map(Value::unspan) {
-                    Some(Value::Var(w)) => Some(*w),
-                    _ => None,
-                };
-                let ui = |x: Option<&Value>| match x.map(Value::unspan) {
-                    Some(Value::Int(n)) => Some(*n),
-                    _ => None,
-                };
-                let mut handled = false;
-                match v.unspan() {
-                    // The temp's declaration site.
-                    Value::Call(d, args) if named(d, "OpDatabase") => {
-                        if let Some(vdb) = uv(args.first())
-                            && let Some(&pi) = self.elem_first.by_vdb.get(&vdb)
-                        {
-                            let pair = &self.elem_first.pairs[pi];
-                            let b = pair
-                                .binds
-                                .iter()
-                                .find(|b| b.vdb == vdb)
-                                .expect("by_vdb names a bind");
-                            let tmpn = sanitize(dvars.name(b.tmp));
-                            let elmn = sanitize(dvars.name(pair.elm));
-                            let (first, field_off) = (b.first, b.field_off);
-                            self.write_elem_first_mint(w, pi, first)?;
-                            self.indent(w)?;
-                            writeln!(
-                                w,
-                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {field_off} }}; //@PLN157 § V-z field-slot bind"
-                            )?;
-                            handled = true;
-                        }
-                    }
-                    // @PLN164 E-2 — a call-filled temp's lazy buffer guard: the buffer is
-                    // never minted, and the element is, when this temp carries the mint.
-                    Value::If(cond, _, _)
-                        if matches!(cond.unspan(), Value::Call(d, cargs)
-                            if named(d, "OpRefIsNull")
-                                && uv(cargs.first())
-                                    .is_some_and(|u| self.elem_first.buf_place.contains_key(&u))) =>
-                    {
-                        if let Value::Call(_, cargs) = cond.unspan()
-                            && let Some(buf) = uv(cargs.first())
-                            && let Some(&pi) = self.elem_first.by_vdb.get(&buf)
-                        {
-                            let first = self.elem_first.pairs[pi]
-                                .binds
-                                .iter()
-                                .any(|b| b.vdb == buf && b.first);
-                            self.write_elem_first_mint(w, pi, first)?;
-                            handled = true;
-                        }
-                    }
-                    // The declaration's bind and length reset are replaced above.
-                    Value::Set(_, x)
-                        if matches!(x.unspan(), Value::Call(d, cargs)
-                            if named(d, "OpGetField")
-                                && uv(cargs.first())
-                                    .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u))) =>
-                    {
-                        handled = true;
-                    }
-                    Value::Call(d, args)
-                        if named(d, "OpSetInt4")
-                            && uv(args.first())
-                                .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u)) =>
-                    {
-                        handled = true;
-                    }
-                    // The append site's reservation (only when the next statement is
-                    // the suppressed mint of an admitted element).
-                    Value::Call(d, args) if named(d, "OpPreAllocVector") => {
-                        if ui(args.get(1)) == Some(1)
-                            && let Some(next) = operators[vnr + 1..]
-                                .iter()
-                                .find(|o| !matches!(o.unspan(), Value::Line(_)))
-                            && let Value::Set(e2, m2) = next.unspan()
-                            && self.elem_first.by_elm.contains_key(e2)
-                            && matches!(m2.unspan(), Value::Call(md, margs)
-                                if named(md, "OpNewRecord")
-                                    && uv(margs.first()) == uv(args.first()))
-                        {
-                            handled = true;
-                        }
-                    }
-                    // An element's null pre-init (the parser writes one per arm in front of an
-                    // `if` whose arms each append): the element is bound by its early mint, and
-                    // the pre-init would otherwise reset it between the mint and the arms.
-                    Value::Set(e2, x)
-                        if self.elem_first.elms.contains(e2)
-                            && matches!(x.unspan(), Value::Null) =>
-                    {
-                        handled = true;
-                    }
-                    // The append site's mint — or, in another arm of a joined append
-                    // (@PLN164 E-2b), the alias of the element minted at the declaration.
-                    Value::Set(e2, m2)
-                        if self.elem_first.by_elm.contains_key(e2)
-                            && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
-                    {
-                        let pi = self.elem_first.by_elm[e2];
-                        let first = self.elem_first.pairs[pi].elm;
-                        if first != *e2 {
-                            let aliasn = sanitize(dvars.name(*e2));
-                            let firstn = sanitize(dvars.name(first));
-                            self.indent(w)?;
-                            writeln!(
-                                w,
-                                "var_{aliasn} = var_{firstn}; //@PLN164 E-2b the arm's element is the one minted at the declaration"
-                            )?;
-                        }
-                        handled = true;
-                    }
-                    // Paired handle-zeros and paired copies on the element.
-                    Value::Call(d, args)
-                        if named(d, "OpSetInt4")
-                            && uv(args.first())
-                                .and_then(|e| self.elem_first.by_elm.get(&e))
-                                .is_some_and(|&pi| {
-                                    ui(args.get(1)).is_some_and(|off| {
-                                        self.elem_first.pairs[pi]
-                                            .binds
-                                            .iter()
-                                            .any(|b| b.field_off == off)
-                                    })
-                                }) =>
-                    {
-                        handled = true;
-                    }
-                    Value::Call(d, args)
-                        if named(d, "OpAppendVector")
-                            && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
-                            if named(gd, "OpGetField")
-                                && uv(gargs.first())
-                                    .and_then(|e| self.elem_first.by_elm.get(&e))
-                                    .is_some_and(|&pi| {
-                                        ui(gargs.get(1)).is_some_and(|off| {
-                                            self.elem_first.pairs[pi]
-                                                .binds
-                                                .iter()
-                                                .any(|b| b.field_off == off)
-                                        })
-                                    })) =>
-                    {
-                        handled = true;
-                    }
-                    _ => {}
-                }
-                if handled {
-                    continue;
-                }
+            if !self.elem_first.pairs.is_empty()
+                && self.elem_first_override(w, operators, vnr, v)?
+            {
+                continue;
             }
             // `@FR-R-LoopRecord` — a loop record's per-pass declaration (`Set(v, null)`) and
             // its end-of-body free are not emitted from the block that declares it: the local
@@ -3409,6 +3952,230 @@ impl Output<'_> {
                 && matches!(a1.unspan(), Value::Int(0))
                 && matches!(a2.unspan(), Value::Int(0))
             {
+                continue;
+            }
+            // `@FR-R-RetAdopt` — the adopted result local's witness is never allocated
+            // (`OpDatabaseEmitter`), so its literal zero has no record to write: emitted, it
+            // dropped the write and reported `write_dropped` on every call.  The local builds
+            // in the return buffer, whose bind already empties it.
+            if let Some(a) = self.ret_adopt
+                && let Value::Call(d, args) = v.unspan()
+                && (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).name() == "OpSetInt4"
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == a.vdb)
+            {
+                continue;
+            }
+            // `@FR-R-AppendTwin` — inside a twin, the buffer's leading length reset is skipped and
+            // its mint runs only for a buffer the caller did not hand in.
+            if let Some(tb) = self.append_twin_buf
+                && let Value::Call(d, a) = v.unspan()
+                && let Some(Value::Var(first)) = a.first().map(Value::unspan)
+                && *first == tb
+            {
+                match self.data.def(*d).name() {
+                    "OpSetInt4" => continue,
+                    "OpDatabase" => {
+                        let b = sanitize(self.data.def(self.def_nr).variables().name(tb));
+                        self.indent(w)?;
+                        writeln!(
+                            w,
+                            "if var_{b}.store_nr == u16::MAX {{ //@FR-R-AppendTwin mint"
+                        )?;
+                        self.indent(w)?;
+                        self.output_code_inner(w, v)?;
+                        writeln!(w, ";")?;
+                        self.indent(w)?;
+                        writeln!(w, "}}")?;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            // `@FR-R-ViewReturn` — the buffer prep of a call whose callee answers a view: the
+            // prep is dropped, the call takes the twin, and the result is freed only when the
+            // twin answers it owned.
+            if super::view_return::enabled()
+                && !self.in_coroutine_body
+                && let Some(vs) = {
+                    let data = self.data;
+                    let memo = &mut self.vr_memo;
+                    super::view_return::site(operators, vnr, data, self.def_nr, &mut |f| {
+                        *memo
+                            .entry(f)
+                            .or_insert_with(|| super::view_return::callee(data, f))
+                    })
+                }
+            {
+                self.dest_counter += 1;
+                let flag = format!("__vro_{}", self.dest_counter);
+                self.indent(w)?;
+                writeln!(w, "let mut {flag}: bool = true; //@FR-R-ViewReturn")?;
+                self.vr_owned.insert(vs.subject, flag.clone());
+                self.vr_flag_pending = Some(flag);
+                self.vr_site_next = Some((vs.callee, vs.args_at));
+                let _ = vs.buf;
+                continue;
+            }
+            if let Value::Call(fd, fa) = v.unspan()
+                && self.data.def(*fd).name() == "OpFreeRefIfDistinct"
+                && let Some(Value::Var(sv)) = fa.first().map(Value::unspan)
+                && let Some(flag) = self.vr_owned.get(sv).cloned()
+            {
+                self.indent(w)?;
+                write!(w, "if {flag} {{ ")?;
+                self.output_code_inner(w, v)?;
+                writeln!(w, "; }}")?;
+                continue;
+            }
+            // `@FR-R-ViewReturn`'s twin — a materialised view exit answers the view.
+            if self.vr_twin
+                && let Some(rb) =
+                    super::hoist::ret_buffer_attr(self.data.def(self.def_nr)).map(|ai| {
+                        let def = self.data.def(self.def_nr);
+                        def.variables().var(&def.attributes()[ai].name)
+                    })
+                && let Some(src) = super::view_return::view_exit(self.data, v, rb)
+                && let Value::Block(bl) = v.unspan()
+            {
+                let ops: Vec<&Value> = bl
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o, Value::Line(_)))
+                    .collect();
+                for f in &ops[2..ops.len() - 1] {
+                    self.indent(w)?;
+                    self.output_code_inner(w, f)?;
+                    writeln!(w, ";")?;
+                }
+                self.indent(w)?;
+                write!(w, "return (")?;
+                self.output_code_inner(w, src)?;
+                writeln!(w, ", false);")?;
+                continue;
+            }
+            // `@FR-R-InPlaceLiteral`'s keyed clause — `h[k] = R { … }` written into the record
+            // the collection claims for it, not built in a store of its own and copied.
+            if super::keyed_place::enabled()
+                && !self.in_coroutine_body
+                && let Some(ks) = super::keyed_place::site(v, self.data, self.def_nr)
+                // A partial subscript takes the key from the literal's own fields
+                // (`Stores::set_keyed`'s `full`); only a full one names the record's key.
+                && self
+                    .stores
+                    .types
+                    .get(ks.tp as usize)
+                    .is_some_and(|t| t.keys.len() == ks.keys.len())
+            {
+                self.output_keyed_place(w, &ks)?;
+                continue;
+            }
+            // `@FR-R-Destination` — a call whose result's heap field is moved whole into a
+            // fresh element: the element is minted first and the callee's twin builds there.
+            if super::destination::enabled() && !self.in_coroutine_body {
+                let mut memo = std::mem::take(&mut self.dest_memo);
+                let site = super::destination::site(
+                    operators,
+                    vnr,
+                    self.data,
+                    self.stores,
+                    self.def_nr,
+                    &mut memo,
+                );
+                self.dest_memo = memo;
+                if let Some(site) = site
+                    && site
+                        .callees()
+                        .iter()
+                        .all(|c| !self.value_records.fns.contains_key(c))
+                {
+                    self.output_destination_site(w, &site)?;
+                    repeat_skip = Some(site.last);
+                    continue;
+                }
+            }
+            // `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin: f's twin builds
+            // its result after X's elements, and the copy is gone.
+            if crate::keys::append_twin_enabled() && !self.in_coroutine_body {
+                let mut memo = std::mem::take(&mut self.ap_memo);
+                let site = super::append_twin::call_site(v, self.data, self.def_nr, &mut memo);
+                self.ap_memo = memo;
+                if let Some(site) = site {
+                    let mut args = site.args.to_vec();
+                    args[site.at] = site.dest.clone();
+                    let call = Value::Call(site.callee, args);
+                    if let Value::Call(_, a) = &call {
+                        self.ap_site_next = Some((site.callee, a.as_ptr() as usize));
+                    }
+                    self.indent(w)?;
+                    self.output_code_inner(w, &call)?;
+                    writeln!(w, "; //@FR-R-AppendTwin")?;
+                    assert!(
+                        self.ap_site_next.take().is_none(),
+                        "@FR-R-AppendTwin: the rewritten call of {} was emitted without its twin's \
+                         name — the plain callee would clear the destination",
+                        self.data.def(site.callee).name()
+                    );
+                    continue;
+                }
+            }
+            // `@FR-R-RefillBuffer` — a refilling buffer's vector-field zero empties the vector
+            // in place: a fresh mint holds no vector there (a no-op), a kept store holds the
+            // previous value's, whose record the group's fill then reuses.
+            if !self.refill.field_zeros.is_empty()
+                && self
+                    .refill
+                    .field_zeros
+                    .contains(&(std::ptr::from_ref(v.unspan()) as usize))
+                && let Value::Call(_, args) = v.unspan()
+                && let (Some(Value::Var(b)), Some(Value::Int(off))) = (
+                    args.first().map(Value::unspan),
+                    args.get(1).map(Value::unspan),
+                )
+            {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(*b));
+                // The in-place clause: the zero followed by a repeat literal of the same field
+                // overwrites the kept vector where it stands when it already holds that many
+                // elements; any other length empties and fills it as below.
+                let in_place = if self.refill_in_place
+                    && !self.hoist_disabled
+                    && !self.push_fill_disabled
+                    && let (Some(first), Some(second)) =
+                        (operators.get(vnr + 1), operators.get(vnr + 2))
+                    && let Some(rl) = super::hoist::repeat_literal(first, second, self.data)
+                    && super::hoist::vector_path(self.data, rl.vector)
+                        == Some((*b, vec![i64::from(*off)]))
+                {
+                    let vec = self.expr_string(rl.vector)?;
+                    let val = self.expr_string(rl.val)?;
+                    let ty = rl.rust_type;
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "if !stores.fill_exact::<{ty}>(&({vec}), {}_u32, {}_i64, ({val}) as {ty}) {{ //@FR-R-RefillBuffer in place",
+                        rl.size, rl.count
+                    )?;
+                    self.indent += 1;
+                    crate::rewrite_census::fired("R-RefillBuffer", 1);
+                    Some((rl, first, second))
+                } else {
+                    None
+                };
+                self.indent(w)?;
+                // A buffer whose elements own heap had them released by its entry clear
+                // (`hoist::refill_buffers` admits it only then): the length reset is all the
+                // group owes here too.
+                writeln!(
+                    w,
+                    "{{ let _rf = var_{name}; vector::clear_vector(&DbRef {{ store_nr: _rf.store_nr, rec: _rf.rec, pos: _rf.pos + {off}_u32 }}, &mut stores.allocations); }} //@FR-R-RefillBuffer"
+                )?;
+                if let Some((rl, first, second)) = in_place {
+                    self.output_repeat_literal(w, &rl, first, second)?;
+                    self.indent -= 1;
+                    self.indent(w)?;
+                    writeln!(w, "}}")?;
+                    repeat_skip = Some(vnr + 2);
+                }
                 continue;
             }
             let lit_guard = match v.unspan() {
@@ -3639,7 +4406,31 @@ impl Output<'_> {
                     // nwb fns via the no-work-buffer arm).
                     let tail_outer_owned =
                         wrap_result && super::def_returns_owned_text(self.data.def(self.def_nr));
-                    if is_tail_capture_call {
+                    // A TEXT value block whose tail is one of its OWN locals — the temp of
+                    // `t = f() ?? return "x"` (`ncr`) — hands that `String` out by value: the
+                    // ordinary spelling `&var_x` borrows a local that drops at this block's
+                    // `}` (E0597), the same hazard the `_ret.to_string()` tail above closes,
+                    // and a text value block already yields an owned `String` there.
+                    let own_text_tail = match v.unspan() {
+                        Value::Var(x)
+                            if is_return_expr
+                                && !is_fn_body
+                                && !wrap_result
+                                && narrow_cast.is_none()
+                                && !is_tail_capture_call
+                                && matches!(bl.result.base(), Type::Text(_)) =>
+                        {
+                            let vars = self.data.def(self.def_nr).variables();
+                            (vars.scope(*x) == bl.scope
+                                && matches!(vars.tp(*x).base(), Type::Text(_))
+                                && !self.text_borrowed(*x))
+                            .then(|| sanitize(vars.name(*x)))
+                        }
+                        _ => None,
+                    };
+                    if own_text_tail.is_some() {
+                        // written in place of the value below
+                    } else if is_tail_capture_call {
                         // Wrap the captured value in a block.  A tail call whose
                         // argument carries a store-lifetime "lift" pre-eval emits that
                         // lift as a LEADING `{ … };` statement (it reassigns the lifted
@@ -3659,7 +4450,7 @@ impl Output<'_> {
                         // expression's mutable borrow of `stores`
                         // (e.g. `stores.vec_ref_or_raise_runtime(...)`,
                         // and any other `stores.X` call introduced
-                        // by the C66 production-mode helpers) doesn't
+                        // by the @C66 production-mode helpers) doesn't
                         // overlap with the `stores.scratch.push(...)`
                         // borrow.  Without the pre-bind, rustc rejects
                         // with E0499.  Move the resulting String into
@@ -3673,9 +4464,13 @@ impl Output<'_> {
                     } else if narrow_cast.is_some() {
                         write!(w, "(")?;
                     }
-                    self.indent += 1;
-                    self.output_code_inner(w, v)?;
-                    self.indent -= 1;
+                    if let Some(name) = &own_text_tail {
+                        write!(w, "var_{name}")?;
+                    } else {
+                        self.indent += 1;
+                        self.output_code_inner(w, v)?;
+                        self.indent -= 1;
+                    }
                     if is_tail_capture_call {
                         // Close the block opened above; the call is its tail expr.
                         write!(w, " }}")?;
@@ -3731,6 +4526,9 @@ impl Output<'_> {
                 ptr_frames += 1;
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
+        }
+        if rt_call_at.is_some() {
+            self.refill_text_unconsumed()?;
         }
         self.close_groups_before(w, block_serial, usize::MAX)?;
         self.close_ptr_windows_before(block_serial, usize::MAX);
@@ -3818,11 +4616,208 @@ impl Output<'_> {
 }
 
 impl Output<'_> {
+    /// `@FR-R-RefillText` — a release the pool statement left to its call and no call took
+    /// would be a text leaked per call; it is an emission fault, never a silent leak.
+    fn refill_text_unconsumed(&mut self) -> std::io::Result<()> {
+        if let Some((b, _, _)) = self.refill_text_pending.take() {
+            let def = self.data.def(self.def_nr);
+            return Err(std::io::Error::other(format!(
+                "refill-text: the release of `{}` in `{}` was left to a call that did not take it",
+                def.variables().name(b),
+                def.name()
+            )));
+        }
+        Ok(())
+    }
+
     /// The element-first MINT at a temp's declaration site (@PLN157 § V-z, @PLN164 E-2): the
     /// element is claimed where the first temp is declared, so every paired temp can be built in
     /// its field; the length bump stays at the append's finish.  A local vector is reserved
     /// first, as its append would have; a record's collection field is not.  Writes nothing for
     /// a temp that does not carry the mint.
+    /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first overrides for statement `vnr` of
+    /// `operators`: a paired temp's declaration becomes the element mint (first temp) plus a
+    /// bind to the element's own field slot, and the append site loses its reservation, mint,
+    /// paired handle-zeros and paired copies (scalar sets and the finish stay — the finish is
+    /// the length bump that keeps the element invisible until the append).  Answers whether the
+    /// statement was handled.  Asked by every statement loop — a block's and a loop body's —
+    /// because an append group stands in either (the comprehension clause's, in the loop that
+    /// builds the outer vector).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "moved whole out of output_block: one match arm per element-first override"
+    )]
+    fn elem_first_override(
+        &mut self,
+        w: &mut dyn Write,
+        operators: &[Value],
+        vnr: usize,
+        v: &Value,
+    ) -> std::io::Result<bool> {
+        let dvars = self.data.def(self.def_nr).variables();
+        let named = |d: &u32, n: &str| {
+            (*d as usize) < self.data.definitions.len() && self.data.def(*d).name() == n
+        };
+        let uv = |x: Option<&Value>| match x.map(Value::unspan) {
+            Some(Value::Var(w)) => Some(*w),
+            _ => None,
+        };
+        let ui = |x: Option<&Value>| match x.map(Value::unspan) {
+            Some(Value::Int(n)) => Some(*n),
+            _ => None,
+        };
+        let mut handled = false;
+        match v.unspan() {
+            // The temp's declaration site (`OpDatabaseNP` for a comprehension's buffer,
+            // `@FR-R-ElemFirst`'s comprehension clause).
+            Value::Call(d, args) if named(d, "OpDatabase") || named(d, "OpDatabaseNP") => {
+                if let Some(vdb) = uv(args.first())
+                    && let Some(&pi) = self.elem_first.by_vdb.get(&vdb)
+                {
+                    let pair = &self.elem_first.pairs[pi];
+                    let b = pair
+                        .binds
+                        .iter()
+                        .find(|b| b.vdb == vdb)
+                        .expect("by_vdb names a bind");
+                    let tmpn = sanitize(dvars.name(b.tmp));
+                    let elmn = sanitize(dvars.name(pair.elm));
+                    let (first, field_off) = (b.first, b.field_off);
+                    self.write_elem_first_mint(w, pi, first)?;
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {field_off} }}; //@PLN157 § V-z field-slot bind"
+                    )?;
+                    handled = true;
+                }
+            }
+            // @PLN164 E-2 — a call-filled temp's lazy buffer guard: the buffer is
+            // never minted, and the element is, when this temp carries the mint.
+            Value::If(cond, _, _)
+                if matches!(cond.unspan(), Value::Call(d, cargs)
+                    if named(d, "OpRefIsNull")
+                        && uv(cargs.first())
+                            .is_some_and(|u| self.elem_first.buf_place.contains_key(&u))) =>
+            {
+                if let Value::Call(_, cargs) = cond.unspan()
+                    && let Some(buf) = uv(cargs.first())
+                    && let Some(&pi) = self.elem_first.by_vdb.get(&buf)
+                {
+                    let first = self.elem_first.pairs[pi]
+                        .binds
+                        .iter()
+                        .any(|b| b.vdb == buf && b.first);
+                    self.write_elem_first_mint(w, pi, first)?;
+                    handled = true;
+                }
+            }
+            // The declaration's bind and length reset are replaced above.
+            Value::Set(_, x)
+                if matches!(x.unspan(), Value::Call(d, cargs)
+                    if named(d, "OpGetField")
+                        && uv(cargs.first())
+                            .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u))) =>
+            {
+                handled = true;
+            }
+            Value::Call(d, args)
+                if named(d, "OpSetInt4")
+                    && uv(args.first())
+                        .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u)) =>
+            {
+                handled = true;
+            }
+            // The append site's reservation (only when the next statement is
+            // the suppressed mint of an admitted element).
+            Value::Call(d, args) if named(d, "OpPreAllocVector") => {
+                if ui(args.get(1)) == Some(1)
+                    && let Some(next) = operators[vnr + 1..]
+                        .iter()
+                        .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                    && let Value::Set(e2, m2) = next.unspan()
+                    && self.elem_first.by_elm.contains_key(e2)
+                    && matches!(m2.unspan(), Value::Call(md, margs)
+                        if named(md, "OpNewRecord")
+                            && uv(margs.first()) == uv(args.first()))
+                {
+                    handled = true;
+                }
+            }
+            // An element's null pre-init (the parser writes one per arm in front of an
+            // `if` whose arms each append): the element is bound by its early mint, and
+            // the pre-init would otherwise reset it between the mint and the arms.
+            Value::Set(e2, x)
+                if self.elem_first.elms.contains(e2) && matches!(x.unspan(), Value::Null) =>
+            {
+                handled = true;
+            }
+            // The append site's mint — or, in another arm of a joined append
+            // (@PLN164 E-2b), the alias of the element minted at the declaration.
+            Value::Set(e2, m2)
+                if self.elem_first.by_elm.contains_key(e2)
+                    && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
+            {
+                let pi = self.elem_first.by_elm[e2];
+                let first = self.elem_first.pairs[pi].elm;
+                if first != *e2 {
+                    let aliasn = sanitize(dvars.name(*e2));
+                    let firstn = sanitize(dvars.name(first));
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "var_{aliasn} = var_{firstn}; //@PLN164 E-2b the arm's element is the one minted at the declaration"
+                    )?;
+                }
+                handled = true;
+            }
+            // Paired handle-zeros and paired copies on the element.
+            Value::Call(d, args)
+                if named(d, "OpSetInt4")
+                    && uv(args.first())
+                        .and_then(|e| self.elem_first.by_elm.get(&e))
+                        .is_some_and(|&pi| {
+                            ui(args.get(1)).is_some_and(|off| {
+                                self.elem_first.pairs[pi]
+                                    .binds
+                                    .iter()
+                                    .any(|b| b.field_off == off)
+                            })
+                        }) =>
+            {
+                handled = true;
+            }
+            // The comprehension clause's whole-element copy: the row was built in it.
+            Value::Call(d, args)
+                if named(d, "OpCopyRecord")
+                    && uv(args.first())
+                        .zip(uv(args.get(1)))
+                        .is_some_and(|ce| self.elem_first.whole_copies.contains(&ce)) =>
+            {
+                handled = true;
+            }
+            Value::Call(d, args)
+                if named(d, "OpAppendVector")
+                    && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
+                    if named(gd, "OpGetField")
+                        && uv(gargs.first())
+                            .and_then(|e| self.elem_first.by_elm.get(&e))
+                            .is_some_and(|&pi| {
+                                ui(gargs.get(1)).is_some_and(|off| {
+                                    self.elem_first.pairs[pi]
+                                        .binds
+                                        .iter()
+                                        .any(|b| b.field_off == off)
+                                })
+                            })) =>
+            {
+                handled = true;
+            }
+            _ => {}
+        }
+        Ok(handled)
+    }
+
     fn write_elem_first_mint(
         &mut self,
         w: &mut dyn Write,
@@ -3834,7 +4829,6 @@ impl Output<'_> {
         }
         let pair = &self.elem_first.pairs[pi];
         let dvars = self.data.def(self.def_nr).variables();
-        let outn = sanitize(dvars.name(pair.out));
         let elmn = sanitize(dvars.name(pair.elm));
         let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
         self.indent(w)?;
@@ -3865,15 +4859,19 @@ impl Output<'_> {
                 "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &({operand}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
             );
         }
+        // The container is rendered as any read of it is, so a `&` parameter is dereferenced.
+        let mut out: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut out, &Value::Var(pair.out))?;
+        let out = String::from_utf8_lossy(&out).into_owned();
         if fld == 65535 {
             writeln!(
                 w,
-                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
             )
         } else {
             writeln!(
                 w,
-                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+                "var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
             )
         }
     }

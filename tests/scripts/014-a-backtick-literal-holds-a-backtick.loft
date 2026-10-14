@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN179 finding 014 — `` \` `` is a backtick inside a backtick literal, so a block of text
+// that quotes code is one literal: on one line, across lines (the dedent untouched), after an
+// interpolation hole (the resumed scanner), and in a `"…"` literal too, where it was never
+// needed but reads the same.  Every expected value by hand.
+// @falsified-at: none — before the escape existed each cell was "Backtick string not correctly terminated" or a refused `\``
+fn main() {
+  one = `code: \`x\` here`;
+  assert(one == "code: `x` here", "one line: [{one}]");
+  n = 3;
+  block = `
+    Run \`make release-checklist\` {n} times.
+      #[ignore = "..."] is \`\`\`
+  `;
+  assert(block == "Run `make release-checklist` 3 times.\n  #[ignore = \"...\"] is ```", "across lines, after a hole: [{block}]");
+  plain = "a \` b";
+  assert(plain == "a ` b", "the other quote form: [{plain}]");
+  println("ok");
+}

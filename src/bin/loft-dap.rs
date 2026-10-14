@@ -23,6 +23,8 @@
 // captured as a `terminated` event, and the panic message is silenced (the hook
 // below) so it can never corrupt the stream.
 
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -968,9 +970,7 @@ fn obj(entries: Vec<(&str, Parsed)>) -> Parsed {
 
 /// The file name of a path (the `stackTrace` source label).
 fn basename(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+    loft::file_access::file_name(Path::new(path)).unwrap_or_else(|| path.to_string())
 }
 
 // ── framing ──────────────────────────────────────────────────────────────────────────
@@ -1018,7 +1018,7 @@ fn resolve_stdlib_dir() -> String {
         exe_dir.join("../default"),    // default beside the binary dir
     ];
     for c in candidates {
-        if c.is_dir() {
+        if loft::file_access::is_dir(loft::file_access::PathText::from_os(&c)) {
             return c.to_string_lossy().into_owned();
         }
     }
@@ -1033,7 +1033,7 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
     while i + 1 < args.len() {
         if args[i] == "--lib" {
             let raw = &args[i + 1];
-            let abs = loft::portable_path::plain_canonical_str(raw);
+            let abs = loft::file_access::plain_canonical_str(raw);
             if !dirs.contains(&abs) {
                 dirs.push(abs);
             }

@@ -1,0 +1,193 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ByteCopy`'s vector clause — a run of a byte vector copied into another one byte at a
+// time is ONE slice append.
+//
+// `for k in 0..n { bs += [bytes[a + k] ?? 0] }` — how a binary decoder (cbor's `read_value`)
+// takes a byte string out of its frame — paid a checked element read, a range check, a
+// discharge and a push per byte.  Where the loop is exactly that, over pure bounds, from a byte
+// vector variable into an exclusive byte vector, it is one `OpSliceVector` behind
+// `0 <= a && 0 <= lo && lo <= hi && hi <= len(bytes) - a`, the loop as written running for
+// every range the guard refuses.  The value never changes: every cell answers the same with
+// `LOFT_NO_BYTE_COPY=1`, and that A/B is the falsifier together with the pin
+// (`tests/byte_copy.rs`).  Bytes hand-computed from "hello world" =
+// 104 101 108 108 111 32 119 111 114 108 100 (length 11); a negative index counts from the end.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-10-02): with the guard's upper test (`hi <= len(v) - a`) struck in
+//   `byte_copy::guarded`, v5 fails on both backends — the slice clamps to the source where the
+//   loop pushes the default for the two reads past its end.
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   WITNESS: under the sabotage v5's length reads 3 for 5.
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+
+struct D { v: vector<u8>, next: integer }
+
+struct O { buf: vector<u8> }
+
+fn hw() -> vector<u8> { [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8, 32 as u8,
+                         119 as u8, 111 as u8, 114 as u8, 108 as u8, 100 as u8] }
+
+fn same(v: vector<u8>, want: vector<integer>) -> boolean {
+  if len(v) != len(want) { return false; }
+  for i in 0..len(v) { if (v[i] ?? 0) as integer != (want[i] ?? -1) { return false; } }
+  true
+}
+
+// the decoder's spelling: a run at an offset
+fn rd(bytes: vector<u8>, a: integer, n: integer) -> vector<u8> {
+  bs: vector<u8> = [];
+  for k in 0..n { bs += [bytes[a + k] ?? 0]; }
+  bs
+}
+
+// the same run returned inside a record: the destination is placed in the return buffer
+fn rd_rec(bytes: vector<u8>, a: integer, n: integer) -> D {
+  bs: vector<u8> = [];
+  for k in 0..n { bs += [bytes[a + k] ?? 0]; }
+  return D { v: bs, next: a + n };
+}
+
+fn v1() { b = hw(); assert(same(rd(b, 2, 4), [108, 108, 111, 32]), "v1 got {rd(b, 2, 4)}"); }
+
+// the index spelled the other way round
+fn v2() {
+  b = hw(); a = 2; out: vector<u8> = [];
+  for k in 0..4 { out += [b[k + a] ?? 0]; }
+  assert(same(out, [108, 108, 111, 32]), "v2 got {out}");
+}
+
+// the plain index, literal bounds
+fn v3() {
+  b = hw(); out: vector<u8> = [];
+  for k in 1..4 { out += [b[k] ?? 0]; }
+  assert(same(out, [101, 108, 108]), "v3 got {out}");
+}
+
+// a computed range
+fn v4() {
+  b = hw(); lo = 3; hi = 7; out: vector<u8> = [];
+  for k in lo..hi { out += [b[k] ?? 0]; }
+  assert(same(out, [108, 111, 32, 119]), "v4 got {out}");
+}
+
+// an end past the source: the guard refuses it and the loop pushes the default
+fn v5() {
+  b = hw(); out: vector<u8> = [];
+  for k in 0..5 { out += [b[8 + k] ?? 7]; }
+  assert(len(out) == 5, "v5 length {len(out)}");
+  assert(same(out, [114, 108, 100, 7, 7]), "v5 got {out}");
+}
+
+// a negative offset: the guard refuses it and the loop reads from the end
+fn v6() {
+  b = hw(); a = -2; out: vector<u8> = [];
+  for k in 0..3 { out += [b[a + k] ?? 9]; }
+  assert(same(out, [108, 100, 104]), "v6 got {out}");
+}
+
+// the bytes land after what the vector already holds
+fn v7() {
+  b = hw(); out: vector<u8> = [1 as u8, 2 as u8];
+  for k in 0..3 { out += [b[6 + k] ?? 0]; }
+  assert(same(out, [1, 2, 119, 111, 114]), "v7 got {out}");
+}
+
+// an empty range appends nothing
+fn v8() {
+  b = hw(); out: vector<u8> = [];
+  for k in 3..3 { out += [b[k] ?? 0]; }
+  assert(len(out) == 0, "v8 got {out}");
+}
+
+// the destination is the source: the loop as written (it reads only the elements it started with)
+fn v9() {
+  b = hw();
+  for k in 0..3 { b += [b[k] ?? 0]; }
+  assert(len(b) == 14 && (b[11] ?? 0) == 104 as u8 && (b[13] ?? 0) == 108 as u8, "v9 got {b}");
+}
+
+// an integer vector is not a byte copy: the loop as written
+fn v10() {
+  src: vector<integer> = [5, 6, 7, 8]; out: vector<integer> = [];
+  for k in 0..3 { out += [src[1 + k] ?? 0]; }
+  assert(len(out) == 3 && (out[0] ?? 0) == 6 && (out[2] ?? 0) == 8, "v10 got {out}");
+}
+
+// a second statement in the body keeps the loop
+fn v11() {
+  b = hw(); out: vector<u8> = []; c = 0;
+  for k in 0..4 { out += [b[k] ?? 0]; c += 1; }
+  assert(same(out, [104, 101, 108, 108]) && c == 4, "v11 got {out} {c}");
+}
+
+// past several growth steps
+fn v12() {
+  big: vector<u8> = [];
+  for _ in 0..1000 { for x in hw() { big += [x]; } }
+  out: vector<u8> = [];
+  for k in 0..5000 { out += [big[3 + k] ?? 0]; }
+  s = 0;
+  for x in out { s += x as integer; }
+  // 5000 bytes from offset 3 of a period-11 sequence summing 1116 per period:
+  // 454 periods (4994 bytes) = 506664, then the 6 bytes at offsets 3..8 = 108+111+32+119+111+114 = 595
+  assert(len(out) == 5000 && s == 507259, "v12 length {len(out)} sum {s}");
+}
+
+// the decoder's record: the destination placed in the return buffer's store
+fn v13() {
+  b = hw(); d = rd_rec(b, 6, 5);
+  assert(same(d.v, [119, 111, 114, 108, 100]) && d.next == 11, "v13 got {d.v} {d.next}");
+}
+
+// a default that differs from every byte, on a range wholly inside the source
+fn v15() {
+  b = hw(); out: vector<u8> = [];
+  for k in 0..3 { out += [b[4 + k] ?? 200]; }
+  assert(same(out, [111, 32, 119]), "v15 got {out}");
+}
+
+// a `&` destination may be the source: the loop as written
+fn into(dst: &vector<u8>, src: vector<u8>) {
+  for k in 0..3 { dst += [src[k] ?? 0]; }
+}
+fn v16() {
+  b = hw(); out: vector<u8> = [9 as u8];
+  into(out, b);
+  assert(same(out, [9, 104, 101, 108]), "v16 got {out}");
+}
+
+// a field as the source keeps the loop
+fn v17() {
+  o = O { buf: hw() }; out: vector<u8> = [];
+  for k in 0..3 { out += [o.buf[2 + k] ?? 0]; }
+  assert(same(out, [108, 108, 111]), "v17 got {out}");
+}
+
+// a default that is a variable keeps the loop (only a literal default is admitted)
+fn v18() {
+  b = hw(); d = 7 as u8; out: vector<u8> = [];
+  for k in 0..3 { out += [b[8 + k] ?? d]; }
+  assert(same(out, [114, 108, 100]), "v18 got {out}");
+}
+
+// a float run keeps the loop: its element can hold the null the `??` replaces
+fn v19() {
+  src: vector<float> = [1.5, 2.5, 3.5]; out: vector<float> = [];
+  for k in 0..2 { out += [src[1 + k] ?? 0.0]; }
+  assert(len(out) == 2 && (out[0] ?? 0.0) == 2.5 && (out[1] ?? 0.0) == 3.5, "v19 got {out}");
+}
+
+// the copy inside an `if` arm
+fn v20() {
+  b = hw(); out: vector<u8> = []; flag = len(b) > 3;
+  if flag { for k in 0..3 { out += [b[k] ?? 0]; } }
+  assert(same(out, [104, 101, 108]), "v20 got {out}");
+}
+
+fn main() {
+  v1(); v2(); v3(); v4(); v5(); v6(); v7(); v8(); v9(); v10(); v11(); v12(); v13(); v15();
+  v16(); v17(); v18(); v19(); v20();
+  println("done");
+}

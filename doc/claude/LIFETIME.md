@@ -14,7 +14,9 @@ The `dep` field on `Type` controls ownership and freeing.  See `src/data.rs`
 ## Scope exit — `get_free_vars`
 
 When a scope ends (block exit, function return, loop iteration boundary), the scope
-analysis emits free operations for variables registered in that scope.
+analysis emits free operations for variables registered in that scope.  Which variable gets a
+free is decided from its deps; emitting more frees and relying on a free being idempotent is
+declined (@C88).
 
 ### Step 1: Collect variables — `variables(to_scope)` — `src/scopes.rs:503-533`
 
@@ -199,10 +201,10 @@ marked LIVE.
 | element lives | order | why |
 |---|---|---|
 | **inline** (`vector`, `sorted`) | claims → unlink | the successor is shifted on top of it, so the fields must be read while they are still its own |
-| **own block** (`hash`, `index`, `radix`) | unlink → claims → free block | an `index`'s red-black links live in a FIELD, so before the unlink they look to `remove_claims` like owned children — free first and it follows them into the live siblings and takes the subtree with it |
+| **own block** (`hash`, `index`, `radix`) | unlink → claims → free block | the unlink finds the element by its own KEY — a hash re-hashes it, an index descends with it (@C145: nothing points back) — so it runs while the key is still the element's; `remove_claims` frees a text key |
 
-Getting that backwards is not subtle in its symptom: the whole collection reads
-back as `Item not found` from `tree::remove_iter`.
+Getting that backwards is not subtle in its symptom: the unlink finds nothing, the
+collection keeps naming a freed element, and lookups through it read freed bytes.
 
 `Array` / `Ordered` are excluded from the block free — they hold separate
 records too, but their removal path reads `rec` as an inline index and was wrong
@@ -360,9 +362,15 @@ it is not a store of the caller's, it is never freed, and it needs no identity g
 the result names the destination.  Admitted for a direct call to a loft-defined callee that
 FILLS the buffer it is handed on every exit.  Declined where an argument of the call reaches the
 destination — the callee clears its buffer before reading its arguments, so `h.v = grow(h.v)`
-would read an emptied vector — where the callee MINTS into a buffer parameter, which a returned
-vector literal does, and for a field of a struct-enum VARIANT, which exists only while the enum
-holds that variant.  A grouped destination is admitted: the group maintenance brackets the fill.
+would read an emptied vector — where the callee MINTS into a buffer parameter, which a
+projection chain (`return g().inner.v`) does, and for a field of a struct-enum VARIANT, which
+exists only while the enum holds that variant.  A returned collection LITERAL (`[x; n]`,
+`[a, b]`, a comprehension) is admitted: its `main_vector<T>` mint, handed a live buffer that is
+not that wrapper's own store, answers the buffer as the place, with the collection it held
+released (`Stores::mint_at_place`, both backends), and the literal builds in it.  A grouped destination is admitted: the group maintenance brackets the fill.
+The struct literal `H { v: f(…) }` takes the same admission (`place_buffer_of`, shared): its
+field exists once the header prime has written the empty handle — a variant literal's included,
+since it builds that variant — so the call is handed the field; a `?` field keeps the replace.
 `LOFT_NO_BUFFER_IS_PLACE=1` restores the copy; `tests/scripts/164-buffer-is-the-place.loft` and
 `tests/buffer_is_place.rs` are the receipts.
 

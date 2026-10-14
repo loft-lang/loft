@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic's parameter of type `T` reassigned and returned, instantiated at a struct, answers
+// what its non-generic twin answers (`@FR-G-Mono`): the instance keeps the heap-parameter
+// rebind of `(F-ParamRebind)` — the scalar and text instances drop it, in the sibling files —
+// so it shared the twin's defect: the function-exit release freed the store the return was
+// handing out, a panic on `--native` (loft#1871).  Kept apart from the scalar and text
+// instances because it failed on a different channel.
+//
+// @falsified-at: e6383dd9e — native exit 1 -> 0, native panicked -> clean (the store the return
+//   read was already freed).  interpret INERT: the control reads the freed store and finds the
+//   right value in it; only `LOFT_STRICT_STORES=1` names the use-after-free there.
+// @falsified-by: tests/falsified/a-generic-record-parameter-reassigns-like-its-twin.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once e6383dd9e is out of reach.
+// HOLDS: leak, refusals and asserts are clean on both trees and both backends.
+
+struct S { x: integer }
+
+fn setg<T>(p: T, q: T) -> T {
+  p = q;
+  p
+}
+
+fn main() {
+  a = S { x: 1 };
+  r = setg(a, S { x: 2 });
+  assert(r.x == 2, "record instance: got {r.x}");
+  assert(a.x == 1, "the caller's record is untouched: got {a.x}");
+}

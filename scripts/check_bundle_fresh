@@ -1,0 +1,73 @@
+#!/usr/bin/env -S loft --interpret
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// check_bundle_fresh — fail a change-set that edits a committed browser bundle's SOURCE
+// without rebuilding + committing the bundle in the same set.
+//
+// Why this exists: the repo commits generated browser artefacts (the Brick Buster --html
+// page; the gallery wasm/js pair).  Every time we have shipped a broken or stale page it was
+// a PR that changed the source but skipped the rebuild step (doc/claude/GALLERY_CI.md).  This
+// gate turns that into a red check.  It is DETERMINISTIC and needs NO build/toolchain — it
+// compares the PR's changed-file set against a declared artefact->source table — so it is a
+// fast per-PR gate that can never flake on wasm build non-determinism.
+//
+// Scope (deliberate): only artefacts with a NARROW, well-defined source belong here —
+// currently the Brick Buster page, whose source is one .loft file.  The gallery wasm bundle
+// (doc/pkg/*) is the whole compiler compiled to wasm, so its "source" is all of src/; its
+// freshness is covered by the gallery job's rebuild + Node instantiate.  Add a row below only
+// when the mapping stays one-to-few and clear.  This gate catches staleness a PR
+// *introduces*; pre-existing staleness is release-checklist item B.
+//
+// Usage:
+//   scripts/check_bundle_fresh [<base-ref>]
+// <base-ref> defaults to origin/main.  Changed set = `git diff --name-only <base>...HEAD`
+// (three-dot: what HEAD added since the merge base).
+//
+// The port of scripts/check_bundle_fresh.sh (@PLN179 strand 4d, the first script over
+// `run`); its twin lives in tests/comparisons/scripts/check_bundle_fresh/.  A repo-root
+// tool: paths resolve against the working directory, not the script.
+#cwd
+
+/// A committed artefact and the sources it is built from.
+struct Bundle {
+  artefact: text,
+  sources: vector<text>
+}
+
+// One row per artefact.
+fn mapping() -> vector<Bundle> {
+  [Bundle { artefact: "doc/brick-buster.html", sources: ["tools/brick-buster/25-brick-buster.loft"] }]
+}
+
+fn main() {
+  args = arguments();
+  base = "origin/main";
+  if len(args) > 0 && args[0] != "" { base = args[0]; }
+
+  // Files this change set touches, relative to the merge base with <base>.
+  diff: Command = "git diff --name-only {base}...HEAD";
+  r = diff.run();
+  if !r.ok {
+    // Base unreachable (shallow clone, detached CI without the base ref, a local branch
+    // with no upstream).  Do not block on an undecidable input.
+    println("check_bundle_fresh: SKIP — cannot resolve base '{base}' (no merge base).");
+    exit(0);
+  }
+  changed = r.stdout.split('\n');
+
+  fail = false;
+  for b in mapping() {
+    touched = "";
+    for s in b.sources { if changed.contains(s) { touched = s; } }
+    if touched != "" && !changed.contains(b.artefact) {
+      println("::error file={touched}::'{touched}' changed in this change set but '{b.artefact}' was NOT rebuilt. Rebuild the bundle (`make game` for Brick Buster, `make gallery` for the gallery) and commit '{b.artefact}' in the same change so the deployed website is not stale.");
+      fail = true;
+    }
+  }
+  if fail {
+    println("check_bundle_fresh: FAIL — a committed browser bundle's source changed without a rebuild.");
+    exit(1);
+  }
+  println("check_bundle_fresh: OK — every touched bundle source was rebuilt in this change set.");
+}

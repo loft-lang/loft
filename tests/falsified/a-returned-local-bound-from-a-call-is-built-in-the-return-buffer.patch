@@ -1,0 +1,12 @@
+diff --git a/src/forward_result.rs b/src/forward_result.rs
+index 8ea981ad8..336c5da8a 100644
+--- a/src/forward_result.rs
++++ b/src/forward_result.rs
+@@ -297,7 +297,6 @@ fn apply(code: &mut Value, site: &Site, rb: u16) {
+         }
+         // From the back, so the earlier indices stay valid.
+         ops.remove(site.clear + 1);
+-        ops.remove(site.clear);
+         if let Some(g) = site.guard {
+             ops.remove(g);
+         }

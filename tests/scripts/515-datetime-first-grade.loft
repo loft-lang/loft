@@ -78,50 +78,29 @@ fn minutes(n: integer) -> Duration {
 fn dur_days(n: integer) -> Duration {
   Duration { ms: n * 86400000 }
 }
-fn OpAdd(self: Duration, other: Duration) -> Duration {
+operator plus(self: Duration, other: Duration) -> Duration {
   Duration { ms: self.ms + other.ms }
 }
-fn OpLt(self: Duration, other: Duration) -> boolean {
-  self.ms < other.ms
+operator compare(self: Duration, other: Duration) -> Ordering {
+  self.ms.compare(other.ms)
 }
-fn OpEq(self: Duration, other: Duration) -> boolean {
-  self.ms == other.ms
-}
-fn OpNe(self: Duration, other: Duration) -> boolean {
-  self.ms != other.ms
-}
-fn to_text(self: Duration) -> text {
+operator to_text(self: Duration) -> text {
   "{self.ms}ms"
 }
 
 // --- DateTime operators (comparison + mixed-type arithmetic) ---
-fn OpLt(self: DateTime, other: DateTime) -> boolean {
-  self.ms < other.ms
+operator compare(self: DateTime, other: DateTime) -> Ordering {
+  self.ms.compare(other.ms)
 }
-fn OpLe(self: DateTime, other: DateTime) -> boolean {
-  self.ms <= other.ms
-}
-fn OpGt(self: DateTime, other: DateTime) -> boolean {
-  self.ms > other.ms
-}
-fn OpGe(self: DateTime, other: DateTime) -> boolean {
-  self.ms >= other.ms
-}
-fn OpEq(self: DateTime, other: DateTime) -> boolean {
-  self.ms == other.ms
-}
-fn OpNe(self: DateTime, other: DateTime) -> boolean {
-  self.ms != other.ms
-}
-fn OpMin(self: DateTime, other: DateTime) -> Duration {
+operator minus(self: DateTime, other: DateTime) -> Duration {
   Duration { ms: self.ms - other.ms }
 }
-fn OpAdd(self: DateTime, other: Duration) -> DateTime {
+operator plus(self: DateTime, other: Duration) -> DateTime {
   DateTime { ms: self.ms + other.ms }
 }
 
 // --- custom format: bare {d} = ISO; {d:date}, {d:time} ---
-fn to_text(self: DateTime, spec: text) -> text {
+operator to_text(self: DateTime, spec: text) -> text {
   days = self.ms / 86400000;
   rest = self.ms - days * 86400000;
   (yy, mo, dd) = civil_from_days(days);
@@ -134,11 +113,11 @@ fn to_text(self: DateTime, spec: text) -> text {
 }
 
 // --- conversions (Arc C): text->DateTime (parse), int<->DateTime (epoch ms) ---
-fn OpConvDateTimeFromText(v: text) -> DateTime {
+operator to_date_time(self: text) -> DateTime {
   parts: vector<integer> = [];
   cur = 0;
   has = false;
-  for c in v {
+  for c in self {
     ci = c as integer;
     if ci >= 48 and ci <= 57 {
       cur = cur * 10 + (ci - 48);
@@ -158,11 +137,11 @@ fn OpConvDateTimeFromText(v: text) -> DateTime {
   ss = parts[5] ?? 0;
   datetime(y, mo, dd, hh, mm, ss)
 }
-fn OpConvIntFromDateTime(v: DateTime) -> integer {
-  v.ms
+operator to_integer(self: DateTime) -> integer {
+  self.ms
 }
-fn OpConvDateTimeFromInt(v: integer) -> DateTime {
-  DateTime { ms: v }
+operator to_date_time(self: integer) -> DateTime {
+  DateTime { ms: self }
 }
 
 fn main() {

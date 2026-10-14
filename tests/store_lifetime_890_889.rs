@@ -20,8 +20,8 @@
 //! [`a_false_assertion_fails_the_script`] is the control for the harness itself: without
 //! it, a green run proves only that the script executed.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -40,7 +40,7 @@ const I889_OK: &str = "889 collection through a call's field OK";
 
 /// Run `file` on `backend` with extra env; return `(ok, stdout, stderr)`.
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -173,9 +173,9 @@ fn main() {\n\
 \x20 assert(ybound(3).q == 999, \"deliberately wrong: it is 7\");\n\
 \x20 println(\"890 consumed-lift double free OK\");\n}\n";
     let path = std::env::temp_dir().join(format!("loft_890_control_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(I890_OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

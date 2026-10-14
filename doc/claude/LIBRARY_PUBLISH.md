@@ -35,6 +35,10 @@ emit registry entry → registry PR.
 
 ### 4a. Tag the version
 
+Tag the MERGED `main`: a `loft-libs-*` `main` takes changes only through a PR (admins
+included), merged by auto-merge once its required checks are green, so the version bump lands
+that way and the tag goes on the merge commit.
+
 ```
 $ git tag <name>-v<version>           # convention: name then dash-v
 $ git push origin <name>-v<version>

@@ -1,0 +1,73 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 0fbf8978a..8928b03a0 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -6446,26 +6446,10 @@
+                 );
+                 has_wildcard = exhaustive;
+                 arms.extend(struct_arms);
+-                self.lexer.has_token(",");
+-                // @FR-M-Wild — a pattern with no literal field matches every struct, so an arm
+-                // written after it can never be selected: say so, as the `_` arm does, and keep
+-                // parsing the arms (a `break` left them to the closing brace, which reported
+-                // "Expect token }").
+-                if has_wildcard && !self.lexer.peek_token("}") {
+-                    if !self.first_pass {
+-                        diagnostic!(
+-                            self.lexer,
+-                            Level::Error,
+-                            "this pattern matches every {}, so the arm after it can never be \
+-                             selected — move it to the end",
+-                            self.data.def(e_nr).name()
+-                        );
+-                    }
+-                    continue;
+-                }
+                 if has_wildcard {
+                     break;
+                 }
++                self.lexer.has_token(",");
+                 continue;
+             }
+ 
+@@ -7522,16 +7506,7 @@
+                     let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
+                     let field_type = self.data.attr_type(e_nr, attr_idx);
+                     if self.lexer.has_token(":") {
+-                        // `@FR-P-Point` — a bare lowercase NAME is a binding under that name
+-                        // (`P { y: v }`), as the variant arm reads it; read as a value it
+-                        // compared against an outer `v` (loft#1885).
+-                        if let Some(bind_name) = self.field_pattern_rename() {
+-                            let v = self.pattern_binding(&bind_name, &field_type);
+-                            self.vars.defined(v);
+-                            let bound =
+-                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+-                            binds.push(v_set(v, bound));
+-                        } else if let Some(cond) = self.parse_field_sub_pattern(
++                        if let Some(cond) = self.parse_field_sub_pattern(
+                             field_val,
+                             &field_type,
+                             binds,
+@@ -7587,20 +7562,8 @@
+             &mut first_binds,
+             &mut field_conditions,
+         );
+-        let struct_name = self.data.def(e_nr).name().to_string();
+-        let alternatives = self.parse_pattern_alternatives(
+-            first_names,
+-            &mut first_binds,
+-            |p| {
+-                let at = p.lexer.link();
+-                let named = p.lexer.has_identifier().is_some_and(|id| id == struct_name);
+-                if !named {
+-                    p.lexer.revert(at);
+-                }
+-                named
+-            },
+-            |p, binds, conds| p.parse_struct_pattern_fields(e_nr, subject_val, binds, conds),
+-        );
++        let _ = first_names;
++        let alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
+         self.expect_match_arm_arrow();
+         let mut arm_code = Value::Null;
+         let arm_expected = self.match_arm_expected(result_type);

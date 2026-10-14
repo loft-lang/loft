@@ -50,9 +50,9 @@
 //   both. The native side was not scored in this sweep.
 fn late(k: integer) -> integer { return k + 7; }
 
-fn plus(b: integer = 1 + slow(0)) -> integer { return b; }
-fn minus(b: integer = 20 - slow(0)) -> integer { return b; }
-fn times(b: integer = 2 * slow(0)) -> integer { return b; }
+fn sum_d(b: integer = 1 + slow(0)) -> integer { return b; }
+fn diff_d(b: integer = 20 - slow(0)) -> integer { return b; }
+fn prod_d(b: integer = 2 * slow(0)) -> integer { return b; }
 // `/` and `%` can fault, so their result is `integer?` — declared as such here rather than
 // discharged, which would put a `??` between the operator and the default and test a
 // different shape than the other rows.
@@ -76,9 +76,9 @@ fn slow_text(k: integer) -> text { if k == 0 { return "y"; } return "z"; }
 
 fn main() {
   // ── the operator families that collapsed ────────────────────────────────────
-  assert(plus() == 8, "1 + late(0)");
-  assert(minus() == 13, "20 - late(0)");
-  assert(times() == 14, "2 * late(0)");
+  assert(sum_d() == 8, "1 + late(0)");
+  assert(diff_d() == 13, "20 - late(0)");
+  assert(prod_d() == 14, "2 * late(0)");
   assert(divide() == 10, "70 / late(0)");
   assert(modulo() == 0, "70 % late(0)");
   assert(equals(), "7 == late(0)");
@@ -90,7 +90,7 @@ fn main() {
   assert(disjunct(), "false || late_bool(0)");
 
   // an explicitly passed argument still overrides the default
-  assert(plus(99) == 99, "a supplied argument beats the default");
+  assert(sum_d(99) == 99, "a supplied argument beats the default");
   assert(conjunct(false) == false, "a supplied boolean argument beats the default");
 
   // ── CONTROLS ────────────────────────────────────────────────────────────────

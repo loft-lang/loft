@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ElemFirst`'s comprehension clause — a row built by a comprehension and appended as a
+// whole element of a vector of vectors (`[for y { [for x { … }] }]`) is built in that element on
+// `--native`, instead of in a loop-buffer store and copied across.  The interpreter applies no
+// rewrite and is the oracle; every value below is computed by hand.  What can go wrong is an
+// element minted twice or not finished (a wrong length), a row written into a store whose
+// buffer moved while it grew (c5 forces growth past every first claim), a pair inside a pair
+// (c6), and a body that reads the vector being built (c3: its rows depend on how many rows
+// exist).  `LOFT_NO_ELEMENT_FIRST=1` and `LOFT_HOIST_VERIFY=1` answer the same.
+// c3 and c7 are the STATEMENT spelling (`rows += [[…]]`), which lowers without a copy and so
+// never reaches the clause: they hold the values of the neighbouring path.  A comprehension's
+// body cannot name the vector it is bound to, so the clause's "names the destination" decline
+// is defensive for this spelling.
+//
+// @falsified-by: tests/falsified/a-comprehension-row-is-built-in-its-element.patch — the loop
+//   body not consulting the element-first overrides, so the row's element is minted at the
+//   declaration AND at the append and the copy is kept.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `assertion failed: c1 row lengths`.
+//   HOLDS: --interpret green (it applies no rewrite).
+
+fn c1() {
+  g = [for y in 0..4 { [for x in 0..3 { x * 10 + y }] }];
+  assert(len(g) == 4, "c1 rows {len(g)}");
+  assert(len(g[0]?) == 3 && len(g[3]?) == 3, "c1 row lengths");
+  assert(g[0]?[0]? == 0 && g[1]?[2]? == 21 && g[3]?[1]? == 13 && g[2]?[0]? == 2, "c1 values");
+  println("c1 {g[1]?} {g[3]?}");
+}
+
+// Rows of varying length, the first empty.
+fn c2() {
+  g = [for y in 0..4 { [for x in 0..y { x + 100 * y }] }];
+  assert(len(g[0]?) == 0 && len(g[1]?) == 1 && len(g[2]?) == 2 && len(g[3]?) == 3, "c2 lengths");
+  assert(g[1]?[0]? == 100 && g[2]?[1]? == 201 && g[3]?[2]? == 302, "c2 values");
+  println("c2 {g[2]?} {g[3]?}");
+}
+
+// The body reads the vector it is appended to: row y has y elements.
+fn c3() {
+  rows: vector<vector<integer>> = [];
+  for _ in 0..4 { rows += [[for x in 0..len(rows) { x }]]; }
+  assert(len(rows) == 4 && len(rows[0]?) == 0 && len(rows[3]?) == 3 && rows[3]?[2]? == 2, "c3");
+  println("c3 {rows[2]?} {rows[3]?}");
+}
+
+// Text elements.
+fn c4() {
+  g = [for y in 0..3 { [for x in 0..2 { "t{x}{y}" }] }];
+  assert(len(g) == 3 && g[0]?[1]? == "t10" && g[2]?[0]? == "t02" && g[2]?[1]? == "t12", "c4");
+  println("c4 {g[2]?}");
+}
+
+// Long rows, many of them: the store the rows live in grows while a row is built.
+// Sum over y < 300, x < 50 of (x + y) = 300 * 1225 + 50 * 44850 = 367500 + 2242500 = 2610000.
+fn c5() {
+  g = [for y in 0..300 { [for x in 0..50 { x + y }] }];
+  t = 0;
+  for r in g { for v in r { t += v; } }
+  assert(len(g) == 300 && len(g[299]?) == 50 && g[299]?[49]? == 348 && t == 2610000, "c5 {t}");
+  println("c5 {t}");
+}
+
+// Three levels: a pair inside a pair.  Element (z, y, x) is 100z + 10y + x.
+fn c6() {
+  g = [for z in 0..2 { [for y in 0..3 { [for x in 0..2 { 100 * z + 10 * y + x }] }] }];
+  assert(len(g) == 2 && len(g[1]?) == 3 && len(g[1]?[2]?) == 2, "c6 shape");
+  assert(g[0]?[0]?[0]? == 0 && g[1]?[2]?[1]? == 121 && g[0]?[1]?[1]? == 11 && g[1]?[0]?[0]? == 100, "c6 values");
+  println("c6 {g[1]?[2]?}");
+}
+
+// The statement spelling of the same build.
+fn c7() {
+  rows: vector<vector<integer>> = [];
+  for y in 0..3 { rows += [[for x in 0..2 { x * y }]]; }
+  assert(len(rows) == 3 && rows[2]?[1]? == 2 && rows[1]?[0]? == 0 && len(rows[0]?) == 2, "c7");
+  println("c7 {rows[2]?}");
+}
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7();
+  println("done");
+}

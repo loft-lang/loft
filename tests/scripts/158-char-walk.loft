@@ -37,7 +37,7 @@ fn w1(s: text) -> text { trace(s) }
 fn w2() -> text { trace("aé!€z") }
 
 // w3 — an embedded NUL: the null character, one byte wide, through the written step.
-fn w3() -> text { t = "ab" + "\0" + "c"; trace(t) }
+fn w3() -> text { t = "ab\0c"; trace(t) }
 
 // w4 — an empty text and a null text: no iteration.
 fn w4() -> text { e = ""; n: text? = null; "[" + trace(e) + "][" + trace(n ?? "") + "]" }

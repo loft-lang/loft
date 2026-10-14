@@ -19,12 +19,12 @@
 //   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
 //   exit/expectations channel carries this one on that backend. The native side was not
 //   scored in that run.
-// @EXPECT_ERROR: a nullable `integer(0, 255)?` cannot be stored into the local `x` of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: a nullable `u8?` cannot be stored into the local `x` of the non-null type `u8`
 fn f(v: vector<u8>, i: integer) -> u8 { x: u8 = v[i]; return x; }
-// @EXPECT_ERROR: cannot be stored into the parameter `p` of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: cannot be stored into the parameter `p` of the non-null type `u8`
 fn g(p: u8, v: vector<u8>, i: integer) -> u8 { p = v[i]; return p; }
-// @EXPECT_ERROR: cannot be stored into the local `a` of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: cannot be stored into the local `a` of the non-null type `u8`
 fn h(v: vector<u8>, i: integer) -> u8 { a: u8 = 0; b = 0; (a, b) = (v[i], 1); return a; }
-// @EXPECT_ERROR: cannot be stored into the local `w` of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: cannot be stored into the local `w` of the non-null type `u8`
 fn k(v: vector<u8>, i: integer) -> integer { u = v[0]; u = v[i]; w: u8 = u; return w as integer; }
 fn main() { println("{f([1, 2], 5)} {g(1, [1, 2], 5)} {h([1, 2], 5)} {k([1, 2], 5)}"); }

@@ -14,8 +14,8 @@
 //! The value half is `tests/scripts/1322-a-default-arm-mint-is-freed-once.loft`, run by the
 //! ordinary corpus.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -25,10 +25,10 @@ fn loft_bin() -> PathBuf {
 /// `(stdout, redundant_free_count)`.
 fn redundant_frees(name: &str, src: &str) -> (String, usize) {
     let dir = std::env::temp_dir().join(format!("loft_redundant_free_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{name}.loft"));
-    std::fs::write(&file, src).expect("write probe");
-    let out = Command::new(loft_bin())
+    fa::write(&file, src).expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TRACE_DB", "1")

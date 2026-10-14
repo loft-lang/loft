@@ -11,9 +11,9 @@
 //! The cell corpus (`bytecode-comparisons/V-u-retbuf-adopt-cells.loft`) can only say the
 //! VALUES hold; this pins the EMISSION — which functions adopt — and the switch
 //! (`LOFT_NO_RETBUF_ADOPT=1`).  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-u-retbuf-adopt-cells.loft";
@@ -30,7 +30,8 @@ const EXPECTED: &[(&str, usize)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -40,12 +41,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: adoption inits (the buffer-aliasing declaration).
@@ -82,7 +83,7 @@ fn each_cell_adopts_exactly_as_predicted() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(a, *adopts, "{name}: adoption inits");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -97,5 +98,5 @@ fn the_switch_restores_the_delivery_copies() {
             "{name}: under LOFT_NO_RETBUF_ADOPT=1 no result local adopts"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

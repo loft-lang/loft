@@ -1,0 +1,213 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1954 — a record buffer is pooled (`@FR-O-LazyBuffer`: minted once behind a null test,
+// refilled per call) only where its result local is bound ONCE, because a second bind
+// releases the store it displaces, and under the pool that store is the buffer's
+// (`@FR-O-Buffer`: "a local assigned twice has no such witness").  The question was asked of
+// the parser's whole-body count, keyed by the ORIGINAL variable; two sibling scopes binding
+// one name are split by the scope pass into two variables, and the copy is in no such count.
+// So the second loop's `y`, bound twice, read as bound never, its buffers were pooled, the
+// second rebind released the first call's pooled store, and the next pass's call wrote into
+// it — a use-after-free on both backends, silent in a plain run whenever the allocator handed
+// the store straight back.
+//
+// The cure answers a split copy from its OWN binds (`reassigned_locals`), and reads the
+// pool's precondition as what it is — "a rebind releases what it displaces" — through the
+// one spelling of the loft#1522 veto (`Function::rebind_keeps_displaced`): a nullable local
+// that adopted a construction work-ref releases nothing at a rebind, so pooling its buffers
+// is sound, and NOT pooling them leaked the first call's store every pass (the nullable
+// cells below; the single-scope one leaked before the sibling defect ever applied).
+//
+// ⚠ Every cell allocates `o` FIRST in each pass and reads it back, and every loop runs at
+// least two passes: the freed store is only visible once another record has taken it, and
+// pass 1 is where the free happens.  The cells are measured under `LOFT_STRICT_STORES=1`
+// (`tests/store_lifetime_1954.rs`), which never recycles a slot and so reports the
+// use-after-free and the leak by name; a plain run checks the values.
+//
+// Axes: the type (dense `S`, nullable `S?`), the scope shape (sibling loops, sibling blocks
+// in one loop, `if` arms, a loop inside a block, three siblings), the binds per sibling (one,
+// two, three — in either sibling), the right-hand side (a call, a method, a value branch),
+// and the names (one shared, distinct).  The record carries a text and a vector, so the
+// pool's per-call release of what the previous call left behind (`OpClear`) runs too.
+//
+// @falsified-at: 3de09bdee — interpret exit 1 -> 0, interpret leaked kt=100 S1954×3 -> clean,
+//   native exit 1 -> 0, native leaked kt=100 S1954×3 -> clean (under `LOFT_STRICT_STORES=1`)
+// @falsified-by: tests/falsified/1954-a-sibling-rebind-keeps-the-pooled-buffer.patch — interpret exit 1 -> 0, interpret leaked kt=100 S1954×3 -> clean, native exit 1 -> 0, native leaked kt=100 S1954×3 -> clean
+//   ARMED: LOFT_STRICT_STORES=1 (`tests/store_lifetime_1954.rs` runs that leg per backend).
+//   CHANNEL: the exit is the strict census's USE AFTER FREE in the dense sibling cells; the
+//   leak is the nullable cells.  The two halves of the cure score apart, each by its own
+//   files of the patch: the split-copy count alone (`scopes.rs`, `phase.rs`, `scan_set.rs`)
+//   moves exit only, leak none on both trees and both backends; the veto reading alone
+//   (`buffers.rs`, `variables/mod.rs`) moves exit AND leak, S1954×6 -> clean on both
+//   backends — without it the nullable copies are left unpooled and retain one store a pass.
+//   HOLDS: a plain run on the control answers every value right and warns of the leak only.
+
+struct S1954 { n: integer, tag: text, xs: vector<integer> }
+struct O1954 { opt: S1954? }
+
+fn mk1954(i: integer) -> S1954 { S1954 { n: 81, tag: "a{i}", xs: [i, 1] } }
+fn mk2_1954(i: integer) -> S1954 { S1954 { n: 92, tag: "b{i}", xs: [i, 2, 3] } }
+fn mk3_1954(i: integer) -> S1954 { S1954 { n: 5, tag: "c", xs: [i] } }
+fn mkq1954(i: integer) -> S1954? { S1954 { n: 81, tag: "a{i}", xs: [i, 1] } }
+fn mkq2_1954(i: integer) -> S1954? { S1954 { n: 92, tag: "b{i}", xs: [i, 2, 3] } }
+fn bump1954(self: S1954, i: integer) -> S1954 { S1954 { n: self.n + 1, tag: "m{i}", xs: [i] } }
+
+fn on1954(o: O1954) -> integer { if o.opt != null { o.opt.n } else { -1 } }
+
+// ---- the filed cell: sibling loops, the second binds `y` twice ----
+fn sibling_loops() -> integer {
+  t = 0;
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    y: S1954 = S1954 { n: 37, tag: "", xs: [] };
+    y = mk1954(i);
+    assert(on1954(o) == 63, "loops 1, pass {i}: o={on1954(o)}");
+    t += y.n;
+  }
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    y: S1954 = S1954 { n: 37, tag: "", xs: [] };
+    y = mk1954(i);
+    y = mk2_1954(i);
+    assert(on1954(o) == 63, "loops 2, pass {i}: o={on1954(o)}");
+    assert(y.tag == "b{i}" && len(y.xs) == 3, "loops 2, pass {i}: y={y.tag}/{len(y.xs)}");
+    t += y.n;
+  }
+  t
+}
+
+// ---- three binds in the second sibling, and a THIRD sibling binding it once ----
+fn three_siblings() -> integer {
+  t = 0;
+  for i in 0..2 { y = mk1954(i); t += y.n; }
+  for i in 0..2 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    y = mk1954(i);
+    y = mk2_1954(i);
+    y = mk3_1954(i);
+    assert(on1954(o) == 63, "three, pass {i}: o={on1954(o)}");
+    t += y.n + len(y.xs);
+  }
+  for i in 0..2 { y = mk2_1954(i); t += y.n; }
+  t
+}
+
+// ---- sibling BLOCKS inside one loop, and the two binds in the FIRST sibling ----
+fn sibling_blocks() -> integer {
+  t = 0;
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    { y = mk1954(i); y = mk2_1954(i); t += y.n; }
+    { y = mk1954(i); y = mk2_1954(i); t += y.n; }
+    assert(on1954(o) == 63, "blocks, pass {i}: o={on1954(o)}");
+  }
+  t
+}
+
+// ---- `if` arms, a method on the right, and a value branch on the right ----
+fn arms_methods_branches() -> integer {
+  t = 0;
+  b = S1954 { n: 1, tag: "b", xs: [] };
+  for i in 0..4 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    if i % 2 == 0 {
+      y = b.bump1954(i);
+      t += y.n;
+    } else {
+      y = b.bump1954(i);
+      y = if i > 1 { mk2_1954(i) } else { mk1954(i) };
+      t += y.n;
+    }
+    assert(on1954(o) == 63, "arms, pass {i}: o={on1954(o)}");
+  }
+  t
+}
+
+// ---- a loop inside a block, beside a sibling loop ----
+fn loop_in_block() -> integer {
+  t = 0;
+  for i in 0..2 { y = mk1954(i); t += y.n; }
+  {
+    for i in 0..3 {
+      o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+      y = mk1954(i);
+      y = mk2_1954(i);
+      assert(on1954(o) == 63, "loop in block, pass {i}: o={on1954(o)}");
+      t += y.n;
+    }
+  }
+  t
+}
+
+// ---- the nullable spelling: sibling copies, and one scope alone ----
+fn nullable() -> integer {
+  t = 0;
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    y: S1954? = S1954 { n: 37, tag: "", xs: [] };
+    y = mkq1954(i);
+    assert(on1954(o) == 63, "nullable 1, pass {i}: o={on1954(o)}");
+    t += y.n ?? 0;
+  }
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    y: S1954? = S1954 { n: 37, tag: "", xs: [] };
+    y = mkq1954(i);
+    y = mkq2_1954(i);
+    assert(on1954(o) == 63, "nullable 2, pass {i}: o={on1954(o)}");
+    t += (y.n ?? 0) + len(y.xs);
+  }
+  t
+}
+
+fn nullable_alone() -> integer {
+  t = 0;
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    w: S1954? = S1954 { n: 37, tag: "", xs: [] };
+    w = mkq1954(i);
+    w = mkq2_1954(i);
+    assert(on1954(o) == 63, "nullable alone, pass {i}: o={on1954(o)}");
+    t += w.n ?? 0;
+  }
+  t
+}
+
+// ---- CONTROL: distinct names were never split, and were right before ----
+fn distinct_names() -> integer {
+  t = 0;
+  for i in 0..3 { y = mk1954(i); t += y.n; }
+  for i in 0..3 {
+    o = O1954 { opt: S1954 { n: 63, tag: "o", xs: [6] } };
+    z = mk1954(i);
+    z = mk2_1954(i);
+    assert(on1954(o) == 63, "distinct, pass {i}: o={on1954(o)}");
+    t += z.n;
+  }
+  t
+}
+
+fn main() {
+  // Hand-computed: each loop's last call answers 81 (mk), 92 (mk2), 5 (mk3), and a method
+  // bump of `b` (n 1) answers 2.
+  got = sibling_loops();
+  assert(got == 3 * 81 + 3 * 92, "sibling loops: {got}");
+  got = three_siblings();
+  assert(got == 2 * 81 + 2 * (5 + 1) + 2 * 92, "three siblings: {got}");
+  got = sibling_blocks();
+  assert(got == 3 * (92 + 92), "sibling blocks: {got}");
+  got = arms_methods_branches();
+  assert(got == 2 + 81 + 2 + 92, "arms, methods, branches: {got}");
+  got = loop_in_block();
+  assert(got == 2 * 81 + 3 * 92, "loop in block: {got}");
+  got = nullable();
+  assert(got == 3 * 81 + 3 * (92 + 3), "nullable siblings: {got}");
+  got = nullable_alone();
+  assert(got == 3 * 92, "nullable alone: {got}");
+  got = distinct_names();
+  assert(got == 3 * 81 + 3 * 92, "distinct names: {got}");
+  keep: vector<S1954> = [S1954 { n: 7, tag: "k", xs: [7] }];
+  assert(keep[0].n == 7 && keep[0].tag == "k", "a vector allocated after every cell: {keep[0].n}");
+  print("1954 sibling rebind keeps the pooled buffer OK");
+}

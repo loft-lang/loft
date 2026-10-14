@@ -4,38 +4,38 @@ schema_version = 1
 
 [[package]]
 name = "graphics"
-version = "0.9.4"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.4/graphics-0.9.4.tar.gz"
-sha256 = "05ed1215dcb7e5233abc0e74b3d130d3e5816b002a5147ae6340ba5ce877a2cc"
+version = "0.9.10"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.10/graphics-0.9.10.tar.gz"
+sha256 = "4145057b3a83e0da7bfdccca85ee266555cdb4ec2909bb26ed4196fd1d6807ff"
 source = "registry"
 deps = ["glb", "mesh3d"]
 
 [[package]]
 name = "shapes"
-version = "0.5.1"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/shapes-v0.5.1/shapes-0.5.1.tar.gz"
-sha256 = "83921ee77f64b263a2ef08a50f526981ea93cc5336dcbd58deec49a668c0516a"
+version = "0.5.4"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/shapes-v0.5.4/shapes-0.5.4.tar.gz"
+sha256 = "cad0a82d274b4de5298d844a8b343038290adff133bc4bae08661de805427185"
 source = "registry"
 
 [[package]]
 name = "glb"
-version = "0.1.3"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/glb-v0.1.3/glb-0.1.3.tar.gz"
-sha256 = "57ad8d0a0a25caefd65c4819b03c86562c9d5462dabf294c893132c65718160a"
+version = "0.1.6"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/glb-v0.1.6/glb-0.1.6.tar.gz"
+sha256 = "2efe8e615ff4eee689210c6567e9a18ae0b1a769472fc983ef746aff3ea7f128"
 source = "registry"
 deps = ["mesh3d"]
 
 [[package]]
 name = "mesh3d"
-version = "0.1.2"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/mesh3d-v0.1.2/mesh3d-0.1.2.tar.gz"
-sha256 = "b1929c5f56d5abf5925faad5572cfb02418d15cfe8eb4819c0b8df679915df10"
+version = "0.1.5"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/mesh3d-v0.1.5/mesh3d-0.1.5.tar.gz"
+sha256 = "7724729a20163ffb68c737876bccbc93f5a70009ec6db8310e0b39200f6340ef"
 source = "registry"
 
 [[package]]
 name = "assets"
-version = "0.2.3"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.2.3/assets-0.2.3.tar.gz"
-sha256 = "039a822fd5cd72d4be214f56ef77fa7eef4a09e4ff8f5acca03462247d401b2f"
+version = "0.4.2"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.4.2/assets-0.4.2.tar.gz"
+sha256 = "bcc1aaaa0acd8bd9f1bfc0d24d1a7ca4e5a7c81ee9a3250ff29bd26386935b74"
 source = "registry"
 deps = ["shapes"]

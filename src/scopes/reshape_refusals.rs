@@ -210,6 +210,8 @@ pub struct ReshapeRefusal {
 /// wrong: `Parser::parse_str` — the whole Rust test harness — never leaves `STD_SOURCE`, so the
 /// filter silently made the check a no-op there while it still fired on a file. A pass over
 /// definitions that cannot possibly trip it is the cheaper mistake.
+///
+/// @C79 — ownership stays internal: a reshape under a live `&` is refused, never silently copied.
 #[must_use]
 pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<ReshapeRefusal> {
     let removed = removed_params_map(data);
@@ -262,7 +264,7 @@ fn def_reshape_refusals(
         return Vec::new();
     }
     let function = &def.variables;
-    let file = def.position.file.clone();
+    let file = def.position.file;
     let mut out: Vec<ReshapeRefusal> = Vec::new();
     // (1) — a `&` link this frame holds, still live where its container is disturbed. Every
     // cause the walk reports is refused: each one ends the place the reference names, and a

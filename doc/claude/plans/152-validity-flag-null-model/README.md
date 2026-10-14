@@ -127,5 +127,5 @@ cells someone chose.
 - [`formal/types.md`](../../formal/types.md) § Null-flow laws ·
   [`formal/operational.md`](../../formal/operational.md) `(E-Uncomp)` / `(E-Uncomp-NN)` /
   `(E-Uncomp-Seen)` / `(E-Report)` ·
-  [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) C79, C80, C85, C90.
+  [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) @C79, @C80, @C85, @C90.
 - [CONTROL.md](../../CONTROL.md) item 1 — the census row this closed one half of.

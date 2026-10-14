@@ -5,15 +5,17 @@
 // Generate standard library HTML pages from the documented default/*.loft files.
 // Run with: cargo run --bin gendoc
 
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 use loft::documentation::typst_escape;
 use loft::documentation::{
     StdlibSection, TopicSource, build_nav, gather_topic_info, generate_docs, get_topic_sources,
     is_catalogue_anchor, is_example_tag, page_html, render_topic_body, render_topic_typst,
     without_example_citations,
 };
+use loft::file_access;
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::fs;
 
 // ---  Data model  ---
 
@@ -36,21 +38,17 @@ struct SectionFull {
 
 fn main() -> std::io::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
-    // Before a single page is written: a box without the packages would degrade the pages
-    // rendered from them (the search index first, then every library page).
-    let registry = load_registry_index()?;
-    refuse_degrading_uncached(&registry)?;
     // Every `default/*.loft`, in the order the interpreter loads them — which is the
     // numeric prefix, so sorting the directory gives it. A hard-coded list of three
     // names read as a decision and was a sample: `04_stacktrace`, `05_coroutine`,
     // `06_json` and `07_reflect` joined `default/` afterwards and never joined the list,
     // so the whole JSON and reflection surface was missing from the published Standard
     // Library while the JSON chapter and @F42 documented it.
-    let mut files: Vec<std::path::PathBuf> = fs::read_dir("default")
+    let mut files: Vec<std::path::PathBuf> = file_access::read_dir("default")
         .expect("default/ is unreadable")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
+        .iter()
+        .map(file_access::PathText::os_spelling)
+        .filter(|p| file_access::extension(p).is_some_and(|e| e == "loft"))
         .collect();
     files.sort();
     assert!(
@@ -61,15 +59,13 @@ fn main() -> std::io::Result<()> {
 
     let mut entries: Vec<Entry> = Vec::new();
     for path in &files {
-        match fs::read_to_string(path) {
+        match file_access::read_to_string(path) {
             Ok(content) => {
-                let stem = path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                let stem = file_access::file_stem(path).unwrap_or_default();
                 parse_loft(&content, &mut entries, &section_name_for(&stem));
             }
-            Err(e) => eprintln!("Cannot read {}: {e}", path.display()),
+            // The error starts with the path: "Cannot read <path>: <why>".
+            Err(e) => eprintln!("Cannot read {e}"),
         }
     }
 
@@ -93,13 +89,14 @@ fn main() -> std::io::Result<()> {
     let topic_info = gather_topic_info();
 
     for section in &sections {
-        generate_stdlib_section(section, &stdlib_info, &topic_info)?;
+        generate_stdlib_section(section, &stdlib_info, &topic_info, &link_map)?;
     }
 
     generate_stdlib_toc(&sections, &stdlib_info, &topic_info)?;
     for page in HAND_WRITTEN_PAGES {
         write_hand_page_nav(page, &build_nav(&topic_info, &stdlib_info, page))?;
     }
+    let registry = load_registry_index()?;
     generate_search_index(&sections, &stdlib_info, &registry)?;
 
     let topic_sources = get_topic_sources();
@@ -124,7 +121,7 @@ const HAND_WRITTEN_PAGES: [&str; 3] = ["install", "roadmap", "report"];
 /// Replace the contents of `doc/<page>.html`'s one `<nav>` element with `nav`.
 fn write_hand_page_nav(page: &str, nav: &str) -> std::io::Result<()> {
     let path = format!("doc/{page}.html");
-    let html = fs::read_to_string(&path)?;
+    let html = file_access::read_to_string(&path)?;
     let (Some(open), Some(close)) = (html.find("<nav>"), html.find("</nav>")) else {
         return Err(std::io::Error::other(format!(
             "{path} has no <nav>…</nav> for gendoc to write its navigation into"
@@ -138,7 +135,7 @@ fn write_hand_page_nav(page: &str, nav: &str) -> std::io::Result<()> {
     }
     let out = format!("{}{nav}{}", &html[..start], &html[close..]);
     if out != html {
-        fs::write(&path, out)?;
+        file_access::write(&path, out)?;
     }
     Ok(())
 }
@@ -520,6 +517,7 @@ fn generate_stdlib_section(
     section: &SectionFull,
     stdlib_info: &[StdlibSection],
     topic_info: &[(String, String)],
+    link_map: &HashMap<String, String>,
 ) -> std::io::Result<()> {
     let stem = format!("stdlib-{}", section.id);
     let nav = build_nav(topic_info, stdlib_info, &stem);
@@ -533,12 +531,15 @@ fn generate_stdlib_section(
             }
             body.push_str("</div>\n");
         } else {
-            body.push_str("<div class=\"item\">\n");
-            body.push_str(&format!("<pre><code>{}</code></pre>\n", esc(sig)));
-            for p in &paras {
-                body.push_str(&format!("<p>{}</p>\n", esc(p)));
-            }
-            body.push_str("</div>\n");
+            // @PLN183 — the one item renderer: spans as code, the signature highlighted and
+            // linked, as the library API pages show theirs.
+            body.push_str(&loft::doc_render::item_html(
+                &loft::doc_render::Item {
+                    sig,
+                    doc: &doc_lines.join("\n"),
+                },
+                link_map,
+            ));
         }
     }
     // `stdlib_info` carries the hand-written one-line description for this
@@ -553,8 +554,8 @@ fn generate_stdlib_section(
         description: &desc,
     };
     let html = page_html(&section.name, &nav, &section.name, &body, &meta);
-    fs::create_dir_all("doc")?;
-    fs::write(format!("doc/{stem}.html"), html)?;
+    file_access::create_dir_all("doc")?;
+    file_access::write(format!("doc/{stem}.html"), html)?;
     println!("Generated doc/{stem}.html");
     Ok(())
 }
@@ -677,7 +678,7 @@ fn generate_libraries_page<S: std::hash::BuildHasher>(
              and installed with `loft install`.",
     };
     let html = page_html("Libraries", &nav, "Libraries", &body, &meta);
-    fs::write("doc/libraries.html", html)?;
+    file_access::write("doc/libraries.html", html)?;
 
     generate_library_cards(index, stdlib_sections, topic_info)?;
     let (rendered, unrecorded) =
@@ -690,13 +691,14 @@ fn generate_libraries_page<S: std::hash::BuildHasher>(
         generate_library_guides(index, stdlib_sections, topic_info, link_map)?;
     println!(
         "Generated {guides} library guides ({no_guide} package(s) ship none yet, \
-         {guide_uncached} not in the local registry cache and say so)"
+         {guide_uncached} not in the local registry cache: a committed page is kept, \
+         `make doc` fetches the package)"
     );
     let (src_pages, uncached) =
         generate_library_source_pages(index, stdlib_sections, topic_info, link_map)?;
     println!(
         "Generated {src_pages} library source browsers ({uncached} package(s) not in the \
-         local registry cache and say so)"
+         local registry cache: a committed page is kept, `make doc` fetches the package)"
     );
     Ok(index.packages.len())
 }
@@ -767,6 +769,11 @@ fn generate_library_cards(
                     "none yet \u{2014} the API reference and the source below are what there is"
                         .to_string()
                 }
+                // A guide page kept from a box that had the package is still the guide.
+                GuideSource::Uncached if committed_library_page(name, "guide") => format!(
+                    "<a href=\"lib-{0}-guide.html\">getting started with {0}</a>",
+                    esc(name)
+                ),
                 GuideSource::Uncached => format!(
                     "not known \u{2014} <code>{}</code> is not in this build's registry cache",
                     esc(name)
@@ -911,7 +918,7 @@ fn generate_library_cards(
             description: &desc,
         };
         let html = page_html(name, &nav, name, &body, &meta);
-        fs::write(format!("doc/lib-{name}.html"), html)?;
+        file_access::write(format!("doc/lib-{name}.html"), html)?;
     }
     Ok(())
 }
@@ -1025,17 +1032,15 @@ fn generate_library_api_pages<S: std::hash::BuildHasher>(
                 v.api.len()
             );
             for item in &v.api {
-                // The same wrapper the stdlib section pages use for a documented entry —
-                // one structure for "a signature and its doc", so a style applied later
-                // reaches both rather than only the half that was written second.
-                body.push_str("<div class=\"item\">\n");
-                let _ = writeln!(
-                    body,
-                    "<pre><code>{}</code></pre>",
-                    loft::documentation::highlight_loft(&item.sig, link_map)
-                );
-                body.push_str(&doc_paragraphs(&item.doc));
-                body.push_str("</div>\n");
+                // @PLN183 — the one renderer the REPL and the language server show an item
+                // through, so the three cannot drift.
+                body.push_str(&loft::doc_render::item_html(
+                    &loft::doc_render::Item {
+                        sig: &item.sig,
+                        doc: &item.doc,
+                    },
+                    link_map,
+                ));
             }
         }
 
@@ -1051,7 +1056,7 @@ fn generate_library_api_pages<S: std::hash::BuildHasher>(
         };
         let title = format!("{name} API");
         let html = page_html(&title, &nav, &title, &body, &meta);
-        fs::write(format!("doc/lib-{name}-api.html"), html)?;
+        file_access::write(format!("doc/lib-{name}-api.html"), html)?;
     }
     Ok((rendered, unrecorded))
 }
@@ -1102,7 +1107,7 @@ fn generate_library_guides<S: std::hash::BuildHasher>(
             esc(name)
         );
         for g in &guides {
-            let Ok(source) = fs::read_to_string(g) else {
+            let Ok(source) = file_access::read_to_string(g) else {
                 continue;
             };
             if guides.len() > 1
@@ -1125,7 +1130,7 @@ fn generate_library_guides<S: std::hash::BuildHasher>(
         };
         let title = format!("{name} guide");
         let html = page_html(&title, &nav, &title, &body, &meta);
-        fs::write(format!("doc/lib-{name}-guide.html"), html)?;
+        file_access::write(format!("doc/lib-{name}-guide.html"), html)?;
     }
     Ok((rendered, without, uncached))
 }
@@ -1150,7 +1155,7 @@ enum GuideSource {
 /// about whether there is a page to link at.
 fn guide_source(name: &str, semver: &str) -> GuideSource {
     let dir = loft::registry_index::extract_dir(name, semver);
-    if !dir.is_dir() {
+    if !file_access::is_dir(&dir) {
         return GuideSource::Uncached;
     }
     let mut files: Vec<std::path::PathBuf> = Vec::new();
@@ -1161,6 +1166,16 @@ fn guide_source(name: &str, semver: &str) -> GuideSource {
     } else {
         GuideSource::Ships(files)
     }
+}
+
+/// Is there a committed `doc/lib-<name>-<page>.html` to keep?  loft#1850 — a library's
+/// guide and source pages are a function of the REGISTRY (its index and the packages it
+/// serves), not of this tree, and a box whose cache lacks the indexed version can only write a
+/// "not on this build box" page.  Overwriting a committed page with that turned the published
+/// site into a record of the committing box's cache, so such a page is KEPT instead, and only a
+/// box that has the package rewrites it — `make doc` fetches every indexed version first.
+fn committed_library_page(name: &str, page: &str) -> bool {
+    file_access::is_file(format!("doc/lib-{name}-{page}.html"))
 }
 
 /// The `@TITLE:` a topic file declares, used only to head one guide among several.
@@ -1212,7 +1227,10 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
         };
         let dir = loft::registry_index::extract_dir(name, &v.semver);
         let files = collect_sources(&dir);
-        let out = format!("doc/lib-{name}-src.html");
+        if files.is_empty() && committed_library_page(name, "src") {
+            uncached += 1;
+            continue; // kept as committed — see `committed_library_page`
+        }
 
         let mut body = String::new();
         let _ = writeln!(
@@ -1229,7 +1247,7 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
             uncached += 1;
             let _ = writeln!(
                 body,
-                "<p>The source for <code>{0}</code> {1} {STUB_SOURCE_MARK}, so this page \
+                "<p>The source for <code>{0}</code> {1} is not on this build box, so this page \
                  could not be rendered from it. <code>loft install {0}</code> fetches the \
                  package, and the repository is the other route.</p>",
                 esc(name),
@@ -1272,58 +1290,10 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
         };
         let title = format!("{name} source");
         let html = page_html(&title, &nav, &title, &body, &meta);
-        fs::write(&out, html)?;
+        file_access::write(format!("doc/lib-{name}-src.html"), html)?;
     }
     Ok((rendered, uncached))
 }
-
-/// Refuse a library doc build that would degrade pages rendered from the packages.
-///
-/// The cards, guides and source browsers read the package itself from this box's registry
-/// cache; a miss renders "not in this build's registry cache" in its place, and that reads
-/// like a finished page.  A doc build on a box without the packages replaced 37 committed
-/// source browsers and every card's guide link that way in one commit, and nothing failed
-/// (`doc_hygiene` skips `doc/lib-*.html`, which a box without the packages cannot
-/// re-render).  So before any page is written (`main`): a package missing from the cache
-/// whose committed source page was rendered from it fails the build, naming the packages
-/// and the cure.  A package whose page is already a stub — one the registry cannot serve —
-/// passes, and is rendered as a stub again.
-fn refuse_degrading_uncached(index: &loft::registry_index::RegistryIndex) -> std::io::Result<()> {
-    // A comparison that does not read the library pages (`doc_hygiene`'s drift test renders
-    // into a scratch copy on boxes, CI included, that have no registry cache) opts out.
-    if std::env::var_os("LOFT_DOC_ALLOW_UNCACHED").is_some() {
-        return Ok(());
-    }
-    let mut refused: Vec<String> = Vec::new();
-    for (name, pkg) in &index.packages {
-        let Some(v) = loft::registry_index::find_best_version(pkg, "*", false) else {
-            continue;
-        };
-        if !collect_sources(&loft::registry_index::extract_dir(name, &v.semver)).is_empty() {
-            continue;
-        }
-        if fs::read_to_string(format!("doc/lib-{name}-src.html"))
-            .is_ok_and(|page| !page.contains(STUB_SOURCE_MARK))
-        {
-            refused.push(format!("{name} {}", v.semver));
-        }
-    }
-    if refused.is_empty() {
-        return Ok(());
-    }
-    Err(std::io::Error::other(format!(
-        "{} library package(s) are not in this box's registry cache, and their pages were \
-         rendered from them — this build would replace those pages with 'not on this build \
-         box' stubs: {}.  Fetch them first: `make doc` does (`scripts/fetch-doc-packages.sh`, \
-         then gendoc).",
-        refused.len(),
-        refused.join(", ")
-    )))
-}
-
-/// The words a library source page carries when the package was not in the registry cache;
-/// [`generate_library_source_pages`] reads them back to tell a stub from a rendered page.
-const STUB_SOURCE_MARK: &str = "is not on this build box";
 
 /// Every `.loft` file a package ships, `src/` before `tests/`.
 ///
@@ -1337,10 +1307,13 @@ fn collect_sources(dir: &std::path::Path) -> Vec<SourceFile> {
         collect_loft_files(&dir.join(sub), &mut found);
         found.sort();
         for path in found {
-            let Ok(text) = fs::read_to_string(&path) else {
+            let Ok(text) = file_access::read_to_string(&path) else {
                 continue;
             };
-            let rel = loft::portable_path::portable(path.strip_prefix(dir).unwrap_or(&path));
+            let rel = file_access::relative(&path, dir).map_or_else(
+                || file_access::portable(&path),
+                |r| file_access::portable(&r),
+            );
             let slug: String = rel
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -1352,14 +1325,14 @@ fn collect_sources(dir: &std::path::Path) -> Vec<SourceFile> {
 }
 
 fn collect_loft_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(entries) = file_access::read_dir(dir) else {
         return;
     };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
+    for e in entries {
+        let p = e.os_spelling();
+        if file_access::is_dir(&p) {
             collect_loft_files(&p, out);
-        } else if p.extension().is_some_and(|x| x == "loft") {
+        } else if file_access::extension(&p).is_some_and(|x| x == "loft") {
             out.push(p);
         }
     }
@@ -1607,58 +1580,6 @@ fn numbered_source<S: std::hash::BuildHasher>(
     out
 }
 
-/// A doc comment from the registry, as HTML paragraphs.
-///
-/// The stored form is plain text: paragraphs separated by a blank line, wrapped with hard
-/// newlines inside a paragraph, and backtick spans for code. Rejoining the wrapped lines
-/// matters — kept as-is the text renders with the author's terminal width baked in, which
-/// is not a line break they chose for a browser.
-fn doc_paragraphs(doc: &str) -> String {
-    // Citations are dropped by LINE before the split, because a citation is appended to
-    // the prose paragraph above it rather than given one of its own.
-    let doc = without_example_citations(&doc.lines().collect::<Vec<_>>()).join("\n");
-    let mut out = String::new();
-    for para in doc.split("\n\n") {
-        let joined = para
-            .lines()
-            .map(str::trim_end)
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if joined.is_empty() {
-            continue;
-        }
-        let _ = writeln!(out, "<p>{}</p>", inline_code(&joined));
-    }
-    out
-}
-
-/// Escape one paragraph, turning `` `spans` `` into `<code>`.
-///
-/// An unclosed backtick is left as a literal character rather than swallowing the rest of
-/// the paragraph into a code span — a doc comment is prose someone typed, and the failure
-/// mode of guessing is that the sentence disappears.
-fn inline_code(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(open) = rest.find('`') {
-        let (before, after) = rest.split_at(open);
-        out.push_str(&esc(before));
-        match after[1..].find('`') {
-            Some(close) => {
-                let _ = write!(out, "<code>{}</code>", esc(&after[1..=close]));
-                rest = &after[close + 2..];
-            }
-            None => {
-                out.push_str(&esc(after));
-                return out;
-            }
-        }
-    }
-    out.push_str(&esc(rest));
-    out
-}
-
 /// A download size a person can judge. Packages here run from 11 kB to 200 kB, so kB is the
 /// working unit and MB only appears if one ever grows into it.
 fn human_size(bytes: u64) -> String {
@@ -1724,7 +1645,7 @@ fn generate_stdlib_toc(
         &body,
         &toc_meta,
     );
-    fs::write("doc/stdlib.html", &html)?;
+    file_access::write("doc/stdlib.html", &html)?;
     println!("Generated doc/stdlib.html");
     Ok(())
 }
@@ -1799,7 +1720,7 @@ fn generate_search_index(
     }
 
     let js = format!("const SEARCH_INDEX=[\n{}\n];\n", entries.join(",\n"));
-    fs::write("doc/search-index.js", js)?;
+    file_access::write("doc/search-index.js", js)?;
     println!("Generated doc/search-index.js ({} entries)", entries.len());
     Ok(())
 }
@@ -2058,7 +1979,7 @@ fn generate_print_page(
     }
 
     // Embed the hand-maintained performance page as a print section.
-    let perf_html = fs::read_to_string("doc/00-performance.html").unwrap_or_default();
+    let perf_html = file_access::read_to_string("doc/00-performance.html").unwrap_or_default();
     let article_body = if let (Some(start), Some(end)) =
         (perf_html.find("<article>"), perf_html.find("</article>"))
     {
@@ -2087,12 +2008,13 @@ fn generate_print_page(
                     content.push_str(&format!("<p class=\"section-desc\">{}</p>\n", esc(p)));
                 }
             } else {
-                content.push_str("<div class=\"item\">\n");
-                content.push_str(&format!("<pre><code>{}</code></pre>\n", esc(sig)));
-                for p in &paras {
-                    content.push_str(&format!("<p>{}</p>\n", esc(p)));
-                }
-                content.push_str("</div>\n");
+                content.push_str(&loft::doc_render::item_html(
+                    &loft::doc_render::Item {
+                        sig,
+                        doc: &doc_lines.join("\n"),
+                    },
+                    link_map,
+                ));
             }
         }
     }
@@ -2121,7 +2043,7 @@ fn generate_print_page(
 </html>\n",
         content = content,
     );
-    fs::write("doc/print.html", &html)?;
+    file_access::write("doc/print.html", &html)?;
     println!("Generated doc/print.html ({count} sections)");
     Ok(())
 }
@@ -2323,21 +2245,21 @@ fn generate_typst(
     out.push_str("#pagebreak()\n\n");
 
     // Getting Started — generated from install.html
-    if let Ok(install_html) = std::fs::read_to_string("doc/install.html") {
+    if let Ok(install_html) = file_access::read_to_string("doc/install.html") {
         out.push_str("= Getting Started\n\n");
         out.push_str(&render_article_html_typst(&install_html));
         out.push('\n');
     }
 
     // vs Rust section — generated directly from the static HTML (single source of truth)
-    if let Ok(vs_rust_html) = std::fs::read_to_string("doc/00-vs-rust.html") {
+    if let Ok(vs_rust_html) = file_access::read_to_string("doc/00-vs-rust.html") {
         out.push_str("= vs Rust\n\n");
         out.push_str(&render_vs_rust_typst(&vs_rust_html));
         out.push('\n');
     }
 
     // vs Python section — generated directly from the static HTML (single source of truth)
-    if let Ok(vs_python_html) = std::fs::read_to_string("doc/00-vs-python.html") {
+    if let Ok(vs_python_html) = file_access::read_to_string("doc/00-vs-python.html") {
         out.push_str("= vs Python\n\n");
         out.push_str(&render_vs_python_typst(&vs_python_html));
         out.push('\n');
@@ -2380,13 +2302,13 @@ fn generate_typst(
     }
 
     // Roadmap appendix — generated from roadmap.html
-    if let Ok(roadmap_html) = std::fs::read_to_string("doc/roadmap.html") {
+    if let Ok(roadmap_html) = file_access::read_to_string("doc/roadmap.html") {
         out.push_str("= Roadmap\n\n");
         out.push_str(&render_article_html_typst(&roadmap_html));
         out.push('\n');
     }
 
-    fs::write("doc/loft-reference.typ", &out)?;
+    file_access::write("doc/loft-reference.typ", &out)?;
     println!("Generated doc/loft-reference.typ");
     Ok(())
 }

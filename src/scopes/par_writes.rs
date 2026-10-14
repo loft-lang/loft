@@ -75,7 +75,7 @@ pub fn worker_calls_parent_write_deep(data: &Data, worker_d_nr: u32) -> Option<S
 /// bottoms out in a pure, host-io or unannotated-native primitive.  `visited` stops a
 /// recursive call graph from looping.
 ///
-/// This is PRODUCTION-WIRED — `parse_parallel` turns a `Some` into the C93 `Level::Error`
+/// This is PRODUCTION-WIRED — `parse_parallel` turns a `Some` into the @C93 `Level::Error`
 /// that refuses the program — so a subtree it does not enter is a refusal that does not
 /// happen, and the write then runs in a worker thread against a read-only store.  That is
 /// why the fallback descends via the keystone instead of naming arms: the arm list below
@@ -89,7 +89,7 @@ fn walk_deep_parent_write(
 ) -> Option<String> {
     match value {
         Value::Call(callee, args) => {
-            // @PLN102 C93 — a RAW field/element write (`OpSet*`) whose accessor root is a
+            // @PLN102 @C93 — a RAW field/element write (`OpSet*`) whose accessor root is a
             // NON-LOCAL PARAMETER is a write to captured/parent state: in a `par` worker the
             // captured state is read-only, so this is the race the deep check must reject
             // (the tagged-stdlib ParentWrite path below only catches `+=`/`hash_set`/… — a
@@ -188,8 +188,9 @@ fn first_arg_is_local_var(args: &[Value], current_fn: u32, data: &Data) -> bool 
         return false;
     }
     let def = &data.definitions[current_fn as usize];
+    // A local that VIEWS a parameter is not the worker's own (`captured_param_viewed_by`).
     if !def.variables.is_argument(*v) {
-        return true;
+        return captured_param_viewed_by(def, *v).is_none();
     }
     // Plan-06 phase 5b' G5 — heap-typed return values are passed
     // via a hidden destination argument promoted by ref_return().
@@ -201,7 +202,7 @@ fn first_arg_is_local_var(args: &[Value], current_fn: u32, data: &Data) -> bool 
     def.attributes.iter().any(|a| a.hidden && a.name == name)
 }
 
-/// @PLN102 C93 — walk an accessor chain (`OpGet*(base, …)` / `Var`, span-transparent)
+/// @PLN102 @C93 — walk an accessor chain (`OpGet*(base, …)` / `Var`, span-transparent)
 /// down to its root variable.  The base of an `OpSet*` write target is arg 0.
 pub(super) fn accessor_root_var(v: &Value, data: &Data) -> Option<u16> {
     match v {
@@ -217,7 +218,7 @@ pub(super) fn accessor_root_var(v: &Value, data: &Data) -> Option<u16> {
     }
 }
 
-/// @PLN102 C93 — is this call a RAW field/element write (`OpSet*`) whose accessor root is
+/// @PLN102 @C93 — is this call a RAW field/element write (`OpSet*`) whose accessor root is
 /// a NON-LOCAL PARAMETER of `current_fn` (captured/parent state)?  Returns the captured
 /// var's name if so.  A write to a worker-LOCAL variable, or to the hidden return-buffer
 /// destination (a promoted `ref_return` output), is safe.  Mirrors `first_arg_is_local_var`.
@@ -237,15 +238,33 @@ fn raw_write_to_captured(
         return None;
     }
     let def = &data.definitions[current_fn as usize];
-    if !def.variables.is_argument(root) {
-        return None; // a worker-local write — fine
-    }
-    let name = def.variables.name(root).to_string();
-    // hidden return-buffer destination = the worker's own output, not parent state.
-    if def.attributes.iter().any(|a| a.hidden && a.name == name) {
-        return None;
-    }
+    // `@FR-C-Impure`, @C93 — the captured state is what the root VIEWS, not only a root that
+    // is itself a parameter: `x = e.inner; x.k = …`, `x = &e.items`, `for l in e.list { l.k
+    // = … }` write the parent's record through a local, and compiled to a runtime halt on the
+    // read-only store (loft#1918).  A whole-value copy (`x = e`) has no dep and stays local.
+    let name = captured_param_viewed_by(def, root)?;
     Some(name)
+}
+
+/// The parameter `root` is, or VIEWS through its dep chain, naming it — `None` when the chain
+/// reaches no parameter, or reaches only the hidden return buffer (the worker's own output).
+fn captured_param_viewed_by(def: &crate::data::Definition, root: u16) -> Option<String> {
+    let mut stack = vec![root];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(v) = stack.pop() {
+        if !seen.insert(v) || v >= def.variables.count() {
+            continue;
+        }
+        if def.variables.is_argument(v) {
+            let name = def.variables.name(v).to_string();
+            if !def.attributes.iter().any(|a| a.hidden && a.name == name) {
+                return Some(name);
+            }
+            continue;
+        }
+        stack.extend(def.variables.tp(v).depend());
+    }
+    None
 }
 
 #[allow(dead_code)]
@@ -271,6 +290,14 @@ fn call_deep_parent_write(
         Purity::Impure(ImpureCategory::ParentWrite) => {
             if first_arg_is_local_var(args, current_fn, data) {
                 None
+            } else if def.name.starts_with("Op")
+                && current_fn != u32::MAX
+                && let Some(root) = args.first().and_then(|a| accessor_root_var(a, data))
+            {
+                // An operator is how the write is SPELLED in the IR (`v += [3]` is
+                // `OpPushInt`), not a name the author wrote: say what it writes.
+                let name = data.definitions[current_fn as usize].variables.name(root);
+                Some(format!(" writes captured `{name}`"))
             } else {
                 Some(format!(
                     " → {}",

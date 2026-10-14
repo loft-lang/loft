@@ -10,7 +10,7 @@
 // is not the axis: a private fn is shadowed for its own module's bare calls exactly as a
 // `pub` one is for a consumer's.  The two QUIET functions are the exemptions.
 
-pub struct Span { lo: integer, hi: integer }
+pub struct Span { pub lo: integer, pub hi: integer }
 
 // SUBJECT — the stdlib has `clamp(both: float, …)`, so `t_5float_clamp` takes every
 // bare `clamp(<float>, …)` call and this definition is unreachable by that spelling.

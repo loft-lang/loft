@@ -25,6 +25,7 @@
 extern crate loft;
 
 use loft::data::Type;
+use loft::file_access as fa;
 use loft::parser::Parser;
 
 const SRC: &str = r#"
@@ -53,9 +54,9 @@ fn generic_vector_param_stays_dense_and_monomorph_names_are_identifier_safe() {
     // Parse a real FILE (source = MAIN_SOURCE); `parse_str` leaves source at
     // STD_SOURCE, which the E2 scaffolding pass skips.
     let dir = std::env::temp_dir().join("loft_e2_generics_probe");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join("e2_generics.loft");
-    std::fs::write(&path, SRC).expect("write probe");
+    fa::write(&path, SRC).expect("write probe");
     let mut p = Parser::new();
     p.parse_dir("default", true, false).expect("stdlib");
     p.parse(&path.to_string_lossy(), false);

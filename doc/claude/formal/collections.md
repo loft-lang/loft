@@ -46,10 +46,13 @@ reaches the generic scalar-range branch). This split is the doc's spine.
 
 ```
   (Col-Vec)     vector<τ>                     ordered, 0-based integer index; the only value-sliceable collection.
-  (Col-Hash)    hash<T[k…]>                   O(1) point lookup by key; UNSORTED (bucket) order.
-  (Col-Sorted)  sorted<T[k…]>                 red-black tree; KEY-ORDERED iteration + range slices.
-  (Col-Index)   index<T[k…]>                  BOTH — a red-black tree AND a hash table over the same records
-                                              (O(1) lookup AND ordered/range).  (DATABASE.md:704)
+  (Col-Hash)    hash<T[k…]>                   O(1) point lookup by key; iterates in KEY order (Col-Order);
+                                              no range slice.
+  (Col-Sorted)  sorted<T[k…]>                 a sorted vector of records; KEY-ORDERED iteration + range slices.
+  (Col-Index)   index<T[k…]>                  a B+tree of key parts and record numbers in an arena of its
+                                              own (@C147): O(log n) lookup, KEY-ORDERED iteration + range
+                                              slices, O(1) len, no copy of a record on insert or removal,
+                                              and nothing written into the record (@C145).
   (Col-Spatial) spatial<T[a]> / [a,b] / [a,b,c]   1–3 coordinate axes (MAX_AXES=3), Morton/Z-order radix tree;
                                               the runtime Parts variant is `Radix`.  integer-not-null coord keys;
                                               negative coords via offset-binary (signed axes order like sorted).
@@ -72,6 +75,29 @@ kind test read a `text?` as "not a text", which let it take a spatial AXIS' plac
 iterating its records, and answering null for a point just inserted — loft#799's failure reached
 through the `?` (loft#1429).
 
+```
+  (Col-Key)     a key field of hash / sorted / index has an IMMUTABLE VALUE type: a scalar
+                (integer, float, single, text, character, boolean), a plain enum (a
+                discriminant with no fields), a tuple whose members are all of these — or `?`
+                of one.  A struct, a value struct, an enum variant with fields, a vector or any
+                collection is REFUSED at the declaration, naming the field; a tuple is refused
+                naming its first such member; `?` of a refused type is refused with it (`Dt?`),
+                and a multi-key with one such field is refused at that field.
+```
+**Why: structs are mutable and keys are not** (owner).  A key decides where a
+record sits — its bucket, its place in the order — and a key whose content can change under it
+would have to move the record it keys, which nothing does.  So the rule is permanent, not a
+form reserved for later.  The cure the refusal names is the shape every working program already
+has: key on a scalar field the record carries (`hash<Event[ms]>`, looked up by `d.ms`).  The
+plain enum, the tuple and the payload enum are applications of that reason (loft3, within the
+owner's rule): a plain enum is a value with no fields, a tuple of values is a value, and a variant
+with fields is a record.
+
+*Anchors:* `Parser::check_key_is_value` / `mutable_key_part` (`src/parser/definitions.rs`),
+asked from the `hash`, `sorted` and `index` arms of the type parser;
+`tests/scripts/a-key-field-is-an-immutable-value.loft` and
+`…-a-struct-key-field-is-refused.loft`.
+
 *Anchors:* `Type::{Vector,Hash,Sorted,Index,Radix,Trie}` (src/data.rs); DATABASE.md:693,:704; spatial
 surface tests/scripts/48-spatial-construct-free.loft; trie `Parts::Trie` (database/mod.rs:194) + @PLN134. **To decide when writing:** which formers
 live here vs in types.md's former list (recommend: types.md gains the one-line formers; collections.md
@@ -82,6 +108,10 @@ owns their *operations + order*).
 ```
   (Col-Cons)    c: <kind><…> = []             empty-literal construction (all kinds).
   (Col-Insert)  c += [ rec, … ]               append/insert a record; keyed kinds place it by key.
+                A record whose key is already present REPLACES the one there at `hash`, `sorted`,
+                `index` and `trie` (@C68), so a key names at most one record.  `spatial` keeps both:
+                two records may share a point, a point lookup answers one of them and a box
+                answers every one.
   (Col-Insert-Absent)  c: <kind><…>?  holding null,  c += [ rec, … ]
                 ⟹  c is first instantiated with its default — the empty collection — and the
                 records are then inserted exactly as (Col-Insert) says.  No diagnostic: to an
@@ -90,7 +120,7 @@ owns their *operations + order*).
                 that applies types.md (N-Default) implicitly (owner ruling 2026-09-07, loft#1434).
   (Col-Len)     c.len()                        element count; O(1) (verified O(1) for spatial).
                 An ABSENT collection counts 0 at every kind — a `<kind>?` handed to `len` is
-                `(N-Store)`'s store (a warning), and 0 is the one value C80 leaves it.
+                `(N-Store)`'s store (a warning), and 0 is the one value @C80 leaves it.
 ```
 *Anchor:* tests/scripts/48-spatial-construct-free.loft (construct/append/len).
 
@@ -112,7 +142,7 @@ null, and the first thing the program then does with it is add to it.  Requiring
 distinction the insert cannot even observe.  The type of `c` is unchanged
 by the append (still `<kind><…>?`); what changes is the value it holds.  Measured on both
 backends before it was ruled (`n: vector<It>? = null; n += [It{…}]; len(n) == 1`), and the
-refusal alternative is declined in [DESIGN_DECISIONS.md C118](../DESIGN_DECISIONS.md).
+refusal alternative is declined in [DESIGN_DECISIONS.md @C118](../DESIGN_DECISIONS.md).
 
 **What `Col-Insert`'s source may BE, and what it may not.** The rule is written over one
 spelling, `c += [ rec, … ]`, and three source shapes satisfy it: the collection ITSELF (for a
@@ -172,7 +202,7 @@ under 9, left `c[5]` untouched, and the move spelling above DELETED the record �
 landing at a place other than the one it names, which no rule admits.  `(Col-Lookup)` makes
 `c[k]` the record whose key is `k`, and an assignment to a place must leave that place reading
 the value written, as `v[i] = x` does.  A refusal was not available: a mismatch depends on
-values, so it cannot be judged from the line, and C80 rules out a runtime error.  Re-keying
+values, so it cannot be judged from the line, and @C80 rules out a runtime error.  Re-keying
 the COPY re-keys nothing that exists, so this does not collide with `(B-Ref-Reshape)`, which
 refuses re-keying a LIVE element (`e = &c[30]; e.key = 5`).  A value that lives inside the
 collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves under it.
@@ -261,30 +291,6 @@ stayed correct because their bias is zero).
 integer-not-null, and the 4-byte arm's signed/unsigned split is a storage-schema question one level
 down (loft#1437).
 
-### 1.3b One field, one decode — `Col-Axis`
-
-```
-  (Col-Axis)    a key or coordinate field's VALUE is the one its DECLARED type decodes — layout.md
-                `(L-Narrow-Decode)`, of which this is the KEYED refinement.  The kind of collection
-                asking does not change what the bytes mean, and neither does the storage asked
-                (resident `Store` or paged image), so a lookup answers a record for exactly the
-                keys its own iteration yields.
-```
-*Anchor:* `keys::compare_ref` / `keys::get_key` / `keys::hash_key` (`src/keys.rs`) for the
-value-keyed kinds; `radix_db::axis_i64` + `paged_reader::PagedSpatial::axis_value` for `spatial`.
-
-**In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
-slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the
-descriptor carries the minimum so a reader can undo it. It exists because a reader that
-re-derives the decode instead of reading `Key::start` gets a different code for the same record
-than the writer produced — which does not present as an error, but as `c[k]` answering `null` for
-a record `for x in c` yields (loft#1431, the two `spatial` readers, where `u8` and `integer`
-stayed correct because their bias is zero).
-
-`(Col-Axis)` is about the DECODE only. Which values an axis may take is `(Col-Spatial)`'s
-integer-not-null, and the 4-byte arm's signed/unsigned split is a storage-schema question one level
-down (loft#1437).
-
 ### 1.4 Iteration order per kind — `Col-Order` (EXTENDS [concurrency.md](concurrency.md) `C-Order`)
 
 ```
@@ -293,12 +299,12 @@ down (loft#1437).
                   hash    → KEY order, via the ordered snapshot the walk builds for it
                             (its `par` walk is the UNSORTED one — concurrency.md C-Order)
                   sorted  → key order
-                  index   → key order (its tree side)
+                  index   → key order (its leaf chain)
                   spatial → Morton / Z-order
                   trie    → key order (lexicographic over the text key)
 
   (Col-Order-Sign)  a `-` on a key field is applied by the COMPARATOR and by nothing else, so
-                    exactly once.  The stored form (a red-black tree, a sorted vector) is
+                    exactly once.  The stored form (a B+tree, a sorted vector) is
                     therefore already in the declared order, and every reader walks it FORWARD:
                     no consumer of an ordered collection re-reads `keys[i].type_nr` to decide a
                     direction, and the iterator's reverse bit carries one fact only — did the
@@ -464,9 +470,19 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
 ### 1.8 Storage & whole-value copy — `Col-Store` / `Col-Copy` (cross-link [heap.md](heap.md))
 
 ```
-  (Col-Store)   a collection is store-backed (Parts::{Vector,Hash,Sorted,Radix,Trie}); index = tree+hash over
-                one record set; addressed by DbRef.  (Layout/format ⟶ layout.md; steps ⟶ heap.md.)
+  (Col-Store)   a collection is store-backed (Parts::{Vector,Hash,Sorted,Index,Radix,Trie}), its records and
+                its own structure (a hash's buckets, an index's node arena) in the same store; addressed by
+                DbRef.  (Layout/format ⟶ layout.md; steps ⟶ heap.md.)
   (Col-Copy)    a keyed whole-value bind COPIES (g = h; g += … leaves len(h)) — heap.md H-Copy for keyed.
+  (Col-Bucket)  (@C146) a hash table's bucket count is a POWER OF TWO: it is created at 16, grows by
+                doubling and is reserved to the next power of two past the load trigger.  A key's home
+                bucket is `digest mod count` on every table — written now, written before, rounded up
+                by the allocator — so placement never depends on the count's shape; for a power of two
+                the remainder is a mask, the one division on a lookup's critical path gone.  A reserve
+                rounds up as growth does, so it is never larger than the grown table and its fill never
+                rebuilds — and can take up to twice the bucket array an exact size would.  The ONE
+                place a digest becomes a bucket is `hash::home_bucket`, for the writer and the paged
+                reader alike.
 ```
 *Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`).
 
@@ -677,7 +693,7 @@ VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
    types.md = the former, collections.md = operations + order).
 2. **Exact vector-slice clamp** — hand-verify the partial-OOB and fully-OOB values on both backends
    (plans/25 says partial → in-range part, fully-OOB → `[]`); pin the boundary.
-3. **sorted vs index slice** — do they differ observably (index has both tree+hash)? Confirm both expose
+3. **sorted vs index slice** — do they differ observably? Confirm both expose
    the same `Slice-KeyedIter` iterator; is a `hash` range slice a clean reject (no order)?
 4. ~~**`:n` cap semantics** — exact count guarantee for `[(x,y)..:n]` (≤ n? exactly n if available?)~~
    **ANSWERED 2026-08-19 (loft#1002): exactly n when the collection holds n, from any origin.**

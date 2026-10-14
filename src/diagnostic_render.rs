@@ -58,7 +58,7 @@ impl SourceLoader for FileSourceLoader {
         }
         let mut cache = self.cache.lock().ok()?;
         let entry = cache.entry(file.to_string()).or_insert_with(|| {
-            std::fs::read_to_string(file)
+            crate::file_access::read_to_string(file)
                 .ok()
                 .map(|text| text.lines().map(str::to_string).collect())
         });

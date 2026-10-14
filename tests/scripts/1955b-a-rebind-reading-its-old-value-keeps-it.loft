@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Scope` (loft#1955): the refusal of a read in a variable's own binding
+// (`1955-a-read-in-its-own-binding-is-refused.loft`) is about the statement that STARTS the
+// binding.  A rebind of a binding that holds a value reads that value, and these are the
+// neighbours that must keep running, each against a hand-computed value: a struct rebind
+// reading a field of the old value (o1), an integer (o2), a text (o3) and a vector (o4); a
+// parameter rebind (o5); a lambda whose parameter shares the target's name (o6); a loop-body
+// local rebound after its first binding in the same iteration (o7); a later statement reading
+// the first binding (o8); a field written after the binding (o9); and a block value that binds
+// and reads its own locals (o10).
+// @falsified-at: none — it guards what must keep running beside a new refusal; every build
+//   before the refusal ran it with these values.
+struct P { a: integer, z: integer }
+
+fn o1() { p = P { a: 1, z: 0 }; p = P { a: 2, z: p.a + 5 }; assert(p.a == 2 && p.z == 6, "o1 {p.z}"); }
+fn o2() { x = 4; x = x + 1; assert(x == 5, "o2 {x}"); }
+fn o3() { s = "a"; s = "{s}b"; assert(s == "ab", "o3 {s}"); }
+fn o4() { v = [1]; v = [len(v), 2]; assert(v[0] == 1 && v[1] == 2 && len(v) == 2, "o4 {v}"); }
+fn g5(x: integer) -> integer { x = x + 1; x }
+fn o5() { assert(g5(2) == 3, "o5 {g5(2)}"); }
+fn o6() { f = fn(f: integer) -> integer { f + 1 }; assert(f(2) == 3, "o6 {f(2)}"); }
+fn o7() { t = 0; for i in 0..3 { y = i; y = y + 1; t += y; } assert(t == 6, "o7 {t}"); }
+fn o8() { x = 1; y = x + 1; x = y + x; assert(x == 3, "o8 {x}"); }
+fn o9() { p = P { a: 3, z: 0 }; p.z = p.a + 5; assert(p.z == 8, "o9 {p.z}"); }
+fn o10() { a = 2; b = { c = a + 1; c * 2 }; assert(b == 6, "o10 {b}"); }
+
+fn main() {
+  o1(); o2(); o3(); o4(); o5(); o6(); o7(); o8(); o9(); o10();
+  println("ok");
+}

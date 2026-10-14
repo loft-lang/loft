@@ -1,0 +1,11 @@
+--- a/src/parser/objects.rs	2026-10-02 04:20:55.842141400 +0200
++++ b/src/parser/objects.rs	2026-10-02 04:20:55.854025016 +0200
+@@ -1473,7 +1473,7 @@
+                     // file already sees is refused for want of a type, not of an import.
+                     let import_cure = if variant_enums.len() == 1
+                         && self.data.imports_into(self.data.source)
+-                        && self.data.source_nr(self.data.source, declared) == u32::MAX
++                        && false
+                     {
+                         let what = format!("bare variant '{name}' has no type here; its enum");
+                         self.data.import_cure(&what, declared, self.data.source)

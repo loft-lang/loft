@@ -1,52 +1,10 @@
 ==== exit: 1 ====
 ==== stdout ====
 ==== stderr ====
-error: Expect token ,
-  --> <cases>/37_par_thread_count_zero.loft:3:25
+error: a parallel worker is one call of a function named at the call — `par(b = f(x, k), threads)` or `par(b = x.method(), threads)`; compute the rest from `b` in the loop body
+  --> <cases>/37_par_thread_count_zero.loft:3:23
   |
 3 |   for x in v par(b = x * 2, 0) {
-  |                         ^
+  |                       ^
 
-error: Expect token )
-  --> <cases>/37_par_thread_count_zero.loft:3:28
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                            ^
-
-error: Expect token {
-  --> <cases>/37_par_thread_count_zero.loft:3:28
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                            ^
-
-error: Expect token ;
-  --> <cases>/37_par_thread_count_zero.loft:3:28
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                            ^
-
-error: Expect token }
-  --> <cases>/37_par_thread_count_zero.loft:3:31
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                               ^
-
-error: Expect token ;
-  --> <cases>/37_par_thread_count_zero.loft:3:31
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                               ^
-
-error: Expect token }
-  --> <cases>/37_par_thread_count_zero.loft:3:31
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                               ^
-
-error: Syntax error: unexpected ')'
-  --> <cases>/37_par_thread_count_zero.loft:3:31
-  |
-3 |   for x in v par(b = x * 2, 0) {
-  |                               ^
-
-error: aborting due to 8 previous errors
+error: aborting due to 1 previous error

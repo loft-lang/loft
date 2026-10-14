@@ -131,9 +131,9 @@ pub fn palette_b(idx: integer) -> float {
 // taking a struct parameter (sidesteps @P290).
 
 pub struct CellSnap {
-  const xs: vector<integer>,
-  const ys: vector<integer>,
-  const colors: vector<integer>,
+  pub const xs: vector<integer>,
+  pub const ys: vector<integer>,
+  pub const colors: vector<integer>,
 }
 
 // ── Crystal mesh — output of the segment-list generator ─────────────
@@ -144,20 +144,20 @@ pub struct CellSnap {
 // can give the two classes different widths / styling.
 
 pub struct CrystalMesh {
-  const kinds: vector<integer>,
-  const x0s: vector<float>,
-  const y0s: vector<float>,
-  const z0s: vector<float>,
-  const x1s: vector<float>,
-  const y1s: vector<float>,
-  const z1s: vector<float>,
-  const colors: vector<integer>,
+  pub const kinds: vector<integer>,
+  pub const x0s: vector<float>,
+  pub const y0s: vector<float>,
+  pub const z0s: vector<float>,
+  pub const x1s: vector<float>,
+  pub const y1s: vector<float>,
+  pub const z1s: vector<float>,
+  pub const colors: vector<integer>,
   // Owning cell index (into the source CellSnap) for each segment.  Lets
   // a consumer attribute a segment back to the cell whose paint produced
   // it — e.g. the projector keys per-cell GPU growth (bloom-from-centre
   // by cell age) off this, so the mesh stays static/cached while the
   // animation runs in the vertex shader.
-  const cell_ix: vector<integer>,
+  pub const cell_ix: vector<integer>,
 }
 
 // ── CrystalState — persistent age tracking across rebuilds ───────────
@@ -174,10 +174,10 @@ pub struct CrystalMesh {
 // new fork-points separately when a main grows), or per-supporter
 // timing — placeholders are deliberately omitted until needed.
 pub struct CrystalState {
-  const main_x: vector<integer>,
-  const main_y: vector<integer>,
-  const main_d: vector<integer>,
-  const birth_tick: vector<integer>,
+  pub const main_x: vector<integer>,
+  pub const main_y: vector<integer>,
+  pub const main_d: vector<integer>,
+  pub const birth_tick: vector<integer>,
 }
 
 // Look up the recorded birth tick of (cx, cy, d) main.  Returns -1

@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C132 (@PLN182 P5, `@FR-Op-Std`) — a program's `fn OpLt` / `OpEq` / `OpAdd` / `OpConv…` is an
+// ordinary function: callable by its name, reached by no operator, `as` or bound.  An operator
+// on a program's type is an `operator` method.  `==` and `!=` compare the fields whatever a
+// function named `OpEq` says, which is why that definition WARNS.
+//
+// Also the operand shapes the `operator` path must see through: a struct LITERAL on the left
+// (its type carries the built-in-place marker) for an order form, an arithmetic form, a
+// compound right side and `as`; and a conversion answering a struct, whose result the
+// destination owns — run in a loop so the suite's leak gate sees a store per iteration.
+//
+// @EXPECT_WARNING: `fn OpEq` is an ordinary function and is not called by `==` or `!=`
+//
+// @falsified-at: 4fe642f3c — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the struct-LITERAL cells at compile
+//   time ("No matching operator '<' on 'D' and 'D'"), which hides the rest of the file.
+//   WITNESS: hand-measured with the literal cells removed, on the control's own binary: the
+//   retirement cells fail on VALUE on both backends — "`==` compares the fields, not the last
+//   digit `OpEq` compares" (the control's `==` called `fn OpEq`); this tree passes them.
+//   HOLDS: the struct conversion in a loop is leak-clean on both trees.
+//
+// Every expected value is worked out by hand.
+
+value struct D { ms: integer }
+fn OpLt(self: D, other: D) -> boolean { self.ms > other.ms }
+fn OpEq(self: D, other: D) -> boolean { self.ms % 10 == other.ms % 10 }
+fn OpAdd(self: D, other: D) -> D { D { ms: self.ms * other.ms } }
+operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }
+operator plus(self: D, other: D) -> D { D { ms: self.ms + other.ms } }
+operator minus(self: D, other: integer) -> D { D { ms: self.ms - other } }
+operator to_integer(self: D) -> integer { self.ms * 10 }
+
+struct C { deg: integer }
+struct F { deg: integer }
+operator to_f(self: C) -> F { F { deg: self.deg * 9 / 5 + 32 } }
+fn OpConvIntFromC(c: C) -> integer { c.deg }
+
+fn main() {
+  a = D { ms: 1 };
+  b = D { ms: 11 };
+  // The functions answer by name, and nothing else reaches them.
+  assert(OpLt(a, b) == false && OpEq(a, b) && OpAdd(a, b).ms == 11, "called by name");
+  assert(a < b && !(b < a), "`<` is `compare`, not the reversed `OpLt`");
+  assert(a != b && !(a == b), "`==` compares the fields, not the last digit `OpEq` compares");
+  assert((a + b).ms == 12, "`+` is `plus`, not the `OpAdd` that multiplies");
+  assert(OpConvIntFromC(C { deg: 7 }) == 7, "a conversion function answers by name");
+  // A struct literal on the left: 5 < 9; 9 >= 5; 5 + 2 = 7; 5 - 3 = 2; 4 * 10 = 40.
+  assert(D { ms: 5 } < D { ms: 9 } && D { ms: 9 } >= D { ms: 5 }, "a literal on the left of an order form");
+  assert((D { ms: 5 } + D { ms: 2 }).ms == 7, "a literal on the left of `+`");
+  assert((D { ms: 5 } - 3).ms == 2, "a literal on the left of `-`");
+  assert(D { ms: 4 } as integer == 40, "a literal converted with `as`");
+  e = D { ms: 1 };
+  e += D { ms: 6 };
+  assert(e.ms == 7, "a literal on the right of a compound `+=`: {e.ms}");
+  // A struct conversion's result is the destination's: Σ (i·9/5 + 32) for i in 0..9 is
+  // 77 + 320 = 397, and no store is left per iteration.
+  s = 0;
+  for i in 0..10 {
+    f = C { deg: i } as F;
+    s += f.deg;
+  }
+  assert(s == 397, "a struct conversion in a loop: {s}");
+  println("ok");
+}

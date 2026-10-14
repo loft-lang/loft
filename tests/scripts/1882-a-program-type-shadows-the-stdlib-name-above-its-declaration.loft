@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// C101 — a program type that shares a standard-library type's name (`File`, `Format`) shadows
+// it WHEREVER the bare name is written, above the program's declaration too.  Pass 1 used to
+// bind a name written above `struct File` to the stdlib's `File`: a `vector<File>` field, a
+// parameter, a typed local, a `vector<File>` parameter, an enum named like a stdlib one — each
+// was then refused naming the same type twice ("cannot change type from File to File").  Each
+// cell below writes the name ABOVE the declaration and reads the program's own type back, both
+// backends.  The stdlib's stays reachable as `std::File` (c_std); unshadowed, `File` is still
+// the stdlib's (a-program-type-shadows-…-refusal.loft holds the silent case).
+//
+// @falsified-at: 8a371d505 — interpret exit 1 -> 0, native exit 1 -> 0
+//   Before the fix every name written above `struct File` bound to the stdlib's `File`.
+//   CHANNEL: a refusal, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: exit 1 at the first cell — "cannot store File elements in a vector<File>" and
+//   "cannot change type from File to File", the same name on both sides.
+//   HOLDS: nothing runs; every cell is unreached.
+// @falsified-by: tests/falsified/1882-a-program-type-shadows-the-stdlib-name-above-its-declaration.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   claim_declared_type_names switched off (the durable receipt: the fix's one chokepoint): the same refusal.
+//   CHANNEL: a refusal, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+struct Dir { name: text, files: vector<File> }
+fn show(f: File) -> text { "{f.name}:{f.size}" }
+fn mk() -> integer { f: File = File { name: "q", size: 3 }; f.size }
+fn count(v: vector<File>) -> integer { len(v) }
+fn pick(f: Format) -> integer { match f { Big => 1, Small => 2 } }
+fn std_open(p: text) -> std::File { file(p) }
+struct File { name: text, size: integer }
+enum Format { Big, Small }
+
+fn main() {
+  d = Dir { name: "root", files: [File { name: "a", size: 1 }] };
+  assert(len(d.files) == 1 && d.files[0].name == "a", "c_field");
+  assert(show(File { name: "abc", size: 7 }) == "abc:7", "c_param {show(File { name: "abc", size: 7 })}");
+  assert(mk() == 3, "c_local");
+  assert(count([File { name: "a", size: 1 }, File { name: "b", size: 2 }]) == 2, "c_vector");
+  assert(pick(Format.Small) == 2, "c_enum");
+  assert(std_open("/tmp").path == "/tmp", "c_std");
+  println("all ok");
+}

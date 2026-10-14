@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN182 P1 — `compare` answers an `Ordering` (`Less`, `Equal`, `Greater`) for every built-in
+// ordered type, in the order `<` uses, and `then` chains a second comparison behind an `Equal`.
+// An enum rather than a signed number, so no comparison is a subtraction: the extremes of
+// `integer`, where `a - b` would overflow, are a cell.  A program's own enum may name its
+// variants `Less` / `Greater`: a bare variant takes its type from its context, so the two never
+// meet.
+//
+// @falsified-by: tests/falsified/compare-answers-an-ordering-for-every-ordered-base-type.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control has no `compare`, so the program is refused.
+//   ARMED: nothing.
+//   WITNESS: on the control, `compare` and `Ordering` are unknown names.
+//   HOLDS: every asserted value on this tree, both backends.
+enum Cmp { Less, More }
+
+fn pick(c: Cmp) -> text { if c == Less { "less" } else { "more" } }
+
+fn main() {
+  i3 = 3; i5 = 5; i7 = 7;
+  assert(i3.compare(i5) == Less && i5.compare(i5) == Equal && i7.compare(i5) == Greater, "integer");
+  lo = 0 - 9223372036854775807; hi = 9223372036854775807;
+  assert(lo.compare(hi) == Less && hi.compare(lo) == Greater, "integer extremes");
+  f1 = 1.5; f2 = 2.5; f3 = 3.5;
+  assert(f1.compare(f2) == Less && f2.compare(f2) == Equal && f3.compare(f2) == Greater, "float");
+  z = 0.0; nz = 0.0 - 0.0;
+  assert(nz.compare(z) == Equal, "-0.0 against 0.0 is Equal, as `<` and `==` say");
+  s1 = f1 as single; s2 = f2 as single;
+  assert(s1.compare(s2) == Less && s1.compare(s1) == Equal && s2.compare(s1) == Greater, "single");
+  t1 = "abc"; e = "";
+  assert(t1.compare("abd") == Less && t1.compare("abc") == Equal && "b".compare(t1) == Greater, "text");
+  assert(e.compare("a") == Less, "the empty text first");
+  ca = 'a'; cz = 'z';
+  assert(ca.compare(cz) == Less && cz.compare(ca) == Greater && ca.compare(ca) == Equal, "character");
+  // `then`: the first answer that is not Equal decides.
+  y1 = 2026; m3 = 3; m5 = 5;
+  assert(y1.compare(y1).then(m3.compare(m5)) == Less, "then: equal year, smaller month");
+  assert(y1.compare(y1).then(m5.compare(m3)) == Greater, "then: equal year, larger month");
+  assert(i3.compare(i5).then(m5.compare(m3)) == Less, "then: the first decides");
+  assert(i5.compare(i5).then(i5.compare(i5)) == Equal, "then: equal throughout");
+  l = Ordering.Less;
+  assert("{l} {i7.compare(i3)}" == "Less Greater", "an Ordering formats as its variant");
+  // A program's own `Less` stays its own.
+  assert(pick(Less) == "less" && pick(More) == "more", "a program enum with a Less variant");
+  println("ok");
+}

@@ -166,7 +166,7 @@ gets probed wherever its homes can drift apart.
 ### F4-1 — #333: float ÷0 — interp aborts, native nulls (2026-06-11)
 
 - **Invariant**: one semantics per operator edge case, asserted by the lint
-  text, the interp body, and the native body alike (null per C66/C67).
+  text, the interp body, and the native body alike (null per @C66/@C67).
 - **Homes today**: `fill.rs` float-div (traps) vs the generated native body
   (nulls) vs the lint's own promise ("may produce null").
 - **Natural home**: the op's single definition — `default/01_code.loft`'s

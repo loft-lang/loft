@@ -84,7 +84,7 @@ pub(crate) const NDCALLREF_VAR: u32 = 8;
 /// record the box holds — reached via [`Node::block_rec`], never added to this.
 pub(crate) const NDBLOCK_BLOCK: u32 = 4;
 /// Element stride of that box: one `Block` record.
-pub(crate) const BLOCK_STRIDE: u32 = 28;
+pub(crate) const BLOCK_STRIDE: u32 = 32;
 pub(crate) const BLOCK_NAME: u32 = 16;
 pub(crate) const BLOCK_OPERATORS: u32 = 20;
 pub(crate) const NDINSERT_ITEMS: u32 = 4;
@@ -166,9 +166,9 @@ pub(crate) const TY_OPTIONAL: u8 = 25; // @PLN25 `τ?` — box-of-one child like
 pub(crate) const TY_TRIE: u8 = 26; // `trie<T[k]>` — ONE text key, appended so 0..=25 keep their numbers
 
 /// Element strides for the non-`Node` vectors the TypeT half uses.
-pub(crate) const TYPET_STRIDE: u32 = 33; // `TypeT` enum record size
+pub(crate) const TYPET_STRIDE: u32 = 40; // `TypeT` enum record size
 pub(crate) const INT_STRIDE: u32 = 8; // `vector<integer>` element (dep lists)
-pub(crate) const SORTKEY_STRIDE: u32 = 5; // `SortKey` record size
+pub(crate) const SORTKEY_STRIDE: u32 = 8; // `SortKey` record size
 pub(crate) const NAMEREF_STRIDE: u32 = 4; // `NameRef` record size
 
 /// `TypeT` field offsets.  `dep` (`vector<integer>`) is at 4 for the leaf-ish
@@ -227,28 +227,30 @@ pub(crate) const BLOCK_SCOPE: u32 = 0;
 pub(crate) const BLOCK_VAR_SIZE: u32 = 8;
 
 /// `Attribute` record (element of `vector<Attribute>`).
-pub(crate) const ATTRIBUTE_STRIDE: u32 = 49; // @PLN86 F8b +4 links; @PLN40 +1 const_field bool; C124 +1 value_const bool; +1 work_buffer bool
+pub(crate) const ATTRIBUTE_STRIDE: u32 = 56; // @PLN86 F8b +4 links; @PLN40 +1 const_field bool; C124 +1 value_const bool; +1 work_buffer bool
 pub(crate) const ATTR_NAME: u32 = 16;
 pub(crate) const ATTR_TYPEDEF: u32 = 20; // vector<TypeT> (box-of-one)
 pub(crate) const ATTR_VALUE: u32 = 24; // vector<Node> (box-of-one)
 pub(crate) const ATTR_CHECK: u32 = 28; // vector<Node> (box-of-one)
 pub(crate) const ATTR_CHECK_MESSAGE: u32 = 32; // vector<Node> (box-of-one)
 pub(crate) const ATTR_LINKS: u32 = 36; // @PLN86 F8b — text; "" = unlinked member
-pub(crate) const ATTR_MUTABLE: u32 = 40;
-pub(crate) const ATTR_CONSTANT: u32 = 41;
-pub(crate) const ATTR_INIT: u32 = 42;
-pub(crate) const ATTR_NULLABLE: u32 = 43;
-pub(crate) const ATTR_PRIMARY: u32 = 44;
-pub(crate) const ATTR_HIDDEN: u32 = 45;
-pub(crate) const ATTR_CONST_FIELD: u32 = 46; // @PLN40 — write-once struct field
-pub(crate) const ATTR_VALUE_CONST: u32 = 47; // C124 — a value-const field, or a `const` parameter
-pub(crate) const ATTR_WORK_BUFFER: u32 = 48; // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
+pub(crate) const ATTR_FACT: u32 = 40; // @PLN187 text: where the declared type names an alias
+pub(crate) const ATTR_MUTABLE: u32 = 44;
+pub(crate) const ATTR_CONSTANT: u32 = 45;
+pub(crate) const ATTR_INIT: u32 = 46;
+pub(crate) const ATTR_NULLABLE: u32 = 47;
+pub(crate) const ATTR_PRIMARY: u32 = 48;
+pub(crate) const ATTR_HIDDEN: u32 = 49;
+pub(crate) const ATTR_CONST_FIELD: u32 = 50; // @PLN40 — write-once struct field
+pub(crate) const ATTR_VALUE_CONST: u32 = 51; // C124 — a value-const field, or a `const` parameter
+pub(crate) const ATTR_WORK_BUFFER: u32 = 52; // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
+pub(crate) const ATTR_PUB_FIELD: u32 = 53; // @PLN187 — a field declared `pub`
 pub(crate) const ATTR_ALIAS_D_NR: u32 = 0;
 pub(crate) const ATTR_ASSIGNED_LAMBDA_D_NR: u32 = 8;
 
 /// `LinkedFieldGroup` record (element of `vector<LinkedFieldGroup>`).  `kind`
 /// is the native `LinkedFieldKind` discriminant (`Tuple` = 0, `Index` = 1).
-pub(crate) const LFG_STRIDE: u32 = 36;
+pub(crate) const LFG_STRIDE: u32 = 40;
 pub(crate) const LFG_KIND: u32 = 0;
 pub(crate) const LFG_INSTANCE: u32 = 8;
 pub(crate) const LFG_FIELD_INDICES: u32 = 32; // vector<integer>
@@ -264,29 +266,39 @@ pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
 /// the fifteen codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 43;
-pub(crate) const VAR_NAME: u32 = 24;
-pub(crate) const VAR_TYPE_DEF: u32 = 28; // vector<TypeT> (box-of-one)
+pub(crate) const VARIABLE_STRIDE: u32 = 64;
+pub(crate) const VAR_NAME: u32 = 40;
+pub(crate) const VAR_TYPE_DEF: u32 = 44; // vector<TypeT> (box-of-one)
 pub(crate) const VAR_STACK_POS: u32 = 0;
 pub(crate) const VAR_USES: u32 = 8;
 pub(crate) const VAR_OWNER_WITNESS: u32 = 16;
-pub(crate) const VAR_ARGUMENT: u32 = 32;
-pub(crate) const VAR_STACK_ALLOCATED: u32 = 33;
-pub(crate) const VAR_SKIP_FREE: u32 = 34;
-pub(crate) const VAR_CAPTURED: u32 = 35;
-pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 36;
+/// @PLN87 P2.1 — a rebound parameter's entry witness; the emitters read it (loft#1858).
+pub(crate) const VAR_REBIND_ORIG: u32 = 24;
+/// The scope that declares it; the yield emitter reads it (loft#1858).
+pub(crate) const VAR_SCOPE: u32 = 32;
+pub(crate) const VAR_ARGUMENT: u32 = 48;
+pub(crate) const VAR_STACK_ALLOCATED: u32 = 49;
+pub(crate) const VAR_SKIP_FREE: u32 = 50;
+pub(crate) const VAR_CAPTURED: u32 = 51;
+pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 52;
 /// @PLN157 § V-g — the elided-copy mark; a fact the EMITTERS read, so it is stored.
-pub(crate) const VAR_VIEW_ELIDED: u32 = 37;
+pub(crate) const VAR_VIEW_ELIDED: u32 = 53;
 /// `@FR-O-LazyBuffer` — the buffer's store is minted at its first use; the emitters read it.
-pub(crate) const VAR_LAZY_BUFFER: u32 = 38;
+pub(crate) const VAR_LAZY_BUFFER: u32 = 54;
 /// `@FR-O-Move` — the one bind after an `if`'s pre-init is a first bind; the emitters read it.
-pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 39;
+pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 55;
 /// @PLN167 decision 1 — a `&` names this narrow local, which holds its field encoding.
-pub(crate) const VAR_LINKED_NARROW: u32 = 40;
+pub(crate) const VAR_LINKED_NARROW: u32 = 56;
 /// @PLN167 decision 2 — a `&text` link to a text field or element (the store kind).
-pub(crate) const VAR_STORE_TEXT_LINK: u32 = 41;
+pub(crate) const VAR_STORE_TEXT_LINK: u32 = 57;
 /// loft#1834 — a user identifier names it; `is_compiler_generated` reads it.
-pub(crate) const VAR_USER_NAMED: u32 = 42;
+pub(crate) const VAR_USER_NAMED: u32 = 58;
+/// loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it.
+pub(crate) const VAR_USER_APPENDED: u32 = 59;
+/// loft#1840 — a whole-value bind copied a place into it; the `lost-write` lint reads it.
+pub(crate) const VAR_COPY_BOUND: u32 = 60;
+/// loft#1522 — a construction work-ref still names its store; the displacement free reads it.
+pub(crate) const VAR_BUFFER_WITNESSED: u32 = 61;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -297,46 +309,49 @@ pub(crate) const FN_NAMES: u32 = 12; // vector<NameNr> (name -> var_nr map)
 pub(crate) const FN_INLINE_REFS: u32 = 16; // vector<integer> (inline_ref_vars)
 
 /// `NameNr` record (element of `Function.names` = `vector<NameNr>`).
-pub(crate) const NAMENR_STRIDE: u32 = 12;
+pub(crate) const NAMENR_STRIDE: u32 = 16;
 pub(crate) const NAMENR_NR: u32 = 0; // integer (var_nr)
 pub(crate) const NAMENR_NAME: u32 = 8; // text
 
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 184; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin
+pub(crate) const DEFINITION_STRIDE: u32 = 200; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
 pub(crate) const DEF_POSITION: u32 = 24; // inlined Position base
-pub(crate) const DEF_OP_CODE: u32 = 44;
-pub(crate) const DEF_KNOWN_TYPE: u32 = 52;
-pub(crate) const DEF_CLOSURE_RECORD: u32 = 60;
-pub(crate) const DEF_FORCED_SIZE: u32 = 68; // Option<u8>; 0 = None
-pub(crate) const DEF_PURITY: u32 = 76;
-pub(crate) const DEF_NAME: u32 = 92;
-pub(crate) const DEF_ATTRIBUTES: u32 = 96; // vector<Attribute>
-pub(crate) const DEF_CODE: u32 = 100; // vector<Node> (box-of-one)
-pub(crate) const DEF_RETURNED: u32 = 104; // vector<TypeT> (box-of-one)
-pub(crate) const DEF_RUST: u32 = 108;
-pub(crate) const DEF_NATIVE: u32 = 112;
-pub(crate) const DEF_VARIABLES: u32 = 116; // inlined Function base (20 bytes)
-pub(crate) const DEF_MUTATED_CAPTURES: u32 = 136; // vector<NameRef>
-pub(crate) const DEF_SCALARS_TO_BOX: u32 = 140; // vector<NameRef>
-pub(crate) const DEF_BOUNDS: u32 = 144; // vector<integer>
-pub(crate) const DEF_FIELD_GROUPS: u32 = 148; // vector<LinkedFieldGroup>
-pub(crate) const DEF_SYNTHETIC: u32 = 152; // Option<&str>; "" = None
-pub(crate) const DEF_CAP: u32 = 156; // @PLN86 the group#right call-gate link; "" = unlinked
-pub(crate) const DEF_SUPERSEDED: u32 = 160; // @PLN102 arc C #superseded "Y"; "" = not superseded
-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 180;
-pub(crate) const DEF_PUB_VISIBLE: u32 = 181;
-pub(crate) const DEF_NULL_SAFE: u32 = 182; // @PLN46 W2 #null_safe; false = unannotated
-pub(crate) const DEF_BUILTIN: u32 = 183; // @PLN165 arc E #builtin; false = an ordinary body
-pub(crate) const DEF_C_SYMBOL: u32 = 164; // @PLN24 #c "sym"; "" = not a C binding
-pub(crate) const DEF_C_SIG: u32 = 168; // @PLN24 the declared C signature; "" = none
-pub(crate) const DEF_TYPE_PARAMS: u32 = 172; // @PLN165 D2 vector<integer>, header order
-pub(crate) const DEF_INSTANCE_OF: u32 = 84; // @PLN165 D3 the template; -1 = not an instance
-pub(crate) const DEF_INSTANCE_ARGS: u32 = 176; // @PLN165 D3 vector<TypeT>
+pub(crate) const DEF_OP_CODE: u32 = 48;
+pub(crate) const DEF_KNOWN_TYPE: u32 = 56;
+pub(crate) const DEF_CLOSURE_RECORD: u32 = 64;
+pub(crate) const DEF_FORCED_SIZE: u32 = 72; // Option<u8>; 0 = None
+pub(crate) const DEF_PURITY: u32 = 80;
+pub(crate) const DEF_NAME: u32 = 96;
+pub(crate) const DEF_ATTRIBUTES: u32 = 100; // vector<Attribute>
+pub(crate) const DEF_CODE: u32 = 104; // vector<Node> (box-of-one)
+pub(crate) const DEF_RETURNED: u32 = 108; // vector<TypeT> (box-of-one)
+pub(crate) const DEF_RUST: u32 = 112;
+pub(crate) const DEF_NATIVE: u32 = 116;
+pub(crate) const DEF_VARIABLES: u32 = 120; // inlined Function base (20 bytes)
+pub(crate) const DEF_MUTATED_CAPTURES: u32 = 140; // vector<NameRef>
+pub(crate) const DEF_SCALARS_TO_BOX: u32 = 144; // vector<NameRef>
+pub(crate) const DEF_BOUNDS: u32 = 148; // vector<integer>
+pub(crate) const DEF_FIELD_GROUPS: u32 = 152; // vector<LinkedFieldGroup>
+pub(crate) const DEF_SYNTHETIC: u32 = 156; // Option<&str>; "" = None
+pub(crate) const DEF_CAP: u32 = 160; // @PLN86 the group#right call-gate link; "" = unlinked
+pub(crate) const DEF_SUPERSEDED: u32 = 164; // @PLN102 arc C #superseded "Y"; "" = not superseded
+pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 188;
+pub(crate) const DEF_PUB_VISIBLE: u32 = 189;
+pub(crate) const DEF_NULL_SAFE: u32 = 190; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 191; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_OPERATOR_FORM: u32 = 192; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_RETURNED_CONST: u32 = 193; // @FR-Const-Foreign `-> const T`; false = writable
+pub(crate) const DEF_C_SYMBOL: u32 = 168; // @PLN24 #c "sym"; "" = not a C binding
+pub(crate) const DEF_C_SIG: u32 = 172; // @PLN24 the declared C signature; "" = none
+pub(crate) const DEF_TYPE_PARAMS: u32 = 176; // @PLN165 D2 vector<integer>, header order
+pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not an instance
+pub(crate) const DEF_RETURNED_FACT: u32 = 184; // @PLN187 text: where the declared result names an alias
+pub(crate) const DEF_INSTANCE_ARGS: u32 = 180; // @PLN165 D3 vector<TypeT>
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -357,17 +372,17 @@ pub(crate) const IMPORT_INTO_SOURCE: u32 = 8;
 pub(crate) const IMPORT_NAME: u32 = 16; // "" = wildcard
 pub(crate) const IMPORT_BIND: u32 = 20;
 pub(crate) const IMPORT_PUBLIC: u32 = 24; // `pub use` (@C98)
-pub(crate) const IMPORT_STRIDE: u32 = 25;
+pub(crate) const IMPORT_STRIDE: u32 = 32;
 
 /// `UseName` record — a `use` short name or alias and its source number.
 pub(crate) const USENAME_NAME: u32 = 8;
 pub(crate) const USENAME_SOURCE: u32 = 0;
-pub(crate) const USENAME_STRIDE: u32 = 12;
+pub(crate) const USENAME_STRIDE: u32 = 16;
 
 /// `TypeVarBound` record — a type-variable placeholder and the bound-set key it stands for.
 pub(crate) const TVB_HOLDER: u32 = 0;
 pub(crate) const TVB_BOUNDS: u32 = 8;
-pub(crate) const TVB_STRIDE: u32 = 12;
+pub(crate) const TVB_STRIDE: u32 = 16;
 
 /// Well-known location of the `Data` root record in a saved IR store
 /// (@PLN11 arc D).  A freshly-opened file-backed store's first `claim(16)`
@@ -402,7 +417,7 @@ pub(crate) const DCSINGLE_V: u32 = 4; // single
 pub(crate) const DCSTR_V: u32 = 4; // text
 
 /// `DbField` record (element of `Parts::Struct` / `EnumValue` field vectors).
-pub(crate) const DBFIELD_STRIDE: u32 = 37;
+pub(crate) const DBFIELD_STRIDE: u32 = 40;
 pub(crate) const DBFIELD_CONTENT: u32 = 0; // u16 known_type
 pub(crate) const DBFIELD_POSITION: u32 = 8; // u16 byte offset
 pub(crate) const DBFIELD_NAME: u32 = 24;
@@ -412,12 +427,12 @@ pub(crate) const DBFIELD_NULLABLE: u32 = 36; // @PLN127 arc D — declared nulla
 pub(crate) const DBFIELD_TARGET: u32 = 16; // @C91 — u16 known_type a reference field names
 
 /// `EnumPair` `(u16, text)` element of `Parts::Enum`.
-pub(crate) const ENUMPAIR_STRIDE: u32 = 12;
+pub(crate) const ENUMPAIR_STRIDE: u32 = 16;
 pub(crate) const ENUMPAIR_NR: u32 = 0;
 pub(crate) const ENUMPAIR_NAME: u32 = 8;
 
 /// `KeyField` `(u16, bool)` element of a Sorted/Ordered/Index key list.
-pub(crate) const KEYFIELD_STRIDE: u32 = 9;
+pub(crate) const KEYFIELD_STRIDE: u32 = 16;
 pub(crate) const KEYFIELD_NR: u32 = 0;
 pub(crate) const KEYFIELD_ASC: u32 = 8;
 
@@ -452,11 +467,10 @@ pub(crate) const PTNUM_NULLABLE: u32 = 7; // Byte/Short/Int/ShortRaw/IntRaw
 pub(crate) const PTCONTENT: u32 = 8; // Vector/Array/Sorted/Ordered/Hash/Index/Radix/ChildRec
 pub(crate) const PTKEYS: u32 = 4; // Sorted/Ordered/Index (vector<KeyField>)
 pub(crate) const PTFIELDS: u32 = 4; // Hash/Radix (vector<integer>)
-pub(crate) const PTINDEX_LEFT: u32 = 16;
 pub(crate) const PTTRIE_KEY: u32 = 16; // Trie's key FIELD INDEX (content is at PTCONTENT)
 
 /// `DbType` (`database::Type`) record — `parents` is derived, not stored.
-pub(crate) const DBTYPE_STRIDE: u32 = 34;
+pub(crate) const DBTYPE_STRIDE: u32 = 40;
 pub(crate) const DBTYPE_SIZE: u32 = 0; // u16
 pub(crate) const DBTYPE_ALIGN: u32 = 8; // u8
 pub(crate) const DBTYPE_NAME: u32 = 16;
@@ -471,7 +485,7 @@ pub(crate) const DBTYPE_LINKED: u32 = 33;
 pub(crate) const BUNDLE_DATA: u32 = 0;
 pub(crate) const BUNDLE_TYPES: u32 = 24; // right after the inlined 24-byte `Data`
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
-pub(crate) const BUNDLE_STRIDE: u32 = 28;
+pub(crate) const BUNDLE_STRIDE: u32 = 32;
 #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
@@ -480,7 +494,7 @@ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 pub(crate) const BOOL_MASK: u8 = 1;
 
 /// Element stride of a `vector<Node>` (the `Node` enum's record size).
-pub(crate) const NODE_STRIDE: u32 = 28;
+pub(crate) const NODE_STRIDE: u32 = 32;
 
 /// Which `Node` variant a [`Value`] is.  Mirrors the native `data::Value`
 /// variants 1:1; `Other(discriminant)` only on an unrecognised byte.
@@ -1135,12 +1149,15 @@ mod tests {
     use super::*;
     use crate::ir_schema_gen::register_ir_schema;
 
-    /// Claim a fresh `Node` record and write its discriminant.
+    /// Claim a fresh `Node` record and write it as [`ValuesVector::push`] does: zeroed (its
+    /// nested vector headers empty), then the discriminant.  The claim alone promises no
+    /// value (`@FR-H-Claim`), so a node that only had its discriminant written handed the
+    /// readers whatever bytes the block held.
     fn new_node(stores: &mut Stores, disc: u8) -> DbRef {
         let rec = stores.database(16);
-        stores
-            .store_mut(&rec)
-            .set_byte(rec.rec, rec.pos, 0, i32::from(disc));
+        let store = stores.store_mut(&rec);
+        store.zero_range(rec.rec, rec.pos, NODE_STRIDE);
+        store.set_byte(rec.rec, rec.pos, 0, i32::from(disc));
         rec
     }
 
@@ -1420,6 +1437,7 @@ mod tests {
         assert_eq!(pos(ids.attribute, "check"), ATTR_CHECK);
         assert_eq!(pos(ids.attribute, "check_message"), ATTR_CHECK_MESSAGE);
         assert_eq!(pos(ids.attribute, "links"), ATTR_LINKS);
+        assert_eq!(pos(ids.attribute, "fact"), ATTR_FACT);
         assert_eq!(pos(ids.attribute, "mutable"), ATTR_MUTABLE);
         assert_eq!(pos(ids.attribute, "constant"), ATTR_CONSTANT);
         assert_eq!(pos(ids.attribute, "init"), ATTR_INIT);
@@ -1429,6 +1447,7 @@ mod tests {
         assert_eq!(pos(ids.attribute, "const_field"), ATTR_CONST_FIELD);
         assert_eq!(pos(ids.attribute, "value_const"), ATTR_VALUE_CONST);
         assert_eq!(pos(ids.attribute, "work_buffer"), ATTR_WORK_BUFFER);
+        assert_eq!(pos(ids.attribute, "pub_field"), ATTR_PUB_FIELD);
         assert_eq!(pos(ids.attribute, "alias_d_nr"), ATTR_ALIAS_D_NR);
         assert_eq!(
             pos(ids.attribute, "assigned_lambda_d_nr"),
@@ -1474,7 +1493,12 @@ mod tests {
         assert_eq!(pos(ids.variable, "linked_narrow"), VAR_LINKED_NARROW);
         assert_eq!(pos(ids.variable, "store_text_link"), VAR_STORE_TEXT_LINK);
         assert_eq!(pos(ids.variable, "user_named"), VAR_USER_NAMED);
+        assert_eq!(pos(ids.variable, "user_appended"), VAR_USER_APPENDED);
+        assert_eq!(pos(ids.variable, "copy_bound"), VAR_COPY_BOUND);
         assert_eq!(pos(ids.variable, "owner_witness"), VAR_OWNER_WITNESS);
+        assert_eq!(pos(ids.variable, "rebind_orig"), VAR_REBIND_ORIG);
+        assert_eq!(pos(ids.variable, "scope"), VAR_SCOPE);
+        assert_eq!(pos(ids.variable, "buffer_witnessed"), VAR_BUFFER_WITNESSED);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);
@@ -1528,6 +1552,9 @@ mod tests {
         assert_eq!(pos(ids.definition, "pub_visible"), DEF_PUB_VISIBLE);
         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
         assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
+        assert_eq!(pos(ids.definition, "operator_form"), DEF_OPERATOR_FORM);
+        assert_eq!(pos(ids.definition, "returned_fact"), DEF_RETURNED_FACT);
+        assert_eq!(pos(ids.definition, "returned_const"), DEF_RETURNED_CONST);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);
@@ -1635,7 +1662,6 @@ mod tests {
         for v in [ids.pt_hash, ids.pt_radix] {
             assert_eq!(pos(v, "fields"), PTFIELDS);
         }
-        assert_eq!(pos(ids.pt_index, "left"), PTINDEX_LEFT);
 
         assert_eq!(u32::from(stores.size(ids.db_type)), DBTYPE_STRIDE);
         assert_eq!(pos(ids.db_type, "size"), DBTYPE_SIZE);

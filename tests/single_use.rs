@@ -6,13 +6,13 @@
 //! `LOFT_TRACE_SINGLE_USE`; an element computed by a function with a side effect keeps its
 //! temporary.  And the cells hold with the clause off.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft";
 
 fn loft(env: &[(&str, &str)]) -> (String, String, bool) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

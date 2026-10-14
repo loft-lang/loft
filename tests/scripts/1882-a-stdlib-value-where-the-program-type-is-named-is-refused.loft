@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// C101 — the silent half of loft#1882.  `fn open_it(p: text) -> File { file(p) }` written above
+// the program's own `struct File` compiled and ran on the stdlib's `File`: one name meant two
+// types in one file, and nothing said so.  With the program's type owning the name from the
+// first line, `file(p)` (a `std::File`) is refused where the program's `File` is declared, and
+// the message names the cure: write `std::File` where the standard library's is meant.
+//
+// @falsified-at: 8a371d505 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   Before the fix `open_it` compiled on the stdlib's `File` and nothing was refused.
+//   CHANNEL: the expected diagnostic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: no diagnostic where the file declares one; the program ran on the stdlib type.
+//   HOLDS: the suite accepts the file only with the refusal.
+// @falsified-by: tests/falsified/1882-a-stdlib-value-where-the-program-type-is-named-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   claim_declared_type_names switched off (the durable receipt: the fix's one chokepoint).
+//   CHANNEL: the expected diagnostic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+//
+// @EXPECT_ERROR: write `std::File` where the standard library's is meant
+fn open_it(p: text) -> File { file(p) }
+struct File { name: text }
+
+fn test_the_stdlib_value_is_refused_where_the_program_type_is_named() {
+  f = open_it("/tmp");
+  assert(f.name == "", "unreachable");
+}

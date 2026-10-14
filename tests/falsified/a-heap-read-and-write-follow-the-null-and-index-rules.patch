@@ -1,0 +1,13 @@
+diff --git a/src/vector.rs b/src/vector.rs
+index 0d65fa88c..3622b207d 100644
+--- a/src/vector.rs
++++ b/src/vector.rs
+@@ -795,7 +795,7 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
+ #[inline]
+ pub fn elem_index(from: i64, len: u32) -> Option<u32> {
+     let len = i64::from(len);
+-    let f = if from < 0 { from + len } else { from };
++    let f = from;
+     // `f < len <= u32::MAX` once the unsigned test passes, so the narrowing is exact.
+     if (f as u64) < (len as u64) {
+         Some(f as u32)

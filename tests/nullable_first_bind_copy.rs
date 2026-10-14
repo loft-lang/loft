@@ -18,7 +18,6 @@
 //! with an over-free present once reuse is off, so the plain cells stay.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn probe() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -26,7 +25,8 @@ fn probe() -> PathBuf {
 }
 
 fn run(mode: &str, envs: &[(&str, &str)]) -> (bool, String) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg(mode).arg(probe()).env("LOFT_TIMEOUT", "120");
     for (k, v) in envs {
         cmd.env(k, v);

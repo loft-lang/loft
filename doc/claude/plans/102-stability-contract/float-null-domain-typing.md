@@ -17,7 +17,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > it landed while `contract` is still 0). **No runtime error added** — entirely a
 > compile-time *type* change. Owner directive: *"a null is fine, errors never"* + *"use the
 > types to give warnings about potential nulls"* (DESIGN_DECISIONS
-> [C80](../../DESIGN_DECISIONS.md), the spreadsheet fault model).
+> [@C80](../../DESIGN_DECISIONS.md), the spreadsheet fault model).
 
 ## The problem — the float type lies about null, the integer type does not
 
@@ -25,7 +25,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 storing it into a non-null `integer` field is flagged *today* as a hard error —
 *"a nullable `integer?` cannot be stored into the assignment target of the non-null type
 `integer` — discharge it first with `?? <default>` or `match`."* The programmer is nudged to
-handle the null; nothing halts at runtime (the value is just null, C80). (This doc relaxes
+handle the null; nothing halts at runtime (the value is just null, @C80). (This doc relaxes
 that hard error to a **warning** — see (N-Warn) below.)
 
 The **float** side does none of this. Verified on both backends (2026-07-11):
@@ -44,7 +44,7 @@ called out in the pre-freeze audits (formal-audit E2, lib-audit numeric). Since 
 types freeze at contract 1, the honest signature must be chosen *now*.
 
 **This surfaces a latent hazard; it does not add one.** A `float` can already be `NaN`
-*anywhere* — every IEEE operation can produce it, and `NaN` *is* the float null (C90). The
+*anywhere* — every IEEE operation can produce it, and `NaN` *is* the float null (@C90). The
 `float?` typing + the warning do not create a new failure mode; they make **visible** a null
 that was always possible but silent, for the many programmers unaware of it. Nothing new can
 go wrong at runtime (the NaN was always reachable), which is why a **warning** is the right
@@ -60,7 +60,7 @@ handle the NaN, simply gets an explicit nudge to do so.
 > reachable through such an overflow) stays **non-null** — a decided edge, not a lie.
 
 This is not a new principle: it is the **DN3-vs-C85 boundary already drawn for integers**,
-read across to floats. DN3 (`÷0`, index, parse → `τ?`) and C85 (overflow → non-null,
+read across to floats. DN3 (`÷0`, index, parse → `τ?`) and @C85 (overflow → non-null,
 "the game keeps running") are the two halves; every float op lands on one side by the
 *same* test. So the design absorbs floats into an existing invariant rather than inventing
 one — and the classification below is where that absorption is checked, not assumed
@@ -75,13 +75,13 @@ one — and the classification below is where that absorption is checked, not as
 | `ln`, `log`, `log2`, `log10` | yes — argument `≤ 0` | **`τ?`** |
 | `asin`, `acos` | yes — argument outside `[-1, 1]` | **`τ?`** |
 | `pow` | only base `< 0` **and** fractional exp | **`τ?`** (resolved 2026-07-11 — genuine domain error; `pow(x, 2)` is free, only a non-null store needs a discharge) |
-| `sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `abs`, `ceil`, `floor`, `round` | NaN only from `±inf` input (extraordinary, overflow-reachable) | **non-null** (C85-style decided edge) — no guard forced on ubiquitous ops |
+| `sin`, `cos`, `tan`, `atan`, `atan2`, `exp`, `abs`, `ceil`, `floor`, `round` | NaN only from `±inf` input (extraordinary, overflow-reachable) | **non-null** (@C85-style decided edge) — no guard forced on ubiquitous ops |
 
 `atan2` is total on all finite inputs (including `atan2(0,0)=0`); `sin`/`cos`/`tan` of a
 *finite* argument are always finite (verified `cos(1000.0)` → finite). Their only NaN comes
-from an infinite argument, and infinity is reachable only via a C85 overflow — so forcing
+from an infinite argument, and infinity is reachable only via a @C85 overflow — so forcing
 `?` on every `sin` call would tax the common path for a fault the program never hits,
-exactly the C85 argument. They stay non-null.
+exactly the @C85 argument. They stay non-null.
 
 ## Mechanism — two type-level hooks, runtime untouched
 
@@ -191,11 +191,11 @@ dropped it. The type must catch up to the semantics that already exist:
   unrepresentable and would silently corrupt to a real value. Those keep the **hard error**;
   the programmer must `?? d` or widen the target to the nullable form (`u8?`). The split is
   principled: *warn iff the null is representable-and-observable in the non-null slot* — the
-  same in-band-sentinel property C85 already relies on. Keeping the narrow error costs zero
+  same in-band-sentinel property @C85 already relies on. Keeping the narrow error costs zero
   compatibility (narrow stores already error today, DN1/DN4/DN5).
-- **C85 is untouched and does not conflict.** Propagation is driven by an operand *already
+- **@C85 is untouched and does not conflict.** Propagation is driven by an operand *already
   being nullable*, not by the possibility of overflow. `a * b` with **both operands non-null**
-  stays non-null (C85 — overflow silently → sentinel; no `?` forced on the ubiquitous
+  stays non-null (@C85 — overflow silently → sentinel; no `?` forced on the ubiquitous
   non-null case). The moment a nullable enters, it rides through to the store. The two rules
   compose: non-null arithmetic stays non-null; a null, once present, stays *visible*.
 
@@ -285,7 +285,7 @@ decls in `default/01_code.loft` · narrow discriminator = `IntegerSpec::byte_wid
   && the result base is a scalar → `*ctp = Type::optional(ctp.base())`.
   *Verify:* `x = n + 1` (`n: integer?`) → `x: integer?`; `float - float?` → `float?`; storing
   either into a non-null slot warns (Phase 1). Both backends.
-- **2.3** C85 unaffected — non-null × non-null stays non-null.
+- **2.3** @C85 unaffected — non-null × non-null stays non-null.
   *Verify:* `a=3; b=4; s.f = a*b` (`f: integer`) → NO warning, clean.
 - **2.4** Runtime value pin — a null through arithmetic stays null.
   *Verify:* `(n+1) ?? -7` with `n` null → `-7` on both backends (graduate to `tests/scripts/`).
@@ -343,7 +343,7 @@ throughout the stack" means operationally.
 ## Falsification probes (design-protocol step 3) — run before/with the build
 
 - **"`float?` is representationally free"** → `float? == null` and a `vector<float?>` read
-  correctly. *Confirmed* (the `2076` peel; C90 pins NaN = the float null).
+  correctly. *Confirmed* (the `2076` peel; @C90 pins NaN = the float null).
 - **"the existing divisor proof applies to float"** → after the gate change, `1.0 / 2.0`
   (const) and `if b != 0.0 { a / b }` stay non-null. *Implementation-time.*
 - **"sin/cos/… never null from finite"** → `sin(1e300)`, `cos(1000.0)` finite, not null.
@@ -357,16 +357,16 @@ throughout the stack" means operationally.
 
 ## What this is NOT
 
-- Not a runtime error. `sqrt(-1)` stays null + continue (C80). No `DomainError`, no fault
+- Not a runtime error. `sqrt(-1)` stays null + continue (@C80). No `DomainError`, no fault
   kind, no soft-halt entry. The type does all the work, at compile time.
 - Not a new diagnostic mechanism. It reuses `(N-Store)` — the same check integer `/`
   already trips.
-- Not a per-case DESIGN_DECISIONS entry restating C80. The governing principle already
+- Not a per-case DESIGN_DECISIONS entry restating @C80. The governing principle already
   exists; this doc records the *typing* refinement, not a new value decision.
 
 ## See also
 
 - [types.md](../../formal/types.md) — the formal rule (DN3 float extension); the spec-first artifact this doc backs.
-- [DESIGN_DECISIONS.md C80](../../DESIGN_DECISIONS.md) (spreadsheet model), C85 (overflow non-null), C90 (in-band null sentinel).
+- [DESIGN_DECISIONS.md @C80](../../DESIGN_DECISIONS.md) (spreadsheet model), @C85 (overflow non-null), @C90 (in-band null sentinel).
 - [formal-audit.md](formal-audit.md) E2 / [lib-audit.md](lib-audit.md) numeric — the audit rows this closes.
 - `src/parser/operators.rs:2300` (the div gate) · `default/01_code.loft` (the function return types) — the two touch points.

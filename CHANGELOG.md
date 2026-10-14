@@ -12,6 +12,190 @@ invariants, internal phase numbers)?  See
 
 ---
 
+## 2026-11
+
+### May need a change in your code
+
+**A field is private to the file that declares it.**  Reading, writing or matching a field
+from another file needs `pub` on that field (`struct Unit { pub name: text, hp: integer }`); a
+struct literal outside its file needs every field `pub`, and an enum's variants need `pub enum`.
+A type your `pub fn` returns can still be named, passed and stored by its caller without `pub`
+— it just cannot be built there.  A `type Handle = integer` that is not `pub` but is returned by
+a `pub fn` hides its integer: callers can pass a `Handle` back and compare two, but not add to
+one.  Each refusal names the field or type, its file and the fix.  For a library you use, update
+to its release that marks its fields `pub`; for your own package of several files,
+`scripts/pub_census.sh` and `scripts/pub_migrate.py` add the `pub` the refusals ask for
+([COMPATIBILITY.md](doc/claude/COMPATIBILITY.md)).
+
+**`operator` is a keyword.**  It starts a definition an operator form reaches (below), so a
+variable, field or function named `operator` no longer compiles: rename it.
+
+**`compare` and `then` are stdlib methods.**  `x.compare(y)` answers `Less`, `Equal` or
+`Greater` (the new `Ordering` enum) for an `integer`, `single`, `float`, `text` or `character`,
+and `a.compare(b).then(c.compare(d))` orders by a second value when the first is equal.  A
+program that defines its own `compare` or `then` for one of those types is refused with "Cannot
+redefine": rename yours, or use the stdlib's.
+
+**A function named for an operator no longer gives a type that operator.**  `fn OpLt`, `OpAdd`,
+`OpMin`, `OpMul`, `OpEq`, `OpNe`, `OpIndex`, `OpConvXFromY` and the rest are ordinary functions
+now, callable by their name and reached by no operator, `[…]`, `as` or bound.  Each definition
+says so where it is written, naming what to write instead — a warning for `OpEq` / `OpNe` /
+`OpNot`, whose operators keep answering on their own, an advice for the rest.  The cures, one
+line each:
+
+- `fn OpLt` / `OpLe` / `OpGt` / `OpGe` → one `operator compare(self: T, other: T) -> Ordering`
+  (`self.ms.compare(other.ms)`), which gives all four.
+- `fn OpAdd` / `OpMin` (two operands) / `OpMul` → `operator plus` / `minus` / `times`, same
+  parameters.
+- `fn OpEq` / `OpNe` → delete them: `==` and `!=` compare the fields of every type, always,
+  and no type redefines them.  If yours compared something else, keep it as a named method
+  (`same_second(self, other)`) and call that.
+- `fn OpConvTFromS(v: S) -> T` → `operator to_t(self: S) -> T`, with `T`'s name in snake case
+  (`OpConvDateTimeFromText` → `operator to_date_time(self: text) -> DateTime`).
+- `fn to_text(self: T…)` and `fn next(self: T)` → the same with `operator` in place of `fn`;
+  `"{x}"` and `for e in x` reach only those.
+- `fn OpIndex` → a named method, called as `x.at(i)`: `[…]` belongs to the built-in
+  collections, and `x[i]` on your type is refused naming that.
+- the unary `-` (`fn OpMin(self: T)`) → `operator negate(self: T) -> V`; `fn OpDiv` /
+  `OpRem` → `operator divided_by` / `remainder`; the bit operators → a named method (a type
+  cannot define them yet).
+
+A library that defined any of these needs a new release; `time` 0.4.0 and `server` 0.7.3 are
+written this way.
+
+**An interface names the method that meets it.**  `op <` in an interface body is refused: write
+`operator compare(self: Self, other: Self) -> Ordering`, and likewise `operator plus`, `minus`,
+`times`, `divided_by`, `remainder` and `negate` for `+`, `-`, `*`, `/`, `%` and a unary `-`.
+`op ==` needs nothing: `Equatable` declares no member, since every type meets it.  The stdlib's
+`Ordered`, `Addable`, `Subtractable` and `Numeric` are spelled so.
+
+**`integer`, `single` and `float` have methods `plus`, `minus`, `times`, `negate`, `divided_by`
+and `remainder`** (and every ordered built-in a `compare`), the `operator` definitions by which
+they meet those interfaces.  A program defining its own function of one of those names whose
+first parameter is such a number is refused with "Cannot redefine": rename it.
+
+**A mapped file is `const`, and writing it is a compile error.**  `file_map(path)` answers
+`const vector<u8>`, so a write to the mapping or to a slice of it, a bind of it into a writable
+variable, or passing it to a parameter that is not `const` is refused before the program runs —
+it used to stop the program at the write.  Copy what you change (`w = m`, a bind copies), and
+declare a parameter that only reads it `const`.  A function of yours can say the same of its
+result: `fn view(…) -> const vector<u8>`.
+
+**A concatenation with a null operand is null, whatever the operand's type.**  `"ready: " + flag`
+with a null `flag` used to read `"ready: null"`; it is now `null`, as `"a" + t` with a null text
+already was, and `t += x` with a null `x` makes `t` null.  Interpolation still prints the word:
+write `"ready: {flag}"` when you want the text either way.
+
+**A null inside `{…}` prints `null`, never why it is null.**  `"{a / b}"` with `b = 0`,
+`"{v[9]}"` past the end and `"{5.0 % 0.0}"` now all print `null` where they printed `null(/0)`,
+`null(oob)` and `null(%0)`; the program still continues.  A test or a parser that matched the
+old suffix matches `null` now.  `LOFT_FORMAT_BARE_NULL` is gone: plain `null` is the only form.
+A null whose type has its own `operator to_text` prints `null` as well, and that function is no
+longer called with a null `self` (it printed things like `Tnull`).
+
+**A record shows its null fields.**  `Point { x: 3, y: null, label: null }` prints
+`{x:3,y:null,label:null}` where it printed `{x:3}`, and `{p:j}` writes
+`{"x":3,"y":null,"label":null}` — nested records and records in a vector too.  `Type.parse` reads
+the new form back to the same value; a test that pinned the shorter form needs the nulls added.
+
+**`record#errors` is a `vector<text>` that belongs to its own record.**  It holds one entry
+per error of the `Type.parse(text)` that built that record and is empty after a parse that
+succeeded, so `for e in user#errors { log_warn(e); }` visits each error.  Reading it changes
+nothing, and a later parse of something else leaves it alone: after `a = A.parse(x)` and
+`b = B.parse(y)`, `a#errors` still answers for `a`.  The errors go with the record when it is
+passed, returned from a function or copied to another variable; a record you build yourself
+has none.  Before, the accessor was one text for the whole program: the loop walked its
+characters, a second read answered nothing, and `a#errors` reported on whichever parse ran
+last.  Change `user#errors != ""` to `len(user#errors) > 0` (the old comparison is refused,
+naming the two types); `len(user#errors) > 0` already written keeps its meaning.
+`"{user#errors}"` prints the vector, `["line 1:1 path:"]`, where it printed the bare text:
+write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is refused.
+
+### New
+
+**A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
+its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
+1 and a message.  Under `loft test` it fails the test that called it, naming the code.
+
+**A backtick literal can hold a backtick.**  `` \` `` is a backtick in either quote form, so a
+block of text that quotes code is one multi-line literal instead of a print per line.
+
+**A vector answers whether it holds a value.**  `names.contains("x")` reads any vector by
+content, as `==` compares — a text, a number, a record — beside `text`'s own `contains`; it was
+a four-line loop in every script that held a list of names.
+
+**`?? exit(2)` and `?? panic("…")`.**  A call that never returns may be a `??` default, the
+way `?? return` already was: `n = version(text) ?? exit(1)` reads the value or stops the
+program with that status, with no sentinel and no `if` for the absent case.
+
+**Naming a library's type loads the library.**  `c: Command = "git log -n {n}"` brings in
+`process` the way `line.matches(p)` brings in `regex`: a package that opts into triggers now
+fires on its `pub struct` and `pub enum` names too, wherever the package is declared — a
+sibling, the project's `lib/`, a `path =` dependency.  The type arrives imported by name, and
+its typed-format and `to_text` hooks work on it as they do after `use pkg::*;`.
+
+**loft says when this machine cannot build native — where a developer looks.**  `loft --version`
+now has a second line naming the Rust toolchain a native build would use, or saying there is
+none; the `loft test` summary names a missing `rustc` instead of suggesting `loft test
+--native`; and `loft new --native` lists it in its next steps.  Running a program stays quiet:
+it runs on the interpreter as before.
+
+**A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
+runs the block exactly when the write did not take — an index past the end, a key the
+collection does not hold, a field reached through a null, a narrow slot the value does not fit,
+a locked store — and never when it landed.  The place is written once, and the block may
+`break`, `continue` or `return`.  `if !place` on the next line still works for a narrow slot.
+
+**A dropped write is reported.**  Without an `else`, a write that lands nowhere logs one
+warning — `index_out_of_bounds` for an index, `write_dropped` for a missing key or a null — and
+the program goes on, as before.  Warnings from a running program now name the statement on the
+interpreter and the function on `--native`, where they used to say `:0`.
+
+**Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place
+of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms)
+}` — and the four comparisons, `sort()`, `min_of` and `max_of` all use it.
+
+**…and `+`, `-` and `*`.**  `operator plus`, `operator minus` and `operator times` give a type
+the three operators, `+=`, `-=` and `*=` with them, and `sum` over a vector of it.  A type may
+have several, one per right-hand type: a date minus a date, and a date minus a duration.
+
+**…and `/`, `%` and a unary `-`.**  `operator divided_by`, `remainder` and `negate` give a type
+`/`, `%` and `-x`; `/=` and `%=` come with them.  `==` is not among them: it compares the fields
+of every type, always, so `operator equals` is refused naming a named method as the cure.
+
+**…and `as`.**  `operator to_date_time(self: text) -> DateTime` makes `"2026-07-08" as DateTime`
+work; the name after `to_` is the target type in snake case.  A conversion INTO your type may
+take a foreign `self` (`text`, `integer`), so only your package can define it.
+
+**loft trusts the certificates your machine trusts** (system store, `SSL_CERT_FILE`), so it
+works behind a TLS-inspecting proxy.  Installing a package, fetching a remote store or calling a
+web service checks a server against the bundled roots and the machine's own store, as curl and
+git do.
+
+### Bug fixes
+
+**Operands are evaluated left to right, also around a call that answers a vector or a
+record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and
+`c.n + made(c).v` read `c.n` after `made` had changed it, on both backends.  Each operand now
+sees exactly what the operands to its left did.
+
+**A vector parsed from text can be returned, and holds values of its own type.**  A function
+that bound `vector<T>.parse(text)` to a local and returned the local handed back a vector
+whose memory was already released; so did binding it inside an `if` block and reading it
+afterwards.  Compiled programs answered an empty vector, interpreted ones usually the right
+one.  Also, `vector<integer>.parse` and `vector<float>.parse` gave elements no operator
+accepted, and `vector<text>.parse` printed its texts with their quotes.
+
+**A struct-enum parsed from text can be returned from a function.**
+`fn load(t: text) -> Shape { Shape.parse(t) }` compiled, and its result could not be bound,
+stored in a vector or a field, or passed on: "cannot change type from Shape to Shape".
+
+**A null test narrows a nullable struct-enum.**  Inside `if s != null { area(s) }`, and on the
+else side of `if s == null`, a `Shape?` is a `Shape`: the call was reported as storing a
+nullable into a non-null parameter, where the same code over a struct was not.
+
+---
+
 ## 2026-10
 
 The **one-meaning** release.  A spelling now means one thing wherever it is written: `==`
@@ -324,6 +508,13 @@ record as it stands.  And `check(decode(bytes))` — a call whose result goes st
 another call — used to copy that result once more where `d = decode(bytes); check(d)` did
 not; the two spellings now cost the same.  Nothing in your code changes;
 `LOFT_NO_RETURN_FIELD=1` and `LOFT_NO_ADOPT_FIRST_BIND=1` restore the copies.
+
+**Freeing small records inside a store no longer updates the store's free list for each one.**
+A store now starts in a phase where a freed record is merged with its free neighbours but kept
+out of the free list, and once enough has been freed one pass puts it all back.  A store that is built and then released whole — a call's result,
+a decoder's tree — never pays for its frees at all.  The pluginabi library's `check_request`
+runs 10 % faster with no change to it, together with a cheaper release of a record whose enum
+field holds nothing.  `LOFT_NO_LAZY_FREE=1` restores the per-free update.
 
 **A function that builds a vector and returns it inside a record copies nothing on the way
 out.**  `items: vector<T> = []; …; return Out { items: items }` used to build the vector in a

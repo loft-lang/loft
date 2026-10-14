@@ -5,9 +5,9 @@
 use super::{State, new_ref, size_ref};
 use crate::database::{Parts, ShowDb};
 use crate::keys::{Content, DbRef, Key};
-use crate::{hash, tree, vector};
+use crate::{btree, hash, vector};
 #[cfg(not(host_fs))]
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -65,8 +65,12 @@ impl State {
             let buf = self.database.store_mut(&r).addr_mut::<String>(r.rec, r.pos);
             // One home for the read and its warning, shared with native codegen's
             // `OpGetFileText` — the warning used to live here only, so `--native`
-            // read a binary file in complete silence (loft#829).
-            crate::codegen_runtime::read_file_text_into(&path_string, buf);
+            // read a binary file in complete silence (loft#829).  A refused path reads as
+            // no text (`@FR-Path-Refuse`, logged by `resolve_path`).
+            match path_string {
+                Some(p) => crate::codegen_runtime::read_file_text_into(&p, buf),
+                None => buf.clear(),
+            }
         }
     }
 
@@ -134,16 +138,14 @@ impl State {
             };
             if v_ptr != 0 {
                 let length = self.database.allocations[store_nr as usize].get_u32_raw(v_ptr, 4);
-                let elem_size = u32::from(self.database.size(elem_tp));
-                for i in 0..length {
-                    let elem = DbRef {
-                        store_nr,
-                        rec: v_ptr,
-                        pos: 8 + elem_size * i,
-                    };
-                    self.database
-                        .read_data(&elem, elem_tp, little_endian, &mut data);
-                }
+                self.database.write_vector_payload(
+                    store_nr,
+                    v_ptr,
+                    length,
+                    elem_tp,
+                    little_endian,
+                    &mut data,
+                );
             }
         } else if matches!(
             &self.database.types[db_tp as usize].parts,
@@ -211,7 +213,10 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let path = self.database.resolve_path(&path);
-                std::fs::metadata(&path).map_or(0, |m| m.len() as i64)
+                path.map_or(0, |p| {
+                    crate::file_access::metadata(crate::file_access::at(&p))
+                        .map_or(0, |m| m.len() as i64)
+                })
             }
         } else {
             raw_next
@@ -253,13 +258,19 @@ impl State {
                 // bytes are preserved.  Create the file if it does not
                 // exist yet.  Explicit truncation happens via
                 // `f.set_file_size(0)` (or `f#size = 0`).
-                match OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .truncate(false)
-                    .open(&file_name)
-                {
+                match file_name
+                    .as_deref()
+                    .ok_or_else(crate::file_access::path_refused)
+                    .and_then(|n| {
+                        crate::file_access::open_with(
+                            crate::file_access::at(n),
+                            OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .create(true)
+                                .truncate(false),
+                        )
+                    }) {
                     Ok(mut f) => {
                         // Seek to the stored write position (end of file
                         // for default appends, explicit offset for
@@ -279,7 +290,7 @@ impl State {
                         f_nr
                     }
                     Err(e) => {
-                        eprintln!("file open error for {file_name:?}: {e}");
+                        eprintln!("file open error: {e}");
                         return;
                     }
                 }
@@ -312,8 +323,14 @@ impl State {
         data: Vec<u8>,
         n: usize,
     ) {
+        // `data` holds the bytes the read GOT.  Fewer than asked for, or fewer than the
+        // type's width (`#read(4) as integer`), leave the target as the read declared it —
+        // null — as on `--native` (loft#1861: the zero-padded buffer was decoded as a value).
         let actual = data.len();
         let is_text = self.database.is_text_type(db_tp);
+        if !is_text && actual < self.database.binary_size(db_tp) {
+            return;
+        }
         if is_text {
             let s = unsafe { String::from_utf8_unchecked(data) };
             *self
@@ -460,20 +477,21 @@ impl State {
                 let raw = s.get_str(s.get_u32_raw(file.rec, file.pos + 24)).to_owned();
                 self.database.resolve_path(&raw)
             };
+            let shown = resolved.clone().unwrap_or_default();
             let resolved_name = resolved;
             let store = self.database.store_mut(&file);
             let mut file_ref = store.get_i32_raw(file.rec, file.pos + 28);
             if file_ref == i32::MIN {
-                match File::open(&resolved_name) {
+                match crate::file_access::open_resolved(resolved_name.as_deref()) {
                     Ok(mut f) => {
                         // apply stored seek position on first open.
                         if next_pos != 0 {
                             let _ = f.seek(SeekFrom::Start(next_pos as u64));
                         }
                         store.set_i32_raw(file.rec, file.pos + 28, f_nr);
-                        self.database
-                            .files
-                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
+                        self.database.files.push(Some(
+                            crate::database::loft_file::LoftFile::reader(f, shown.as_str()),
+                        ));
                         file_ref = f_nr;
                     }
                     Err(e) => {
@@ -482,7 +500,7 @@ impl State {
                         // recoverable-fault posture), mirroring both the write
                         // path's create fix and the native runtime
                         // (`file_handle_read` → i32::MIN → return).
-                        eprintln!("file open error for {resolved_name:?}: {e}");
+                        eprintln!("file open error: {e}");
                         return;
                     }
                 }
@@ -512,9 +530,7 @@ impl State {
                 file.pos + 16,
                 next_pos + actual as i64,
             );
-            if is_text {
-                data.truncate(actual);
-            }
+            data.truncate(actual);
             self.dispatch_read_data(val, db_tp, little_endian, data, n);
         }
     }
@@ -585,7 +601,10 @@ impl State {
                 .to_owned();
             // #255 / @PLN9: re-home against the program anchor.
             let file_path = self.database.resolve_path(&file_path);
-            let size = std::fs::metadata(&file_path).map_or(i64::MIN, |meta| meta.len() as i64);
+            let size = file_path.map_or(i64::MIN, |p| {
+                crate::file_access::metadata(crate::file_access::at(&p))
+                    .map_or(i64::MIN, |meta| meta.len() as i64)
+            });
             self.put_stack(size);
         }
     }
@@ -673,9 +692,15 @@ impl State {
                     .store_mut(&file)
                     .set_long(file.rec, file.pos + 16, i64::MIN);
             }
-            let ok = OpenOptions::new()
-                .write(true)
-                .open(&path)
+            let ok = path
+                .as_deref()
+                .ok_or_else(crate::file_access::path_refused)
+                .and_then(|p| {
+                    crate::file_access::open_with(
+                        crate::file_access::at(p),
+                        OpenOptions::new().write(true),
+                    )
+                })
                 .and_then(|f| f.set_len(size as u64))
                 .is_ok();
             self.put_stack(ok);
@@ -743,10 +768,7 @@ impl State {
             self.free_coroutine(&db);
             return;
         }
-        // Plan-57 Phase C: single-ownership (ref-count removed) — close the OS file
-        // handle whenever its File store is freed (free_named frees unconditionally).
-        #[cfg(not(host_fs))]
-        self.database.close_file_handle(&db);
+        // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
         self.database.free(&db);
     }
 
@@ -860,6 +882,9 @@ impl State {
         // produces.  Without this, `clear()` below would OOB into
         // `allocations[u16::MAX as usize]`.
         let fresh = db.store_nr == u16::MAX;
+        if !fresh && self.database.mint_at_place(&db, db_tp) {
+            return;
+        }
         if fresh {
             db = self.database.null();
             *self.mut_var::<DbRef>(var) = db;
@@ -888,15 +913,19 @@ impl State {
         code_pos: u32,
         fresh: bool,
     ) -> DbRef {
-        if !fresh {
-            self.database.clear(db);
-        }
+        let kept = if fresh {
+            Vec::new()
+        } else {
+            self.database.clear(db)
+        };
         // The record layout is: word 0 = size header (4 B) + type tag (4 B),
         // payload from byte 8.  `Stores::claim` takes WORDS, so the payload's
         // `size` BYTES need `1 + ceil(size / 8)` words — passing `size` raw
         // under-claims for 1-byte payloads (a single-boolean struct/closure
         // record got zero payload bytes and wrote into the next word).
         let r = self.database.claim(db, 1 + u32::from(size).div_ceil(8));
+        // `@FR-H-Removed` — the records a stored reference named went with the old content.
+        self.database.allocations[r.store_nr as usize].entomb_kept(&kept);
         self.database.allocations[r.store_nr as usize].set_created_at(code_pos);
         // P259 commit 3 — record the type allocated into this store so
         // free_named can recognise closure-record stores at free time
@@ -1193,7 +1222,7 @@ impl State {
                 // derivation is shared with the native runtime (loft#691) — the two
                 // had their own copies and drifted apart.
                 let (s_cur, f_cur) =
-                    tree::range_cursors(&data, arg, all, &keys, &from, &till, ex, reverse);
+                    btree::range_cursors(&data, all, &keys, &from, &till, ex, reverse);
                 start = s_cur;
                 finish = f_cur;
                 if trace_iter {
@@ -1272,7 +1301,7 @@ impl State {
                 // from/till are always empty, so it takes the unbounded answer.
                 //
                 // The derivation is shared with the native runtime (loft#904), the way
-                // `tree::range_cursors` is for an index: each backend had its own copy of
+                // `btree::range_cursors` is for an index: each backend had its own copy of
                 // the bounded arms, in SLOT INDICES where the stepper walks BYTE OFFSETS,
                 // and the two had already drifted apart — invisibly, because neither was
                 // ever consumed.
@@ -1355,20 +1384,23 @@ impl State {
         let cur = if data.rec == 0 || finish == u32::MAX {
             new_ref(&data, 0, 0)
         } else {
-            let store = crate::keys::store(&data, &self.database.allocations);
             match on & 63 {
                 1 => {
-                    let rec = new_ref(&data, cur, arg);
+                    // `arg` is the index type; the cursor is the record last yielded.
+                    let all = &self.database.allocations;
                     let n = if cur == 0 {
                         if reverse {
-                            tree::last(&data, arg, &self.database.allocations).rec
+                            btree::last_record(&data, all)
                         } else {
-                            tree::first(&data, arg, &self.database.allocations).rec
+                            btree::first_record(&data, all)
                         }
-                    } else if reverse {
-                        tree::previous(store, &rec)
                     } else {
-                        tree::next(store, &rec)
+                        let keys = self.database.keys(arg);
+                        if reverse {
+                            btree::previous_record(&data, all, keys, cur)
+                        } else {
+                            btree::next_record(&data, all, keys, cur)
+                        }
                     };
                     self.put_var(state_var - 8, n);
                     if std::env::var("LOFT_ITERATE_TRACE").is_ok() {
@@ -1668,6 +1700,8 @@ impl State {
         // `__nullable<S>` element the parser emits the discriminant-0 store, not
         // OpCopyRecord, so this path is the can't-represent-null fallback.)
         if data.store_nr == u16::MAX {
+            // A FRESH destination is written absent instead (`Stores::copy_null_into`).
+            self.database.copy_null_into(&to, raw_tp);
             return;
         }
         // @FR-L-Null, the DESTINATION half of the same question (loft#1374's boundary).  A
@@ -1678,6 +1712,34 @@ impl State {
         // process dies on a program the compiler accepted.  The source half above and this
         // one are one rule read from its two ends.
         if to.store_nr == u16::MAX {
+            if free_source {
+                self.database.release_copy_source(&data, &to);
+            }
+            if to.absence_unreported() {
+                self.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+            }
+            return;
+        }
+        // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:
+        // no copy runs, so none is reported below.
+        if free_source && self.database.try_swap_in(&data, &to, tp) {
+            self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
+            return;
+        }
+        // The exchange moved the source's parse errors with its records; a copy brings them.
+        self.database.deliver_parse_errors(&data, &to, tp);
+        // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
+        // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
+        // its bytes lie outside the store's own blocks, where the record copy below would
+        // read a record that is not there.  An element append of mapped bytes
+        // (`v += [file_map(p) ?? []]`) panicked on a corrupt reference.
+        if let Some(crate::database::Parts::Vector(elem)) =
+            self.database.types.get(tp as usize).map(|t| &t.parts)
+            && (data.store_nr as usize) < self.database.allocations.len()
+            && self.database.allocations[data.store_nr as usize].is_foreign()
+        {
+            let elem = *elem;
+            self.database.vector_add(&to, &data, elem);
             return;
         }
         // @PLN90 phase 1 — make the copy visible. A real record deep-copy is about to
@@ -1854,14 +1916,8 @@ impl State {
         // Issue #120: free the source store after deep copy when the caller
         // knows the source is a temporary (callee's return store) that would
         // otherwise leak because is_ret_work_ref suppresses its OpFreeRef.
-        if free_source
-            && data.store_nr != to.store_nr
-            && !self.database.is_stack_store(data.store_nr)
-            && !self.database.allocations[data.store_nr as usize].free
-            && !self.database.allocations[data.store_nr as usize].read_only
-            && !self.database.allocations[data.store_nr as usize].is_free_protected()
-        {
-            self.database.free(&data);
+        if free_source {
+            self.database.release_copy_source(&data, &to);
         }
     }
 
@@ -2018,6 +2074,13 @@ impl State {
         // the destination first emptied the source with it: every keyed kind read back empty
         // while the vector twin kept its elements, on both backends.
         if src == dest {
+            return;
+        }
+        // `@FR-H-SwapIn`'s keyed clause — a source the bind gives up (`h = build(…)`) is the
+        // value the copy would rebuild, and its whole store is that value: the two stores
+        // exchange contents and the slot left holding the old collection is released, where
+        // the copy rebuilt every element and bucket and then freed the source.
+        if free_source && self.database.try_swap_keyed(&src, &dest, tp) {
             return;
         }
         self.database.remove_claims(&dest, tp);
@@ -2206,10 +2269,8 @@ impl State {
             pos: 8,
         };
         self.database.set_final_default_value(db_tp, &into);
-        self.database.last_parse_errors.clear();
-        if let Some(err) = self.database.parse(val, db_tp, &into) {
-            self.database.last_parse_errors.push(err);
-        }
+        let err = self.database.parse(val, db_tp, &into);
+        self.database.set_parse_errors(&into, db_tp, err);
         into
     }
 

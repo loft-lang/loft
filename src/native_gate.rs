@@ -4,7 +4,7 @@
 
 //! @PLN11 Arc N / N2 — the **native-compilability gate**.
 //!
-//! In the native-library execution model (C71) a stable library compiles to
+//! In the native-library execution model (@C71) a stable library compiles to
 //! native code while the user script interprets, and calls dispatch across the
 //! shared store ABI.  Not every function can be `--native`-compiled, so the
 //! compiler partitions a library's functions into the **maximal native subgraph**

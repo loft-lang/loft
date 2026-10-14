@@ -83,7 +83,7 @@ change. Recipe + per-slice detail: [STEPS.md](STEPS.md).
 - **Standalone local cost** — kept simple by user directive: a standalone local may own its store
   (negligible; a loop reuses the slot). The zero-cost target was fields + vector elements, met.
 - **Keyword** — `value struct`.
-- **C65** (DESIGN_DECISIONS.md) stays accurate: loft still has no `Type::Value` *distinct from*
+- **@C65** (DESIGN_DECISIONS.md) stays accurate: loft still has no `Type::Value` *distinct from*
   `Reference` — the value-struct kind is a marker + copy pass over `Reference`, not a new variant.
 
 ## Follow-on (no plan needed)
@@ -96,5 +96,5 @@ prototype that already proves the feature. Any residual polish is bug-fix-level 
 
 - Supersedes **@PLN99 Arc D** (the deferred "someday-perf" framing).
 - Mechanism: `src/scopes.rs` (`value_struct_copy`), `src/parser/{definitions,mod}.rs`, `src/data.rs`.
-- Reference: [LOFT_DATA.md § Value structs](../../LOFT_DATA.md), [STEPS.md](STEPS.md), DESIGN_DECISIONS.md C65.
+- Reference: [LOFT_DATA.md § Value structs](../../LOFT_DATA.md), [STEPS.md](STEPS.md), DESIGN_DECISIONS.md @C65.
 - Tracker: [@PLN101](https://github.com/loft-lang/plans/issues/101).

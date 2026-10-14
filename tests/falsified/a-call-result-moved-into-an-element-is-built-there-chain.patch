@@ -1,0 +1,13 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 51bc4196c..bf18bf023 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -3094,7 +3094,7 @@ impl Output<'_> {
+         }
+         self.indent(w)?;
+         write!(w, "}} else {{ ")?;
+-        for (d, vt) in filled.iter().rev() {
++        for (d, vt) in filled.iter().rev().take(1) {
+             write!(w, "stores.remove_claims(&(")?;
+             self.output_code_inner(w, d)?;
+             write!(w, "), ({vt}_u16)); ")?;

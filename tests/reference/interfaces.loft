@@ -30,7 +30,7 @@ fn test_a_struct_satisfies_an_interface_by_shape() {
 }
 
 interface Summable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 fn total<T: Summable>(a: T, b: T) -> T { a + b }
 

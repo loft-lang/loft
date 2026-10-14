@@ -9,13 +9,13 @@ pub use spawn::*;
 
 // Top-level map container. Holds chunks and palette definitions.
 pub struct Map {
-  m_name:             text,
-  m_chunks:           vector<Chunk>,
-  m_material_palette: vector<MaterialDef>,
-  m_wall_palette:     vector<WallDef>,
-  m_item_palette:     vector<ItemDef>,
-  m_spawn_points:     vector<SpawnPoint>,
-  m_npc_routines:     vector<NpcRoutine>,
+  pub m_name:             text,
+  pub m_chunks:           vector<Chunk>,
+  pub m_material_palette: vector<MaterialDef>,
+  pub m_wall_palette:     vector<WallDef>,
+  pub m_item_palette:     vector<ItemDef>,
+  pub m_spawn_points:     vector<SpawnPoint>,
+  pub m_npc_routines:     vector<NpcRoutine>,
 }
 
 // ── Constructors ────────────────────────────────────────────────────

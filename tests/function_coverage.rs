@@ -19,8 +19,8 @@
 //! being called, and a dependency's functions are not the package's to cover. Each got
 //! it wrong during development, and each would have made the number meaningless.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -38,10 +38,10 @@ fn coverage_of(name: &str, lib: &str, test: &str) -> String {
     // library unfindable and the whole fixture parse-fail.
     let holder = std::env::temp_dir().join(format!("loft_cov_{name}_{}", std::process::id()));
     let root = holder.join(name);
-    let _ = std::fs::remove_dir_all(&holder);
-    std::fs::create_dir_all(root.join("src")).expect("create src");
-    std::fs::create_dir_all(root.join("tests")).expect("create tests");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&holder);
+    fa::create_dir_all(root.join("src")).expect("create src");
+    fa::create_dir_all(root.join("tests")).expect("create tests");
+    fa::write(
         root.join("loft.toml"),
         format!(
             "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n[library]\nentry = \"src/{name}.loft\"\n"
@@ -50,10 +50,10 @@ fn coverage_of(name: &str, lib: &str, test: &str) -> String {
     .expect("write loft.toml");
     // The entry file is named after the package: `use <name>;` resolves to
     // `src/<name>.loft`, so a generic `lib.loft` would not be found at all.
-    std::fs::write(root.join(format!("src/{name}.loft")), lib).expect("write lib");
-    std::fs::write(root.join("tests/t.loft"), test).expect("write test");
+    fa::write(root.join(format!("src/{name}.loft")), lib).expect("write lib");
+    fa::write(root.join("tests/t.loft"), test).expect("write test");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--tests")
         .arg("tests")
@@ -62,7 +62,7 @@ fn coverage_of(name: &str, lib: &str, test: &str) -> String {
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft");
-    let _ = std::fs::remove_dir_all(&holder);
+    let _ = fa::remove_dir_all(&holder);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     // A package that fails to parse produces no coverage at all, which would satisfy
     // every "must NOT be listed" assertion below without testing anything.  Fail loudly

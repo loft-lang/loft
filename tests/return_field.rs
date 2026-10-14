@@ -17,7 +17,8 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "120")
         .env_remove("LOFT_NO_RETURN_FIELD");
     cmd
@@ -93,7 +94,8 @@ const OFF: &[(&str, &str)] = &[("LOFT_NO_RETURN_FIELD", "1")];
 /// The exits are hand-overs: no mint of the buffer, no copy, the field's address returned,
 /// and every buffer free the exit keeps witnessed against the root — the plain root (r1),
 /// the lifted root (r10), the pooled loop root (r12), and the alias (r5, whose owner's free
-/// is witnessed against the alias).  The parameter cell (r4) keeps the copy.
+/// is witnessed against the alias), and the natural spelling over a forwarding decoder (r14,
+/// whose call buffer's guard stands inside the exit).  The parameter cell (r4) keeps the copy.
 #[test]
 fn the_exits_hand_the_root_store_over() {
     let on = introspect(&[]);
@@ -105,12 +107,12 @@ fn the_exits_hand_the_root_store_over() {
         ),
         (
             "n_r10",
-            "return OpGetField(__lift_1(2), 12i32,",
+            "return OpGetField(__lift_1(2), 16i32,",
             "OpFreeRefIfDistinct(__ref_1(1), __lift_1(2))",
         ),
         (
             "n_r12",
-            "return OpGetField(p(5), 12i32,",
+            "return OpGetField(p(5), 16i32,",
             "OpFreeRefIfDistinct(__ref_1(1), p(5))",
         ),
         (
@@ -122,6 +124,11 @@ fn the_exits_hand_the_root_store_over() {
             "n_r8",
             "return v(1);",
             "OpFreeRefIfDistinct(__ref_1(1), d(1))",
+        ),
+        (
+            "n_r14",
+            "return OpGetField(__lift_1(2), 0i32,",
+            "OpFreeRefIfDistinct(__ref_1(1), __lift_1(2))",
         ),
     ] {
         let ir = section(&on, name);
@@ -143,6 +150,13 @@ fn the_exits_hand_the_root_store_over() {
             "{name}: the copy block is gone\n{ir}"
         );
     }
+    // r14: the pooled buffer's mint-or-release guard stays where the scope pass put it, in
+    // front of the lifted call, inside the hand-over.
+    let r14 = section(&on, "n_r14");
+    assert!(
+        r14.contains("if OpRefIsNull(__ref_1(1))"),
+        "r14: the call's buffer guard is kept\n{r14}"
+    );
     let r4 = section(&on, "n_r4");
     assert!(
         !r4.contains("return_field_handover"),
@@ -156,15 +170,16 @@ fn the_exits_hand_the_root_store_over() {
     );
 }
 
-/// 2000 rounds.  r9 (a struct-enum wrapper whose field is the answer) minted the wrapper and a
-/// copy of the field per call, now the wrapper alone, on both backends; r1's copy census
-/// reads zero and the switch puts one copy per call back.
+/// 2000 rounds, one `r9` call each (`@FR-M-Match`: the match subject is evaluated once).  r9 (a
+/// struct-enum wrapper whose field is the answer) mints the wrapper alone per call — the
+/// switch adds the field's copy — on both backends; r1's copy census reads zero and the
+/// switch puts one copy per call back.
 #[test]
 fn the_censuses_drop() {
     for mode in ["--interpret", "--native"] {
         let on = store_mints(mode, "r9", &[]);
         let off = store_mints(mode, "r9", OFF);
-        assert_eq!((on, off), (4000, 8000), "{mode}: r9 mints (on, off)");
+        assert_eq!((on, off), (2000, 4000), "{mode}: r9 mints (on, off)");
     }
     assert_eq!(copies("r1", &[]), 0, "r1: no copy with the hand-over");
     assert_eq!(

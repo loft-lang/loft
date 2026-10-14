@@ -1,0 +1,76 @@
+// `@FR-R-Base`'s byte clause, THE RESOLVE CLAUSE — a `vector<u8>` element read through a
+// header held WITHOUT an element base (the function clause of `(R-Header)`, or a loop that
+// grows a store) is one range test and one load, the base taken from the store at the read.
+// The header proves the vector's record and length unchanged; the store around it may grow
+// (here: the same store, through a sibling field), so a base held from entry would read the
+// buffer the store left behind.  The interpreter takes no base and is the oracle; every
+// value is hand-computed.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below: the function clause binding a base at ENTRY, which `c1`'s
+//   growth of the same store leaves stale.  A realloc keeps the old bytes readable and equal,
+//   so the stale read answers right unless the vacated block is poisoned.
+// @falsified-by: tests/falsified/a-byte-read-through-a-held-header-takes-its-base-at-the-read.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   ARMED: `LOFT_POISON=1`.  Unarmed, the control answers `ok`: the stale base reads the
+//   vacated block's old bytes.
+//
+// rb.data is [10, 20, 30, 40, 50, 60, 70, 80] (10 (i + 1)); rb.out starts empty.
+
+struct Rb { data: vector<u8>, out: vector<integer>, tag: integer }
+
+fn mk() -> Rb {
+  d: vector<u8> = [];
+  for i in 0..8 { d += [(((i + 1) * 10) & 255) as u8]; }
+  Rb { data: d, out: [], tag: 5 }
+}
+
+/// The function clause: `bytes` read many times, never written; between the reads the store
+/// it lives in grows (the caller hands a field of `r`, and `r.out` is appended to).
+fn sum_growing(bytes: vector<u8>, r: Rb) -> integer {
+  t = 0;
+  for i in 0..8 {
+    r.out += [bytes[i] ?? 0];
+    for k in 0..40 { r.out += [k]; }
+    t += (bytes[i] ?? 0) * (i + 1);
+  }
+  t + (bytes[-1] ?? 0) * 1000 + (bytes[9] ?? 7) * 100000
+}
+
+/// The reads of the decoder: an index, the next one, past the end.
+fn head(bytes: vector<u8>, p: integer) -> integer {
+  a = bytes[p] ?? 0;
+  b = bytes[p + 1] ?? 0;
+  c = bytes[p + 2] ?? 99;
+  a * 10000 + b * 100 + c
+}
+
+fn main() {
+  rb = mk();
+
+  // c1 — sum of 10 (i+1) (i+1) for i = 0..7 = 10 * 204 = 2040; the last byte 80 * 1000;
+  // index 9 is past the end, so 7 * 100000.
+  s1 = sum_growing(rb.data, rb);
+  assert(s1 == 2040 + 80000 + 700000, "c1: {s1}");
+  // r.out received 8 bytes and 8 * 40 counters: 328 elements, the bytes at every 41st.
+  assert(len(rb.out) == 328 && rb.out[0] == 10 && rb.out[41] == 20 && rb.out[287] == 80, "c1 out: {len(rb.out)}");
+
+  // c2 — in range, the next byte, then past the end at 7: 70, 80, and 99 for index 8.
+  h2 = head(rb.data, 6);
+  assert(h2 == 70 * 10000 + 80 * 100 + 99, "c2: {h2}");
+
+  // c3 — from the start: 10, 20, 30.
+  h3 = head(rb.data, 0);
+  assert(h3 == 10 * 10000 + 20 * 100 + 30, "c3: {h3}");
+
+  // c4 — a negative index counts from the end: -2 is 70, -1 is 80, 0 is 10.
+  h4 = head(rb.data, -2);
+  assert(h4 == 70 * 10000 + 80 * 100 + 10, "c4: {h4}");
+
+  // c5 — an empty vector: every read takes its default.
+  e: vector<u8> = [];
+  h5 = head(e, 0);
+  assert(h5 == 0 + 0 + 99, "c5: {h5}");
+
+  println("ok");
+}

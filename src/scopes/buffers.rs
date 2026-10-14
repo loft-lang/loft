@@ -37,7 +37,10 @@ use crate::variables::Function;
 /// use-after-free on every turn after the first).  Guarding that free against the buffer is
 /// the widening that lifts this condition; until then the buffer stays null there.  The
 /// nulls in front of a local's one real bind on every pass (`null_led_first_binds_in`) are
-/// not such a second assignment: they displace nothing.
+/// not such a second assignment: they displace nothing.  The count is per VARIABLE — a
+/// sibling scope's split copy counts its own binds (`reassigned_locals`, loft#1954) — and a
+/// local whose rebind keeps what it displaces (`Function::rebind_keeps_displaced`) is not
+/// objected to: the release is the whole objection.
 /// The calls at the VALUE positions of a branch (@PLN157 § V-af, `@FR-O-Buffer`): an `if`'s two arms, a
 /// value block's last statement, recursively; a `Call` is its own tail.  Anything else — a
 /// variable, a literal, a null — contributes no call.
@@ -137,12 +140,14 @@ pub(super) fn reuse_record_buffers(
             continue;
         }
         if !ungated
-            && fed_locals
-                .get(&av)
-                .is_some_and(|vs| vs.iter().any(|v| reassigned.contains(v)))
+            && fed_locals.get(&av).is_some_and(|vs| {
+                vs.iter()
+                    .any(|&v| reassigned.contains(&v) && !function.rebind_keeps_displaced(v))
+            })
         {
             // The result local is reassigned somewhere: its set lowering frees the store
-            // it displaces, which would be this buffer's.
+            // it displaces, which would be this buffer's.  A local whose rebind keeps what
+            // it displaces (the loft#1522 veto) releases nothing there.
             decline(av, "its result local is assigned more than once");
             continue;
         }

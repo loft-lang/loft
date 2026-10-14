@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-FnRefValue` — a call through a fn-ref whose every arm answers a small record by value
+// answers the tuple, and a record parameter every arm receives as a tuple is passed as one: no
+// store is minted, adopted and freed per call.  The cells cross what the group admission reads:
+// two arms of one record (c1, field reads, a tuple parameter, a nested direct call); one arm
+// that cannot answer a tuple — a copy out of an owned vector — which keeps the whole dispatch
+// on the buffer road (c2); a second record behind the same Rust ABI, which is another
+// dispatch and never an arm of the first (c3); a capturing lambda (c4); an absent fn-ref,
+// which answers the null record (c5); a result consumed as a record — appended to a vector,
+// returned whole — which declines (c6); an arm also called directly, and a lambda arm (c7); a
+// record PARAMETER through a fn-ref, with one arm writing its by-value copy (c8); a rebind in
+// a loop and a branch joining a fn-ref call with a direct one (c9).  Every value by hand; run
+// under `LOFT_STORES=warn` / `LOFT_NATIVE_LEAK_CHECK=1` it leaks nothing, and
+// `LOFT_NO_FNREF_VALUE=1` (the buffer road) answers the same.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   The dispatch's `_` arm answers the tuple's zero instead of the null record's fields.
+//   CHANNEL: an assertion, on native.
+//   WITNESS: c5 — an out-of-range fn-ref's `weight` reads `0` where the file says `null`.
+//   HOLDS: LOFT_NO_FNREF_VALUE=1 green (the buffer road answers the null record).
+
+struct Style { size: float, weight: integer, italic: boolean, dir: integer }
+struct Pt { x: integer, y: integer }
+
+// c1, c5, c7, c9 — the admitted group: `fn(integer) -> Style`.
+fn style_a(id: integer) -> Style { return Style { size: 1.5, weight: id * 3, italic: false, dir: 1 }; }
+fn style_b(id: integer) -> Style { return Style { size: 2.25, weight: id + 100, italic: true, dir: 2 }; }
+fn height(st: Style) -> float { return st.size * 10.0 + st.weight as float; }
+
+fn sum_ref(n: integer, resolve: fn(integer) -> Style) -> float {
+  t = 0.0;
+  for i in 0..n { st = resolve(i); t += height(st) + st.dir as float; }
+  return t;
+}
+
+// c5 — an absent fn-ref answers the null record.
+fn absent_weight(fs: vector<fn(integer) -> Style>, at: integer) -> text {
+  f = fs[at];
+  st = f(2);
+  return "{st.weight}";
+}
+
+// c9 — a rebind in a loop, and a branch joining a fn-ref call with a direct one.
+fn joined(n: integer, resolve: fn(integer) -> Style) -> integer {
+  t = 0;
+  for i in 0..n {
+    st = if i % 2 == 0 { resolve(i) } else { style_b(i) };
+    t += st.weight;
+  }
+  return t;
+}
+
+// c8 — a record PARAMETER through a fn-ref: `fn(text, Style) -> float`, both arms read it.
+fn measure_a(s: text, st: Style) -> float { return len(s) as float * st.size; }
+fn measure_c(s: text, st: Style) -> float { return st.weight as float + len(s) as float; }
+fn width_ok(words: vector<text>, resolve: fn(integer) -> Style, measure: fn(text, Style) -> float) -> float {
+  w = 0.0;
+  for i in 0..len(words) { w += measure(words[i], resolve(i)); }
+  return w;
+}
+
+// c8b — one arm WRITES its by-value copy, so this signature keeps the record parameter, and
+// what is handed to it is consumed as a record: its resolver has a signature of its own.
+fn grow_style(id: integer, s: float) -> Style { return Style { size: s, weight: id, italic: false, dir: 0 }; }
+fn grow_a(s: text, st: Style, k: integer) -> float { st.size = st.size + 1.0; return len(s) as float * st.size + k as float; }
+fn grow_b(s: text, st: Style, k: integer) -> float { return len(s) as float * st.size + k as float; }
+fn width_grow(words: vector<text>, resolve: fn(integer, float) -> Style, measure: fn(text, Style, integer) -> float) -> float {
+  w = 0.0;
+  for i in 0..len(words) { w += measure(words[i], resolve(i, 1.5), 0); }
+  return w;
+}
+
+// c1b — a field read straight off the call consumes the record: its own signature.
+fn nested_a(id: integer, b: boolean) -> Style { return Style { size: 0.75, weight: id + 40, italic: b, dir: 6 }; }
+fn nested(f: fn(integer, boolean) -> Style) -> text { return "{f(5, true).weight} {f(1, false).italic}"; }
+
+// c2 — one arm's record is consumed as a record by a direct call elsewhere (`main` hands it
+// to `bump`, which writes its by-value copy), so it cannot answer a tuple and neither can the
+// dispatch: the fixpoint takes the whole group out after admitting it.
+fn tab_a(id: integer, k: integer) -> Style {
+  t = [Style { size: 1.0, weight: 7, italic: false, dir: 3 }, Style { size: 2.0, weight: 9, italic: true, dir: 4 }];
+  return t[(id + k) % 2] ?? Style { size: 0.0, weight: 0, italic: false, dir: 0 };
+}
+fn bump(s: Style) -> integer { s.weight = s.weight + 1; return s.weight; }
+fn tab_b(id: integer, k: integer) -> Style { return Style { size: 0.5, weight: id * k, italic: false, dir: 5 }; }
+fn sum_tab(n: integer, f: fn(integer, integer) -> Style) -> integer {
+  t = 0;
+  for i in 0..n { st = f(i, 1); t += st.weight * 10 + st.dir; }
+  return t;
+}
+
+// c3, c6 — the same Rust ABI (`fn(integer) -> DbRef`) with another record, consumed as a
+// record: appended to a vector and returned whole.
+fn mk_pt(n: integer) -> Pt { return Pt { x: n + 7, y: n * 2 }; }
+fn sum_pt(n: integer, f: fn(integer) -> Pt) -> integer {
+  t = 0;
+  for i in 0..n { p = f(i); t += p.x * 100 + p.y; }
+  return t;
+}
+fn collect(n: integer, f: fn(integer) -> Pt) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for i in 0..n { out += [f(i)]; }
+  return out;
+}
+fn first_of(f: fn(integer) -> Pt) -> Pt { return f(4); }
+
+// c4 — a capturing lambda: its own signature, `fn(float) -> Style`.
+fn plain_f(x: float) -> Style { return Style { size: x, weight: 1, italic: false, dir: 0 }; }
+fn sum_f(n: integer, f: fn(float) -> Style) -> float {
+  t = 0.0;
+  for i in 0..n { st = f(i as float); t += st.size + st.weight as float; }
+  return t;
+}
+
+fn main() {
+  // c1: style_a: 15 + 3i + 1 over i < 4 = 64 + 18; style_b: 22.5 + 100 + i + 2 = 498 + 6.
+  assert("{sum_ref(4, style_a)} {sum_ref(4, style_b)}" == "82 504", "c1 {sum_ref(4, style_a)} {sum_ref(4, style_b)}");
+  // c1b: weight 45; italic false.
+  assert(nested(nested_a) == "45 false", "c1b {nested(nested_a)}");
+
+  // c2: tab_a(i, 1) picks t[(i+1)%2]: i=0 -> 9/4, i=1 -> 7/3, i=2 -> 9/4: 94 + 73 + 94.
+  //     tab_b(i, 1): weight i, dir 5: 5 + 15 + 25.
+  assert("{sum_tab(3, tab_a)} {sum_tab(3, tab_b)}" == "261 45", "c2 {sum_tab(3, tab_a)} {sum_tab(3, tab_b)}");
+  // (1 + 1) % 2 picks t[0]: weight 7, bumped.
+  assert(bump(tab_a(1, 1)) == 8, "c2 direct {bump(tab_a(1, 1))}");
+
+  // c3: p = (i + 7, 2i): 700 + 0, 800 + 2, 900 + 4.
+  assert(sum_pt(3, mk_pt) == 2406, "c3 {sum_pt(3, mk_pt)}");
+
+  // c4: a capture — size from the frame: (4 + 1) twice; the plain arm: (0 + 1) + (1 + 1).
+  base = 4.0;
+  cap = fn(x: float) -> Style { Style { size: base, weight: 1, italic: false, dir: 0 } };
+  assert("{sum_f(2, cap)} {sum_f(2, plain_f)}" == "10 3", "c4 {sum_f(2, cap)} {sum_f(2, plain_f)}");
+
+  // c5: in range, style_a(2).weight = 6; out of range, the null record's weight.
+  fs: vector<fn(integer) -> Style> = [style_a];
+  assert("{absent_weight(fs, 0)} {absent_weight(fs, 3)}" == "6 null", "c5 {absent_weight(fs, 0)} {absent_weight(fs, 3)}");
+
+  // c6: appended and returned whole.
+  ps = collect(3, mk_pt);
+  assert("{ps[0].x},{ps[2].y} {first_of(mk_pt).x}" == "7,4 11", "c6 {ps[0].x},{ps[2].y} {first_of(mk_pt).x}");
+
+  // c7: an arm also called directly, and a lambda arm: 30 + i² + 9 over i < 3.
+  direct = style_a(7);
+  lam = fn(id: integer) -> Style { Style { size: 3.0, weight: id * id, italic: true, dir: 9 } };
+  assert(direct.weight == 21 && sum_ref(3, lam) == 122.0, "c7 {direct.weight} {sum_ref(3, lam)}");
+
+  // c8: words of 1, 2, 3 letters.  measure_a over style_a sizes 1.5: 9; measure_c weight
+  //     3i + len: 1 + 5 + 9; over style_b weights 100, 101, 102: 101 + 103 + 105.
+  words = ["a", "bb", "ccc"];
+  assert("{width_ok(words, style_a, measure_a)} {width_ok(words, style_a, measure_c)} {width_ok(words, style_b, measure_c)}" == "9 15 309",
+    "c8 {width_ok(words, style_a, measure_a)} {width_ok(words, style_a, measure_c)} {width_ok(words, style_b, measure_c)}");
+  // c8b: grow_a sizes 2.5 over 6 letters; grow_b 1.5.
+  assert("{width_grow(words, grow_style, grow_a)} {width_grow(words, grow_style, grow_b)}" == "15 9", "c8b {width_grow(words, grow_style, grow_a)} {width_grow(words, grow_style, grow_b)}");
+
+  // c9: even i through style_a (3i), odd through style_b (i + 100): 0 + 101 + 6 + 103 + 12.
+  assert(joined(5, style_a) == 222, "c9 {joined(5, style_a)}");
+  println("ok");
+}

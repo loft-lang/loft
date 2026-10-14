@@ -1,0 +1,16 @@
+// @FR-B-Scope — a destructure's binders are LOOP bindings, so a plain loop and a destructure
+// may reuse each other's names in either order, at any types: each loop binds its own.  The
+// shadow guard (`x = 5; for x in …`) asks whether the name ever served as a loop variable.
+// @falsified-at: ec3f52c8c — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-loop-name-a-destructure-reuses-compiles.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the exit — the control refuses each shape.
+
+fn main() {
+  r1 = ""; for a in [7, 8] { r1 += "{a}" }; for (a, b) in [("p", 3)] { r1 += "|{a}{b}" }
+  assert(r1 == "78|p3", "a plain loop, then a destructure: {r1}");
+  r2 = ""; for (a, b) in [(1, "x")] { r2 += "{a}{b}" }; for a in ["s", "t"] { r2 += "|{a}" }
+  assert(r2 == "1x|s|t", "a destructure, then a plain loop: {r2}");
+  r6 = 0; for (a, b) in [(10, 20)] { r6 += a + b }; for (a, b) in [(1.5, 2.5)] { r6 += (a + b) as integer }
+  assert(r6 == 34, "integer members, then float members: {r6}");
+}

@@ -27,6 +27,7 @@ extern crate loft;
 use common::cached_default;
 use loft::data::Data;
 use loft::database::{Parts, Stores};
+use loft::file_access as fa;
 use loft::parser::Parser;
 use std::path::PathBuf;
 
@@ -104,8 +105,12 @@ const TYPES: &[&str] = &[
 /// a `u32` ELEMENT.  The corpus carried `i32`, `u8` and `u16` but no `u32` — the one narrow
 /// width whose ENCODING its width does not decide — so `(L-Narrow-Enc)` had no row at all.
 /// That is a fact a layout dump CAN carry, because the row names the Part, while a value
-/// comparison cannot see it.  Only the added rows move the hash.)
-const LAYOUT_ALGO_HASH: u64 = 2_090_453_648_790_136_790;
+/// comparison cannot see it.  Only the added rows move the hash.
+/// 2026-10-06 — re-blessed for @C138 `(L-Align)`: a record's size is a multiple of its
+/// alignment.  Ten rows moved and every one is a SIZE rounded up (`Item` 17→24, `Narrow`
+/// 7→8, `Scalars` 29→32, …) or an `elem_size` following it; no field position moved,
+/// because the corpus places no field after an inline record of odd size.)
+const LAYOUT_ALGO_HASH: u64 = 1_591_903_154_127_288_799;
 
 /// @PLN135 Q2 — `keys::key_hash` for a fixed seed over a fixed key set: the function a
 /// reader must reproduce to find an entry a writer placed. Pinned by
@@ -169,8 +174,8 @@ fn layout_golden() {
     let path = golden_path();
 
     if std::env::var("LOFT_BLESS_LAYOUT").is_ok() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &golden).unwrap();
+        fa::create_dir_all(path.parent().unwrap()).unwrap();
+        fa::write(&path, &golden).unwrap();
         eprintln!(
             "blessed {} ; LAYOUT_ALGO_HASH = {}",
             path.display(),
@@ -185,7 +190,7 @@ fn layout_golden() {
         return;
     }
 
-    let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+    let expected = fa::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
             "missing golden {} — regenerate with LOFT_BLESS_LAYOUT=1",
             path.display()
@@ -248,7 +253,7 @@ fn referenced(db: &Stores, kt: u16, out: &mut Vec<u16>) {
         Parts::Sorted(e, _)
         | Parts::Ordered(e, _)
         | Parts::Hash(e, _)
-        | Parts::Index(e, _, _)
+        | Parts::Index(e, _)
         | Parts::Radix(e, _) => out.push(*e),
         Parts::ChildRec(c) => out.push(*c),
         // A plain variant (no data) keeps `known_type == u16::MAX`; only
@@ -469,6 +474,8 @@ fn program_roots_are_the_user_types() {
 /// a token nobody bumped cannot refuse the resulting store. This pin is the only thing
 /// that would notice, which is why its failure message asks WHICH cause it is before
 /// anyone re-blesses it.
+///
+/// @C105 — the bucket slot it pins holds an entry index only: no cached hash, no entries.
 #[test]
 fn placement_contract_is_pinned() {
     use loft::keys::{Content, Str};

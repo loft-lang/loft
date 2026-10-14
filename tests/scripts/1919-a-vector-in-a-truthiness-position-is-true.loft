@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1919 — `@FR-E-Truthy` / `@FR-E-Truthy-1`: both operands of `&&` / `||` are truthiness
+// positions, the `if` / `while` / `assert` condition and `!` are the others, and every
+// non-null value is true there — a vector, empty or not, and an untyped `[]` alike.
+//
+// The `if` condition converted a heap value through `convert_condition`; the `&&` / `||`
+// operands converted as a plain boolean, and a heap type has no `OpConv*FromX`, so the raw
+// `DbRef` reached the jump: a vector LEFT operand read false on the interpreter (its
+// pointer's first byte) and a RIGHT one did not compile natively.  An untyped `[]` reached a
+// condition as nothing at all — the interpreter read a stack byte, and the next local took
+// the damage; native emitted `if ()`.  Both operands now convert through the condition's one
+// home, which reads the untyped `[]` as the present vector it is.
+//
+// Cells: a non-empty and an empty vector on each side of `&&` and `||`; vectors of text and
+// of structs and a hash FIELD; a nullable vector that IS absent (false); `if []` with the
+// locals beside it; `while`; `assert`; `!`; a call result, a parameter, a nested element, a
+// `sorted` and an `index` field, float and boolean elements; and the controls — a struct, a
+// text, a null text.
+//
+// @falsified-by: tests/falsified/1919-a-vector-in-a-truthiness-position-is-true.patch — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: value on the interpreter; on `--native` the control does not COMPILE (rustc
+//   E0308 on a vector right operand and on `if ()`), so that row scores the abort.
+//   WITNESS: on the control `{v && true} {v || false}` reads `false false` and `if []`
+//   takes ELSE on the interpreter.
+//   HOLDS: leak, panic and free-refusal are equal on BOTH trees; the struct / text /
+//   absent-vector controls pass on the interpreter control.
+
+struct P { x: integer }
+struct H { k: text, n: integer }
+struct Q { items: hash<H[k]> }
+struct K { k: integer }
+struct S { s: sorted<K[k]>, i: index<K[k]> }
+
+fn nv() -> vector<integer>? { null }
+fn nt() -> text? { null }
+fn mk(n: integer) -> vector<integer> { [n] }
+fn via(v: vector<integer>) -> boolean { v && true }
+fn nested() -> vector<vector<integer>> { [[1], []] }
+
+fn test_a_vector_on_either_side_is_true() {
+  v: vector<integer> = [1, 2];
+  e: vector<integer> = [];
+  assert("{v && true} {v || false} {true && v} {false || v}" == "true true true true",
+    "non-empty: got {v && true} {v || false} {true && v} {false || v}");
+  assert("{e && true} {e || false} {true && e}" == "true true true",
+    "empty: got {e && true} {e || false} {true && e}");
+}
+
+fn test_every_element_kind_and_a_field_is_true() {
+  w: vector<text> = ["a"];
+  r: vector<P> = [P { x: 1 }];
+  q = Q { items: [] };
+  assert("{w && true} {r && true} {q.items && true}" == "true true true",
+    "got {w && true} {r && true} {q.items && true}");
+}
+
+fn test_an_absent_vector_is_false() {
+  assert("{nv() && true} {nv() || false} {true && nv()}" == "false false false",
+    "got {nv() && true} {nv() || false} {true && nv()}");
+}
+
+fn test_an_untyped_empty_literal_is_a_present_vector() {
+  a = 5;
+  b = 7;
+  took = "";
+  if [] { took = "then"; } else { took = "else"; }
+  assert(took == "then", "if []: took {took}");
+  assert(a == 5 && b == 7, "the locals beside it: a={a} b={b}");
+  assert("{[] && true} {[] && false} {!([])}" == "true false false", "got {[] && true} {[] && false} {!([])}");
+  assert([], "assert([])");
+}
+
+fn test_every_truthiness_position() {
+  v: vector<integer> = [1, 2];
+  c = 0;
+  while v && c < 2 { c += 1; }
+  assert(c == 2, "while: c={c}");
+  took = "";
+  if v && true { took = "then"; } else { took = "else"; }
+  assert(took == "then", "if: took {took}");
+  assert(v && true, "assert");
+  assert(!v == false, "!v");
+}
+
+fn test_control_struct_and_text() {
+  p = P { x: 0 };
+  t = "";
+  assert("{p && true} {t && true} {nt() && true}" == "true true false",
+    "got {p && true} {t && true} {nt() && true}");
+}
+
+fn test_every_provenance_and_collection_kind() {
+  s = S { s: [], i: [] };
+  assert("{mk(1) && true} {false || mk(2)} {via([])} {s.s && true} {s.i || false}" == "true true true true true",
+    "got {mk(1) && true} {false || mk(2)} {via([])} {s.s && true} {s.i || false}");
+  f: vector<float> = [];
+  b: vector<boolean> = [];
+  assert("{nested()[1] && true} {f && true} {true && b}" == "true true true",
+    "got {nested()[1] && true} {f && true} {true && b}");
+  n = 0;
+  for i in 0..4 { if mk(i) && i > 1 { n += 1; } }
+  assert(n == 2, "a call result in a loop: n={n}");
+}

@@ -23,8 +23,8 @@
 //! audience-demo tool, not a library — so this test stays in the loft
 //! repo, not in any extracted library chunk.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -52,7 +52,7 @@ fn skip(reason: &str) {
 }
 
 fn has_cmd(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -66,8 +66,7 @@ fn update_gold() -> bool {
 
 /// Decode a PNG into an (rgba, width, height) tuple.
 fn decode_rgba8(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let file =
-        std::fs::File::open(path).unwrap_or_else(|e| panic!("opening {}: {e}", path.display()));
+    let file = fa::open(path).unwrap_or_else(|e| panic!("opening {}: {e}", path.display()));
     let decoder = png::Decoder::new(file);
     let mut reader = decoder
         .read_info()
@@ -180,7 +179,7 @@ fn crystal_editor_gl_matches_gold() {
     let root = workspace_root();
     // A program that does not compile produces no screenshot either, and the
     // screenshot check below reads that as "no software GL".  Ask first.
-    let check = Command::new(loft_bin())
+    let check = loft::platform::process::harness_command(loft_bin())
         .args(["--no-warnings", "--path"])
         .arg(format!("{}/", root.display()))
         .arg("--lib")
@@ -195,8 +194,8 @@ fn crystal_editor_gl_matches_gold() {
         String::from_utf8_lossy(&check.stderr)
     );
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
-    let _ = std::fs::remove_file(&shot);
-    let out = Command::new("xvfb-run")
+    let _ = fa::remove_file(&shot);
+    let out = loft::platform::process::harness_command("xvfb-run")
         .args([
             "-a",
             "-s",
@@ -234,7 +233,7 @@ fn crystal_editor_gl_matches_gold() {
         .output()
         .expect("invoke xvfb-run");
 
-    if !shot.exists() {
+    if !fa::exists(&shot) {
         // No framebuffer captured — almost always a missing software-GL
         // context in this environment, not a rendering regression.  Skip.
         skip(&format!(
@@ -247,12 +246,12 @@ fn crystal_editor_gl_matches_gold() {
 
     let gold = root.join("tests/gold").join("crystal-editor-gl.png");
     if update_gold() {
-        std::fs::copy(&shot, &gold).expect("copying new GL gold");
+        fa::copy(&shot, &gold).expect("copying new GL gold");
         eprintln!("UPDATE_GOLD=1: wrote {}", gold.display());
         return;
     }
     assert!(
-        gold.exists(),
+        fa::exists(&gold),
         "GL gold missing: {}\nrun `UPDATE_GOLD=1 cargo test --test crystal_editor_gold`",
         gold.display()
     );
@@ -264,11 +263,12 @@ fn crystal_editor_gl_matches_gold() {
     // pixels, the content identical).  Each is held to the same strict limits, so a missing
     // or wrong element fails against every one of them.
     let mut accepted: Vec<(String, Vec<u8>)> = vec![("crystal-editor-gl.png".into(), expected)];
-    if let Ok(dir) = std::fs::read_dir(root.join("tests/gold")) {
+    if let Ok(dir) = fa::read_dir(root.join("tests/gold")) {
         let mut others: Vec<PathBuf> = dir
-            .filter_map(|e| e.ok().map(|e| e.path()))
+            .into_iter()
+            .map(|e| e.os_spelling())
             .filter(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                fa::file_name(p).is_some_and(|n| {
                     n.starts_with("crystal-editor-gl.")
                         && n.ends_with(".png")
                         && n != "crystal-editor-gl.png"
@@ -279,7 +279,7 @@ fn crystal_editor_gl_matches_gold() {
         for p in others {
             let (px, w, h) = decode_rgba8(&p);
             if (w, h) == (ew, eh) {
-                accepted.push((p.file_name().unwrap().to_string_lossy().into_owned(), px));
+                accepted.push((fa::file_name(&p).unwrap(), px));
             }
         }
     }

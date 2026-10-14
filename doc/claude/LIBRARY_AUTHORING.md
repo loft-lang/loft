@@ -51,7 +51,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 7. **Written in loft, readable first.**  A slow routine is cured in the engine or in its own
    loft algorithm; a native rewrite is a per-routine exception with its reason beside it.
    A native crate (`#native`) bridges a capability loft lacks, never speed; `#rust` is the
-   standard library's own template and is refused in a library (C87).  And a rewrite IN
+   standard library's own template and is refused in a library (@C87).  And a rewrite IN
    LOFT for speed is the last resort after the code generation, allowed only when an
    `advice` can name the faster API to a user.
    [formal/performance.md](formal/performance.md) `(Perf-Cure)`, `(Perf-Teach)`
@@ -72,7 +72,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 13. **A clean surface** — no duplicates or confusable names, no footguns or hidden setup
     ([API_SURFACE.md](API_SURFACE.md) S1–S7); public names live under the library's module,
     so the stdlib can grow beside them, and a free function a same-named method would
-    silently shadow is refused (DESIGN_DECISIONS.md C95, C97, C101; `warning[shadowed-by-method]`);
+    silently shadow is refused (DESIGN_DECISIONS.md @C95, @C97, @C101; `warning[shadowed-by-method]`);
     a parameter or field that is never written is `const` (loft-write skill).
 14. **Only a browser-declared library knows JavaScript**; a platform-blind one carries bytes,
     and a blocking-looking primitive yields.  [BROWSER_INTEROP.md](BROWSER_INTEROP.md)
@@ -145,8 +145,11 @@ and the library work done there was being crowded out by that suite.  So:
 - a consumer that needs something the library does not do **reports the gap** (an issue in the
   library's repo, or a message), and the loft stream builds it — in the library, for every
   consumer;
-- the loft stream edits the `loft-libs-*` repos directly and republishes them (the
-  **loft-ship skill**); the consumer APPLICATIONS stay read-only to it;
+- the loft stream edits the `loft-libs-*` repos and republishes them (the **loft-ship
+  skill**) — through a PR per change, since every library `main` requires one (admins
+  included): push a branch, `gh pr create`, `gh pr merge --auto --squash`, and publish from the
+  merged `main`.  No owner wait: the required `ci / <pkg>` checks are the merge rule.  The
+  consumer APPLICATIONS stay read-only to it;
 - a library is developed and tested on its **testbed** (next section), never inside a consumer's
   tree and never against a consumer's suite.
 
@@ -274,7 +277,7 @@ Created library `my_lib/`:
 
 `loft new` validates the name (lowercase ascii + digits +
 underscore), refuses a **reserved namespace name** (`std`, `core` — these resolve to a
-built-in namespace, not a package; see [C101](DESIGN_DECISIONS.md)), and refuses to
+built-in namespace, not a package; see [@C101](DESIGN_DECISIONS.md)), and refuses to
 overwrite an existing dir.
 
 `release.sh` (executable) is a one-command release: it reads name + version
@@ -646,7 +649,7 @@ upgrade is safe on each axis it can be hurt on:
 ```toml
 [package]
 version              = "0.7.0"
-loft                 = ">=0.8"    # which loft this needs
+loft                 = ">=2026.10.0"    # which loft this needs: the one you build and test with
 api_compatible_with  = "0.3.0"    # oldest release of THIS package it is a drop-in for
 data_compatible_with = "0.1.0"    # oldest release whose stored data it still reads
 ```
@@ -720,6 +723,32 @@ one — a pin nobody can compare against says a format is *different*, not that 
 floor)` rather than a bare BREAK.  The fingerprint is identical on `--interpret` and
 `--native`, which is the other half of the claim: a pack built on one backend is readable
 by the other.
+
+**When loft moves the layout under an unchanged library**, the library ships the change as a
+release whose `loft` floor names the first loft build that has it.  The steps, in order:
+
+1. **Prove the delta is loft's change and nothing else.**  Diff the layout descriptor the pin
+   is computed from, old loft against new: every changed line must be one the loft change
+   explains (@C138's alignment, for example, rounds sizes up and moves no field).  A change you
+   cannot explain is not re-pinned.
+2. **Re-pin, move `data_compatible_with`, bump the version** — in one commit, as above.  Check
+   whether the library ships persisted data in the old layout; such data is refused, not
+   misread (`formal/layout.md`), so consumers rebuild it, and the CHANGELOG says so.
+3. **Floor `loft` on the DAY that carries the change**, not on a release that does not exist
+   yet: `loft = ">=<release>.<yyyymmdd>"`, the date of the first `main` commit that contains it
+   ([PACKAGES.md § The `loft` floor names a release or a DAY](PACKAGES.md)).  Check that no
+   earlier `main` commit carries the same date without the change.  A loft below the floor
+   skips this release and keeps resolving to the previous one, whose layout matches it — from
+   the loft whose resolver reads the floor (`registry_index::floor_admits`) on; an older loft
+   resolves the release and its load refuses it, naming the floor, so a user there pins the
+   previous version.
+4. **Publish through a library PR with auto-merge**, then the loft-ship skill.  A release that
+   already went out with a floor too low is corrected by a follow-up release with the right
+   floor, and the earlier one is yanked when lofts it does not fit would otherwise resolve to
+   it ([LIBRARY_PUBLISH.md § 5b](LIBRARY_PUBLISH.md#5b-yank-a-vulnerable-version)).
+
+The loft change that caused it carries the `libs:migration` label, listing the libraries it
+moves ([.github/LABELS.md](../../.github/LABELS.md)).
 
 The mechanical `[auto]` core of the full correctness bar — see
 [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md) for the Goal-by-Goal + doc-quality

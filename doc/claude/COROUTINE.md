@@ -70,7 +70,7 @@ function not declared with an `iterator<T>` return type.
 ```loft
 fn count_up(start: integer) -> iterator<integer> {
     i = start;
-    loop {
+    while true {
         yield i;
         i += 1;
     }
@@ -92,8 +92,9 @@ Evaluates `expr` to type `T`, produces it as the next element of the iterator,
 and suspends the coroutine. Control returns to the consumer. The coroutine
 resumes from the statement immediately after `yield` on the next advance.
 
-`yield` may appear at any call depth inside the generator, including inside
-helper functions called from it (stackful semantics).
+`yield` appears only in the generator's own body; a helper that yields is refused
+(formal/coroutines.md `(G-Yield)`).  To produce a sub-generator's values, delegate with
+`yield from` below.
 
 ### `yield from` — delegate to a sub-generator
 

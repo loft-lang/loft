@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1959: `reduce(v, init, f)` folds through `f: fn(U, T) -> U`, and a call whose fold does
+// not fit is refused, naming the part that does not.  Before, a fold NAMED at the call (the
+// inlined form) was never checked: the interpreter read one type's bits as another
+// (`reduce([1, 2], 0.5, add)` answered `0.5000000000000003`) and `--native` failed rustc.
+// One cell per part: a float initial value into an integer accumulator (`r1`), a text one
+// (`r2`), an empty `[]` with a scalar accumulator (`r3`), text elements into an integer
+// parameter (`r4`), integer elements into a boolean one (`r5`), a fold answering float for an
+// integer accumulator (`r6`); the same misfit through a function VALUE (`r7`); and a function
+// value whose initial value converts to the accumulator without being it, which the generic
+// declaration does not take (`r8`).  The fitting calls are
+// `1959b-a-reduce-fold-that-fits-answers.loft`.
+//
+// @EXPECT_ERROR: reduce: the initial value is `float`, but the fold's accumulator parameter takes `integer`
+// @EXPECT_ERROR: reduce: the initial value is `text`, but the fold's accumulator parameter takes `integer`
+// @EXPECT_ERROR: reduce: the initial value gives no type, and the fold accumulates `integer`
+// @EXPECT_ERROR: reduce: the elements are `text`, but the fold's element parameter takes `integer`
+// @EXPECT_ERROR: reduce: the elements are `integer`, but the fold's element parameter takes `boolean`
+// @EXPECT_ERROR: reduce: the fold answers `float`, but its accumulator parameter takes `integer`
+// @EXPECT_ERROR: reduce: the initial value is `float`, but the fold's accumulator parameter takes `integer`
+// @EXPECT_ERROR: reduce: a function held in a variable takes the initial value as exactly its accumulator type `float`, and this one is `integer`
+// @falsified-at: 7f164b6a0 — interpret exit 1 -> 0, interpret expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1959-a-reduce-fold-that-does-not-fit-is-refused.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — on the control the named-fold cells compile and the
+//   function-value cells carry another message, so the eight refusals do not match.
+//   WITNESS: on 7f164b6a0 `r1` answers 0.5000000000000003 on the interpreter.
+//   HOLDS: leak and panic are equal on both trees.
+fn add(a: integer, b: integer) -> integer { a + b }
+fn addf(a: float, b: integer) -> float { a + b as float }
+fn half(a: integer, b: integer) -> float { 0.5 }
+fn first(a: integer, b: boolean) -> integer { a + 1 }
+
+fn r1() { r = reduce([1, 2], 0.5, add); println("r1 {r}"); }
+fn r2() { r = reduce([1], "x", add); println("r2 {r}"); }
+fn r3() { r = reduce([1, 2], [], add); println("r3 {r}"); }
+fn r4() { r = reduce(["a"], 0, add); println("r4 {r}"); }
+fn r5() { r = reduce([1, 2], 0, first); println("r5 {r}"); }
+fn r6() { r = reduce([1, 2], 0, half); println("r6 {r}"); }
+fn r7() { f = add; r = reduce([1, 2], 0.5, f); println("r7 {r}"); }
+fn r8() { f = addf; r = reduce([1, 2], 1, f); println("r8 {r}"); }
+
+fn main() { r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); }

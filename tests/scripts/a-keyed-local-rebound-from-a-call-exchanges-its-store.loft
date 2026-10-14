@@ -1,0 +1,206 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-SwapKeyed` — a keyed LOCAL rebound from a call that gave its collection up (`h =
+// build(…)`, `OpReplaceKeyed`'s free-source form) is an EXCHANGE of the two stores on both
+// backends: the local's store takes the callee's content, and the slot that ends up holding the
+// local's old collection is released.  Walked at every keyed kind, rebound once, a thousand
+// times in a loop, from a call handed the local itself (`h = grow(h, …)`), and with a copy taken
+// before the rebind that must keep the old content (`@FR-B-Copy`).  The leak channel is the
+// measurement: a released slot that is parked instead of freed stays live at exit.  The walk
+// found no defect.
+//
+// @falsified-at: none — the walk found no defect, so no earlier build answers wrong.  The
+//   control is the hand patch below.
+// @falsified-by: tests/falsified/a-keyed-local-rebound-from-a-call-exchanges-its-store.patch — the released slot of a keyed exchange is
+//   PARKED as a refill spare instead of freed: interpret leaked kt=101 spatial<E[k,j]>×1 ->
+//   clean (parking keeps one slot, so the last kind walked is the one left live at exit);
+//   native INERT.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+// ARMED: `LOFT_NATIVE_LEAK_CHECK=1`, which `scripts/falsify.sh` arms on every run of its own
+//   accord; the interpreter's store census prints at exit unasked.
+// HOLDS: exit, asserts and panic are unmoved on both trees.
+
+struct E { k: integer, n: text, j: integer }
+
+fn build_hash(a: integer, b: integer) -> hash<E[k]> {
+  r: hash<E[k]> = [E { k: a, n: "x{a}", j: a }, E { k: b, n: "y{b}", j: b }];
+  r
+}
+
+fn grow_hash(h: hash<E[k]>, a: integer) -> hash<E[k]> {
+  h += [E { k: a, n: "z{a}", j: a }];
+  h
+}
+
+fn total_hash(h: hash<E[k]>) -> integer {
+  t = 0;
+  for e in h {
+    t += e.k;
+  }
+  t
+}
+
+fn walk_hash() {
+  h: hash<E[k]> = [E { k: 1, n: "a", j: 1 }];
+  g = h;
+  h = build_hash(10, 20);
+  assert(len(h) == 2 && total_hash(h) == 30 && len(g) == 1, "hash: rebound once");
+  for i in 0..1000 {
+    h = build_hash(i, i + 2);
+  }
+  assert(len(h) == 2 && total_hash(h) == 2000, "hash: rebound in a loop");
+  s: hash<E[k]> = [E { k: 1, n: "a", j: 1 }, E { k: 6, n: "b", j: 6 }];
+  s = grow_hash(s, 10);
+  for i in 1..4 {
+    s = grow_hash(s, i * 20);
+  }
+  assert(len(s) == 6 && total_hash(s) == 137, "hash: rebound from a call handed the local");
+}
+
+fn build_sorted(a: integer, b: integer) -> sorted<E[k]> {
+  r: sorted<E[k]> = [E { k: a, n: "x{a}", j: a }, E { k: b, n: "y{b}", j: b }];
+  r
+}
+
+fn grow_sorted(h: sorted<E[k]>, a: integer) -> sorted<E[k]> {
+  h += [E { k: a, n: "z{a}", j: a }];
+  h
+}
+
+fn total_sorted(h: sorted<E[k]>) -> integer {
+  t = 0;
+  for e in h {
+    t += e.k;
+  }
+  t
+}
+
+fn walk_sorted() {
+  h: sorted<E[k]> = [E { k: 1, n: "a", j: 1 }];
+  g = h;
+  h = build_sorted(10, 20);
+  assert(len(h) == 2 && total_sorted(h) == 30 && len(g) == 1, "sorted: rebound once");
+  for i in 0..1000 {
+    h = build_sorted(i, i + 2);
+  }
+  assert(len(h) == 2 && total_sorted(h) == 2000, "sorted: rebound in a loop");
+  s: sorted<E[k]> = [E { k: 1, n: "a", j: 1 }, E { k: 6, n: "b", j: 6 }];
+  s = grow_sorted(s, 10);
+  for i in 1..4 {
+    s = grow_sorted(s, i * 20);
+  }
+  assert(len(s) == 6 && total_sorted(s) == 137, "sorted: rebound from a call handed the local");
+}
+
+fn build_index(a: integer, b: integer) -> index<E[k]> {
+  r: index<E[k]> = [E { k: a, n: "x{a}", j: a }, E { k: b, n: "y{b}", j: b }];
+  r
+}
+
+fn grow_index(h: index<E[k]>, a: integer) -> index<E[k]> {
+  h += [E { k: a, n: "z{a}", j: a }];
+  h
+}
+
+fn total_index(h: index<E[k]>) -> integer {
+  t = 0;
+  for e in h {
+    t += e.k;
+  }
+  t
+}
+
+fn walk_index() {
+  h: index<E[k]> = [E { k: 1, n: "a", j: 1 }];
+  g = h;
+  h = build_index(10, 20);
+  assert(len(h) == 2 && total_index(h) == 30 && len(g) == 1, "index: rebound once");
+  for i in 0..1000 {
+    h = build_index(i, i + 2);
+  }
+  assert(len(h) == 2 && total_index(h) == 2000, "index: rebound in a loop");
+  s: index<E[k]> = [E { k: 1, n: "a", j: 1 }, E { k: 6, n: "b", j: 6 }];
+  s = grow_index(s, 10);
+  for i in 1..4 {
+    s = grow_index(s, i * 20);
+  }
+  assert(len(s) == 6 && total_index(s) == 137, "index: rebound from a call handed the local");
+}
+
+fn build_trie(a: integer, b: integer) -> trie<E[n]> {
+  r: trie<E[n]> = [E { k: a, n: "x{a}", j: a }, E { k: b, n: "y{b}", j: b }];
+  r
+}
+
+fn grow_trie(h: trie<E[n]>, a: integer) -> trie<E[n]> {
+  h += [E { k: a, n: "z{a}", j: a }];
+  h
+}
+
+fn total_trie(h: trie<E[n]>) -> integer {
+  t = 0;
+  for e in h {
+    t += e.k;
+  }
+  t
+}
+
+fn walk_trie() {
+  h: trie<E[n]> = [E { k: 1, n: "a", j: 1 }];
+  g = h;
+  h = build_trie(10, 20);
+  assert(len(h) == 2 && total_trie(h) == 30 && len(g) == 1, "trie: rebound once");
+  for i in 0..1000 {
+    h = build_trie(i, i + 2);
+  }
+  assert(len(h) == 2 && total_trie(h) == 2000, "trie: rebound in a loop");
+  s: trie<E[n]> = [E { k: 1, n: "a", j: 1 }, E { k: 6, n: "b", j: 6 }];
+  s = grow_trie(s, 10);
+  for i in 1..4 {
+    s = grow_trie(s, i * 20);
+  }
+  assert(len(s) == 6 && total_trie(s) == 137, "trie: rebound from a call handed the local");
+}
+
+fn build_spatial(a: integer, b: integer) -> spatial<E[k,j]> {
+  r: spatial<E[k,j]> = [E { k: a, n: "x{a}", j: a }, E { k: b, n: "y{b}", j: b }];
+  r
+}
+
+fn grow_spatial(h: spatial<E[k,j]>, a: integer) -> spatial<E[k,j]> {
+  h += [E { k: a, n: "z{a}", j: a }];
+  h
+}
+
+fn total_spatial(h: spatial<E[k,j]>) -> integer {
+  t = 0;
+  for e in h {
+    t += e.k;
+  }
+  t
+}
+
+fn walk_spatial() {
+  h: spatial<E[k,j]> = [E { k: 1, n: "a", j: 1 }];
+  g = h;
+  h = build_spatial(10, 20);
+  assert(len(h) == 2 && total_spatial(h) == 30 && len(g) == 1, "spatial: rebound once");
+  for i in 0..1000 {
+    h = build_spatial(i, i + 2);
+  }
+  assert(len(h) == 2 && total_spatial(h) == 2000, "spatial: rebound in a loop");
+  s: spatial<E[k,j]> = [E { k: 1, n: "a", j: 1 }, E { k: 6, n: "b", j: 6 }];
+  s = grow_spatial(s, 10);
+  for i in 1..4 {
+    s = grow_spatial(s, i * 20);
+  }
+  assert(len(s) == 6 && total_spatial(s) == 137, "spatial: rebound from a call handed the local");
+}
+
+fn main() {
+  walk_hash();
+  walk_sorted();
+  walk_index();
+  walk_trie();
+  walk_spatial();
+}

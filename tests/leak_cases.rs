@@ -22,8 +22,8 @@
 //! cargo test --release --test leak_cases -- --ignored
 //! ```
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -68,19 +68,19 @@ fn folder_expect(folder: &str) -> Option<Expect> {
 fn case_files() -> Vec<(String, String, PathBuf)> {
     let base = root().join("tests/leak_cases");
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(&base).expect("tests/leak_cases must exist") {
-        let dir = entry.unwrap().path();
-        if !dir.is_dir() {
+    for entry in fa::read_dir(&base).expect("tests/leak_cases must exist") {
+        let dir = entry.os_spelling();
+        if !fa::is_dir(&dir) {
             continue;
         }
-        let folder = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let folder = fa::file_name(&dir).unwrap();
         if folder_expect(&folder).is_none() {
             continue;
         }
-        for f in std::fs::read_dir(&dir).unwrap() {
-            let p = f.unwrap().path();
-            if p.extension().and_then(|e| e.to_str()) == Some("loft") {
-                let stem = p.file_stem().unwrap().to_string_lossy().into_owned();
+        for f in fa::read_dir(&dir).unwrap() {
+            let p = f.os_spelling();
+            if fa::has_extension(&p, "loft") {
+                let stem = fa::file_stem(&p).unwrap();
                 out.push((folder.clone(), stem, p));
             }
         }
@@ -95,16 +95,16 @@ fn case_files() -> Vec<(String, String, PathBuf)> {
 
 /// Wrap a case body (`fn test()`) into a runnable program in a temp file.
 fn wrap_to_temp(name: &str, path: &Path) -> PathBuf {
-    let body = std::fs::read_to_string(path).unwrap();
+    let body = fa::read_to_string(path).unwrap();
     let src = format!("{body}\nfn main() {{ test(); }}\n");
     let tmp = std::env::temp_dir().join(format!("loft_leakcase_{name}.loft"));
-    std::fs::write(&tmp, src).unwrap();
+    fa::write(&tmp, src).unwrap();
     tmp
 }
 
 /// Returns `(success, leaked, stderr)`.
 fn run(mode: &str, src: &Path, leak_env: bool) -> (bool, bool, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(mode).arg(src).current_dir(root());
     if leak_env {
         cmd.env("LOFT_NATIVE_LEAK_CHECK", "1");
@@ -129,7 +129,7 @@ fn sweep(mode: &str, leak_env: bool, expected: impl Fn(Expect) -> bool) {
         let want_leak = expected(exp);
         let tmp = wrap_to_temp(&name, &path);
         let (ok, leaked, stderr) = run(mode, &tmp, leak_env);
-        let _ = std::fs::remove_file(&tmp);
+        let _ = fa::remove_file(&tmp);
         if !ok {
             failures.push(format!(
                 "{folder}/{name}: {mode} run failed\n---- stderr ----\n{stderr}"

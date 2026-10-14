@@ -60,7 +60,7 @@ line that no longer parses (say, after a loft upgrade) is skipped on replay and
 never blocks the rest.
 
 Because resume re-runs your bindings, a value drawn from `random()` or `now()`
-is produced afresh — the original stream is not reproduced (set an explicit seed
+is produced afresh — the original stream is not reproduced (@C72; set an explicit seed
 if you need reproducibility). Auto-resume is interactive-only: piped or scripted
 input never reads or writes the session file, so captured output stays stable.
 
@@ -99,6 +99,22 @@ loft> add(2, 3)
 A typo prints an error and the prompt comes back; everything you defined before
 is still there. A run-time error (such as a failed `assert`) is caught the same
 way — the session keeps going.
+
+## Finding what there is
+
+Five commands answer "what can I use?" without leaving the REPL, and without a network:
+they read the feature catalogue built into loft and the registry index already on your
+machine (`loft search` or `loft install` fetches it once).
+
+| Command | What it shows |
+|---|---|
+| `:features [word]` | Every language feature, grouped (values and types, collections, control flow, …). With a word, the features that mention it (`:features slice`). `:features inside` lists how loft itself is built. |
+| `:libs` | Every library in the registry, grouped by category, with its newest version, whether it is installed here, and its description. |
+| `:api <library> [word]` | Everything a library offers — each public function and type with its doc — or only the items whose signature contains `word`.  It shows the version this project's `loft.lock` pins, else the newest. |
+| `:ops <Type>` | What a type can be written with: each operator and the definition behind it, its `[ ]` forms, and the interfaces it meets. |
+| `:doc <name>` | One thing in full: a feature (`:doc @F2`, `:doc ??`, `:doc match`), a function, type or method (`:doc split`), a library function (`:doc time::from_ymd`), or a library (`:doc time`). `:doc <feature> run` runs the feature's example in a scratch session, so its definitions never meet yours. |
+
+The same text is on the web pages: both are rendered from one source.
 
 ## REPL commands
 
@@ -379,7 +395,15 @@ When you bind a name to a value, the REPL runs the right-hand side **once** and
 snapshots the value — for **every** type (numbers, text, structs, vectors,
 enums) — so a side effect (printing, reading input) in the binding happens a
 single time, however often you read the name later (`name = read_line()` prompts
-once).
+once).  A typed binding (`x: float = 1`) keeps the type it declares.
+
+An input that changes a bound variable **in place** — `x += 1`, `s.a = 9`,
+`w.sort()`, `w[0] = 7`, a call that takes it by `&` — is kept the same way: it
+runs once, and each variable it changed is snapshotted again, so the next input
+reads the new value and a side effect in it does not repeat.  An input that
+only reads a variable records nothing.  A value with no literal form (a bare
+`hash`) cannot be snapshotted, so an input that writes one is kept as source
+and replayed instead; a side effect in that input repeats on a later read.
 
 ### The session store — values live in a store, not in replayed source
 

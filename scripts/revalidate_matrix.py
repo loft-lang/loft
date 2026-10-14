@@ -55,8 +55,13 @@ import tomllib
 # so the gate reflects NEW breaks and future reds are real signals.  Every entry MUST cite a
 # tracking issue and be removed the moment the lib republishes migrated.
 KNOWN_BROKEN: dict[str, str] = {
-    # (empty) — hex_terrain 0.1.1 republished migrated (loft-lang/loft#579).
     # Add an entry ONLY with a tracking issue + a remove-on-republish note.
+    "lavition_ui": (
+        "field visibility (@C140): 0.1.1 reads its own structs' fields across its files "
+        "without `pub`, and its source left moros `main` (now `lib/moros_ui`), so no "
+        "republish is on its way (loft#1984) — remove when a migrated version publishes or "
+        "both versions are yanked"
+    ),
 }
 
 # The compiler is not a library revalidated against itself; see the module docstring.

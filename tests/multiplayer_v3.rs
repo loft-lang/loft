@@ -27,7 +27,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -93,7 +93,7 @@ fn await_stdout_marker(
 /// the test.  Self-healing: once the republished package is installed the
 /// probe passes and the tests run again.
 fn registry_predates_dn1(server_script: &str) -> bool {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--dump")
         .arg(examples_dir().join(server_script))
         .current_dir(examples_dir())
@@ -127,7 +127,7 @@ struct ServerGuard {
 
 impl ServerGuard {
     fn spawn(server_script: &str, port: u16) -> Self {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(examples_dir().join(server_script))
             .env("LOFT_TICTACTOE_PORT", port.to_string())
@@ -289,7 +289,7 @@ fn spawn_listening_server(script: &str, port: u16, label: &str) -> ServerGuard {
 }
 
 fn spawn_client(client_script: &str, port: u16) -> Child {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(examples_dir().join(client_script))
         .current_dir(examples_dir())

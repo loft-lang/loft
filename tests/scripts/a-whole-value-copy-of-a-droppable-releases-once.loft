@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @C111 — a drop cascade reaches a container's death.
+// @C111 @C121 — a whole-value copy of an OWNED droppable is a move: the release goes with it.
 // A plain whole-value copy of a droppable — the droppable itself, a struct or a struct-enum
 // holding one, through a dense or a nullable spelling, into a local, a branch-arm temp or a
-// return buffer — MOVES the release to the copy: one hook per resource, on both backends.
+// return buffer — moves the release to the copy (`(H-Spent)`): one hook per resource, on both
+// backends.  A copy of a value the function does not own is refused instead (`(H-Copy-Refuse)`).
 //
 // C111 chose move-on-construction for a container because a copy leaves two records
 // holding one resource, and `t = s` is that same step one level up.  Measured before this
@@ -16,7 +17,7 @@
 // Two shapes stay as they were, on purpose: a copy off a PARAMETER leaves the CALLER as the
 // owner (the parameter aliases it), and a source or destination assigned more than once
 // keeps both hooks, because the transfer set is per variable and the fact belongs to the
-// assignment (`@FR-O-Latest`).  A rebind never releases what it displaces (loft#1362).
+// assignment (`@FR-O-Latest`).  What a rebind displaces is released by loft#1362's own rule.
 //
 // The trace file is this guard's own, so a sibling guard run beside it cannot read its notes.
 //

@@ -203,6 +203,16 @@ pub fn apply_env_limit(default: u64) {
     }
 }
 
+/// An ordinary run (not `--tests` / `loft test`) is never capped by DEFAULT, but honours an
+/// explicitly set `LOFT_MEMORY_LIMIT` — the one memory bound that works on every platform, where
+/// an address-space `rlimit` is enforced on Linux only (macOS ignores `RLIMIT_AS`).  A harness
+/// that runs ordinary cells under a ceiling sets the variable instead of reaching for `setrlimit`.
+pub fn apply_env_limit_if_set() {
+    if std::env::var_os("LOFT_MEMORY_LIMIT").is_some() {
+        apply_env_limit(0);
+    }
+}
+
 /// Record what a store type is called, so the report can name it.
 pub fn note_type_name(kt: u16, name: &str) {
     if name.is_empty() || (LIMIT.load(Ordering::Relaxed) == 0 && !sites_armed()) {

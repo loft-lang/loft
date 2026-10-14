@@ -1,0 +1,25 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9f0a3619b..67ba0d3b9 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -16164,12 +16164,14 @@
+                     if prev == u32::MAX {
+                         self.data.definitions[d_nr as usize].attributes[f_nr]
+                             .assigned_lambda_d_nr = lambda_d_u;
+-                    } else if prev != lambda_d_u && self.first_pass {
+-                        // `@FR-L-Escape` (loft#1874) — a field holds any closure, so every lambda
+-                        // written into it shares ONE closure record: the union of their captures,
+-                        // each lambda reading its own by name.  The field's child record then has
+-                        // one layout whatever closure it holds.
+-                        self.unite_field_closure_records(prev, lambda_d_u);
++                    } else if prev != lambda_d_u && !self.first_pass {
++                        diagnostic!(
++                            self.lexer,
++                            Level::Error,
++                            "heterogeneous capture shapes per fn-ref struct field are not supported \
++                             (this lambda's captured environment differs from the previously-assigned \
++                              lambda's); split into two structs or unify the captures"
++                        );
+                     }
+                     // `@FR-L-Escape` (loft#1867): a host rooted in an ARGUMENT is the caller's
+                     // struct, and the closure record is built in its store (`OpChildRec`).  The

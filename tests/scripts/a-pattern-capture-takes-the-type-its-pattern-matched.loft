@@ -1,0 +1,57 @@
+// @FR-P-Cap-Ty — a capture `name: p` binds the value `p` matched, at that value's type: a slice
+// element's capture has the ELEMENT type and an arm root's capture the SUBJECT type, whatever
+// the element is (a narrow integer, text, an enum, a record, a tuple, a vector, a nullable).
+// Each cell names the type (`type_name`) and hands the capture to a parameter of exactly
+// that type.  A tuple capture holding `text` is handed over member by member on `--native`,
+// spelled through the capture's own Rust place (`var_place`).
+// @falsified-at: 4aa94359f — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-pattern-capture-takes-the-type-its-pattern-matched.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: every type and value agrees on the interpreter on both trees; leak and panic are clean.
+// CHANNEL: the native exit — rustc refuses the control's member list over the raw name.
+
+enum Col { Red, Green }
+enum Tok { Num { n: integer }, Word { w: text } }
+struct Pt { x: integer, y: integer }
+
+fn k_int(v: integer) -> integer { v }
+fn k_u8(v: u8) -> integer { v }
+fn k_text(v: text) -> integer { len(v) }
+fn k_col(v: Col) -> integer { if v == Col.Green { 2 } else { 1 } }
+fn k_tok(v: Tok) -> integer { match v { Num { n } => n, Word { w } => len(w) } }
+fn k_pt(v: Pt) -> integer { v.x * 10 + v.y }
+fn k_tup(v: (integer, text)) -> integer { v.0 + len(v.1) }
+fn k_vec(v: vector<integer>) -> integer { len(v) }
+
+fn s_int(v: vector<integer>) -> text { match v { [x: _, ..] => "{type_name(x)}:{k_int(x)}", _ => "-" } }
+fn s_u8(v: vector<u8>) -> text { match v { [x: 250, ..] => "{type_name(x)}:{k_u8(x)}", _ => "-" } }
+fn s_f(v: vector<float>) -> text { match v { [x: _, ..] => "{type_name(x)}:{x}", _ => "-" } }
+fn s_text(v: vector<text>) -> text { match v { [x: "ab", ..] => "{type_name(x)}:{k_text(x)}", _ => "-" } }
+fn s_char(v: vector<character>) -> text { match v { [x: _, ..] => "{type_name(x)}:{x}", _ => "-" } }
+fn s_bool(v: vector<boolean>) -> text { match v { [x: true, ..] => "{type_name(x)}:{x}", _ => "-" } }
+fn s_col(v: vector<Col>) -> text { match v { [x: Green, ..] => "{type_name(x)}:{k_col(x)}", _ => "-" } }
+fn s_tok(v: vector<Tok>) -> text { match v { [x: Word, ..] => "{type_name(x)}:{k_tok(x)}", _ => "-" } }
+fn s_pt(v: vector<Pt>) -> text { match v { [x: _, ..] => "{type_name(x)}:{k_pt(x)}", _ => "-" } }
+fn s_tup(v: vector<(integer, text)>) -> text { match v { [x: _, ..] => "{type_name(x)}:{k_tup(x)}", _ => "-" } }
+fn s_tup_bare(v: vector<(integer, text)>) -> integer { match v { [x, ..] => k_tup(x), _ => -1 } }
+fn s_vec(v: vector<vector<integer>>) -> text { match v { [x: _, ..] => "{type_name(x)}:{k_vec(x)}", _ => "-" } }
+fn s_opt(v: vector<integer?>) -> text { match v { [x: _, ..] => "{type_name(x)}:{x ?? -1}", _ => "-" } }
+fn r_root(t: Tok) -> text { match t { x: Num { n } => "{type_name(x)}:{k_tok(x) + n}", _ => "-" } }
+
+fn main() {
+  assert(s_int([42, 1]) == "integer:42", s_int([42, 1]));
+  assert(s_u8([250, 1]) == "u8:250", s_u8([250, 1]));
+  assert(s_f([1.5]) == "float:1.5", s_f([1.5]));
+  assert(s_text(["ab", "c"]) == "text:2", s_text(["ab", "c"]));
+  assert(s_char(['q']) == "character:q", s_char(['q']));
+  assert(s_bool([true]) == "boolean:true", s_bool([true]));
+  assert(s_col([Col.Green]) == "Col:2", s_col([Col.Green]));
+  assert(s_tok([Word { w: "abc" }]) == "Tok:3", s_tok([Word { w: "abc" }]));
+  assert(s_pt([Pt { x: 3, y: 4 }]) == "Pt:34", s_pt([Pt { x: 3, y: 4 }]));
+  assert(s_tup([(5, "xy")]) == "(integer, text):7", s_tup([(5, "xy")]));
+  assert(s_tup_bare([(5, "xyz")]) == 8, "a bare tuple binding handed whole: {s_tup_bare([(5, "xyz")])}");
+  assert(s_vec([[1, 2, 3]]) == "vector<integer>:3", s_vec([[1, 2, 3]]));
+  assert(s_opt([null, 3]) == "integer?:-1", s_opt([null, 3]));
+  assert(r_root(Num { n: 6 }) == "Tok:12", r_root(Num { n: 6 }));
+}

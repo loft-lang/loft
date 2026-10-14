@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @observes: LOFT_NO_POW2_BUCKETS — it asserts the reserved table's byte size, which the bucket-count rule decides.
 // @PLN135 arc C — `reserve(h, n)` sizes a hash's BUCKET TABLE for `n` entries up
 // front, so filling it does not rebuild the table on the way (a million inserts
 // rebuilt it 17 times).
@@ -98,17 +99,23 @@ fn main() {
   for i in 0..1000 { v += [i * 2]; }
   assert(len(v) == 1000 && v[999] == 1998, "vector still fills: {len(v)}");
 
-  // --- the table really is smaller, which is the point --------------------------
-  // The growth policy overshoots (it doubles past the trigger), so a reserved table
-  // is the tighter of the two for the same contents.
+  // --- the reserved table is never rebuilt, and never larger -------------------
+  // A reserve sizes the table for the count up front, so the fill rebuilds nothing: its
+  // size after the 20000 inserts is the size the reserve gave it.  Since @C146 a table's
+  // bucket count is a power of two (`@FR-Col-Bucket`), so the reserve rounds up to the
+  // power growth would have reached — 65536 slots for 20000 entries either way — and it
+  // is never larger than the grown table.
   big_plain: hash<RRec[k]> = [];
   big_res: hash<RRec[k]> = [];
   reserve(big_res, 20000);
+  reserved_size = size(big_res);
   for i in 0..20000 { big_plain += RRec { k: i, v: i }; big_res += RRec { k: i, v: i }; }
   assert(len(big_plain) == 20000 && len(big_res) == 20000,
     "big lens {len(big_plain)}/{len(big_res)}");
-  assert(size(big_res) < size(big_plain),
-    "reserved table should be tighter: {size(big_res)} vs {size(big_plain)}");
+  assert(size(big_res) == reserved_size && reserved_size == 65536 * 4,
+    "the reserved table is not rebuilt by the fill: {reserved_size} then {size(big_res)}");
+  assert(size(big_res) <= size(big_plain),
+    "a reserved table is never larger than a grown one: {size(big_res)} vs {size(big_plain)}");
 
   println("135-reserve-hash ok");
 }

@@ -1,7 +1,9 @@
 // Benchmark 15: KEYED collections — the Rust twin.
 //
-// `std::collections::HashMap` stands for loft's `hash`, `BTreeMap` for `sorted` and
-// `index`: what a Rust author reaches for with `std` alone.  Text keys are counted with the
+// `std::collections::HashMap` stands for loft's `hash`, `BTreeMap` for `index`, and a `Vec`
+// kept sorted by binary-search insert for `sorted` — the same contiguous layout and the same
+// tail move on an out-of-order insert, which is the trade `sorted` makes on purpose (a random
+// insert that must be fast uses `index`).  What a Rust author reaches for with `std` alone.  Text keys are counted with the
 // entry API over borrowed `&str`.  Same keys, same order of work, same result per op as
 // bench.loft — the hash column is the receipt.
 use std::collections::{BTreeMap, HashMap};
@@ -102,9 +104,15 @@ fn k_hash_walk(db: &HashMap<i64, E>, salt: i64) -> i64 {
 }
 
 fn k_sorted(count: i64, salt: i64) -> i64 {
-    let mut db: BTreeMap<i64, E> = BTreeMap::new();
+    // A sorted vector: find the slot by binary search, shift the tail, write.  An equal key
+    // takes the older record's slot (latest insert wins), as loft's `sorted` does.
+    let mut db: Vec<(i64, E)> = Vec::new();
     for i in 0..count {
-        db.insert(key_of(i, salt), E { val: i });
+        let id = key_of(i, salt);
+        match db.binary_search_by_key(&id, |(k, _)| *k) {
+            Ok(at) => db[at] = (id, E { val: i }),
+            Err(at) => db.insert(at, (id, E { val: i })),
+        }
     }
     let mut acc = 0i64;
     let mut prev = -1i64;

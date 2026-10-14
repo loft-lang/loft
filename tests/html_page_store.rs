@@ -19,13 +19,14 @@
 //!
 //! Skips cleanly without chrome / node / python3, in the shape of `tests/html_fonts.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -61,7 +62,7 @@ impl Drop for ServerGuard {
 }
 
 fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
         .arg(dir)
         .stdout(std::process::Stdio::null())
@@ -80,7 +81,7 @@ fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
 
 /// Read the page's `<pre>` after the wait, via the harness's `--assert`.
 fn page_output(url: &str, port: u16) -> String {
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
         .args(["--wait-ms", "4000"])
@@ -111,20 +112,20 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
         return;
     };
     let loft = repo_root().join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
 
     let dir = std::env::temp_dir().join("loft_html_page_store");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
 
     // One program, two jobs: write the store natively, then read it back. The page runs
     // only the reading half, so the bytes it reads were produced by the desktop — which
     // is the direction a pack actually travels.
     let src = dir.join("page_store.loft");
-    std::fs::write(
+    fa::write(
         &src,
         "struct Rec { r_key: text, r_n: integer }\n\
          fn main() {\n\
@@ -142,7 +143,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
     )
     .expect("write source");
 
-    let made = Command::new(&loft)
+    let made = loft::platform::process::harness_command(&loft)
         .arg("--interpret")
         .arg(&src)
         .current_dir(&dir)
@@ -150,19 +151,19 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
         .output()
         .expect("invoke loft");
     assert!(
-        dir.join("page.store").exists(),
+        fa::exists(dir.join("page.store")),
         "the fixture store was not written: {}",
         String::from_utf8_lossy(&made.stdout)
     );
 
     let html = dir.join("page_store.html");
-    let built = Command::new(&loft)
+    let built = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().expect("utf-8 path")])
         .arg(&src)
         .current_dir(&dir)
         .output()
         .expect("invoke loft --html");
-    if !built.status.success() || !html.exists() {
+    if !built.status.success() || !fa::exists(&html) {
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
@@ -172,15 +173,15 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
 
     // The seeded variant: identical wasm, with the store handed to the page's own
     // filesystem the way `doc/loft-fs.js` documents (`globalThis.loftBaseFS`).
-    let page = std::fs::read_to_string(&html).expect("read page");
-    let bytes = std::fs::read(dir.join("page.store")).expect("read store");
+    let page = fa::read_to_string(&html).expect("read page");
+    let bytes = fa::read(dir.join("page.store")).expect("read store");
     let b64 = loft::base64::encode(&bytes);
     let seed = format!(
         "<script>globalThis.loftBaseFS={{\"/page.store\":Uint8Array.from(atob(\"{b64}\"),c=>c.charCodeAt(0))}};</script>\n"
     );
     let seeded = page.replacen("<script>", &format!("{seed}<script>"), 1);
     assert!(seeded.len() > page.len(), "the seed was not spliced in");
-    std::fs::write(dir.join("seeded.html"), &seeded).expect("write seeded page");
+    fa::write(dir.join("seeded.html"), &seeded).expect("write seeded page");
 
     let Some(port) = pick_free_port() else {
         eprintln!("SKIP: could not pick a free TCP port");

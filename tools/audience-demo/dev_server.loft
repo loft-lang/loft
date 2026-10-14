@@ -137,7 +137,7 @@ fn main() {
   port = 18083;
 
   srv = server::listen(port);
-  if srv.handle < 0 {
+  if !srv.bound() {
     println("audience dev-server: FAILED to listen on port {port}");
     return;
   }

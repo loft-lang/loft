@@ -84,7 +84,7 @@ pub fn active() -> bool {
 /// warning — never an error (the program itself is unaffected).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crate::data::Data) {
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Ok(content) = crate::file_access::read_to_string(path) else {
         eprintln!("live-reload: cannot read {path}; reload disabled");
         return;
     };
@@ -137,7 +137,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         return;
     }
     for d in 0..running.definitions() {
-        if shadow.def(d).name != running.def(d).name {
+        if shadow.def_identity(d) != running.def_identity(d) {
             eprintln!(
                 "live-reload: def {d} name mismatch ('{}' vs '{}'); reload disabled",
                 shadow.def(d).name,
@@ -149,13 +149,13 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     // #351 — the watch set: every file the program parsed (entry, modules,
     // `--lib` packages, bundles), except the stdlib and synthetic sources.
     // Pair each file with its def-source id for source-aware fn lookup.
-    let stdlib_prefix = crate::portable_path::plain_canonical_str(stdlib_dir);
+    let stdlib_prefix = crate::file_access::plain_canonical_str(stdlib_dir);
     // The entry file's id in the SHADOW, read off its own definitions: a snippet parses under
     // it and an overload set is looked up by it, and the shadow's `parse_str` does not use the
     // id the running program's `parse` did.
     let entry_source = (0..shadow.definitions())
         .map(|d| shadow.def(d))
-        .find(|def| &*def.position.file == path)
+        .find(|def| def.position.file == path)
         .map_or(crate::data::STD_SOURCE, |def| def.source);
     let mut files: Vec<WatchedFile> = vec![WatchedFile {
         path: path.to_string(),
@@ -168,14 +168,14 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         if f.is_empty() || f.starts_with('<') || &**f == path {
             continue;
         }
-        let canon = crate::portable_path::plain_canonical_str(f);
-        if canon.starts_with(&stdlib_prefix) {
+        let canon = crate::file_access::plain_canonical_str(f);
+        if crate::file_access::is_under(&canon, &stdlib_prefix) {
             continue;
         }
         if files.iter().any(|w| *w.path == **f) {
             continue;
         }
-        let Ok(c) = std::fs::read_to_string(&**f) else {
+        let Ok(c) = crate::file_access::read_to_string(&**f) else {
             continue; // unreadable (virtual / moved) — not watchable
         };
         files.push(WatchedFile {
@@ -215,7 +215,7 @@ pub fn poll(state: &mut State) -> bool {
         host.last_check = Instant::now();
         let mut grew = false;
         for i in 0..host.files.len() {
-            let Ok(content) = std::fs::read_to_string(&host.files[i].path) else {
+            let Ok(content) = crate::file_access::read_to_string(&host.files[i].path) else {
                 continue; // transient (editor mid-save); next poll retries
             };
             if content == host.files[i].last_content {

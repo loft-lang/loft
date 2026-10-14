@@ -26,7 +26,7 @@
 
 fn take(v: vector<u8>) -> text { text_from_bytes(v) }
 
-// @EXPECT_ERROR: expected vector<integer(0, 255)>, got vector<integer>
+// @EXPECT_ERROR: expected vector<u8>, got vector<integer>
 fn main() {
   // The near side of the boundary: a `vector<u8>` built from integer LITERALS
   // is typed at the target width element-wise and must stay legal.

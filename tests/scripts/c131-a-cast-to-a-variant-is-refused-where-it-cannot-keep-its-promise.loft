@@ -9,7 +9,7 @@
 // sibling file.
 //
 // @falsified-at: f298fb423 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
-// @falsified-by: tests/falsified/c131-a-cast-to-a-variant-is-refused-where-it-cannot-keep-its-promise.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/c131-a-cast-to-a-variant-is-refused-where-it-cannot-keep-its-promise.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not 
 // CHANNEL: the expected refusals — the control tree gives neither message.
 // HOLDS: nothing runs on either tree (a refusal file).
 

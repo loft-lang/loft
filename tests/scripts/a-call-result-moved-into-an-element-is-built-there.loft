@@ -1,0 +1,214 @@
+// `@FR-R-Destination` — `sub = dv(b, p); if sub.ok { items += [sub.value]; p = sub.next }`:
+// the element is minted before the call and the callee's DESTINATION TWIN builds `value` in
+// it, answering `next` and `ok`; the element is finished where the plain form moved and
+// released where it did not.  The interpreter moves as before and is the oracle; every value
+// is hand-computed.
+//
+// The format, one byte a head: below 100 an integer; 100 + n a text of the n bytes after it;
+// 200 + n a list of n values; 240 + n a map of n key/value pairs.  A value that runs past
+// the end fails, and so does every list or map holding it — a failure answers `next` = where
+// the failing value started.  A map entry is the CHAIN form: two calls built into the two
+// halves of one element, the second only where the first succeeded.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below: admission without the offset-0 condition, which takes `dw`
+//   (its moved field at +8) and writes every value 8 bytes past the element (`c5`).  Measured
+//   by hand beside it: the failing-prefix sweeps leave the same live records with the rule on,
+//   off (`LOFT_NO_DESTINATION=1`) and on the interpreter (603 lists, 807 maps).
+// @falsified-by: tests/falsified/a-call-result-moved-into-an-element-is-built-there.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-call-result-moved-into-an-element-is-built-there-chain.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).  The plant releases only the failing
+//   level's own destination; the key built before it stays in the kept results' store, which
+//   only the live record count `c8` reads can see (values and the leak check stay green).
+
+enum Val { VNone, VInt { value: integer }, VText { value: text }, VList { items: vector<Val> }, VMap { entries: vector<Entry> } }
+struct Entry { key: Val, value: Val }
+struct Dv { const value: Val, const next: integer, const ok: boolean }
+/// The same record with the moved field NOT first: the twin binds its buffer to the
+/// element, so this shape declines (and must answer the same).
+struct Dw { const next: integer, const value: Val, const ok: boolean }
+
+fn dv(b: vector<u8>, pos: integer) -> Dv {
+  if pos >= len(b) { return Dv { value: VNone, next: pos, ok: false }; }
+  t = b[pos] ?? 0;
+  if t < 100 { return Dv { value: VInt { value: t }, next: pos + 1, ok: true }; }
+  if t < 200 {
+    n = t - 100;
+    if pos + 1 + n > len(b) { return Dv { value: VNone, next: pos, ok: false }; }
+    return Dv { value: VText { value: text_from_byte_range(b, pos + 1, pos + 1 + n) }, next: pos + 1 + n, ok: true };
+  }
+  if t >= 240 {
+    entries: vector<Entry> = [];
+    p = pos + 1;
+    mok = true;
+    for _ in 0..t - 240 {
+      if mok {
+        kd = dv(b, p);
+        if kd.ok {
+          vd = dv(b, kd.next);
+          if vd.ok {
+            kv = kd.value;
+            vv = vd.value;
+            entries += [Entry { key: kv, value: vv }];
+            p = vd.next;
+          } else { mok = false; }
+        } else { mok = false; }
+      }
+    }
+    if !mok { return Dv { value: VNone, next: pos, ok: false }; }
+    return Dv { value: VMap { entries: entries }, next: p, ok: true };
+  }
+  items: vector<Val> = [];
+  p = pos + 1;
+  aok = true;
+  for _ in 0..t - 200 {
+    if aok {
+      sub = dv(b, p);
+      if sub.ok { items += [sub.value]; p = sub.next; } else { aok = false; }
+    }
+  }
+  if !aok { return Dv { value: VNone, next: pos, ok: false }; }
+  return Dv { value: VList { items: items }, next: p, ok: true };
+}
+
+fn dw(b: vector<u8>, pos: integer) -> Dw {
+  if pos >= len(b) { return Dw { value: VNone, next: pos, ok: false }; }
+  t = b[pos] ?? 0;
+  if t < 100 { return Dw { value: VInt { value: t }, next: pos + 1, ok: true }; }
+  if t < 200 {
+    n = t - 100;
+    if pos + 1 + n > len(b) { return Dw { value: VNone, next: pos, ok: false }; }
+    return Dw { value: VText { value: text_from_byte_range(b, pos + 1, pos + 1 + n) }, next: pos + 1 + n, ok: true };
+  }
+  items: vector<Val> = [];
+  p = pos + 1;
+  aok = true;
+  for _ in 0..t - 200 {
+    if aok {
+      sub = dw(b, p);
+      if sub.ok { items += [sub.value]; p = sub.next; } else { aok = false; }
+    }
+  }
+  if !aok { return Dw { value: VNone, next: pos, ok: false }; }
+  return Dw { value: VList { items: items }, next: p, ok: true };
+}
+
+fn ints(v: Val) -> integer {
+  match v {
+    VInt { value } => value,
+    VList { items } => { s = 0; for x in items { s += ints(x); } s },
+    VMap { entries } => { s = 0; for x in entries { s += ints(x.key) * 100 + ints(x.value); } s },
+    _ => 0
+  }
+}
+
+fn texts(v: Val) -> text {
+  match v {
+    VText { value } => value,
+    VList { items } => { s = ""; for x in items { s += texts(x); } s },
+    VMap { entries } => { s = ""; for x in entries { s += texts(x.key) + "=" + texts(x.value) + ";"; } s },
+    _ => ""
+  }
+}
+
+/// The live record count `store_memory()` reports: no value of this program depends on it,
+/// so a release a failing path skips shows here and nowhere else.
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+/// Every prefix of the map frame, every result discarded.
+fn map_sweep(m: vector<u8>, rounds: integer) -> integer {
+  ok = 0;
+  for _ in 0..rounds {
+    for l in 0..len(m) + 1 { if dv(m[0..l], 0).ok { ok += 1; } }
+  }
+  ok
+}
+
+fn main() {
+  // c1 — [5, [7, 8], 9]: 29 across four integers, the whole frame read.
+  b1: vector<u8> = [203, 5, 202, 7, 8, 9];
+  d1 = dv(b1, 0);
+  assert(d1.ok && d1.next == 6 && ints(d1.value) == 29, "c1: {d1.ok} {d1.next} {ints(d1.value)}");
+
+  // c2 — a text inside a list: ["hij", 42].
+  b2: vector<u8> = [202, 103, 104, 105, 106, 42];
+  d2 = dv(b2, 0);
+  assert(d2.ok && d2.next == 6 && ints(d2.value) == 42 && texts(d2.value) == "hij", "c2: {d2.next} {texts(d2.value)}");
+
+  // c3 — every prefix of [1, ["xy", 7], 9]: only the whole frame (length 8) decodes, every
+  // shorter one fails at the top with next 0 — after a text or a list was already built
+  // into an element that must then be released.
+  f: vector<u8> = [203, 1, 202, 102, 120, 121, 7, 9];
+  oks = 0;
+  nexts = 0;
+  for l in 0..9 {
+    d = dv(f[0..l], 0);
+    if d.ok {
+      oks += 1;
+      assert(l == 8 && d.next == 8 && ints(d.value) == 17 && texts(d.value) == "xy", "c3 whole: {l} {d.next}");
+    } else {
+      nexts += d.next;
+    }
+  }
+  assert(oks == 1 && nexts == 0, "c3: {oks} {nexts}");
+
+  // c4 — five lists deep around one integer.
+  b4: vector<u8> = [201, 201, 201, 201, 201, 4];
+  d4 = dv(b4, 0);
+  assert(d4.ok && d4.next == 6 && ints(d4.value) == 4, "c4: {d4.next} {ints(d4.value)}");
+
+  // c6 — a map {"ab": 3, 4: [5, "c"]}: keys weigh 100 in ints, so 3 + 400 + 5 = 408; texts
+  // render key=value; per entry.
+  m6: vector<u8> = [242, 102, 97, 98, 3, 4, 202, 5, 101, 99];
+  d6 = dv(m6, 0);
+  assert(d6.ok && d6.next == 10 && ints(d6.value) == 408, "c6: {d6.ok} {d6.next} {ints(d6.value)}");
+  assert(texts(d6.value) == "ab=;=c;", "c6 texts: {texts(d6.value)}");
+
+  // c7 — every prefix of that map: the second entry's VALUE fails after its key (4) and the
+  // first entry ("ab" = 3) were built into elements, the first finished, the second not —
+  // only the whole frame decodes.
+  ok7 = 0;
+  for l in 0..11 { if dv(m6[0..l], 0).ok { ok7 += 1; } }
+  assert(ok7 == 1, "c7: {ok7}");
+
+  // c8 — the failing prefixes leave nothing behind.  Ten rounds decoding the whole frame and
+  // keeping it cost some number of live records; ten rounds of EVERY prefix, keeping the one
+  // success each round, must cost exactly as many — a key built into an element whose value then failed, and not released,
+  // stays in the store the kept results live in and adds records every round.
+  // Both phases run the same loop and end on the same last iteration (the whole frame), so
+  // they leave the same temporaries live; they differ only in the failing prefixes.
+  keep: vector<Val> = [];
+  // A warm-up of ten whole-frame rounds first, which settles what a first round claims once.
+  r0 = 0;
+  r1 = 0;
+  for round in 0..30 {
+    if round == 10 { r0 = live_records(); }
+    if round == 20 { r1 = live_records(); }
+    lo = if round < 20 { 10 } else { 0 };
+    for l in lo..11 {
+      d8 = dv(m6[0..l], 0);
+      if d8.ok { keep += [d8.value]; }
+    }
+  }
+  r2 = live_records();
+  assert(len(keep) == 30 && r1 > r0 && r2 - r1 == r1 - r0, "c8: {r0} {r1} {r2}");
+
+  // c5 — the record whose moved field is not first answers the same (and is not admitted).
+  w1 = dw(b1, 0);
+  w2 = dw(b2, 0);
+  assert(w1.ok && w1.next == 6 && ints(w1.value) == 29, "c5 w1: {w1.next}");
+  assert(w2.ok && texts(w2.value) == "hij" && ints(w2.value) == 42, "c5 w2: {texts(w2.value)}");
+  wok = 0;
+  for l in 0..9 { if dw(f[0..l], 0).ok { wok += 1; } }
+  assert(wok == 1, "c5 prefixes: {wok}");
+
+  println("ok");
+}

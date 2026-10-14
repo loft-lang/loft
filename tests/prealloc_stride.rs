@@ -12,8 +12,8 @@
 //!
 //! Red on a build that reserves 8 for a narrow element, and on one that loses the nested
 //! element's handle row.
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct P { a: integer, s: text }
@@ -29,7 +29,8 @@ fn main() {
 ";
 
 fn introspect(src: &std::path::Path) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect").arg(src).env("LOFT_TIMEOUT", "120");
     let out = cmd.output().expect("spawn loft introspect");
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -58,9 +59,9 @@ fn reservations(ir: &str) -> Vec<(i32, i32)> {
 #[test]
 fn a_vector_literal_reserves_at_its_elements_width() {
     let src = std::env::temp_dir().join(format!("loft_prealloc_{}.loft", std::process::id()));
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     let ir = introspect(&src);
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
     let got = reservations(&ir);
     assert!(
         !got.is_empty(),

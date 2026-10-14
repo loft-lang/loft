@@ -18,17 +18,20 @@
 //! Skips cleanly when `typst` is absent, the way the native tests skip without `rustc`. A
 //! skip is honest here: the check belongs wherever the PDFs are actually built.
 
+use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 fn typst_available() -> bool {
-    Command::new("typst").arg("--version").output().is_ok()
+    loft::platform::process::harness_command("typst")
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 /// Compile one generated `.typ` to a throwaway PDF and report the first error.
 fn compiles(source: &str) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(source);
-    if !src.exists() {
+    if !fa::exists(&src) {
         println!("skip {source}: not generated in this tree");
         return;
     }
@@ -36,19 +39,19 @@ fn compiles(source: &str) {
     // to the home directory and answers "Permission denied" for a PDF in `/tmp`,
     // while `make pdf` writing into `doc/` works on the same box.
     let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
-    std::fs::create_dir_all(&scratch).expect("target/ is writable");
+    fa::create_dir_all(&scratch).expect("target/ is writable");
     let out = scratch.join(format!(
         "loft_typst_check_{}_{}.pdf",
         std::process::id(),
         source.replace(['/', '.'], "_")
     ));
-    let result = Command::new("typst")
+    let result = loft::platform::process::harness_command("typst")
         .arg("compile")
         .arg(&src)
         .arg(&out)
         .output()
         .expect("typst runs once its presence is established");
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     assert!(
         result.status.success(),
         "{source} no longer compiles — `make pdf` would fail:\n{}",

@@ -1,0 +1,63 @@
+# @PLN184 A1 — the compiler and runtime reach the file system only through `file_access`
+# (src/file_access/mod.rs): build a `PathText` and call the operation there.  Denied in the
+# lib and the binaries (`#![warn]` at each crate root, `-D warnings` at the clippy gate); a
+# file not yet migrated carries one marked `#![allow]`, and that set only shrinks.
+disallowed-methods = [
+  { path = "std::fs::canonicalize", reason = "file_access::canonical" },
+  { path = "std::fs::copy", reason = "file_access::copy" },
+  { path = "std::fs::create_dir", reason = "file_access::create_dir" },
+  { path = "std::fs::create_dir_all", reason = "file_access::create_dir_all" },
+  { path = "std::fs::exists", reason = "file_access::exists" },
+  { path = "std::fs::hard_link", reason = "a file_access operation" },
+  { path = "std::fs::metadata", reason = "file_access::metadata" },
+  { path = "std::fs::read", reason = "file_access::read" },
+  { path = "std::fs::read_dir", reason = "file_access::read_dir" },
+  { path = "std::fs::read_link", reason = "a file_access operation" },
+  { path = "std::fs::read_to_string", reason = "file_access::read_to_string" },
+  { path = "std::fs::remove_dir", reason = "file_access::remove_dir" },
+  { path = "std::fs::remove_dir_all", reason = "file_access::remove_dir_all" },
+  { path = "std::fs::remove_file", reason = "file_access::remove_file" },
+  { path = "std::fs::rename", reason = "file_access::rename" },
+  { path = "std::fs::set_permissions", reason = "a file_access operation" },
+  { path = "std::fs::soft_link", reason = "a file_access operation" },
+  { path = "std::fs::symlink_metadata", reason = "file_access::is_symlink" },
+  { path = "std::fs::write", reason = "file_access::write" },
+  { path = "std::fs::File::open", reason = "file_access::open" },
+  { path = "std::fs::File::create", reason = "file_access::create" },
+  { path = "std::fs::File::create_new", reason = "file_access::open_with" },
+  { path = "std::fs::OpenOptions::open", reason = "file_access::open_with" },
+  { path = "std::fs::DirBuilder::create", reason = "file_access::create_dir_all" },
+  { path = "std::path::Path::exists", reason = "file_access::exists" },
+  { path = "std::path::Path::try_exists", reason = "file_access::exists" },
+  { path = "std::path::Path::is_file", reason = "file_access::is_file" },
+  { path = "std::path::Path::is_dir", reason = "file_access::is_dir" },
+  { path = "std::path::Path::is_symlink", reason = "file_access::is_symlink" },
+  { path = "std::path::Path::metadata", reason = "file_access::metadata" },
+  { path = "std::path::Path::symlink_metadata", reason = "file_access::is_symlink" },
+  { path = "std::path::Path::canonicalize", reason = "file_access::canonical" },
+  { path = "std::path::Path::read_dir", reason = "file_access::read_dir" },
+  { path = "std::path::Path::read_link", reason = "a file_access operation" },
+  # Path-NAME logic: the name operations file_access answers by the host flavor's rules.
+  { path = "std::path::Path::file_name", reason = "file_access::file_name" },
+  { path = "std::path::Path::file_stem", reason = "file_access::file_stem" },
+  { path = "std::path::Path::extension", reason = "file_access::extension / has_extension" },
+  { path = "std::path::Path::with_extension", reason = "file_access::with_extension" },
+  { path = "std::path::Path::with_file_name", reason = "a PathText operation" },
+  { path = "std::path::Path::has_root", reason = "PathText::is_absolute" },
+  { path = "std::path::Path::is_relative", reason = "file_access::is_absolute" },
+  { path = "std::path::PathBuf::set_extension", reason = "file_access::with_extension" },
+  { path = "std::os::unix::fs::symlink", reason = "a file_access operation", allow-invalid = true },
+  { path = "std::os::windows::fs::symlink_file", reason = "a file_access operation", allow-invalid = true },
+  { path = "std::os::windows::fs::symlink_dir", reason = "a file_access operation", allow-invalid = true },
+  { path = "std::env::set_current_dir", reason = "the current directory is process state: a file_access operation" },
+  { path = "libloading::Library::new", reason = "a library path is a file_access path", allow-invalid = true },
+  { path = "mmap_storage::file::Storage::open", reason = "a store image path is a file_access path", allow-invalid = true },
+  # @PLN184 P6 — every process loft starts goes through `platform::process` (src/platform_process.rs,
+  # the one home of this call): `Spawn` owns the child's tree, its driver death and its paths.  A
+  # test harness that must hold the raw process takes `platform::process::harness_command`; an
+  # unmigrated file opts out with a marked `#![allow]`, listed in src/platform_process_clippy_allow.baseline.
+  { path = "std::process::Command::new", reason = "platform::process::Spawn (a test harness: platform::process::harness_command)" },
+]
+disallowed-types = [
+  { path = "std::fs::DirBuilder", reason = "file_access::create_dir_all" },
+]

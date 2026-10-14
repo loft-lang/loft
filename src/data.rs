@@ -613,7 +613,7 @@ impl IntegerSpec {
     /// `not_null` is NOT read.  It once was, as "the same answer reached by declaration", but
     /// every non-nullable struct field's spec carries it and `not null` itself has no effect,
     /// so on a wide template it claimed a null the bytes still hold: `s.i = a * b` overflowing
-    /// into an `i: integer` field reads null with nothing reported (C85), and the lint called
+    /// into an `i: integer` field reads null with nothing reported (@C85), and the lint called
     /// the only test that sees it always false.  The width families above are the whole answer.
     ///
     /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
@@ -638,6 +638,16 @@ impl IntegerSpec {
     /// they were unified: the `i32` FIELD stored `0` where its local and its element stored
     /// null — loft#1296's disagreement reopened from the other side.  An earlier version of
     /// this comment claimed *"two readers, one fact"*; that was never true.
+    /// Is this the FULL `integer` — the one range nothing narrows to?  `IntegerSpec`'s i32/u32
+    /// bounds cannot hold the i64 range, so it has two bound encodings (the `signed32`
+    /// template ending at `i32::MAX`, the `wide` one at `u32::MAX`, formal/types.md D2) and is
+    /// told from a range by those and by carrying no `forced_size`: the `i32` ALIAS has the
+    /// signed-32 template's exact range in 4 bytes, and is a narrow range like any other.
+    #[must_use]
+    pub fn is_full_integer(&self) -> bool {
+        self.forced_size.is_none() && (self.is_signed32_template() || self.is_wide_template())
+    }
+
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
         self.is_wide_template() || self.is_signed32_template()
@@ -1459,6 +1469,24 @@ impl Value {
     pub fn map_nodes(&mut self, f: &mut impl FnMut(&mut Value)) {
         f(self);
         self.for_each_child_mut(&mut |c| c.map_nodes(f));
+    }
+
+    /// Is this expression tree deeper than `limit`, every node counted — `Span` wrappers too,
+    /// because the recursive passes after the parser descend through them one call each?  The
+    /// descent stops at `limit`, so a tree too deep for those passes is answered with at most
+    /// `limit` small frames and no allocation (the parser asks this of every body, loft#1961).
+    #[must_use]
+    pub fn deeper_than(&self, limit: usize) -> bool {
+        if limit == 0 {
+            return true;
+        }
+        let mut deeper = false;
+        self.for_each_child(&mut |c| {
+            if !deeper && c.deeper_than(limit - 1) {
+                deeper = true;
+            }
+        });
+        deeper
     }
 
     /// Pre-order visitor: calls `f` on this node and every descendant.
@@ -2405,7 +2433,7 @@ impl Type {
     /// Yes for every kind that spells absence IN BAND — a wide integer, `boolean`, `float`,
     /// `single`, `character`, `text` and an enum: `(N-Store)` lets a null into such a slot with
     /// a warning and the slot then holds it, and an overflow reaches a plain `integer` with no
-    /// warning at all (C85).  No for a declared narrow range (C127: an unfitting value takes
+    /// warning at all (@C85).  No for a declared narrow range (C127: an unfitting value takes
     /// the default) and for a dense record or a collection, whose slot has no room for absence
     /// and reads a record or an empty collection instead.
     #[must_use]
@@ -2498,54 +2526,68 @@ impl Type {
 
     /// The type the return-buffer machinery should treat this return as (loft#938).
     ///
-    /// `Optional(Vector(τ))` peels to `Vector(τ)`: a nullable COLLECTION return lays out
-    /// exactly like the bare one and wants the same hidden `__retbuf`, which is what stops
-    /// the caller inheriting a store the callee allocated per call.
+    /// `Optional(τ)` peels to `τ` for every shape that takes the buffer — a collection, a
+    /// record, a record enum: the `?` is a compile-time marker over τ's own storage (C90), so a
+    /// nullable return lays out exactly like the bare one and takes the same hidden `__retbuf`
+    /// (`@FR-N-Road`, loft#1934).  A `null` answer is a value the caller reads, never a buffer
+    /// it fails to receive.  Every other `Optional` stays wrapped.
     ///
-    /// Every other `Optional` stays WRAPPED, and that is the load-bearing half. A nullable
-    /// STRUCT return (`-> S?`) is loft#896's synthetic `__nullable<S>` enum — a different
-    /// representation with its own delivery — and giving it a buffer as well leaks one record
-    /// per call. The `?` is transparent only where the storage under it is.
-    ///
-    /// Gated on [`keys::nullable_ret_buffer`], **OPT-IN and default off**: with the switch
-    /// off this is the IDENTITY, so every caller reads exactly as it did before the gate
-    /// existed. See that switch for what turning it on currently fixes and what it does not.
+    /// Gated on [`keys::nullable_ret_buffer`] (default on, `LOFT_NO_NULLABLE_RETBUF=1` turns it
+    /// off): with the switch off this is the IDENTITY, and a nullable return takes no buffer.
     #[must_use]
     pub fn ret_promo_base(&self) -> &Type {
-        if !crate::keys::nullable_ret_buffer() {
-            return self;
-        }
+        self.buffered_payload().unwrap_or(self)
+    }
+
+    /// The `τ` a `τ?` return looks through its `?` to, when `τ` takes the buffer — `None` for
+    /// every other type.  The one answer the peels below share, so "which shapes peel"
+    /// cannot drift between them.
+    fn buffered_payload(&self) -> Option<&Type> {
         match self {
-            Type::Optional(inner) if matches!(inner.as_ref(), Type::Vector(_, _)) => inner,
-            other => other,
+            Type::Optional(inner)
+                if crate::keys::nullable_ret_buffer()
+                    && matches!(
+                        inner.as_ref(),
+                        Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _)
+                    ) =>
+            {
+                Some(inner)
+            }
+            _ => None,
         }
+    }
+
+    /// Does a function returning this type take the caller-allocated hidden `__retbuf`?
+    ///
+    /// One home for the three sites that reserve one — the signature, the between-passes
+    /// sweep and a generic method's stub — so they cannot disagree on a function's arity.
+    /// Read through [`ret_promo_base`](Self::ret_promo_base), so `τ?` answers as `τ` does.
+    #[must_use]
+    pub fn takes_ret_buffer(&self) -> bool {
+        matches!(
+            self.ret_promo_base(),
+            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+        )
     }
 
     /// How `ref_return` reads this return type: the heap shape whose DEPS it carries, and
     /// what peeling to reach it means — loft#974.
     ///
-    /// [`ret_promo_base`](Self::ret_promo_base) answers a DELIVERY question (does this
-    /// return get a `__retbuf` and a buffer-filling rewrite?) and deliberately peels
-    /// `Optional(Vector)` only: a nullable STRUCT return is loft#896's synthetic
-    /// `__nullable<S>`, which has its own delivery, and giving it a second one leaks a
-    /// record per call — measured, and the reason that peel is narrow.
+    /// A `τ?` that takes the buffer ([`ret_promo_base`](Self::ret_promo_base)) is
+    /// `Delivered`: its base is placed as τ's is.  A nullable KEYED return keeps its own
+    /// delivery and is `SignatureOnly`.
     ///
-    /// This answers a SIGNATURE question, which is not the same one: *does the returned
-    /// value borrow a parameter, and which?* That fact is true whatever the delivery is —
-    /// `fn get(b: Bag, k: text) -> Item? { b.items[k] }` hands back a view into `b`
-    /// whether or not a `?` is wrapped around it — and losing it makes the CALLER type
-    /// the result owned and free the caller's own record at scope exit (silent wrong
-    /// answers on both backends; a panic for the enum form).
+    /// The SIGNATURE half is true whatever the delivery is: *does the returned value borrow a
+    /// parameter, and which?* `fn get(b: Bag, k: text) -> Item? { b.items[k] }` hands back a
+    /// view into `b` whether or not a `?` is wrapped around it, and losing it makes the CALLER
+    /// type the result owned and free the caller's own record at scope exit.
     ///
     /// One function answers both halves, so "which shapes peel" and "did it peel" cannot
     /// drift apart the way two `matches!` did.
     #[must_use]
     pub fn ret_dep_shape(&self) -> (&Type, RetPeel) {
         match self {
-            Type::Optional(inner)
-                if crate::keys::nullable_ret_buffer()
-                    && matches!(inner.as_ref(), Type::Vector(_, _)) =>
-            {
+            Type::Optional(_) if let Some(inner) = self.buffered_payload() => {
                 (inner, RetPeel::Delivered)
             }
             Type::Optional(inner)
@@ -2566,8 +2608,7 @@ impl Type {
     /// same question instead of re-deriving the rule. `false` whenever the switch is off.
     #[must_use]
     pub fn ret_promo_peels(&self) -> bool {
-        crate::keys::nullable_ret_buffer()
-            && matches!(self, Type::Optional(inner) if matches!(inner.as_ref(), Type::Vector(_, _)))
+        self.buffered_payload().is_some()
     }
 
     /// This type with the `Rewritten` marker removed.
@@ -2581,11 +2622,18 @@ impl Type {
     /// rather than a wrapper.
     #[must_use]
     pub fn unrewritten(&self) -> Type {
+        self.peel_rewritten().clone()
+    }
+
+    /// The type under every `Rewritten` marker, borrowed — [`Type::unrewritten`] without the
+    /// clone, for a site asked on every operator of a program, which must not allocate.
+    #[must_use]
+    pub fn peel_rewritten(&self) -> &Type {
         let mut t = self;
         while let Type::Rewritten(inner) = t {
             t = inner;
         }
-        t.clone()
+        t
     }
 
     /// Pass-2 keystone, the `Type` twin of `Value::for_each_child`
@@ -3326,16 +3374,27 @@ impl Type {
     /// In a vector they are not: the element width IS the stride, so handing a
     /// `vector<integer>` to a `vector<u8>` parameter re-reads each 8-byte
     /// element as eight 1-byte ones — silently, since the element COUNT is
-    /// stored and still agrees.  Width comes from the canonical
-    /// [`IntegerSpec::byte_width`] (so a range-typed element and its alias —
-    /// `integer(0,100)` and `u8` — are correctly the same layout), and the sign
-    /// of the lower bound separates `i8` from `u8`, which share a width but not
-    /// a reading.
+    /// stored and still agrees.
+    ///
+    /// Two integer elements are one storage when their BYTES mean the same values: the same
+    /// nullability and width, as the storage home derives them (`Data::narrow_vector_element`
+    /// — a null code is reserved for a `τ?` element only), and below 8 bytes the same encoding
+    /// base, since a narrow element is stored as `value - part_min`.  So `u8` and
+    /// `integer limit(0, 255)` are one storage, `limit(100, 355) size(1)` is not `u8` although
+    /// both are one byte, and every 8-byte element is stored raw and is one storage whatever
+    /// range it declares (`@FR-C-Refl` decided on storage — D-types-26).
     #[must_use]
     pub fn same_element_storage(&self, other: &Type) -> bool {
         match (self.base(), other.base()) {
             (Type::Integer(a), Type::Integer(b)) => {
-                a.byte_width(!a.not_null) == b.byte_width(!b.not_null) && (a.min < 0) == (b.min < 0)
+                let (a_null, b_null) = (
+                    matches!(self, Type::Optional(_)),
+                    matches!(other, Type::Optional(_)),
+                );
+                let (a_w, b_w) = (a.byte_width(a_null), b.byte_width(b_null));
+                a_null == b_null
+                    && a_w == b_w
+                    && (a_w >= 8 || a.part_min(a_w, a_null) == b.part_min(b_w, b_null))
             }
             (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
             // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is
@@ -3518,11 +3577,10 @@ impl Type {
             // A width declared through a stdlib alias reads as the alias the author wrote
             // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
             // debugger seed annotated with it could not be evaluated (@PLN165 D10).
-            Type::Integer(spec)
-                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
-            {
-                data.integer_alias(spec).unwrap_or("integer").to_string()
-            }
+            // loft#1938 — every integer, at any depth (a vector's element, a tuple member, a
+            // parameter), by the name `integer_spec_name` gives it: its alias or its range as
+            // the parser reads it back.
+            Type::Integer(spec) if source => data.integer_spec_name(spec),
             Type::Integer(spec) if spec.source_name().is_some() => {
                 spec.source_name().unwrap_or("integer").to_string()
             }
@@ -3656,7 +3714,7 @@ impl Type {
             Type::Optional(tp) => format!("{}?", tp.argument(data, d_nr)),
             _ => {
                 let d = data.def(d_nr);
-                self.show(data, &Function::new(&d.name, &d.position.file))
+                self.show(data, &Function::new(&d.name, d.position.file.as_str()))
             }
         }
     }
@@ -3779,9 +3837,27 @@ fn element_offsets_alignment_max(types: &[Type]) -> u8 {
 /// (`calculate_positions_with_groups`) agree on every byte offset.
 #[must_use]
 pub fn element_stack_size(t: &Type) -> usize {
+    element_stack_size_in(t, false)
+}
+
+/// `@FR-T-Record` — does a tuple LOCAL's frame slot hold each `text` member as the tuple's own
+/// text?  The one switch both halves of the layout read: the slot size a tuple variable is
+/// given (`variables::size(Tuple, Context::Variable)`) and the member offsets every emitter
+/// lays the slot out by (`state::codegen::tuple_slot_owned`).  A by-value tuple parameter and
+/// a tuple value on the eval stack stay borrowed either way.
+pub const TUPLE_LOCAL_TEXT_OWNED: bool = true;
+
+/// [`element_stack_size`] for a tuple held in an OWNED slot or not.  A `text` member of an
+/// owned tuple — a tuple LOCAL's frame slot — is the tuple's own text, a `String`, as a text
+/// local is (`variables::size(Text, Context::Variable)`); in a borrowed position — a tuple
+/// value on the eval stack, a by-value parameter — it is the `Str` a text argument is
+/// (`@FR-T-Record`).  Every other member is the same width either way.
+#[must_use]
+pub fn element_stack_size_in(t: &Type, owned: bool) -> usize {
     match t {
         // @PLN25 slice (b): `Optional(τ)` shares its base's sentinel storage size.
-        Type::Optional(inner) => element_stack_size(inner),
+        Type::Optional(inner) => element_stack_size_in(inner, owned),
+        Type::Text(_) if owned => std::mem::size_of::<String>(),
         Type::Boolean | Type::Enum(_, false, _) => 1,
         Type::Single | Type::Character => 4,
         // P249 — fn-ref slot is 20 bytes (8 B d_nr + 12 B closure DbRef);
@@ -3800,7 +3876,7 @@ pub fn element_stack_size(t: &Type) -> usize {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Enum(_, true, _)
-        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (C125).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (@C125).
         // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
         // member of one overlapped its neighbours.
         | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
@@ -3815,7 +3891,8 @@ pub fn element_stack_size(t: &Type) -> usize {
             elems
                 .iter()
                 .map(|t| {
-                    crate::variables::aligned_stack_step(element_stack_size(t) as u32) as usize
+                    crate::variables::aligned_stack_step(element_stack_size_in(t, owned) as u32)
+                        as usize
                 })
                 .sum()
         }
@@ -3838,14 +3915,23 @@ pub fn element_stack_size(t: &Type) -> usize {
 /// is what makes `(u8, u16)` occupy 16 bytes where `struct { a: u8, b: u16 }`
 /// occupies 3.
 ///
-/// Records pack TIGHTLY — `struct { a: u8, b: u32, c: u16 }` is 1+4+2 = 7 bytes with
-/// no padding, because store access is unaligned-tolerant — so there is no alignment
-/// term here.
+/// `@FR-L-Align` (@C138) — every element sits on its natural boundary
+/// ([`element_storage_align`]), and a nested tuple's size is a multiple of its own
+/// alignment, exactly as the layout routine places a `__tuple<…>` record's members.
 #[must_use]
 pub fn element_storage_size(t: &Type) -> usize {
     match t.base() {
         Type::Integer(spec) => spec.byte_width(true) as usize,
-        Type::Tuple(elems) => elems.iter().map(element_storage_size).sum(),
+        Type::Tuple(elems) => {
+            let offsets = element_storage_offsets(elems);
+            let end = elems
+                .iter()
+                .zip(&offsets)
+                .map(|(e, o)| o + element_storage_size(e))
+                .max()
+                .unwrap_or(0);
+            end.next_multiple_of(element_storage_align(t))
+        }
         // Measured against the record oracle: `(u8, text)` is 5 bytes, so a stored
         // `text` element is the 4-byte heap pointer, NOT the 16-byte stack `Str`.
         // `read_tuple_at_wide` says the same ("text: 4-byte heap-pointer") and
@@ -3862,17 +3948,41 @@ pub fn element_storage_size(t: &Type) -> usize {
     }
 }
 
-/// Element offsets in the **STORAGE** (record) layout: cumulative
-/// [`element_storage_size`], packed tight. Sibling of [`element_stack_offsets`].
+/// The natural alignment of a tuple element as STORED — the alignment the layout routine
+/// gives the matching field of a `__tuple<…>` record: a narrow integer its own width, a
+/// text or a record pointer 4, a nested tuple its largest member's.
+#[must_use]
+pub fn element_storage_align(t: &Type) -> usize {
+    match t.base() {
+        Type::Integer(spec) => spec.byte_width(true) as usize,
+        Type::Tuple(elems) => elems.iter().map(element_storage_align).max().unwrap_or(1),
+        Type::Function(..) => 4,
+        other => element_stack_align(other) as usize,
+    }
+}
+
+/// Element offsets in the **STORAGE** (record) layout: each element at the next position
+/// its [`element_storage_align`] divides (`@FR-L-Align`, @C138).  Sibling of
+/// [`element_stack_offsets`]; the layout of the `__tuple<…>` record is the authority, and
+/// `tests/layout_alignment.rs` holds the two to the same answer.
 #[must_use]
 pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
-    let mut offsets = Vec::with_capacity(types.len());
-    let mut pos = 0usize;
-    for t in types {
-        offsets.push(pos);
-        pos += element_storage_size(t);
-    }
-    offsets
+    // `@FR-L-Tuple` — the record's own packing, largest alignment first
+    // (`LinkedFieldGroup::record_member_offsets`), so the two agree byte for byte.
+    let sa: Vec<(u16, u8)> = types
+        .iter()
+        .map(|t| {
+            (
+                element_storage_size(t) as u16,
+                element_storage_align(t) as u8,
+            )
+        })
+        .collect();
+    LinkedFieldGroup::record_member_offsets(&sa)
+        .0
+        .into_iter()
+        .map(usize::from)
+        .collect()
 }
 
 /// Byte offset of each element in a tuple-like layout.
@@ -3894,12 +4004,20 @@ pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
 /// functions so a call site has to say which it means.
 #[must_use]
 pub fn element_stack_offsets(types: &[Type]) -> Vec<usize> {
+    element_stack_offsets_in(types, false)
+}
+
+/// [`element_stack_offsets`] for a tuple held in an OWNED slot or not — see
+/// [`element_stack_size_in`]: only a `text` member's width differs.
+#[must_use]
+pub fn element_stack_offsets_in(types: &[Type], owned: bool) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(types.len());
     let mut pos: usize = 0;
     for t in types {
         offsets.push(pos);
         // @PLN114 — one stepped slot per element; see `element_stack_size`.
-        pos += crate::variables::aligned_stack_step(element_stack_size(t) as u32) as usize;
+        pos +=
+            crate::variables::aligned_stack_step(element_stack_size_in(t, owned) as u32) as usize;
     }
     offsets
 }
@@ -4260,25 +4378,27 @@ mod tuple_stack_layout_tests {
         })
     }
 
-    /// @PLN114 D1 — the storage view sizes elements as record FIELDS.
+    /// @PLN114 D1 — the storage view sizes elements as record FIELDS; `@C138` places each on
+    /// its natural boundary.
     ///
-    /// Hand-computed against the record oracle: `struct { a: u8, b: u32, c: u16 }`
-    /// measures 7 bytes per record on this build, so the tuple of the same three
-    /// element types must compute 7 too.
+    /// Hand-computed (`@FR-L-Tuple`, @C139): a stored tuple packs as a record, largest
+    /// alignment first — `(u8, u32, u16)` puts the u32 at 0, the u16 at 4 and the u8 at 6: 7
+    /// bytes, padded to 8, as `struct { a: u8, b: u32, c: u16 }`.  The `__tuple<…>` record's
+    /// layout answers the same (`tests/layout_alignment.rs`).
     #[test]
     fn storage_view_packs_like_a_record() {
         use super::{element_storage_offsets, element_storage_size};
         let elems = vec![narrow(1), narrow(4), narrow(2)];
-        assert_eq!(element_storage_offsets(&elems), vec![0, 1, 5]);
+        assert_eq!(element_storage_offsets(&elems), vec![6, 0, 4]);
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            7,
-            "u8 + u32 + u16 packs to 7 bytes, as `struct M` does"
+            8,
+            "u32, u16, u8, pad 1"
         );
 
         let pair = vec![narrow(1), narrow(2)];
-        assert_eq!(element_storage_offsets(&pair), vec![0, 1]);
-        assert_eq!(element_storage_size(&Type::Tuple(pair)), 3);
+        assert_eq!(element_storage_offsets(&pair), vec![2, 0]);
+        assert_eq!(element_storage_size(&Type::Tuple(pair)), 4);
     }
 
     /// The stack view is unchanged and deliberately WIDER — a push occupies a whole
@@ -4295,8 +4415,8 @@ mod tuple_stack_layout_tests {
         );
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            7,
-            "storage: 1 + 4 + 2"
+            8,
+            "storage: 4, 2 and 1, largest alignment first"
         );
     }
 
@@ -4542,6 +4662,156 @@ pub struct Argument {
     pub const_pos: (u32, u32),
 }
 
+/// @PLN187 (@C140) — where a declared type names a user `type` alias, by position: the alias
+/// itself, a vector's elements, a tuple's members.  `type Handle = integer` declared without
+/// `pub` is ABSTRACT outside its file (`parser::abstract_alias`), so the checker follows these
+/// positions through a program while the `Type` stays the alias's underlying type.  A
+/// position no alias names is `Plain`; a compound whose positions are all plain is `Plain`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum AliasFact {
+    #[default]
+    Plain,
+    /// The value IS the alias (its def number).
+    Alias(u32),
+    /// A vector whose elements carry the inner fact.
+    Vector(Box<AliasFact>),
+    /// A tuple whose members carry these facts, in order.
+    Tuple(Vec<AliasFact>),
+    /// An empty vector literal `[]` — fits a vector of any fact.  Never recorded.
+    Empty,
+    /// A lambda whose body yields the inner fact — what binds a generic's result type
+    /// variable (`map(v, |x| x)`).  Never recorded.
+    Lambda(Box<AliasFact>),
+}
+
+impl AliasFact {
+    #[must_use]
+    pub fn is_plain(&self) -> bool {
+        matches!(self, AliasFact::Plain)
+    }
+
+    /// Every alias the fact names, at any position.
+    pub fn aliases(&self, out: &mut Vec<u32>) {
+        match self {
+            AliasFact::Alias(a) => out.push(*a),
+            AliasFact::Vector(inner) => inner.aliases(out),
+            AliasFact::Tuple(ms) => ms.iter().for_each(|m| m.aliases(out)),
+            AliasFact::Plain | AliasFact::Empty | AliasFact::Lambda(_) => {}
+        }
+    }
+
+    /// `vector<inner>`, plain when its elements are.
+    #[must_use]
+    pub fn vector(inner: AliasFact) -> AliasFact {
+        match inner {
+            AliasFact::Plain | AliasFact::Empty => AliasFact::Plain,
+            f => AliasFact::Vector(Box::new(f)),
+        }
+    }
+
+    /// `(members…)`, plain when every member is.
+    #[must_use]
+    pub fn tuple(members: Vec<AliasFact>) -> AliasFact {
+        let members: Vec<AliasFact> = members
+            .into_iter()
+            .map(|m| {
+                if m == AliasFact::Empty {
+                    AliasFact::Plain
+                } else {
+                    m
+                }
+            })
+            .collect();
+        if members.iter().all(AliasFact::is_plain) {
+            AliasFact::Plain
+        } else {
+            AliasFact::Tuple(members)
+        }
+    }
+
+    /// The IR's text for it: `""` plain, `a<n>` an alias, `v<f>` a vector, `t(<f>,…)` a tuple,
+    /// `_` a plain member inside a tuple.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        fn put(f: &AliasFact, out: &mut String) {
+            match f {
+                AliasFact::Plain | AliasFact::Empty | AliasFact::Lambda(_) => out.push('_'),
+                AliasFact::Alias(a) => {
+                    out.push('a');
+                    out.push_str(&a.to_string());
+                }
+                AliasFact::Vector(inner) => {
+                    out.push('v');
+                    put(inner, out);
+                }
+                AliasFact::Tuple(ms) => {
+                    out.push_str("t(");
+                    for (i, m) in ms.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        put(m, out);
+                    }
+                    out.push(')');
+                }
+            }
+        }
+        if self.is_plain() {
+            return String::new();
+        }
+        let mut out = String::new();
+        put(self, &mut out);
+        out
+    }
+
+    /// The inverse of [`Self::encode`]; anything unreadable is `Plain`.
+    #[must_use]
+    pub fn decode(text: &str) -> AliasFact {
+        fn get(b: &[u8], at: &mut usize) -> AliasFact {
+            match b.get(*at) {
+                Some(b'a') => {
+                    *at += 1;
+                    let start = *at;
+                    while b.get(*at).is_some_and(u8::is_ascii_digit) {
+                        *at += 1;
+                    }
+                    std::str::from_utf8(&b[start..*at])
+                        .ok()
+                        .and_then(|d| d.parse().ok())
+                        .map_or(AliasFact::Plain, AliasFact::Alias)
+                }
+                Some(b'v') => {
+                    *at += 1;
+                    AliasFact::vector(get(b, at))
+                }
+                Some(b't') if b.get(*at + 1) == Some(&b'(') => {
+                    *at += 2;
+                    let mut ms = Vec::new();
+                    loop {
+                        ms.push(get(b, at));
+                        match b.get(*at) {
+                            Some(b',') => *at += 1,
+                            Some(b')') => {
+                                *at += 1;
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    AliasFact::tuple(ms)
+                }
+                Some(b'_') => {
+                    *at += 1;
+                    AliasFact::Plain
+                }
+                _ => AliasFact::Plain,
+            }
+        }
+        let mut at = 0;
+        get(text.as_bytes(), &mut at)
+    }
+}
+
 #[derive(Clone)]
 #[allow(clippy::struct_excessive_bools)] // independent property flags (mutable/constant/const_field/nullable/primary); an enum would add indirection without clarity
 pub struct Attribute {
@@ -4577,6 +4847,9 @@ pub struct Attribute {
     /// bridge, the engine host, placement) reads this mark to hand it a scratch store or
     /// the null sentinel — never the caller's offered result record.
     pub work_buffer: bool,
+    /// @PLN187 (C140) — a field declared `pub`: outside its file it can be read, written,
+    /// matched and named in a literal.  Every field is private to its file without it.
+    pub pub_field: bool,
     /// The initial value of this attribute if it is not given.
     pub value: Value,
     /// A constraint expression checked on every field write.
@@ -4588,6 +4861,8 @@ pub struct Attribute {
     /// `size(N)` annotation (e.g. `i32`), this holds the alias def_nr so
     /// `fill_database` / codegen can consult `forced_size(alias_nr)`.  `0`
     /// means "no alias" — fall back to the limit()-based heuristic.
+    /// @PLN187 — where this parameter's or field's DECLARED type names a `type` alias.
+    pub fact: AliasFact,
     pub alias_d_nr: u32,
     /// P213: for fn-ref struct fields, the def_nr of the lambda assigned
     /// at the (single) construction site.  Used by `fill_database`'s
@@ -4737,41 +5012,31 @@ impl Display for DefType {
 }
 
 /// A group of fields on a struct/type that belong together as a single
-/// logical unit.  Used **exclusively** for two patterns — tuple
-/// elements and index bookkeeping triples.  Do not extend for other
-/// uses without explicit user direction.
+/// logical unit.  Used **exclusively** for tuple elements.  Do not
+/// extend for other uses without explicit user direction.
 ///
 /// `Tuple` — synthetic `__tuple<T1,T2,…>` struct's element fields
 /// `_0`, `_1`, ….  One group per tuple-shape struct; `field_indices`
 /// lists every attribute in element order.  Registered by
 /// [`Data::tuple_def`].
 ///
-/// `Index` — bookkeeping triple appended to a content struct when
-/// `index<T[key]>` is registered.  One group per index instance on the
-/// struct (multiple indexes → multiple groups); `field_indices`
-/// lists exactly `[left, right, color]` in that order.  Registered by
-/// [`Stores::index`].
+/// An `index<T[key]>` once appended a red-black bookkeeping triple as a second kind; its
+/// B+tree (`btree.rs`) keeps its nodes apart and adds no field (@PLN190).
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkedFieldKind {
     Tuple,
-    Index,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkedFieldGroup {
     pub kind: LinkedFieldKind,
     /// 0 for Tuple (only one tuple group per synthetic struct).
-    /// 1-based index instance counter for Index (matches the `_N`
-    /// suffix on `#left_N` / `#right_N` / `#color_N`).
     pub instance: u16,
-    /// Indices into the host struct's field/attribute list.
-    /// For Tuple: element order, length = arity.
-    /// For Index: exactly `[left, right, color]`, length = 3.
+    /// Indices into the host struct's field/attribute list, in element order (length =
+    /// arity).
     pub field_indices: Vec<u16>,
     /// Alignment the GROUP must be placed at — the MAX of every
-    /// member field's alignment.  An index triple
-    /// `[int4 (align 4), int4 (align 4), bool (align 1)]` has group
-    /// alignment 4.  A tuple `(integer (align 8), byte (align 1))` has
+    /// member field's alignment.  A tuple `(integer (align 8), byte (align 1))` has
     /// group alignment 8.  Pass this to the layout routine as the
     /// alignment requirement when reserving the group's contiguous
     /// block — the routine must honour it so the int/integer members
@@ -4780,8 +5045,7 @@ pub struct LinkedFieldGroup {
     /// Total bytes the group occupies when laid out atomically — the
     /// sum of every member's size, **plus** any internal padding
     /// needed to align larger members after smaller ones in element
-    /// order.  An index triple is `4 + 4 + 1 = 9` (no internal padding,
-    /// 1-byte bool last).  A tuple `(byte, integer)` requires 7 bytes
+    /// order.  A tuple `(byte, integer)` requires 7 bytes
     /// of internal padding between them: `1 + 7 + 8 = 16`.
     pub size: u16,
 }
@@ -4840,6 +5104,32 @@ impl LinkedFieldGroup {
     /// each member's position relative to the group's anchor.
     /// Mirrors `group_size`'s internal packing — first member at 0,
     /// each subsequent member at the next natural-alignment offset.
+    #[must_use]
+    pub fn record_member_offsets(member_sizes_aligns: &[(u16, u8)]) -> (Vec<u16>, u16) {
+        // `@FR-L-Tuple` / `@FR-L-Struct` (@C139) — a stored TUPLE is a record, packed as any
+        // record is: the members with the LARGEST alignment first, members of equal alignment
+        // in written order, each on its natural boundary; the size rounded up to the largest
+        // alignment.  The ORDER of the bytes changes nothing a program sees — member `i` is
+        // still `t.i`, and the tuple prints in written order.  An index group keeps
+        // [`Self::group_member_offsets`]: its consumers read `color` at `left + 8`.
+        let mut order: Vec<usize> = (0..member_sizes_aligns.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(member_sizes_aligns[i].1));
+        let mut offsets = vec![0u16; member_sizes_aligns.len()];
+        let mut pos: u16 = 0;
+        let mut max_align: u16 = 1;
+        for i in order {
+            let (size, align) = member_sizes_aligns[i];
+            let align_u16 = u16::from(align.max(1));
+            max_align = max_align.max(align_u16);
+            pos = pos.next_multiple_of(align_u16);
+            offsets[i] = pos;
+            pos += size;
+        }
+        (offsets, pos.next_multiple_of(max_align))
+    }
+
+    /// Per-member offsets inside a group in WRITTEN order — the index group's layout; a
+    /// tuple's is [`Self::record_member_offsets`].
     #[must_use]
     pub fn group_member_offsets(member_sizes_aligns: &[(u16, u8)]) -> Vec<u16> {
         let mut offsets = Vec::with_capacity(member_sizes_aligns.len());
@@ -4905,6 +5195,11 @@ pub struct Definition {
     /// Related type for fields, and the return type for functions
     pub returned: Type,
     /// Whether the return type was declared `not null` (only meaningful for functions)
+    /// @PLN187 — where the DECLARED result type names a `type` alias (`-> Handle`,
+    /// `-> (Handle, u8)`); for an alias definition, where its right-hand side does.
+    /// `returned` holds the underlying type; this keeps what a caller in another file sees,
+    /// so a non-`pub` alias can stay abstract there (C140).
+    pub returned_fact: AliasFact,
     pub returned_not_null: bool,
     /// Rust code
     pub rust: String,
@@ -5024,6 +5319,17 @@ pub struct Definition {
     /// name, as the bare call always has.  A marker on the declaration, never a name test.
     /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
     pub builtin: bool,
+    /// @PLN182 — written `operator` in place of `fn`: a call of this method is what an
+    /// operator form on its `self` type reaches (`a < b` → `compare`).  A plain `fn` of the
+    /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
+    /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
+    pub operator_form: bool,
+    /// `@FR-Const-Foreign` — the declared return type is `-> const T`: the producer hands out
+    /// data loft does not own (a mapped file, a library's adopted buffer), so the value is
+    /// value-const and a binding of the call's result takes `(Const-Value)` (@C139).
+    /// Persisted through the IR store (`DEF_RETURNED_CONST`), so a cached stdlib keeps it;
+    /// mirrored in `tools/ir_schema/ir.loft`.
+    pub returned_const: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -5048,8 +5354,7 @@ pub struct Definition {
     pub purity: Purity,
     /// Linked-field groups on this definition's attributes.
     /// Used **exclusively** for tuple elements (one group covering all
-    /// `_0`, `_1`, …) and index bookkeeping triples (one group per
-    /// index instance, covering `#left_N` / `#right_N` / `#color_N`).
+    /// `_0`, `_1`, …).
     /// Empty for ordinary user-defined structs.
     pub field_groups: Vec<LinkedFieldGroup>,
     /// Origin tag for definitions the compiler synthesises rather than
@@ -5091,6 +5396,12 @@ impl Definition {
     /// `test_*` naming rule and says so in as many words: *"a generated entry point that runs a
     /// different SET than the interpreter is a backend divergence the suite reads as a wrong
     /// answer."*  This is that sentence applied to the two TEST harnesses.
+    /// Declared in `default/` — the standard library.
+    #[must_use]
+    pub fn is_stdlib(&self) -> bool {
+        crate::file_access::is_stdlib_source(self.position.file.as_str())
+    }
+
     #[must_use]
     pub fn is_corpus_entry_point(&self) -> bool {
         if !matches!(self.def_type, DefType::Function) {
@@ -5099,7 +5410,7 @@ impl Definition {
         if !self.name.starts_with("n_") || self.name.starts_with("n___lambda_") {
             return false;
         }
-        if crate::portable_path::is_stdlib_source(&self.position.file) {
+        if crate::file_access::is_stdlib_source(self.position.file.as_str()) {
             return false;
         }
         // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers.
@@ -5154,6 +5465,12 @@ impl Definition {
     #[must_use]
     pub fn builtin(&self) -> bool {
         self.builtin
+    }
+
+    /// Written `operator` (@PLN182): the method an operator form on its `self` type reaches.
+    #[must_use]
+    pub fn operator_form(&self) -> bool {
+        self.operator_form
     }
 
     /// `#superseded "Y"` (@PLN102 arc C): the bare successor-symbol name this
@@ -5386,8 +5703,16 @@ impl Definition {
         vars: &crate::variables::Function,
         buf: Option<u16>,
         null_ref: u32,
+        self_nr: u32,
     ) -> bool {
         match v.unspan() {
+            // A call to ITSELF is fresh when every other site is (loft#1881): a terminating run
+            // ends at one of those, and the answer is the AND over all of them, so a body whose
+            // other sites borrow is refused on those.  Read as "not proven", a recursive generic
+            // copying its base case (`if i == 0 { y: T = v[0]; y } else { ev(v, i - 1) }`) left
+            // its result unlifted and leaked one record per inline call, where its concrete
+            // twin was lifted and freed (@FR-G-Mono).
+            Value::Call(nr, _) if *nr == self_nr => true,
             // Null is a value, not a store — it can neither leak nor dangle.  So is the null
             // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
             // `null` tail is spelled: read as "not proven", it refused every instance that
@@ -5402,7 +5727,7 @@ impl Definition {
             // unknown shape it refused a body that returns its fresh buffer, so a bounded
             // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
             // left its result unlifted and leaked one record per inline call (loft#1820).
-            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref),
+            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref, self_nr),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -5410,14 +5735,14 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars, buf, null_ref)
-                    && Self::site_is_fresh(els, vars, buf, null_ref)
+                Self::site_is_fresh(then, vars, buf, null_ref, self_nr)
+                    && Self::site_is_fresh(els, vars, buf, null_ref, self_nr)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -5487,7 +5812,15 @@ impl Definition {
                 sites.push((**inner).clone());
             }
         });
-        if let Value::Block(bl) = &self.code
+        // The body is a `Block`, or an `Insert` whose last element is one: the scope pass
+        // hoists a join's declaration out in front of the body it binds (loft#1872's
+        // `___ret_join`).  Read only as a `Block`, such a body had no tail at all, and the
+        // proofs that read these sites answered "not proven" for a body ending in a local.
+        let body = match &self.code {
+            Value::Insert(ops) => ops.last().unwrap_or(&self.code),
+            other => other,
+        };
+        if let Value::Block(bl) = body
             && let Some(tail) = bl.operators.last()
             && !matches!(tail.unspan(), Value::Return(_))
         {
@@ -5525,7 +5858,7 @@ impl Definition {
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
                 continue;
             }
             match site.unspan() {
@@ -5573,7 +5906,7 @@ impl Definition {
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
                 continue;
             }
             match site.unspan() {
@@ -5612,7 +5945,7 @@ impl Definition {
     }
 
     #[must_use]
-    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
+    pub fn monomorph_return_is_fresh(&self, null_ref: u32, self_nr: u32) -> bool {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let mut seen_return = false;
@@ -5623,7 +5956,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
+            if !Self::site_is_fresh(inner, vars, buf, null_ref, self_nr) {
                 all_fresh = false;
             }
         }
@@ -6010,7 +6343,25 @@ impl Clone for OpSetCache {
     }
 }
 
+/// The answer to [`Data::is_name_only`], kept beside the definition count that produced it —
+/// the [`OpSetCache`] shape, for its reasons: the table is still growing when the first
+/// question arrives, and a clone's definitions diverge, so a clone starts EMPTY.
+#[derive(Default)]
+struct NameOnlyCache(std::sync::Mutex<Option<(u32, std::sync::Arc<HashSet<u32>>)>>);
+
+impl Clone for NameOnlyCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+/// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
+/// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
+/// was declared under.
+pub const RETIRED: &str = "_retired";
+
 #[allow(dead_code)]
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 /// The immutable data of a parsed loft program
 pub struct Data {
@@ -6021,6 +6372,18 @@ pub struct Data {
     /// closed program: a later parse would type a call by the rewritten signature, and a
     /// caller outside loft would read a record the function no longer returns.
     pub open_world: bool,
+    /// The whole-program rewrites (`compile::close_program`) have run on this `Data`.  They
+    /// read facts the scope pass leaves on each function that the program cache's image does
+    /// not carry (scopes, loops, intervals), so a program is closed BEFORE its image is taken
+    /// and a warm load marks the decoded `Data` closed rather than closing it a second time
+    /// from a degraded table (loft#1858).
+    pub program_closed: bool,
+    /// Definitions below this number have had their parse unit finished and their cascades
+    /// synthesized, so what their fn FIELDS hold is known ([`Self::fn_field_record`]).  A
+    /// field's closure record is learned while the parse meets the lambda written into it, so
+    /// during that parse the answer grows; [`Self::owns_droppable`] steers parse-time
+    /// lowerings that must answer alike in both passes, and asks it only for a settled host.
+    pub fn_fields_settled: u32,
     /// The run this program is compiled for OBSERVES function entries — `loft test`'s
     /// coverage, which counts a function covered when a call enters it.  A rewrite that
     /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
@@ -6091,7 +6454,7 @@ pub struct Data {
     /// The file each source was parsed from, as the parser met it.  A definition written
     /// in a source's own file is never a private import there — adoption can leave a
     /// declaration under the `source` of the file that first NAMED it (@C98).
-    source_files: HashMap<u16, std::sync::Arc<str>>,
+    source_files: HashMap<u16, crate::lexer::FileName>,
     /// loft#788 — bare names that MORE THAN ONE import binds, and to different
     /// definitions: `(name, importing_source) → the losing def_nrs`.
     ///
@@ -6131,6 +6494,10 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// `@FR-Op-Conv` — whether the program declares any function named `to_<type>`, an
+    /// `operator` or not; `x as T` asks for one only then, so a program without conversions
+    /// pays nothing at its casts.
+    pub user_operator_conversions: bool,
     /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
     /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
     /// forever.  A refused program does not run, so this needs no place in the image.
@@ -6228,6 +6595,8 @@ pub struct Data {
     /// Lazy cache of the op-number sets the use/dead-store/ownership walks read
     /// (see [`crate::use_analysis::OpSets`] and [`OpSetCache`]).
     op_sets: OpSetCache,
+    /// @PLN187 — the name-only types ([`Self::is_name_only`]).
+    name_only: NameOnlyCache,
 }
 
 #[must_use]
@@ -6235,36 +6604,24 @@ pub fn v_if(test: Value, t: Value, f: Value) -> Value {
     Value::If(Box::new(test), Box::new(t), Box::new(f))
 }
 
-/// May a STACK-backed `&(…)` reference tuple hold an element of this type?
-///
-/// The scalar set is what the stack form addresses; a `&(…)` with any other element is
-/// record-backed instead and is admitted by [`ref_tuple_record_element_ok`].
-///
-/// Enforces @FR-T-Ref-Rep (which representation a `&(…)` names) and @FR-T-Ref-El (what each
-/// may hold), the pair binding.md's D-bind-11 was measured against.
-///
-/// A reference tuple's element is read and written through the tuple's stored DbRef with
-/// the same `(ref, offset)` opcodes an ordinary struct FIELD uses, so the admitted set is
-/// exactly the set those opcode pairs are laid out for.  This is the ONE list — the
-/// signature guard and both `RefTupleGet` / `RefTuplePut` arms read it, so the set the
-/// compiler ADMITS and the set codegen can EMIT cannot disagree.
-///
-/// `text` is not in this set because a stack tuple holds it as a 16-byte `Str` BORROW that the
-/// `(ref, offset)` opcodes — which speak the record form — would misread; the record-backed
-/// `&(…)` is where a `text` element lives, with a slot of its own.
-#[must_use]
-pub fn ref_tuple_element_ok(tp: &Type) -> bool {
-    is_scalar(tp.base())
-}
-
-/// May a RECORD-backed `&(…)` — the form a `&(…)` takes once an element is not a scalar —
-/// hold an element of this type?  Everything a struct field can hold, which is what the
+/// May a `&(…)` reference tuple — a `__tuple<…>` RECORD (`@FR-T-Ref-Rep`) — hold an element of
+/// this type?  Enforces @FR-T-Ref-El.  Everything a struct field can hold, which is what the
 /// `__tuple<…>` record is; what it cannot is what `tuple_def` cannot spell or lay out as a
 /// field: a nullable element (its `?` does not survive the synthetic name), a fn-ref, and a
 /// nested tuple.  Those stay refused, and the refusal names them (tuples.md T-Ref-El).
 #[must_use]
 pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
     !matches!(tp, Type::Optional(_) | Type::Function(..) | Type::Tuple(_))
+}
+
+/// `@FR-T-Ref-Rep` — is a `&(…)` over these members the `__tuple<…>` RECORD?  Every `&(…)` the
+/// record can lay out is (loft#1883): a scalar-only one as much as one with a heap member, so a
+/// link names a tuple local, a vector element and a struct field the same way, as a `&S` names
+/// a record.  What the record cannot spell ([`ref_tuple_record_element_ok`]) is refused where
+/// the `&` is written.  The ONE answer: the type, the local's build and the link bind ask it.
+#[must_use]
+pub fn ref_tuple_is_record(elems: &[Type]) -> bool {
+    !elems.is_empty() && elems.iter().all(ref_tuple_record_element_ok)
 }
 
 /// `@FR-N-Opt`'s side condition: does τ have a value to spend on ABSENCE?
@@ -6464,8 +6821,8 @@ pub fn holds_dbref(tp: &Type) -> bool {
 /// Is `tp` a SCALAR — a value that lives inline in its slot and owns no store?
 ///
 /// The one home for a membership test written at several sites and already drifted between
-/// them: `generation`'s two copies included `Enum(_, false, _)` and
-/// [`ref_tuple_element_ok`] did not, so `&(Col, Col)` over a value enum was refused while
+/// them: `generation`'s two copies included `Enum(_, false, _)` and the stack reference
+/// tuple's element list did not, so `&(Col, Col)` over a value enum was refused while
 /// `&(boolean, boolean)` was admitted — with an identical 1-byte layout
 /// (`element_stack_size`: `Boolean | Enum(_, false, _) => 1`).  Two spellings of one list
 /// disagreeing is the shape loft#1006 was.
@@ -6623,7 +6980,7 @@ impl NarrowSlot {
 pub fn is_scalar(tp: &Type) -> bool {
     matches!(
         // `@FR-N-Shape` — a `τ?` scalar is stored in `τ`'s own width with an in-band sentinel
-        // (C90), so every question this answers is the same question for both.
+        // (@C90), so every question this answers is the same question for both.
         tp.base(),
         Type::Integer(_)
             | Type::Float
@@ -6637,6 +6994,10 @@ pub fn is_scalar(tp: &Type) -> bool {
 pub fn v_set(var: u16, value: Value) -> Value {
     Value::Set(var, Box::new(value))
 }
+
+/// The name of the one-statement block `(I-RangeNull)`'s guard occupies in a counted range's
+/// prelude: a rewrite that matches that prelude by shape steps over a block of this name.
+pub const RANGE_NULL_GUARD: &str = "Range null guard";
 
 #[must_use]
 pub fn v_block(operators: Vec<Value>, result: Type, name: &'static str) -> Value {
@@ -6700,6 +7061,8 @@ impl Write for Into {
 /// `DESIGN_DECISIONS.md`).  Every entry is a name verified to be UNDEFINED in
 /// loft; the width types that ARE legal (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) are
 /// deliberately absent, since a legal name never reaches an unknown-type error.
+///
+/// @C103 — `int` / `str` / `bool` are suggested, never legal.
 pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     Some(match name {
         // Rust / C / Java / Go habits for the 64-bit integer loft calls `integer`.
@@ -6877,6 +7240,8 @@ impl Data {
         Data {
             definitions: Vec::new(),
             open_world: false,
+            program_closed: false,
+            fn_fields_settled: 0,
             observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
@@ -6891,6 +7256,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            user_operator_conversions: false,
             refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
@@ -6913,6 +7279,7 @@ impl Data {
             declared_embeds: Vec::new(),
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
+            name_only: NameOnlyCache::default(),
         }
     }
 
@@ -7036,6 +7403,7 @@ impl Data {
         // could in principle land back on its old value over a different table.  This
         // is the one place that happens, and dropping the cache here costs one rebuild.
         self.op_sets = OpSetCache::default();
+        self.name_only = NameOnlyCache::default();
         self.def_names.clear();
         // loft#788 — derived from the imports exactly as `def_names` is, so it
         // is rebuilt by the same replay. Keeping stale entries would refuse a
@@ -7388,10 +7756,12 @@ impl Data {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
             alias_d_nr: u32::MAX,
+            fact: AliasFact::Plain,
             assigned_lambda_d_nr: u32::MAX,
             links: Vec::new(),
             lexeme: false,
@@ -7434,7 +7804,7 @@ impl Data {
             bound_holder: false,
             name: name.to_string(),
             source: self.source,
-            position: position.clone(),
+            position: *position,
             def_type,
             parent: u32::MAX,
             first_child: u32::MAX,
@@ -7444,6 +7814,7 @@ impl Data {
             code: Value::Null,
             returned: Type::Unknown(rec),
             returned_not_null: false,
+            returned_fact: AliasFact::Plain,
             rust: String::new(),
             native: String::new(),
             cap: String::new(),
@@ -7451,7 +7822,7 @@ impl Data {
             known_type: u16::MAX,
             code_position: 0,
             code_length: 0,
-            variables: Function::new(name, &position.file),
+            variables: Function::new(name, position.file.as_str()),
             pub_visible: false,
             null_safe: false,
             op_priority: OP_NORMAL,
@@ -7466,6 +7837,8 @@ impl Data {
             instance_of: u32::MAX,
             instance_args: Vec::new(),
             builtin: false,
+            operator_form: false,
+            returned_const: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,
@@ -7534,6 +7907,25 @@ impl Data {
         &self.possible[start]
     }
 
+    /// Does the conversion `dnr` (an `OpConv…`, not a `…FromNull`) take a value of `is_type` —
+    /// flattened to `check_type` for a handle or a plain enum, as [`crate::parser::Parser`]'s
+    /// `convert` flattens it — into a slot of type `should`?  The one question both the
+    /// implicit conversion and overload selection ask (`@FR-Disp-Applicable`: a definition
+    /// takes a call when the call's own argument check would accept it).
+    #[must_use]
+    pub fn converts_with(
+        &self,
+        dnr: u32,
+        check_type: &Type,
+        is_type: &Type,
+        should: &Type,
+    ) -> bool {
+        self.attributes(dnr) > 0
+            && (self.attr_type(dnr, 0).is_equal(check_type)
+                || self.attr_type(dnr, 0).is_equal(is_type))
+            && self.def(dnr).returned().is_equal(should)
+    }
+
     /// The operator definition whose SIGNATURE matches — same candidate list the concrete
     /// path walks, asked with the arity and receiver instead of the name alone.
     ///
@@ -7585,6 +7977,47 @@ impl Data {
         main != u32::MAX && self.def(main).def_type == DefType::Dynamic
     }
 
+    /// The source whose overload set `name` a call on `receiver` chooses among: the caller's
+    /// scope (`u16::MAX`) when the set is there, else the source that declares the receiver's
+    /// TYPE when that source has one.  `(Op-Left)` and `x.m(…)` choose among the members of
+    /// the RECEIVER's method, and a library declares its type's overloads in its own source:
+    /// through a qualified import (`use time;`, @C98) the set's bare name is not in the
+    /// caller's scope, so `d.minus(span)` reached the first member alone and refused the
+    /// `Duration` the second one takes, and `d - span` was refused outright.
+    ///
+    /// Asked for a RECEIVER only — the method spelling and the operator forms.  A free call
+    /// keeps its own scope: a type's source is never a second place to find a free function
+    /// (loft#853), and the stdlib's sets are in every scope already.
+    #[must_use]
+    pub fn receiver_overload_source(&self, name: &str, receiver: &Type) -> u16 {
+        if self.has_overload_set(name) {
+            return u16::MAX;
+        }
+        // `@FR-N-Shape` — a `τ?` or `&τ` receiver is the type it wraps.
+        let tp = match receiver.base() {
+            Type::RefVar(inner) => inner.base(),
+            other => other,
+        };
+        let type_nr = self.type_def_nr(tp);
+        if type_nr == u32::MAX {
+            return u16::MAX;
+        }
+        let own = self.definitions[type_nr as usize].source;
+        let set = self.source_nr(own, name);
+        if own != STD_SOURCE && set != u32::MAX && self.def(set).def_type == DefType::Dynamic {
+            own
+        } else {
+            u16::MAX
+        }
+    }
+
+    /// Is there an overload set named `name` in `source` (`u16::MAX`: the caller's scope)?
+    #[must_use]
+    pub fn has_overload_set_in(&self, source: u16, name: &str) -> bool {
+        let main = self.source_nr(source, name);
+        main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+    }
+
     /// Does `d_nr` declare the visible parameters `params` — compared by type definition, at
     /// every position whose wanted type is concrete (a type variable or an unknown there asks
     /// nothing)?
@@ -7612,6 +8045,33 @@ impl Data {
         h == w || variant_of(h, w) || variant_of(w, h)
     }
 
+    /// `@FR-G-Sat` — may a member returning `have` stand where an interface member declares the
+    /// return `want` (`Self` already replaced)?  The return is part of the signature
+    /// `[Self ↦ C](p̄ -> R)` the generic body was typed with: a `float` read where `integer`
+    /// was promised is its bits, a `text` its handle.  Compared as a parameter is
+    /// ([`Self::param_fits`]) at every position of the type — a collection's element, a
+    /// function type's parameters and result — with nullability peeled at each, as a nullable
+    /// parameter takes its dense type.  A `want` naming a type variable or unknown asks
+    /// nothing; `have` returning NOTHING meets only a `want` of nothing.
+    #[must_use]
+    pub fn return_fits(&self, have: &Type, want: &Type) -> bool {
+        let (h, w) = (have.base(), want.base());
+        if w.is_unknown() || self.mentions_type_var(w) || self.mentions_type_var(h) {
+            return true;
+        }
+        if matches!(h, Type::Void) || matches!(w, Type::Void) {
+            return matches!(h, Type::Void) == matches!(w, Type::Void);
+        }
+        if !h.has_child_types() && !w.has_child_types() {
+            return self.param_fits(h, w);
+        }
+        if std::mem::discriminant(h) != std::mem::discriminant(w) {
+            return false;
+        }
+        h.zip_children(w)
+            .is_some_and(|pairs| pairs.into_iter().all(|(a, b)| self.return_fits(a, b)))
+    }
+
     /// The member of `start`'s overload set whose visible parameters are `params`
     /// ([`Self::params_fit`]) — `None` when the name has no set or no member fits.  What
     /// [`Self::possible_with_signature`] asks by arity and receiver, asked of the whole
@@ -7636,6 +8096,167 @@ impl Data {
         if !slot.contains(&d_nr) {
             slot.push(d_nr);
         }
+    }
+
+    /// `@FR-Op-Bound` (@PLN182) — the `operator compare(self: C, other: C) -> Ordering` a
+    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.
+    #[must_use]
+    pub fn operator_compare_for(&self, concrete: &Type) -> Option<u32> {
+        self.operator_member_for("compare", concrete)
+    }
+
+    /// `@FR-Op-Bound` — the `operator <form>(self: C, other: C)` a type `C` declares at the
+    /// signature a bound asks: `compare` answering `Ordering` (`Ordered`), and `plus` /
+    /// `minus` / `times` answering `C` (`Addable`, `Subtractable`, the `*` of `Numeric`).  A
+    /// plain `fn` of the name meets nothing (`@FR-Op-Mark`).
+    #[must_use]
+    pub fn operator_member_for(&self, form: &str, concrete: &Type) -> Option<u32> {
+        let base = concrete.base().clone();
+        self.operator_member_with(form, &[base.clone(), base.clone()], Some(&base))
+    }
+
+    /// [`Self::operator_member_for`] at the signature an interface member declares, `Self`
+    /// already replaced: `params[0]` is the type, the rest what the member takes
+    /// (`op * (self: Self, factor: float)`), and `result` what it answers — `None` leaves
+    /// the result unasked.  `compare` always answers `Ordering`.
+    #[must_use]
+    pub fn operator_member_with(
+        &self,
+        form: &str,
+        params: &[Type],
+        result: Option<&Type>,
+    ) -> Option<u32> {
+        let first = params.first()?;
+        let shape = first.base();
+        if !matches!(shape, Type::Reference(_, _) | Type::Enum(_, _, _)) {
+            return None;
+        }
+        let base = shape.clone();
+        // A form may be an overload set (several right-hand types), and `compare` always is
+        // one beside the stdlib's own members on the base types.
+        let mut candidates = self.overload_routines(form);
+        let found = self.find_fn(u16::MAX, form, &base);
+        if found != u32::MAX && !candidates.contains(&found) {
+            candidates.push(found);
+        }
+        let ordering = self.def_nr("Ordering");
+        // `@FR-G-Sat` — a bound is met by a CONCRETE member of its signature; a template member
+        // (`operator plus<U>`) is reached by the operator, never bound (loft#1826).
+        candidates.into_iter().find(|&d| {
+            self.def(d).operator_form
+                && self.def(d).def_type != DefType::Generic
+                && self.params_fit(d, params)
+                && if form == "compare" {
+                    matches!(self.def(d).returned().base(), Type::Enum(e, false, _) if *e == ordering)
+                } else {
+                    // By the type alone: a method handing back `self` carries a dep on it.
+                    result.is_none_or(|r| self.def(d).returned().base().is_same(r.base()))
+                }
+        })
+    }
+
+    /// `@FR-Op-Conv` (@PLN182) — the name `to_<name>` an `operator` conversion INTO `tp` has:
+    /// the six base types by their own names, a non-generic struct or enum by its name in snake
+    /// case (`DateTime` → `date_time`; an all-capital run is one word, `HTTPRequest` →
+    /// `http_request`; a digit stays with the word before it, `Vec2` → `vec2`).  A generic
+    /// instance, a narrowed integer and any other type have none.
+    #[must_use]
+    pub fn conversion_name(&self, tp: &Type) -> Option<String> {
+        // `x as T?` converts to T: the nullability bit names no other conversion.
+        match tp.base() {
+            // `IntegerSpec::source_name` is the one home for "this spells `integer`": both
+            // templates do, and a narrow alias (`u8`, `i32`) carries a forced size of its own.
+            Type::Integer(spec)
+                if spec.source_name() == Some("integer") && spec.forced_size.is_none() =>
+            {
+                Some("integer".to_string())
+            }
+            Type::Float => Some("float".to_string()),
+            Type::Single => Some("single".to_string()),
+            Type::Text(_) => Some("text".to_string()),
+            Type::Boolean => Some("boolean".to_string()),
+            Type::Character => Some("character".to_string()),
+            Type::Reference(d, _) | Type::Enum(d, false, _)
+                if matches!(self.def(*d).def_type, DefType::Struct | DefType::Enum)
+                    && self.def(*d).instance_of == u32::MAX
+                    && !self.is_type_var_placeholder(*d) =>
+            {
+                Some(Self::snake_case(self.def(*d).name()))
+            }
+            _ => None,
+        }
+    }
+
+    /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
+    #[must_use]
+    pub fn snake_case_name(name: &str) -> String {
+        Self::snake_case(name)
+    }
+
+    /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
+    fn snake_case(name: &str) -> String {
+        let chars: Vec<char> = name.chars().collect();
+        let mut out = String::new();
+        for (i, &c) in chars.iter().enumerate() {
+            if c.is_ascii_uppercase() {
+                let prev = if i > 0 { Some(chars[i - 1]) } else { None };
+                let next_lower = chars.get(i + 1).is_some_and(char::is_ascii_lowercase);
+                let after_word = prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit());
+                let run_ends = prev.is_some_and(|p| p.is_ascii_uppercase()) && next_lower;
+                if after_word || run_ends {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// The `operator` form a bound's operator member names: `OpLt` → `compare`, `OpAdd` →
+    /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`, `OpDiv` → `divided_by`,
+    /// `OpRem` → `remainder`, a one-operand `OpMin` → `negate`.
+    #[must_use]
+    pub fn operator_form_of_member(member: &str, arity: usize) -> Option<&'static str> {
+        match (member, arity) {
+            ("OpLt", 2) => Some("compare"),
+            ("OpAdd", 2) => Some("plus"),
+            ("OpMin", 2) => Some("minus"),
+            ("OpMul", 2) => Some("times"),
+            ("OpDiv", 2) => Some("divided_by"),
+            ("OpRem", 2) => Some("remainder"),
+            ("OpMin", 1) => Some("negate"),
+            _ => None,
+        }
+    }
+
+    /// `@FR-Op-Std`, @C132 (@PLN182 P5) — whether the `Op…` definition `d` backs an operator:
+    /// only the stdlib's do.  A program's or a library's `fn OpAdd` / `OpLt` / `OpIndex` /
+    /// `OpConv…` is an ordinary function — callable by its name, reached by no operator, `[]`
+    /// or `as`, and meeting no bound.
+    #[must_use]
+    pub fn backs_operator(&self, d: u32) -> bool {
+        d != u32::MAX && self.def(d).is_stdlib()
+    }
+
+    /// The stored discriminant of one `Ordering` variant (`Less`, `Equal`, `Greater`), read
+    /// from the enum's own definition rather than assumed from its declaration order.
+    #[must_use]
+    pub fn ordering_discriminant(&self, variant: &str) -> i32 {
+        let ordering = self.def_nr("Ordering");
+        if ordering == u32::MAX {
+            return 0;
+        }
+        self.def(ordering)
+            .attributes()
+            .iter()
+            .find(|a| a.name == variant)
+            .and_then(|a| match a.value {
+                Value::Enum(nr, _) => Some(i32::from(nr)),
+                _ => None,
+            })
+            .unwrap_or(0)
     }
 
     #[must_use]
@@ -8097,9 +8718,28 @@ impl Data {
                              `{tn}?` (defaults null)"
                         ));
                     }
-                    // A genuinely nullable field defaults to `null`.
-                    if at.nullable || matches!(ftp, Type::Optional(_)) {
+                    // A genuinely nullable field defaults to `null`.  `@FR-D-NoRef` — a
+                    // `reference<T>` POINTER field keeps `nullable` set whatever it is spelled
+                    // (#328's layout), so its flag says nothing: only `reference<T>?` defaults
+                    // to null, and a bare one has no default (loft#1931).
+                    let pointer =
+                        matches!(ftp.base(), Type::Reference(_, deps) if deps.is_pointer_marker());
+                    if (at.nullable && !pointer) || matches!(ftp, Type::Optional(_)) {
                         continue;
+                    }
+                    if pointer {
+                        let fname = self.attr_name(*d_nr, a);
+                        let tn = self
+                            .def(match ftp.base() {
+                                Type::Reference(t, _) => *t,
+                                _ => *d_nr,
+                            })
+                            .name()
+                            .to_string();
+                        return Err(format!(
+                            "record `{rec}` has no default: field `{fname}: reference<{tn}>` is a \
+                             pointer with no default — make it `reference<{tn}>?` (defaults null)"
+                        ));
                     }
                     if self.has_default(&ftp).is_err() {
                         let fname = self.attr_name(*d_nr, a);
@@ -8209,6 +8849,15 @@ impl Data {
         match Self::split_key(name) {
             Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
                 format!("{}.{}", key.spelling, key.rest)
+            }
+            // An instance is the generic its author wrote (`i_7integer_n_gen` is `gen`).
+            Some(key) if key.kind == KeyKind::Instance && !key.rest.is_empty() => {
+                let template = self.def_nr(key.rest);
+                if template == u32::MAX {
+                    key.rest.strip_prefix("n_").unwrap_or(key.rest).to_string()
+                } else {
+                    self.user_facing_name(template)
+                }
             }
             _ => name.to_string(),
         }
@@ -8398,6 +9047,40 @@ impl Data {
     }
 
     /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
+    /// `@FR-Disp-Hint` — does the call `name(receiver, …)` (either spelling) reach an overload set
+    /// in which SEVERAL members take `receiver`?  Then no single definition may steer how the
+    /// arguments parse: an untyped `|x|` lambda, or a literal needing a width, would be typed by
+    /// whichever member is asked — the first declared — and the call would then select that
+    /// member because of the type the hint gave it.  A set whose members take DIFFERENT receivers
+    /// keeps the receiver's own member as its hint: the receiver is typed before the arguments
+    /// are read (`F-Recv`), so it already names one definition.
+    #[must_use]
+    pub fn receiver_shared_in_set(&self, name: &str, receiver: &Type) -> bool {
+        let source = self.receiver_overload_source(name, receiver);
+        let main = self.source_nr(source, name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return false;
+        }
+        let receiver = match receiver.base() {
+            Type::RefVar(inner) => inner.base().clone(),
+            other => other.clone(),
+        };
+        self.def(main)
+            .attributes
+            .iter()
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
+            })
+            .filter(|&r| {
+                self.visible_params(r)
+                    .first()
+                    .is_some_and(|p| self.param_fits(&receiver, p))
+            })
+            .count()
+            > 1
+    }
+
     pub(crate) fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
         self.def(d_nr)
             .attributes
@@ -8514,15 +9197,15 @@ impl Data {
     /// under a standard-library FREE function's name (`n_…`) says so — that name is reserved for
     /// the standard library, whatever the parameters — rather than reading as a duplicate of the
     /// program's own.  Every other collision keeps naming where the first definition is
-    /// (loft#863), a standard-library METHOD set among them: C95 refuses a free function there
+    /// (loft#863), a standard-library METHOD set among them: @C95 refuses a free function there
     /// only for the method's own first-parameter type, so "reserved whatever the parameters"
     /// would be false for it.
     fn redefinition_text(&self, lexer: &Lexer, winner: u32, fn_name: &str) -> String {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
         if self.def(winner).name.starts_with("n_")
-            && crate::portable_path::is_stdlib_source(&at.file)
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && crate::file_access::is_stdlib_source(at.file.as_str())
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
         {
             format!(
                 "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
@@ -8871,6 +9554,17 @@ impl Data {
         self.def_names.contains_name(name)
     }
 
+    /// Does some generic header declare a type variable spelled `spelling`?  An undefined
+    /// type of that spelling is then a variable named outside its header, and its message
+    /// says so (`Parser::type_var_out_of_scope`).
+    #[must_use]
+    pub fn is_type_var_spelling(&self, spelling: &str) -> bool {
+        self.type_var_bound_keys.keys().any(|d| {
+            (*d as usize) < self.definitions.len()
+                && Self::type_var_spelling(self.definitions[*d as usize].name()) == spelling
+        })
+    }
+
     /// The placeholder a header spelling `<T>` (or `<T: Ordered>`) already names, read off the
     /// DATA rather than off the parser that minted it.
     ///
@@ -8956,6 +9650,18 @@ impl Data {
         }
     }
 
+    /// The definition whose `pub` and file decide a type's visibility (@FR-F-Visible): the
+    /// template of an instance of a generic type, the type itself otherwise.  An instance is
+    /// minted wherever it is first spelled, so its own `pub_visible` says only whether a `pub`
+    /// item's parse minted it.
+    #[must_use]
+    pub fn visibility_def(&self, type_nr: u32) -> u32 {
+        match self.definitions.get(type_nr as usize) {
+            Some(d) if d.instance_of != u32::MAX => d.instance_of,
+            _ => type_nr,
+        }
+    }
+
     /// The name that KEYS a method on `type_nr`: a concrete type's own name, or a bound
     /// holder's marked spelling.
     #[must_use]
@@ -8994,14 +9700,14 @@ impl Data {
             );
             String::new()
         });
-        // @PLN102 C97 — a LIBRARY (source ≥ 2, i.e. not the stdlib prelude and not the user's
+        // @PLN102 @C97 — a LIBRARY (source ≥ 2, i.e. not the stdlib prelude and not the user's
         // MAIN program) defines its public symbols MODULE-SCOPED: they live under the library's
         // own source and are reached as `lib::name`, never injected into the global namespace.
         // So a library name that exists only in the STDLIB is NOT a redefinition — the two
         // coexist (`shapes::clamp` beside the stdlib `clamp`), which is what lets the stdlib grow
         // without breaking a shipped lib.  Only a clash within the library's OWN source is a real
         // redefinition.  The stdlib (STD_SOURCE) and the user's MAIN program keep the global-scope
-        // check (a MAIN top-level def that a stdlib method would silently shadow is a C95 error).
+        // check (a MAIN top-level def that a stdlib method would silently shadow is a @C95 error).
         let scoped = self.source != STD_SOURCE && self.source != MAIN_SOURCE;
         let own = |data: &Self, nm: &str| -> u32 {
             if scoped {
@@ -9034,14 +9740,27 @@ impl Data {
         // This used to be refused only when the name also had a bare-name definition — which a
         // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
         // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+        // `@FR-N-Shape` — `τ` and `τ?` are one receiver for this question: `(F-Recv)` sends a
+        // call to whichever of `m(τ)` / `m(τ?)` is declared, so a plain `m(p: P?)` beside
+        // `fn m(self: P)` was reached by neither spelling, dead in silence.  Both method keys
+        // are asked; a `self`/`self` pair over `τ` and `τ?` never reaches this test.
+        let nullability_twin = |tp: &Type| -> Type {
+            if matches!(tp, Type::Optional(_)) {
+                tp.base().clone()
+            } else {
+                Type::optional(tp.clone())
+            }
+        };
         let shadowed_method = if is_both || is_self {
             None
         } else {
-            arguments
-                .first()
-                .and_then(|a| receiver_key(self, &a.typedef))
-                .map(|key| own(self, &key))
-                .filter(|m| *m != u32::MAX)
+            arguments.first().and_then(|a| {
+                [a.typedef.clone(), nullability_twin(&a.typedef)]
+                    .iter()
+                    .filter_map(|tp| receiver_key(self, tp))
+                    .map(|key| own(self, &key))
+                    .find(|m| *m != u32::MAX)
+            })
         };
         let shadows_a_method = shadowed_method.is_some();
         // …and the other order: a `self`/`both` method declared after a plain function of its
@@ -9067,8 +9786,11 @@ impl Data {
                             && self.def(d).attributes.first().is_some_and(|p| {
                                 p.name != "self"
                                     && p.name != "both"
-                                    && receiver_key(self, &p.typedef).as_deref()
-                                        == Some(key.as_str())
+                                    && [p.typedef.clone(), nullability_twin(&p.typedef)]
+                                        .iter()
+                                        .any(|tp| {
+                                            receiver_key(self, tp).as_deref() == Some(key.as_str())
+                                        })
                             })
                     })
                 })
@@ -9114,15 +9836,15 @@ impl Data {
             let text = self.redefinition_text(lexer, o_nr, fn_name);
             diagnostic!(lexer, Level::Error, "{text}");
         }
-        // loft#940 — the C97 residual on the FREE-function side, and the only silent corner of
+        // loft#940 — the @C97 residual on the FREE-function side, and the only silent corner of
         // the three. `find_fn` resolves the METHOD spelling `t_<sig>_<name>` before the free
         // `n_<name>`, and it reaches that spelling through the STDLIB row from every source —
         // so a library's `fn f(x: τ, …)` is unreachable by its bare name not just from the
         // consumer that imported it, but from the library's own other modules and from the
-        // declaring file itself. C97 keeps the DEFINITION legal on purpose (module-scoped, so
+        // declaring file itself. @C97 keeps the DEFINITION legal on purpose (module-scoped, so
         // the stdlib can grow without breaking a shipped library) and `mylib::f` still reaches
         // it; what it left unsaid is that the bare name now belongs to the stdlib. The MAIN
-        // spelling of this clash is the C95 error above and the `both:`/`self` spelling is the
+        // spelling of this clash is the @C95 error above and the `both:`/`self` spelling is the
         // shared-attribute-table error below — this corner only needed a voice.
         if scoped
             && !shadows_a_method
@@ -9184,13 +9906,13 @@ impl Data {
                 }
             }
         }
-        let mut d_nr = own(self, &name); // C97: a library's mangled name is scoped to its own source
+        let mut d_nr = own(self, &name); // @C97: a library's mangled name is scoped to its own source
         // `Disp-Key` (@PLN162): a second definition of a name whose parameter types differ
         // from the incumbent's is an OVERLOAD, not a redefinition.  It is keyed by its full
         // parameter spelling, and the name's bare `Dynamic` dispatcher carries every overload
         // the way a `both` name always has.  Within ONE source only: a MAIN definition under
-        // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
-        // (C97).  The same spelling twice is the redefinition it always was.
+        // a stdlib name stays the refusal below (@C95), and a library's names stay module-scoped
+        // (@C97).  The same spelling twice is the redefinition it always was.
         let mut overload_label: Option<String> = None;
         // @PLN165 B4 — a `self` method that joins a free generic's set after registering.
         let mut join_as_method = false;
@@ -9250,7 +9972,7 @@ impl Data {
             // the first overload's pass-2 body then read *Unknown variable* for its own
             // parameter, and every program with three overloads lost its watcher
             // (measured, @PLN162 step 14).
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
             && self.def(o_nr).source == self.source
@@ -9272,7 +9994,7 @@ impl Data {
         } else if d_nr == u32::MAX
             && generic_members
             && crate::keys::method_in_set_enabled()
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
             && (o_nr == u32::MAX
                 || (self.def(o_nr).def_type == DefType::Dynamic
                     && self.def(o_nr).source == self.source))
@@ -9398,9 +10120,9 @@ impl Data {
                 // both, which is where a call's argument types choose.
             } else if existing {
                 // The receiver type already carries a member of this name.  Unlike a free
-                // function (which C97 module-scopes to its library), a method lives in the
+                // function (which @C97 module-scopes to its library), a method lives in the
                 // type's SHARED, global attribute table, and `x.name(…)` can resolve to only
-                // one thing — so a colliding method can't be module-scoped (the C97 residual).
+                // one thing — so a colliding method can't be module-scoped (the @C97 residual).
                 // Name the type and point at the fix; when the clash is with the stdlib, say so.
                 let tname = self.def(type_nr).name.clone();
                 let attr_idx = self.attr(type_nr, fn_name);
@@ -9900,6 +10622,19 @@ impl Data {
         }
     }
 
+    /// How many stubs have been adopted this pass: taken before a declaration, it lets
+    /// [`Data::adopted_since`] name the stubs that one declaration adopted.
+    #[must_use]
+    pub fn adopted_stub_count(&self) -> usize {
+        self.adopted_stubs.len()
+    }
+
+    /// The stubs adopted since `adopted_stub_count` answered `from`.
+    #[must_use]
+    pub fn adopted_since(&self, from: usize) -> &[u32] {
+        self.adopted_stubs.get(from..).unwrap_or(&[])
+    }
+
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
         // Not a stub a GENERIC struct adopted: its target would be the bare template, where
         // each use names an instance whose arguments the paths that read them resolve
@@ -10167,7 +10902,7 @@ impl Data {
         if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
             return u32::MAX;
         }
-        let position = self.definitions[template as usize].position.clone();
+        let position = self.definitions[template as usize].position;
         let enum_mixed = match self.definitions[template as usize].returned.base() {
             Type::Enum(_, mixed, _) => Some(*mixed),
             _ => None,
@@ -10231,7 +10966,7 @@ impl Data {
             .children_of(template)
             .filter(|&c| self.def_type(c) == DefType::EnumValue)
             .collect();
-        let position = self.definitions[d as usize].position.clone();
+        let position = self.definitions[d as usize].position;
         for v in variants {
             let vname = self.definitions[v as usize].name.clone();
             let vd = self.add_def(&vname, &position, DefType::EnumValue);
@@ -10276,11 +11011,27 @@ impl Data {
         bindings: &[(u32, Type)],
     ) {
         let tp = self.close_open(lexer, &f.typedef, bindings);
+        // A field that holds a TUPLE needs its record before the instance is laid out, as a
+        // declared struct's tuple field has it from its parse: missing, the layout waited for
+        // it (`lay_out_late`) and the record took an id after unrelated types, while the
+        // generated `init()` creates it with the instance's fields — every id past it
+        // disagreed on `--native` (a `W<integer>` with `p: (T, T)`).  Innermost first.
+        let mut tuples: Vec<Vec<Type>> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Tuple(elems) = t.base() {
+                tuples.push(elems.clone());
+            }
+            false
+        });
+        for elems in tuples.into_iter().rev() {
+            self.tuple_def(lexer, &elems);
+        }
         let a_nr = self.add_attribute(lexer, d, &f.name, tp);
         let a = &mut self.definitions[d as usize].attributes[a_nr];
         a.mutable = f.mutable;
         a.constant = f.constant;
         a.const_field = f.const_field;
+        a.pub_field = f.pub_field;
         a.value_const = f.value_const;
         a.init = f.init;
         a.nullable = f.nullable;
@@ -10313,14 +11064,13 @@ impl Data {
         });
         let mut pairs: Vec<(u32, Type)> = Vec::new();
         for o in opens {
-            let template = self.definitions[o as usize].instance_of;
             let args: Vec<Type> = self.definitions[o as usize]
                 .instance_args
                 .clone()
                 .iter()
                 .map(|a| self.close_open(lexer, a, bindings))
                 .collect();
-            let closed = self.instance_def(lexer, template, &args);
+            let closed = self.close_instance(lexer, o, &args);
             if closed != u32::MAX && closed != o {
                 pairs.push((o, Type::Reference(closed, Deps::none())));
             }
@@ -10469,6 +11219,12 @@ impl Data {
                 alignment,
                 size,
             });
+        // A tuple of a TYPE VARIABLE (`(T, U)` inside a template) is an OPEN instance of the
+        // anonymous tuple template (`(G-Type)`): it keeps its members as written, so each
+        // monomorph closes it to the tuple of their bindings ([`Data::close_instance`]).
+        if types.iter().any(|t| self.mentions_type_var(t)) {
+            self.definitions[d as usize].instance_args = types.to_vec();
+        }
         d
     }
 
@@ -10603,7 +11359,7 @@ impl Data {
         if let Some(nr) = self.def_names.get(&name, struct_source) {
             return nr;
         }
-        let pos = lexer.pos().clone();
+        let pos = *lexer.pos();
         // Create + register the synth under the STRUCT's source (not the current parse source),
         // so `add_def`'s `(name, source)` registration + dual-definition guard match the lookup
         // key above, and a `rebuild_indices` (cache-load path) re-derives the SAME key from the
@@ -10787,12 +11543,17 @@ impl Data {
         // alias, and the diagnostic fell back to `integer(1000, 1100)`, which is true and is
         // no spelling the parser reads (loft#1641).  The same flag caught `non_null_reads_null`
         // out the same day, from the other side (C127).
+        // The alias's WIDTH is its `size(N)`, which the definition carries beside the range it
+        // returns (`Definition::forced_size`); a use of the alias carries it in the spec.  Asked
+        // of the spec alone, `type Lim = integer limit(1000, 1100) size(2)` never named a
+        // `vector<Lim>` element (loft#1938).
         let matches_spec = |d: &Definition| {
             d.def_type == DefType::Type
                 && matches!(d.returned.base(), Type::Integer(s)
                     if s.min == spec.min
                         && s.max == spec.max
-                        && s.forced_size == spec.forced_size)
+                        && s.forced_size.map(NonZeroU8::get).or(d.forced_size)
+                            == spec.forced_size.map(NonZeroU8::get))
         };
         self.definitions
             .iter()
@@ -10840,7 +11601,88 @@ impl Data {
                 .is_some_and(|p| p.def_type == DefType::Enum)
                 && self.is_open_instance(d.parent);
         }
-        d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+        (d.instance_of != u32::MAX || self.is_tuple_def(d_nr))
+            && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// The synthetic record of a tuple shape (`__tuple<…>`, [`Data::tuple_def`]) — told by
+    /// its Tuple field group, never by its name.
+    #[must_use]
+    pub fn is_tuple_def(&self, d_nr: u32) -> bool {
+        self.definitions.get(d_nr as usize).is_some_and(|d| {
+            d.field_groups
+                .iter()
+                .any(|g| matches!(g.kind, LinkedFieldKind::Tuple))
+        })
+    }
+
+    /// The open tuples (loft#1868) the template `g` names in its parameters, its return and
+    /// its variables — written as a tuple type or held as its record.
+    fn open_tuples_named_by(&self, g: u32) -> Vec<u32> {
+        let Some(def) = self.definitions.get(g as usize) else {
+            return Vec::new();
+        };
+        let vars = &def.variables;
+        let mut types: Vec<&Type> = def.attributes.iter().map(|a| &a.typedef).collect();
+        types.push(&def.returned);
+        types.extend((0..vars.count()).map(|v| vars.tp(v)));
+        let mut out: Vec<u32> = Vec::new();
+        for tp in types {
+            tp.any_node(&mut |t| {
+                let d = match t.base() {
+                    Type::Reference(r, _) => *r,
+                    tuple @ Type::Tuple(_) => self.type_def_nr(tuple),
+                    _ => u32::MAX,
+                };
+                if d != u32::MAX
+                    && self.is_tuple_def(d)
+                    && self.is_open_instance(d)
+                    && !out.contains(&d)
+                {
+                    out.push(d);
+                }
+                false
+            });
+        }
+        out
+    }
+
+    /// The instance an OPEN instance `open` closes to at the arguments `args`: its template's
+    /// instance, or — for an open TUPLE (loft#1868) — the tuple of those members, the record
+    /// a concrete `vector<(integer, text)>` stores.
+    pub fn close_instance(&mut self, lexer: &mut Lexer, open: u32, args: &[Type]) -> u32 {
+        let template = self.definitions[open as usize].instance_of;
+        if template == u32::MAX && self.is_tuple_def(open) {
+            self.tuple_def(lexer, args)
+        } else {
+            self.instance_def(lexer, template, args)
+        }
+    }
+
+    /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
+    /// another template's body was parsed: `relay<U>` calling `hole(u)` binds `hole`'s `T` to
+    /// `U`.  It is the function-side twin of [`Self::is_open_instance`] — a stand-in for its
+    /// template that the template's own IR calls, never code: `(G-Mono)` specialises at
+    /// CONCRETE argument types only, and each monomorph of the caller re-aims the call at the
+    /// instance its binding names (`instantiate_nested_generics`).  So neither backend
+    /// generates it (@FR-G-Mono, loft#1841): its body formats, sizes and lays out a type
+    /// variable, which `--native` refused with an internal error.
+    ///
+    /// Asked of the instance KEY (`D-Key`) and the parameters together.  A non-instance
+    /// function whose parameter names a type variable is no placeholder — an interface's
+    /// method stub (`OpLt(self: Self, …)`) is emitted on purpose — so the answer is `false`
+    /// for every definition this does not positively recognise, and a `false` only keeps a
+    /// function the backends generated already.
+    #[must_use]
+    pub fn is_placeholder_instance(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.def_type == DefType::Function
+            && d.is_instance()
+            && d.attributes
+                .iter()
+                .any(|a| self.mentions_type_var(&a.typedef))
     }
 
     /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
@@ -10912,10 +11754,17 @@ impl Data {
         &mut self,
         lexer: &mut Lexer,
         bindings: &[(u32, Type)],
+        template: u32,
     ) -> Vec<(u32, Type)> {
         let mut pairs: Vec<(u32, Type)> = Vec::new();
+        // An open TUPLE is anonymous, so another template's `(T?, integer)` shares its
+        // placeholder with this one's `T` and would close too — minting tuples, and the
+        // `__nullable<S>` a member `S?` stores as, that nothing asked for (on pass 2, which
+        // H5 refuses).  Only the open tuples this template's own types name are closed.
+        let own_tuples = self.open_tuples_named_by(template);
         for d in 0..self.definitions() {
-            if !self.is_open_instance(d)
+            if (self.is_tuple_def(d) && !own_tuples.contains(&d))
+                || !self.is_open_instance(d)
                 || !bindings.iter().any(|(h, _)| {
                     self.definitions[d as usize]
                         .instance_args
@@ -10925,7 +11774,6 @@ impl Data {
             {
                 continue;
             }
-            let template = self.definitions[d as usize].instance_of;
             let all: Vec<(u32, Type)> = bindings.iter().chain(pairs.iter()).cloned().collect();
             let args: Vec<Type> = self.definitions[d as usize]
                 .instance_args
@@ -10933,7 +11781,7 @@ impl Data {
                 .into_iter()
                 .map(|a| a.substitute_all(&all))
                 .collect();
-            let bound = self.instance_def(lexer, template, &args);
+            let bound = self.close_instance(lexer, d, &args);
             if bound != u32::MAX && bound != d {
                 pairs.push((d, Type::Reference(bound, Deps::none())));
             }
@@ -10941,18 +11789,6 @@ impl Data {
         pairs
     }
 
-    /// Give up the flat NAME of a type-variable placeholder, so a declaration in another
-    /// file may take it (`Parser::placeholder_from_another_file`).
-    ///
-    /// The definition stays — every template that declared it holds it by NUMBER, and its
-    /// instances were bound to that number — only the `(name, source)` key it occupied is
-    /// released.  It exists because a REPL input, a `<host>` string and the test harness
-    /// parse at the stdlib's own source id on purpose, so a stdlib type variable and the
-    /// reader's own struct compete for one key there where a FILE gives them two.
-    ///
-    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
-    /// after this restores the placeholder's key; the declaration that took it is rolled
-    /// back with it, which is the state they were both in before.
     /// @C98 — can `into` name what `lib` declares as `name` UNQUALIFIED?  Only through a
     /// glob or a by-name import of `lib`, directly or through a chain of `pub use`s; a bare
     /// `use lib;` binds the qualifier alone.  Asked of the imports applied so far.
@@ -10981,6 +11817,13 @@ impl Data {
         false
     }
 
+    /// Give up a definition's flat NAME in `source`, so a declaration may take it
+    /// (`Parser::release_unseen_stub`).  The definition stays — whatever refers to it does
+    /// so by NUMBER — and only the `(name, source)` key is released.
+    ///
+    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
+    /// after this restores the key; the declaration that took it is rolled back with it,
+    /// which is the state they were both in before.
     pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
         let _ = self.def_names.remove(name, source);
     }
@@ -10988,8 +11831,8 @@ impl Data {
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
     /// `min_of<T>`) so the template body's types resolve.  It has store size 0 and
-    /// is an INTERNAL construct — it must never resolve as a real type outside the
-    /// default files that declare it.
+    /// is an INTERNAL construct, minted under a name no source can write (`T#1`), so a
+    /// spelling never resolves to it outside its header (@FR-G-Gen-Scope).
     #[must_use]
     pub fn is_type_var_placeholder(&self, d_nr: u32) -> bool {
         let d = &self.definitions[d_nr as usize];
@@ -11032,7 +11875,7 @@ impl Data {
     /// The lookup is keyed to the source that defines the TYPE, not to whichever source is
     /// current. `def_nr` searches `self.source` and the stdlib, and both askers run AFTER
     /// parsing — by then the current source is the main program — so a hook declared in a
-    /// library was reachable only when @PLN102 C97 had also injected it into the global
+    /// library was reachable only when @PLN102 @C97 had also injected it into the global
     /// namespace, which happens for a `pub` function and not for a private one. The effect
     /// was a hook the compiler VALIDATED (`check_drop_signature` accepts it) and then never
     /// called anywhere, including inside its own package: a `#c` handle a cursor was written
@@ -11162,6 +12005,39 @@ impl Data {
         })
     }
 
+    /// Does anything in this program RELEASE on a value's death — a drop hook, or a closure
+    /// record's cascade over the stores it adopted (`@FR-L-CapOwn`)?  The gate of the rules
+    /// that judge a copy and a move ((H-Copy-Refuse), (H-Spent)): both kinds of release are
+    /// owned, and a copy of either releases it twice.
+    #[must_use]
+    pub fn any_release(&self) -> bool {
+        self.any_drop_hook() || self.any_closure_drop()
+    }
+
+    /// Take definition `d` out of the name index and rename it `<name>`[`RETIRED`], so no
+    /// lookup by its old name — a fresh one, or the index a cached program rebuilds from
+    /// names — finds it again.  The definition itself stays where it is: code that already
+    /// calls it keeps a valid target.
+    pub fn retire_def_name(&mut self, d: u32) {
+        debug_assert!(!self.definitions[d as usize].name.ends_with(RETIRED));
+        let name = self.definitions[d as usize].name.clone();
+        let source = self.definitions[d as usize].source;
+        self.def_names.remove(&name, source);
+        self.def_names.remove(&name, STD_SOURCE);
+        self.definitions[d as usize].name = format!("{name}{RETIRED}");
+        let renamed = self.definitions[d as usize].name.clone();
+        self.def_names.insert_if_absent(&renamed, source, d);
+    }
+
+    /// The name definition `d` was declared under — its name, less the suffix a retirement
+    /// added.  What two parses of one program agree on, when only one of them ran the pass
+    /// that retired it (a live-reload shadow session parses and stops).
+    #[must_use]
+    pub fn def_identity(&self, d: u32) -> &str {
+        let name = &self.def(d).name;
+        name.strip_suffix(RETIRED).unwrap_or(name)
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
@@ -11248,6 +12124,28 @@ impl Data {
         self.owns_droppable_walk(type_def, &mut path)
     }
 
+    /// `@FR-L-CapOwn` — the closure record a struct's fn FIELD is built into, where that record
+    /// has something to release: a captured store it may adopt (an attribute typed `Reference`
+    /// with deps), or a captured droppable.  The record lives in the struct's own store
+    /// (`OpChildRec`, loft#1867), so the struct answers for what it adopted, as it answers for
+    /// any other member.  One lambda per field (`assigned_lambda_d_nr`).
+    #[must_use]
+    pub fn fn_field_record(&self, a: &Attribute) -> Option<u32> {
+        if !matches!(a.typedef.base(), Type::Function(..)) || a.assigned_lambda_d_nr == u32::MAX {
+            return None;
+        }
+        let record = self.def(a.assigned_lambda_d_nr).closure_record();
+        if record == u32::MAX {
+            return None;
+        }
+        let holds = self
+            .def(record)
+            .attributes()
+            .iter()
+            .any(|c| matches!(c.typedef.base(), Type::Reference(_, deps) if !deps.is_empty()));
+        (holds || self.owns_droppable(record)).then_some(record)
+    }
+
     fn owns_droppable_walk(&self, d_nr: u32, path: &mut HashSet<u32>) -> bool {
         if d_nr == u32::MAX || d_nr as usize >= self.definitions.len() {
             return false;
@@ -11258,12 +12156,10 @@ impl Data {
         if self.drop_hook_nr(d_nr) != u32::MAX || d_nr == self.iterator_def() {
             return true;
         }
-        if self
-            .def(d_nr)
-            .attributes()
-            .iter()
-            .any(|a| self.type_owns_droppable(&a.typedef, path))
-        {
+        if self.def(d_nr).attributes().iter().any(|a| {
+            self.type_owns_droppable(&a.typedef, path)
+                || (d_nr < self.fn_fields_settled && self.fn_field_record(a).is_some())
+        }) {
             return true;
         }
         // An enum's variants are its CHILDREN, not its attributes, and each carries its own
@@ -11279,9 +12175,8 @@ impl Data {
     /// Every heap-record constructor forwards to its record definition; `Vector` and the
     /// keyed collections forward to their element, because owning a collection of
     /// droppables is owning the droppables. `Optional` / `RefVar` / `Rewritten` are
-    /// wrappers over a base type and peel. A `Function` does NOT forward: a closure record
-    /// is owned by the fn-ref slot's own cascade, not by the type that names it, and
-    /// following it would make every fn-ref-holding struct answer for its captures.
+    /// wrappers over a base type and peel. A `Function` does NOT forward: what a closure holds
+    /// is known per FIELD, by the record that owns the field ([`Self::fn_fields_settled`]).
     /// Does a value of this TYPE own a droppable somewhere inside it — a struct through
     /// its fields, a vector through its elements, at any depth?  The type-level twin of
     /// [`Self::owns_droppable`], for a container that has no def of its own (a `vector<S>`).
@@ -12133,6 +13028,23 @@ impl Data {
         }
     }
 
+    /// `@FR-Op-Left` — every `use` of a library binds the `operator` definitions it publishes,
+    /// whatever its spec: `use time;` brings in only the `time::` qualifier (@C98), and a value
+    /// of `time::DateTime` must still answer `<`, `-`, `"{dt}"` and `for … in` with the
+    /// operators its package declares, as `dt.year()` answers with its methods through the
+    /// type's attribute table.  Bound privately — the importer does not pass them on — and
+    /// under their mangled per-type keys, which `(Op-Home)` places in the type's own source,
+    /// so they cannot take a name the importer could declare.  Each operator site asks by
+    /// name (the forms, the overload set, `to_text`, `next`), and this is the one place the
+    /// names arrive.
+    pub fn import_operators(&mut self, lib_source: u16, into_source: u16) {
+        for (name, def_nr) in self.exported_names(lib_source) {
+            if self.definitions[def_nr as usize].operator_form {
+                self.bind_import(&name, (into_source, lib_source), def_nr, false, true);
+            }
+        }
+    }
+
     /// Everything `lib_source` passes on to an importer: its own public definitions and
     /// what it `pub use`s — not what a plain `use` bound there for its own use (@C98).
     fn exported_names(&self, lib_source: u16) -> Vec<(String, u32)> {
@@ -12140,7 +13052,7 @@ impl Data {
             .iter()
             .filter(|&(name, src, def_nr)| {
                 src == lib_source
-                    && self.definitions[def_nr as usize].pub_visible
+                    && self.passes_on(def_nr)
                     && !self.is_private_import(lib_source, name, def_nr)
             })
             .map(|(name, _, def_nr)| (name.to_string(), def_nr))
@@ -12149,9 +13061,102 @@ impl Data {
 
     /// The definition `lib_source` passes on under `key`, if any (see [`Self::exported_names`]).
     fn exported(&self, key: &str, lib_source: u16) -> Option<u32> {
-        self.def_names.get(key, lib_source).filter(|&d| {
-            self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
-        })
+        self.def_names
+            .get(key, lib_source)
+            .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
+    }
+
+    /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
+    /// has no `pub` of its own: it travels with the import so the importer's declaration can
+    /// adopt it (loft#801), and that declaration decides whether it is `pub`.  Its USER's
+    /// `pub` decided the trip before, so a private function naming the importer's type
+    /// above its declaration was refused where a `pub` one compiled (loft#1856).
+    fn passes_on(&self, d_nr: u32) -> bool {
+        let d = &self.definitions[d_nr as usize];
+        d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
+    }
+
+    /// @PLN187 (@C140, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+    /// (or a visible `pub` field) of its own file?  Outside that file it can be named, passed
+    /// and stored, never built — [`crate::api_surface::name_only_defs`] is the closure.
+    #[must_use]
+    pub fn is_name_only(&self, d_nr: u32) -> bool {
+        let n = self.definitions();
+        let mut cache = self
+            .name_only
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let set = match &*cache {
+            Some((at, set)) if *at == n => std::sync::Arc::clone(set),
+            _ => {
+                let set = std::sync::Arc::new(crate::api_surface::name_only_defs(self));
+                *cache = Some((n, std::sync::Arc::clone(&set)));
+                set
+            }
+        };
+        drop(cache);
+        set.contains(&d_nr)
+    }
+
+    /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
+    /// does not pass on, or `None` when `lib` passes it on (or does not have it: absence keeps its own
+    /// "no such" message).
+    ///
+    /// The SAME rule as the glob import — [`Self::exported`]: an item `lib` declares without
+    /// `pub`, or a name `lib` holds only through its own plain `use` (@C98), is not part of
+    /// `lib`'s surface, so `lib::name` must not reach what `use lib::*` refuses.  The message
+    /// carries the one-edit cure: the owner's own qualifier for a name `lib` merely imported,
+    /// or `pub` on `lib`'s side for an item it keeps private.
+    #[must_use]
+    pub fn qualified_refusal(&self, lib_source: u16, lib: &str, name: &str) -> Option<String> {
+        if lib_source == u16::MAX || lib_source == STD_SOURCE {
+            return None;
+        }
+        let fn_key = format!("n_{name}");
+        for key in [name, fn_key.as_str()] {
+            let Some(d) = self.def_names.get(key, lib_source) else {
+                continue;
+            };
+            // A pass-1 forward stub (a library parsed after its user, as in a mutual-use
+            // pair) is not the item yet and carries no `pub`: judging it would refuse a
+            // `pub struct` the second pass finds published.
+            if self.exported(key, lib_source).is_some()
+                || matches!(self.definitions[d as usize].def_type, DefType::Unknown)
+            {
+                return None;
+            }
+            if self.is_private_import(lib_source, key, d) {
+                let owner = self
+                    .private_imports
+                    .get(&lib_source)
+                    .and_then(|keys| keys.get(key))
+                    .and_then(|&(_, from)| {
+                        self.qualifier_of(from)
+                            .and_then(|q| self.writable_qualifier(&q, from))
+                    });
+                return Some(match owner {
+                    Some(m) => format!(
+                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use — \
+                         it is `{m}`'s, and `{lib}` does not pass it on.\n  fix: write \
+                         `{m}::{name}` after `use {m};` (or `{lib}` passes it on with \
+                         `pub use {m}::({name});`)"
+                    ),
+                    None => format!(
+                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use, \
+                         and does not pass on.\n  fix: `{lib}` passes it on with `pub use`"
+                    ),
+                });
+            }
+            if !self.definitions[d as usize].pub_visible {
+                return Some(format!(
+                    "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
+                     library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
+                     or the program uses something `{lib}` does publish"
+                ));
+            }
+        }
+        None
     }
 
     fn is_private_import(&self, source: u16, key: &str, def_nr: u32) -> bool {
@@ -12162,14 +13167,12 @@ impl Data {
             && self
                 .source_files
                 .get(&source)
-                .is_none_or(|f| *self.definitions[def_nr as usize].position.file != **f)
+                .is_none_or(|f| self.definitions[def_nr as usize].position.file != *f)
     }
 
     /// Record the file `source` is parsed from (see `source_files`).
-    pub fn note_source_file(&mut self, source: u16, file: &std::sync::Arc<str>) {
-        self.source_files
-            .entry(source)
-            .or_insert_with(|| std::sync::Arc::clone(file));
+    pub fn note_source_file(&mut self, source: u16, file: crate::lexer::FileName) {
+        self.source_files.entry(source).or_insert(file);
     }
 
     /// Bind an imported `def_nr` at `key` in `into_source` — only where the key is free,
@@ -12334,7 +13337,7 @@ impl Data {
         let bind_fn_key = format!("n_{bind}");
         let found_plain = self.exported(name, lib_source);
         let found_fn = self.exported(&fn_key, lib_source);
-        // C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
+        // @C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
         // and has no bare-name definition for an import list to find.  Import every public
         // method of that name the library declares, each under its own key — exactly what a
         // wildcard `use lib::*` already brings in — so after `use lib::(twice)` both
@@ -13016,6 +14019,21 @@ impl Data {
         self.type_name_with(tp, false)
     }
 
+    /// A type as its author can write it back into the source — the spelling a refusal's
+    /// cure names (`cast with \`as u8?\``).  An integer, nullable or not, is named by its
+    /// alias or range ([`Self::display_type_name`]); every other type keeps its
+    /// [`Type::source_name`], which carries a keyed collection's keys.  `source_name` alone
+    /// spells a ranged integer `integer(0, 255)`, which does not parse, so a cure written
+    /// with it could not be pasted (loft#1786's class).
+    #[must_use]
+    pub fn written_type_name(&self, tp: &Type) -> String {
+        if matches!(tp.base(), Type::Integer(_)) {
+            self.display_type_name(tp)
+        } else {
+            tp.source_name(self)
+        }
+    }
+
     /// A type's name as a reader should see it — `type_name()`, advice, hover text: an
     /// integer is named by its alias (`u8`, `i16`, a user's `type Lim = …`) or its range
     /// (`integer limit(0, 10)`), inside a collection or a function type too (loft#1824).
@@ -13038,15 +14056,20 @@ impl Data {
         // plain integer is named by its range here (@FR-N-Shape: the nullability is asked, not
         // left to a missing arm).
         let (inner, nullable) = t.peel_optional();
-        let Type::Integer(s) = inner else {
-            return t.source_name(self);
-        };
-        if nullable {
-            return t.source_name(self);
+        match inner {
+            Type::Integer(s) if !nullable => self.integer_spec_name(s),
+            _ => t.source_name(self),
         }
+    }
+
+    /// [`Self::integer_name`] for a spec — the one home of an integer's SOURCE spelling, which
+    /// every message also reads through [`Type::source_name`] (loft#1938: an element or a
+    /// parameter written `u8` read `integer(0, 255)`, a key no parser reads back).
+    #[must_use]
+    pub fn integer_spec_name(&self, s: &IntegerSpec) -> String {
         if s.forced_size.is_none() {
-            if s.is_wide_template() || s.is_signed32_template() {
-                return t.source_name(self);
+            if let Some(name) = s.source_name() {
+                return name.to_string();
             }
             return self.integer_alias_any_source(s, false).map_or_else(
                 || format!("integer limit({}, {})", s.min, s.max),
@@ -13065,10 +14088,10 @@ impl Data {
         if let Some(n) = named {
             return n.to_string();
         }
-        if let Some(name) = self.integer_alias_any_source(s, false) {
-            return name.to_string();
-        }
-        t.source_name(self)
+        self.integer_alias_any_source(s, false).map_or_else(
+            || format!("integer limit({}, {})", s.min, s.max),
+            str::to_string,
+        )
     }
 
     fn type_name_with(&self, tp: &Type, named: bool) -> String {
@@ -13465,7 +14488,7 @@ fn span_clone_and_eq_roundtrip() {
         line: 17,
         pos: 4,
     };
-    let v = Value::Span(Box::new((pos.clone(), Value::Int(7))));
+    let v = Value::Span(Box::new((pos, Value::Int(7))));
     let v2 = v.clone();
     assert_eq!(v, v2, "clone must be Eq");
     let dbg = format!("{v:?}");
@@ -13486,10 +14509,10 @@ fn span_unspan_strips_wrapper() {
     };
     let inner = Value::Int(42);
     // Single wrap.
-    let wrapped = Value::Span(Box::new((pos.clone(), inner.clone())));
+    let wrapped = Value::Span(Box::new((pos, inner.clone())));
     assert_eq!(wrapped.unspan(), &inner);
     // Doubly wrapped.
-    let double = Value::Span(Box::new((pos.clone(), wrapped.clone())));
+    let double = Value::Span(Box::new((pos, wrapped.clone())));
     assert_eq!(double.unspan(), &inner);
     // Non-Span passes through unchanged.
     assert_eq!(inner.unspan(), &inner);

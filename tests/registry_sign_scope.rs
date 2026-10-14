@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @C96 — shipping is keyed on trust-root presence.
+// @C96 — shipping is keyed on trust-root presence: the scope cells keep a key holder's
+// signature from re-pointing a published version, and the routing cells at the end keep
+// `loft ship` autonomous only where the key is.
 
 //! `registry-sign.sh`'s scope check must tell a version's METADATA correction from a
 //! re-point of a version's BYTES.
@@ -26,8 +28,8 @@
 //! the correction must still pass and an ordinary new-version publish must still pass,
 //! because a refusal that also blocks the everyday route would simply be turned off.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -36,7 +38,7 @@ fn repo_root() -> PathBuf {
 /// Lift the review block out of `registry-sign.sh` — the body of its `python3 - <<'PY'`
 /// heredoc, which is where every scope decision is made.
 fn review_source() -> String {
-    let script = std::fs::read_to_string(repo_root().join("scripts/registry-sign.sh"))
+    let script = fa::read_to_string(repo_root().join("scripts/registry-sign.sh"))
         .expect("registry-sign.sh readable");
     let open = script
         .find("python3 - \"$PREV\" \"$INDEX\" <<'PY'\n")
@@ -77,15 +79,15 @@ struct Verdict {
 /// Run the lifted review block over `prev` → `cur` with the given bound forms.
 fn review(tag: &str, prev: &str, cur: &str, expect: &str, expect_meta: &str) -> Verdict {
     let dir = std::env::temp_dir().join(format!("loft_signscope_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("temp dir");
     let script = dir.join("review.py");
-    std::fs::write(&script, review_source()).expect("write review");
+    fa::write(&script, review_source()).expect("write review");
     let p = dir.join("prev.json");
     let c = dir.join("cur.json");
-    std::fs::write(&p, prev).expect("write prev");
-    std::fs::write(&c, cur).expect("write cur");
-    let out = Command::new("python3")
+    fa::write(&p, prev).expect("write prev");
+    fa::write(&c, cur).expect("write cur");
+    let out = loft::platform::process::harness_command("python3")
         .arg(&script)
         .arg(&p)
         .arg(&c)
@@ -98,7 +100,7 @@ fn review(tag: &str, prev: &str, cur: &str, expect: &str, expect_meta: &str) -> 
         .expect("python3 runs the review block");
     let mut text = String::from_utf8_lossy(&out.stdout).to_string();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     Verdict {
         ok: out.status.success(),
         out: text,
@@ -197,5 +199,64 @@ fn expect_meta_on_a_version_field_names_the_form_that_works() {
         v.out.contains("--expect <pkg>@<ver>"),
         "the refusal must name the form that DOES describe this write:\n{}",
         v.out
+    );
+}
+
+/// One `loft ship` with `HOME` a private tree that does or does not hold the trust-root key, and
+/// a stub in place of `registry_maintain.sh` (`LOFT_SHIP_SCRIPT`) that reports what it was handed:
+/// its arguments and the signer it was told to use.  Nothing is packaged, signed or pushed.
+fn ship_with_key(tag: &str, key: bool) -> (String, String) {
+    let home = std::env::temp_dir().join(format!("loft-ship-route-{tag}-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&home);
+    fa::create_dir_all(home.join(".loft/trust-root")).expect("mkdir");
+    if key {
+        fa::write(home.join(".loft/trust-root/registry-signing-key.bin"), "k").expect("key");
+    }
+    let stub = home.join("ship-stub.sh");
+    fa::write(
+        &stub,
+        "echo \"ARGS=$*\"\necho \"SIGNER=${LOFT_REGISTRY_SIGNER:-unset}\"\n",
+    )
+    .expect("stub");
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+        .arg("ship")
+        .env("HOME", &home)
+        .env("LOFT_SHIP_SCRIPT", &stub)
+        .env_remove("LOFT_REGISTRY_SIGNER")
+        .output()
+        .expect("spawn loft ship");
+    let _ = fa::remove_dir_all(&home);
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// @C96 — a key-present machine ships autonomously: `--yes`, and the local file key as signer.
+#[test]
+fn a_key_present_machine_ships_autonomously_with_the_file_signer() {
+    let (out, err) = ship_with_key("present", true);
+    assert!(
+        out.contains("--yes") && !out.contains("--dry-run") && out.contains("SIGNER=file"),
+        "a key-present `loft ship` runs the routine with `--yes` and the file signer:\n{out}{err}"
+    );
+    assert!(
+        !err.contains("cannot sign"),
+        "nothing to defer on a key-present machine:\n{err}"
+    );
+}
+
+/// @C96 — a key-absent machine defers: it says it cannot sign, and runs the routine in review
+/// mode (`--dry-run`) with no signer chosen for it.
+#[test]
+fn a_key_absent_machine_says_so_and_runs_in_review_mode() {
+    let (out, err) = ship_with_key("absent", false);
+    assert!(
+        out.contains("--dry-run") && !out.contains("--yes") && out.contains("SIGNER=unset"),
+        "a key-absent `loft ship` runs the routine in review mode, unsigned:\n{out}{err}"
+    );
+    assert!(
+        err.contains("this machine cannot sign"),
+        "a key-absent machine says why it is not shipping:\n{err}"
     );
 }

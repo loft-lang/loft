@@ -5,7 +5,7 @@
 # The seconds-long checks a `make ci` would otherwise report only after minutes of building.
 #
 #   scripts/gate_preflight.sh            # the default set, ~45 s on this box
-#   CI_PREFLIGHT=full scripts/gate_preflight.sh   # + doc_hygiene and frontend_counts via nextest
+#   CI_PREFLIGHT=full scripts/gate_preflight.sh   # + doc_hygiene via nextest
 #
 # `scripts/ci-run.sh start` runs this first and refuses to queue a gate that would fail on one
 # of these.  Why it exists: `make ci` rebuilds the native fixtures and both wasm rlibs BEFORE
@@ -19,11 +19,18 @@
 #   audit rows   QUALITY.md's `unspan` and `optional` rows against
 #                `ir_walker_audit.py`, compared exactly as doc_hygiene's
 #                `quality_*_table_matches_the_audit` compare them         ~6 s
+#   shape tests  `make optional-ratchet`'s command: the count of shape tests
+#                that cannot see through `τ?` has not grown (@FR-N-Shape).
+#                The audit row above reads the count of opaque FUNCTIONS; a
+#                new `matches!(t, Type::…)` in a body that already has one
+#                moves only the count of TESTS, which this reads            ~5 s
 #   doc drift    `scripts/check_doc_drift.sh -q`                           ~30 s
 #   stdlib       `scripts/compiled_stdlib_fresh.py` — the compiled stdlib
-#                was compiled from default/ as it is now                   <1 s
-#   full only    `cargo nextest run --release` over doc_hygiene and
-#                frontend_counts — seconds of tests, minutes of compiling
+#                was compiled from default/ as it is now; when it was not,
+#                `make compiled-stdlib` regenerates it here and the step
+#                says so (commit the regenerated file with the change)      <1 s, or ~2 min
+#   full only    `cargo nextest run --release` over doc_hygiene (the front-end allocation
+#                pins are advisory, ci.yml's own job) — seconds of tests, minutes of compiling
 #                when the release test binaries are stale
 #
 # Clippy is not here: both variants the gate runs compile the whole crate, which is the cost
@@ -71,13 +78,26 @@ sys.exit(1 if bad else 0)
 EOF
 }
 
+# fd 3 reaches the terminal past `step`'s capture: a step that SUCCEEDS by repairing something
+# (the stdlib regeneration) still says what it changed.
+exec 3>&1
 echo "gate pre-flight (CI_NO_PREFLIGHT=1 skips it):"
 step fmt cargo fmt -- --check
 step "audit rows" audit_rows
+step "shape tests" python3 scripts/ir_walker_audit.py optional --check-ratchet
 step "doc drift" scripts/check_doc_drift.sh -q
-step stdlib python3 scripts/compiled_stdlib_fresh.py
+# A stale compiled stdlib is REGENERATED, not refused: it is a derived file whose only cure is
+# this command, and a gate on a stale one measures an interpreted stdlib (5-23x slower on text).
+stdlib_fresh() {
+  python3 scripts/compiled_stdlib_fresh.py >/dev/null 2>&1 && return 0
+  echo "    the compiled stdlib was stale: regenerating (make compiled-stdlib)" >&3
+  make -s compiled-stdlib || return 1
+  python3 scripts/compiled_stdlib_fresh.py || return 1
+  echo "    regenerated src/compiled_stdlib_gen.rs — commit it with this change" >&3
+}
+step stdlib stdlib_fresh
 if [ "${CI_PREFLIGHT:-}" = full ]; then
-  step "hygiene+fe" cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'
+  step "hygiene" cargo nextest run --release --test doc_hygiene
 fi
 
 if [ ${#failed[@]} -gt 0 ]; then

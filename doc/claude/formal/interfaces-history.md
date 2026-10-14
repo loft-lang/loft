@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
+OPEN: **0** (D-gen-11 and D-gen-12 opened and closed 2026-10-07, loft#1927 and loft#1928; D-gen-10 opened 2026-10-05 and closed 2026-10-06, loft#1872; D-gen-7 and D-gen-8 opened and closed 2026-10-05, loft#1868; D-gen-5 — @C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
 `D-gen-4` on 2026-09-02.
 
 ⚠ **This line read `OPEN: 0` because *"a rules doc adds no code deviation"* — a claim about the
@@ -16,6 +16,73 @@ until the walk that first asked found four defects there.  It has now produced o
 The oracle under it (`86-interfaces.loft`, `48-generics.loft`, and the numbered scripts) is real,
 but it is an oracle for the shapes those files happen to write; `D-gen-1` is what it could not
 see.
+
+### D-gen-12 — OPENED AND CLOSED (2026-10-07, loft#1928): an enum template named itself irregularly
+
+`(G-Regular)` refuses `Bad<vector<T>>` inside `Bad<T>` at the declaration.  The check read the
+template's own attributes, which are a struct's fields but an enum's VARIANTS, so a variant's
+field naming the enum at a growing instance (`Cons { t: vector<Lst<vector<T>>> }`), at swapped
+variables (`Two<U, T>`) or at a concrete argument (`One<integer>`) was accepted where the struct
+twin is refused.  No wrong value was measured at the depths a program builds by hand; the rule
+exists for the instance chain that does not end.  The check now reads each variant's fields
+too.  Guard: `1928-a-generic-enum-that-names-itself-irregularly-is-refused.loft`.
+
+### D-gen-11 — OPENED AND CLOSED (2026-10-07, loft#1927): a member's RETURN was compared only between named types
+
+`(G-Sat)` satisfies a bound by a function of signature `[Self ↦ C](p̄ -> R)`.  The parameters
+are compared (loft#1818); the return was compared only when both sides named a struct or enum
+(@PLN125 A2a), so `fn size(self: A) -> float` met `fn size(self: Self) -> integer`, and the
+generic, typed with `integer`, read the float's bits (`4612811918334230529` for `2.5 + 1` on
+the interpreter, rustc E0308 on `--native`); a `-> text` member printed `50`, a
+`-> vector<text>` one answered a handle as an integer on both backends, and a member returning
+nothing printed nothing.  `Data::return_fits` compares every return as a parameter is, at
+every position of the type, nullability peeled; a member whose interface member returns
+nothing may still return a value.  Guards: `1927-a-member-returning-another-type-does-not-satisfy-a-bound.loft`,
+`1927b-a-member-returning-the-declared-type-satisfies-a-bound.loft`.
+
+### D-gen-10 — OPENED (2026-10-05) AND CLOSED (2026-10-06, loft#1872): a recursive instance's struct result read inline
+
+`(G-Mono)` says an instance answers as its concrete twin does.  The twin `fn pick(n, a: S,
+b: S) -> S` returns `S["a", "b"]` through a caller's buffer; the recursive generic instance
+returned a bare `S` with no buffer, and its recursive arm's result was a store of its own that
+a caller reading a field straight off the call (`pick(1, a, b).x`) never released — one record
+per call on `--interpret`.  The vector half was silent: the instance handed the caller's own
+vector up on its borrow arm and the call site's lift freed it.  The instance now binds such a
+join into one owned local, and a returned whole vector is always a copy (`(F-Ret)`).  Guard:
+`1872-a-generic-instance-answers-as-its-twin-when-read-inline.loft`.  Recorded in the rules
+doc as `D-gen-7`, a number this register had already given loft#1868's entry; the reuse let the
+register read the closed entry's date and count the open one as closed.
+
+### D-gen-8 — OPENED AND CLOSED (2026-10-05, found by loft#1868's matrix): a compound on an open instance's field
+
+`(G-Type)` says an open instance's field behaves as its twin's.  Three compounds on a
+`Bag<T>` field inside the template did not: `b.items += [x]` built the literal INTO the field
+and then appended that vector to the field again, so every append doubled it (two one-element
+appends left six); `b.name += "x"` appended to a work text that nothing read the field into
+or wrote back (a panic on `--interpret`, E0425 on `--native`).  The append test that
+recognises a literal built through its place (`rhs_built_into_place`) knew only the tuple
+place; it now knows the deferred field too, and a block is "built into the place" only when
+its accumulator is never re-pointed, which a comprehension does.  The text compound writes
+back through the deferred field write (`assign_text`).  Guard:
+`a-compound-on-a-generic-structs-field-writes-that-field-once.loft`.
+
+### D-gen-7 — OPENED AND CLOSED (2026-10-05, loft#1868): a tuple of a type variable held in a collection
+
+`(G-Mono)` applies `[T ↦ C]` to every constant derived from a type.  A template's
+`vector<(T, U)>` kept one: the record `__tuple<T,U>`, laid out once with zero-width members
+and named by every instance.  A parameter of that type read `null(oob)` silently, a built one
+ran without output, text members panicked in the allocator, `--native` refused every cell
+(E0308), and `v[0] = (x, y)` was refused outright.  A tuple of a type variable is now an OPEN
+instance of the anonymous tuple template, read as `(G-Type)` reads `Box<T>`: each monomorph
+closes it to the concrete tuple's record (`Data::close_instance`), its element stride names it,
+and its unbox, member reads, member and element writes and destructuring are deferred to the
+monomorph.  The tuple member writer also gained the plain-enum arm a deferred write needed.
+Two things the closing taught: an open tuple is anonymous, so another template's `(T?, integer)`
+shares this one's placeholder — only the open tuples a template's own types name are closed
+(closing the rest minted `__nullable<S>` on pass 2, which H5 refused); and an instance whose
+field holds a tuple mints that tuple's record with the field, or its layout waited and the
+record took a later id than the generated `init()` gives it (`--native` schema drift).
+Guard: `a-generic-over-a-vector-of-tuples-of-its-type-variables.loft`.
 
 ### D-gen-4 — OPENED AND CLOSED (2026-09-02, loft#1275): the stub key spelled a NAME, not a signature
 

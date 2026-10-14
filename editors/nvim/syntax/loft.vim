@@ -11,7 +11,7 @@ if exists("b:current_syntax")
   finish
 endif
 
-syn keyword loftKeyword fn struct enum type interface pub use const let
+syn keyword loftKeyword fn operator struct enum type interface pub use const let
 syn keyword loftKeyword if else for while match in return break continue yield
 syn keyword loftKeyword and or not as is sizeof
 syn keyword loftBoolean true false

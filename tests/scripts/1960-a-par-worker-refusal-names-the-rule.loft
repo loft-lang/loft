@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1960: a `par(…)` worker is one call of a function named at the call, and a worker of
+// another shape is refused ONCE, naming that rule and the cure.  Before, a function value was
+// reported as `Unknown function`, a field holding a function as a method of a captured value,
+// and every non-call shape as eight syntax errors.  One cell per shape: a local holding a
+// function (`r1`), a local holding a lambda (`r2`), a parameter of function type (`r3`), a
+// field holding a function (`r4`), a local that is not a function (`r5`), a call through a
+// vector element (`r6`), an inline lambda (`r7`), an expression around the call (`r8`), a call
+// through a call's result (`r9`).  Each refused function sits alone, so each `@EXPECT_ERROR`
+// pins one cell.  The cures it names run in `1960b-a-par-worker-named-at-the-call-runs.loft`.
+//
+// @EXPECT_ERROR: `g` holds a function value, and a parallel worker is a function named at the call
+// @EXPECT_ERROR: `h` holds a function value, and a parallel worker is a function named at the call
+// @EXPECT_ERROR: `p` holds a function value, and a parallel worker is a function named at the call
+// @EXPECT_ERROR: `o.one` is a function held in a field, and a parallel worker is a function named at the call
+// @EXPECT_ERROR: `k` is a variable, not a function — a parallel worker is a function named at the call
+// @EXPECT_ERROR: a parallel worker is one call of a function named at the call
+// @EXPECT_ERROR: a parallel worker is one call of a function named at the call
+// @EXPECT_ERROR: a parallel worker is one call of a function named at the call
+// @EXPECT_ERROR: a parallel worker is one call of a function named at the call
+// @falsified-at: 107cef1cd — interpret exit 1 -> 0, interpret expectations FAIL/9 -> 0/9 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/9 -> 0/9 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1960-a-par-worker-refusal-names-the-rule.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — the control reports the value shapes as
+//   `Unknown function` and the non-call shapes as a syntax-error cascade, so none of the nine
+//   expected refusals matches.
+//   WITNESS: on 107cef1cd `r1` says "Unknown function 'g'" and `r8` eight `Expect token` errors.
+//   HOLDS: leak and panic are equal on both trees.
+fn dbl(x: integer) -> integer { x * 2 }
+struct Ops { one: fn(integer) -> integer }
+fn mk() -> fn(integer) -> integer { dbl }
+
+fn r1() { v = [1, 2, 3]; g = dbl; for a in v par(b = g(a), 2) { println("{b}"); } }
+fn r2() {
+  v = [1, 2, 3];
+  h = fn(x: integer) -> integer { x * 2 };
+  for a in v par(b = h(a), 2) { println("{b}"); }
+}
+fn r3(p: fn(integer) -> integer) { v = [1, 2, 3]; for a in v par(b = p(a), 2) { println("{b}"); } }
+fn r4() { v = [1, 2, 3]; o = Ops { one: dbl }; for a in v par(b = o.one(a), 2) { println("{b}"); } }
+fn r5() { v = [1, 2, 3]; k = 3; for a in v par(b = k(a), 2) { println("{b}"); } }
+fn r6() { v = [1, 2, 3]; fs = [dbl]; for a in v par(b = fs[0](a), 2) { println("{b}"); } }
+fn r7() { v = [1, 2, 3]; for a in v par(b = fn(x: integer) -> integer { x * 2 }(a), 2) { println("{b}"); } }
+fn r8() { v = [1, 2, 3]; for a in v par(b = dbl(a) + 1, 2) { println("{b}"); } }
+fn r9() { v = [1, 2, 3]; for a in v par(b = mk()(a), 2) { println("{b}"); } }
+
+fn main() { r1(); r2(); r3(dbl); r4(); r5(); r6(); r7(); r8(); r9(); }

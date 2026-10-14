@@ -19,12 +19,12 @@
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
+use crate::btree;
 use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{DbRef, Str};
 use crate::ops;
 use crate::state::{Hot, Regs, State};
-use crate::tree;
 use crate::vector;
 
 pub static OPERATORS: &[fn(&mut State)] = &[
@@ -207,11 +207,13 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     get_short_spare::<false>,
     get_short_full::<false>,
     set_text::<false>,
+    set_text_replace::<false>,
     var_vector::<false>,
     length_vector::<false>,
     vector_is_null::<false>,
     ref_is_null::<false>,
     distinct_store::<false>,
+    store_live::<false>,
     ref_alias::<false>,
     clear_vector::<false>,
     get_vector::<false>,
@@ -224,6 +226,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     append_vector::<false>,
     slice_vector::<false>,
     slice_view::<false>,
+    keep_range::<false>,
     push_int::<false>,
     push_int4::<false>,
     push_float::<false>,
@@ -234,6 +237,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     push_byte::<false>,
     claim_child_rec::<false>,
     ref_from_child_rec::<false>,
+    child_rec::<false>,
     get_record::<false>,
     hash_add::<false>,
     hash_find::<false>,
@@ -282,6 +286,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     vec_get_int_nullable::<false>,
     vec_set_int::<false>,
     vec_end_jump::<false>,
+    null_reported::<false>,
     cast_text_from_bool::<false>,
     range_default::<false>,
     conv_character_from_null::<false>,
@@ -314,7 +319,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     sizeof_ref::<false>,
     eq_content::<false>,
     ne_content::<false>,
-    tag_fault::<false>,
     size_vector::<false>,
     size_struct::<false>,
     size_scalar::<false>,
@@ -330,16 +334,20 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     reserve_hash::<false>,
     size_hash::<false>,
     length_index::<false>,
+    size_index::<false>,
     panic::<false>,
     print::<false>,
     remove::<false>,
     clear::<false>,
     copy_record::<false>,
+    evacuate::<false>,
     replace_keyed::<false>,
     clear_keyed::<false>,
     fill_keyed::<false>,
     length_spatial::<false>,
+    size_spatial::<false>,
     length_trie::<false>,
+    size_trie::<false>,
     fn_ref_detach_shared::<false>,
     parallel_begin::<false>,
     parallel_arm::<false>,
@@ -553,11 +561,13 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     get_short_spare::<true>,
     get_short_full::<true>,
     set_text::<true>,
+    set_text_replace::<true>,
     var_vector::<true>,
     length_vector::<true>,
     vector_is_null::<true>,
     ref_is_null::<true>,
     distinct_store::<true>,
+    store_live::<true>,
     ref_alias::<true>,
     clear_vector::<true>,
     get_vector::<true>,
@@ -570,6 +580,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     append_vector::<true>,
     slice_vector::<true>,
     slice_view::<true>,
+    keep_range::<true>,
     push_int::<true>,
     push_int4::<true>,
     push_float::<true>,
@@ -580,6 +591,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     push_byte::<true>,
     claim_child_rec::<true>,
     ref_from_child_rec::<true>,
+    child_rec::<true>,
     get_record::<true>,
     hash_add::<true>,
     hash_find::<true>,
@@ -628,6 +640,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     vec_get_int_nullable::<true>,
     vec_set_int::<true>,
     vec_end_jump::<true>,
+    null_reported::<true>,
     cast_text_from_bool::<true>,
     range_default::<true>,
     conv_character_from_null::<true>,
@@ -660,7 +673,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     sizeof_ref::<true>,
     eq_content::<true>,
     ne_content::<true>,
-    tag_fault::<true>,
     size_vector::<true>,
     size_struct::<true>,
     size_scalar::<true>,
@@ -676,16 +688,20 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     reserve_hash::<true>,
     size_hash::<true>,
     length_index::<true>,
+    size_index::<true>,
     panic::<true>,
     print::<true>,
     remove::<true>,
     clear::<true>,
     copy_record::<true>,
+    evacuate::<true>,
     replace_keyed::<true>,
     clear_keyed::<true>,
     fill_keyed::<true>,
     length_spatial::<true>,
+    size_spatial::<true>,
     length_trie::<true>,
+    size_trie::<true>,
     fn_ref_detach_shared::<true>,
     parallel_begin::<true>,
     parallel_arm::<true>,
@@ -899,11 +915,13 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     get_short_spare_r,
     get_short_full_r,
     set_text_r,
+    set_text_replace_r,
     var_vector_r,
     length_vector_r,
     vector_is_null_r,
     ref_is_null_r,
     distinct_store_r,
+    store_live_r,
     ref_alias_r,
     clear_vector_r,
     get_vector_r,
@@ -916,6 +934,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     append_vector_r,
     slice_vector_r,
     slice_view_r,
+    keep_range_r,
     push_int_r,
     push_int4_r,
     push_float_r,
@@ -926,6 +945,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     push_byte_r,
     claim_child_rec_r,
     ref_from_child_rec_r,
+    child_rec_r,
     get_record_r,
     hash_add_r,
     hash_find_r,
@@ -974,6 +994,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     vec_get_int_nullable_r,
     vec_set_int_r,
     vec_end_jump_r,
+    null_reported_r,
     cast_text_from_bool_r,
     range_default_r,
     conv_character_from_null_r,
@@ -1006,7 +1027,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     sizeof_ref_r,
     eq_content_r,
     ne_content_r,
-    tag_fault_r,
     size_vector_r,
     size_struct_r,
     size_scalar_r,
@@ -1022,16 +1042,20 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     reserve_hash_r,
     size_hash_r,
     length_index_r,
+    size_index_r,
     panic_r,
     print_r,
     remove_r,
     clear_r,
     copy_record_r,
+    evacuate_r,
     replace_keyed_r,
     clear_keyed_r,
     fill_keyed_r,
     length_spatial_r,
+    size_spatial_r,
     length_trie_r,
+    size_trie_r,
     fn_ref_detach_shared_r,
     parallel_begin_r,
     parallel_arm_r,
@@ -1245,11 +1269,13 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpGetShortSpare",
     "OpGetShortFull",
     "OpSetText",
+    "OpSetTextReplace",
     "OpVarVector",
     "OpLengthVector",
     "OpVectorIsNull",
     "OpRefIsNull",
     "OpDistinctStore",
+    "OpStoreLive",
     "OpRefAlias",
     "OpClearVector",
     "OpGetVector",
@@ -1262,6 +1288,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpAppendVector",
     "OpSliceVector",
     "OpSliceView",
+    "OpKeepRange",
     "OpPushInt",
     "OpPushInt4",
     "OpPushFloat",
@@ -1272,6 +1299,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpPushByte",
     "OpClaimChildRec",
     "OpRefFromChildRec",
+    "OpChildRec",
     "OpGetRecord",
     "OpHashAdd",
     "OpHashFind",
@@ -1320,6 +1348,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpVecGetIntNullable",
     "OpVecSetInt",
     "OpVecEndJump",
+    "OpNullReported",
     "OpCastTextFromBool",
     "OpRangeDefault",
     "OpConvCharacterFromNull",
@@ -1352,7 +1381,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpSizeofRef",
     "OpEqContent",
     "OpNeContent",
-    "OpTagFault",
     "OpSizeVector",
     "OpSizeStruct",
     "OpSizeScalar",
@@ -1368,16 +1396,20 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpReserveHash",
     "OpSizeHash",
     "OpLengthIndex",
+    "OpSizeIndex",
     "OpPanic",
     "OpPrint",
     "OpRemove",
     "OpClear",
     "OpCopyRecord",
+    "OpEvacuate",
     "OpReplaceKeyed",
     "OpClearKeyed",
     "OpFillKeyed",
     "OpLengthSpatial",
+    "OpSizeSpatial",
     "OpLengthTrie",
+    "OpSizeTrie",
     "OpFnRefDetachShared",
     "OpParallelBegin",
     "OpParallelArm",
@@ -1415,7 +1447,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 218;
+pub const OP_NORMAL: u16 = 223;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -1509,10 +1541,10 @@ fn call_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn op_return<const F: bool>(s: &mut State) {
-    let operands = s.operands(5);
+    let operands = s.operands(6);
     let v_ret = operands.get::<u16>(0);
-    let v_value = operands.get::<u8>(2);
-    let v_discard = operands.get::<u16>(3);
+    let v_value = operands.get::<u16>(2);
+    let v_discard = operands.get::<u16>(4);
     s.fn_return(v_ret, v_value, v_discard);
 }
 
@@ -1524,9 +1556,9 @@ fn op_return_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn free_stack<const F: bool>(s: &mut State) {
-    let operands = s.operands(3);
-    let v_value = operands.get::<u8>(0);
-    let v_discard = operands.get::<u16>(1);
+    let operands = s.operands(4);
+    let v_value = operands.get::<u16>(0);
+    let v_discard = operands.get::<u16>(2);
     s.free_stack(v_value, v_discard);
 }
 
@@ -1591,7 +1623,7 @@ fn cast_text_from_bool<const F: bool>(s: &mut State) {
     let new_value = if v_v1 == 1 {
         "true"
     } else if v_v1 == 255 {
-        "null"
+        "\0"
     } else {
         "false"
     };
@@ -2215,11 +2247,7 @@ fn mul_int_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn div_int_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, i64>();
     let v_v1 = s.get_stack_m::<F, i64>();
-    let new_value = {
-        let r = ops::op_div_int_nullable(v_v1, v_v2);
-        ops::note_format_fault(1, r == i64::MIN && v_v1 != i64::MIN && v_v2 != i64::MIN);
-        r
-    };
+    let new_value = ops::op_div_int_nullable(v_v1, v_v2);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -2233,11 +2261,7 @@ fn div_int_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn rem_int_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, i64>();
     let v_v1 = s.get_stack_m::<F, i64>();
-    let new_value = {
-        let r = ops::op_rem_int_nullable(v_v1, v_v2);
-        ops::note_format_fault(2, r == i64::MIN && v_v1 != i64::MIN && v_v2 != i64::MIN);
-        r
-    };
+    let new_value = ops::op_rem_int_nullable(v_v1, v_v2);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -2666,11 +2690,7 @@ fn rem_single_r(s: &mut State, r: Regs) -> Regs {
 fn div_single_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f32>();
     let v_v1 = s.get_stack_m::<F, f32>();
-    let new_value = {
-        let r = v_v1 / v_v2;
-        ops::note_format_fault(1, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 / v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -2684,11 +2704,7 @@ fn div_single_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn rem_single_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f32>();
     let v_v1 = s.get_stack_m::<F, f32>();
-    let new_value = {
-        let r = v_v1 % v_v2;
-        ops::note_format_fault(2, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 % v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3230,11 +3246,7 @@ fn rem_float_r(s: &mut State, r: Regs) -> Regs {
 fn div_float_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f64>();
     let v_v1 = s.get_stack_m::<F, f64>();
-    let new_value = {
-        let r = v_v1 / v_v2;
-        ops::note_format_fault(1, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 / v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3248,11 +3260,7 @@ fn div_float_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn div_float_nullable_h(s: &mut Hot) {
     let v_v2 = s.get_stack::<f64>();
     let v_v1 = s.get_stack::<f64>();
-    let new_value = {
-        let r = v_v1 / v_v2;
-        ops::note_format_fault(1, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 / v_v2;
     s.put_stack(new_value);
 }
 
@@ -3260,11 +3268,7 @@ fn div_float_nullable_h(s: &mut Hot) {
 fn rem_float_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f64>();
     let v_v1 = s.get_stack_m::<F, f64>();
-    let new_value = {
-        let r = v_v1 % v_v2;
-        ops::note_format_fault(2, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 % v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3543,14 +3547,7 @@ fn text_character_r(s: &mut State, r: Regs) -> Regs {
 fn text_character_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, i64>();
     let v_v1 = s.string();
-    let new_value = {
-        let ch = ops::text_character(v_v1.str(), v_v2);
-        ops::note_format_fault(
-            3,
-            ch == char::from(0) && v_v2 != i64::MIN && !v_v1.str().is_empty(),
-        );
-        ch
-    };
+    let new_value = ops::text_character(v_v1.str(), v_v2);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3790,7 +3787,11 @@ fn cast_text_from_enum<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_enum_tp = operands.get::<u16>(0);
     let v_v1 = s.get_stack_m::<F, u8>();
-    let new_value = Str::new(s.database.enum_val(v_enum_tp, v_v1));
+    let new_value = Str::new(if v_v1 == 0 || v_v1 == 255 {
+        "\0"
+    } else {
+        s.database.enum_val(v_enum_tp, v_v1)
+    });
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -4179,6 +4180,8 @@ fn set_ref<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_u32_raw(db.rec, db.pos + u32::from(v_fld), v.rec);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4198,12 +4201,8 @@ fn set_db_ref<const F: bool>(s: &mut State) {
     {
         let db = v_v1;
         let r = v_val;
-        if db.rec != 0 {
-            let off = db.pos + u32::from(v_fld);
-            let store = s.database.store_mut(&db);
-            store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
-            store.set_u32_raw(db.rec, off + 4, r.rec);
-            store.set_u32_raw(db.rec, off + 8, r.pos);
+        if !s.database.set_db_ref(&db, u32::from(v_fld), r) && db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4219,19 +4218,7 @@ fn get_db_ref<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_fld = operands.get::<u16>(0);
     let v_v1 = s.get_stack_m::<F, DbRef>();
-    let new_value = {
-        let db = v_v1;
-        if db.rec == 0 {
-            DbRef::NULL
-        } else {
-            let store = s.database.store(&db);
-            let off = db.pos + u32::from(v_fld);
-            let store_nr = store.get_u32_raw(db.rec, off) as u16;
-            let rec = store.get_u32_raw(db.rec, off + 4);
-            let pos = store.get_u32_raw(db.rec, off + 8);
-            DbRef { store_nr, rec, pos }
-        }
-    };
+    let new_value = s.database.get_db_ref(&v_v1, u32::from(v_fld));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -4456,6 +4443,8 @@ fn set_enum<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_byte(db.rec, db.pos + u32::from(v_fld), 0, i32::from(v));
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4505,6 +4494,8 @@ fn set_boolean<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_byte(db.rec, db.pos + u32::from(v_fld), 0, i32::from(v));
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4582,6 +4573,8 @@ fn set_int<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_int(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4605,6 +4598,8 @@ fn set_character<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_u32_raw(db.rec, db.pos + u32::from(v_fld), v as u32);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4628,6 +4623,8 @@ fn set_single<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_single(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4651,6 +4648,8 @@ fn set_float<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_float(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4678,6 +4677,8 @@ fn set_byte<const F: bool>(s: &mut State) {
                 (v_min),
                 v as i32,
             );
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4705,6 +4706,8 @@ fn set_byte_nullable<const F: bool>(s: &mut State) {
         if db.rec != 0 {
             s.database
                 .set_byte_nullable(&db, db.pos + u32::from(v_fld), (v_min), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4732,6 +4735,8 @@ fn set_short<const F: bool>(s: &mut State) {
         if db.rec != 0 {
             s.database
                 .set_short_nullable(&db, db.pos + u32::from(v_fld), (v_min), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4789,6 +4794,8 @@ fn set_int4<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_i32_raw(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4846,6 +4853,8 @@ fn set_int4_raw<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_u32_raw(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4931,6 +4940,8 @@ fn set_short_raw<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_i16_raw(db.rec, db.pos + u32::from(v_fld), (v_min), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -5008,6 +5019,8 @@ fn set_text<const F: bool>(s: &mut State) {
             let store = s.database.store_mut(&db);
             let s_pos = store.set_str(&s_val);
             store.set_u32_raw(db.rec, db.pos + u32::from(v_fld), s_pos);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -5015,6 +5028,31 @@ fn set_text<const F: bool>(s: &mut State) {
 fn set_text_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     set_text::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn set_text_replace<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_fld = operands.get::<u16>(0);
+    let v_val = s.string();
+    let v_v1 = s.get_stack_m::<F, DbRef>();
+    {
+        let db = v_v1;
+        let s_val = v_val.str().to_string();
+        if db.rec != 0 {
+            s.database
+                .store_mut(&db)
+                .refill_str(db.rec, db.pos + u32::from(v_fld), &s_val);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+        }
+    }
+}
+
+fn set_text_replace_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    set_text_replace::<true>(s);
     s.regs_out()
 }
 
@@ -5029,22 +5067,6 @@ fn var_vector<const F: bool>(s: &mut State) {
 fn var_vector_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     var_vector::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
-fn tag_fault<const F: bool>(s: &mut State) {
-    let operands = s.operands(1);
-    let v_kind = operands.get::<u8>(0);
-    {
-        let _ = v_kind;
-        ops::arm_format_fault();
-    }
-}
-
-fn tag_fault_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    tag_fault::<true>(s);
     s.regs_out()
 }
 
@@ -5098,6 +5120,19 @@ fn distinct_store<const F: bool>(s: &mut State) {
 fn distinct_store_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     distinct_store::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn store_live<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.store_live(&v_r);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn store_live_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    store_live::<true>(s);
     s.regs_out()
 }
 
@@ -5235,11 +5270,7 @@ fn get_vector_nullable<const F: bool>(s: &mut State) {
     let v_size = operands.get::<u16>(0);
     let v_index = s.get_stack_m::<F, i64>();
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = {
-        let el = vector::get_vector(&v_r, u32::from(v_size), v_index, &s.database.allocations);
-        ops::note_format_fault(3, el.rec == 0 && v_index != i64::MIN && !v_r.is_null());
-        el
-    };
+    let new_value = vector::get_vector(&v_r, u32::from(v_size), v_index, &s.database.allocations);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -5255,7 +5286,6 @@ fn vector_ref_nullable<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
     let new_value = {
         let el = vector::get_vector(&v_r, 4, v_index, &s.database.allocations);
-        ops::note_format_fault(3, el.rec == 0 && v_index != i64::MIN && !v_r.is_null());
         s.database.get_ref(&el, 0)
     };
     s.put_stack_m::<F, _>(new_value);
@@ -5408,6 +5438,22 @@ fn slice_view<const F: bool>(s: &mut State) {
 fn slice_view_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     slice_view::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn keep_range<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_hi = s.get_stack_m::<F, i64>();
+    let v_lo = s.get_stack_m::<F, i64>();
+    let v_r = s.get_stack_m::<F, DbRef>();
+    s.database.vector_keep_range(&v_r, v_lo, v_hi, v_tp);
+}
+
+fn keep_range_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    keep_range::<true>(s);
     s.regs_out()
 }
 
@@ -5583,6 +5629,21 @@ fn ref_from_child_rec_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn child_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_field = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.new_child_rec(&v_field, v_tp);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn child_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn get_record<const F: bool>(s: &mut State) {
     s.get_record();
 }
@@ -5680,16 +5741,27 @@ fn size_hash_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn length_index<const F: bool>(s: &mut State) {
-    let operands = s.operands(2);
-    let v_fields = operands.get::<u16>(0);
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(tree::count(&v_r, v_fields, &s.database.allocations));
+    let new_value = i64::from(btree::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
 fn length_index_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     length_index::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn size_index<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = i64::from(btree::table_bytes(&v_r, &s.database.allocations));
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn size_index_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    size_index::<true>(s);
     s.regs_out()
 }
 
@@ -5835,6 +5907,23 @@ fn place_record<const F: bool>(s: &mut State) {
 fn place_record_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     place_record::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn evacuate<const F: bool>(s: &mut State) {
+    let operands = s.operands(4);
+    let v_fld = operands.get::<u16>(0);
+    let v_tp = operands.get::<u16>(2);
+    let v_home = s.get_stack_m::<F, DbRef>();
+    let v_holder = s.get_stack_m::<F, DbRef>();
+    s.database
+        .evacuate(&v_holder, u32::from(v_fld), &v_home, v_tp);
+}
+
+fn evacuate_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    evacuate::<true>(s);
     s.regs_out()
 }
 
@@ -6022,6 +6111,22 @@ fn length_spatial_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn size_spatial<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = i64::from(codegen_runtime::spatial_bytes(
+        &v_r,
+        &s.database.allocations,
+    ));
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn size_spatial_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    size_spatial::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn length_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
     let new_value = i64::from(codegen_runtime::trie_len(&v_r, &s.database.allocations));
@@ -6031,6 +6136,19 @@ fn length_trie<const F: bool>(s: &mut State) {
 fn length_trie_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     length_trie::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn size_trie<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = i64::from(codegen_runtime::trie_bytes(&v_r, &s.database.allocations));
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn size_trie_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    size_trie::<true>(s);
     s.regs_out()
 }
 
@@ -6346,7 +6464,7 @@ fn size_file_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn delete<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_delete(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_delete_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6360,10 +6478,7 @@ fn delete_r(s: &mut State, r: Regs) -> Regs {
 fn move_file<const F: bool>(s: &mut State) {
     let v_to = s.string();
     let v_from = s.string();
-    let new_value = codegen_runtime::fs_move(
-        &s.database.resolve_path(v_from.str()),
-        &s.database.resolve_path(v_to.str()),
-    );
+    let new_value = s.database.fs_move_at(v_from.str(), v_to.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6457,7 +6572,7 @@ fn call_ref_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn mkdir<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_mkdir(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_mkdir_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6470,7 +6585,7 @@ fn mkdir_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn mkdir_all<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_mkdir_all(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_mkdir_all_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6483,7 +6598,7 @@ fn mkdir_all_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn rmdir<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_rmdir(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_rmdir_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -7010,7 +7125,6 @@ fn vec_get_int_nullable<const F: bool>(s: &mut State) {
         let r = s.get_var_m::<F, DbRef>(v_vec);
         let i = s.get_var_m::<F, i64>(v_idx);
         let db = vector::get_vector(&r, u32::from(v_size), i, &s.database.allocations);
-        ops::note_format_fault(3, db.rec == 0 && i != i64::MIN && !r.is_null());
         if db.rec == 0 {
             i64::MIN
         } else {
@@ -7076,8 +7190,24 @@ fn vec_end_jump_r(s: &mut State, r: Regs) -> Regs {
     s.regs_out()
 }
 
+#[inline(always)]
+fn null_reported<const F: bool>(s: &mut State) {
+    let new_value = DbRef::NULL_REPORTED;
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn null_reported_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    null_reported::<true>(s);
+    s.regs_out()
+}
+
 /// The lean loop's dispatch: a `#hot` operator runs inline on the loop's registers
 /// ([`Hot`]), every other one through [`OPERATORS_REG`].
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per #hot operator: the table IS the dispatch, and splitting it adds a call the inline arms exist to avoid"
+)]
 #[inline(always)]
 pub(crate) fn dispatch_lean(s: &mut State, opcode: u16, r: Regs) -> Regs {
     match opcode {

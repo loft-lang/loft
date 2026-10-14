@@ -52,10 +52,12 @@ fn test_a_struct_parses_itself_and_reports_its_own_errors() {
   scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 
   // A failed parse leaves the record at its type's zeros, so ask whether it failed.
-  errs = user#errors;              // TEXT, not a collection — and the read clears it
+  errs = user#errors;              // a vector<text>: one entry per error of user's own parse
   assert(user.name == "Alice" and len(scores) == 2, "both shapes parsed");
-  assert(errs == "", "a clean parse has no errors");
+  assert(len(errs) == 0, "a clean parse has no errors");
   bad = User.parse(`{{"id":"not a number"}}`);
   assert(bad.id == 0, "a failed field is at its type's zero");
-  assert(bad#errors != "", "and the record says so once");
+  for e in bad#errors { assert(e.contains("path:id"), "each entry names its field: {e}"); }
+  assert(len(bad#errors) == 1, "and reading them leaves them in place");
+  assert(len(user#errors) == 0, "while the first record still answers for its own parse");
 }

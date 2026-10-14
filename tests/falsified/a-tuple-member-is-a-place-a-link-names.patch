@@ -1,0 +1,15 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9f0a3619b..95a13d4a3 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -22393,9 +22393,7 @@
+             return dbref.is_place_read(data);
+         }
+         match val.unspan() {
+-            // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
+-            // member types it can link, and refuses the rest by name.
+-            Value::Var(_) | Value::TupleGet(_, _) => true,
++            Value::Var(_) => true,
+             Value::Call(d_nr, args) => {
+                 let name = data.def(*d_nr).name();
+                 let listed = matches!(

@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1927 — what `(G-Sat)`'s return comparison still ADMITS, each answered on both backends:
+// the declared return itself, `Self` met by the implementor, a record return (whose hidden
+// buffer an interface declaration does not carry), another integer width, either nullability
+// (compared by the dense type, as a parameter is), a value where the interface member returns
+// nothing (the generic discards it), and the stdlib's operator interfaces met by built-in and
+// program types.
+//
+// Axes this file MOVES:  the return's shape (scalar · Self · record · narrow integer · nullable
+//                        either way · none declared) and the interface (program · stdlib).
+// Axes it HOLDS FIXED:   struct implementors; one call per bound.
+//
+// @falsified-at: none — the CONTROLS of loft#1927's fix: every cell answers the same on the
+//   build before it (measured: `ok` there and here, both backends).  It fails if the return
+//   comparison refuses a return the rules admit.
+
+struct Pt { x: integer }
+interface Sz { fn size(self: Self) -> integer }
+interface Dup { fn dup(self: Self) -> Self }
+interface Mk { fn pt(self: Self) -> Pt }
+interface Op { fn opt(self: Self) -> integer? }
+interface Tk { fn tick(self: Self) }
+
+struct A { a: integer }
+fn size(self: A) -> integer { self.a * 7 }
+fn dup(self: A) -> A { A { a: self.a * 2 } }
+fn pt(self: A) -> Pt { Pt { x: self.a + 10 } }
+fn opt(self: A) -> integer { self.a }
+fn tick(self: A) -> integer { 9 }
+
+struct N { n: integer }
+fn size(self: N) -> i32 { 5 }
+fn opt(self: N) -> integer? { if self.n > 0 { self.n } else { null } }
+
+struct V { x: integer }
+operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
+operator to_text(self: V) -> text { "V{self.x}" }
+
+fn sz<T: Sz>(x: T) -> integer { x.size() + 1 }
+fn twice<T: Dup>(x: T) -> T { x.dup().dup() }
+fn px<T: Mk>(x: T) -> integer { x.pt().x }
+fn op<T: Op>(x: T) -> integer { x.opt() ?? -1 }
+fn tk<T: Tk>(x: T) -> integer { x.tick(); 1 }
+fn sum2<T: Addable>(a: T, b: T) -> T { a + b }
+fn show<T: Printable>(a: T) -> text { "{a}" }
+fn lo<T: Ordered>(a: T, b: T) -> T { if a < b { a } else { b } }
+
+fn main() {
+  a = A { a: 3 };
+  assert(sz(a) == 22, "declared return: {sz(a)}");
+  assert(twice(a).a == 12, "Self return: {twice(a).a}");
+  assert(px(a) == 13, "record return: {px(a)}");
+  assert(op(a) == 3, "a dense return where the interface is nullable: {op(a)}");
+  assert(tk(a) == 1, "a value where the interface returns nothing: {tk(a)}");
+  assert(sz(N { n: 0 }) == 6, "an i32 return behind integer: {sz(N { n: 0 })}");
+  assert(op(N { n: 0 }) == -1, "a nullable return answering null: {op(N { n: 0 })}");
+  s = "{sum2(2, 3)} {sum2(1.5, 2.0)} {sum2(V { x: 1 }, V { x: 2 }).x} {show(V { x: 4 })} {show(7)} {lo(5, 2)} {lo("b", "a")}";
+  assert(s == "5 3.5 3 V4 7 2 a", "stdlib interfaces: {s}");
+  println("ok");
+}

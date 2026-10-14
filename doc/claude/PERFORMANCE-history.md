@@ -1951,6 +1951,21 @@ f's: the ratchet demands the same count from two runs in one process, and a `Laz
 mints a shared value once fails that by exactly one — reach for a static-backed default
 (`Arc::<str>::default()`) rather than a lazily minted one.
 
+## F2 — the allocation gate's two pins (loft#1761, closed 2026-10-02)
+
+One counting window held the cold stdlib parse and the program together, so a stdlib
+declaration read as front-end growth (+3974 on every row from the fused-op declarations,
+c7c0521b9) and could mask a real front-end regression of the same size.  The window now
+splits after `parse_dir`: a `stdlib` row and `tiny` / `medium` program rows per key.
+Measured when it landed (linux-debug): stdlib 291 885, tiny 18 905, medium 731 226; one
+added stdlib function moved stdlib +252 and both program rows +23 — the scope pass and the
+lints re-reading the stdlib each run, which is why the gate reports both halves together.
+
+The same change made the count hermetic.  A stray `default/.loft/` (the cache a run on a
+stdlib file writes beside it) moved every row by +44, and a `.loft` file under it was parsed
+into the stdlib; the loader now skips hidden entries, and the gate parses a pristine copy of
+`default/` because even a skipped entry costs +2 to list.
+
 ## Design: W1 — wasm string representation
 
 **Affected benchmark:** 07 (2.06× wasm vs native)
@@ -2029,7 +2044,7 @@ forces execution through the interpreter so it can step, inspect, and hot-reload
 touches the **debug loop**, which is Purpose-level (the fast iterative loop is loft's
 whole value). But the impact is **bounded**, for two reasons: a shipped game runs
 native (players never touch the interpreter), and **library calls dispatch to the
-native cdylib even under `--interpret`** (the C71 / [NATIVE.md § N9](NATIVE.md#n9--native-library-shared-store-dispatch-c71)
+native cdylib even under `--interpret`** (the @C71 / [NATIVE.md § N9](NATIVE.md#n9--native-library-shared-store-dispatch-c71)
 shared-store dispatch). So during a debug session only the maker's *own* glue/logic
 runs interpreted, while the heavy library work (render, physics, hex-world) stays
 native. Interpreter optimisation (P1, P2) is therefore a **real but secondary** win —
@@ -4039,14 +4054,14 @@ side effect that keeps LLVM re-testing the hoisted index's overflow and sentinel
 from the stack on every iteration, and a loop whose every step branches does not
 vectorise while the reference's tap is a four-wide multiply-accumulate.  Skipping the
 tests where the operands are merely typed non-null was put to the owner and declined
-(DESIGN_DECISIONS.md C120: values after a fault must not differ); the sound units that
+(DESIGN_DECISIONS.md @C120: values after a fault must not differ); the sound units that
 remain are invariant index arithmetic hoisted at loft level and a plain loop under a
 bound established once per nest, both in the plan's queue.
 
 ### The release-pass ceiling (2026-09-15)
 
 `LOFT_RELEASE_PASS_PROBE=1` compiles a program as the owner's eventual release build pass
-for games would (C120; NATIVE.md § Optimisation tiers): every integer `+`, `-`, `*` and
+for games would (@C120; NATIVE.md § Optimisation tiers): every integer `+`, `-`, `*` and
 non-literal division as the processor's wrapping operator, every float comparison plain,
 the null test and the `*Nullable` twins untouched.  It is a MEASUREMENT instrument and
 never a build anyone ships — the values after a fault are not the language's — so a row
@@ -4090,7 +4105,7 @@ plan-cleanup audits:
 
 | Item | Section | ROADMAP row | Tier | Status |
 |---|---|---|---|---|
-| **P1** — Superinstruction merging | § Design: P1 | O1 | Interpreter | Open — **unblocked** (corrected 2026-06): the two-byte escape (byte 255 → `OPERATORS[255+ext]`) gives ~242 free slots; superinstructions are escape-range ops. **Secondary** value — the debug loop runs interpreted, but bounded (library calls stay native via C71/N9; players run native), so it speeds only the maker's own glue. Worth doing because it is now cheap + low-risk. |
+| **P1** — Superinstruction merging | § Design: P1 | O1 | Interpreter | Open — **unblocked** (corrected 2026-06): the two-byte escape (byte 255 → `OPERATORS[255+ext]`) gives ~242 free slots; superinstructions are escape-range ops. **Secondary** value — the debug loop runs interpreted, but bounded (library calls stay native via @C71/N9; players run native), so it speeds only the maker's own glue. Worth doing because it is now cheap + low-risk. |
 | **P2** — Reduce store indirection on the stack | § Design: P2 | (cited in PLANNING.md) | Interpreter **+ Native** | **Native half SHIPPED 2026-08-15 (loft#885)** — a loop the emitter proves writes no store derives each vector's `(store_nr, record, length)` ONCE before the loop, and each element read becomes a bounds test plus address arithmetic.  Alternating single runs of ONE binary (`LOFT_NO_VECTOR_HOIST=1` is the before-half) on the issue's kernel: median **18.6 → 8.3 ns/iter**, distributions not overlapping, identical accumulator on all twelve runs — **~2.25×**, taking `vector<single>` indexed reads from ~15× hand-written Rust to ~6.5×.  The full write-up — the allow-list gate and why it is an allow-list, the `attributes()`-vs-`variables()` parameter hole that made the first cut classify every mutator as a reader, and the `LOFT_HOIST_VERIFY=1` / `LOFT_NO_VECTOR_HOIST=1` switches — is in § Design: P2 → *Shipped: the NATIVE half*.  **Still open:** fusing the element read into the address computation (the `DbRef` → `stores.store(&db)` → `get_single` chain), measured at a further ~1.4× and needing the gate that now exists; and the INTERPRETER half below (`stack_base` raw-pointer cache), which is untouched and still low-priority.  The sibling cost in the same report — `??`'s NaN sentinel — measured at ~0, so a non-nullable indexing form buys nothing on its own. |
 | **P3** — Confirm integer paths carry no `long` sentinel | § Design: P3 | — | Interpreter | Open — small verification + audit task; verifies the Plan-01 `i32::MIN`-removal stuck. |
 | **P4** — Block-copy slice materialisation for primitive vectors | § Design: P4 | — | Interpreter + Native | Open — discovered alongside @P287 (2026-05-20).  Today's slice → vector materialisation is element-by-element through the record allocator (5 000+ dispatches for 1 000 i32 elements); a new `OpAppendVectorSlice` op + parser fast-path reduces this to one `copy_block`.  Affects both backends. |
@@ -4105,7 +4120,7 @@ plan-cleanup audits:
 | **W1** — wasm string representation | § Design: W1 | — | WASM | Open — design ready, scheduled for wasm-priority workloads (game-client + browser-IDE consumers). |
 | **BUILD1** — Eliminate lib/bin double compilation | § Design: BUILD1 | — | Build-time | Open — discovered 2026-05-30 wiring the tmpfs safeguards.  `main.rs` re-declares 41 modules already in `lib.rs` (~38,520 LOC of single-file modules) → whole crate compiled twice (rlib + bin).  Fix = thin-binary lib/bin split.  M–L, crate-wide; needs its own change.  Until then, shared `platform` helpers used only by `tests/` carry `#[allow(dead_code)]` in the binary view. |
 | **BUILD2** — Persist native-test binary cache across CI runs | § Design: BUILD2 | — | Build-time (CI + local) | **LANDED 2026-05-30.**  Both cache keys fold rlib CONTENT hash (was mtime) + ci.yml sets `LOFT_TMPDIR=target/loft-native-cache` (persisted by actions/cache) + prune step.  Warm runs skip ~565s/OS of native recompiles; also a local speedup (rlib rebuild no longer busts the native cache on the mtime bump).  NB: `libraries4` `f73e58a0 @P334` fixes the world.loft wasip2 stub at the source — supersedes the harness preopen workaround when it merges. |
-| **E2 (zero-copy `read_data`)** — `read_data` profiling breakdown | `§ Startup cache` above | — | Startup / parse | Open but **deprioritised (2026-06-04): the native-library execution model supersedes E2 as the startup-perf lever** — in that model library bodies + variable tables are never materialised at all (libraries are native artifacts loaded via `dlopen`), so the allocation cost E2 eliminates is simply not incurred.  See [DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model) and [BROADENING.md § Native-library execution model](BROADENING.md#native-library-execution-model--the-steady-state-design).  Measurement record: `bench_read_data_breakdown` (`src/ir_read.rs`, `#[ignore]`) on the real stdlib bundle: full `read_data` = **693 µs** = def-fields **453 µs (65%)** + variable tables **98 µs (14%)** + body trees **142 µs (20%)**.  Variable-table decode is **~0.39 µs/variable** (linear in allocation count); each variable rebuilds a `String` name + a boxed `Type` — exactly what E2 eliminates.  No cheap `read_function` optimisation exists; E2 is the only lever **if** this cost matters.  E2 startup prize: **~0.7 ms on the stdlib** (scales with def + var count).  Full arc: `plans/11-data-as-store/README.md`. |
+| **E2 (zero-copy `read_data`)** — `read_data` profiling breakdown | `§ Startup cache` above | — | Startup / parse | Open but **deprioritised (2026-06-04): the native-library execution model supersedes E2 as the startup-perf lever** — in that model library bodies + variable tables are never materialised at all (libraries are native artifacts loaded via `dlopen`), so the allocation cost E2 eliminates is simply not incurred.  See [DESIGN_DECISIONS.md § @C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model) and [BROADENING.md § Native-library execution model](BROADENING.md#native-library-execution-model--the-steady-state-design).  Measurement record: `bench_read_data_breakdown` (`src/ir_read.rs`, `#[ignore]`) on the real stdlib bundle: full `read_data` = **693 µs** = def-fields **453 µs (65%)** + variable tables **98 µs (14%)** + body trees **142 µs (20%)**.  Variable-table decode is **~0.39 µs/variable** (linear in allocation count); each variable rebuilds a `String` name + a boxed `Type` — exactly what E2 eliminates.  No cheap `read_function` optimisation exists; E2 is the only lever **if** this cost matters.  E2 startup prize: **~0.7 ms on the stdlib** (scales with def + var count).  Full arc: `plans/11-data-as-store/README.md`. |
 
 Other ROADMAP rows that conceptually belong here but lack
 PERFORMANCE.md design content yet — A12 (lazy work-variable
@@ -4136,3 +4151,26 @@ cycles (2026-10-01).  The crash context, before it was derived from the register
 (`(R-DispatchPublish)`), was written per op; the function is not tracked, the report's `at:`
 line names it.
 
+
+## The interpreter section: dates and episodes behind its measurements
+
+Moved from PERFORMANCE.md § How the interpreter executes when that section became
+INTERPRETER_PERFORMANCE.md (2026-10-02).  Vector growth was priced against a hand-reserved
+vector on 2026-10-01.  The layout measurements (bench 14 at +6 % cycles with equal
+instructions, a hash loop +14 % then −4 % once pinned) and the pre-rebase "before" that made
+`join` read −95 % and `split` −90 % were both taken on 2026-10-01.  The cross-rebase
+comparison that read wrong credited a change with −4.2 % that was −5.6 % of main's commits and
++0.9 % of its own.
+
+## Dates and episodes moved out of PERFORMANCE.md (2026-10-02)
+
+`--annotate` once printed forty lines of disassembly about a one-sample `getenv` from libc,
+which is why it refuses a low-sample symbol.  The owner set the WIDE-not-deep direction for
+the perf stream on 2026-09-23.  The library A/B that reads flat (394 ms against 393 ms under
+`LOFT_NO_SCALAR_HOIST=1`) was measured on 2026-09-10 while attributing loft#1426's `smooth`
+row.  On 2026-10-02 a commit that edited `default/` without regenerating the compiled stdlib
+read as a +2213 % "regression" of the next change measured.  The single-file Rust-emit harness
+is how N4 and N5 were found (commenting out `cr_call_push`, replacing `op_add_int` with `+`),
+and it surfaced the `--native` against `--native-release` gap (`-O` missing from the default
+mode), fixed in `ae34bdb1` (`make index` uses `--native-release`).  P2's interpreter half
+(`(R-StackBase)`) was delivered on 2026-10-01.

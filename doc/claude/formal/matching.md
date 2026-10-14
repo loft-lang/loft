@@ -108,12 +108,14 @@ spelled as an `if` was quiet (loft#1343).  The last arm is the fallback now, as 
 > `P-Cap`, `P-Rest`, `P-Multi`, `P-Atomic` are verified passing on both backends via
 > `tests/scripts/35*.loft` (worklist: [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md)).
 >
-> ⚠ **`P-Anchor`, `P-Revert` and `P-IterBound` are NOT among them, and are not shipped** —
-> they describe a memoising cursor that was never built, and the ops they name exist nowhere in
-> `src/`.  The shipped design materialises an iterator subject into a vector instead, which
-> leaves `(P-IterBound)`'s bound absent and an endless source unbounded (**D-match-6**, in
-> [matching-history.md](matching-history.md)).  A section banner covers the rules a reader then
-> reads under it, so it names its exceptions.
+> ⚠ **`P-Anchor` and `P-Revert` are NOT among them** — they describe a memoising cursor that
+> was never built, and the ops they name exist nowhere in `src/`.  The shipped design
+> materialises an iterator subject into a vector instead (§ How it is built, below), and
+> `(P-IterBound)` holds by bounding that materialise: past `max_lookahead` the pull stops with
+> the defined error on both backends (guard: `tests/exit_codes.rs`
+> `a_match_over_an_iterator_stops_at_max_lookahead`; D-match-6 in
+> [matching-history.md](matching-history.md)).  A section banner covers the rules a reader
+> then reads under it, so it names its exceptions.
 > Overview + phase↔rule map: [../plans/35-match-peg/FORMAL-DESIGN.md](../plans/35-match-peg/FORMAL-DESIGN.md).
 
 PEG patterns generalise a *point* pattern (unit/struct variant, `_`) to a **sequence** that may
@@ -133,9 +135,11 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
 ```
 
 ```
-  (P-Point)  a unit variant V, struct variant V{f…}, literal, `_`, or bare binding is a POINT
-             pattern over one value (today's M-Unit/M-Variant/M-Wild lifted into ⇓).  A struct /
-             variant FIELD may itself be a pattern (nested) — the recursion this extension adds.
+  (P-Point)  a unit variant V, struct variant V{f…}, plain struct S{f…}, literal, `_`, or bare
+             binding is a POINT pattern over one value (today's M-Unit/M-Variant/M-Wild lifted into
+             ⇓).  A struct / variant FIELD may itself be a pattern (nested) — the recursion this
+             extension adds — whether the field holds its record inline or points at it
+             (`reference<T>`): the pattern asks the record either way.
   (P-Range)  a RANGE pattern over a SCALAR value v (a non-enum subject — integer / character):
              `a..=b` (inclusive) matches iff a ≤ v ≤ b; `a..b` (half-open) matches iff a ≤ v < b —
              the upper bound is EXCLUSIVE.  A POINT pattern (one value, no extra cursor advance);
@@ -164,8 +168,10 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              the slice's ONE rest, typed: `xs:T*` ≡ `..xs`, and `xs:T+` ≡ `..xs` with ≥ 1
              element.  Whatever follows it is (P-Rest)'s fixed tail, read from the END — a
              literal, `_`, a bare name, a variant: `[xs:integer*, last]` binds last = v[len−1].
-  (P-Multi)  a MULTI-PATTERN arm `pat_a, pat_b => body`: try pat_a from ⟨0,v⟩ (whole-match); else
-             pat_b; the FIRST whole-match commits.  (P-Alt at arm granularity — no new cursor work.)
+  (P-Multi)  a MULTI-PATTERN arm `pat_a | pat_b => body` (or `pat_a, pat_b`, the same arm): try
+             pat_a from ⟨0,v⟩ (whole-match); else pat_b; the FIRST whole-match commits.  (P-Alt at
+             arm granularity — no new cursor work.)  P-Alt holds at EVERY pattern position: the
+             arm, a tuple element, a field sub-pattern, a slice element.
   (P-Guard)  a GUARDED arm `pat if cond => body`: run `pat` from κ; on Match(binds,κ') evaluate
              `cond` under σ extended with `binds`.  cond true ⟹ the arm commits (Match(binds,κ'));
              cond false ⟹ the arm ⇓ Fail — exactly as if `pat` had not matched (P-Atomic keeps the
@@ -213,7 +219,7 @@ backtracking safe.
                  is a static error at the arm (M-Unit) rather than an arm that never fires.
                • SCALAR subject (integer / character — an unbounded domain) — coverage is NOT decidable
                  and NOT required.  With no total final arm the match MAY select no arm at runtime; by
-                 the C80 spreadsheet model ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md)) it then
+                 the @C80 spreadsheet model ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md)) it then
                  yields **null**, so the match's result type is **nullable** (`τ?`) — no error, the null
                  surfaces at the use site (the null-flow discipline).  This is the one place a `match`
                  "falls through", and it falls through to null, never to a fault.
@@ -232,7 +238,7 @@ arm names it — a guard does not), or a final `_`; otherwise the program does n
 > renamed variant would otherwise fall to `_` and answer the wildcard's value
 > (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
-no total final arm may select nothing at runtime and then yields **null** (the C80 model), which makes
+no total final arm may select nothing at runtime and then yields **null** (the @C80 model), which makes
 its result type nullable. So a `match` still never faults on a fall-through: on an enum it cannot fall
 through at all, and on a scalar it falls through to null. For a pure-enum match, nothing changes from
 `M-Exhaust`.
@@ -272,8 +278,10 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — every entry, `D-match-1` to `-15`, is closed; the record is in
-[matching-history.md](matching-history.md).
+OPEN: **0** — the closed entries, `D-match-1` to `-22`, are in
+[matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
+arm (`|` and `,` alike), a tuple subject, a tuple element, a field, a slice element, and the arm
+root's `name: pattern`.
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
 invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail
@@ -295,6 +303,10 @@ follows `(P-Seq)` as a prefix reading of it.
 
 ## Conformance
 
+- **The subject is evaluated once (`M-Match`)** — `match next(lx) { Num { v } => …, … }` calls
+  `next` once: the variant tested and the payload bound are the same token's.  A subject that is
+  a place (a variable, a field or element of one) is read in place; anything else is bound
+  once.  Guard `tests/scripts/a-match-evaluates-its-subject-once.loft` c1–c10.
 - **Arm selection + payload bind (`M-Variant`)** — `match Sh::Circle { r: 5 } { Dot => 0,
   Circle { r } => r*r }` is `25`.
 - **Wildcard default (`M-Wild`)** — `match C::D { A => 1, _ => 0 }` is `0`; an arm after `_` is a

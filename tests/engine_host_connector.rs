@@ -10,9 +10,10 @@
 //! its conflation slots (`udp=true`), events round-trip over WS, and
 //! `run_client` RETURNS when the server goes away.
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -29,7 +30,7 @@ mod common;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -90,7 +91,7 @@ fn wait_until_listening(port: u16) {
 
 fn spawn_loft(prog: &PathBuf, piped: bool) -> Child {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Command::new(loft_bin())
+    loft::platform::process::harness_command(loft_bin())
         .env("LOFT_OFFLINE", "1") // hermetic fixtures
         .arg("--interpret")
         .arg("--no-warnings")
@@ -137,12 +138,12 @@ fn harness_env_skip(out: &std::process::Output) -> Option<String> {
 #[test]
 fn connector_auto_path_end_to_end() {
     let port = common::bind_port(PORT_BASE);
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let server_prog = test_tmp().join(format!("eh_conn_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -165,7 +166,7 @@ fn main() {{
     )
     .unwrap();
     let client_prog = test_tmp().join(format!("eh_conn_cli_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &client_prog,
         format!(
             r#"
@@ -248,8 +249,8 @@ fn main() {{
     wait_for(&rx, "client: disconnected", 10);
     wait_for(&rx, "client: loop exited", 10);
 
-    let _ = std::fs::remove_file(&server_prog);
-    let _ = std::fs::remove_file(&client_prog);
+    let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
 }
 
 /// Priority keyframes: a sync sample promoted to must-deliver survives a
@@ -262,13 +263,13 @@ fn main() {{
 // @speed 7.6
 #[test]
 fn keyframes_survive_total_datagram_loss() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let port = common::bind_port(18090);
     let server_prog = test_tmp().join(format!("eh_kf_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -292,7 +293,7 @@ fn main() {{
     )
     .unwrap();
     let client_prog = test_tmp().join(format!("eh_kf_cli_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &client_prog,
         format!(
             r#"
@@ -317,7 +318,7 @@ fn main() {{
     let _server = Guard(Some(spawn_loft(&server_prog, false)));
     wait_until_listening(port);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut client = Command::new(loft_bin())
+    let mut client = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
@@ -388,8 +389,8 @@ fn main() {{
         }
     }
 
-    let _ = std::fs::remove_file(&server_prog);
-    let _ = std::fs::remove_file(&client_prog);
+    let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
 }
 
 /// Minimal masked-client WS for the S6 push driver (16-bit length frames —
@@ -476,12 +477,15 @@ fn s6_ws_recv(stream: &std::net::TcpStream) -> Option<String> {
 fn assert_bundle_describes_this_tree() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let script = root.join("scripts/wasm_bundle_stamp.sh");
-    let Ok(out) = Command::new(&script).current_dir(&root).output() else {
+    let Ok(out) = loft::platform::process::harness_command(&script)
+        .current_dir(&root)
+        .output()
+    else {
         eprintln!("SKIP-CHECK: cannot run {}", script.display());
         return;
     };
     let want = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let have = std::fs::read_to_string(root.join("doc/pkg-src.stamp"))
+    let have = fa::read_to_string(root.join("doc/pkg-src.stamp"))
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -524,7 +528,7 @@ fn s6_fnv64(s: &str) -> String {
 // @speed 27.1
 #[test]
 fn s6_browser_swap_under_living_page() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -532,19 +536,20 @@ fn s6_browser_swap_under_living_page() {
     let chrome_ok = ["google-chrome", "chromium", "chromium-browser", "chrome"]
         .iter()
         .any(|c| {
-            Command::new("sh")
+            loft::platform::process::harness_command("sh")
                 .arg("-c")
                 .arg(format!("command -v {c}"))
                 .output()
                 .is_ok_and(|o| o.status.success())
         });
-    let node_ok = Command::new("sh")
+    let node_ok = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg("command -v node")
         .output()
         .is_ok_and(|o| o.status.success());
     let harness = root.join("tools/html_render_check.mjs");
-    if !chrome_ok || !node_ok || !harness.exists() || !root.join("doc/pkg/loft.js").exists() {
+    if !chrome_ok || !node_ok || !fa::exists(&harness) || !fa::exists(root.join("doc/pkg/loft.js"))
+    {
         eprintln!("SKIP: chromium/node/harness/bundle missing");
         return;
     }
@@ -554,7 +559,7 @@ fn s6_browser_swap_under_living_page() {
     // The relay server: ticks the sync class; relays "pushblob:" payloads
     // verbatim to every client (the bulk-channel role — content-agnostic).
     let server_prog = test_tmp().join(format!("eh_s6_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -591,7 +596,7 @@ fn main() {{
 
     // Serve doc/ for the page + bundle.
     let http_port = common::bind_port(18103);
-    let mut http = Command::new("python3")
+    let mut http = loft::platform::process::harness_command("python3")
         .args([
             "-m",
             "http.server",
@@ -738,7 +743,7 @@ fn main() {{
     let url = format!(
         "http://127.0.0.1:{http_port}/kernel-swap.html?port={port}&deadline_ms={page_deadline_ms}"
     );
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", &harness_wait_ms.to_string()])
@@ -750,7 +755,7 @@ fn main() {{
     let _ = http.wait();
     if let Some(reason) = harness_env_skip(&out) {
         eprintln!("{reason}");
-        let _ = std::fs::remove_file(&server_prog);
+        let _ = fa::remove_file(&server_prog);
         return;
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -759,7 +764,7 @@ fn main() {{
         out.status.success(),
         "browser swap failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let _ = std::fs::remove_file(&server_prog);
+    let _ = fa::remove_file(&server_prog);
 }
 
 /// @PLN18 phase 07 acceptance — the ONE-SCRIPT differential: the same loft
@@ -771,7 +776,7 @@ fn main() {{
 // @speed 13.4
 #[test]
 fn browser_kernel_one_script_differential() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -779,19 +784,20 @@ fn browser_kernel_one_script_differential() {
     let chrome_ok = ["google-chrome", "chromium", "chromium-browser", "chrome"]
         .iter()
         .any(|c| {
-            Command::new("sh")
+            loft::platform::process::harness_command("sh")
                 .arg("-c")
                 .arg(format!("command -v {c}"))
                 .output()
                 .is_ok_and(|o| o.status.success())
         });
-    let node_ok = Command::new("sh")
+    let node_ok = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg("command -v node")
         .output()
         .is_ok_and(|o| o.status.success());
     let harness = root.join("tools/html_render_check.mjs");
-    if !chrome_ok || !node_ok || !harness.exists() || !root.join("doc/pkg/loft.js").exists() {
+    if !chrome_ok || !node_ok || !fa::exists(&harness) || !fa::exists(root.join("doc/pkg/loft.js"))
+    {
         eprintln!("SKIP: chromium/node/harness/bundle missing");
         return;
     }
@@ -799,7 +805,7 @@ fn browser_kernel_one_script_differential() {
 
     let port = common::bind_port(18105);
     let server_prog = test_tmp().join(format!("eh_diff_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -855,7 +861,7 @@ fn main() {{
 "#
     );
     let client_prog = test_tmp().join(format!("eh_diff_cli_{}.loft", std::process::id()));
-    std::fs::write(&client_prog, &client_src).unwrap();
+    fa::write(&client_prog, &client_src).unwrap();
     let expect = [
         "t:connected",
         "t:event 7:hi",
@@ -868,7 +874,7 @@ fn main() {{
     {
         let _server = Guard(Some(spawn_loft(&server_prog, false)));
         wait_until_listening(port);
-        let mut client = Command::new(loft_bin())
+        let mut client = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg("--no-warnings")
             .arg("--lib")
@@ -910,7 +916,7 @@ fn main() {{
     // Serve doc/ (the page + bundle); kill the kernel server mid-run so the
     // browser client exits and the page compares its transcript.
     let http_port = common::bind_port(18106);
-    let mut http = Command::new("python3")
+    let mut http = loft::platform::process::harness_command("python3")
         .args([
             "-m",
             "http.server",
@@ -952,7 +958,7 @@ fn main() {{
         std::thread::sleep(Duration::from_secs(1));
         drop(_server);
     });
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", "9000"])
@@ -974,6 +980,6 @@ fn main() {{
         "browser-kernel differential failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
-    let _ = std::fs::remove_file(&server_prog);
-    let _ = std::fs::remove_file(&client_prog);
+    let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
 }
