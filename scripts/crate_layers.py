@@ -15,6 +15,8 @@ the exported macros by name — and answers:
                   BACK-EDGE (a reference from a lower layer to a higher one) by file:line;
                   exit 1 when a module is unassigned or a back-edge count exceeds BUDGET
   sites A B       every reference from module A to module B, by file:line
+  runtime [-v]    the references out of the RUNTIME set, by module pair (every site with -v);
+                  `check` holds their count to RUNTIME_BUDGET
   move MOD LAYER  put module MOD in LAYER (rewrites LAYERS in this file, sorted)
   lower [--relayer]
                   set every budget the tree has fallen below to the tree's count; it never
@@ -91,6 +93,29 @@ LAYERS: list[tuple[str, list[str]]] = [
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
 }
+
+# The RUNTIME (@PLN191 R1): the modules a compiled program links — what the generator names
+# (`loft::codegen_runtime`, `loft::store`, …) and what those reach — which become ONE crate,
+# `loft-runtime`, that the `loft` binary uses as a single dependency.  Kept whole so the
+# optimiser sees all of it at once: compiled-code speed is the first priority.  Seeded from
+# the closure of the generated code's roots with the compiler, the interpreter (`State`), the
+# live tier and the IR/tooling ring left out.  A runtime module may name only runtime modules
+# (and `lib`'s macros); every reference out of the set is counted against RUNTIME_BUDGET, a
+# ratchet that only falls.  A module leaves the set only when nothing in the set names it.
+RUNTIME: list[str] = [
+    "arena", "btree", "c_call", "c_libs", "c_signature", "cache", "calc", "call_frames",
+    "codegen_runtime", "compiled_stdlib", "crash_report", "data_ref", "database", "extensions",
+    "file_access", "git_query", "hash", "integrity", "json", "keys", "limits", "log_config",
+    "logger", "loop_kernels", "narrow", "native", "native_gate", "native_lib", "net",
+    "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "parallel", "placement",
+    "platform", "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope",
+    "rewrite_census", "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store",
+    "store_budget", "store_census", "timeout", "tls", "trie_db", "vector", "wasm",
+    "wasm_assets",
+]
+
+# References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
+RUNTIME_BUDGET: int = 304
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 
@@ -366,6 +391,23 @@ def rewrite_tables(layers, budget) -> None:
     me.write_text(src, encoding="utf-8")
 
 
+def runtime_crossings(mods) -> list[tuple[str, str, str]]:
+    """(from, to, file:line) for every reference from a RUNTIME module to a module outside it."""
+    rt = set(RUNTIME) | {"lib"}
+    out = []
+    for a, b, p, l in references(mods):
+        if a in rt and a != "lib" and b not in rt:
+            out.append((a, b, f"{p.relative_to(ROOT)}:{l}"))
+    return out
+
+
+def set_runtime_budget(n: int) -> None:
+    me = Path(__file__)
+    src = me.read_text(encoding="utf-8")
+    src = re.sub(r"^RUNTIME_BUDGET: int = \d+$", f"RUNTIME_BUDGET: int = {n}", src, count=1, flags=re.M)
+    me.write_text(src, encoding="utf-8")
+
+
 def back_counts(mods) -> dict[tuple[str, str], int]:
     lo = layer_of()
     counts: dict[tuple[str, str], int] = defaultdict(int)
@@ -433,9 +475,28 @@ def main(argv):
             else:
                 print(f"--relayer refused: the total would go {total_was} -> {total_now}")
         rewrite_tables(LAYERS, new)
+        have = len(runtime_crossings(mods))
+        if have < RUNTIME_BUDGET:
+            print(f"runtime: budget {RUNTIME_BUDGET} -> {have}")
+            set_runtime_budget(have)
+        elif have > RUNTIME_BUDGET:
+            raised.append(f"runtime: {have} reference(s) out of the runtime set, budget {RUNTIME_BUDGET}")
         for r in raised:
             print(f"NOT raised — cut these instead: {r}")
         return 1 if raised else 0
+    if cmd == "runtime":
+        cross = runtime_crossings(mods)
+        pairs = defaultdict(list)
+        for a, b, site in cross:
+            pairs[(a, b)].append(site)
+        print(f"{len(cross)} reference(s) out of the runtime set over {len(pairs)} module pair(s), "
+              f"budget {RUNTIME_BUDGET}")
+        for (a, b), sites in sorted(pairs.items(), key=lambda x: -len(x[1])):
+            print(f"  {a} -> {b}: {len(sites)}")
+            if "-v" in argv:
+                for site in sites:
+                    print(f"      {site}")
+        return 0
     if cmd == "sites":
         a, b = argv[2], argv[3]
         for x, y, p, l in references(mods):
@@ -476,6 +537,21 @@ def main(argv):
                 print(f"{key[0]} -> {key[1]}: {len(sites)} upward reference(s)")
                 for s in sites:
                     print(f"    {s}")
+        missing = sorted(m for m in RUNTIME if m not in mods)
+        if missing:
+            print(f"RUNTIME names modules lib.rs no longer declares: {' '.join(missing)}")
+            bad = 1
+        cross = runtime_crossings(mods)
+        if len(cross) > RUNTIME_BUDGET:
+            bad = 1
+            print(f"runtime: {len(cross)} reference(s) out of the runtime set, budget "
+                  f"{RUNTIME_BUDGET}: a runtime module may name only runtime modules")
+            for a, b, site in cross:
+                print(f"    {site} {a} -> {b}")
+        elif len(cross) < RUNTIME_BUDGET:
+            bad = 1
+            print(f"runtime: {len(cross)} reference(s) out of the runtime set, budget "
+                  f"{RUNTIME_BUDGET}: lower RUNTIME_BUDGET to {len(cross)} (`lower`)")
         return bad
     print(__doc__)
     return 2

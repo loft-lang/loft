@@ -726,7 +726,9 @@ fn native_libraries_follow_clean_binding_pattern() {
 /// check` reads every `crate::` reference between top-level modules from the tree and holds
 /// it to the layering: every module assigned to one layer, and the references that still point
 /// UP held to a budget that may only fall — and must be lowered the moment it does, so the
-/// budget is always the tree's count.  The same command a person runs, so the gate and the
+/// budget is always the tree's count.  The same holds for the RUNTIME set (R1): the modules a
+/// compiled program links, whose references out of the set are counted against their own
+/// ratchet on the way to a minimised `loft-runtime` crate.  The same command a person runs, so the gate and the
 /// tool cannot drift; skipped (not failed) where `python3` is unavailable.
 #[test]
 fn library_modules_keep_their_layers() {
