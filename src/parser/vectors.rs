@@ -4992,6 +4992,18 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         vec != u16::MAX && keyed_kind(self.vars.tp(vec))
     }
 
+    /// Is a build's destination a keyed collection, in either spelling — a local whose type
+    /// is keyed (`&` peeled), or a field whose `OpGetField` names a keyed collection type?
+    /// Its literal is built THROUGH it (loft#703), so a plain-vector copy of it is not its
+    /// kind: its lookups do not read one (loft#2008).
+    pub(crate) fn keyed_destination(&self, vec: u16, dest: &Value) -> bool {
+        self.keyed_local_kind(vec)
+            || matches!(dest.unspan(), Value::Call(d, a)
+                if *d == self.data.def_nr("OpGetField")
+                    && matches!(a.get(2).map(Value::unspan), Some(Value::Int(t))
+                        if u16::try_from(*t).is_ok_and(|t| self.database.is_keyed_collection(t))))
+    }
+
     /// The empty keyed collection a NULLABLE keyed LOCAL must be given before a write can
     /// land in it — `if h == null { OpDatabase(h, …) }` — or `None` when `vec` is not one.
     ///
@@ -5296,7 +5308,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         parts: &mut [&mut Value],
         literal: bool,
     ) -> Option<Vec<Value>> {
-        if self.first_pass || (vec != u16::MAX && self.keyed_local(vec)) {
+        // A keyed destination, in either spelling, takes no copy: a field did, and the reads
+        // renamed onto it looked a key up in a plain vector as if it were the hash (loft#2008).
+        // Its literal's reads are staged ahead of the first element instead
+        // (`build_vector_list`, `(E-Asgn-Compound)`).
+        if self.first_pass || self.keyed_destination(vec, dest) {
             return None;
         }
         // Any destination that is not a bare VARIABLE is named by its PLACE, whether the
@@ -5705,12 +5721,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// record construction moves ahead whole.  Any other record or collection value keeps
     /// its place: it is a view (`@FR-B-View`), and a view taken before the mint could name
     /// an array the append then moves.  No field reads the root → nothing changes, which is
-    /// every append that does not look at its own container.
+    /// every append that does not look at its own container — unless `force`: the caller
+    /// stages every element of a keyed literal one of whose elements reads it, ahead of the
+    /// first mint, so the values keep their source order (`(E-Left)`).
     fn stage_append_fields(
         &mut self,
         steps: &[Value],
         elm: u16,
         container: &Value,
+        force: bool,
     ) -> (Vec<Value>, Vec<Value>) {
         let root = match container.unspan() {
             Value::Var(v) => Some(*v),
@@ -5760,7 +5779,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 .iter()
                 .any(|(i, _)| args[*i].reads_var(root))
         });
-        if !triggered {
+        if !triggered && !force {
             return untouched();
         }
         // A nested record CONSTRUCTION (`OpCopyRecord(Object { … }, <field>, tp)`) builds into
@@ -6658,6 +6677,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         } else {
             None
         };
+        // `(E-Asgn-Compound)` at a keyed destination, which takes no snapshot (loft#2008): a
+        // literal of several elements, one of which reads the destination, stages EVERY
+        // element's values ahead of the FIRST mint, in source order — the second element's
+        // read must see what the destination held before the first was filed.
+        let stage_all = !self.first_pass
+            && crate::keys::append_staging_enabled()
+            && res.len() > 1
+            && res.iter().all(|p| matches!(p, Value::Insert(_)))
+            && self.keyed_destination(vec, val)
+            && match container.unspan() {
+                Value::Var(v) => Some(*v),
+                other => {
+                    crate::use_analysis::projection_container_place(&self.data, other).map(|p| p.0)
+                }
+            }
+            .is_some_and(|root| res.iter().any(|p| p.reads_var(root)));
+        let mut stage_at: Option<usize> = None;
         for p in res {
             // route through `vector_of` so narrow integer
             // aliases (i32, u8) produce the same narrow-element vector
@@ -6776,9 +6812,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 };
                 if let Value::Insert(steps) = p {
                     // Inline struct initialization: the steps already write fields into elm.
-                    let (staged, steps) = self.stage_append_fields(steps, elm, &container);
+                    let (staged, steps) =
+                        self.stage_append_fields(steps, elm, &container, stage_all);
                     ls.extend(steps);
-                    ls.splice(mint_at..mint_at, staged);
+                    let at = if stage_all {
+                        *stage_at.get_or_insert(mint_at)
+                    } else {
+                        mint_at
+                    };
+                    let staged_len = staged.len();
+                    ls.splice(at..at, staged);
+                    if stage_all {
+                        stage_at = Some(at + staged_len);
+                    }
                 } else if !self.first_pass
                     && crate::keys::append_in_place_enabled()
                     && let Some((fn_nr, buf_idx, args)) = self.element_call_takes_record_buffer(p)
