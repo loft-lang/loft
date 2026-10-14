@@ -212,7 +212,13 @@ impl Output<'_> {
                 for (vnr, v) in ops.iter().enumerate() {
                     self.indent(w)?;
                     self.indent += 1;
-                    self.output_code_node(w, v)?;
+                    // `@FR-R-Apart` — an item is a statement the apart hooks may own (a
+                    // `return` path's frees sit in an `Insert`), and it is written here
+                    // without passing `output_code_inner`.
+                    let apart = self.apart_ctx.is_some() && self.apart_expr(w, v.as_native())?;
+                    if !apart {
+                        self.output_code_node(w, v)?;
+                    }
                     self.indent -= 1;
                     if vnr < n - 1 {
                         writeln!(w, ";")?;

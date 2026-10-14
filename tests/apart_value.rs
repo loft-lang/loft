@@ -198,7 +198,9 @@ const VECTOR_CELLS: &str = "tests/scripts/a-local-float-vector-lives-in-an-inlin
 
 /// Instance 3: the bodies holding an inline buffer.  Unlike instance 2 it needs no plan of the
 /// whole program, so a build that ships the live tier makes it too.
-const INLINE: &[&str] = &["n_main", "n_v1", "n_v10", "n_v3", "n_v4", "n_v5", "n_v6"];
+const INLINE: &[&str] = &[
+    "n_main", "n_v1", "n_v10", "n_v12", "n_v3", "n_v4", "n_v5", "n_v6",
+];
 
 fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
     let out = std::env::temp_dir().join(format!("loft_apart_vector_{tag}.rs"));

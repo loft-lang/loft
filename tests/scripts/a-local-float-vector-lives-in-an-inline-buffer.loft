@@ -6,7 +6,7 @@
 // 64 elements, into the spill.
 //
 // Predictions (`tests/apart_value.rs` pins them on the emitted Rust): an inline buffer for
-// v1's xs, v3's big, v4's q, v5's w, v6's ws, v10's c and main's ys; none for v7 (handed to a
+// v1's xs, v3's big, v4's q, v5's w, v6's ws, v10's c, v12's e and main's ys; none for v7 (handed to a
 // call), v8 (returned), v9 (iterated) or v11's parameter, which carries the caller's elements.
 //
 // @falsified-by: tests/falsified/a-local-float-vector-lives-in-an-inline-buffer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
@@ -102,6 +102,16 @@ fn v10() -> text {
   "{len(c)} {c[0] ?? -1.0} {c[1] ?? -1.0}"
 }
 
+/// A `return` from inside the loop: the frees on that path are the buffer's too.
+fn v12(n: integer) -> float {
+  e: vector<float> = [];
+  for k in 0..n {
+    e += [(k as float) * 1.5];
+    if k == 3 { return (e[-1] ?? 0.0) + len(e) as float; }
+  }
+  -1.0
+}
+
 /// A parameter that is no work buffer carries the caller's elements.
 fn v11(p: vector<float>) -> float { (p[0] ?? 0.0) + (p[2] ?? 0.0) }
 
@@ -121,6 +131,7 @@ fn main() {
   assert("{r8}" == "[4,5]", "v8 returned: {r8}");
   assert(v9() == 60.0, "v9 iterated: {v9()}");
   assert(v10() == "1 3 -1", "v10 clear: {v10()}");
+  assert(v12(10) == 8.5 && v12(2) == -1.0, "v12 an early return: {v12(10)} {v12(2)}");
   assert(v11([2.0, 3.0, 4.0]) == 6.0, "v11 a parameter: {v11([2.0, 3.0, 4.0])}");
   println("ok");
 }
