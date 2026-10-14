@@ -33,9 +33,9 @@ copies and is the oracle.
 ## The invariant (design-protocol step 1)
 
 > **A `Match` is a record whose every text field is constructed as a slice of the subject
-> and read only as a value, so that `(R-DecodeView)` (@C141) — the rule under which a
-> decoded text is a span of the bytes it came from — admits it without a regex-shaped
-> clause.  Its offsets are byte positions on code-point boundaries, the engine's guarantee,
+> and read only as a value, so that `(R-Apart)` — the rule under which a value never
+> observed as a store value takes the representation the compiler chooses — holds it as a
+> value whose texts borrow the subject for the frame, with no regex-shaped clause.  Its offsets are byte positions on code-point boundaries, the engine's guarantee,
 > asserted at ONE native.  Nothing in the surface chooses a representation; the compiler
 > proves where a view is the same value (@C125), and where the proof fails the field is an
 > owned copy that answers the same.**
@@ -51,16 +51,15 @@ gave vectors a view (`OpSliceView`, a foreign span read-only under the store con
 
 - A library's `pub fn` is emitted INLINE into the consumer's `--native` program, before and
   after its `native-auto` cdylib exists.  So the construction of a `Match` and every read of
-  it sit in one compilation unit, which is the region `(R-DecodeView)` needs.  (The
+  it sit in one compilation unit, which is what `(R-Apart)`'s proof reads.  (The
   prediction was the opposite — a record copied across a cdylib ABI — and a spans-only
   surface built on that prediction was dropped with it.)
 - Today that record's text field is `OpGetTextSub(subject, a, b).to_string()` followed by a
   `set_str` into the record's store: one owned copy per field, on native as interpreted.
-  `(R-DecodeView)` instance 1 is BUILT, on branch `157-native-4x` (pushed, not yet on
-  `main`; § P4 says where).  Its source is a byte vector and the regex subject is a `text`,
-  and its view type is an ENUM, where `Match` is a struct.  So the zero-copy half of the goal
-  is the clause this plan contributes (§ P4), and never something this library can deliver
-  alone.
+  A match result does not last — it has the lifetime of a `match` statement's bindings —
+  so the copy is removed by holding the `Match` as a VALUE whose texts borrow the subject
+  (`(R-Apart)`, § P4), never by a span kept in the record; the zero-copy half of the goal
+  is that instance, and never something this library can deliver alone.
 - Every offset the engine answers is a code-point boundary (`.` on `"😀x"` spans bytes
   0..4; `(?-u:\xFF)` is refused), so a span can never cut a character where `"héllo"[-4..]`
   can.
@@ -99,7 +98,7 @@ pub fn named(self: Match, name: text) -> text?
 // finding 011's three shapes, as they read with this surface
 m = line.capture("^(\\w+)=(.+)$");
 if m != null {
-  key = m.group(1)?;                       // a view on native once (R-DecodeView) admits it
+  key = m.group(1)?;                       // a borrow of line on native once P4 holds m apart
   value = m.group(2)?;
 }
 for h in header.capture_all("HTTP/(?<maj>\\d)\\.(?<min>\\d)") {
@@ -116,9 +115,8 @@ out += s[last..];
 
 **Built as the rule admits it.**  `match_at` constructs every text field as a slice of its
 `self` parameter — `Match { text: self[s..e], … }`, `Group { text: self[gs..ge], … }` — and
-returns the record to the caller that passed `self`, which is `(R-DecodeView)`'s confinement
-clause (2) verbatim: *a return hands R to a caller only where that call passed B as an
-argument*.  `capture_all` builds a `vector<Match>` the same way.  A consumer that keeps a
+returns the record to the caller that passed `self` — the frame that holds the subject, which
+is where an apart `Match` lives (§ P4).  `capture_all` builds a `vector<Match>` the same way.  A consumer that keeps a
 `Match` past its subject (stores it in a longer-lived record, returns it from the frame that
 owns the subject) is the rule's decline case: the field is an owned copy and the program
 answers the same — the cell that proves it is in the matrix.
@@ -195,7 +193,7 @@ The cells, each hand-computed, `--interpret` and `--native`, graduated to
 | **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | **Built** on the testbed (loft-libs-core branch `pln192`, `regex/tests/captures.loft`, 21 tests both backends, the guide identical on both); the re-twin waits on the release |
 | **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | **Built** (same branch); the `^` / `\b` cells are green |
 | **P3** `(R-SliceBorrow)`: a text local bound to a slice of a parameter is a `&str` (S, compiler, native) | § P3 | emission pins `tests/slice_borrow.rs`; cells `tests/scripts/192-slice-borrow.loft` under `LOFT_NO_SLICE_BORROW=1`; the census row `R-SliceBorrow`; a planted admission of any text variable turns the pins red | **Built** — the slice arm of `(R-TextBorrow)`'s store-read clause; a slice of an OWNED local is the clause left open |
-| **P4** `(R-DecodeView)` for a `Match`: a `text` subject as the frame, and where a STRUCT keeps its span (M, compiler, native) | § P4 | `LOFT_TRACE_DECODE_VIEW` names no decline on `capture`'s twin and its emission holds no `to_string` / `set_str` for a text field; the holder-axis cells; `make perf-check` on the two ports' rows | Open — the rule's instance 1 is **built** (`157-native-4x`, joined here): view types are ENUMS of 16 bytes or more, the span in the record's spare last word, one per record; `Match` and `Group` are structs with no spare word, so P4 is first the design question § P4 asks |
+| **P4** `(R-Apart)` instance 4: a `Match` held as a value whose text fields borrow the subject for the frame; the match-binding clause beside it (M, compiler, native) | § P4 | the consumer's emission holds no `set_str` / `.to_string()` for a text field; the holder-axis cells (stored, returned, subject written, generator: the store form, value right); `make perf-check` on the two ports' rows | Open — no stored span: `(R-DecodeView)` is for values that last, and a match result does not |
 | **P5** the broken-pattern warning (XS, library) | § Broken patterns | the warning in `.loft/log.txt` once per pattern per process, absent on the second use; `@RGX-003` re-measured | **Built** — one `WARN` line through `log_warn`, the `[divide_by_zero]` channel |
 | **P6** `Pattern` typed-format target (S, library, optional) | § built-in feel | a hole holding `.` matches only a literal dot; the type trigger loads the library with no `use`; `(F-Target-Pos)`: an argument position does not target | Open |
 | **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | **Built** — 0.5.0, `api_compatible_with = "0.5.0"`; the publish is the maintainer's signing run |
@@ -255,75 +253,55 @@ statement — a text a pattern binds, copied into a `String` — is what is left
 are about 10 % of its row.  Nothing for either is built yet.  Decided in the formal register
 as a rule with its own `@FR-` tag, its code sites citing it, `make rule-coverage` counting it.
 
-### P4 — what a `Match` needs from `(R-DecodeView)`
+### P4 — a `Match` is an apart value: its texts borrow the subject for the frame
 
-Instance 1 of the rule (`src/generation/decode_view.rs`, `157-native-4x`) keeps a decoded
-enum's span in the record's LAST EIGHT BYTES: an enum record is padded to its largest
-variant, so a variant with one text field and room to spare has a free word, and the span
-`[lo, lo + n)` of the frame lives there with its sign bit set (`0` is the owned form).  A
-root is a function whose byte-vector parameter is the frame; a vector of view records is a
-holder already.  Two things a `Match` needs that it does not have:
+A regex result has the lifetime of a `match` statement's bindings.  In `match p { Pair { key,
+value } => … }` the bindings are read for the arm and gone with it, and native binds each as a
+`&str` into the subject's field with no `String` built (the store-read clause of
+`(R-TextBorrow)`, measured on a parameter subject).  `m = line.capture("(\\w+)=(.+)")` is the
+same statement one level up: read in the frame that holds `line`, then gone.  So the `Match`
+does not need a span kept in a store record at all — it needs to not be a store record while
+it is read, which is `(R-Apart)` (APART_VALUES.md, built in instances 1–3): *a value the
+compiler proves is never observed as a store value may be held in any representation it
+likes, converted to the ordinary store form at its first boundary.*
 
-1. **A `text` subject as the frame.**  The clause: *B may be a `text` parameter, and a span
-   of it is the subject's bytes at `[a, b)` — valid UTF-8 on a code-point boundary by the
-   engine's guarantee, so the UTF-8 test `dv_span_text` pays on a byte frame is not paid.*
-2. **Where a STRUCT keeps its span — the open question.**  `Group { text: text?, start:
-   integer, end: integer }` and `Match` are structs: laid out field by field, no padding,
-   no spare word.  Three answers, to decide before building:
-   - *a spare word on every record of a struct the rule admits* — eight bytes more on every
-     `Group` in every program, interpreter included, since a layout is per type and shared;
-   - *the twin layout the rule's text first proposed* — `Group__dv` with a span word, used
-     only by the region's twins, no cost outside it; the larger build, and the one the rule
-     already names;
-   - *the record's own fields* — a `Group` already holds its span as `start` / `end`, so a
-     declaration that `text` IS the subject at `[start, end)` costs no byte and no twin
-     layout, at the price of a field form the language does not have today (a sibling of
-     `virtual`), which is the one of the three that touches the surface.
+**Instance 4 — a record whose text fields borrow.**  A `Match` built by the inlined
+`capture_from` is held as a Rust value, `Match<'h> { text: &'h str, start, end, groups:
+Vec<Group<'h>>, names }` — the engine's own `Captures<'h>` — with every text field a `&str`
+into the subject, under the proof P3 makes for a slice (the subject is a plain parameter, or a
+local that borrows one, and is not written while the value lives).  Instances 1 and 2
+declined an element that OWNS heap (a `vector<text>`); a `&str` owns nothing, which is the
+whole point.  The allow-list, each answer equal to the store path's: a field read (`m.text`,
+`m.start`), an element read and `len` of `groups`, `group` and `named` (region twins over
+the value), a walk of `capture_all`'s vector, a format or comparison of a text field, the
+null test.  The boundary, where the store form is built with its copies as today: the value
+stored into a collection or record that outlives the frame, returned past the subject's
+frame, handed to a native or a `par` body, yielded.  The interpreter is untouched and stays
+the oracle.
 
-   The measurement that decides: `capture`'s twin under each, on `dump_ignored_tests`'s
-   row.  Until then a `Match`'s texts are owned copies on both backends, and the consumer's
-   `line[m.start..m.end]` is the view (P3).
+**Why not `(R-DecodeView)`.**  Its instance 1 (`src/generation/decode_view.rs`,
+`157-native-4x`, joined here; the rule text, switches, guard and pin are in the register,
+NATIVE_SWITCHES.md, `tests/scripts/a-decoded-text-is-read-where-it-lies.loft` and
+`tests/decode_view.rs`) keeps a decoded value's span in the record's last eight bytes
+because decoded values LAST: held in a store, put in collections, looked up later.  That is
+what forces a span word, hence its constraints — a view type is an enum of 16 bytes or more
+with that word spare, one span per record, the frame a byte-vector parameter — and the
+question this section asked before, where a STRUCT keeps its span.  A `Match` never lasts,
+so the question is struck: there is no stored span.  Decode-view stays what it was built for.
 
-**Where instance 1 is.**  Branch `157-native-4x` (pushed to `origin`, not yet on `main`; JOINED into this branch, so every path below is in this tree):
+**The sibling clause.**  The match-binding clause proposed for `(R-TextBorrow)` (a text a
+pattern binds, read only as a value in its arm, borrows the field when the subject is a
+LOCAL the frame built — the parameter case is built) is the same lifetime one construct
+over; the `check_request` keys it was priced on (−1.5 % of the row) are its first cells.
 
-- Commits: `f00897790` (the build), `41b419bf8` (its docs), `cbd50ff8d` (the span helpers
-  read the frame once a call), `aed8e7da4` (why a library function's `native` mark does not
-  keep it out of a region); the row's price and result `1185b06a5`, `d9252256a`.
-- Admission and planning: `src/generation/decode_view.rs` (`view_types`, `root_frame`,
-  `region_of`, `plan`).  Emission, the `<f>__dv` twins: `src/generation/decode_view_emit.rs`.
-- Runtime: `src/codegen_runtime.rs`, the `dv_*` helpers (`DvFrame`, `dv_span_text`,
-  `dv_text`, `dv_put_span`, `dv_clear`), and the `Stores::dv_frame` field in
-  `src/database/mod.rs`.
-- Rule text: `doc/claude/formal/rewrites.md` § `(R-DecodeView)`; switches
-  `LOFT_NO_DECODE_VIEW` and `LOFT_TRACE_DECODE_VIEW` (`doc/claude/NATIVE_SWITCHES.md`).
-- Guard `tests/scripts/a-decoded-text-is-read-where-it-lies.loft`; pin `tests/decode_view.rs`
-  (the expected roots and twins).
-- Measured on pluginabi `check_request`: 7.55× → 5.07× its Rust twin
-  (`bench/portal/analysis/over-9x.md`, `bench/portal/analysis/worklist.md` § 0).
-- Joining the two branches: `157-native-4x` also extends `src/same_read.rs` with
-  `(R-SameRead)`'s get-or-insert clause (`057baaaed`), a file this branch also carries.
-
-**What the build decided for this clause:**
-
-1. **A view type is an ENUM today.**  The span word — `i64::MIN | (lo + 1) << 32 | n` — is
-   kept in the record's last 8 bytes, and only an enum of 16 bytes or more has those spare,
-   padded to its largest variant (`view_types`).  `Match` and `Group` are structs and have
-   no spare word, so the clause must decide where a struct keeps its span: a design
-   question, not only a new source.
-2. **One span per record.**  One spare word, so a variant with two text fields declines.
-   `Match` and `Group`, one text field each, fit.
-3. **The frame is a byte-vector parameter.**  A root is a function whose single byte-vector
-   parameter, not passed by `&`, is the frame; it sets `stores.dv_frame` for the call
-   through the `DvFrame` guard (`root_frame`).  A `text` subject is a new kind of frame, and
-   it may skip `dv_span_text`'s UTF-8 test, as stated above.
-4. **A vector of view records is already a holder.**  An element of a view type works (guard
-   cell c15, `mixed`), so `capture_all`'s `vector<Match>` should take the existing path
-   once `Match` is a view type.
-5. **What makes a root decline:** returning a decoded value from the root; a span variant's
-   record created on its own; a native function, a function reference, `yield` or `par`
-   reached by a decoded value; any read of a byte-string field.  A library's `pub fn` is
-   emitted inline into the consumer (§ P0 a), which is why the region's `loft_fn` test does
-   not look at `def.native`.
+**Cells (the matrix's holder axis, both backends):** the `Match` read in the frame that
+passed the subject (apart); every group read through `group` and `named`; `capture_all`
+walked; a `Match` stored into a longer-lived vector (the boundary: the store form, value
+right); one returned from the frame that owns the subject (boundary); the subject appended
+to after the capture (declines, value right); a generator (declines).  Verify: the emission
+of `capture`'s consumer holds no `set_str` and no `.to_string()` for a text field;
+`LOFT_NO_APART=1` (its switch) restores the store form; `make perf-check` on the two ports'
+rows.
 
 ## Open design questions
 
