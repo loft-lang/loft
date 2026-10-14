@@ -3299,7 +3299,11 @@ insert; the type's heap facts are cached, so the answer is one lookup.  `insert_
                  is a bind or the mint-or-release guard of a hidden buffer the lifted call is
                  handed (`@FR-O-LazyBuffer` — it names neither the function's buffer nor the
                  root), and every statement between the copy and the return is a store or
-                 text free.  Declines keep the copy: a parameter's or a
+                 text free.  The copy reaches the rewrite bare, or under a PRESENCE TEST
+                 of its source with the frees after it (`(N-Store)`: the field of a record
+                 that is not there is not there); one admission reads both, and the
+                 hand-over answers the test by itself — a field of a null root is null.
+                 Declines keep the copy, and with it the test: a parameter's or a
                  view's field, an ELEMENT (`p.items[i]` — a slot inside a claimed block, not
                  a field of the root record), any other statement in the exit, a buffer that
                  is not the function's own.  A caller is not consulted: it binds what comes

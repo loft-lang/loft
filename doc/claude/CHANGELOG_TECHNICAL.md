@@ -21,6 +21,13 @@ All notable changes to the loft language and interpreter.
   record local (`record_local_may_be_absent`) and splits a branch whose arm is one, in a
   `-> S` function as in a `-> S?`; a local typed by a template's type variable keeps the bare
   copy unless it is written `T?`.
+- **A field path is a copy source like a local** (loft#2006, first half).
+  `Parser::copy_source_may_be_absent` asks a path its root, and the return copy tests the
+  path by re-reading it; `branch_has_nullable_leaf` splits a branch whose arm is one.
+  `return_field.rs::Cx::tested_exit` rebuilds `ret = if OpRefIsNull(src) null else { mint;
+  copy; rb }; frees; return ret` into the bare exit block, drops the own-buffer release that
+  guards the removed mint, and hands it to the one admission; an admitted exit is emitted as
+  before.  A source rooted at a call or an element read is still copied bare (`D-types-36`).
 - **The scope pass reads the return copy through its presence test** (loft#2004).
   `scopes/returns.rs::return_tail` and `materialised_join_mut`'s walk descend
   `if <absent> { null } else { materialized_view_return }` (`is_presence_tested_copy`), so

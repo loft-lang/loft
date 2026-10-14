@@ -1,0 +1,201 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RETURNED FIELD OF A RECORD THAT IS NULL IS NULL (`@FR-N-Store`, `@FR-N-Road`,
+// `@FR-R-ReturnField`, loft#2006).  An inline field of a record that is not there is not
+// there, so the copy a `return` makes of `o.inner` tests its source as the copy of a local
+// does.  `(R-ReturnField)` hands the record's store over in place of that copy where it
+// admits the exit, and reads the copy through the test: a hand-over of a null root is null
+// by itself, and an exit the rewrite declines keeps the tested copy.  The copy used to stand
+// bare, so a declined exit — a record that owns no heap, a root typed `τ?` — answered a
+// PRESENT record of zeros.
+//
+// Every cell asserts a hand-computed value AND its presence for a null root and for a root
+// that is there, on both backends.
+//
+// @EXPECT_WARNING: is stored into parameter
+// @falsified-at: none — receipt recorded below once derived
+
+struct In { n: integer, tag: text }
+struct Pair { a: In, b: In }
+struct S { a: integer }
+struct O { inner: S, k: integer }
+struct W { p: Pair, o: O }
+enum CV { Num { v: integer, label: text }, Txt { t: text } }
+struct Dn { value: CV, k: integer }
+
+fn mk(n: integer) -> Pair {
+  Pair { a: In { n: n, tag: "a{n}" }, b: In { n: n + 1, tag: "b{n}" } }
+}
+
+fn through(p: Pair) -> Pair {
+  p
+}
+
+fn thr_o(o: O) -> O {
+  o
+}
+
+fn thr_w(w: W) -> W {
+  w
+}
+
+fn thr_d(d: Dn) -> Dn {
+  d
+}
+
+// a1 — a path of an owned local, a heap-owning record: the hand-over admits it.
+fn a1(p: Pair) -> In {
+  d = through(p);
+  return d.a;
+}
+
+// a2 — a1 through a nullable result.
+fn a2(p: Pair) -> In? {
+  d = through(p);
+  return d.b;
+}
+
+// a3 — a SCALAR record: the hand-over declines (no heap), the tested copy stays.
+fn a3(o: O) -> S {
+  r = thr_o(o);
+  return r.inner;
+}
+
+// a4 — a3 through a nullable result.
+fn a4(o: O) -> S? {
+  r = thr_o(o);
+  return r.inner;
+}
+
+// a5 — the root typed `τ?`: the hand-over declines.
+fn a5(p: Pair) -> In {
+  d: Pair? = through(p);
+  return d.a;
+}
+
+// a6 — the local-view spelling.
+fn a6(p: Pair) -> In {
+  d = through(p);
+  v = d.b;
+  return v;
+}
+
+// a7 — the local-view spelling of a scalar record.
+fn a7(o: O) -> S {
+  r = thr_o(o);
+  v = r.inner;
+  return v;
+}
+
+// a9 — the tail spelling.
+fn a9(p: Pair) -> In {
+  d = through(p);
+  d.a
+}
+
+// a10 — the root is an alias of the record.
+fn a10(p: Pair) -> In {
+  d = through(p);
+  q = d;
+  return q.a;
+}
+
+// a11 — a root that is rebound.
+fn a11(p: Pair, q: Pair) -> In {
+  d = through(p);
+  d = through(q);
+  return d.b;
+}
+
+// a12 — a nested path, heap-owning and scalar.
+fn a12h(w: W) -> In {
+  x = thr_w(w);
+  return x.p.a;
+}
+
+fn a12s(w: W) -> S {
+  x = thr_w(w);
+  return x.o.inner;
+}
+
+// a13 — a branch whose arms are paths: each arm is tested by itself.
+fn a13(p: Pair, q: Pair, c: boolean) -> In? {
+  d = through(p);
+  e = through(q);
+  if c { d.a } else { e.b }
+}
+
+// a14 — control: a parameter's field.
+fn a14(p: Pair) -> In {
+  return p.a;
+}
+
+// a15 — a struct-enum field of a wrapper.
+fn a15(d: Dn) -> CV {
+  r = thr_d(d);
+  return r.value;
+}
+
+fn show(r: In) -> text {
+  "{r.n ?? -1} {r.tag ?? "none"} {r == null}"
+}
+
+fn shs(r: S) -> text {
+  "{r.a ?? -1} {r == null}"
+}
+
+fn main() {
+  pr = Pair { a: In { n: 3, tag: "x" }, b: In { n: 9, tag: "y" } };
+  ob = O { inner: S { a: 41 }, k: 2 };
+  gone = "-1 none true";
+  assert_eq(show(a1(null)), gone, "a1 null");
+  assert_eq(show(a1(pr)), "3 x false", "a1 record");
+  assert_eq(show(a2(null)), gone, "a2 null");
+  assert_eq(show(a2(pr)), "9 y false", "a2 record");
+  assert_eq(shs(a3(null)), "-1 true", "a3 null");
+  assert_eq(shs(a3(ob)), "41 false", "a3 record");
+  assert_eq(shs(a4(null)), "-1 true", "a4 null");
+  assert_eq(shs(a4(ob)), "41 false", "a4 record");
+  assert_eq(show(a5(null)), gone, "a5 null");
+  assert_eq(show(a5(pr)), "3 x false", "a5 record");
+  assert_eq(show(a6(null)), gone, "a6 null");
+  assert_eq(show(a6(pr)), "9 y false", "a6 record");
+  assert_eq(shs(a7(null)), "-1 true", "a7 null");
+  assert_eq(shs(a7(ob)), "41 false", "a7 record");
+  assert_eq(show(a9(null)), gone, "a9 null");
+  assert_eq(show(a9(pr)), "3 x false", "a9 record");
+  assert_eq(show(a10(null)), gone, "a10 null");
+  assert_eq(show(a10(pr)), "3 x false", "a10 record");
+  assert_eq(show(a11(pr, null)), gone, "a11 rebound to null");
+  assert_eq(show(a11(null, pr)), "9 y false", "a11 rebound to a record");
+
+  w = W { p: mk(60), o: O { inner: S { a: 77 }, k: 5 } };
+  assert_eq(show(a12h(null)), gone, "a12h null");
+  assert_eq(show(a12h(w)), "60 a60 false", "a12h record");
+  assert_eq(shs(a12s(null)), "-1 true", "a12s null");
+  assert_eq(shs(a12s(w)), "77 false", "a12s record");
+
+  assert_eq(show(a13(null, pr, true)), gone, "a13 the taken arm's root is null");
+  assert_eq(show(a13(null, pr, false)), "9 y false", "a13 the other arm's root is null");
+  assert_eq(show(a13(pr, null, true)), "3 x false", "a13 first arm");
+  assert_eq(show(a13(pr, null, false)), gone, "a13 second arm null");
+
+  assert_eq(show(a14(null)), gone, "a14 null");
+  assert_eq(show(a14(pr)), "3 x false", "a14 record");
+
+  dn = Dn { value: Num { v: 12, label: "tw" }, k: 1 };
+  n15 = a15(null);
+  p15 = a15(dn);
+  s15 = match p15 { Num { v, label } => "{v} {label}", Txt { t } => t };
+  assert(n15 == null, "a15 null");
+  assert(s15 == "12 tw" && p15 != null, "a15 record {s15}");
+
+  // 1000 calls, half of them null: 500 * 1 + the odd numbers below 1000 (250000).
+  total = 0;
+  for i in 0..1000 {
+    r = if i % 2 == 0 { a1(null) } else { a1(mk(i)) };
+    total += r.n ?? 1;
+  }
+  assert_eq(total, 250500, "loop");
+}
