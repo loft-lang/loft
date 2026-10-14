@@ -26,7 +26,7 @@ register.
 | arguments `parse` | 9.7× | 8.5× | 3.40 / 2.99 | generated 38 %, claims 20 %, unheld vector reads 19 % | hold the headers across a write to another vector (~16 %); `len(t) > 0` as emptiness, no `"{c}"` per compare (~9 %) |
 | check_request | 8.0× | 8.0× | 3.45 / 3.43 | claims 22 %; each decoded text copied three times | decoded texts as views, @C141 (−36 % ceiling, measured earlier) |
 | dryopea `panel_build` | 7.9× | 8.3× | 2.82 / 2.96 | claim + release 45 % | a small-size free list in the store allocator (~20 %); straight-line release of a known type (~13 %) |
-| dryopea `reload_and_record` | 7.9× | 7.3× | 2.94 / 2.72 | keyed 68 %: the key-ordered walk sorts (19 %), generic multi-key lookup | a typed lookup for an all-integer compound key (~25 %); an order-free walk (~30 %, needs a decision) |
+| dryopea `reload_and_record` | 7.9× | 7.3× | 2.94 / 2.72 | keyed 68 %: the key-ordered walk sorts (19 %), generic multi-key lookup | a typed lookup for an all-integer compound key (priced −2 % and dropped, worklist.md § 0 item 8); an order-free walk (~30 %, needs a decision) |
 | zttext `invert` | 7.9× | 6.1× | 3.58 / 2.77 | deep copy 46 % — the document buffer per op, the prepend | move the dead document buffer into the callee's result (~25–30 %); prepend in place (~15–20 %) |
 | cbor `encode` | 6.7× | 6.4× | 3.79 / 3.59 | generated 60 %, vector runtime 17 % | hold the emit loop's headers through a callee writing another store (~15–20 %); byte runs copied as a block (~10 %) |
 | moros `map_json` | 6.3× | 6.4× | 3.28 / 3.35 | JSON lexer/parser/walk 55 % | a schema-directed parse straight into the store (@PLN109, ~60–70 %) |

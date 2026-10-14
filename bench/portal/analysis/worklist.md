@@ -179,7 +179,14 @@ before it; the slowest row goes first; a step with no price is priced before it 
    its range proof.  Re-profiled: the key-ordered walk's sort is 22 % of `reload_and_record`
    and 9 % of `mapfile_to_painted`; the generic compound-key probe (`find`, `key_hash`,
    `key_compare`, `int_key_part`, `arena::slot`) ~28 % of the first and `keys::hash` 12 % of
-   the second — a typed probe for an all-integer compound key needs no decision.
+   the second.  A typed probe for an all-integer compound key (`@FR-R-TypedKeyed` taken to two
+   to four integer fields, the values handed over in key order) PRICED and dropped: the five
+   lookups of `reload_and_record` through it read 1.415 → 1.385 ms (−2 %), `mapfile_to_painted`
+   level, hashes equal.  The `Content` was never the cost — the typed probe itself is 15 % of
+   the row: the seeded SipHash (kept: integer keys can come from outside, @P253) and the walk's
+   three dependent loads (bucket, arena chunk, entry) where the twin's table has one.  What is
+   left of these two rows is the ordered walk (the sort, `step_ordered`, `entries`, `OpStep`:
+   ~45 % of `reload_and_record`), which waits on the walk's decision.
 9. **`binary_read`** — X8 is built (1.47 → 0.84 ms); X13 is declined, so what is left is
    the push and the buffered take per value.
 10. **cbor `encode` (5.57×)** — X9, on what X2 left of the row.
