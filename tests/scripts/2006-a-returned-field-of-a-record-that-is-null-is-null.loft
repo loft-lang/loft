@@ -10,8 +10,16 @@
 // bare, so a declined exit — a record that owns no heap, a root typed `τ?` — answered a
 // PRESENT record of zeros.
 //
+// The same holds for every ROOT the source can have (the `b` cells): a field path whose root
+// is a user call (`thr_o(o).inner`) is bound to an owned local first — the spelling
+// `d = f(x); return d.inner` — so the call runs once and the copy tests the local; a read
+// that may answer nothing (an element out of range, a keyed entry that is not there, a
+// field of one) is tested by re-reading it, which is pure; and a read with a user call in
+// its index (`w[next(c)].a`) is read once into a handle that is tested.  A branch whose arm
+// is any of these is split, so each arm is tested by itself.
+//
 // Every cell asserts a hand-computed value AND its presence for a null root and for a root
-// that is there, on both backends.
+// that is there, on both backends; a cell with a call in its source asserts the call ran once.
 //
 // @EXPECT_WARNING: is stored into parameter
 // @falsified-by: tests/falsified/2006-a-returned-field-of-a-record-that-is-null-is-null.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
@@ -19,6 +27,9 @@
 // path and stops a branch splitting on a path arm, so the copy of a path stands bare again.
 // WITNESS: on the patched tree both backends stop at `a3 null: got 0 false, want -1 true`: the
 // field of a null record that the hand-over declines is a present record of zeros.
+// @falsified-at: 6891ea042 — hand-measured, both backends, the rewrite on and off: every `b`
+//   cell whose source is absent answered a present record (`0 false`; native `-1 false` for
+//   b1 and b6), and every `b` cell whose source is there and both call counts were right.
 // HOLDS: the cells the hand-over admits (a1, a2, a6, a9, a10, a11, a12h), whose hand-over
 // answers the null root by itself, and every cell whose root is there.
 
@@ -29,6 +40,8 @@ struct O { inner: S, k: integer }
 struct W { p: Pair, o: O }
 enum CV { Num { v: integer, label: text }, Txt { t: text } }
 struct Dn { value: CV, k: integer }
+struct K { key: integer, v: S }
+struct Ctr { n: integer }
 
 fn mk(n: integer) -> Pair {
   Pair { a: In { n: n, tag: "a{n}" }, b: In { n: n + 1, tag: "b{n}" } }
@@ -143,6 +156,62 @@ fn a15(d: Dn) -> CV {
   return r.value;
 }
 
+fn next(c: Ctr) -> integer {
+  c.n += 1;
+  c.n - 1
+}
+
+fn cnt_o(c: Ctr, o: O) -> O {
+  c.n += 1;
+  o
+}
+
+// The root is a user CALL.
+fn b1(c: Ctr, o: O) -> S {
+  return cnt_o(c, o).inner;
+}
+
+fn b2(p: Pair) -> In {
+  return through(p).a;
+}
+
+// The root is a READ that may answer nothing.
+fn b3(i: integer) -> In {
+  w = [mk(1), mk(5)];
+  return w[i].a;
+}
+
+fn b4(i: integer) -> Pair {
+  w = [mk(1), mk(5)];
+  return w[i];
+}
+
+fn b5(k: integer) -> S {
+  h: hash<K[key]> = [K { key: 1, v: S { a: 9 } }];
+  return h[k].v;
+}
+
+fn b6(o: O) -> S? {
+  return thr_o(o).inner;
+}
+
+fn b7(i: integer) -> S {
+  w = [O { inner: S { a: 8 }, k: 1 }];
+  return w[i].inner;
+}
+
+// A user call in the INDEX.
+fn b8(c: Ctr) -> In {
+  w = [mk(1), mk(5)];
+  return w[next(c)].a;
+}
+
+// A branch whose arm is a read.
+fn b9(k: integer, i: integer) -> In {
+  w = [mk(1), mk(5)];
+  return if k > 0 { w[i].a } else { In { n: 9, tag: "x" } };
+}
+
 fn show(r: In) -> text {
   "{r.n ?? -1} {r.tag ?? "none"} {r == null}"
 }
@@ -196,6 +265,33 @@ fn main() {
   s15 = match p15 { Num { v, label } => "{v} {label}", Txt { t } => t };
   assert(n15 == null, "a15 null");
   assert(s15 == "12 tw" && p15 != null, "a15 record {s15}");
+
+  c = Ctr { n: 0 };
+  assert_eq(shs(b1(c, null)), "-1 true", "b1 null");
+  assert_eq(c.n, 1, "b1 null: the call ran once");
+  assert_eq(shs(b1(c, ob)), "41 false", "b1 record");
+  assert_eq(c.n, 2, "b1 record: the call ran once");
+  assert_eq(show(b2(null)), gone, "b2 null");
+  assert_eq(show(b2(pr)), "3 x false", "b2 record");
+  assert_eq(show(b3(7)), gone, "b3 out of range");
+  assert_eq(show(b3(1)), "5 a5 false", "b3 element");
+  assert(b4(7) == null, "b4 out of range");
+  assert_eq(show(b4(0).a), "1 a1 false", "b4 element");
+  assert_eq(shs(b5(3)), "-1 true", "b5 no entry");
+  assert_eq(shs(b5(1)), "9 false", "b5 entry");
+  assert_eq(shs(b6(null)), "-1 true", "b6 null");
+  assert_eq(shs(b6(ob)), "41 false", "b6 record");
+  assert_eq(shs(b7(4)), "-1 true", "b7 out of range");
+  assert_eq(shs(b7(0)), "8 false", "b7 element");
+  c.n = 7;
+  assert_eq(show(b8(c)), gone, "b8 out of range");
+  assert_eq(c.n, 8, "b8 out of range: the index ran once");
+  c.n = 0;
+  assert_eq(show(b8(c)), "1 a1 false", "b8 element");
+  assert_eq(c.n, 1, "b8 element: the index ran once");
+  assert_eq(show(b9(1, 7)), gone, "b9 the read arm, out of range");
+  assert_eq(show(b9(0, 7)), "9 x false", "b9 the literal arm");
+  assert_eq(show(b9(1, 0)), "1 a1 false", "b9 the read arm, element");
 
   // 1000 calls, half of them null: 500 * 1 + the odd numbers below 1000 (250000).
   total = 0;

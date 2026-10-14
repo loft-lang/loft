@@ -16662,7 +16662,10 @@ impl Parser {
         }
         let kt = self.data.def(td).known_type();
         let copy_d = self.data.def_nr("OpCopyRecord");
-        let orig = std::mem::replace(tail, Value::Null);
+        let mut orig = std::mem::replace(tail, Value::Null);
+        // A source that may be nothing but cannot be RE-READ, because a user call is in it
+        // (loft#2006), is read once into a local first, and the copy tests that local.
+        let bind = self.bind_return_source(td, &mut orig);
         // A NULLABLE local as the source (`cur: Node?` after a walk) may hold nothing, and
         // `OpCopyRecord` of a null source leaves the destination an allocated EMPTY record —
         // presence standing in for absence.  Copy only where the source is present; the
@@ -16678,10 +16681,10 @@ impl Parser {
             Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
             // A FIELD of a record that may be absent is absent with it (loft#2006).  The read
             // is pure, so the test re-reads it.
-            Value::Call(_, _) if self.copy_source_may_be_absent(&orig) => Some(orig.clone()),
-            Value::Call(d, _)
-                if *d == self.data.def_nr("OpGetDbRef")
-                    && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+            // So is an element or a keyed entry that is not there, and anything read off one.
+            // The re-read is safe only where no user call is in it.
+            Value::Call(_, _)
+                if !self.ir_has_user_call(&orig) && self.copy_source_may_be_absent(&orig) =>
             {
                 Some(orig.clone())
             }
@@ -16697,13 +16700,21 @@ impl Parser {
             Type::Reference(td, Deps::frame1(w)),
             "materialized_view_return",
         );
-        *tail = match absent_guard {
+        let tested = match absent_guard {
             Some(v) => crate::data::v_if(
                 self.cl("OpRefIsNull", &[v]),
                 self.cl("OpNullRefSentinel", &[]),
                 copy,
             ),
             None => copy,
+        };
+        *tail = match bind {
+            Some(set) => crate::data::v_block(
+                vec![set, tested],
+                Type::Reference(td, Deps::frame1(w)),
+                "return_source",
+            ),
+            None => tested,
         };
         // @PLN130 — parser-emitted materialisation: `return f.field` must publish an OWNED
         // record, not a view into a frame-local. See `ParserMaterialise`.
@@ -16846,14 +16857,87 @@ impl Parser {
 
     /// May the SOURCE of a whole-record copy be absent: a record local that may hold nothing
     /// ([`Self::record_local_may_be_absent`]), or a FIELD PATH rooted at one — an inline
-    /// field of a record that is not there is not there (`o.inner` of a null `o`).
+    /// field of a record that is not there is not there (`o.inner` of a null `o`).  So is
+    /// what a read answers (`OpGet…`: an element out of range, a keyed entry that is not
+    /// there, a stored reference that holds none) and what a user CALL answers, and
+    /// anything read off either (loft#2006).  Whether the copy may RE-READ the source to
+    /// test it is a second question, [`Self::bind_return_source`]'s.
     fn copy_source_may_be_absent(&self, src: &Value) -> bool {
         match src.unspan() {
             Value::Var(v) => self.record_local_may_be_absent(*v),
             Value::Call(d, args) if *d == self.data.def_nr("OpGetField") && args.len() == 3 => {
                 self.copy_source_may_be_absent(&args[0])
             }
+            Value::Call(d, _) => {
+                let def = self.data.def(*d);
+                let name = def.name();
+                name.starts_with("OpGet")
+                    || (!name.starts_with("Op") && def.returned().heap_def_nr().is_some())
+            }
             _ => false,
+        }
+    }
+
+    /// loft#2006 — read a return copy's SOURCE once, where a user call in it forbids the
+    /// re-read its test would be: a read path whose ROOT is a user call binds that call to an
+    /// owned local first (`_ret_root_N = f(x)`, the spelling `d = f(x); return d.inner`),
+    /// and a read path with a user call elsewhere (an index: `w[next(c)].a`) is read once
+    /// into a `τ?` handle that views what it reads (`_ret_src_N`).  `src` is rewritten to
+    /// read the local, and the bind is answered for the caller to put first.  Pass 2 only,
+    /// and never in a generic template, whose instance may hold a tuple: nothing is bound
+    /// there, and such a source stays a bare copy.
+    fn bind_return_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
+        let read = |p: &Parser, v: &Value| {
+            matches!(v.unspan(), Value::Call(d, args)
+                if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet"))
+        };
+        if self.first_pass
+            || matches!(self.data.def(self.context).def_type(), DefType::Generic)
+            || self.data.is_type_var_placeholder(td)
+            || !read(self, src)
+            || !self.ir_has_user_call(src)
+        {
+            return None;
+        }
+        // The root of the read path: the first operand of each read, down to what it reads.
+        fn root_of<'a>(p: &Parser, v: &'a Value) -> &'a Value {
+            match v.unspan() {
+                Value::Call(d, args)
+                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
+                {
+                    root_of(p, &args[0])
+                }
+                other => other,
+            }
+        }
+        fn replace_root(p: &Parser, v: &mut Value, with: Value) -> Value {
+            match v.unspan_mut() {
+                Value::Call(d, args)
+                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
+                {
+                    replace_root(p, &mut args[0], with)
+                }
+                other => std::mem::replace(other, with),
+            }
+        }
+        match root_of(self, src) {
+            Value::Call(d, _) if !self.data.def(*d).name().starts_with("Op") => {
+                let tp = self.data.def(*d).returned().without_deps();
+                tp.heap_def_nr()?;
+                let v = self.create_unique("_ret_root", &tp);
+                self.vars.defined(v);
+                let call = replace_root(self, src, Value::Var(v));
+                Some(crate::data::v_set(v, call))
+            }
+            Value::Var(r) => {
+                let r = *r;
+                let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame1(r))));
+                let v = self.create_unique("_ret_src", &tp);
+                self.vars.defined(v);
+                let path = std::mem::replace(src, Value::Var(v));
+                Some(crate::data::v_set(v, path))
+            }
+            _ => None,
         }
     }
 
