@@ -416,6 +416,15 @@ admits and each component it keeps in the store, with the mention that kept it.
 `vector<float>` local, or a work buffer, that never leaves its function lives in the store again
 — with it off, it is an inline buffer with a heap spill (`codegen_runtime::ApVec`), on every
 native build.  The first bisect step for a wrong element or length out of such a local.
+
+**`LOFT_NO_DECODE_VIEW=1`** (`@FR-R-DecodeView`, default-ON, generation time, every build that
+does not ship the live tier) keeps every decoded text and byte string owned — with it off, a
+function that hands its read-only byte frame to a decoder answering an enum value has that
+value's text and byte-string fields written as spans of the frame, inside the `__dv` twins of
+every function the value reaches, and read from the frame in place.  The first bisect step for
+a wrong decoded text on a release build.  Its falsifier is this switch's A/B against the guard's
+hand-computed values; **`LOFT_TRACE_DECODE_VIEW=1`** names each root the plan admits and each
+one it declines, with the mention that declined it.
 A reader behind a one-statement helper is held only where the helper is inlined
 (`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
 

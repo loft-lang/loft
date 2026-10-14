@@ -84,6 +84,11 @@ impl Output<'_> {
             .is_some_and(|s| s.contains(&v))
     }
 
+    /// The destination `dst` is a byte local held as a span.
+    fn dv_span_dest(&self, dst: &Value) -> bool {
+        matches!(dst.unspan(), Value::Var(v) if self.dv_span_local(*v))
+    }
+
     fn dv_span_local(&self, v: u16) -> bool {
         self.dv_active
             && self
@@ -125,9 +130,7 @@ impl Output<'_> {
         };
         match (self.data.def(*d).name(), args.as_slice()) {
             ("OpMoveVector", [dst, ..]) if self.dv_bytes_field(dst).is_some() => Some(Vec::new()),
-            ("OpSliceVector", [dst, ..]) if matches!(dst.unspan(), Value::Var(v) if self.dv_span_local(*v)) => {
-                Some(Vec::new())
-            }
+            ("OpSliceVector", [dst, ..]) if self.dv_span_dest(dst) => Some(Vec::new()),
             _ => None,
         }
     }

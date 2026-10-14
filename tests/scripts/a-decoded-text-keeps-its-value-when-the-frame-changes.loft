@@ -4,9 +4,10 @@
 // appended to, cleared or rebound afterwards, and when it outlives the function that owned the
 // frame.  Every value is hand-computed; both backends answer the owned copy's values.
 //
-// @falsified-at: none — the decision admits no view yet (`(R-DecodeView)` is proposed, not
-//   built), so no build exists that breaks this boundary; the rule's own guard falsifies it by
-//   planting a view that a frame write reaches.
+// @falsified-at: none — every cell writes, grows, clears or outlives its frame, which is
+//   exactly what `(R-DecodeView)` declines, so no build of the rule holds a view here; the
+//   rule's own guard (`a-decoded-text-is-read-where-it-lies.loft`) is falsified by a planted
+//   span read.
 
 struct Item { name: text, raw: vector<u8>, at: integer }
 

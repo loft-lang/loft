@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator
-//! `@FR-R-DecodeView`, instance 1 — a text or byte-string field of a decoded enum value
-//! holds a SPAN of the byte frame it was decoded from, not an owned copy, inside the region
-//! of functions that decode the frame and read the result.
+//! `@FR-R-DecodeView` (`@C141`), instance 1 — a text or byte-string field of a decoded enum
+//! value holds a SPAN of the byte frame it was decoded from, not an owned copy, inside the
+//! region of functions that decode the frame and read the result.
 //!
 //! The plan is decided here, from the IR alone, before anything is emitted:
 //!
@@ -121,7 +121,10 @@ fn loft_fn(data: &Data, d: u32) -> bool {
 
 /// `vector<u8>`: a vector of integers that fit a byte.
 fn byte_vector(tp: &Type) -> bool {
-    matches!(tp, Type::Vector(e, _) if matches!(e.base(), Type::Integer(s) if s.min >= 0 && s.max <= 255))
+    let Type::Vector(e, _) = tp else {
+        return false;
+    };
+    matches!(e.base(), Type::Integer(s) if s.min >= 0 && s.max <= 255)
 }
 
 /// The view types: enums whose every text- or byte-string-carrying variant leaves the
@@ -971,19 +974,21 @@ fn holders(data: &Data, code: &Value, bs: u16, lazy: &mut HashMap<usize, Value>)
     let Some(vdb) = vdb else {
         return;
     };
-    let holder = |s: &Value| {
-        match s.unspan() {
+    let holder = |s: &Value| match s.unspan() {
         Value::Set(u, _) if *u == bs => true,
         Value::Insert(items) => items.iter().any(|x| {
-            matches!(x.unspan(), Value::Set(u, rhs) if *u == vdb
-                && matches!(rhs.unspan(), Value::Call(g, _) if op_name(data, *g) == "OpPlaceRecord"))
+            let Value::Set(u, rhs) = x.unspan() else {
+                return false;
+            };
+            *u == vdb
+                && matches!(rhs.unspan(), Value::Call(g, _)
+                    if op_name(data, *g) == "OpPlaceRecord")
         }),
         Value::Call(g, args) => {
             op_name(data, *g) == "OpSetInt4"
                 && matches!(args.first().map(Value::unspan), Some(Value::Var(u)) if *u == vdb)
         }
         _ => false,
-    }
     };
     let Some(first) = ops[..i].iter().position(holder) else {
         return;

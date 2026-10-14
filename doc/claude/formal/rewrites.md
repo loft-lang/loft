@@ -5312,17 +5312,41 @@ keeps every use one that reads.  (5) is the one way a span and a copy can differ
 A run-time tag in the field ("owned or span?") was the other representation.  It is
 declined here because every `text` field read in every program would test it (@C125).
 
-The ceiling, measured on pluginabi `check_request` (over-9x.md): building no text or byte
-string at all takes the row from 3.95 to 2.54 ms (−36 %); the spans' own bookkeeping comes
-out of that.  Reach: every decoder of a frame read once (cbor's `decode`, the web stack's
-request handlers).  Switch `LOFT_NO_DECODE_VIEW`; trace `LOFT_TRACE_DECODE_VIEW` names the
-holder or site that declined.  Falsifier: `LOFT_HOIST_VERIFY=1` re-reads each span as the
-owned text and compares; cells on both backends with hand-computed values — the
-`check_request` shape; B appended to after decode and before the lookup (declines, value
-right); R stored into a vector that outlives B (declines); invalid UTF-8 in a text span (the
-converted owned text); a decoded value returned from the function that owns B (declines); and
-a planted defect that admits a site writing B must read the wrong bytes under the verify
-switch.
+**Instance 1, built** (`src/generation/decode_view.rs` decides, `decode_view_emit.rs`
+writes).  The twin layout is the record itself: an ENUM whose every text- or
+byte-string-carrying variant leaves the record's last eight bytes free keeps the span there —
+the frame's bytes `[lo, lo + n)` under the sign bit, `0` for the owned form — with the field
+itself null, so a release frees nothing for it and a copy or a shallow move carries the word
+with the record's bytes.  A variant minted as a record of its own is the variant's size and
+has no such room: a region that mints one declines.
+- The ROOT is a function whose one byte-vector parameter B (not `&`, no other parameter but
+  numbers, texts and hidden buffers) it hands to a call answering a decoded value; it names B
+  as the frame for the length of its call (`codegen_runtime::DvFrame`).  (1) is the read-only
+  walk: B and every parameter it is handed to may be read for a length, read under a getter,
+  sliced or text-run, and handed to a region call — anything else, an element address outside
+  a getter included, declines.  (2) and (3) are the region's closure: every loft function a
+  value of the enum (or a record or collection holding one) reaches joins the region, the
+  root may not return one, and a native, a function reference, a `yield` or a `par` declines.
+- Every region function is re-emitted as its `__dv` twin, beside its own body for the callers
+  outside.  A text run of a parameter that is B at every call writes the span when its guard
+  holds and the bytes are UTF-8 — (5) — and the owned text otherwise; a byte slice sets its
+  local's span word, the local's move writes it, and the local's holder is placed only on the
+  guard's fallback path.  Every other write of a span field clears the word.
+- (4) in instance 1: a text field is read through `OpGetText`, which answers the frame's bytes
+  for a span; a byte-string field is never READ in a region — a read declines the root.
+- Not yet admitted: a frame held in a local of the root, a struct (no free bytes), a byte
+  string read as a value.
+
+Measured on pluginabi `check_request` (over-9x.md): 2.57 → 1.64 ms per op on one core
+(−36 %, against −46 % priced), every row's hash unchanged.  Switch `LOFT_NO_DECODE_VIEW`;
+trace `LOFT_TRACE_DECODE_VIEW` names each root admitted and each one declined with the
+mention that declined it.  Guard `tests/scripts/a-decoded-text-is-read-where-it-lies.loft`,
+its value cells hand-computed on both backends — a lookup by key, a format, a length and a
+character walk, invalid UTF-8, an empty text, unread byte strings, a nested map, a copy, an
+owned value beside a decoded one, a pooled buffer refilled with an integer and then texts,
+and the declines: a byte string read, the frame written after the decode, a decoded value
+returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
+pin `tests/decode_view.rs` holds the roots and the region.
 
 ### Proposed clauses on existing rules
 
