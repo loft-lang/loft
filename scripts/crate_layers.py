@@ -50,15 +50,15 @@ LAYERS: list[tuple[str, list[str]]] = [
         "database", "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct",
         "doc_render", "documentation", "exit_record", "exit_vector", "ffi_deliver", "file_access",
         "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts", "install",
-        "integrity", "ir_schema", "ir_schema_gen", "json", "keys", "lexer", "lib", "libscan",
-        "limits", "literal_append", "lockfile", "log_config", "logger", "loop_shape", "manifest",
-        "migrate_long", "narrow", "net", "net_profile", "null_census", "op_census", "op_sets",
-        "ops", "package", "package_layout", "page_metrics", "paged_reader", "placement",
-        "platform", "platform_census", "png_store", "process_run", "pure_reuse", "radix_db",
-        "radix_tree", "registry", "registry_advisories", "registry_index", "registry_keys",
-        "registry_signing", "repeat_run", "repl_doc", "resolution", "resolution_scope",
-        "return_field", "rewrite_census", "runtime_abi", "runtime_error", "sandbox",
-        "schema_sidecar", "script", "self_update", "siphash", "slot_alias", "spatial",
+        "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "lexer", "lib",
+        "libscan", "limits", "literal_append", "lockfile", "log_config", "logger", "loop_shape",
+        "manifest", "migrate_long", "narrow", "net", "net_profile", "null_census", "op_census",
+        "op_sets", "ops", "package", "package_layout", "page_metrics", "paged_reader",
+        "placement", "platform", "platform_census", "png_store", "process_run", "pure_reuse",
+        "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
+        "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
+        "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
+        "sandbox", "schema_sidecar", "script", "self_update", "siphash", "slot_alias", "spatial",
         "stack_census", "stack_verify", "stdlib_sources", "store", "store_budget", "store_census",
         "take_local", "text_calls", "text_run", "timeout", "tls", "trace", "trie_db", "triggers",
         "tuple_links", "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets",
@@ -81,7 +81,7 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "serve", "startup_cache",
-        "wasm_debug", "wasm_threads",
+        "wasm_debug", "wasm_entry", "wasm_threads",
     ]),
 ]
 
@@ -89,9 +89,9 @@ LAYERS: list[tuple[str, list[str]]] = [
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
-    ("core", "front"): 10,
-    ("core", "runtime"): 12,
-    ("front", "gen"): 10,
+    ("core", "front"): 2,
+    ("core", "runtime"): 8,
+    ("front", "gen"): 4,
     ("front", "runtime"): 10,
     ("gen", "facade"): 6,
     ("gen", "runtime"): 9,

@@ -87,3 +87,32 @@ pub(crate) fn is_c_text_call(def: &crate::data::Definition) -> bool {
     // the NULL the crossing carries either way.
     !def.c_sig.is_empty() && matches!(def.returned().base(), Type::Text(_))
 }
+
+/// @P283 — Op-name rewrite for `RefVar(Text)` destinations.
+///
+/// `text_return` (`src/parser/control.rs:2919`) promotes the work-text
+/// buffer of any text-returning function from a local `Type::Text(_)`
+/// to a hidden `Type::RefVar(Type::Text(_))` argument (`&mut String`).
+/// Self-reference assignments inside such a function emit
+/// `OpAppendText` / `OpClearText` / `OpFormat{Text,Int,Float,Single,
+/// Database}` / `OpAppendCharacter` IR on that buffer, but those ops
+/// expect a local `String` destination.  The `Stack` variants exist
+/// for the refvar case — this table maps a base op name to its Stack
+/// variant.  Both `src/state/codegen.rs::generate_call` (interp
+/// bytecode dispatch) and `src/generation/dispatch.rs::output_call_inner`
+/// (native emit dispatch) consult it.  Kept here, out-of-band of
+/// `output_call_inner`'s `Op` match-arm budget gate.
+#[must_use]
+pub fn refvar_text_stack_variant(name: &str) -> Option<&'static str> {
+    match name {
+        "OpAppendText" => Some("OpAppendStackText"),
+        "OpClearText" => Some("OpClearStackText"),
+        "OpAppendCharacter" => Some("OpAppendStackCharacter"),
+        "OpFormatText" => Some("OpFormatStackText"),
+        "OpFormatInt" => Some("OpFormatStackInt"),
+        "OpFormatFloat" => Some("OpFormatStackFloat"),
+        "OpFormatSingle" => Some("OpFormatStackSingle"),
+        "OpFormatDatabase" => Some("OpFormatStackDatabase"),
+        _ => None,
+    }
+}

@@ -7109,28 +7109,6 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
 }
 
 impl Data {
-    /// @PLN11 arc D — serialize this `Data` to a file-backed IR store at
-    /// `path` (zero-copy-loadable via [`Data::open`]).  Thin wrapper over
-    /// [`crate::ir_store::save_data`].
-    ///
-    /// # Errors
-    /// Propagates file I/O errors from the store writer.
-    #[cfg(feature = "mmap")]
-    pub fn save(&self, path: &str) -> std::io::Result<()> {
-        crate::ir_store::save_data(self, path)
-    }
-
-    /// @PLN11 arc D — load a `Data` from a file-backed IR store written by
-    /// [`Data::save`], by `mmap`-ing the file and rebuilding the native graph —
-    /// no re-parse.  Thin wrapper over [`crate::ir_read::open_data`].
-    ///
-    /// # Errors
-    /// Returns `NotFound` if `path` does not exist (cache miss → caller parses).
-    #[cfg(feature = "mmap")]
-    pub fn open(path: &str) -> std::io::Result<Data> {
-        crate::ir_read::open_data(path)
-    }
-
     /// map a vector's content `Type` to a narrow
     /// database element type-nr when the content is a `Type::Integer`
     /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)

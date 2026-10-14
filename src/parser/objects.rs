@@ -3617,7 +3617,7 @@ impl Parser {
             let mut a = args.clone();
             a[0] = Value::Var(var_nr);
             let op = if stack {
-                let twin = crate::generation::ops::refvar_text_stack_variant(name)
+                let twin = crate::text_calls::refvar_text_stack_variant(name)
                     .expect("every write of the format family has a stack twin");
                 self.data.def_nr(twin)
             } else {

@@ -1624,14 +1624,13 @@ mod tests {
         }
     }
 
-    /// @PLN11 arc D step D1 — the public `Data::save` / `Data::open` API:
+    /// @PLN11 arc D step D1 — `ir_store::save_data` / `open_data`:
     /// save the stdlib to a `.store` file, load it back (mmap, no re-parse),
     /// and confirm bit-for-bit equality.  Also checks that opening a missing
     /// file is a clean `NotFound` (the cache-miss path the caller falls back on).
     #[cfg(feature = "mmap")]
     #[test]
     fn data_save_open_round_trip_stdlib() {
-        use crate::data::Data;
         use crate::ir_schema::compare_data;
 
         let mut p = crate::parser::Parser::new();
@@ -1642,16 +1641,16 @@ mod tests {
         let path = std::env::temp_dir().join(format!("loft_data_api_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
 
-        fresh.save(path_str).expect("Data::save");
-        let loaded = Data::open(path_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, path_str).expect("save_data");
+        let loaded = open_data(path_str).expect("open_data");
         let result = compare_data(&fresh, &loaded);
         let _ = crate::file_access::remove_file(&path);
         if let Err(diff) = result {
-            panic!("Data::save/open round-trip diverged: {diff:?}");
+            panic!("save_data/open_data round-trip diverged: {diff:?}");
         }
 
         // Opening a non-existent store is a clean cache-miss (NotFound).
-        let miss = Data::open("/nonexistent/loft_no_such_store.store");
+        let miss = open_data("/nonexistent/loft_no_such_store.store");
         assert_eq!(
             miss.err().map(|e| e.kind()),
             Some(std::io::ErrorKind::NotFound)
@@ -1665,8 +1664,6 @@ mod tests {
     #[cfg(feature = "mmap")]
     #[test]
     fn cap_annotation_survives_store_round_trip() {
-        use crate::data::Data;
-
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn capped() -> integer fs#read;\n#native\n";
@@ -1679,8 +1676,8 @@ mod tests {
         let fresh = p.data;
         let spath = std::env::temp_dir().join(format!("loft_cap_rt_{}.store", std::process::id()));
         let spath_str = spath.to_str().unwrap();
-        fresh.save(spath_str).expect("Data::save");
-        let loaded = Data::open(spath_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, spath_str).expect("save_data");
+        let loaded = open_data(spath_str).expect("open_data");
         let _ = crate::file_access::remove_file(&spath);
         assert_eq!(
             loaded.def(loaded.def_nr("n_capped")).cap(),
@@ -1698,7 +1695,7 @@ mod tests {
     #[cfg(feature = "mmap")]
     #[test]
     fn optional_type_survives_store_round_trip() {
-        use crate::data::{Data, Type};
+        use crate::data::Type;
 
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).expect("parse stdlib");
@@ -1717,8 +1714,8 @@ mod tests {
         let fresh = p.data;
         let spath = std::env::temp_dir().join(format!("loft_opt_rt_{}.store", std::process::id()));
         let spath_str = spath.to_str().unwrap();
-        fresh.save(spath_str).expect("Data::save");
-        let loaded = Data::open(spath_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, spath_str).expect("save_data");
+        let loaded = open_data(spath_str).expect("open_data");
         let _ = crate::file_access::remove_file(&spath);
 
         let (base, is_opt) = loaded
@@ -1743,8 +1740,6 @@ mod tests {
     #[cfg(feature = "mmap")]
     #[test]
     fn member_links_survive_store_round_trip() {
-        use crate::data::Data;
-
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "struct Inv { items: integer }\n";
@@ -1762,8 +1757,8 @@ mod tests {
         let fresh = p.data;
         let spath = std::env::temp_dir().join(format!("loft_ml_rt_{}.store", std::process::id()));
         let spath_str = spath.to_str().unwrap();
-        fresh.save(spath_str).expect("Data::save");
-        let loaded = Data::open(spath_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, spath_str).expect("save_data");
+        let loaded = open_data(spath_str).expect("open_data");
         let _ = crate::file_access::remove_file(&spath);
 
         let reloaded_inv = loaded.def_nr("Inv");
@@ -1782,8 +1777,6 @@ mod tests {
     #[cfg(feature = "mmap")]
     #[test]
     fn null_safe_survives_store_round_trip() {
-        use crate::data::Data;
-
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn tolerant(c: character) -> boolean { c == 'a' }\n#null_safe\n";
@@ -1799,8 +1792,8 @@ mod tests {
         let fresh = p.data;
         let spath = std::env::temp_dir().join(format!("loft_ns_rt_{}.store", std::process::id()));
         let spath_str = spath.to_str().unwrap();
-        fresh.save(spath_str).expect("Data::save");
-        let loaded = Data::open(spath_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, spath_str).expect("save_data");
+        let loaded = open_data(spath_str).expect("open_data");
         let _ = crate::file_access::remove_file(&spath);
         assert!(
             loaded.def(loaded.def_nr("n_tolerant")).null_safe(),
@@ -1815,8 +1808,6 @@ mod tests {
     /// and survives both the binary-store and JSON round-trips (so a marked stdlib
     /// symbol keeps its mark when loaded from the `LOFT_STDLIB_CACHE` bundle).
     fn superseded_survives_store_round_trip() {
-        use crate::data::Data;
-
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn old_add(a: integer, b: integer) -> integer { a + b }\n#superseded \"new_add\"\nfn new_add(a: integer, b: integer) -> integer { a + b }\n";
@@ -1833,8 +1824,8 @@ mod tests {
         let fresh = p.data;
         let spath = std::env::temp_dir().join(format!("loft_sup_rt_{}.store", std::process::id()));
         let spath_str = spath.to_str().unwrap();
-        fresh.save(spath_str).expect("Data::save");
-        let loaded = Data::open(spath_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, spath_str).expect("save_data");
+        let loaded = open_data(spath_str).expect("open_data");
         let _ = crate::file_access::remove_file(&spath);
         assert_eq!(
             loaded.def(loaded.def_nr("n_old_add")).superseded(),
@@ -1855,8 +1846,6 @@ mod tests {
     #[cfg(feature = "mmap")]
     #[test]
     fn c_binding_survives_store_round_trip() {
-        use crate::data::Data;
-
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "pub fn c_len(s: text) -> integer;\n#c \"strlen\" \"size_t(const char*)\"\n";
@@ -1871,8 +1860,8 @@ mod tests {
 
         let spath = std::env::temp_dir().join(format!("loft_c_rt_{}.store", std::process::id()));
         let spath_str = spath.to_str().unwrap();
-        fresh.save(spath_str).expect("Data::save");
-        let loaded = Data::open(spath_str).expect("Data::open");
+        crate::ir_store::save_data(&fresh, spath_str).expect("save_data");
+        let loaded = open_data(spath_str).expect("open_data");
         let _ = crate::file_access::remove_file(&spath);
         let d = loaded.def(loaded.def_nr("n_c_len"));
         assert_eq!(

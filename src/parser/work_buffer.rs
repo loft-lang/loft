@@ -961,8 +961,8 @@ impl Walk<'_> {
     /// is the one home of that reading — provided the wrapper's FIRST parameter is the op's
     /// first operand and no other operand names it.
     fn one_op_wrapper(&self, d: u32) -> Option<u32> {
-        use crate::generation::hoist::WrapperOperand;
-        let (op, operands) = crate::generation::hoist::one_op_wrapper(self.data, d)?;
+        use crate::ir_shape::WrapperOperand;
+        let (op, operands) = crate::ir_shape::one_op_wrapper(self.data, d)?;
         let first = matches!(operands.first(), Some(WrapperOperand::Param(0)));
         let rest_free = !operands
             .iter()

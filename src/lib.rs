@@ -389,6 +389,7 @@ pub mod call_frames;
 pub mod codegen_runtime;
 pub mod const_literal;
 pub mod generation;
+pub mod ir_shape;
 pub mod loop_shape;
 pub mod op_sets;
 pub mod ops;
@@ -495,6 +496,8 @@ pub mod stdlib_sources;
 #[cfg(host_fs)]
 pub mod wasm;
 pub mod wasm_assets;
+#[cfg(host_fs)]
+pub mod wasm_entry;
 pub mod wasm_gl;
 // @PLN117 — the browser thread pool.  Browser-only by nature (it exists because
 // wasm has no `thread::spawn`), so it is not compiled for the host: type-checking

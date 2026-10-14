@@ -194,7 +194,7 @@ impl Parser {
         // `@FR-R-LazySplit` and `@FR-R-SplitTable` read a constant split without building
         // its vector at all, and leave the buffer unminted: a caller's buffer for it
         // would be a store nothing fills.
-        if crate::generation::hoist::split_call(rhs, &self.data, &self.vars).is_ok() {
+        if crate::ir_shape::split_call(rhs, &self.data, &self.vars).is_ok() {
             return Err("a constant split, read without its vector");
         }
         if self.vars.is_argument(x) || self.vars.tp(x).peel_optional().1 {
@@ -398,8 +398,8 @@ impl ReadWalk<'_> {
 
     /// A one-op stdlib wrapper (`len(v)`) reads as its op (`hoist::one_op_wrapper`).
     fn op_name(&self, d: u32) -> &str {
-        use crate::generation::hoist::WrapperOperand;
-        if let Some((op, operands)) = crate::generation::hoist::one_op_wrapper(self.data, d)
+        use crate::ir_shape::WrapperOperand;
+        if let Some((op, operands)) = crate::ir_shape::one_op_wrapper(self.data, d)
             && matches!(operands.first(), Some(WrapperOperand::Param(0)))
             && !operands
                 .iter()
