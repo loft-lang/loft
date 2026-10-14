@@ -1083,6 +1083,9 @@ pub struct Output<'a> {
     /// [`Output::borrowed_text_locals`] ([`hoist::borrowed_store_texts`]): every `Set` of
     /// one binds its `&str` slot.
     pub borrowed_store_locals: HashSet<u16>,
+    /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
+    /// value slice of a parameter, for the rewrite census; rebuilt per function.
+    pub slice_borrow_count: usize,
     /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
@@ -2484,6 +2487,7 @@ impl<'a> Output<'a> {
             text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
+            slice_borrow_count: 0,
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
@@ -2983,6 +2987,7 @@ impl Output<'_> {
             .copied()
             .collect();
         self.borrowed_store_locals.clear();
+        self.slice_borrow_count = 0;
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
@@ -2996,6 +3001,7 @@ impl Output<'_> {
             let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
+            self.slice_borrow_count = store.slices.len();
             walks
         };
         self.char_walks = if self.char_walk_disabled {
@@ -3099,6 +3105,7 @@ impl Output<'_> {
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
         fired("R-TextBorrow", self.borrowed_text_locals.len());
+        fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
         fired("R-LoopRecord", self.loop_records.len());

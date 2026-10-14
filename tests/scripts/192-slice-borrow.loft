@@ -1,0 +1,157 @@
+// `@FR-R-SliceBorrow` — a text LOCAL bound to a value slice of a text PARAMETER (or of a
+// local that itself borrows one) is bound as the `&str` the slice answers on `--native`:
+// no `String` is built, and every read of it reads bare.  Every cell hand-computes its
+// value; the interpreter copies the slice as the IR spells it and is the oracle.  The cells
+// walk the axes the rewrite has: what the BODY does with `t` (size, compare, prefix, format,
+// bind to another local, hand it to a user function by value, walk its characters, slice it
+// again), the bounds (negative, past the end, reversed, inside a multibyte character), what
+// must DECLINE and still answer right (a rebind of `t` to a built text, an append to `t`, a
+// `&t` link, `t` handed to a `&text` parameter, `t` in a tuple, `t` returned, `t` stored in
+// a record, a slice of a `&text` parameter, a slice of a rebound parameter, a slice of an
+// OWNED local, a generator), a `text?` parameter, an empty slice, and a slice bound inside
+// a loop.  `LOFT_NO_SLICE_BORROW=1`, `LOFT_NO_TEXT_BORROW=1`, `LOFT_POISON=1`,
+// `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+//
+// @falsified-at: pending — see tests/slice_borrow.rs (the emission pins) and the record
+// below once the sabotage has run.
+
+struct Row { label: text, n: integer }
+
+// t1 — the plain shape: size, a compare, a prefix test, bare in a format.
+fn t1(line: text) -> text {
+  t = line[2..5];
+  n = size(t);
+  if t == "cde" { n += 100; }
+  if t.starts_with("cd") { n += 10; }
+  "{t}:{n}"
+}
+
+// t2 — two slices of one parameter, one of them a slice of the other.
+fn t2(line: text) -> text {
+  head = line[0..3];
+  tail = line[3..];
+  mid = head[1..2];
+  "{head}|{tail}|{mid}"
+}
+
+// t3 — `t` bound to another local (a copy at the bind), handed to a user function by
+// value, and walked by character.
+fn by_value(s: text) -> integer { size(s) * 2 }
+fn t3(line: text) -> text {
+  t = line[1..4];
+  u = t;
+  c = 0;
+  for ch in t { c += ch as integer; }
+  "{u}:{by_value(t)}:{c}"
+}
+
+// t4 — the bounds: negative, past the end (and a start inside the two-byte `é`, which
+// snaps back to the character's first byte — `@FR-Slice-Value`), reversed, a character,
+// empty.
+fn t4(line: text) -> text {
+  a = line[-3..];
+  b = line[2..99];
+  c = line[4..2];
+  d = line[1..3];
+  e = line[3..3];
+  "{a}|{b}|[{c}]|{d}|[{e}]|{size(d)}"
+}
+
+// t5 — a slice bound inside a loop, read in the same iteration.
+fn t5(line: text) -> integer {
+  n = 0;
+  for i in 0..3 {
+    t = line[i..i + 2];
+    if t == "bc" { n += 10; }
+    n += size(t);
+  }
+  n
+}
+
+// t6 — DECLINES: `t` appended to, and `t` rebound to a built text.  Values hold.
+fn t6(line: text) -> text {
+  t = line[0..2];
+  t += "!";
+  u = line[2..4];
+  u = "{u}?";
+  "{t}{u}"
+}
+
+// t7 — DECLINES: `t` returned, and `t` stored in a record.
+fn t7(line: text) -> text {
+  t = line[1..3];
+  r = Row { label: line[3..5], n: 1 };
+  "{r.label}{r.n}{t}"
+}
+fn t7r(line: text) -> text {
+  t = line[1..3];
+  t
+}
+
+// t8 — DECLINES: `t` in a tuple, and `t` handed to a `&text` parameter.
+fn grow(s: &text) { s += "+"; }
+fn t8(line: text) -> text {
+  t = line[0..2];
+  pair = (t, 1);
+  u = line[2..3];
+  grow(u);
+  "{pair.0}{pair.1}{u}"
+}
+
+// t9 — DECLINES: a slice of a `&text` parameter, and of a parameter the body rebinds.
+fn t9(line: &text) -> text {
+  t = line[0..2];
+  line += "x";
+  t
+}
+fn t9b(line: text) -> text {
+  t = line[0..2];
+  line = "zz";
+  "{t}{line}"
+}
+
+// t10 — DECLINES (this clause): a slice of an OWNED local — the local is written after.
+fn t10(line: text) -> text {
+  s = "{line}{line}";
+  t = s[1..3];
+  s += "y";
+  "{t}:{size(s)}"
+}
+
+// t11 — a `text?` parameter: the slot is the same, its null the sentinel, and a slice of
+// null is null.
+fn t11(line: text?) -> text {
+  t = line[0..2];
+  "[{t}]"
+}
+
+// t12 — a generator declines whole.
+fn gen(line: text) -> iterator<text> {
+  t = line[0..2];
+  yield t;
+  yield line[2..4];
+}
+fn t12(line: text) -> text {
+  out = "";
+  for p in gen(line) { out += "{p}."; }
+  out
+}
+
+fn main() {
+  assert(t1("abcdefgh") == "cde:113", "t1 {t1(\"abcdefgh\")}");
+  assert(t2("abcdefgh") == "abc|defgh|b", "t2 {t2(\"abcdefgh\")}");
+  assert(t3("abcdefgh") == "bcd:6:297", "t3 {t3(\"abcdefgh\")}");
+  assert(t4("héllo") == "llo|éllo|[]|é|[]|2", "t4 {t4(\"héllo\")}");
+  assert(t5("abcde") == 16, "t5 {t5(\"abcde\")}");
+  assert(t6("abcdefgh") == "ab!cd?", "t6 {t6(\"abcdefgh\")}");
+  assert(t7("abcdefgh") == "de1bc", "t7 {t7(\"abcdefgh\")}");
+  assert(t7r("abcdefgh") == "bc", "t7r {t7r(\"abcdefgh\")}");
+  assert(t8("abcdefgh") == "ab1c+", "t8 {t8(\"abcdefgh\")}");
+  s9 = "abcd";
+  assert(t9(s9) == "ab" and s9 == "abcdx", "t9 {t9(\"abcd\")} {s9}");
+  assert(t9b("abcd") == "abzz", "t9b {t9b(\"abcd\")}");
+  assert(t10("ab") == "ba:5", "t10 {t10(\"ab\")}");
+  assert(t11("abcd") == "[ab]" and t11(null) == "[null]", "t11 {t11(\"abcd\")} {t11(null)}");
+  assert(t12("abcdef") == "ab.cd.", "t12 {t12(\"abcdef\")}");
+  println("ok");
+}
