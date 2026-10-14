@@ -1,0 +1,12 @@
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -366,7 +366,8 @@
+     if i >= 0 && (i as u64) < N as u64 {
+         return a[i as usize];
+     }
+-    ap_index_slow(cell, i, N).map_or(f64::NAN, |f| a[f])
++    let _ = cell;
++    f64::NAN
+ }
+ 
+ /// The nullable read `v[i]?` (`OpGetVectorNullable`): the same index, and null without a
