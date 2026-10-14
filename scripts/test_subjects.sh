@@ -86,7 +86,7 @@ subject_patterns() {
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~code_base ~fast_table ~frame_headroom ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_ ~fs_ ~frame_readers' ;;
     (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~dropped_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures ~btree =concurrent_warm_start' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust' ;;
+    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust =builder_trigger' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
@@ -124,7 +124,7 @@ subject_paths() {
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs|^src/timeout\.rs|^src/native\.rs|^src/crash_report\.rs' ;;
     (store)    echo '^src/store\.rs|^src/vector\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/btree\.rs|^src/placement\.rs|^src/siphash\.rs' ;;
     (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
-    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/' ;;
+    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/|^src/triggers\.rs|^src/libscan\.rs' ;;
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
