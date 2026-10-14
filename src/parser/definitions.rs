@@ -2577,12 +2577,9 @@ impl Parser {
         // and `debug_assert` are reserved so the language can give them more meaning later, and
         // an error that spelled out the current one would read as a promise not to.
         if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has.clone()
-            && crate::lexer::is_keyword(&word)
+            && crate::lexer::is_keyword(word)
         {
-            if matches!(
-                word.as_str(),
-                "assert" | "panic" | "sizeof" | "debug_assert"
-            ) {
+            if matches!(word, "assert" | "panic" | "sizeof" | "debug_assert") {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -6829,7 +6826,7 @@ impl Parser {
                         // C132, Q13 (@PLN182) — a member is spelled as the definition that
                         // meets it: `op ⊕` is refused, naming the `operator` member to write.
                         if !self.first_pass && !self.default {
-                            let cure = match tok.as_str() {
+                            let cure = match tok {
                                 "<" | "<=" | ">" | ">=" => {
                                     "`operator compare(self: Self, other: Self) -> Ordering`"
                                 }
@@ -6854,7 +6851,7 @@ impl Parser {
                                  is spelled {cure}"
                             );
                         }
-                        format!("Op{}", rename(&tok))
+                        format!("Op{}", rename(tok))
                     }
                 } else {
                     if !self.first_pass {

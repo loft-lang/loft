@@ -965,7 +965,8 @@ impl Parser {
                 // distinguish `fn(args)` (lambda) from `fn name(args)`.
                 let lexer_link = self.lexer.link();
                 self.lexer.token("fn");
-                let is_named_fn = !matches!(self.lexer.peek().has, crate::lexer::LexItem::Token(ref t) if t == "(");
+                let is_named_fn =
+                    !matches!(self.lexer.peek().has, crate::lexer::LexItem::Token(t) if t == "(");
                 self.lexer.revert(lexer_link);
                 if is_named_fn { Some("fn") } else { None }
             } else {
@@ -1119,7 +1120,7 @@ impl Parser {
                 self.parse_store_else(&mut n);
                 t = Type::Void;
             }
-            self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if tok == "null")
+            self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "null")
                 && matches!(n.unspan(), Value::Null);
             self.stmt_if_pending = saved_stmt_if;
             // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
@@ -8384,16 +8385,16 @@ impl Parser {
         loop {
             match &self.lexer.peek().has.clone() {
                 LexItem::None => break,
-                LexItem::Token(t) if depth == 0 && t == "," => {
+                LexItem::Token(t) if depth == 0 && *t == "," => {
                     self.lexer.cont();
                     break;
                 }
-                LexItem::Token(t) if depth == 0 && t == "}" => break,
-                LexItem::Token(t) if t == "{" || t == "(" || t == "[" => {
+                LexItem::Token(t) if depth == 0 && *t == "}" => break,
+                LexItem::Token(t) if *t == "{" || *t == "(" || *t == "[" => {
                     depth += 1;
                     self.lexer.cont();
                 }
-                LexItem::Token(t) if t == "}" || t == ")" || t == "]" => {
+                LexItem::Token(t) if *t == "}" || *t == ")" || *t == "]" => {
                     depth -= 1;
                     self.lexer.cont();
                 }
@@ -9071,11 +9072,11 @@ impl Parser {
                 let mut depth = 0i32;
                 loop {
                     match &self.lexer.peek().has.clone() {
-                        LexItem::Token(t) if t == "{" => {
+                        LexItem::Token(t) if *t == "{" => {
                             depth += 1;
                             self.lexer.cont();
                         }
-                        LexItem::Token(t) if t == "}" => {
+                        LexItem::Token(t) if *t == "}" => {
                             depth -= 1;
                             self.lexer.cont();
                             if depth == 0 {
@@ -9286,18 +9287,18 @@ impl Parser {
                 loop {
                     match &self.lexer.peek().has.clone() {
                         LexItem::None => break,
-                        LexItem::Token(t) if t == "{" || t == "[" || t == "(" => {
+                        LexItem::Token(t) if *t == "{" || *t == "[" || *t == "(" => {
                             depth += 1;
                             self.lexer.cont();
                         }
-                        LexItem::Token(t) if t == "}" || t == "]" || t == ")" => {
+                        LexItem::Token(t) if *t == "}" || *t == "]" || *t == ")" => {
                             if depth == 0 {
                                 break;
                             }
                             depth -= 1;
                             self.lexer.cont();
                         }
-                        LexItem::Token(t) if t == "," && depth == 0 => break,
+                        LexItem::Token(t) if *t == "," && depth == 0 => break,
                         _ => self.lexer.cont(),
                     }
                 }

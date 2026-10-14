@@ -1,0 +1,107 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1995 — `T.parse(text)` writes every field of the record it answers (`@FR-H-Claim`: a
+// claimed block holds whatever it held last, so the reader owes each byte it makes
+// reachable).  Two records are written by no prefill, only by the members that name their
+// fields: an enum's payload and a nullable record.  A variant named by its bare tag, and
+// either record left by a member that does not fit, read back the PREVIOUS parse's values —
+// the first with no error at all, the second with a collection's handle among the stale
+// bytes.  Each now takes its fields' defaults before its members are read.
+//
+// Every cell parses a filled value first, in a helper whose store the next parse reuses, so
+// a field left unwritten shows the earlier value and not a lucky zero.
+//
+// Axes it MOVES: the record (an enum's payload, a nullable record), where it stands (the
+// root, a field, a vector's element), how it is left (a bare tag as a word and as a text, a
+// payload cut short by a value that does not fit, a payload that is not a record), and the
+// field kind left behind (a float, an integer, a text, a vector).  Every value is
+// hand-computed.
+//
+// @falsified-at: 59cdb57e1 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1995-a-parsed-record-has-every-field-written.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the control compiles this file and answers the earlier value.
+//   WITNESS: the control stops at the first cell, *a bare tag kept an earlier radius:
+//   Circle {r:7.5} []*.  Run one cell per program there, every cell fails: `Rect {w:11,h:22}`
+//   after a first side that did not fit, `q:{n:41,name:"old",v:[1,2,3]}` after `q.n` did
+//   not, and `[Circle {r:7.5},Rect {w:11,h:22},Dot {},Circle {r:0}]` for four bare tags.
+//   HOLDS: leak, panic and free-refusal are clean on both trees.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Shape95 { Dot, Circle { r: float }, Rect { w: integer, h: integer }, Label { t: text, sizes: vector<integer> } }
+struct In95 { n: integer, name: text, v: vector<integer> }
+struct Out95 { a: integer, q: In95?, s: Shape95 }
+struct Many95 { shapes: vector<Shape95> }
+
+fn shape(d: text) -> text {
+  s = Shape95.parse(d);
+  "{s} {s#errors}"
+}
+
+fn outer(d: text) -> text {
+  o = Out95.parse(d);
+  "{o} {o#errors}"
+}
+
+fn many(d: text) -> text {
+  m = Many95.parse(d);
+  "{m} {m#errors}"
+}
+
+fn a_bare_tag_answers_the_payloads_defaults() {
+  assert(shape("Circle{{r:7.5}}") == "Circle {{r:7.5}} []", "the filled circle");
+  got = shape("Circle");
+  assert(got == "Circle {{r:0}} []", "a bare tag kept an earlier radius: {got}");
+  assert(shape("Rect{{w:11,h:22}}") == "Rect {{w:11,h:22}} []", "the filled rectangle");
+  got = shape("\"Rect\"");
+  assert(got == "Rect {{w:0,h:0}} []", "a tag written as a text kept earlier sides: {got}");
+  assert(shape("Label{{t:\"old\",sizes:[1,2,3]}}") == "Label {{t:\"old\",sizes:[1,2,3]}} []", "the filled label");
+  got = shape("Label");
+  assert(got == "Label {{t:\"\",sizes:[]}} []", "a bare tag kept an earlier text or vector: {got}");
+  got = shape("Dot");
+  assert(got == "Dot {{}} []", "a variant without a payload: {got}");
+}
+
+fn a_payload_cut_short_leaves_the_rest_absent() {
+  assert(shape("Rect{{w:11,h:22}}") == "Rect {{w:11,h:22}} []", "the filled rectangle");
+  got = shape("Rect{{w:\"no\",h:5}}");
+  assert(got == "Rect {{w:0,h:0}} [\"line 1:6 path:w\"]", "the first side did not fit: {got}");
+  assert(shape("Rect{{w:11,h:22}}") == "Rect {{w:11,h:22}} []", "the filled rectangle");
+  got = shape("Rect{{w:3,h:true}}");
+  assert(got == "Rect {{w:3,h:0}} [\"line 1:10 path:h\"]", "the second side did not fit: {got}");
+  assert(shape("Label{{t:\"old\",sizes:[1,2,3]}}") == "Label {{t:\"old\",sizes:[1,2,3]}} []", "the filled label");
+  got = shape("Label{{t:5,sizes:[9]}}");
+  assert(got == "Label {{t:\"\",sizes:[]}} [\"line 1:7 path:t\"]", "the vector after the fault: {got}");
+  // A payload that is not a record at all.
+  assert(shape("Circle{{r:7.5}}") == "Circle {{r:7.5}} []", "the filled circle");
+  got = shape("{{\"Circle\":5}}");
+  assert(got == "Circle {{r:0}} [\"line 1:1 path:\"]", "a number for a payload: {got}");
+}
+
+fn a_nullable_record_cut_short_leaves_the_rest_absent() {
+  filled = "{{a:1,q:{{n:41,name:\"old\",v:[1,2,3]}},s:Dot}}";
+  assert(outer(filled) == "{{a:1,q:{{n:41,name:\"old\",v:[1,2,3]}},s:Dot {{}}}} []", "the filled record");
+  got = outer("{{a:2,q:{{n:\"bad\",name:\"new\",v:[9]}}}}");
+  assert(got == "{{a:2,q:{{n:0,name:\"\",v:[]}},s:null}} [\"line 1:9 path:q.n\"]", "the record after the fault: {got}");
+  assert(outer(filled) == "{{a:1,q:{{n:41,name:\"old\",v:[1,2,3]}},s:Dot {{}}}} []", "the filled record");
+  got = outer("{{a:3,q:{{n:7,name:false}}}}");
+  assert(got == "{{a:3,q:{{n:7,name:\"\",v:[]}},s:null}} [\"line 1:13 path:q.name\"]", "the vector after the fault: {got}");
+  // The record's own enum field, by a bare tag and by a payload cut short.
+  assert(outer("{{a:1,s:Rect{{w:11,h:22}}}}") == "{{a:1,q:null,s:Rect {{w:11,h:22}}}} []", "the filled field");
+  got = outer("{{a:4,s:Rect}}");
+  assert(got == "{{a:4,q:null,s:Rect {{w:0,h:0}}}} []", "a bare tag in a field: {got}");
+}
+
+fn a_vector_of_bare_tags_holds_defaults() {
+  assert(many("{{shapes:[Circle{{r:7.5}},Rect{{w:11,h:22}},Circle{{r:2.5}}]}}") == "{{shapes:[Circle {{r:7.5}},Rect {{w:11,h:22}},Circle {{r:2.5}}]}} []", "the filled vector");
+  got = many("{{shapes:[Circle,\"Rect\",Dot,Circle]}}");
+  assert(got == "{{shapes:[Circle {{r:0}},Rect {{w:0,h:0}},Dot {{}},Circle {{r:0}}]}} []", "bare tags in a vector: {got}");
+}
+
+fn main() {
+  a_bare_tag_answers_the_payloads_defaults();
+  a_payload_cut_short_leaves_the_rest_absent();
+  a_nullable_record_cut_short_leaves_the_rest_absent();
+  a_vector_of_bare_tags_holds_defaults();
+}

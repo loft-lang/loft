@@ -1,0 +1,82 @@
+// A deep copy of a vector whose elements own no heap is its one block copy: the per-element
+// walk that follows the copy (`copy_claims_seq_vector`) has nothing to copy for such elements
+// and is skipped.  Elements that own heap — a text, a nested vector — are still walked, so the
+// copy owns its own text and inner vector.  Every cell copies, then changes or drops the
+// source, and reads the copy; every value is hand-computed.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-08) — with the skip taken for EVERY element
+//   type, h2 reads `:0,:1,:2,` (the copied elements' texts point into the source's store) on
+//   --interpret and --native, with and without LOFT_POISON=1.  A first draft copied the
+//   vector field alone (`copy = src.items`), which never reaches this copy and stayed green
+//   under the plant; h2 and h3 now copy a RECORD holding the vector.  Restored, every cell
+//   holds on --interpret, --native and --native-release, under
+//   `LOFT_NO_HEAP_FREE_VECTOR_COPY=1` and under LOFT_STRICT_STORES=1, LOFT_POISON=1,
+//   LOFT_POISON_CLAIM=1 and LOFT_NATIVE_LEAK_CHECK=1.
+
+struct Pd { q: integer, r: integer }
+struct Stroke { painted: vector<Pd>, n: integer }
+struct Named { name: text, k: integer }
+struct Holder { items: vector<Named> }
+struct Grid { rows: vector<vector<integer>> }
+
+fn pd_sum(s: const Stroke) -> integer {
+  t = s.n * 1000;
+  for p in s.painted { t += p.q * 10 + p.r; }
+  t
+}
+
+fn make_holder(base: integer) -> Holder {
+  h = Holder { items: [] };
+  for i in 0..3 { h.items += [Named { name: "n{base + i}", k: i }]; }
+  h
+}
+
+fn main() {
+  // h1 — a stroke appended to a timeline, then the source's vector changed: the timeline's
+  // copy keeps 1000*5 + (1*10+2) + (3*10+4) = 5046.
+  timeline: vector<Stroke> = [];
+  s = Stroke { painted: [Pd { q: 1, r: 2 }, Pd { q: 3, r: 4 }], n: 5 };
+  timeline += [s];
+  s.painted += [Pd { q: 9, r: 9 }];
+  s.painted[0].q = 77;
+  h1 = pd_sum(timeline[0]);
+  assert(h1 == 5046 && len(timeline[0].painted) == 2, "h1: {h1}");
+
+  // h2 — a record whose vector's elements own a text, appended to a collection (the deep
+  // copy walks each element): the copy owns its texts after the source is changed and gone.
+  hs: vector<Holder> = [];
+  {
+    src = make_holder(40);
+    hs += [src];
+    src.items[1].name = "changed";
+    src.items += [Named { name: "extra", k: 9 }];
+  }
+  h2 = "";
+  for n in hs[0].items { h2 += "{n.name}:{n.k},"; }
+  assert(h2 == "n40:0,n41:1,n42:2,", "h2: {h2}");
+
+  // h3 — a record holding a vector of vectors, appended to a collection: the copy owns its
+  // inner vectors.
+  gs: vector<Grid> = [];
+  g = Grid { rows: [[1, 2], [3]] };
+  gs += [g];
+  g.rows[0] += [50];
+  g.rows[1][0] = 300;
+  h3 = 0;
+  for row in gs[0].rows { for x in row { h3 = h3 * 10 + x; } }
+  assert(h3 == 123 && len(gs[0].rows[0]) == 2, "h3: {h3}");
+
+  // h4 — the timeline shape at volume: 40 strokes of i % 5 points, each source rebuilt after
+  // its append; sum over i of 1000 i + sum over j < i % 5 of (10 i + j).
+  tl: vector<Stroke> = [];
+  for i in 0..40 {
+    st = Stroke { painted: [], n: i };
+    for j in 0..i % 5 { st.painted += [Pd { q: i, r: j }]; }
+    tl += [st];
+    st.painted += [Pd { q: 1000, r: 0 }];
+  }
+  h4 = 0;
+  for t in tl { h4 += pd_sum(t); }
+  assert(h4 == 796480, "h4: {h4}");
+  println("copy ok");
+}

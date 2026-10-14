@@ -129,7 +129,15 @@ fn a_discharge_buffer_leaves_the_loops_headers_in_place() {
 #[test]
 fn the_switch_blocks_every_discharging_loop_again() {
     let out = std::env::temp_dir().join("loft_null_buffer_hoist_off.rs");
-    let fns = headers(&emit(&out, &[("LOFT_NO_NULL_BUFFER_HOIST", "1")]));
+    // `@FR-R-Header`'s apart clause off too: a blocked loop keeps the header of a vector it
+    // only reads, and this pin counts the headers the discharge allowance itself admits.
+    let fns = headers(&emit(
+        &out,
+        &[
+            ("LOFT_NO_NULL_BUFFER_HOIST", "1"),
+            ("LOFT_NO_APART_HEADERS", "1"),
+        ],
+    ));
     for (name, vec, push) in BLOCKED_OFF {
         let got = fns
             .get(*name)

@@ -352,6 +352,339 @@ pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -
     op_database_inner(cell, db, db_tp, true)
 }
 
+/// `@FR-R-Apart` — element `i` of a field held as a Rust array, read as the store path
+/// reads `v[i]` (`OpGetVector`, `@FR-H-Index`): a negative index counts from the end, and an
+/// index still out of range — or null — raises the recoverable error the store path raises
+/// (`Stores::index_or_raise_runtime`, the one definition) and answers null, NaN.
+#[inline]
+#[must_use]
+pub fn ap_get_f64<const N: usize>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    a: &[f64; N],
+    i: i64,
+) -> f64 {
+    if i >= 0 && (i as u64) < N as u64 {
+        return a[i as usize];
+    }
+    ap_index_slow(cell, i, N).map_or(f64::NAN, |f| a[f])
+}
+
+/// The nullable read `v[i]?` (`OpGetVectorNullable`): the same index, and null without a
+/// report for one out of range.
+#[inline]
+#[must_use]
+pub fn ap_get_f64_or_null<const N: usize>(a: &[f64; N], i: i64) -> f64 {
+    match crate::vector::elem_index(i, N as u32) {
+        Some(f) => a[f as usize],
+        None => f64::NAN,
+    }
+}
+
+/// `@FR-R-Apart` — a write of element `i` of a field held as a Rust array: the address the
+/// store path takes for it (`OpGetVector`) raises for an index out of range and writes
+/// nothing there (`@FR-H-WriteOOB`).
+#[inline]
+pub fn ap_set_f64<const N: usize>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    a: &mut [f64; N],
+    i: i64,
+    v: f64,
+) {
+    if i >= 0 && (i as u64) < N as u64 {
+        a[i as usize] = v;
+    } else if let Some(f) = ap_index_slow(cell, i, N) {
+        a[f] = v;
+    }
+}
+
+/// Every index the fast test does not take: the negative form, and the report.
+#[cold]
+#[inline(never)]
+fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Option<usize> {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    stores
+        .index_or_raise_runtime(i, n as u32)
+        .map(|f| f as usize)
+}
+
+/// `@FR-R-Apart` instance 3 — a `vector<float>` local held apart from the store: its first `C`
+/// elements in an inline array, the rest in a heap spill, so a short vector costs no
+/// allocation and a long one keeps every element.  Each operation answers what the store path
+/// answers for the vector it stands for: an empty vector at its init, a negative index from
+/// the end, an index out of range reported (`Stores::index_or_raise_runtime`) or, for `v[i]?`,
+/// null without a report.
+pub struct ApVec<const C: usize> {
+    d: [f64; C],
+    n: usize,
+    spill: Vec<f64>,
+}
+
+impl<const C: usize> Default for ApVec<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const C: usize> ApVec<C> {
+    #[must_use]
+    pub const fn new() -> Self {
+        ApVec {
+            d: [0.0; C],
+            n: 0,
+            spill: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.n = 0;
+        self.spill.clear();
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    #[inline]
+    pub fn push(&mut self, v: f64) {
+        if self.n < C {
+            self.d[self.n] = v;
+        } else {
+            self.spill.push(v);
+        }
+        self.n += 1;
+    }
+
+    #[inline]
+    fn at(&self, f: usize) -> f64 {
+        if f < C { self.d[f] } else { self.spill[f - C] }
+    }
+
+    #[inline]
+    fn at_mut(&mut self, f: usize) -> &mut f64 {
+        if f < C {
+            &mut self.d[f]
+        } else {
+            &mut self.spill[f - C]
+        }
+    }
+
+    /// `v[i]`: an index out of range reports, then answers null (NaN).
+    #[inline]
+    #[must_use]
+    pub fn get(&self, cell: &std::cell::UnsafeCell<Stores>, i: i64) -> f64 {
+        if i >= 0 && (i as u64) < self.n as u64 {
+            return self.at(i as usize);
+        }
+        ap_index_slow(cell, i, self.n).map_or(f64::NAN, |f| self.at(f))
+    }
+
+    /// `v[i]?`: the same index, and null without a report out of range.
+    #[inline]
+    #[must_use]
+    pub fn get_or_null(&self, i: i64) -> f64 {
+        match crate::vector::elem_index(i, self.n as u32) {
+            Some(f) => self.at(f as usize),
+            None => f64::NAN,
+        }
+    }
+
+    /// `v[i] = x`: an index out of range reports and writes nothing (`@FR-H-WriteOOB`).
+    #[inline]
+    pub fn set(&mut self, cell: &std::cell::UnsafeCell<Stores>, i: i64, v: f64) {
+        if i >= 0 && (i as u64) < self.n as u64 {
+            *self.at_mut(i as usize) = v;
+        } else if let Some(f) = ap_index_slow(cell, i, self.n) {
+            *self.at_mut(f) = v;
+        }
+    }
+}
+
+/// `@FR-R-DecodeView` — the mark of a span word: the sign bit.  A span word is
+/// `DV_MARK | (lo + 1) << 32 | n`, the frame's bytes `[lo, lo + n)` — never `i64::MIN`, the
+/// null an integer slot holds; the word `0` is the owned form.
+const DV_MARK: i64 = i64::MIN;
+
+/// The span word of `[lo, lo + n)`, or `0` when it does not fit one.
+fn dv_word(lo: i64, n: i64) -> i64 {
+    if lo < 0 || lo >= i64::from(i32::MAX) || !(0..=i64::from(u32::MAX)).contains(&n) {
+        return 0;
+    }
+    DV_MARK | ((lo + 1) << 32) | n
+}
+
+/// `@FR-R-DecodeView` — the region's root sets the frame its spans read for the length of
+/// its call, and the previous frame comes back when the call ends, however it ends.
+pub struct DvFrame<'a> {
+    cell: &'a std::cell::UnsafeCell<Stores>,
+    old: DbRef,
+}
+
+impl<'a> DvFrame<'a> {
+    #[must_use]
+    pub fn enter(cell: &'a std::cell::UnsafeCell<Stores>, frame: DbRef) -> Self {
+        let stores = unsafe { &mut *cell.get() };
+        let old = std::mem::replace(&mut stores.dv_frame, frame);
+        DvFrame { cell, old }
+    }
+}
+
+impl Drop for DvFrame<'_> {
+    fn drop(&mut self) {
+        unsafe { (*self.cell.get()).dv_frame = self.old };
+    }
+}
+
+/// The bytes of the byte vector `b`, read the way `vector_slice` reads its source.
+#[inline]
+fn dv_bytes<'a>(stores: &'a Stores, b: &DbRef) -> &'a [u8] {
+    if b.is_null() || b.rec == 0 || b.pos == 0 {
+        return &[];
+    }
+    let store = crate::keys::store(b, &stores.allocations);
+    let rec = store.collection_rec(b.rec, b.pos);
+    if rec == 0 {
+        return &[];
+    }
+    let n = vector::length_vector(b, &stores.allocations) as usize;
+    let all = store.bytes_of(rec);
+    &all[..n.min(all.len())]
+}
+
+/// The span word of `b[lo..hi]` under `vector_slice`'s clamps, or `0` when the bounds do not
+/// fit a word — the owned slice is then built, as it always was.
+#[must_use]
+#[inline]
+pub fn dv_span(stores: &Stores, b: DbRef, lo: i64, hi: i64) -> i64 {
+    if b.is_null() || b.rec == 0 || b.pos == 0 {
+        return 0;
+    }
+    let len = i64::from(vector::length_vector(&b, &stores.allocations));
+    let lo = lo.clamp(0, len);
+    let hi = hi.clamp(lo, len);
+    dv_word(lo, hi - lo)
+}
+
+/// A decoded text written as a span of the frame `b`, under `text_from_byte_range`'s bounds,
+/// when its bytes are UTF-8 — the condition that makes the span the text the owned form
+/// holds.  Answers whether it was written; the caller builds the owned text otherwise.
+#[inline]
+pub fn dv_span_text(
+    stores: &mut Stores,
+    rec: DbRef,
+    off: u32,
+    spare: u32,
+    b: DbRef,
+    lo: i64,
+    hi: i64,
+) -> bool {
+    if rec.rec == 0 {
+        return false;
+    }
+    let bytes = dv_bytes(stores, &b);
+    let length = bytes.len() as i64;
+    if length == 0 {
+        return false;
+    }
+    let bound = |x: i64| {
+        if x < 0 {
+            (x + length).max(0)
+        } else {
+            x.min(length)
+        }
+    };
+    let (lo, hi) = (bound(lo), bound(hi));
+    let word = dv_word(lo, hi - lo);
+    if hi <= lo || word == 0 {
+        return false;
+    }
+    if std::str::from_utf8(&bytes[lo as usize..hi as usize]).is_err() {
+        return false;
+    }
+    dv_put_span(stores, rec, off, spare, word);
+    true
+}
+
+/// Write the span word `word` into the record `rec`: its field at `off` holds nothing of its
+/// own, so the record's release frees nothing for it.
+#[inline]
+pub fn dv_put_span(stores: &mut Stores, rec: DbRef, off: u32, spare: u32, word: i64) {
+    if rec.rec == 0 {
+        return;
+    }
+    let store = stores.store_mut(&rec);
+    store.set_u32_raw(rec.rec, rec.pos + off, 0);
+    store.set_int(rec.rec, rec.pos + spare, word);
+}
+
+/// The owned form of a span field: its span word cleared, so no read takes a stale one.
+#[inline]
+pub fn dv_clear(stores: &mut Stores, rec: DbRef, spare: u32) {
+    if rec.rec != 0 {
+        stores.store_mut(&rec).set_int(rec.rec, rec.pos + spare, 0);
+    }
+}
+
+/// A text field of a decoded record: the frame's bytes when it holds a span, else its own.
+#[must_use]
+#[inline]
+pub fn dv_text(stores: &Stores, rec: DbRef, off: u32, spare: u32) -> &str {
+    if rec.rec == 0 {
+        return crate::state::STRING_NULL;
+    }
+    let store = stores.store(&rec);
+    let word = store.get_int(rec.rec, rec.pos + spare);
+    if word < 0 {
+        let lo = (((word >> 32) & 0x7fff_ffff) - 1) as usize;
+        let n = (word & 0xffff_ffff) as usize;
+        let bytes = dv_bytes(stores, &stores.dv_frame);
+        if let Some(run) = bytes.get(lo..lo + n) {
+            // Checked when the span was written, and the frame is not written while one
+            // lives (`@FR-R-DecodeView` (1)).
+            return unsafe { std::str::from_utf8_unchecked(run) };
+        }
+        return "";
+    }
+    store.get_str(store.get_u32_raw(rec.rec, rec.pos + off))
+}
+
+/// `@FR-R-Apart` — the BOUNDARY: an apart record written into the return buffer `buf` with
+/// the steps its own constructor emits — the buffer kept when it holds a record, else minted
+/// (`OpDatabaseRefill`), then each `vector<float>` field emptied in place and its elements
+/// appended.  Answers the buffer, which is what the unrewritten function returns.
+pub fn ap_store_f64(
+    cell: &std::cell::UnsafeCell<Stores>,
+    mut buf: DbRef,
+    rec_tp: i32,
+    fields: &[(u32, &[f64])],
+) -> DbRef {
+    if buf.store_nr == u16::MAX || buf.rec == 0 {
+        buf = OpDatabaseRefill(cell, buf, rec_tp);
+    }
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    for (off, elems) in fields {
+        let fld = DbRef {
+            store_nr: buf.store_nr,
+            rec: buf.rec,
+            pos: buf.pos + off,
+        };
+        vector::clear_vector(&fld, &mut stores.allocations);
+        vector::pre_alloc_vector(&fld, elems.len() as u32, 8, &mut stores.allocations);
+        for v in *elems {
+            stores.append_f64(&fld, *v);
+        }
+    }
+    buf
+}
+
 /// `@FR-R-RefillBuffer` — the mint of a refilling callee's return buffer: a null buffer
 /// takes the kept store of the same type (its previous value still in it — the literal that
 /// follows writes every field, and empties each vector field in place); otherwise the
@@ -1216,23 +1549,7 @@ pub fn OpSizeofRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef) -> i64 {
 /// Bytecode equivalent: `State::db_from_text` in `src/state/io.rs:780`.
 #[must_use]
 pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
-    // @P372: size the target record to the struct, not a fixed 8 words — see
-    // the mirror in `State::db_from_text` (`src/state/io.rs`) for the full
-    // rationale.  A fixed `database(8)` (64 bytes) left only 56 bytes for the
-    // struct (written at `pos: 8`), so a struct > 56 bytes overflowed its tail
-    // field into the adjacent block header, and a later `claim` spun forever in
-    // `claim_scan`.  Keep a floor of 8 words.
-    let words = std::cmp::max(8, 1 + u32::from(stores.size(db_tp)).div_ceil(8));
-    let db = stores.database(words);
-    let into = DbRef {
-        store_nr: db.store_nr,
-        rec: db.rec,
-        pos: 8,
-    };
-    stores.set_final_default_value(db_tp, &into);
-    let err = stores.parse(val, db_tp, &into);
-    stores.set_parse_errors(&into, db_tp, err);
-    into
+    stores.record_from_text(val, db_tp)
 }
 
 /// Return the JSON parse / schema-walk errors from the last `json_parse()`
@@ -2787,7 +3104,11 @@ pub fn OpReadFile<T: FileVal>(
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
     {
-        if is_text {
+        // The read starts at THIS record's `#next`, wherever another record that names the
+        // handle left it (`LoftFile::place`, loft#2005).
+        if f.place(next_pos as u64).is_err() {
+            0
+        } else if is_text {
             f.read(buf).unwrap_or(0)
         } else if f.read_exact(buf).is_ok() {
             n
@@ -2853,7 +3174,11 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
         .files
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
-        .and_then(loft_file_take::<W>);
+        .and_then(|f| {
+            f.place(next_pos as u64)
+                .ok()
+                .and_then(|()| loft_file_take::<W>(f))
+        });
     let nread = if let Some(b) = bytes {
         *val = decode_int::<W, SIGNED>(&b, little_endian);
         W
@@ -2863,6 +3188,194 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     let st = stores.store_mut(&file);
     st.set_long(file.rec, file.pos + 8, next_pos);
     st.set_long(file.rec, file.pos + 16, next_pos + nread as i64);
+}
+
+/// `@FR-R-FileHold` — one `File`'s cursor held across a loop that reads it and lets nothing
+/// else see its record.  [`OpReadFileInt`] reads the record's format, handle and `#next` and
+/// writes `#index` and `#next` back for every value; held, a value is its bytes off the
+/// buffered handle and two locals moved, and the record gets both fields when the guard
+/// drops — at every way out of the loop, a `break`, a `return` and an unwinding panic alike.
+///
+/// Nothing is held (`handle` is `i32::MIN`) while the record names no open handle or no
+/// position — a file not read yet, an absent one, a directory: each read then goes through
+/// [`OpReadFileInt`], which opens the handle, and the guard looks again.  `CHECK` is the
+/// falsifier (`LOFT_HOIST_VERIFY=1`): every read and the drop assert that the record still
+/// says what it said when the hold began, so a loop that moved the cursor behind the guard
+/// stops there and not at a wrong value later.
+#[cfg(not(host_fs))]
+pub struct FileCursor<'c, const CHECK: bool> {
+    cell: &'c std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    handle: i32,
+    little_endian: bool,
+    /// Where the last read started: the record's `#index`.
+    last: i64,
+    /// Where the next read lands: the record's `#next`.
+    next: i64,
+    /// What the record said when the hold began, for `CHECK`.
+    seen: (i64, i64),
+}
+
+#[cfg(not(host_fs))]
+impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
+    #[must_use]
+    #[inline]
+    pub fn hold(cell: &'c std::cell::UnsafeCell<Stores>, file: DbRef) -> Self {
+        let mut held = FileCursor {
+            cell,
+            file,
+            handle: i32::MIN,
+            little_endian: false,
+            last: 0,
+            next: 0,
+            seen: (0, 0),
+        };
+        held.take();
+        held
+    }
+
+    /// Read the record into the guard, when it names an open handle and a position.
+    #[inline]
+    fn take(&mut self) {
+        self.handle = i32::MIN;
+        if self.file.rec == 0 {
+            return;
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store(&self.file);
+        let format = st.get_byte(self.file.rec, self.file.pos + 32, 0);
+        let open_ref = st.get_i32_raw(self.file.rec, self.file.pos + 28);
+        let next = st.get_long(self.file.rec, self.file.pos + 16);
+        if open_ref == i32::MIN
+            || next == i64::MIN
+            || (format != 1 && format != 2 && format != 3 && format != 5)
+        {
+            return;
+        }
+        let last = st.get_long(self.file.rec, self.file.pos + 8);
+        // A copy of the record may have moved the shared handle: the hold reads from THIS
+        // record's `#next`, and nothing in the loop moves the handle after this.
+        let placed = stores
+            .files
+            .get_mut(open_ref as usize)
+            .and_then(|x| x.as_mut())
+            .is_some_and(|f| f.place(next as u64).is_ok());
+        if !placed {
+            return;
+        }
+        self.little_endian = format == 2;
+        self.last = last;
+        self.next = next;
+        self.seen = (last, next);
+        self.handle = open_ref;
+    }
+
+    /// The record must still say what the hold read from it.
+    #[cold]
+    #[inline(never)]
+    fn check(&self) {
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store(&self.file);
+        let now = (
+            st.get_long(self.file.rec, self.file.pos + 8),
+            st.get_long(self.file.rec, self.file.pos + 16),
+        );
+        let handle = st.get_i32_raw(self.file.rec, self.file.pos + 28);
+        assert!(
+            now == self.seen && handle == self.handle,
+            "LOFT_HOIST_VERIFY: a held file cursor moved behind its hold (#index, #next were {:?}, now {:?}; handle was {}, now {handle})",
+            self.seen,
+            now,
+            self.handle,
+        );
+    }
+
+    /// [`OpReadFileInt`] with its own parameters, so the generator only renames the callee;
+    /// the guard's own cell and file are the ones read.
+    #[inline]
+    pub fn read<const W: usize, const SIGNED: bool>(
+        &mut self,
+        _cell: &std::cell::UnsafeCell<Stores>,
+        _file: DbRef,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        if self.handle == i32::MIN {
+            self.through::<W, SIGNED>(val, bytes, db_tp);
+            return;
+        }
+        if CHECK {
+            self.check();
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        self.last = self.next;
+        if let Some(b) = stores
+            .files
+            .get_mut(self.handle as usize)
+            .and_then(|x| x.as_mut())
+            .and_then(loft_file_take::<W>)
+        {
+            *val = decode_int::<W, SIGNED>(&b, self.little_endian);
+            self.next += W as i64;
+        }
+    }
+
+    /// A read with nothing held: through the record, which is then looked at again.
+    #[cold]
+    #[inline(never)]
+    fn through<const W: usize, const SIGNED: bool>(
+        &mut self,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        OpReadFileInt::<W, SIGNED>(self.cell, self.file, val, bytes, db_tp);
+        self.take();
+    }
+}
+
+#[cfg(not(host_fs))]
+impl<const CHECK: bool> Drop for FileCursor<'_, CHECK> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.handle == i32::MIN {
+            return;
+        }
+        if CHECK {
+            self.check();
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store_mut(&self.file);
+        st.set_long(self.file.rec, self.file.pos + 8, self.last);
+        st.set_long(self.file.rec, self.file.pos + 16, self.next);
+    }
+}
+
+/// The host-bridge build holds nothing: every read goes through [`OpReadFileInt`].
+#[cfg(host_fs)]
+pub struct FileCursor<'c, const CHECK: bool> {
+    cell: &'c std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+}
+
+#[cfg(host_fs)]
+impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
+    #[must_use]
+    pub fn hold(cell: &'c std::cell::UnsafeCell<Stores>, file: DbRef) -> Self {
+        FileCursor { cell, file }
+    }
+
+    pub fn read<const W: usize, const SIGNED: bool>(
+        &mut self,
+        _cell: &std::cell::UnsafeCell<Stores>,
+        _file: DbRef,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        OpReadFileInt::<W, SIGNED>(self.cell, self.file, val, bytes, db_tp);
+    }
 }
 
 /// The host-bridge build reads through [`OpReadFile`]; the specialisation is the native file's.
@@ -6431,6 +6944,69 @@ impl Drop for RefillKeepGuard {
             // the `cell`'s lifetime, and runs after that frame's last use of `stores`.
             let stores: &mut Stores = unsafe { &mut *(*self.cell).get() };
             stores.refill_keep_close(&self.buf, self.field, self.keep, self.size, self.texts);
+        }
+    }
+}
+
+/// The work buffers a frame LENDS to the functions it calls through a function value
+/// (`@FR-R-WorkBuffer`'s function-value clause).
+///
+/// A direct call hands a work-buffer parameter the frame's pooled buffer; a call through a
+/// function value cannot name one in the IR, because which function runs is not known
+/// there.  So the frame keeps one store per `(wrapper type, k)` — the k-th work buffer of
+/// that type in one candidate — minted the first time a dispatch arm asks for it and
+/// released when the frame ends.  Calls from a frame never overlap and a callee clears or
+/// refills its buffer on entry, so one slot serves every candidate and every call, as the
+/// pool does for direct calls.  A function that lends nothing never mints: an empty list
+/// allocates nothing.
+pub struct FnRefWork {
+    cell: *const std::cell::UnsafeCell<Stores>,
+    bufs: Vec<(i32, u32, DbRef)>,
+}
+
+impl FnRefWork {
+    #[must_use]
+    #[inline]
+    pub fn new(cell: &std::cell::UnsafeCell<Stores>) -> Self {
+        Self {
+            cell: std::ptr::from_ref(cell),
+            bufs: Vec::new(),
+        }
+    }
+
+    /// The frame's buffer for the `k`-th work buffer of wrapper type `tp`, minted on its
+    /// first use.
+    #[inline]
+    pub fn lend(&mut self, tp: i32, k: u32) -> DbRef {
+        for (t, n, buf) in &self.bufs {
+            if *t == tp && *n == k {
+                return *buf;
+            }
+        }
+        self.mint(tp, k)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn mint(&mut self, tp: i32, k: u32) -> DbRef {
+        // SAFETY: the pointer is the `cell` argument of the frame this value is a local of.
+        let cell = unsafe { &*self.cell };
+        let buf = OpDatabase(cell, DbRef::NULL, tp);
+        self.bufs.push((tp, k, buf));
+        buf
+    }
+}
+
+impl Drop for FnRefWork {
+    #[inline]
+    fn drop(&mut self) {
+        if self.bufs.is_empty() {
+            return;
+        }
+        // SAFETY: as in `mint` — the frame outlives its own local.
+        let cell = unsafe { &*self.cell };
+        for (_, _, buf) in self.bufs.drain(..) {
+            OpFreeRef(cell, buf, "__fnref_work");
         }
     }
 }

@@ -3392,12 +3392,13 @@ impl Parser {
             let had_spec = self.lexer.has_token(":");
             if had_spec {
                 if custom_fmt {
-                    if let LexResult {
-                        has: LexItem::Token(t) | LexItem::Identifier(t),
-                        position: _pos,
-                    } = self.lexer.peek().clone()
-                    {
-                        spec_string = t;
+                    let spec = match &self.lexer.peek().has {
+                        LexItem::Token(t) => Some((*t).to_string()),
+                        LexItem::Identifier(t) => Some(t.clone()),
+                        _ => None,
+                    };
+                    if let Some(spec) = spec {
+                        spec_string = spec;
                         self.lexer.cont();
                     }
                 } else {
@@ -3406,10 +3407,10 @@ impl Parser {
                         position: _pos,
                     } = self.lexer.peek().clone()
                     {
-                        let st: &str = &t;
+                        let st: &str = t;
                         if !SKIP_TOKEN.contains(&st) {
                             token.clear();
-                            token += &t;
+                            token += t;
                             state.token = &token;
                             self.lexer.cont();
                         }
@@ -3868,9 +3869,7 @@ impl Parser {
     /// and has not yet met a variable declared further down.
     fn starts_format_width(&self, item: &LexItem) -> bool {
         match item {
-            LexItem::Token(s) => {
-                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(s).is_none()
-            }
+            LexItem::Token(s) => !SKIP_WIDTH.contains(s) && crate::parser::radix_for(s).is_none(),
             LexItem::Identifier(s) => {
                 !SKIP_WIDTH.contains(&s.as_str())
                     && crate::parser::radix_for(s).is_none()
@@ -4026,7 +4025,7 @@ impl Parser {
         self.lexer.set_mode(Mode::Formatting);
         self.lexer.cont();
         if let LexItem::Token(t) = self.lexer.peek().has.clone()
-            && !SKIP_TOKEN.contains(&t.as_str())
+            && !SKIP_TOKEN.contains(&t)
         {
             self.lexer.cont();
         }

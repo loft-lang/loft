@@ -1782,11 +1782,10 @@ impl Parser {
         let crate::lexer::LexItem::Token(t) = &self.lexer.peek().has else {
             return None;
         };
-        OPERATORS.iter().enumerate().find_map(|(level, ops)| {
-            ops.iter()
-                .find(|op| **op == t.as_str())
-                .map(|op| (level, *op))
-        })
+        OPERATORS
+            .iter()
+            .enumerate()
+            .find_map(|(level, ops)| ops.iter().find(|op| *op == t).map(|op| (level, *op)))
     }
 
     /// The binary operators of one expression (`formal/grammar.md` `(G-Prec)` / `(G-Assoc)`),

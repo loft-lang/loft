@@ -107,13 +107,56 @@ into a parent that keeps them, and those are destination passing's.
 
 ## Order
 
-1. **Build instance 2 first** — the gate over the IR (construction, every use, every
-   assignment, the boundary), the `[T; N]` field inside the value record's tuple, the
-   boundary constructor, `LOFT_NO_APART=1`, cells per allowed use × both switch states.  It
-   is the one unit priced at an order of magnitude, it closes the worst float-kernel row, and
-   its gate is the same one every later instance reuses.  `make perf-portal` after it: the
-   float-kernel median should move, no long-lived class may.
-2. Instance 3 as an **inline buffer with spill**, priced here at −48 % on `rig_world_frame3`;
-   `draw_bezier`'s stack is its second row once the library's slice copy is gone.
+1. **Instance 2 — BUILT** (§ Built below).  Its gate (`generation::apart_value::plan`) is
+   the one every later instance reuses.
+2. **Instance 3 — BUILT** (§ Built below); `draw_bezier`'s stack is its next row once the
+   library's slice copy is gone.
 3. The two library fixes in the triage (`draw_bezier`, `surface_fitted_spread`) are a
    library branch each — this stream's to make, no consumer in the loop.
+
+## Built — instance 2, 2026-10-14
+
+`(R-Apart)` instance 2 (`formal/rewrites.md` § A record of fixed-length vectors travels as a
+value), x86-64 laptop, `--native-release`, branch `157-native-4x` at `f82d8df0e`.  Not the
+tuple the order above proposed: each apart type is a value struct of its own (`Apart<n>`, a
+`[f64; N]` per field) and each admitted function a twin (`n_<f>__apv`), because
+`(R-ValueRecord)`'s return-buffer protocol is the part an array field does not need.
+
+| | before | after |
+|---|--:|--:|
+| `mat4_mul`, ns a product, one core, three alternated runs | 62.0 | **7.74** (the hand form: 7.75) |
+| `mat4_mul` against its twin (`perf_check`, recorded) | 5.26× | **0.57×** |
+| float-kernel median, x86-64 | 1.75× | 1.69× (13 of 18 under the bar, 12 before) |
+
+Every row's hash and the run's sink are unchanged; `mesh_to_floats`' native time −1.1 % (its
+ratio moved with its twin).  The census: `R-Apart` fires only in mesh3d (15 twin calls).  A
+first build rewrote every body holding an apart value, `mat4_mul`'s own included; such a body is
+emitted with the vector hoists off, and its store reads lost their headers and bases for every
+caller handing it store matrices — the census showed it as drops in mesh3d and glb.  Only a body
+that calls a twin is rewritten now, and the only drops left are `mul_op`'s buffer exchange
+(`H-SwapRebind`, `R-RebindBuffer`), which a value assignment does not need.
+
+Left on this instance's reach: `return g(…)` forwarded through a hidden buffer (the cells'
+first `e2` was declined on it), `len(v)` through the stdlib wrapper, and fields of another type.
+
+## Built — instance 3, 2026-10-14
+
+`(R-Apart)` instance 3, x86-64 laptop, `--native-release`, at `dab609a29`: a `vector<float>`
+local or work buffer as `codegen_runtime::ApVec<64>` (64 elements inline, a heap spill past
+them).  The hand form re-taken on this box first: 1545 → 692 ns a call (the arm64 price was
+−48 %).
+
+| | before | after |
+|---|--:|--:|
+| `rig_world_frame3`, ns a call, one core, three alternated runs | 1540 | **747** (hand form, no spill test: 692) |
+| `rig_world_frame3` against its twin (`perf_check`, recorded) | 5.33× | **2.59×** |
+| `bone_shape_has` (hex_body, not targeted) | 2.49× | 1.40× |
+| `mesh_emit` (16_consumer_shapes, not targeted) | 2.54× | 2.01× |
+| `lock` (12_drawing) | 1.31× | 1.09× (native −3 %) |
+
+Every hash unchanged; no routine of the four lanes got slower.  The gap to the hand form is the
+spill test per push and the length test per read, which a vector past 64 elements needs.  The
+census: `R-Apart/vector` in hex_body (30), hex_terrain (11), 16_consumer_shapes (4) and
+12_drawing (1), and the header, push, `len` and base admissions that drop with it are those
+vectors' own.  12_drawing's lane found the one mention the hooks missed — a free on a `return`
+path, written through an `Insert` — as a `rustc` error, which is the design's backstop.

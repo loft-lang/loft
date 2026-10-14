@@ -116,4 +116,20 @@ fn u7() {
   println("u7 {len(a)} {sum_r2(a)} {len(b)} {sum_r2(b)}");
 }
 
-fn main() { u1(); u2(); u3(); u4(); u5(); u6(); u7(); }
+// u8 — a caller's work buffer (`@FR-R-WorkBuffer`) declared AHEAD of the result local: its
+// null road binds a PARAMETER to a backing before the result local is bound to its own, and
+// the result local adopts all the same.  One id is seen, so the second fill is mkr(1,
+// seed + 1): 550 + 660 for 5, 770 + 880 for 7.
+fn tagged(seed: integer) -> vector<R2> {
+  ids: vector<integer> = [];
+  out: vector<R2> = [];
+  for r in mkr(1, seed) { ids += [r.id]; out += [r]; }
+  for r in mkr(1, seed + len(ids)) { out += [r]; }
+  out
+}
+fn u8w() {
+  a = tagged(5); b = tagged(7);
+  println("u8 {len(a)} {sum_r2(a)} {len(b)} {sum_r2(b)}");
+}
+
+fn main() { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8w(); }

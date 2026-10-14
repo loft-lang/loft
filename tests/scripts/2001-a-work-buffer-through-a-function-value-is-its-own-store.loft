@@ -1,0 +1,194 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2001 — `@FR-R-WorkBuffer`'s function-value clause.  A function whose scratch vector is
+// a caller's work buffer may be reached through a function value, where no caller names a
+// buffer for it.  On `--native` the dispatch handed such a parameter the store of the RETURN
+// buffer whenever the function value's signature answers a vector, so the scratch vector
+// and the result were one vector record (c1, c2).  Each work buffer now takes a store of
+// its own that the calling frame keeps; the interpreter mints one per call and is the
+// oracle.  Every value below is computed by hand.
+//
+// The rest of the cells are the routes a function value takes — passed by name, bound to a
+// local, held in a record field, held in a vector — and the shapes of the function it
+// reaches: a leaf, a forwarder, one holding its buffer across a call of itself, a
+// value-record answer, a work buffer beside a record or a vector return buffer.
+// `LOFT_NO_FNREF_WORK_BUFFER=1`, `LOFT_NO_WORK_BUFFER=1`, `LOFT_WORK_BUFFER_NULL=1`,
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1` must answer identically.
+//
+// @falsified-at: cd1cdcf23 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret
+//   INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/2001-a-work-buffer-through-a-function-value-is-its-own-store.patch
+//   — the dispatch arm handing a work buffer the return buffer's store again.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `c1 3:5/1005|0/0|1010/2|` where the file says `2:5/10|1005/1|`.
+//   HOLDS: --interpret green on both trees; every route cell (the dispatch answers a
+//   scalar there, and hands the sentinel) green on the control.
+
+struct P { a: integer, b: integer }
+struct H { f: fn(integer) -> integer, n: integer }
+struct Q { name: text, n: integer }
+struct R { id: integer, tag: text }
+struct S { id: integer, n: integer }
+
+// tally(n) = the sum of i·i for i < n, plus n: 0, 1, 3, 8, 18, 35.
+fn tally(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * i]; }
+  s = 0;
+  for x in v { s += x; }
+  s + len(v)
+}
+fn apply(f: fn(integer) -> integer, a: integer) -> integer { f(a) }
+
+// c1 — the scratch vector holds 1000 + each id and is read back after the result is built:
+// one run [5], ids [1005], and the last record carries their sum and their count.
+fn mks(seed: integer) -> vector<S> {
+  out: vector<S> = [];
+  out += [S { id: seed, n: seed * 2 }];
+  out
+}
+fn summed(seed: integer) -> vector<S> {
+  ids: vector<integer> = [];
+  out: vector<S> = [];
+  for r in mks(seed) { out += [r]; ids += [r.id + 1000]; }
+  s = 0;
+  for x in ids { s += x; }
+  out += [S { id: s, n: len(ids) }];
+  out
+}
+fn show_s(f: fn(integer) -> vector<S>, n: integer) -> text {
+  rs = f(n);
+  t = "{len(rs)}:";
+  for r in rs { t += "{r.id}/{r.n}|"; }
+  t
+}
+
+// c2 — the same with text-owning records and two fills: ids [1005, 1006], sum 2011.
+fn mkr(seed: integer) -> vector<R> {
+  out: vector<R> = [];
+  out += [R { id: seed, tag: "t{seed}" }];
+  out
+}
+fn tagged(seed: integer) -> vector<R> {
+  ids: vector<integer> = [];
+  out: vector<R> = [];
+  for r in mkr(seed) { ids += [r.id + 1000]; out += [r]; }
+  for r in mkr(seed + 1) { ids += [r.id + 1000]; out += [r]; }
+  s = 0;
+  for x in ids { s += x; }
+  out += [R { id: s, tag: "sum{len(ids)}" }];
+  out
+}
+fn show_r(f: fn(integer) -> vector<R>, n: integer) -> text {
+  rs = f(n);
+  t = "{len(rs)}:";
+  for r in rs { t += "{r.id}{r.tag}|"; }
+  t
+}
+
+// c3 — a work buffer beside a RECORD return buffer that owns a text.
+fn mkq(n: integer) -> Q {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  Q { name: "q{len(v)}", n: n * 2 }
+}
+fn show_q(f: fn(integer) -> Q, n: integer) -> text { q = f(n); "{q.name}:{q.n}" }
+
+// c4 — two work buffers of two element types: 3 · 10 + 3.
+fn two(n: integer) -> integer {
+  a: vector<integer> = [];
+  b: vector<float> = [];
+  for i in 0..n { a += [i]; b += [1.5]; }
+  len(a) * 10 + len(b)
+}
+
+// c5 — a forwarder, which only hands the buffer down: twice(k) = 1, 4, 11.
+fn twice(n: integer) -> integer { tally(n) + tally(n + 1) }
+
+// c6 — a buffer holding data across a call of ITSELF through a function value:
+// deepv(n) = the sum of i for i < n, plus deepv(n − 1): 0, 1, 4, 10.
+fn deepv(n: integer) -> integer {
+  if n <= 0 { return 0 }
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  t = apply(deepv, n - 1);
+  for x in v { t += x; }
+  t
+}
+
+// c7 — a value-record answer, one candidate with a work buffer and one without.
+fn mk1(n: integer) -> P {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  P { a: len(v), b: n }
+}
+fn mk2(n: integer) -> P { P { a: n, b: 0 } }
+fn pick(f: fn(integer) -> P, n: integer) -> integer { p = f(n); p.a * 10 + p.b }
+
+// c8 — a forwarder with a loop of its own: 25 rounds of 0 + 1 + 3 + 8.
+fn inner_loop(n: integer) -> integer {
+  t = 0;
+  for k in 0..n { t += tally(k % 4); }
+  t
+}
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+// m1 — the live records after 1 000 calls through a function value equal those after 10.
+fn m1_calls(n: integer) -> integer {
+  t = 0;
+  for c in 0..n { t += apply(tally, c % 5) + pick(mk1, c % 3) + len(show_s(summed, c)); }
+  assert(t > 0, "m1_calls ran");
+  census_records()
+}
+
+fn main() {
+  assert(show_s(summed, 5) == "2:5/10|1005/1|", "c1 {show_s(summed, 5)}");
+  d = summed(5);
+  assert(len(d) == 2 && d[1].id == 1005, "c1 direct {len(d)}");
+  assert(show_r(tagged, 5) == "3:5t5|6t6|2011sum2|", "c2 {show_r(tagged, 5)}");
+  assert(show_r(tagged, 7) == "3:7t7|8t8|2015sum2|", "c2 again {show_r(tagged, 7)}");
+  q = "";
+  for k in 0..3 { q += "{show_q(mkq, k)},"; }
+  assert(q == "q0:0,q1:2,q2:4,", "c3 {q}");
+  assert(apply(two, 3) == 33, "c4 {apply(two, 3)}");
+  // by name beside a direct call, bound to a local, in a record field, in a vector
+  ta = 0;
+  for k in 0..4 { ta += apply(tally, k) + tally(k); }
+  assert(ta == 24, "routes: by name {ta}");
+  f = tally;
+  assert(f(3) == 8 && f(5) == 35, "routes: a local {f(3)} {f(5)}");
+  h = H { f: tally, n: 4 };
+  g = h.f;
+  assert(g(h.n) == 18, "routes: a field {g(h.n)}");
+  fs = [tally, twice];
+  td = 0;
+  for e in fs { td = td * 100 + e(2); }
+  assert(td == 311, "routes: a vector {td}");
+  ti = 0;
+  for k in 0..3 { ti += apply(twice, k) + twice(k); }
+  assert(ti == 32, "c5 {ti}");
+  assert(deepv(1) == 0 && deepv(2) == 1 && deepv(3) == 4 && deepv(4) == 10, "c6 {deepv(4)}");
+  assert(pick(mk1, 3) == 33 && pick(mk2, 3) == 30, "c7 {pick(mk1, 3)} {pick(mk2, 3)}");
+  assert(apply(inner_loop, 100) == 300 && inner_loop(100) == 300, "c8 {apply(inner_loop, 100)}");
+  w = [0, 0, 0];
+  for p in 0..3 {
+    n = 10;
+    if p == 2 { n = 1000 }
+    w[p] = m1_calls(n);
+  }
+  assert(w[1] == w[2], "m1 grows: {w[1]} -> {w[2]} records");
+  println("done");
+}

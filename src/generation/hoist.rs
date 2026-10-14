@@ -167,9 +167,10 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
 ];
 
 /// The operators that only COMPARE a reference — its record number, or the whole `DbRef` —
-/// and read no store: a view tested against null (`v != null`) is still the view it was, so a
-/// held address survives them (`@FR-R-RecPtr`).  An allow-list like the one above.
-pub const REF_COMPARE_OPS: [&str; 3] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef"];
+/// and read no store: a view tested against null (`v != null`, or the handle test
+/// `OpRefIsNull`) is still the view it was, so a held address survives them (`@FR-R-RecPtr`).
+/// An allow-list like the one above.
+pub const REF_COMPARE_OPS: [&str; 4] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef", "OpRefIsNull"];
 
 /// `@FR-R-InPlace`'s copy clause — `OpCopyRecord(src, dst, tp)` with no flag set, over a
 /// record type that owns NO heap: `size(tp)` bytes stored at the address of `dst`, which is
@@ -219,6 +220,41 @@ fn scalar_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Fu
     op == "OpCreateStack"
         && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
             if vars.is_some_and(|v| is_scalar(v.tp(*t))))
+}
+
+/// The address of a TEXT local (`OpCreateStack(t)`, a `&text` hand-off such as a callee's
+/// output text) writes nothing a header describes: on `--native` a text local is a Rust
+/// `String`, outside every store, and the link is its address.  Whatever writes through it is
+/// judged on its own.
+fn text_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+            if vars.is_some_and(|v| is_text_shape(v.tp(*t))))
+}
+
+/// A text, seen through `τ?` and any `&` link.
+fn is_text_shape(tp: &Type) -> bool {
+    matches!(tp.peel_link(), Type::Text(_))
+}
+
+/// `@FR-R-InPlace`'s link clause — the address of a local naming a record that owns NO heap
+/// (`&rows[i]` handed to `fn f(p: &(integer, integer))`) writes nothing either: through it a
+/// callee can only write the record's scalars in place or rebind the local, and neither claims,
+/// grows or frees.  What the callee writes is judged by its own summary.  A record that owns a
+/// text or a collection stays a writer — a callee writing it through the link re-claims.
+fn record_stack_ref(
+    stores: Option<&Stores>,
+    data: &Data,
+    op: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+        if vars.zip(stores).is_some_and(|(v, st)| {
+            plain_record_type(data, v.tp(*t))
+                .is_some_and(|tp| st.is_struct(tp) && !st.owns_heap(tp))
+        }))
 }
 
 /// `LOFT_NO_COPY_IN_PLACE=1` — a no-heap record copy is a store writer again
@@ -308,6 +344,10 @@ pub struct HoistOwned {
     /// The same fact for EVERY function of the program, so a CALLEE's body is judged with
     /// its own dead buffers exempt (`call_writes_store`): a program-wide table, shared.
     pub dead_by_fn: Rc<HashMap<u32, HashSet<u16>>>,
+    /// The elements `(R-RefillText)`'s collection clause builds into KEPT slots: a mint there
+    /// reuses a slot that still owns its previous text, so a text written into it releases
+    /// that text — no first write, and `@FR-R-Mint`'s text clause does not take it.
+    pub kept_elems: HashSet<u16>,
 }
 
 impl HoistOwned {
@@ -1006,7 +1046,7 @@ pub struct StoreFacts<'a> {
 
 impl StoreFacts<'_> {
     /// The end of `x`'s dep chain; `None` when the chain forks, loops or leaves the table.
-    fn terminal(&self, x: u16) -> Option<u16> {
+    pub(super) fn terminal(&self, x: u16) -> Option<u16> {
         let mut cur = x;
         let mut seen: HashSet<u16> = HashSet::new();
         loop {
@@ -1050,6 +1090,12 @@ impl StoreFacts<'_> {
             && !vars.is_compiler_generated(t)
             && !matches!(vars.tp(t).base(), Type::RefVar(_))
             && crate::data::is_dbref(vars.tp(t).base())
+    }
+
+    /// Is `t` the owner of a store nothing outside this activation can name — `fresh`,
+    /// asked by `@FR-R-Header`'s apart clause.
+    pub(super) fn owns_alone(&self, t: u16) -> bool {
+        self.fresh(t)
     }
 
     /// Do `a`'s and `b`'s records provably live in different stores?
@@ -1126,6 +1172,43 @@ fn mover_roots(
     out
 }
 
+/// `@FR-R-Header`'s apart clause — what a loop the gate DECLINES still holds: the header
+/// and the element base of each vector it only reads in a store nothing in it is handed
+/// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
+/// gate's verdict about the whole body, and this rests on the one store's mentions alone.
+fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts>) -> LoopHoist {
+    let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
+        return LoopHoist::default();
+    };
+    let vectors = super::apart::apart_headers(
+        body,
+        data,
+        facts,
+        &|t| work_buffer_arg(data, def_nr, t),
+        vector_candidates(body, data, def_nr),
+    );
+    crate::rewrite_census::fired("R-Header/apart", vectors.len());
+    if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+        let vars = data.def(def_nr).variables();
+        eprintln!(
+            "hoist: {} loop {} keeps {} header(s) apart from what declined it: {:?}",
+            data.def(def_nr).name(),
+            body.scope,
+            vectors.len(),
+            vectors
+                .iter()
+                .map(|(p, _)| vars.name(p.0))
+                .collect::<Vec<_>>()
+        );
+    }
+    LoopHoist {
+        // The loop grows no store these headers live in, so each carries its base.
+        growth_free: !vectors.is_empty(),
+        vectors,
+        ..LoopHoist::default()
+    }
+}
+
 /// The vector headers and the record scalars `body` may derive once up front.
 ///
 /// The gate is [`hoistable_vectors`]' gate; a body it declines hoists nothing.  Under it
@@ -1158,7 +1241,7 @@ pub fn hoistable(
     facts: Option<&StoreFacts>,
 ) -> LoopHoist {
     if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
-        return LoopHoist::default();
+        return apart_hoist(body, data, def_nr, facts);
     }
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
@@ -1362,7 +1445,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return LoopHoist::default();
+                return apart_hoist(body, data, def_nr, facts);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1378,7 +1461,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return LoopHoist::default();
+                return apart_hoist(body, data, def_nr, facts);
             }
             let any_retbuf = pushes
                 .iter()
@@ -6089,6 +6172,136 @@ pub struct MintLoop {
     pub mints_per_pass: u32,
 }
 
+/// `@FR-R-PushFill`'s hash clause — a counted loop that inserts records into ONE hash local:
+/// the hash, its type, the most inserts one pass runs, and the loop's counters.  Reserving
+/// the table for them up front changes capacity only — never `len` or contents — so no
+/// program answers differently; a pass whose key is already present inserts nothing, which
+/// leaves room unused, bounded by the trip count.
+pub struct HashFill {
+    pub hash: u16,
+    pub tp: u16,
+    pub per_pass: u32,
+    pub index: u16,
+    pub next: Option<u16>,
+    pub inclusive: bool,
+}
+
+/// [`HashFill`] for `lp`, or why it is no hash-fill loop.
+///
+/// # Errors
+///
+/// The reason the loop is no counted fill of one hash, as a trace would name it.
+pub fn hash_fill_loop<'a>(
+    lp: &'a Block,
+    data: &Data,
+    stores: &Stores,
+) -> Result<(HashFill, &'a Value), &'static str> {
+    let body = plain_for_body(lp).ok_or("not a plain counted loop")?;
+    let rc = range_counters(lp, data).map_err(|_| "not a range loop")?;
+    if leaves_early(body) {
+        return Err("the body can leave early, or loops");
+    }
+    let mint_of = |n: &Value| -> Option<(u16, u16)> {
+        let Value::Call(d, args) = n.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpNewRecord" {
+            return None;
+        }
+        let (Some(Value::Var(h)), Some(Value::Int(tp))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return None;
+        };
+        let tp = u16::try_from(*tp).ok()?;
+        matches!(
+            stores.types.get(tp as usize).map(|t| &t.parts),
+            Some(crate::database::Parts::Hash(..))
+        )
+        .then_some((*h, tp))
+    };
+    let mut target: Option<(u16, u16)> = None;
+    let mut two = false;
+    let mut rebound = false;
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Some(t) = mint_of(n) {
+                match target {
+                    Some(old) if old != t => two = true,
+                    _ => target = Some(t),
+                }
+            }
+            false
+        });
+    }
+    let (hash, tp) = target.ok_or("no hash insert in the body")?;
+    if two {
+        return Err("the inserts reach two hashes");
+    }
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if matches!(n, Value::Set(v, _) if *v == hash) {
+                rebound = true;
+            }
+            false
+        });
+    }
+    if rebound {
+        return Err("the hash is rebound in the body");
+    }
+    let mut banned = vec![rc.loop_var, rc.index, hash];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return Err("the range's end is not a simple invariant");
+    }
+    fn most(n: &Value, mint_of: &dyn Fn(&Value) -> Option<(u16, u16)>) -> u32 {
+        if mint_of(n).is_some() {
+            return 1;
+        }
+        if let Value::If(c, t, e) = n.unspan() {
+            return most(c, mint_of) + most(t, mint_of).max(most(e, mint_of));
+        }
+        let mut total = 0u32;
+        n.for_each_child(&mut |child| total += most(child, mint_of));
+        total
+    }
+    let per_pass: u32 = body.operators.iter().map(|s| most(s, &mint_of)).sum();
+    if per_pass == 0 {
+        return Err("no hash insert in the body");
+    }
+    Ok((
+        HashFill {
+            hash,
+            tp,
+            per_pass,
+            index: rc.index,
+            next: rc.next,
+            inclusive: rc.inclusive,
+        },
+        rc.hi,
+    ))
+}
+
+/// Can a statement of `body` leave the loop early, or run a loop of its own?
+fn leaves_early(body: &Block) -> bool {
+    body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
+    })
+}
+
 /// Recognise the counted RECORD-append loop (`@FR-R-PushFill`'s record clause): `for i in
 /// a..b { if … { v += [R { … }] } else { v += [S { … }] } }` — a plain `for` over a counted
 /// range whose body's only writes to the path are mint groups (the parser's reservation,
@@ -7260,6 +7473,45 @@ fn fresh_copy(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
         && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e))
 }
 
+/// `@FR-R-Mint`'s text clause — the first text written into an element the body has just
+/// minted (`e.f = t` between `OpNewRecord` and `OpFinishRecord`): a claim in the store the
+/// mint itself claims in, so it can move nothing the admitted mint cannot, and the mint's
+/// aliasing decision covers it.  The slot holds no text yet, so nothing is released.
+fn fresh_text_set(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
+    name == "OpSetText"
+        && args.len() == 3
+        && fresh_text_set_enabled()
+        && matches!(args[0].unspan(), Value::Var(e) if fresh.contains(e))
+}
+
+/// `LOFT_NO_FRESH_TEXT_SET=1` — a text written into a just-minted element blocks the loop's
+/// header hold again.
+fn fresh_text_set_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_FRESH_TEXT_SET").is_ok_and(|v| v != "0"))
+}
+
+/// A write into the fresh element that moves nothing a held header describes: § V-d's delivery
+/// copy (under the in-place tier) or its first text (`@FR-R-Mint`'s text clause, the mint tier).
+fn fresh_write(
+    name: &str,
+    args: &[Value],
+    fresh: &HashSet<u16>,
+    tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
+) -> bool {
+    (tiers.in_place && fresh_copy(name, args, fresh))
+        || (tiers.mint
+            && fresh_text_set(name, args, fresh)
+            && !matches!(args[0].unspan(), Value::Var(e)
+                if owned.is_some_and(|o| o.kept_elems.contains(e))))
+}
+
+/// The address of a scalar local, or (`@FR-R-Mint`'s text clause) of a text local.
+fn local_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    scalar_stack_ref(op, args, vars) || (fresh_text_set_enabled() && text_stack_ref(op, args, vars))
+}
+
 /// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
 /// extra allowance: under `allow_in_place`, a direct [`IN_PLACE_SET_OPS`] call is
 /// not blocking (its target and value subtrees still walk, so a growing op INSIDE
@@ -7308,7 +7560,8 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
-                    || scalar_stack_ref(data.def(*d).name(), args, vars));
+                    || local_stack_ref(data.def(*d).name(), args, vars)
+                    || record_stack_ref(stores, data, data.def(*d).name(), args, vars));
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
@@ -7384,7 +7637,7 @@ fn blocks_header_hoist(
             let record_copy = known
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
-            let fresh_copy = known && tiers.in_place && fresh_copy(data.def(*d).name(), args, fresh);
+            let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers, owned);
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -8029,7 +8282,7 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
 /// The buffer and the separator of a call that is the standard library's `split` with a
 /// constant, non-null separator and a hidden return buffer — the call both
 /// `(R-LazySplit)` and `(R-SplitTable)` replace — or why it is not one.
-fn split_call(
+pub(crate) fn split_call(
     call: &Value,
     data: &Data,
     vars: &crate::variables::Function,
@@ -8795,6 +9048,10 @@ pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
                     && let Some(Value::Var(w)) = gargs.first().map(Value::unspan)
                     && (*w as usize) < vars.count() as usize
                     && vars.name(*w).starts_with("__vdb")
+                    // A PARAMETER bound to a backing is a work buffer taking its null
+                    // road (`@FR-R-WorkBuffer`), never the result local: skipped, so the
+                    // first bind found is the first a local could be adopted through.
+                    && !vars.is_argument(*sv)
                     && init.is_none()
                 {
                     init = Some((*sv, *w));
@@ -13237,6 +13494,135 @@ pub struct LoopRecord {
     pub loop_scope: u16,
     /// The block whose direct `Set(v, null)` declares the local per iteration.
     pub decl_block: u16,
+    /// The REFILL clause: a record whose vector fields hold no-heap elements.  Its per-pass
+    /// mint keeps the store as it stands (`OpDatabaseRefill`) and each literal zero of a
+    /// vector field empties that vector in place, so the vectors keep their records.
+    pub refill: bool,
+}
+
+/// [`loop_records`]' answer: the admitted locals, and the literal zeros of the refill-clause
+/// records' vector fields (by node address) — the empties `emit.rs` writes for
+/// `@FR-R-RefillBuffer` too.
+#[derive(Default)]
+pub struct LoopRecords {
+    pub recs: HashMap<u16, LoopRecord>,
+    pub field_zeros: HashSet<usize>,
+}
+
+/// The byte offsets of `tp`'s vector fields.
+fn vector_field_offsets(stores: &Stores, tp: u16) -> Vec<i32> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return Vec::new();
+    };
+    fields
+        .iter()
+        .filter(|f| {
+            matches!(
+                stores.types.get(f.content as usize).map(|c| &c.parts),
+                Some(crate::database::Parts::Vector(_))
+            )
+        })
+        .map(|f| i32::from(f.position))
+        .collect()
+}
+
+/// The field NUMBERS of `tp`'s vector fields — what `OpNewRecord` / `OpFinishRecord` name
+/// an append's target field by.
+fn vector_field_numbers(stores: &Stores, tp: u16) -> Vec<i32> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return Vec::new();
+    };
+    (0i32..)
+        .zip(fields.iter())
+        .filter(|(_, f)| {
+            matches!(
+                stores.types.get(f.content as usize).map(|c| &c.parts),
+                Some(crate::database::Parts::Vector(_))
+            )
+        })
+        .map(|(nr, _)| nr)
+        .collect()
+}
+
+/// The REFILL clause's group check: every mint of `v` heads a literal group that writes
+/// every field of `tp` ([`group_covers_type`]), and every zero of a vector field of `v` is
+/// one of those groups' — answered as the set of those zeros, or `None`.  A zero anywhere
+/// else would drop a kept vector's record into the store, where the clear arm it replaces
+/// reclaimed it.
+fn loop_record_zeros(
+    body: &Value,
+    v: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> Option<HashSet<usize>> {
+    let offs = vector_field_offsets(stores, tp);
+    let mut ok = true;
+    let mut mints = 0usize;
+    let mut zeros: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let ops = &bl.operators;
+            for (i, stmt) in ops.iter().enumerate() {
+                let Some(Value::Call(d, args)) = Some(stmt.unspan()) else {
+                    continue;
+                };
+                if (*d as usize) >= data.definitions.len()
+                    || !matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                    || !matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                {
+                    continue;
+                }
+                mints += 1;
+                if !matches!(args.get(1).map(Value::unspan), Some(Value::Int(t)) if *t == i32::from(tp))
+                    || !group_covers_type(ops, i + 1, v, tp, data, stores)
+                {
+                    ok = false;
+                    continue;
+                }
+                for g in &ops[i + 1..] {
+                    let Value::Call(d, args) = g.unspan() else {
+                        if matches!(g.unspan(), Value::Line(_)) {
+                            continue;
+                        }
+                        break;
+                    };
+                    if (*d as usize) >= data.definitions.len()
+                        || !data.def(*d).name().starts_with("OpSet")
+                    {
+                        break;
+                    }
+                    if data.def(*d).name() == "OpSetInt4"
+                        && let [a0, Value::Int(off), zero] = &args[..]
+                        && matches!(a0.unspan(), Value::Var(w) if *w == v)
+                        && matches!(zero.unspan(), Value::Int(0))
+                        && offs.contains(off)
+                    {
+                        zeros.insert(std::ptr::from_ref(g.unspan()) as usize);
+                    }
+                }
+            }
+        }
+        false
+    });
+    // Every vector-field zero of `v` must be one the groups own.
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name().starts_with("OpSet")
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+            && matches!(args.get(1).map(Value::unspan), Some(Value::Int(off)) if offs.contains(off))
+            && !zeros.contains(&(std::ptr::from_ref(n) as usize))
+        {
+            ok = false;
+        }
+        false
+    });
+    (ok && mints > 0 && zeros.len() == mints * offs.len()).then_some(zeros)
 }
 
 /// `@FR-R-LoopRecord` (the `@FR-R-LoopBuffer` shape for a RECORD) — the loop records of
@@ -13259,17 +13645,18 @@ pub struct LoopRecord {
 /// The fallback is "not a loop record", which costs the reuse and never a value.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
+pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
     let def = data.def(def_nr);
     let vars = def.variables();
     let body = def.code();
-    let mut out = HashMap::new();
+    let mut out = LoopRecords::default();
     if matches!(body, Value::Null)
         || body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_)))
     {
         return out;
     }
     let trace = std::env::var("LOFT_TRACE_LOOP_RECORD").is_ok();
+    let refill_on = !std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0");
     // Where each candidate is declared: the innermost enclosing loop and the block holding
     // its `Set(v, null)`.
     let mut decls: HashMap<u16, LoopRecord> = HashMap::new();
@@ -13297,25 +13684,50 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
             && !matches!(vars.tp(*v), Type::Optional(_))
             && let Type::Reference(d, _) = vars.tp(*v).peel_link()
             && data.def_type(*d) == DefType::Struct
-            && all_scalar_record(data, *d)
         {
             decls.entry(*v).or_insert(LoopRecord {
                 loop_scope,
                 decl_block,
+                refill: !all_scalar_record(data, *d),
             });
         }
     });
-    for (v, rec) in decls {
+    for (v, mut rec) in decls {
         let mut minted = false;
         let mut declined: Option<&'static str> = None;
+        // The REFILL clause: the store type the mints name, refillable, every mint heading a
+        // complete literal group.  The vector fields' own ops are then part of the init family.
+        let mut vec_offs: Vec<i32> = Vec::new();
+        let mut vec_nrs: Vec<i32> = Vec::new();
+        let mut rec_tp: i32 = -1;
+        let mut zeros: HashSet<usize> = HashSet::new();
+        if rec.refill {
+            let tp = mint_type_of(data, def_nr, v);
+            match tp {
+                Some(tp) if refill_on && refillable_plain(stores, tp) => {
+                    match loop_record_zeros(body, v, tp, data, stores) {
+                        Some(z) => {
+                            zeros = z;
+                            vec_offs = vector_field_offsets(stores, tp);
+                            vec_nrs = vector_field_numbers(stores, tp);
+                            rec_tp = i32::from(tp);
+                        }
+                        None => declined = Some("a mint whose literal group the refill cannot see"),
+                    }
+                }
+                _ => declined = Some("a heap-owning type"),
+            }
+        }
         // Every mention of `v`, judged by its parent.
         fn check(
             n: &Value,
             v: u16,
+            vec: (&[i32], &[i32], i32),
             data: &Data,
             minted: &mut bool,
             declined: &mut Option<&'static str>,
         ) {
+            let (vec_offs, vec_nrs, rec_tp) = vec;
             let n = n.unspan();
             match n {
                 Value::Var(w) if *w == v => {
@@ -13343,6 +13755,22 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
+                    // The REFILL clause: a vector field read in place as a native op's
+                    // operated-on vector (`OpPushInt(OpGetField(v, off, tp), x)`, a length, an
+                    // element read) names the record only for that op.
+                    let on_vec_field = native
+                        && name != "OpGetField"
+                        && matches!(args.first().map(Value::unspan), Some(Value::Call(gf, ga))
+                            if (*gf as usize) < data.definitions.len()
+                                && data.def(*gf).name() == "OpGetField"
+                                && matches!(ga.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                                && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(off)) if vec_offs.contains(off)));
+                    if on_vec_field {
+                        for a in args.iter().skip(1) {
+                            check(a, v, vec, data, minted, declined);
+                        }
+                        return;
+                    }
                     if first && native {
                         let fld_lit = matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)));
                         let ok = match name {
@@ -13351,6 +13779,13 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                                 true
                             }
                             "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag" => true,
+                            // The refill clause: an append to one of the record's own vector
+                            // fields, named by field number (`e.v += [R {…}]`).
+                            "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord" => {
+                                let at = if name == "OpFinishRecord" { 2 } else { 1 };
+                                matches!(args.get(at).map(Value::unspan), Some(Value::Int(t)) if *t == rec_tp)
+                                    && matches!(args.get(at + 1).map(Value::unspan), Some(Value::Int(f)) if vec_nrs.contains(f))
+                            }
                             _ => {
                                 fld_lit
                                     && (SCALAR_GETTERS.contains(&name)
@@ -13363,7 +13798,7 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         }
                         // The other operands still walk (a value may mention `v` again).
                         for a in args.iter().skip(1) {
-                            check(a, v, data, minted, declined);
+                            check(a, v, vec, data, minted, declined);
                         }
                         return;
                     }
@@ -13383,7 +13818,7 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         }
                         for a in args {
                             if !matches!(a.unspan(), Value::Var(w) if *w == v) {
-                                check(a, v, data, minted, declined);
+                                check(a, v, vec, data, minted, declined);
                             }
                         }
                         return;
@@ -13391,9 +13826,16 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                 }
                 _ => {}
             }
-            n.for_each_child(&mut |c| check(c, v, data, minted, declined));
+            n.for_each_child(&mut |c| check(c, v, vec, data, minted, declined));
         }
-        check(body, v, data, &mut minted, &mut declined);
+        check(
+            body,
+            v,
+            (&vec_offs, &vec_nrs, rec_tp),
+            data,
+            &mut minted,
+            &mut declined,
+        );
         if !minted {
             declined.get_or_insert("never minted by a literal");
         }
@@ -13401,13 +13843,16 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
             None => {
                 if trace {
                     eprintln!(
-                        "[loop-record] {}: {} keeps its store across iterations of loop {}",
+                        "[loop-record] {}: {} keeps its store{} across iterations of loop {}",
                         def.name(),
                         vars.name(v),
+                        if rec.refill { " and its vectors" } else { "" },
                         rec.loop_scope
                     );
                 }
-                out.insert(v, rec);
+                rec.refill = rec.refill && !zeros.is_empty();
+                out.field_zeros.extend(zeros);
+                out.recs.insert(v, rec);
             }
             Some(why) => {
                 if trace {

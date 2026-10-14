@@ -54,7 +54,7 @@ def edit_fn(body):
                       r"a_getv(&a_\1, \2)", body)
     assert k == 12, k
     # 5. the exit reads `X[i] ?? d`
-    body, k = re.subn(r"let _pre_(\d+) = \{\{ let _v_index = \(var_i\); \{ let _v_r = \(var_(" + "|".join(BUFS) + r")\);[^\n]*\n\s*let mut var___ncc_(\d+): f64 = \{\{let db = \(_pre_\1\);[^\n]*",
+    body, k = re.subn(r"let _pre_(\d+) = vector::get_vector\(&\(var_(" + "|".join(BUFS) + r")\), \(8_i64\) as u32, \(var_i\), &stores\.allocations\);\n\s*let mut var___ncc_(\d+): f64 = \{\{let db = \(_pre_\1\);[^\n]*",
                       r"let mut var___ncc_\3: f64 = a_getv(&a_\2, var_i);", body)
     assert k == 12, k
     return body

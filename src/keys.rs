@@ -241,6 +241,33 @@ impl Str {
     }
 }
 
+impl Str {
+    /// The text as an owned `String`: one allocation and one copy.
+    ///
+    /// Inherent on purpose.  Emitted code writes `x.to_string()` wherever a text view
+    /// becomes an owned text, and without this that call is the blanket `ToString` over
+    /// [`Display`](std::fmt::Display): a `Formatter`, `fmt::write`, and a `String` that grows
+    /// as it is written.  The result is the same bytes either way — and the same CAPACITY:
+    /// that path reserved at least eight bytes for a text that is not empty, and a text
+    /// built from a short one and then appended to (a character, then the rest) reallocated
+    /// at its first append when this allocated the exact size.
+    #[must_use]
+    #[inline]
+    #[expect(
+        clippy::inherent_to_string_shadow_display,
+        reason = "the same text as Display writes, without the formatting machinery"
+    )]
+    pub fn to_string(&self) -> String {
+        let text = self.str();
+        if text.is_empty() {
+            return String::new();
+        }
+        let mut owned = String::with_capacity(text.len().max(8));
+        owned.push_str(text);
+        owned
+    }
+}
+
 impl std::ops::Deref for Str {
     type Target = str;
     fn deref(&self) -> &str {
@@ -1733,6 +1760,32 @@ pub fn work_buffer_pool_enabled() -> bool {
 pub fn work_buffer_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_WORK_BUFFER"))
+}
+
+/// `LOFT_NO_APART_HEADERS=1` — a loop the header gate declines holds no header at all
+/// (`@FR-R-Header`'s apart clause off): the first bisect step for a stale element or length
+/// read from a vector the loop only reads, in a loop that also calls a writer or grows
+/// another vector.
+pub fn apart_headers_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APART_HEADERS"))
+}
+
+/// `LOFT_NO_FILE_HOLD=1` — every scalar read of a file goes through its `File` record
+/// (`@FR-R-FileHold` off): the first bisect step for a wrong `f#next` or `f#index` after a
+/// loop that reads `f`, or a value read from the wrong offset inside one.
+pub fn file_hold_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FILE_HOLD"))
+}
+
+/// `LOFT_NO_RESULT_BUFFER=1` — a call's vector result that is only read where it stands
+/// keeps the buffer its frame mints (`@FR-R-WorkBuffer`'s result clause off).  The bisect
+/// step between `LOFT_NO_WORK_BUFFER` and the rest of the rule: a stale or leaked element of
+/// a vector a call answered, in a function that only reads it.
+pub fn result_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RESULT_BUFFER"))
 }
 
 /// `LOFT_TRACE_WORK_BUFFER=1` — name each local promoted to a caller buffer and each declined
@@ -3869,7 +3922,28 @@ pub fn max_ops() -> u64 {
 }
 
 #[cfg(test)]
+mod text_view_owned {
+    /// `Str::to_string` is one copy of what `Display` writes — the same bytes for plain,
+    /// multi-byte, empty and null texts, and for a view that points nowhere.
+    #[test]
+    fn a_text_view_owned_is_what_display_writes() {
+        for text in ["plain", "héllo wörld ✓", "", "\0", "a\0b"] {
+            let view = super::Str::new(text);
+            assert_eq!(view.to_string(), format!("{view}"), "{text:?}");
+            assert_eq!(view.to_string(), text, "{text:?}");
+        }
+        let nowhere = super::Str {
+            ptr: std::ptr::null(),
+            len: 7,
+        };
+        assert_eq!(nowhere.to_string(), format!("{nowhere}"));
+        assert_eq!(nowhere.to_string(), "");
+    }
+}
+
+#[cfg(test)]
 mod p355_large_str {
+
     use super::Str;
 
     /// @P355: `Str::str()` must NOT silently truncate a legitimately-large

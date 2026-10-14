@@ -11794,6 +11794,17 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 }
                 cmd.push_arg("-Zsanitizer=address");
             }
+            // `LOFT_NATIVE_RUSTC_ARGS=<file>` — the arguments of this compile, one a line.
+            // A pricing tool replays them on an edited copy of the emitted file
+            // (`bench/portal/hand_price.sh`): which package libraries are linked, and from
+            // where, is the one fact it cannot derive from the file itself.
+            if let Some(path) = std::env::var_os("LOFT_NATIVE_RUSTC_ARGS") {
+                let replay: Vec<String> = cmd
+                    .get_args()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                let _ = fa::write(std::path::Path::new(&path), replay.join("\n") + "\n");
+            }
             loft::timeout::blocked_on("rustc compiling the program");
             let output = cmd.run(b"");
             loft::timeout::unblocked();

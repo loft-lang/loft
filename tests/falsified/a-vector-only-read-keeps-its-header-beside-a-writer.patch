@@ -1,0 +1,14 @@
+diff --git a/src/generation/apart.rs b/src/generation/apart.rs
+--- a/src/generation/apart.rs
++++ b/src/generation/apart.rs
+@@ -240,9 +240,7 @@
+             })
+             .flat_map(|x| probe.owners_of(x))
+             .collect();
+-        for t in reached {
+-            owners.remove(&t);
+-        }
++        let _ = reached;
+     }
+     // A suspended or forked body is not this loop running: a header bound before it would
+     // be read by a later resumption, or beside a worker.

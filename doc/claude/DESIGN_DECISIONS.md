@@ -57,6 +57,7 @@ a guard that does not exercise it — is its line in
 - [C137](DESIGN_DECISIONS_OWNERSHIP.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written) — A claim promises no value; a slot is read only after it is written
 - [C141](DESIGN_DECISIONS_OWNERSHIP.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from) — A decoded text or byte string may be a view into the bytes it was decoded from
 - [C145](DESIGN_DECISIONS_OWNERSHIP.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it) — No back references inside a store: what a reference points at never moves under it
+- [C150](DESIGN_DECISIONS_OWNERSHIP.md#c150--a-collections-size-reports-its-representation-which-the-compiler-may-size) — A collection's size() reports its representation, which the compiler may size
 
 ## Syntax, names and calls — [DESIGN_DECISIONS_SYNTAX.md](DESIGN_DECISIONS_SYNTAX.md)
 - [C132](DESIGN_DECISIONS_SYNTAX.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function) — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function

@@ -1752,6 +1752,7 @@ pub(super) mod fields;
 pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
+mod result_buffer;
 pub(super) mod store_else;
 pub(super) mod store_text;
 pub(super) mod vectors;
@@ -19524,9 +19525,8 @@ impl Parser {
                 );
             } else {
                 let token = match &res.has {
-                    crate::lexer::LexItem::Token(s) | crate::lexer::LexItem::Identifier(s) => {
-                        format!("'{s}'")
-                    }
+                    crate::lexer::LexItem::Token(s) => format!("'{s}'"),
+                    crate::lexer::LexItem::Identifier(s) => format!("'{s}'"),
                     crate::lexer::LexItem::CString(s) => format!("\"{s}\""),
                     other => format!("{other:?}"),
                 };

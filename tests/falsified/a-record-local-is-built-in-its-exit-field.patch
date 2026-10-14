@@ -1,0 +1,29 @@
+diff --git a/src/exit_record.rs b/src/exit_record.rs
+index 299c502bf..fdbb98d10 100644
+--- a/src/exit_record.rs
++++ b/src/exit_record.rs
+@@ -172,7 +172,9 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
+     for plan in &plans {
+         let vars = &mut data.definitions[d_nr as usize].variables;
+         let tp = vars.tp(plan.v).depending(rb);
+-        vars.set_type(plan.v, tp);
++        if false {
++            vars.set_type(plan.v, tp);
++        }
+     }
+ }
+ 
+diff --git a/src/lib.rs b/src/lib.rs
+index 2e298a58f..0b405d15a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -340,8 +340,8 @@ pub mod compact;
+ pub mod const_fn;
+ pub mod copy_view;
+ pub mod discharge_into;
+-pub mod exit_vector;
+ pub mod exit_record;
++pub mod exit_vector;
+ pub mod file_access;
+ pub mod forward_result;
+ pub mod forward_walk;

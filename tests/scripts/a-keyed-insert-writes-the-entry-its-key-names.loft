@@ -1,0 +1,188 @@
+// `@FR-R-KeyedEntry` — `h += [T{k: key, …}]` writes the literal's fields into the entry its key
+// names: the one already there (a repeated key overwrites it in place — `(Col-Insert)`, latest
+// insert wins) or a fresh one filed where the probe for it ended.  Every cell asserts the
+// VALUES a hand computation gives; the interpreter keeps the plain claim / write / file and is
+// the oracle, and `LOFT_NO_KEYED_ENTRY=1` must answer the same.
+//
+// Admitted (native): a `hash` with one `integer` key, an element that owns no heap
+// and is in no linked group, every field written by the literal.  Declined: c9 (a text field),
+// c10 (a vector and a hash over one element type).  c7's first insert and c8's inserts take
+// the general path at run time (no table yet; a sorted snapshot of the hash live).
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-keyed-insert-writes-the-entry-its-key-names.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch overwrites in place while a sorted
+//   snapshot of the hash is live.
+//   WITNESS: under the patch c8 walks 6 where this file says 3: the overwritten key 3 stays in
+//   the walk a replace takes it out of.
+
+struct K { k: integer, v: integer, w: integer }
+struct H { h: hash<K[k]> }
+
+struct C { k: integer, n: integer }
+struct HC { h: hash<C[k]> }
+
+struct HA { h: hash<K[k]>? }
+
+struct T { k: integer, name: text }
+struct HT { h: hash<T[k]> }
+
+struct G { k: integer, v: integer }
+struct HG { all: vector<G>, by_k: hash<G[k]> }
+
+fn sum_v(s: const H) -> integer {
+  t = 0;
+  for e in s.h { t += e.v; }
+  t
+}
+
+fn keys_in_order(s: const H) -> text {
+  o = "";
+  for e in s.h { o += "{e.k},"; }
+  o
+}
+
+fn bump(s: H) -> integer {
+  s.h += [K{k: 7, v: 100, w: 100}];
+  1
+}
+
+fn put3(s: H) {
+  s.h += [K{k: 3, v: 99, w: 0}];
+}
+
+fn bump_one(s: H, k: integer, v: integer) {
+  s.h += [K{k: k, v: v + 1, w: 0}];
+}
+
+fn code(x: integer, y: integer) -> integer {
+  (x + 1000) * 4096 + (y + 1000)
+}
+
+fn main() {
+  // c1 — a repeated key: the latest values win, the count stays.  k=2 written three times.
+  s = H{h: []};
+  s.h += [K{k: 2, v: 1, w: 10}];
+  s.h += [K{k: 5, v: 2, w: 20}];
+  s.h += [K{k: 2, v: 3, w: 30}];
+  s.h += [K{k: 2, v: 4, w: 40}];
+  assert(len(s.h) == 2, "c1 len {len(s.h)}");
+  assert(s.h[2].v == 4 && s.h[2].w == 40, "c1 k2 {s.h[2].v} {s.h[2].w}");
+  assert(s.h[5].v == 2 && s.h[5].w == 20, "c1 k5 {s.h[5].v}");
+
+  // c2 — new keys only, inserted out of order: iteration is in key order.
+  s2 = H{h: []};
+  for i in 0..6 { s2.h += [K{k: (i * 5) % 6, v: i, w: 0}]; }
+  assert(len(s2.h) == 6, "c2 len");
+  assert(keys_in_order(s2) == "0,1,2,3,4,5,", "c2 order {keys_in_order(s2)}");
+  // k = 0,5,4,3,2,1 for i = 0..5, so v under k is (6 - k) % 6.
+  assert(s2.h[1].v == 5 && s2.h[4].v == 2 && s2.h[0].v == 0, "c2 values");
+
+  // c3 — a value reading the entry its own insert replaces: a counter.  Five bumps of k=9.
+  c = HC{h: []};
+  for _ in 0..5 { c.h += [C{k: 9, n: (c.h[9]?.n ?? 0) + 1}]; }
+  assert(len(c.h) == 1 && c.h[9].n == 5, "c3 n {c.h[9].n}");
+
+  // c4 — a value that inserts the same key itself: the outer insert is the later one.
+  s4 = H{h: []};
+  s4.h += [K{k: 7, v: bump(s4) + 1, w: 3}];
+  assert(len(s4.h) == 1, "c4 len {len(s4.h)}");
+  assert(s4.h[7].v == 2 && s4.h[7].w == 3, "c4 k7 {s4.h[7].v} {s4.h[7].w}");
+
+  // c5 — a local hash: keys 0..3 each written twice, the second time v = 10 + k.
+  h: hash<K[k]> = [];
+  for r in 0..2 { for k in 0..4 { h += [K{k: k, v: r * 10 + k, w: r}]; } }
+  t5 = 0;
+  for e in h { t5 += e.v * 100 + e.w; }
+  // v = 10,11,12,13 (sum 46), w = 1 each (4): 4600 + 4.
+  assert(len(h) == 4 && t5 == 4604, "c5 {len(h)} {t5}");
+
+  // c6 — keys past 32 bits, one negative, sharing their low 32 bits.
+  s6 = H{h: []};
+  big = 5000000000;
+  s6.h += [K{k: big, v: 1, w: 0}];
+  s6.h += [K{k: -big, v: 2, w: 0}];
+  s6.h += [K{k: big + 4294967296, v: 4, w: 0}];
+  s6.h += [K{k: big, v: 3, w: 0}];
+  assert(len(s6.h) == 3 && s6.h[big].v == 3 && s6.h[-big].v == 2, "c6");
+  assert(s6.h[big + 4294967296].v == 4, "c6 high");
+
+  // c7 — an absent hash field: the first insert gives it a table, the second repeats its key.
+  ha = HA{h: null};
+  ha.h += [K{k: 1, v: 1, w: 1}];
+  ha.h += [K{k: 1, v: 2, w: 2}];
+  ha.h += [K{k: 3, v: 3, w: 3}];
+  assert(len(ha.h?) == 2 && ha.h?[1].v == 2, "c7 len {len(ha.h?)}");
+
+  // c8 — inserting while the same hash is iterated (through a call: the loop itself refuses it).  Replacing a key the walk has not reached
+  // takes it out of the walk: visiting 1 replaces 3, so the walk sees 1 and 2 (sum 3) and 3
+  // holds the new 99.  Replacing the key just visited bumps each by one.
+  s8 = H{h: []};
+  for k in 1..4 { s8.h += [K{k: k, v: k * 10, w: 0}]; }
+  seen = 0;
+  for e in s8.h {
+    seen += e.k;
+    if e.k == 1 { put3(s8); }
+  }
+  assert(seen == 3, "c8 seen {seen}");
+  assert(s8.h[3].v == 99 && len(s8.h) == 3, "c8 k3 {s8.h[3].v}");
+  for e in s8.h { bump_one(s8, e.k?, e.v?); }
+  assert(sum_v(s8) == 11 + 21 + 100, "c8 bumped {sum_v(s8)}");
+
+  // c9 — an element that owns a text (declines): the replaced name is released, the new kept.
+  ht = HT{h: []};
+  ht.h += [T{k: 4, name: "old"}];
+  ht.h += [T{k: 4, name: "new name"}];
+  assert(len(ht.h) == 1 && ht.h[4].name == "new name", "c9 {ht.h[4].name}");
+
+  // c10 — a linked group (declines): the vector keeps both records, the hash the later one.
+  g = HG{all: [], by_k: []};
+  g.all += [G{k: 7, v: 1}];
+  g.all += [G{k: 7, v: 2}];
+  assert(len(g.all) == 2 && len(g.by_k) == 1 && g.by_k[7].v == 2, "c10");
+
+  // c11 — growth: 1000 new keys (the table rebuilt, the arena given new chunks), then every
+  // even key repeated.  v ends k for odd k and k + 1000000 for even.
+  s11 = H{h: []};
+  for k in 0..1000 { s11.h += [K{k: k * 7919, v: k, w: 0}]; }
+  for k in 0..500 { s11.h += [K{k: k * 2 * 7919, v: k * 2 + 1000000, w: 1}]; }
+  bad = 0;
+  for k in 0..1000 {
+    e = s11.h[k * 7919];
+    want = if k % 2 == 0 { k + 1000000 } else { k };
+    if e == null || e.v != want { bad += 1; }
+  }
+  // 0..999 sums to 499500, plus 500 × 1000000.
+  assert(len(s11.h) == 1000 && bad == 0 && sum_v(s11) == 500499500, "c11 {bad} {sum_v(s11)}");
+  assert(!s11.h[1], "c11 miss");
+
+  // c12 — a reference taken before a repeated insert reads its own copy.
+  s12 = H{h: []};
+  s12.h += [K{k: 1, v: 10, w: 11}];
+  held = s12.h[1];
+  s12.h += [K{k: 1, v: 30, w: 31}];
+  assert(held.v == 10 && s12.h[1].v == 30, "c12 {held.v} {s12.h[1].v}");
+
+  // c13 — a literal that leaves a field out: on the repeat the field is its zero again.
+  s13 = H{h: []};
+  s13.h += [K{k: 1, v: 1, w: 5}];
+  s13.h += [K{k: 1, v: 2}];
+  assert(s13.h[1].v == 2 && s13.h[1].w == 0, "c13 w {s13.h[1].w}");
+
+  // c14 — removed, then inserted again.
+  s14 = H{h: []};
+  s14.h += [K{k: 6, v: 1, w: 1}];
+  s14.h[6] = null;
+  assert(len(s14.h) == 0, "c14 removed");
+  s14.h += [K{k: 6, v: 2, w: 2}];
+  assert(len(s14.h) == 1 && s14.h[6].v == 2, "c14 again");
+
+  // c15 — the key from a function call, as the coordinate index builds it.
+  s15 = H{h: []};
+  for i in 0..20 { s15.h += [K{k: code(i % 5, -(i % 5)), v: i, w: 0}]; }
+  // i % 5 = j for i = j, j+5, j+10, j+15: the last is 15 + j, summing 75 + 10.
+  assert(len(s15.h) == 5 && sum_v(s15) == 85, "c15 {len(s15.h)} {sum_v(s15)}");
+  assert(s15.h[code(2, -2)].v == 17, "c15 j2");
+
+  println("ok");
+}

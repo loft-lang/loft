@@ -24,10 +24,38 @@
 #
 # Worked examples, with what each priced: bench/portal/analysis/vector-build.md § Method,
 # bench/portal/analysis/records.md § Built (R2 — where skipping this cost a rebuild cycle).
+#
+# A PACKAGE's bench links its libraries' native halves, and which ones, from where, only the
+# compile itself knows.  So that compile writes its arguments down and this replays them:
+#
+#   cd <package> && LOFT_NATIVE_NO_CACHE=1 LOFT_NATIVE_RUSTC_ARGS=/tmp/b.args \
+#       loft --native-release bench/bench.loft --n 2
+#   loft --native-release --native-emit /tmp/b.rs bench/bench.loft
+#   bench/portal/hand_price.sh /tmp/b.rs /tmp/b /tmp/b.args
+#
+# Only the source and the output are replaced, and the symbols are kept (a profile needs them).
 set -euo pipefail
-if [ $# -ne 2 ]; then
-  echo "usage: $0 <emitted.rs> <out-binary>" >&2
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+  echo "usage: $0 <emitted.rs> <out-binary> [<rustc-args-file>]" >&2
   exit 2
+fi
+if [ $# -eq 3 ]; then
+  args=()
+  prev=""
+  while IFS= read -r arg; do
+    if [ "$prev" = "-o" ]; then
+      args+=("$2")
+    elif [ "$arg" = "-Cstrip=symbols" ]; then
+      :
+    elif [[ "$arg" == *.rs && "$prev" != "--extern" && "$prev" != "-L" ]]; then
+      args+=("$1")
+    else
+      args+=("$arg")
+    fi
+    prev="$arg"
+  done < "$3"
+  rustc "${args[@]}" 2> >(grep -E "^error" -A 14 >&2 || true)
+  exit
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 rel="$root/target/release"

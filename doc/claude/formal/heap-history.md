@@ -2849,6 +2849,11 @@ answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_v
 answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
 the type the same way and zeroing the successors it wrote over).
 
+The LINKED layout was the same trap: loft#903 closed it for the by-index removal; loft#1670
+found `reverse` and `insert` had never been reached, both sliding a span twice as wide, both
+silent on both backends, until `Parser::element_store_size` asked `is_linked` before it
+measured the record.
+
 ## The drop rule before the copy refusal
 
 The rule before `(H-Copy-Refuse)` moved a droppable's release along with a copy and warned where
@@ -2859,6 +2864,13 @@ The refusal was decided with the owner on 2026-09-15 from the use cases in
 reverse hand-off for a copy of what the caller holds and the field hand-off (`OpDropAllExcept`):
 a copy the rules accept either leases or does not exist, and a read through a member of a call
 result is a view of the call's record.
+
+The first version of the copy rules, written the same day as the refusal, made a copy of a
+value that is not used afterwards a MOVE.  Then `x = a; send(x)` compiled and
+`x = a; send(x); send(a)` failed at its FIRST line: a later line decided what an earlier one
+meant, and correct and incorrect code looked the same to anyone who does not know how the
+compiler reasons.  The owner ruled that out, which is why `heap.md` reads the verdict off the
+line (moved out of `heap.md` § The drop rules, 2026-10-14).
 
 ## (H-RefHome): a home moves out instead of being refused (2026-10-11)
 
@@ -2906,3 +2918,15 @@ re-point counted as a disturbance of such views, and in both cases a test on eve
 write.  Even then each re-point leaves its 8-byte removal mark.  The owner chose not to burden
 every program for the rare shape of a holder re-pointed to fresh records in a loop.
 
+## 2026-10-08 — `(H-ScanIndex)`: the claim scan reads its indexes
+
+Found profiling dryopea's `truncate_to` (the timeline rebuilt per push): `Store::claim`'s self
+time was 13 % of the row, and the hot loop was the inlined block-chain walk.  A temporary trace
+counted ~250 walks per op, each stopping about half way through a 1267-word store, every one
+with an empty tree and no wilderness and the store in its lazy phase — the freed blocks were
+untracked, so the walk was the only way to find them.  Read off the lazy record's bitset and
+the tail's confirmed footer instead: `truncate_to` −7 % instructions, −12 % cycles (hash
+unchanged); `panel_build` −0.4 % / −0.8 % (its claims never reached the walk).  The seeded
+equivalence test found on its first run that a freshly claimed record's last payload word
+still spells the free block's old footer (a claim does not zero it) — the case the tail
+confirmation exists for; it is pinned there.

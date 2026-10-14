@@ -97,7 +97,7 @@ C137	code	src/store.rs; src/database/structures.rs	ok	-
 C138	code	src/store.rs; src/calc.rs	ok	-	
 C139	code	src/tuple_links.rs; src/parser/definitions.rs	ok	-	
 C140	code	src/api_surface.rs; src/parser/definitions.rs	ok	-	
-C141	pending	-	weak	build	(R-DecodeView) is proposed, not built; its guard records no falsification until it is
+C141	code	src/generation/decode_view.rs::@FR-R-DecodeView	ok	-	
 C142	code	src/parser/objects.rs::formatting never traps: every fault-prone op in the; src/parser/collections.rs::a hole whose value is null renders `null`	ok	-	
 C143	code	src/database/format.rs::a record renders EVERY field it declares	ok	-	
 C144	code	src/generation/hoist.rs::NULLABLE_LAYOUT	ok	-	
@@ -106,3 +106,4 @@ C146	code	src/hash.rs::pub fn home_bucket(digest: u64, count: u32); src/hash.rs:
 C147	code	src/btree.rs; src/placement.rs::the B+tree in `crate::btree`	ok	-	
 C148	code	src/store.rs; src/database/format.rs; src/parser/objects.rs	ok	-	
 C149	code	src/limits.rs::pub const LIMIT: u32 = 300	ok	-	
+C150	code	src/generation/mod.rs::fn hash_reserve(&mut self	ok	-	

@@ -1,0 +1,11 @@
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -638,7 +638,7 @@
+     let store = stores.store(&rec);
+     let word = store.get_int(rec.rec, rec.pos + spare);
+     if word < 0 {
+-        let lo = (((word >> 32) & 0x7fff_ffff) - 1) as usize;
++        let lo = ((word >> 32) & 0x7fff_ffff) as usize;
+         let n = (word & 0xffff_ffff) as usize;
+         let bytes = dv_bytes(stores, &stores.dv_frame);
+         if let Some(run) = bytes.get(lo..lo + n) {

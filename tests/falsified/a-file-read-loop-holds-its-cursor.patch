@@ -1,0 +1,12 @@
+diff --git a/src/generation/file_hold.rs b/src/generation/file_hold.rs
+index e5c710dfe..f5cec78c8 100644
+--- a/src/generation/file_hold.rs
++++ b/src/generation/file_hold.rs
+@@ -156,5 +156,6 @@ pub(super) fn held_file(
+     let plain = !tp.peel_optional().1
+         && matches!(tp.base(), Type::Reference(d, _) if *d == file)
+         && !vars.is_captured(f);
+-    (plain && reads.get(&f) == Some(&mentions)).then_some(f)
++    let _ = mentions;
++    (plain && reads.contains_key(&f)).then_some(f)
+ }

@@ -146,8 +146,11 @@ fn the_values_hold_on_both_backends_in_both_switch_states() {
 fn no_entry_mint_is_left_and_the_switch_restores_them() {
     let on_path = std::env::temp_dir().join("loft_lazy_buffer_on.rs");
     let off_path = std::env::temp_dir().join("loft_lazy_buffer_off.rs");
-    let on = emit(&on_path, &[]);
-    let off = emit(&off_path, &[("LOFT_NO_LAZY_BUFFER", "1")]);
+    // `@FR-R-WorkBuffer`'s result clause hands a reader's buffer to its caller, mint and
+    // all; this pin reads where `@FR-O-LazyBuffer` puts a mint in the frame that owns one.
+    let keep = ("LOFT_NO_RESULT_BUFFER", "1");
+    let on = emit(&on_path, &[keep]);
+    let off = emit(&off_path, &[("LOFT_NO_LAZY_BUFFER", "1"), keep]);
     for (name, guards) in REWRITTEN {
         let (entry, guarded) = mints(body(&on, name));
         assert_eq!(entry, 0, "{name}: a buffer is still minted at entry");

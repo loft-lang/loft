@@ -1,0 +1,11 @@
+--- a/src/same_read.rs
++++ b/src/same_read.rs
+@@ -333,7 +333,7 @@
+         }
+         let mut arm = arm;
+         if let Value::Block(bl) = arm.unspan_mut() {
+-            bl.operators.push(Value::Set(b, Box::new(read.clone())));
++            let _ = (bl, &read);
+         }
+         // The `if` and the assignment are edited in place, so their source spans stay.
+         let mut guard = ops[at].clone();

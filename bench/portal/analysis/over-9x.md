@@ -132,8 +132,11 @@ per `resolve`); `default_resolver` 16 % — the fn-ref answers a DbRef, so the t
 entry clear a store reset), F alone is −20 %, A alone −8 % and A+F −31 % (26.74 → 18.52 M,
 three interleaved runs, hash unchanged; edits `over-9x/zttext_flow_layout_full/price_keep.py`).
 F is built as `(R-RefillText)`'s collection clause: 26.0 → 22.7 M (12.35×), the difference
-from its price being each kept slot still going through the append.  A is the next unit
-(worklist S1c).
+from its price being each kept slot still going through the append.  A is built as
+`(R-WorkBuffer)`'s result clause (worklist S1c), re-priced first on the emission with B in
+it (−19 %, one static buffer in `token_width`): 14.35 → 11.26 ms on one core, 7.92× → 6.23×
+in its lane, hash `eb888d85` unchanged.  It is wider than the price — `place_line`'s three
+run buffers are held the same way.
 
 F is load-bearing, and it is the mechanism `msg_ping`, `decode` and `check_request` were
 priced against too: build it first, then B (reaches every fn-ref API), then A, C, D.  The
@@ -225,11 +228,10 @@ the program as emitted today.
 ## Tooling found on the way
 
 `bench/portal/hand_price.sh` picked the OLDEST of several `libloft_ffi-*.rlib` generations
-(`ls | head -1`; rustc refuses with "colliding StableCrateId") — fixed to the newest.  It
-still links no package native library, so a bench whose library ships a cdylib (`server`,
-`pluginabi` via crypto, `web`, `ssh`) needs `-L native=~/.loft/build-cache/<pkg>-<ver>/release
--l dylib=loft_<pkg>` and an rpath by hand; the `hp.sh` beside each of those two reports is the
-fix shape, not yet in the script.
+(`ls | head -1`; rustc refuses with "colliding StableCrateId") — fixed to the newest.  A
+bench whose library ships a cdylib (`server`, `pluginabi` via crypto, `web`, `ssh`) needs
+`-L native=~/.loft/build-cache/<pkg>-<ver>/release -l dylib=loft_<pkg>` and an rpath; the
+script takes them from the package's own compile (worklist.md § Tooling).
 
 ## The three rows still over 9× (2026-10-07, after `(R-Destination)`)
 
@@ -259,6 +261,68 @@ names) per value walked to escape a borrow, and the two passes themselves: a sch
 parse straight into the store layout (one lexer still, @PLN109) is the structural lever that
 removes the `Parsed` tree.
 
+**What the lexer and the parse still pay** (the row alone at `f7f23c5b5`, 7.44×; self time,
+rustc-vs-twin.md § Method notes).  The lexer's own functions are 31 % of the row before
+their allocations, the JSON parser's 17 %, the tree and its walk about 10 %, and `malloc` /
+`free` 24 % shared between them.  None of these is priced.
+
+| lever | what it removes | share of the row |
+|---|---|---|
+| J4 | BUILT (`lexer::LineCursor`) — a line was decoded into a `Vec<char>` the scan walked through a `Peekable`; the cursor reads the line's own text at a byte offset.  The `String` per line that `Lexer::from_str_with` cuts is still made | measured: the row −2 % (instructions −1.0 %, cycles −1.2 % on the lane), the `Vec<char>` share exactly; a cold compile −0.6 % instructions, cycles level; the cold stdlib parse 293,580 → 267,472 allocations |
+| J5 | BUILT (`Lexer::peek_offset`) — the JSON reader mapped each token's line and character column back to a byte offset, through a table it built by reading the whole text once more before the parse.  The lexer notes the byte it reads each token at; the reader asks it, and the table (`ByteMapper`) is gone | measured: the row −10 % on an efficiency core (`byte_of` 4 %, the table's pass over the text 6 %) |
+| J6 | BUILT (`Lexer::decimal`) — a number was scanned twice: the lexer's `get_number` built a `String` of the digits loft's grammar accepts (and a `Vec` of group sizes), `JParser::scan_number` read the raw bytes again by JSON's grammar, and `advance_past` stepped the lexer until it had caught up.  Decimal digits alone are folded straight off the line with nothing allocated, and the JSON reader takes the token's value where JSON reads the same digits as one integer — no leading zero, directly after its sign; every other spelling is read from the raw text as it was | measured with J7 |
+| J7 | BUILT (`LineCursor::plain_run`, `Lexer::peek_plain`) — a string was scanned twice and copied once more: `Lexer::string` pushed it a character at a time, `json_string_validate` walked the raw bytes again, and `take_string` cloned the token's text.  A literal's plain text is copied as one slice into one allocation, the lexer says when a token is its source text (`peek_plain`) so a plain string is not validated again, and its text is taken from the token | measured, J6 and J7 together: the row 9.54 → 7.89 ms (−17 %, 6.18× → 5.11×) on the fastest core and 17.60 → 13.38 ms (−24 %) on an efficiency core; the lane's instructions −11.5 %; the cold stdlib parse 231,077 → 228,369 allocations, the medium corpus 664,019 → 660,253 |
+| J8 | BUILT — `LexItem::Token` names the lexicon's own text (`&'static str`) where it owned a `String` built per token: a one-character ASCII token is read off a table (`Lexer::tok1`), a longer one and a keyword off the set, and nothing is allocated, copied or freed for it | measured: the row 11.06 → 9.67 ms (−12.6 %; the lane's instructions −4.7 %, cycles −5.9 %); a cold compile −0.7 % instructions and cycles; the cold stdlib parse 267,472 → 231,077 allocations, the medium corpus 699,885 → 664,019 |
+| J9 | BUILT (`Stores::read_into`, `Stores::record_from_text`) — the `Parsed` tree between the text and the store (decided: no intermediate format — worklist.md § 6).  A collection is filled from an array element by element and a record from an object member by member, on the same reader steps `json::parse` builds its tree with; the fields a member named are a bit each where they were a hashed set of names, and the type's field list is read in place where it was cloned per value.  A value under an enum, and one whose shape its type does not have, is still read as a `Parsed` | measured: the row 7.89 → 5.30 ms (−33 %, 5.11× → 3.41×) on the fastest core, 13.7 → 9.95 ms (−28 %) on an efficiency core; `malloc` / `free` 20 % → 5 % of the row |
+| J10 | BUILT (`Lexer::put`, `Lexer::scan`) — what a token cost whatever it was.  A scanner handed its `LexResult` back by value: written to one stack slot, copied to a second in `cont`, copied into `peek`, each copy read before its own writes had settled (half of `cont`; the same at the end of `string`, and `string` re-read the position a step had just written).  Every scanner writes `peek` itself, releasing the token before first; the comment test runs only where a token is produced; a word is looked up as a keyword while it is a slice of the line | measured: the row −8 % on an efficiency core; with J5 4.15 ms, 3.40× → 2.68× on the fastest core (−22 %); the cold stdlib parse 228,369 → 223,493 allocations (a keyword no longer copies its text) |
+
+J6 and J7 rest on J4: a plain run is a slice of the line the cursor stands in.  Neither moved
+a scan into the JSON reader — the lexer still reads every string and every number, and
+JSON's grammar still owns every refusal; the reader only skips its second look where the
+lexer's token is the source text.  J4, J6, J7 and J8 change the lexer every compile runs, so
+they are measured on the front-end allocation pins as well as on this row.
+
+**What is left** (the row alone at 2.68×, self time).  The lexer is 36 %: `scan_once` 15 %,
+`string` 10 %, `cont` 6 %, `put` 5 % — no one instruction stands out in any of them now.
+The store side is `read_struct` 6 %, `read_into` 6 %, the leaf write 3 %; `"{m:j}"`, the
+other half of the row, about 12 %.  Forcing `put` inline was measured and is slower.
+
+**How a change to the lexer or the JSON reader is checked.**  Two byte-for-byte comparisons
+of the build before against the build after, neither of which a unit test replaces.  For the
+compiler: `loft introspect` (IR, bytecode, diagnostics) of every file under `tests/scripts`,
+`tests/docs`, `tests/comparisons` and every `bench/*/bench.loft`, both binaries run from one
+directory — the dump prints the stdlib's path.  For `T.parse`: a Rust program over
+`loft::json::parse_with` that prints the whole result (`{:?}`) for each of a set of seed
+documents and a few thousand mutations of each, drawn from a fixed generator, in both
+dialects; it is compiled with `hand_price.sh` against each build's `libloft.rlib`.  Most of
+the mutations are refused, which is the point: the messages and byte offsets `x#errors`
+reports are the part of the contract no bench row reads.
+
+`T.parse` itself is compared one level up, as a program sees it: a loft program reads each
+of some tens of thousands of generated documents as each of nine types — records, keyed
+collections, enums with a payload, nullable elements, narrow integers — and prints the
+value both ways with its `#errors`; the documents are shaped after the types with a share
+of wrong shapes, unknown and repeated keys, and a fifth of them damaged.  Both builds run
+it under `LOFT_POISON_CLAIM=1`, so that a byte nothing wrote reads the same in both builds
+instead of whatever an earlier parse left there.
+
+**A read writes every byte it makes reachable** (`@FR-H-Claim`, loft#1995) — the defect
+that comparison found, on both forms of the parse.  Two records are written by no prefill,
+only by the members that name their fields: an enum's payload and a nullable record.  A
+variant named by its bare tag (`Shape.parse("Circle")`) answered the previous parse's
+payload with no error, and either record left by a member that did not fit kept the
+earlier value's fields, a collection's handle among them.  Both take their fields'
+defaults before their members are read now (`Stores::write_absent_fields`).  The count is
+exact and cheap to take again: the results that differ between a `LOFT_POISON_CLAIM=1` and
+a `LOFT_ZERO_CLAIM=1` run of the program above — none of 270,000, where 360 did.
+
+**What J4 taught.**  `Lexer::next` and `cont` were read as the cost of the character iterator;
+they are the cost per TOKEN.  With the cursor in, their shares are what they were, and their
+hottest instructions are the token's `String` being built and the result moved — J8.  The
+first form of the cursor was 4.5 % SLOWER on the row with fewer instructions: its step was
+not inlined (a call per character), because the decode of a wide character sat in it.  That
+path is out of line now (`decode_wide`), and the step inlines at every scan site.
+
 ### dryopea `mapfile_to_painted` — a store per insert
 
 Same algorithm as the twin: per ground entry a palette scan (≤ 16 text compares) and a hash
@@ -279,7 +343,17 @@ the routine's total 62.6 → 53.7 ms alone on one core (−14 %, against −10 %
 left before it is the § above: `pa_get` answered a deep copy of the entry it found, its key
 compares copy each key, `pa_text` copies the value twice more, and `decode` still claims,
 fills and frees four texts and two byte strings per frame the twin never materialises —
-`(R-DecodeView)` (@C141), whose ceiling was measured at 3.95 → 2.54 ms (−36 %).
+`(R-DecodeView)` (@C141).
+
+**`(R-DecodeView)` priced on today's tree** (`pluginabi_check_request/price_decode_view.py`):
+every decoded text and byte string held as a span — offset and length — of the frame, in the
+spare word of its 16-byte `CborValue` record; `decode`'s twins write the span where the owned
+form claims, and `pa_text` / `pa_get` read the frame in place.  1255 → **680 ns per check
+(−46 %)** on one core, every row's hash unchanged: the byte strings alone −26 % (no reader
+needs them), the texts alone −20 %.  **Built** (instance 1, `formal/rewrites.md` § A decoded text or byte
+string is a view into the frame): 2.55 → 1.67 ms per op, 7.55× → 5.07× recorded.  Of the 20 %
+of the price it leaves, the parts measured: the key bindings copied into a `String` (−1.5 %
+borrowed, S6) and the span helpers' frame lookups (−1 % with one lookup per call, taken).
 
 ### Order
 

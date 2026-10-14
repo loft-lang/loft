@@ -63,6 +63,17 @@ gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the laz
 the source is ZEROED so the next turn's clear and the callee's refill find an empty record
 — and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
 cbor decoder's bench (`--native-release`, this box): decode 42.6 ms → 34.7 ms per op.
+**`LOFT_NO_TAKE_LOCAL=1`** (`(R-MoveLast)`'s local clause, the scope pass, BOTH backends) keeps
+`x = y` for a vector local `y` built afresh each pass (the double buffer `tmp = []; …; result =
+tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
+bisect step for a wrong or emptied vector after such a rebind; `LOFT_TRACE_PLACE=1` names each
+decision (`[take-local]`).
+**`LOFT_NO_EXIT_RECORD=1`** (`(R-ExitVector)`'s record clause, the scope pass right after it,
+BOTH backends) keeps a local RECORD returned inside the exit literal (`lb = ListBox { … };
+Panel { list: lb, … }`) in a store of its own, deep-copied into the return buffer's field —
+with it off, the local is a view of that field, built there.  It is the first bisect step for
+a wrong field or a stale default out of a callee that assembled its result from locals, and
+`LOFT_TRACE_PLACE=1` names each admission and decline (`[exit-record]`).
 **`LOFT_NO_EXIT_VECTOR=1`** (`(R-ExitVector)`, decided in the scope pass after the placements,
 BOTH backends) keeps a local vector that is returned inside the exit literal (`items:
 vector<T> = []; …; return Out { items: items, … }`) minting a wrapper store of its own and
@@ -354,8 +365,19 @@ again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps e
 is the first bisect step for a wrong answer out of a small scalar function on either backend;
 **`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
 reduction each; **`LOFT_NO_INLINE_APPENDER=1`** keeps the calls of a void leaf that appends to a
-record parameter's vector fields (the appender clause); **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+record parameter's vector fields (the appender clause); **`LOFT_NO_INLINE_READER=1`** keeps
+the calls of a leaf that reads scalars from a `File` parameter (the reader clause — the first
+bisect step for a wrong value or cursor out of a small function that reads a file);
+**`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
+
+**A constructor's call is its literal (`@FR-R-CtorLiteral`, default-ON, both backends, after
+the leaf inliner):** `x = ctor(args)`, where `ctor`'s body is one record literal over its
+parameters, is replaced by that literal written into `x`, a vector-literal argument built in
+its field instead of in a buffer the callee copied from.  An open-world program keeps the
+calls.  **`LOFT_NO_CTOR_LITERAL=1`** keeps every call and is the first bisect step for a wrong
+field, a leak or a double free out of a constructor call on either backend;
+**`LOFT_TRACE_CTOR_LITERAL=1`** names every rewritten call and every declined site.
 
 **The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
 the leaf inliner):** each removes work the IR shows is redundant, and each has its switch and
@@ -416,10 +438,28 @@ function whose return type carries deps (the swap would renumber them), a local 
 inside a loop (`@FR-R-LoopBuffer`'s length reset is cheaper than a clear), a local written
 and never read (the dead-store lint's), a mention in a return, a literal, a link or a
 capture, a record or text element, a body that suspends or forks, an entry point, a generic,
-a lambda, a function whose address is taken and a `par` worker keep the mint.  A caller that
+a lambda, a function a closure or a yielded function value names and a `par` worker keep the
+mint (a function passed by name is promoted: its call through the function value hands a
+buffer of the calling frame's, `LOFT_NO_FNREF_WORK_BUFFER` in NATIVE_SWITCHES.md).  A caller that
 only hands such a buffer down is promoted in its turn (the trace's `ref=… PROMOTED onward`),
 so the buffer is minted by the outermost frame that is not; a callee that reaches back to its
 caller declines that (`stays a local`), and the same switch turns both halves off.
+
+**`LOFT_NO_RESULT_BUFFER=1`** (`@FR-R-WorkBuffer`'s result clause, default-ON, after pass 2,
+BOTH backends) keeps the buffer of a call's vector result in the frame that binds it.  With
+it off, a function that binds `x = f(…)` — `f` answering a `vector<τ>` through its hidden
+buffer — and only READS `x` (its length, its elements, their fields; `for e in x` included)
+takes that buffer as a hidden work-buffer parameter, provided the function runs again (a
+call of it stands in a loop, or in a function that does or that calls itself): the caller's
+frame keeps the store across the calls, and a callee that refills a live buffer finds the
+previous result's elements in it.  Handed no buffer — a call through a function value, a
+`par` worker's frame — the function mints its own at entry and releases it at its exit.  A
+result written, appended to, copied whole, stored, handed on or returned keeps the mint, as
+do a function answering a text and a constant `split` (the native build reads that one
+without a vector, `@FR-R-SplitTable`).  The bisect step between `LOFT_NO_WORK_BUFFER` (which turns
+this off too) and the rest of that rule: a stale element or length in a vector a call
+answered, in a function that only reads it.  `LOFT_TRACE_WORK_BUFFER=1` names each ref
+(`result=… PROMOTED to a caller buffer`, `keeps its mint: <why>`).
 
 **`LOFT_NO_WORK_BUFFER_POOL=1`** (loft#1697, default-ON, with `@FR-R-WorkBuffer`) gives every
 call site a work buffer of its own again.  By default a frame POOLS them: the k-th work buffer
@@ -514,6 +554,11 @@ copy does, so a short vector in a fresh field is not a flat block (a rebuilt sto
 the from-scratch size, @PLN123; a builder written in its element keeps the size the copy
 had).  First bisect step for a wrong element or a size change out of such an append;
 `store_rebuild_b1` / `store_compact_b3` are the falsifiers.
+**`LOFT_NO_VADD_FITS=1`** (runtime, BOTH backends) sends every whole-vector append
+(`v += w`, `Rec { xs: v }`, a field copy) through `Stores::vector_add`'s general path again —
+with it off, an append of no-heap elements into a destination record that already has room,
+distinct from the source, is one block copy and one length write.  First bisect step for a
+wrong element or length out of such an append.
 
 **`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON)
 routes a record appended to a plain vector FIELD of a plain struct — `self.items += [x]`, the
@@ -678,6 +723,31 @@ construction) and is the first bisect step for a store-layout fault, a claim tha
 live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
 own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
 pin the untracked delete, the growth below the floor and the one sweep at the bound.
+
+**`LOFT_NO_SCAN_INDEX=1`** (runtime, BOTH backends, `@FR-H-ScanIndex`) makes a claim the free
+tree and the wilderness cannot serve walk the block chain from the store's start again — with
+it off, the first fit is read off the lazily freed blocks' bitset and the tail block off its
+confirmed footer, which is the same block the walk takes.  First bisect step for a claim that
+lands on a live block or a store that grows where the walk would have reused a free block; the
+seeded test `store::tests::the_indexed_scan_takes_the_block_the_walk_takes` compares the two
+answers at every claim.
+
+**`LOFT_NO_HEAP_FREE_VECTOR_COPY=1`** (runtime, BOTH backends) makes the deep copy of a vector
+whose elements own no heap list and visit every element after its one block copy again — with
+it off, that walk is skipped, as the record arm already skips a record that owns no heap.
+First bisect step for a copied record whose vector reads the source's data; guard
+`tests/scripts/157-a-heap-free-vector-copies-in-one-block.loft`.
+
+**`LOFT_NO_PLAIN_VECTOR_RECORDS=1`** (runtime, BOTH backends) sends a record that owns plain
+vectors and nothing else — every field that owns heap a `vector<E>` whose elements own none —
+through the walk of its type again when it is copied or released.  With it off, such a record
+is copied and released by the list of those fields (`Stores::plain_vectors_of`, at most eight;
+one bit of the type's facts says whether a type has the list): each vector's block is claimed
+and copied as one piece, or freed and its field cleared, with no descent through the fields'
+types.  A field holding anything but an empty handle or a block that fits its store sends the
+release back to the walk, which reports it.  First bisect step for a copied record whose vector
+reads its source's data, or a store that grows across rebinds of such a record; guard
+`tests/scripts/157-a-record-of-plain-vectors-copies-and-releases-by-its-fields.loft`.
 
 **A removed record a stored reference named leaves a tombstone (default-ON, both backends,
 `@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`

@@ -1,0 +1,143 @@
+// `@FR-R-Apart` instance 2 — a record whose every field is a `vector<float>` of one length
+// travels between the functions that build it, read and write its elements and hand it on as
+// a Rust value on `--native-release`, and meets the store once, where a function returns it
+// through its buffer to a caller that keeps it.  Every cell asserts the VALUES (and, after a
+// boundary, the LENGTH) a hand computation gives; the interpreter keeps the store and is the
+// oracle, and `LOFT_NO_APART=1` must answer the same.
+//
+// The 2×2 matrices are column-major: `mul(ma, mb)` is the product ma·mb, and `rot(a)` is
+// [[a, -0.5], [0.5, a]].  Every value is a sum of products of halves, so each is exact.
+//
+// Predictions (`tests/apart_value.rs` pins them on the emitted Rust): twins for ident, rot,
+// mk, mul, cube, last, setneg, first_over, pr, swap, pp, e2 and e4; a region in cube,
+// first_over, pp, e2 and e4, the bodies that call a twin; NO twin for gr (a push changes its length), o3 and o4
+// (their two lengths disagree, so `Odd` is no apart type), and d4's values stay in the store
+// (handed to `show`, which is no twin).
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-record-of-fixed-vectors-travels-as-a-value.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch reads a negative index as itself,
+//   so the apart read of `x.m[-1]` answers null where the store path counts from the end.
+//   WITNESS: under the patch native fails e2 with `[null,null,1,9]` where this file says
+//   `[4,1,1,9]`.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both — only native's values move.
+
+struct M2 { m: vector<float> }
+struct Pair { a: vector<float>, b: vector<float> }
+struct Grow { g: vector<float> }
+struct Odd { o: vector<float> }
+
+fn ident() -> M2 { M2 { m: [1.0, 0.0, 0.0, 1.0] } }
+fn rot(a: float) -> M2 { M2 { m: [a, 0.5, -0.5, a] } }
+fn mk(a: float) -> M2 { M2 { m: [a, a + 1.0, a + 2.0, a + 3.0] } }
+
+fn mul(ma: const M2, mb: const M2) -> M2 {
+  r = M2 { m: [0.0, 0.0, 0.0, 0.0] };
+  for c in 0..2 {
+    for w in 0..2 {
+      s = 0.0;
+      for k in 0..2 { s += ma.m[k * 2 + w] * mb.m[c * 2 + k]; }
+      r.m[c * 2 + w] = s;
+    }
+  }
+  r
+}
+
+/// rot(0.5)ⁿ — rot(0.5) is 0.5·√2 times a 45° turn.
+fn cube(n: integer) -> M2 {
+  a = mul(rot(0.5), ident());
+  c = ident();
+  for _ in 0..n { c = mul(a, c); }
+  c
+}
+
+/// A negative index counts from the end, on a read.
+fn last(x: const M2) -> M2 { M2 { m: [x.m[-1], x.m[-4], x.m[0], 9.0] } }
+
+/// ... and on a write.
+fn setneg(x: const M2) -> M2 {
+  r = M2 { m: [0.0, 0.0, 0.0, 0.0] };
+  r.m[-1] = 5.0;
+  r.m[0] = x.m[1];
+  r
+}
+
+/// A `return` from inside the loop of a function that rebinds the value.
+fn first_over(n: integer) -> M2 {
+  c = mk(0.0);
+  for i in 0..n {
+    c = mul(rot(1.0), c);
+    if i == 2 { return c; }
+  }
+  c
+}
+
+fn pr(a: float) -> Pair { Pair { a: [a, a], b: [a, 1.0, 2.0] } }
+fn swap(p: const Pair) -> Pair { Pair { a: [p.b[2], p.b[1]], b: [p.a[0], p.a[1], 7.0] } }
+fn pp() -> Pair {
+  x = pr(3.0);
+  y = swap(x);
+  y
+}
+
+fn gr() -> Grow {
+  g = Grow { g: [1.0, 2.0] };
+  g.g += [3.0];
+  g
+}
+
+fn o3() -> Odd { Odd { o: [1.0, 2.0, 3.0] } }
+fn o4() -> Odd { Odd { o: [1.0, 2.0, 3.0, 4.0] } }
+fn ocat() -> Odd {
+  a = o3();
+  b = o4();
+  Odd { o: [a.o[2], b.o[3], len(a.o) as float, len(b.o) as float] }
+}
+
+fn show(x: const M2) -> text { "{x.m}" }
+fn d4() -> text {
+  a = mk(1.0);
+  b = last(a);
+  show(b)
+}
+
+fn e2() -> M2 {
+  a = mk(1.0);
+  b = last(a);
+  b
+}
+
+fn e4() -> M2 {
+  a = mk(1.0);
+  b = setneg(a);
+  b
+}
+
+fn main() {
+  e1 = cube(3);
+  assert("{e1.m}" == "[-0.25,0.25,-0.25,-0.25]", "e1 rot(0.5) cubed: {e1.m}");
+  x2 = e2();
+  assert("{x2.m}" == "[4,1,1,9]", "e2 negative reads: {x2.m}");
+  x4 = e4();
+  assert("{x4.m}" == "[2,0,0,5]", "e4 negative write: {x4.m}");
+  // e6 — after the boundary the value is an ordinary record: its vector grows.
+  x6 = e2();
+  x6.m += [6.0];
+  assert(len(x6.m) == 5 && "{x6.m}" == "[4,1,1,9,6]", "e6 after the boundary: {x6.m}");
+  x7 = first_over(10);
+  assert("{x7.m}" == "[-1.375,0.25,-3.625,3.5]", "e7 early return: {x7.m}");
+  // e8 — one caller buffer reused across the calls: each call's own value.
+  s = 0.0;
+  for r in 0..3 { s += cube(r).m[0]; }
+  x8 = cube(2);
+  assert(s == 1.5 && "{x8.m}" == "[0,0.5,-0.5,0]", "e8 reuse: {s} {x8.m}");
+  p = pp();
+  assert("{p.a}" == "[2,1]" && "{p.b}" == "[3,3,7]", "pair: {p.a} {p.b}");
+  g = gr();
+  assert(len(g.g) == 3 && "{g.g}" == "[1,2,3]", "d1 a pushed field: {g.g}");
+  o = ocat();
+  assert("{o.o}" == "[3,4,3,4]", "d3 two lengths of one type: {o.o}");
+  assert(d4() == "[4,1,1,9]", "d4 handed to a non-twin: {d4()}");
+  println("ok");
+}
