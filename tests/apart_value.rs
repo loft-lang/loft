@@ -193,3 +193,119 @@ fn an_index_out_of_range_reports_as_the_store_path_does() {
         "the two forms report differently"
     );
 }
+
+const VECTOR_CELLS: &str = "tests/scripts/a-local-float-vector-lives-in-an-inline-buffer.loft";
+
+/// Instance 3: the bodies holding an inline buffer.  Unlike instance 2 it needs no plan of the
+/// whole program, so a build that ships the live tier makes it too.
+const INLINE: &[&str] = &["n_main", "n_v1", "n_v10", "n_v3", "n_v4", "n_v5", "n_v6"];
+
+fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
+    let out = std::env::temp_dir().join(format!("loft_apart_vector_{tag}.rs"));
+    let mut cmd = loft();
+    cmd.env_remove("LOFT_NO_APART_VECTOR")
+        .arg(tier)
+        .arg("--native-emit")
+        .arg(&out)
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(VECTOR_CELLS));
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let res = cmd.output().expect("spawn loft --native-emit");
+    let text = loft::file_access::read_to_string(&out).unwrap_or_else(|e| {
+        panic!(
+            "no Rust emitted ({e}): {}",
+            String::from_utf8_lossy(&res.stderr)
+        )
+    });
+    let _ = loft::file_access::remove_file(&out);
+    let mut found = Vec::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("fn ")
+            && let Some((name, _)) = rest.split_once('(')
+        {
+            current = Some(name.trim_end_matches("__rg").to_string());
+        } else if line.contains("codegen_runtime::ApVec::new()")
+            && let Some(name) = current.take()
+        {
+            found.push(name);
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[test]
+fn the_inline_buffers_are_where_the_cells_say() {
+    for tier in ["--native", "--native-release"] {
+        assert_eq!(
+            inline_bodies(tier, &[], "on"),
+            INLINE,
+            "{tier}: the inline buffers moved"
+        );
+    }
+    assert!(
+        inline_bodies("--native", &[("LOFT_NO_APART_VECTOR", "1")], "off").is_empty(),
+        "LOFT_NO_APART_VECTOR=1 must hold no vector inline"
+    );
+}
+
+#[test]
+fn the_vector_cells_hold_with_the_rule_off() {
+    for tier in ["--native", "--native-release"] {
+        let out = loft()
+            .env("LOFT_NO_APART_VECTOR", "1")
+            .arg(tier)
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(VECTOR_CELLS))
+            .output()
+            .expect("spawn loft");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.trim_end().ends_with("ok"),
+            "{tier} with the rule off:\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// A reporting read out of range of an inline buffer reports what the store path reports.
+#[test]
+fn an_inline_buffer_reports_an_index_out_of_range_as_the_store_does() {
+    let src = std::env::temp_dir().join(format!("loft_apart_vec_oob_{}.loft", std::process::id()));
+    loft::file_access::write(
+        &src,
+        "fn f() -> float {\n  xs: vector<float> = [];\n  xs += [1.0];\n  xs += [2.0];\n  a = xs[5];\n  xs[-7] = 3.0;\n  (a ?? 10.0) + (xs[0] ?? 0.0)\n}\nfn main() { println(\"{f()}\"); }\n",
+    )
+    .expect("write the probe");
+    let run = |on: bool| {
+        let mut cmd = loft();
+        cmd.arg("--native").arg(&src).env("LOFT_DEV_SOFT_HALT", "1");
+        if !on {
+            cmd.env("LOFT_NO_APART_VECTOR", "1");
+        }
+        let out = cmd.output().expect("spawn loft --native");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .filter(|l| l.starts_with("soft-halt:"))
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        )
+    };
+    let (on_out, on_err) = run(true);
+    let (off_out, off_err) = run(false);
+    let _ = loft::file_access::remove_file(&src);
+    assert_eq!(on_out.trim(), "11", "the value");
+    assert_eq!(
+        on_err,
+        [
+            "soft-halt: index 5 out of bounds for length 2",
+            "soft-halt: negative index -7",
+        ],
+        "the reports"
+    );
+    assert_eq!((on_out, on_err), (off_out, off_err), "the two forms differ");
+}

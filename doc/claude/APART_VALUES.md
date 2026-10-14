@@ -1,6 +1,6 @@
 # Apart values — fast representations that never touch the store model
 
-**Accepted by the owner, with the rulings recorded below.  Instance 2 is BUILT: `(R-Apart)` is in [formal/rewrites.md](formal/rewrites.md) § A record of fixed-length vectors travels as a value.**
+**Accepted by the owner, with the rulings recorded below.  Instances 2 and 3 are BUILT: `(R-Apart)` is in [formal/rewrites.md](formal/rewrites.md) § A record of fixed-length vectors travels as a value.**
 
 The store model is an in-memory database built for data that LASTS: records with identity, a
 best-fit allocator with a free tree, ownership walks so nothing leaks, checked access because a
@@ -158,7 +158,8 @@ The list below is only the ORDER, set by measured payoff — the classes over th
    function, not as `(R-ValueRecord)`'s tuple: that rewrite's return-buffer protocol is the
    part an array field does not need.
 3. **Variable-length vectors and texts** — an INLINE buffer with a spill to the heap past its
-   capacity, never a bare Rust `Vec` / `String`: many short vectors grown by push pay a
+   capacity, never a bare Rust `Vec` / `String`.  BUILT for a `vector<float>` local (64 inline
+   elements); texts and other element types are later instances.  Why never a bare `Vec`: many short vectors grown by push pay a
    `malloc` and its reallocations each, more than the pooled work buffers they replace
    (`rig_world_frame3`: a `Vec` +37 %, a stack buffer −48 % — analysis/apart.md).
 4. **Every other type the bench shows paying the store protocol as a throwaway** — enums with a

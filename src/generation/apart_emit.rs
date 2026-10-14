@@ -15,6 +15,7 @@
 use std::io::Write;
 
 use super::apart_value::{self, ApLayout, Construction, Elem, Roles};
+use super::apart_vector::{self, VecRoles};
 use super::{Output, sanitize};
 use crate::data::Value;
 
@@ -36,29 +37,50 @@ pub struct ApartCtx {
     pub twin: bool,
     /// The function's return buffer variable.
     pub rb: Option<u16>,
+    /// Instance 3: the body's apart `vector<float>` locals and their companions.
+    pub vecs: VecRoles,
 }
 
 impl Output<'_> {
-    /// The context `def_nr`'s body is emitted under: its twin's while a twin is emitted,
-    /// else its region when that is profitable.
+    /// The context `def_nr`'s body is emitted under: its twin's while a twin is emitted, else
+    /// its region when that is profitable — and in either, or alone, its apart vectors.
     pub(super) fn apart_ctx_for(&self, def_nr: u32) -> Option<ApartCtx> {
         let def = self.data.def(def_nr);
         let rb = super::hoist::ret_buffer_attr(def)
             .map(|i| def.variables().var(&def.attributes()[i].name));
-        if self.apart_twin {
-            let roles = self.apart.twin_roles.get(&def_nr)?.clone();
-            return Some(ApartCtx {
-                roles,
-                twin: true,
-                rb,
-            });
+        let vecs = apart_vector::roles(self.data, def_nr).unwrap_or_default();
+        let (roles, twin) = if self.apart_twin {
+            (self.apart.twin_roles.get(&def_nr)?.clone(), true)
+        } else {
+            match self.apart.regions.get(&def_nr) {
+                Some(r) if r.profitable => (r.clone(), false),
+                _ => (Roles::default(), false),
+            }
+        };
+        if !twin && roles.is_empty() && vecs.is_empty() {
+            return None;
         }
-        let roles = self.apart.regions.get(&def_nr)?;
-        roles.profitable.then(|| ApartCtx {
-            roles: roles.clone(),
-            twin: false,
+        if !vecs.is_empty() {
+            crate::rewrite_census::fired("R-Apart/vector", vecs.apart.len());
+        }
+        Some(ApartCtx {
+            roles,
+            twin,
             rb,
+            vecs,
         })
+    }
+
+    fn ap_vec(&self, v: u16) -> bool {
+        self.apart_ctx
+            .as_ref()
+            .is_some_and(|c| c.vecs.apart.contains(&v))
+    }
+
+    fn ap_companion(&self, v: u16) -> bool {
+        self.apart_ctx
+            .as_ref()
+            .is_some_and(|c| c.vecs.companions.contains(&v))
     }
 
     fn ap_apart(&self, v: u16) -> bool {
@@ -162,6 +184,16 @@ impl Output<'_> {
             }
             let t = &self.apart.types[rec].rust;
             let _ = write!(out, "\n  let mut {}: {t} = {t}::ZERO;", self.ap_name(v));
+        }
+        let mut vecs: Vec<&u16> = ctx.vecs.apart.iter().collect();
+        vecs.sort_unstable();
+        for &v in vecs {
+            let _ = write!(
+                out,
+                "\n  let mut {}: codegen_runtime::ApVec<{}> = codegen_runtime::ApVec::new();",
+                self.ap_name(v),
+                apart_vector::INLINE
+            );
         }
         if ctx.twin
             && let Some(rb) = ctx.rb
@@ -331,6 +363,9 @@ impl Output<'_> {
         if self.apart_ctx.is_none() {
             return Ok(false);
         }
+        if self.apart_vector_expr(w, x)? {
+            return Ok(true);
+        }
         let data = self.data;
         if let Some((v, off, idx, nullable)) = apart_value::element_read(data, x)
             && self.ap_apart(v)
@@ -464,6 +499,9 @@ impl Output<'_> {
     /// own — the index, and a write's value — or `None` when `x` is no such mention.
     pub(super) fn apart_operands<'v>(&self, x: &'v Value) -> Option<Vec<&'v Value>> {
         self.apart_ctx.as_ref()?;
+        if let Some(ops) = self.apart_vector_operands(x) {
+            return Some(ops);
+        }
         if let Some((v, _, idx, _)) = apart_value::element_read(self.data, x)
             && self.ap_apart(v)
         {
@@ -491,5 +529,137 @@ impl Output<'_> {
         let c = self.apart_construction_at(ops, 0)?;
         (c.end + 1 == ops.len() && matches!(ops[c.end].unspan(), Value::Var(u) if *u == c.v))
             .then_some(c)
+    }
+}
+
+impl Output<'_> {
+    /// Instance 3's operands of a mention the vector hook takes, for the pre-eval walk: an
+    /// element's index, a written or pushed value; a statement of the vector's own (its init,
+    /// a free, a companion's) has none.
+    fn apart_vector_operands<'v>(&self, x: &'v Value) -> Option<Vec<&'v Value>> {
+        let data = self.data;
+        if let Some((v, idx, _)) = apart_vector::read(data, x)
+            && self.ap_vec(v)
+        {
+            return Some(vec![idx]);
+        }
+        if let Some((v, idx, val)) = apart_vector::write(data, x)
+            && self.ap_vec(v)
+        {
+            return Some(vec![idx, val]);
+        }
+        if let Some((v, val)) = apart_vector::push(data, x)
+            && self.ap_vec(v)
+        {
+            return Some(vec![val]);
+        }
+        self.apart_vector_statement(x).then(Vec::new)
+    }
+
+    /// A statement that only serves an apart vector or a companion and emits nothing of the
+    /// store's: a free, a save, a reservation, a companion's null init, mint or emptying.
+    fn apart_vector_quiet(&self, x: &Value) -> bool {
+        let Value::Call(d, args) = x.unspan() else {
+            return matches!(x.unspan(), Value::Set(v, _) if self.ap_companion(*v));
+        };
+        let held = |a: &Value| matches!(a.unspan(), Value::Var(u) if self.ap_vec(*u) || self.ap_companion(*u));
+        match self.data.def(*d).name() {
+            "OpPutRef" | "OpFreeRefIfDistinct" | "OpFreeRef" => {
+                !args.is_empty()
+                    && args
+                        .iter()
+                        .all(|a| held(a) || !matches!(a.unspan(), Value::Var(_)))
+                    && args.iter().any(held)
+            }
+            "OpPreAllocVector" => args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(u) if self.ap_vec(*u))),
+            "OpDatabase" | "OpSetInt4" => args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(u) if self.ap_companion(*u))),
+            _ => false,
+        }
+    }
+
+    /// A statement of an apart vector's own: its empty init, or a quiet one.
+    fn apart_vector_statement(&self, x: &Value) -> bool {
+        if self.apart_vector_quiet(x) {
+            return true;
+        }
+        if let Some((v, _)) = apart_vector::buffer_init(self.data, x)
+            && self.ap_vec(v)
+        {
+            return true;
+        }
+        matches!(x.unspan(), Value::Set(v, _) if self.ap_vec(*v))
+    }
+
+    /// The vector hook: answers whether it wrote `x`.
+    fn apart_vector_expr(&mut self, w: &mut dyn Write, x: &Value) -> std::io::Result<bool> {
+        let Some(ctx) = &self.apart_ctx else {
+            return Ok(false);
+        };
+        if ctx.vecs.is_empty() {
+            return Ok(false);
+        }
+        let data = self.data;
+        if let Some((v, idx, nullable)) = apart_vector::read(data, x)
+            && self.ap_vec(v)
+        {
+            if nullable {
+                write!(w, "{}.get_or_null(", self.ap_name(v))?;
+            } else {
+                write!(w, "{}.get(cell, ", self.ap_name(v))?;
+            }
+            self.output_code_inner(w, idx)?;
+            write!(w, ")")?;
+            return Ok(true);
+        }
+        if let Some((v, idx, val)) = apart_vector::write(data, x)
+            && self.ap_vec(v)
+        {
+            write!(w, "{{ let __api: i64 = ")?;
+            self.output_code_inner(w, idx)?;
+            write!(w, "; let __apv: f64 = ")?;
+            self.output_code_inner(w, val)?;
+            write!(w, "; {}.set(cell, __api, __apv) }}", self.ap_name(v))?;
+            return Ok(true);
+        }
+        if let Some((v, val)) = apart_vector::push(data, x)
+            && self.ap_vec(v)
+        {
+            write!(w, "{{ let __apv: f64 = ")?;
+            self.output_code_inner(w, val)?;
+            write!(w, "; {}.push(__apv) }}", self.ap_name(v))?;
+            return Ok(true);
+        }
+        if let Some((op, v)) = apart_vector::unary(data, x)
+            && self.ap_vec(v)
+        {
+            match op {
+                "len" => write!(w, "({}.len() as i64)", self.ap_name(v))?,
+                "clear" => write!(w, "{}.clear()", self.ap_name(v))?,
+                _ => write!(w, "()")?,
+            }
+            return Ok(true);
+        }
+        if let Some((v, _)) = apart_vector::buffer_init(data, x)
+            && self.ap_vec(v)
+        {
+            write!(w, "{}.clear()", self.ap_name(v))?;
+            return Ok(true);
+        }
+        if let Value::Set(v, _) = x.unspan()
+            && self.ap_vec(*v)
+        {
+            // The plain local's empty init (`v = OpGetField(<companion>, …)`) or a null one.
+            write!(w, "{}.clear()", self.ap_name(*v))?;
+            return Ok(true);
+        }
+        if self.apart_vector_quiet(x) {
+            write!(w, "()")?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }

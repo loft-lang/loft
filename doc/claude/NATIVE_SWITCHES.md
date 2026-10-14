@@ -412,6 +412,10 @@ keeps it.  The first bisect step for a wrong element, a wrong length or a missin
 report out of such a record on a release build.  Its falsifier is this switch's A/B against the
 guard's hand-computed values; **`LOFT_TRACE_APART=1`** names every type, twin and region the plan
 admits and each component it keeps in the store, with the mention that kept it.
+**`LOFT_NO_APART_VECTOR=1`** turns off instance 3 alone (`LOFT_NO_APART=1` turns off both): a
+`vector<float>` local, or a work buffer, that never leaves its function lives in the store again
+— with it off, it is an inline buffer with a heap spill (`codegen_runtime::ApVec`), on every
+native build.  The first bisect step for a wrong element or length out of such a local.
 A reader behind a one-statement helper is held only where the helper is inlined
 (`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
 

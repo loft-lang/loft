@@ -11,6 +11,7 @@ use std::io::Write;
 pub mod apart;
 mod apart_emit;
 pub mod apart_value;
+pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
@@ -4661,7 +4662,7 @@ impl Output<'_> {
             return hoist::LoopHoist::default();
         }
         let tiers = self.hoist_tiers();
-        hoist::hoistable(
+        let mut verdict = hoist::hoistable(
             lp,
             self.data,
             self.stores,
@@ -4680,7 +4681,23 @@ impl Output<'_> {
                     assumed: &self.assumed_distinct,
                 })
                 .as_ref(),
-        )
+        );
+        // `@FR-R-Apart` instance 3 — an apart vector is no store vector: no path rooted at it
+        // or at a companion takes a header, and a loop whose only growth was such a vector
+        // grows no store.
+        if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs)
+            && !vecs.is_empty()
+        {
+            verdict.vectors.retain(|(p, _)| !vecs.holds(p.0));
+            verdict.pushes.retain(|(p, _)| !vecs.holds(p.0));
+            verdict.mint_pushes.retain(|(p, _)| !vecs.holds(p.0));
+            let movers = verdict.movers.len();
+            verdict.movers.retain(|m| !vecs.holds(*m));
+            if movers > 0 && verdict.movers.is_empty() {
+                verdict.growth_free = true;
+            }
+        }
+        verdict
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -4704,7 +4721,11 @@ impl Output<'_> {
         {
             HashSet::new()
         } else {
-            hoist::nest_read_paths(lp, self.data)
+            let mut paths = hoist::nest_read_paths(lp, self.data);
+            if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs) {
+                paths.retain(|p| !vecs.holds(p.0));
+            }
+            paths
         };
         let hoisted = self.compute_loop_hoist(lp);
         let hoist::LoopHoist {
@@ -10616,7 +10637,11 @@ extern crate loft;"
     ) -> std::io::Result<()> {
         let saved_hoist = self.hoist_disabled;
         self.apart_ctx = self.apart_ctx_for(def_nr);
-        if self.apart_ctx.is_some() {
+        if self
+            .apart_ctx
+            .as_ref()
+            .is_some_and(|c| c.twin || !c.roles.is_empty())
+        {
             self.hoist_disabled = true;
         }
         let r = self.output_function_body(w, def_nr, program_store);

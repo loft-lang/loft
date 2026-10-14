@@ -2445,7 +2445,14 @@ the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, 
                  buffer, an alias, a null init or a free is DEAD and emits nothing.  A
                  component with any other mention stays in the store, and so does every
                  component of a body with a `yield` or a parallel block.  Native, and not in
-                 a build that ships the live tier.
+                 a build that ships the live tier.  Instance 3, a `vector<float>` LOCAL: a
+                 local, or a work-buffer parameter (`R-WorkBuffer`, whose incoming content the
+                 body never reads), is an inline buffer with a heap spill when each mention is
+                 its empty init, a push, a reservation, an element read or write, a length, a
+                 `clear` or a free, and each variable serving it — the store a local is minted
+                 into, the save of a work buffer's incoming value — has no other mention.
+                 Nothing of it crosses into the store, so this instance needs no plan of the
+                 whole program and is made in every native build.
 ```
 
 **In words.**  The store protocol is for data that lasts.  A matrix built, multiplied and
@@ -2465,13 +2472,21 @@ tier has no plan, since a twin's call would run the native body of a function fl
 interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
 loop in them plans a header, a base or an address on a variable that is no longer a record.
 
+An inline vector answers what the store's vector answers — empty at its init, an index from
+the end, an index out of range reported or, for `v[i]?`, null — and its loops plan no header,
+push header or base on it: the loop verdict (`Output::compute_loop_hoist`) drops every path
+rooted at it, and a loop whose only growth was such a vector grows no store.
+
 **BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
 regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
-`ap_set_f64` / `ap_store_f64`; `LOFT_NO_APART=1`, `LOFT_TRACE_APART=1`).  Not admitted yet: an
+`ap_set_f64` / `ap_store_f64`; instance 3: `generation::apart_vector::roles` the gate, runtime
+`codegen_runtime::ApVec`; `LOFT_NO_APART=1` both, `LOFT_NO_APART_VECTOR=1` instance 3,
+`LOFT_TRACE_APART=1`).  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
-Guard `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
-native-release`), pins and the out-of-range report `tests/apart_value.rs`.  Design:
+Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
+native-release`) and `a-local-float-vector-lives-in-an-inline-buffer.loft`; pins and both
+out-of-range reports `tests/apart_value.rs`.  Design:
 [APART_VALUES.md](../APART_VALUES.md).
 
 ### A walk of a scalar literal builds no vector

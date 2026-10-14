@@ -407,6 +407,107 @@ fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Opti
         .map(|f| f as usize)
 }
 
+/// `@FR-R-Apart` instance 3 — a `vector<float>` local held apart from the store: its first `C`
+/// elements in an inline array, the rest in a heap spill, so a short vector costs no
+/// allocation and a long one keeps every element.  Each operation answers what the store path
+/// answers for the vector it stands for: an empty vector at its init, a negative index from
+/// the end, an index out of range reported (`Stores::index_or_raise_runtime`) or, for `v[i]?`,
+/// null without a report.
+pub struct ApVec<const C: usize> {
+    d: [f64; C],
+    n: usize,
+    spill: Vec<f64>,
+}
+
+impl<const C: usize> Default for ApVec<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const C: usize> ApVec<C> {
+    #[must_use]
+    pub const fn new() -> Self {
+        ApVec {
+            d: [0.0; C],
+            n: 0,
+            spill: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.n = 0;
+        self.spill.clear();
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    #[inline]
+    pub fn push(&mut self, v: f64) {
+        if self.n < C {
+            self.d[self.n] = v;
+        } else {
+            self.spill.push(v);
+        }
+        self.n += 1;
+    }
+
+    #[inline]
+    fn at(&self, f: usize) -> f64 {
+        if f < C { self.d[f] } else { self.spill[f - C] }
+    }
+
+    #[inline]
+    fn at_mut(&mut self, f: usize) -> &mut f64 {
+        if f < C {
+            &mut self.d[f]
+        } else {
+            &mut self.spill[f - C]
+        }
+    }
+
+    /// `v[i]`: an index out of range reports, then answers null (NaN).
+    #[inline]
+    #[must_use]
+    pub fn get(&self, cell: &std::cell::UnsafeCell<Stores>, i: i64) -> f64 {
+        if i >= 0 && (i as u64) < self.n as u64 {
+            return self.at(i as usize);
+        }
+        ap_index_slow(cell, i, self.n).map_or(f64::NAN, |f| self.at(f))
+    }
+
+    /// `v[i]?`: the same index, and null without a report out of range.
+    #[inline]
+    #[must_use]
+    pub fn get_or_null(&self, i: i64) -> f64 {
+        match crate::vector::elem_index(i, self.n as u32) {
+            Some(f) => self.at(f as usize),
+            None => f64::NAN,
+        }
+    }
+
+    /// `v[i] = x`: an index out of range reports and writes nothing (`@FR-H-WriteOOB`).
+    #[inline]
+    pub fn set(&mut self, cell: &std::cell::UnsafeCell<Stores>, i: i64, v: f64) {
+        if i >= 0 && (i as u64) < self.n as u64 {
+            *self.at_mut(i as usize) = v;
+        } else if let Some(f) = ap_index_slow(cell, i, self.n) {
+            *self.at_mut(f) = v;
+        }
+    }
+}
+
 /// `@FR-R-Apart` — the BOUNDARY: an apart record written into the return buffer `buf` with
 /// the steps its own constructor emits — the buffer kept when it holds a record, else minted
 /// (`OpDatabaseRefill`), then each `vector<float>` field emptied in place and its elements
