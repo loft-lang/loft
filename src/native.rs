@@ -1919,7 +1919,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
         let n_hidden_text = def
             .attributes
             .iter()
-            .filter(|a| crate::native_lib::is_text_work_buffer(&a.typedef))
+            .filter(|a| crate::native_gate::is_text_work_buffer(&a.typedef))
             .count();
         let n_hidden_dests = def
             .attributes
@@ -2071,7 +2071,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         let n_hidden_text = def
             .attributes
             .iter()
-            .filter(|a| crate::native_lib::is_text_work_buffer(&a.typedef))
+            .filter(|a| crate::native_gate::is_text_work_buffer(&a.typedef))
             .count();
         let n_hidden_dests = def
             .attributes

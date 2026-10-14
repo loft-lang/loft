@@ -869,7 +869,7 @@ pub fn fold_compare(op: u8, fold_right: bool, upper: bool, t: &str, other: &str)
 #[inline]
 #[must_use]
 pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
-    let rest = if text.is_empty() || text == crate::state::STRING_NULL {
+    let rest = if text.is_empty() || text == crate::store::STRING_NULL {
         None
     } else {
         Some(text)
@@ -886,12 +886,12 @@ pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
 #[must_use]
 pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
     if from == i64::MIN {
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     let len = table.len() as i64;
     let at = if from < 0 { from + len } else { from };
     if at < 0 || at >= len {
-        crate::state::STRING_NULL
+        crate::store::STRING_NULL
     } else {
         table[at as usize]
     }
@@ -909,7 +909,7 @@ pub fn split_table_get_or_raise<'a>(stores: &mut Stores, table: &[&'a str], from
         stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::NegativeIndex {
             idx: from,
         });
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     if at >= len {
         stores.raise_recoverable_runtime(
@@ -918,7 +918,7 @@ pub fn split_table_get_or_raise<'a>(stores: &mut Stores, table: &[&'a str], from
                 len: table.len() as u32,
             },
         );
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     table[at as usize]
 }
@@ -3286,7 +3286,7 @@ pub fn t_9JsonValue_as_text(cell: &std::cell::UnsafeCell<Stores>, v: DbRef) -> S
         let s_rec = stores.store(&v).get_u32_raw(v.rec, value_pos);
         stores.store(&v).get_str(s_rec).to_string()
     } else {
-        crate::state::STRING_NULL.to_string()
+        crate::store::STRING_NULL.to_string()
     }
 }
 
@@ -4983,7 +4983,7 @@ pub trait LoftCoroutine {
     /// Advance a text-yielding generator one step.  Returns the yielded
     /// `String`, or `STRING_NULL` (`"\0"`) when the generator is exhausted.
     fn next_text(&mut self, _stores: &mut Stores) -> String {
-        crate::state::STRING_NULL.to_string()
+        crate::store::STRING_NULL.to_string()
     }
 
     /// Advance a Reference-yielding generator one step.  Returns the yielded
@@ -5353,10 +5353,10 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
     advance_native(
         gen_ref,
         stores,
-        crate::state::STRING_NULL.to_string(),
+        crate::store::STRING_NULL.to_string(),
         |coro, stores| {
             let val = coro.next_text(stores);
-            let done = val == crate::state::STRING_NULL && coro.done();
+            let done = val == crate::store::STRING_NULL && coro.done();
             (val, done)
         },
     )

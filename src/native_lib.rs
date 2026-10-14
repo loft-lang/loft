@@ -33,6 +33,7 @@
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
+pub(crate) use crate::native_gate::is_text_work_buffer;
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashSet};
 
@@ -1060,14 +1061,6 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
         }
         _ => "compile_error!(\"unsupported shared-store return type\");".to_string(),
     }
-}
-
-/// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
-/// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
-/// for each and passes `&mut`.  Shared with `native_gate` (the gate admits exactly
-/// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
-pub(crate) fn is_text_work_buffer(t: &Type) -> bool {
-    matches!(t, Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
 }
 
 /// Candidate `(rlib-lookup-dir, deps-dir)` pairs for a loft binary at `exe_dir`,

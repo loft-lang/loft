@@ -141,7 +141,7 @@ pub fn shared_store_dispatchable(data: &Data) -> HashSet<u32> {
                 || def
                     .attributes()
                     .iter()
-                    .any(|a| crate::native_lib::is_text_work_buffer(&a.typedef));
+                    .any(|a| is_text_work_buffer(&a.typedef));
             ret_ok
                 && text_ret_has_buffer
                 && def
@@ -183,7 +183,7 @@ pub fn classify_bridge_attr(a: &crate::data::Attribute, ret_text: bool) -> Optio
         // @P387: a text-returning fn's work-buffer is now `hidden` too (so it rides
         // the adaptive fn-ref dispatch like struct/vector return buffers).  It still
         // bridges as `WorkText` — the bridge owns a local `String` — NOT a heap dest.
-        if crate::native_lib::is_text_work_buffer(&a.typedef) {
+        if is_text_work_buffer(&a.typedef) {
             return ret_text.then_some(BridgeAttrKind::WorkText);
         }
         // @PLAN59: every heap-kind hidden destination (Reference / Vector /
@@ -196,7 +196,7 @@ pub fn classify_bridge_attr(a: &crate::data::Attribute, ret_text: bool) -> Optio
         )
         .then_some(BridgeAttrKind::HiddenDest);
     }
-    if crate::native_lib::is_text_work_buffer(&a.typedef) {
+    if is_text_work_buffer(&a.typedef) {
         // Valid iff the function actually returns text.
         return ret_text.then_some(BridgeAttrKind::WorkText);
     }
@@ -308,6 +308,14 @@ fn walk(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> bool {
         | Value::FnRefDnr(_)
         | Value::RawExpr(_) => true,
     }
+}
+
+/// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
+/// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
+/// for each and passes `&mut`.  Shared with `native_lib` (the gate admits exactly
+/// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
+pub(crate) fn is_text_work_buffer(t: &Type) -> bool {
+    matches!(t, Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
 }
 
 #[cfg(test)]
