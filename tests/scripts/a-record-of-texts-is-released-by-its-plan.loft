@@ -86,20 +86,19 @@ fn main() {
   // (3 + digits(i) chars) and keys of one char; i % 3 items of 5 chars; "frame {i}" is
   // 6 + digits(i).  Pass 13: 3 buttons (300) with labels of 5 chars and keys of 1 (18),
   // 1 item (10000 + 5), msg 8: 10331.
-  p = pan(0);
-  c1 = 0; l5 = 0; l17 = 0;
+  c1 = 0; l5 = 0; l17 = 0; last = "";
   for i in 0..24 {
     p = pan(i);
     if i == 13 { c1 = pan_sig(p); }
     if i == 5 { l5 = live_records(); }
     if i == 17 { l17 = live_records(); }
+    if i == 23 { last = "{p.btns[2].label} {p.lst.items[1]} {p.bar.msg}"; }
   }
   assert(c1 == 10331, "c1 sig {c1}");
   assert(l5 == l17, "c1 live {l5} -> {l17}");
-  assert(p.btns[2].label == "b2-23" && p.lst.items[1] == "item1" && p.bar.msg == "frame 23", "c1 last");
+  assert(last == "b2-23 item1 frame 23", "c1 last {last}");
 
   // c2 — a text beside a vector of scalars.  Pass 19: "m19", xs = 0, 19, 38, 57 (sum 114).
-  m = mix(0);
   l5 = 0; l20 = 0;
   for i in 0..24 {
     m = mix(i);
@@ -113,16 +112,19 @@ fn main() {
   }
   assert(l5 == l20, "c2 live {l5} -> {l20}");
 
-  // c3 — an absent vector field on even passes, two tags on odd.
-  o = opt(0);
-  l5 = 0; l17 = 0; tagged = 0;
+  // c3 — an absent vector field on even passes, two tags on odd, each written over an
+  // element of a vector, which releases the element it replaces.
+  os: vector<Opt> = [opt(0), opt(1)];
+  l5 = 0; l17 = 0; tagged = 0; last = "";
   for i in 0..24 {
-    o = opt(i);
+    os[i % 2] = opt(i);
+    o = os[i % 2]?;
     if o.tags != null { tagged += len(o.tags?); }
     if i == 5 { l5 = live_records(); }
     if i == 17 { l17 = live_records(); }
+    if i == 23 { last = "{o.name} {o.tags?[0]}"; }
   }
-  assert(tagged == 24 && o.name == "odd" && o.tags?[0] == "t23", "c3 {tagged}");
+  assert(tagged == 24 && last == "odd t23", "c3 {tagged} {last}");
   assert(l5 == l17, "c3 live {l5} -> {l17}");
 
   // c4 — empty texts and empty vectors: a panel of pass 0 has two buttons, no items.
@@ -135,28 +137,33 @@ fn main() {
   assert(e.at.x == 5 && len(e.btns) == 1 && e.btns[0].label == "" && len(e.lst.items) == 1, "c4");
 
   // c5 — declined to the walk: five texts per element, an enum payload, a vector of vectors.
-  w = wide(0);
-  l5 = 0; l17 = 0;
+  l5 = 0; l17 = 0; last = "";
   for i in 0..24 {
     w = wide(i);
     if i == 5 { l5 = live_records(); }
     if i == 17 { l17 = live_records(); }
+    if i >= 22 {
+      who = match w.p { Named { who, n } => "{who}{n}", Nothing => "none" };
+      last += "{w.fs[0].a} {w.fs[0].e} {who} {len(w.vv[0])};";
+    }
   }
-  who = match w.p { Named { who, n } => "{who}{n}", Nothing => "none" };
-  assert(w.fs[0].a == "a23" && w.fs[0].e == "eeeee" && who == "none" && len(w.vv[0]) == 2, "c5 {who}");
+  assert(last == "a22 eeeee w2222 2;a23 eeeee none 2;", "c5 {last}");
   assert(l5 == l17, "c5 live {l5} -> {l17}");
 
-  // c6 — a text two records deep inside a vector element: rows k = 0..2 of pass 17 read
+  // c6 — a text two records deep inside a vector element, over an element as c3: rows
+  // k = 0..2 of pass 17 read
   // "in{k}17" (5 chars), "row{k}" (4) and k + 17: 27 + 54 = 81.
-  d = deep(0);
-  l5 = 0; l17 = 0; c6 = 0;
+  ds: vector<Deep> = [deep(0), deep(1)];
+  l5 = 0; l17 = 0; c6 = 0; last = "";
   for i in 0..24 {
-    d = deep(i);
+    ds[i % 2] = deep(i);
+    d = ds[i % 2]?;
     if i == 17 { for r in d.rows { c6 += len(r.a.t) + len(r.b) + r.k; } }
     if i == 5 { l5 = live_records(); }
     if i == 17 { l17 = live_records(); }
+    if i == 23 { last = d.rows[2].a.t; }
   }
-  assert(c6 == 81 && d.rows[2].a.t == "in223", "c6 {c6}");
+  assert(c6 == 81 && last == "in223", "c6 {c6} {last}");
   assert(l5 == l17, "c6 live {l5} -> {l17}");
 
   // c7 — an element of a vector of panels replaced: the old element is released by its plan.
