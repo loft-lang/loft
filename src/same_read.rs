@@ -27,6 +27,11 @@
 //! overflow is still reported, once where the program spelled it twice (the owner's ruling,
 //! formal/rewrites.md `(R-SameRead)`).
 //!
+//! THE GET-OR-INSERT CLAUSE — `if !c[k] { c += [T{k: k, …}] }` followed by `b = c[k]`: the
+//! assignment moves before the `if`, whose condition tests the variable, and the arm reads the
+//! key again into it as its last statement: a hit looks the key up once and a miss reads what
+//! the plain second lookup would.
+//!
 //! `LOFT_NO_SAME_READ=1` keeps every read; `LOFT_TRACE_SAME_READ=1` names each statement it binds.
 use crate::data::{Block, Data, DefType, Value};
 
@@ -266,6 +271,85 @@ fn replace_expr(v: &mut Value, e: &Value, t: u16) -> usize {
     }
 }
 
+/// THE GET-OR-INSERT CLAUSE's shape: `if !L { … }` with no `else` and a block for its arm,
+/// `L` a plain keyed read (`c[k]`, `OpGetRecord` over read operators and locals) — answers
+/// `L` and the arm.
+fn absent_test<'a>(data: &Data, v: &'a Value) -> Option<(&'a Value, &'a Value)> {
+    let Value::If(cond, then_arm, else_arm) = v.unspan() else {
+        return None;
+    };
+    if !empty_arm(else_arm) || !matches!(then_arm.unspan(), Value::Block(_)) {
+        return None;
+    }
+    let Value::Call(not, nargs) = cond.unspan() else {
+        return None;
+    };
+    let [test] = &nargs[..] else { return None };
+    let Value::Call(conv, cargs) = test.unspan() else {
+        return None;
+    };
+    let [read] = &cargs[..] else { return None };
+    (data.def(*not).name() == "OpNot"
+        && data.def(*conv).name() == "OpConvBoolFromRef"
+        && matches!(read.unspan(), Value::Call(op, _) if data.def(*op).name() == "OpGetRecord")
+        && plain_read(data, read))
+    .then_some((read, then_arm))
+}
+
+/// THE GET-OR-INSERT CLAUSE over one block's statements: `if !c[k] { …arm… }` followed by
+/// `b = c[k]` looks the key up once on a hit.  The assignment moves before the `if`, the
+/// condition tests `b`, and the arm ends by reading `c[k]` into `b` again.  On a hit nothing
+/// ran between the two reads, so the first answers what the second would; on a miss the arm's
+/// last read IS the second, after everything the arm did.
+fn bind_get_or_insert(data: &Data, ops: &[Value]) -> (Vec<Value>, usize) {
+    let mut out: Vec<Value> = Vec::with_capacity(ops.len());
+    let mut bound = 0;
+    let mut at = 0;
+    while at < ops.len() {
+        let next = (at + 1..ops.len()).find(|&n| !matches!(ops[n], Value::Line(_)));
+        let site = match (absent_test(data, &ops[at]), next.map(|n| ops[n].unspan())) {
+            (Some((read, arm)), Some(Value::Set(b, val))) if same_read(val, read) => {
+                Some((read.clone(), arm.clone(), *b))
+            }
+            _ => None,
+        };
+        let Some((read, arm, b)) = site else {
+            out.push(ops[at].clone());
+            at += 1;
+            continue;
+        };
+        let nx = next.expect("a next statement");
+        // The assigned variable itself is bound before the `if`: `b = t` between two record
+        // locals is a COPY, so a local of its own would leave `b` no view of the entry.  So
+        // `b` must not be read or written by the condition or the arm, which would see it
+        // bound early.
+        let names_b = |v: &Value| {
+            v.any_node(&mut |n| matches!(n, Value::Var(x) | Value::Set(x, _) if *x == b))
+        };
+        if !matches!(arm.unspan(), Value::Block(_)) || names_b(&arm) || names_b(&ops[at]) {
+            out.push(ops[at].clone());
+            at += 1;
+            continue;
+        }
+        let mut arm = arm;
+        if let Value::Block(bl) = arm.unspan_mut() {
+            bl.operators.push(Value::Set(b, Box::new(read.clone())));
+        }
+        // The `if` and the assignment are edited in place, so their source spans stay.
+        let mut guard = ops[at].clone();
+        if let Value::If(cond, then_arm, _) = guard.unspan_mut() {
+            replace_expr(cond, &read, b);
+            **then_arm = arm;
+        }
+        out.push(ops[nx].clone());
+        out.push(guard);
+        out.extend(ops[at + 1..nx].iter().cloned());
+        bound += 1;
+        at = nx + 1;
+    }
+    (out, bound)
+}
+
 /// THE GUARD CLAUSE over one block's statements: per `if` whose arm leaves, the pure
 /// computations of its condition the next statement's assigned value repeats, bound once
 /// before the `if`.  A computation with a scalar result only — the local holds a value.
@@ -383,8 +467,12 @@ fn rewrite_in(
             "same-read: {fname} binds {g} computation(s) a guard shares with its next statement"
         );
     }
+    let (out, gi) = bind_get_or_insert(data, &out);
+    if gi > 0 && trace() {
+        eprintln!("same-read: {fname} binds {gi} get-or-insert lookup(s)");
+    }
     *operators = out;
-    n + g
+    n + g + gi
 }
 
 /// Bind the repeated reads of every statement in the program; answers how many.

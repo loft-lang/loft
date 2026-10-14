@@ -1,0 +1,126 @@
+// `@FR-R-SameRead`'s get-or-insert clause — `if !c[k] { … }` followed by `b = c[k]` looks the
+// key up once on a hit: the lookup is bound before the `if`, the arm reads it again as its last
+// statement, and the assignment reads the bound local.  Both backends (an IR rewrite).  Every
+// cell asserts the VALUES a hand computation gives; `LOFT_NO_SAME_READ=1` must answer the same.
+// The cells that matter most are the ones where the second lookup must NOT answer the first:
+// the arm changes the key (c2), inserts nothing (c3) or another key (c4).
+
+struct B { ck: integer, cx: integer, ixs: vector<integer> }
+struct F { buckets: hash<B[ck]> }
+struct I { buckets: index<B[ck]> }
+
+fn add(f: F, ck: integer, ix: integer) {
+  if !f.buckets[ck] {
+    f.buckets += [B{ck: ck, cx: ck * 2, ixs: []}];
+  }
+  b = f.buckets[ck];
+  b.ixs += [ix];
+}
+
+fn add_moved(f: F, ck: integer, ix: integer) -> integer {
+  k = ck;
+  if !f.buckets[k] {
+    k = k + 100;
+    f.buckets += [B{ck: k, cx: 0, ixs: []}];
+  }
+  b = f.buckets[k];
+  b.ixs += [ix];
+  b.ck?
+}
+
+fn probe_none(f: F, ck: integer) -> boolean {
+  if !f.buckets[ck] {
+    f.buckets += [B{ck: ck + 1, cx: 0, ixs: []}];
+  }
+  b = f.buckets[ck];
+  b == null
+}
+
+fn count_absent(f: F, ck: integer, misses: vector<integer>) -> boolean {
+  if !f.buckets[ck] {
+    misses += [ck];
+  }
+  b = f.buckets[ck];
+  b != null
+}
+
+fn add_index(f: I, ck: integer, ix: integer) {
+  if !f.buckets[ck] {
+    f.buckets += [B{ck: ck, cx: ck * 3, ixs: []}];
+  }
+  b = f.buckets[ck];
+  b.ixs += [ix];
+}
+
+fn either(f: F, ck: integer) -> integer {
+  seen = 0;
+  if !f.buckets[ck] {
+    f.buckets += [B{ck: ck, cx: 7, ixs: []}];
+  } else {
+    seen = 1;
+  }
+  b = f.buckets[ck];
+  b.cx? * 10 + seen
+}
+
+fn main() {
+  // c1 — ten adds over keys i % 3: k0 holds 0,3,6,9 (4), k1 1,4,7 (3), k2 2,5,8 (3).
+  // ck*1000 + len*10 + cx: 40 + 1032 + 2034.
+  f = F{buckets: []};
+  for i in 0..10 { add(f, i % 3, i); }
+  t = 0;
+  for b in f.buckets { t += b.ck * 1000 + len(b.ixs) * 10 + b.cx; }
+  assert(len(f.buckets) == 3 && t == 3106, "c1 {len(f.buckets)} {t}");
+
+  // c2 — the arm moves the key: a miss on 5 files 105 and the second lookup reads 105; a hit
+  // on 105 itself reads it unmoved.
+  f2 = F{buckets: []};
+  assert(add_moved(f2, 5, 1) == 105, "c2 moved");
+  assert(add_moved(f2, 105, 2) == 105, "c2 hit");
+  assert(len(f2.buckets) == 1 && len(f2.buckets[105].ixs?) == 2, "c2 ixs");
+
+  // c3 — the arm files ANOTHER key: the second lookup of 4 still misses.
+  f3 = F{buckets: []};
+  assert(probe_none(f3, 4), "c3 4 absent");
+  assert(len(f3.buckets) == 1 && f3.buckets[5].cx == 0, "c3 5 filed");
+
+  // c4 — the arm inserts nothing into the hash: present only after a separate insert.
+  f4 = F{buckets: []};
+  m: vector<integer> = [];
+  assert(!count_absent(f4, 8, m), "c4 miss");
+  f4.buckets += [B{ck: 8, cx: 1, ixs: []}];
+  assert(count_absent(f4, 8, m), "c4 hit");
+  assert(len(m) == 1 && m[0] == 8, "c4 misses {len(m)}");
+
+  // c5 — inside a loop, an arm that LEAVES: the second lookup never runs on a miss.
+  f5 = F{buckets: []};
+  f5.buckets += [B{ck: 2, cx: 20, ixs: []}];
+  s5 = 0;
+  for k in 0..4 {
+    if !f5.buckets[k] { continue; }
+    b5 = f5.buckets[k];
+    s5 += b5.cx;
+  }
+  assert(s5 == 20, "c5 {s5}");
+
+  // c6 — an index: k0 holds 0,2,4 and k1 1,3 — ck*1000 + len*10 + cx (3*ck): 30 + 1023.
+  fi = I{buckets: []};
+  for i in 0..5 { add_index(fi, i % 2, i); }
+  ti = 0;
+  for b in fi.buckets { ti += b.ck * 1000 + len(b.ixs) * 10 + b.cx; }
+  assert(ti == 1053, "c6 {ti}");
+
+  // c7 — an `else` arm: the clause declines and the plain form answers 70 then 71.
+  f7 = F{buckets: []};
+  assert(either(f7, 3) == 70, "c7 first");
+  assert(either(f7, 3) == 71, "c7 second");
+
+  // c8 — the view the assignment binds is the entry: its writes reach the collection.
+  f8 = F{buckets: []};
+  for i in 0..4 { add(f8, 6, i * 11); }
+  o = "";
+  for x in f8.buckets[6].ixs? { o += "{x},"; }
+  assert(o == "0,11,22,33,", "c8 {o}");
+
+  println("ok");
+}

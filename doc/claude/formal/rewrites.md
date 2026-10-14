@@ -4869,6 +4869,15 @@ native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  S
                  program spelled it twice — a fault is owed a report, not a count
                  (owner, 2026-10-11).  A defended site's silent operator is another
                  operator than the reporting one and is never the same computation.
+                 THE GET-OR-INSERT CLAUSE: `if !c[k] { … }` with no `else`, followed
+                 directly by an assignment whose value is the same keyed read `c[k]` (a
+                 plain read: read operators, locals and literals), moves the assignment
+                 `b = c[k]` before the `if`, tests `b`, and ends the arm with `b = c[k]`.
+                 On a hit nothing ran between the two reads; on a miss the arm's last read
+                 is the plain second read, after everything the arm did (a key it changed,
+                 a key it filed or did not).  The variable itself is bound — `b = t`
+                 between two record locals is a copy, which would leave `b` no view of the
+                 entry — so neither the condition nor the arm may name `b`.
 ```
 
 **In words.** Applied by: `same_read::rewrite_program`, in the IR phase (both backends; native
@@ -4881,7 +4890,10 @@ positions.  Measured on `index_read` by the hand-written form: −31 % interpret
 `LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
 `tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft`,
 `tests/scripts/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft`
-(the guard clause; zttext `locate`'s shape) and `tests/same_read.rs`
+(the guard clause; zttext `locate`'s shape),
+`tests/scripts/a-lookup-a-get-or-insert-repeats-is-made-once.loft` (the get-or-insert clause;
+gridmesh `field_add_cell`'s bucket, whose two lookups were 18 % of what `(R-KeyedEntry)` left of the row) and
+`tests/same_read.rs`
 (which statements bind; the cells with the rewrite off).
 
 ### `(R-InlineLeaf)` takes a tuple result
