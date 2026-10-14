@@ -1001,7 +1001,7 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
                 matches!(def.def_type, DefType::Function)
                     && !data.is_placeholder_instance(*d)
                     && *def.code() != Value::Null
-                    && !matches!(def.returned(), Type::Iterator(_, _))
+                    && !matches!(def.returned().base(), Type::Iterator(_, _))
                     && !value_fns.contains(d)
             })
             .collect();
