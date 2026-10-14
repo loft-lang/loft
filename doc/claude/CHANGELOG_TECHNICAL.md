@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The catalog trigger map reads each package's newest loadable release (2026-10-14)
+
+- `registry_index::providers_of` took the union of every published version's triggers, so
+  a spelling a release dropped (regex 0.5.0 retired `regex_find`) still loaded the package
+  from a bare call, which then failed on an unknown method.  It now reads the release
+  `loft install` would choose for an undeclared consumer (`find_best_version` on `"*"`:
+  yanked, prerelease and floor-refused versions skipped); a package with no loadable
+  release answers nothing.  The sidecar carries a `derivation` stamp (2) beside the index
+  stamp, so a sidecar an older loft derived is rebuilt once rather than trusted until the
+  index moves.  PKG_REGISTRY.md § Derived trigger sidecar.
+
 ### Builder triggers — the declared half of the auto-use surface (2026-10-14)
 
 - `[triggers] builders = ["set"]` (`Manifest::trigger_builders`): the free `pub fn`s a

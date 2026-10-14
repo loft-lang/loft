@@ -424,9 +424,14 @@ today's index, `loft --check` on a four-line program cost **1.05 s and
 344 MB RSS**, all of it `api` rows the compiler never looks at.
 
 The sidecar holds just the map, stamped with the index's byte length +
-mtime.  A missing or mismatched stamp rebuilds it from the index and
-writes it back, so the parse lands once per index rather than once per
-compile; the registry commands that fetch an index refresh it from the
+mtime and the derivation that produced it.  The map reads each package's
+NEWEST loadable release only — yanked, prerelease and floor-refused
+versions skipped, as `loft install` chooses — so a spelling an older
+release carried and the current one dropped does not load the package
+to fail on an unknown method.
+A missing or mismatched stamp, or a sidecar without the `derivation`
+key this loft writes, rebuilds it from the index and writes it back, so
+the parse lands once per index rather than once per compile; the registry commands that fetch an index refresh it from the
 copy they already hold (`install::load_index_inner`).  Same program,
 same 100× index, with the sidecar: **0.04 s and 11.7 MB** — the cost of
 having no catalog at all.  It is derived data: any doubt rebuilds it,

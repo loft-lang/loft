@@ -1183,11 +1183,17 @@ pub fn cached_versions(pkg: &str) -> Vec<String> {
 /// the method up here, gets the package name, and hands it to the normal
 /// `lib_path` resolution (lockfile → installed → auto-install).
 ///
+/// **Which release speaks for a package:** the one `loft install` would choose for a
+/// consumer that declared nothing — the newest that is not yanked, not a prerelease and
+/// whose `loft` floor this loft meets ([`find_best_version`] on `"*"`).  Its triggers are
+/// the package's; an older release's are not, so a spelling a release dropped (regex 0.5.0
+/// retired `regex_find`) stops loading the package only to fail on an unknown method, and
+/// a package with no loadable release answers nothing.
+///
 /// **Ambiguity policy:** a method provided by exactly one package maps to it; a
 /// method provided by two or more *distinct* packages is OMITTED — auto-loading
 /// would have to guess, so the consumer must disambiguate with an explicit
-/// `use`.  Versions of the SAME package collapse to one provider, so a
-/// multi-version package is never self-ambiguous.  This omit is a safety net:
+/// `use`.  This omit is a safety net:
 /// the registry CI rejects a submission whose full `method:receiver` trigger
 /// collides with another package (`validate.py` gate 4, mirrored locally by the
 /// [`trigger_owners`] publish pre-check), so a true `text.matches` vs
@@ -1215,20 +1221,21 @@ fn is_builder_trigger(trig: &str) -> bool {
 fn providers_of(index: &RegistryIndex, builders: bool) -> BTreeMap<String, String> {
     let mut providers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (pname, pkg) in &index.packages {
-        for ver in pkg.versions.values() {
-            for trig in &ver.triggers {
-                if is_builder_trigger(trig) != builders {
-                    continue;
-                }
-                let method = trig.split(':').next().unwrap_or(trig);
-                if method.is_empty() {
-                    continue;
-                }
-                providers
-                    .entry(method.to_string())
-                    .or_default()
-                    .insert(pname.clone());
+        let Some(ver) = find_best_version(pkg, "*", false) else {
+            continue;
+        };
+        for trig in &ver.triggers {
+            if is_builder_trigger(trig) != builders {
+                continue;
             }
+            let method = trig.split(':').next().unwrap_or(trig);
+            if method.is_empty() {
+                continue;
+            }
+            providers
+                .entry(method.to_string())
+                .or_default()
+                .insert(pname.clone());
         }
     }
     providers
@@ -1269,10 +1276,17 @@ fn index_stamp(index: &std::path::Path) -> Option<(u64, u64)> {
 /// The two maps a sidecar carries: the method triggers and the builders.
 type SidecarMaps = (BTreeMap<String, String>, BTreeMap<String, String>);
 
+/// How the maps are derived from the index, written into the sidecar beside the index
+/// stamp: a loft whose derivation differs rebuilds a sidecar the index stamp alone would
+/// call current.  1 was the union over every published version; 2 is the newest loadable
+/// release only ([`trigger_providers`]).
+const SIDECAR_DERIVATION: i64 = 2;
+
 /// The sidecar's maps, or `None` when it is absent, unreadable, stamped for a
-/// different index, or written before it carried `builders` (a loft that did not
-/// know them left the key out, and that sidecar would answer no bare call until the
-/// index moved).  Derived data is rebuilt on any doubt, never trusted.
+/// different index, derived another way ([`SIDECAR_DERIVATION`]), or written before it
+/// carried `builders` (a loft that did not know them left the key out, and that sidecar
+/// would answer no bare call until the index moved).  Derived data is rebuilt on any
+/// doubt, never trusted.
 fn read_trigger_sidecar_at(
     sidecar: &std::path::Path,
     index: &std::path::Path,
@@ -1284,6 +1298,7 @@ fn read_trigger_sidecar_at(
     };
     let mut stamped_len: Option<i64> = None;
     let mut stamped_mtime: Option<i64> = None;
+    let mut derivation: Option<i64> = None;
     let mut map = BTreeMap::new();
     let mut builders: Option<BTreeMap<String, String>> = None;
     let read_map = |v: &Parsed| {
@@ -1301,12 +1316,15 @@ fn read_trigger_sidecar_at(
         match k.as_str() {
             "index_len" => stamped_len = v.as_i64(),
             "index_mtime" => stamped_mtime = v.as_i64(),
+            "derivation" => derivation = v.as_i64(),
             "triggers" => map = read_map(v),
             "builders" => builders = Some(read_map(v)),
             _ => {}
         }
     }
-    (stamped_len? == i64::try_from(len).ok()? && stamped_mtime? == i64::try_from(mtime).ok()?)
+    (stamped_len? == i64::try_from(len).ok()?
+        && stamped_mtime? == i64::try_from(mtime).ok()?
+        && derivation? == SIDECAR_DERIVATION)
         .then_some((map, builders?))
 }
 
@@ -1333,6 +1351,7 @@ fn write_trigger_sidecar_at(sidecar: &std::path::Path, stamp: (u64, u64), maps: 
     let doc = Parsed::Object(vec![
         ("index_len".to_string(), 0, Parsed::Int(len)),
         ("index_mtime".to_string(), 0, Parsed::Int(mtime)),
+        ("derivation".to_string(), 0, Parsed::Int(SIDECAR_DERIVATION)),
         ("triggers".to_string(), 0, Parsed::Object(entries(&maps.0))),
         ("builders".to_string(), 0, Parsed::Object(entries(&maps.1))),
     ]);
@@ -2217,6 +2236,46 @@ mod tests {
         assert_eq!(map.get("matches"), None, "ambiguous method must be omitted");
     }
 
+    /// The newest loadable release speaks for a package: a spelling an older release carried
+    /// and the current one dropped is no trigger, nor is one only a yanked, a prerelease or a
+    /// floor-refused release carries.
+    #[test]
+    fn the_catalog_maps_follow_the_newest_loadable_release() {
+        let idx = parse_index(
+            r#"{ "schema_version": 1, "updated": "x", "packages": {
+                "regex": { "categories": [], "yanked": ["0.3.0"], "versions": {
+                    "0.1.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["matches:text", "regex_find:text", "mk:fn"], "published": "x" },
+                    "0.2.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["matches:text", "search:text", "build:fn"], "published": "x" },
+                    "0.3.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["capture:text"], "published": "x" },
+                    "0.4.0-beta": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "prerelease": true, "triggers": ["named:text"], "published": "x" },
+                    "9.0.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=9999.1.0",
+                        "triggers": ["future:text"], "published": "x" } } },
+                "gone": { "categories": [], "yanked": ["0.1.0"], "versions": {
+                    "0.1.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["slugify:text"], "published": "x" } } } } }"#,
+        )
+        .expect("parse");
+        let methods = trigger_providers(&idx);
+        assert_eq!(methods.get("search").map(String::as_str), Some("regex"));
+        assert_eq!(methods.get("matches").map(String::as_str), Some("regex"));
+        for retired in ["regex_find", "capture", "named", "future", "slugify"] {
+            assert!(
+                !methods.contains_key(retired),
+                "{retired} is not the newest release's"
+            );
+        }
+        let builders = builder_providers(&idx);
+        assert_eq!(builders.get("build").map(String::as_str), Some("regex"));
+        assert!(
+            !builders.contains_key("mk"),
+            "a dropped builder is no trigger"
+        );
+    }
+
     /// A `"set:fn"` entry is a builder: it answers a bare `set(…)`, never a `.set(` method,
     /// and the two maps keep apart.
     #[test]
@@ -2987,6 +3046,38 @@ mod tests {
         let text = file_access::read_to_string(&sidecar).unwrap();
         assert!(text.contains("globbing"), "sidecar not rewritten: {text}");
 
+        let _ = file_access::remove_dir_all(&dir);
+    }
+
+    /// A sidecar an older loft derived the other way carries no derivation stamp, so the
+    /// index stamp alone must not pass it off as current.
+    #[test]
+    fn a_sidecar_from_another_derivation_is_rebuilt() {
+        let dir = scratch_dir("sidecar-derivation");
+        let index = dir.join("index.json");
+        let sidecar = dir.join("triggers.json");
+        file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
+        let (len, mtime) = index_stamp(&index).expect("stamp");
+        file_access::write(
+            &sidecar,
+            format!(
+                r#"{{"index_len": {len}, "index_mtime": {mtime}, "triggers": {{"matches": "stale"}}, "builders": {{}}}}"#
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog_maps_at(&sidecar, &index)
+                .0
+                .get("matches")
+                .map(String::as_str),
+            Some("regex"),
+            "a sidecar without the derivation stamp must be rebuilt from the index"
+        );
+        let text = file_access::read_to_string(&sidecar).unwrap();
+        assert!(
+            text.contains("\"derivation\""),
+            "the rebuilt sidecar carries its derivation: {text}"
+        );
         let _ = file_access::remove_dir_all(&dir);
     }
 
