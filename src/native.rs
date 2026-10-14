@@ -5567,5 +5567,6 @@ fn n_to_json_pretty_dest(stores: &mut Stores, stack: &mut DbRef) {
 /// for each and passes `&mut`.  Shared with `native_lib` (the gate admits exactly
 /// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
 pub(crate) fn is_text_work_buffer(t: &crate::data::Type) -> bool {
-    matches!(t, crate::data::Type::RefVar(inner) if matches!(**inner, crate::data::Type::Text(_)))
+    use crate::data::Type;
+    matches!(t, Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
 }
