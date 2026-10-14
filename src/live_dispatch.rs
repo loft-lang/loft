@@ -344,15 +344,7 @@ pub fn flip_all_dispatch_debug() {
     ));
 }
 
-/// @PLN98 P3.4 — write `msg` to the browser host's stdout (`loft_host_print`), so a
-/// headless `--html` run can observe the debug tier's activity.  A no-op off the
-/// browser wasm target (native / wasip2 / the `wasm` feature route their own way).
-pub fn wasm_host_log(msg: &str) {
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
-    crate::loft_host_print(msg.as_ptr(), msg.len());
-    #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))))]
-    let _ = msg;
-}
+pub use crate::platform::wasm_host_log;
 
 /// @PLN98 P3.4 — run the cooperative debug cycle (P3.2) entirely inside the
 /// current runtime and REPORT it, so a headless `--html` run can confirm the

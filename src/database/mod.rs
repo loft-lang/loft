@@ -1834,10 +1834,7 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            lg.log_runtime_kind(
-                &kind,
-                crate::codegen_runtime::running_frame_position().as_ref(),
-            );
+            lg.log_runtime_kind(&kind, crate::call_frames::running_frame_position().as_ref());
         }
     }
 

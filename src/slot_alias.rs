@@ -29,7 +29,7 @@
 //!
 //! `LOFT_NO_LOOP_VAR_ALIAS=1` keeps every copy (`keys::loop_var_alias_enabled`).
 use crate::data::{Data, Value};
-use crate::generation::hoist;
+use crate::loop_shape;
 
 /// The `(loop variable, range index)` pairs of function `d_nr` that share one slot.  A pure
 /// function of the IR: the allocator and the validator each ask it and get the same answer.
@@ -45,7 +45,7 @@ pub fn range_slot_aliases(data: &Data, d_nr: u32) -> Vec<(u16, u16)> {
     let mut pairs: Vec<(u16, u16, &crate::data::Block)> = Vec::new();
     code.any_node(&mut |n| {
         if let Value::Loop(lp) = n
-            && let Ok(rc) = hoist::range_counters(lp, data)
+            && let Ok(rc) = loop_shape::range_counters(lp, data)
         {
             pairs.push((rc.loop_var, rc.index, lp));
         }

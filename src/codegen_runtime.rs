@@ -19,6 +19,13 @@
 #![allow(non_snake_case)]
 
 use crate::btree;
+// The shadow call stack and the lazy-driver flag live in `call_frames`, in the core layer;
+// these are the paths emitted Rust calls them by.
+use crate::call_frames::with_call_frames;
+pub use crate::call_frames::{
+    CallGuard, cr_call_pop, cr_call_push, cr_call_push_lean, cr_call_site, in_lazy_driver,
+    native_call_chain,
+};
 use crate::database::{ShowDb, Stores};
 use crate::keys::{Content, DbRef, Key};
 use crate::ops;
@@ -334,7 +341,7 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
     }
 }
 use crate::vector;
-use std::cell::{Cell, RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell};
 #[cfg(not(host_fs))]
 use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
@@ -623,17 +630,7 @@ pub fn host_print(s: &str) {
     }
 }
 
-/// Write `s` to standard error, ignoring a write that cannot land.
-///
-/// The counterpart of [`host_print`], and it does NOT exit: stderr being closed says nothing
-/// about the program's own output, so `prog 2>/dev/full` or a reader that stopped reading the
-/// diagnostics stream must not end the run.  What it must never do is panic — a panic whose
-/// message cannot be printed is what turns a broken pipe into a SIGABRT and a crash report
-/// (loft#1289).
-pub fn host_eprint(s: &str) {
-    use std::io::Write;
-    let _ = std::io::stderr().write_all(s.as_bytes());
-}
+pub use crate::platform::host_eprint;
 
 /// conditionally free `placeholder` — only when its `store_nr`
 /// differs from `witness`'s.  Emitted for `__ref_N` work-refs whose
@@ -723,31 +720,6 @@ static LAZY_FETCH: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::ne
 /// compiled. Generated `init()` installs the refusal so both backends answer the
 /// sentence `Data` wrote.
 static LAZY_FETCH_REFUSAL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-thread_local! {
-    /// @PLN133 S8 — is this thread inside a lazy DRIVER right now?
-    ///
-    /// It changes what a fault MEANS. An ordinary loft call that overflows the
-    /// stack is a program bug and halting is right; the same overflow inside a
-    /// FETCH is not, because @PLN129's contract is @C80 — a failed fetch reports
-    /// through `store_lazy_error` and the lookup answers null. So a buggy driver
-    /// must not turn a lookup into a program halt, which is what moving the
-    /// source from Rust to loft would otherwise have cost.
-    ///
-    /// Thread-local rather than global: a `par` worker running its own fetch is
-    /// its own answer.
-    static IN_LAZY_DRIVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Is a fault on this thread a driver's, and therefore containable?
-///
-/// Read by `cr_stack_overflow`, which exits the process for an ordinary overflow
-/// and unwinds for this one, and by the panic hook, which stays silent for a
-/// fault that is about to be reported through arc C's channel instead.
-#[must_use]
-pub fn in_lazy_driver() -> bool {
-    IN_LAZY_DRIVER.with(std::cell::Cell::get)
-}
 
 /// Install one lazy driver, under the element type it serves. Emitted by
 /// generated `init()`, once per driver.
@@ -963,12 +935,12 @@ fn get_record_lookup(
             // unwind runs its own drop glue, but a loft store is freed by an
             // explicit call the unwind skips exactly as the interpreter's fault
             // skips its scope-exit op — measured identical on both backends.
-            IN_LAZY_DRIVER.with(|f| f.set(true));
+            crate::call_frames::set_in_lazy_driver(true);
             let outer_watch = stores.lazy_watch_begin();
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 driver(cell, data, &source, key_int, &key_text)
             }));
-            IN_LAZY_DRIVER.with(|f| f.set(false));
+            crate::call_frames::set_in_lazy_driver(false);
             // `stores` was borrowed from `cell` and the driver borrowed it too,
             // so it is re-taken here rather than reused.
             let stores: &mut Stores = unsafe { &mut *cell.get() };
@@ -5971,82 +5943,6 @@ fn browser_panic_frames() -> String {
     })
 }
 
-// Thread-local shadow call stack used by native-compiled loft code.
-// Each entry is (function_name, source_file, line_number).
-// Generated code calls `cr_call_push` / `cr_call_pop` around every function body.
-//
-// The live prefix is `CALL_FRAMES[..CALL_DEPTH]`: a pop only decrements the
-// depth, leaving its entry as garbage the next push at that depth overwrites.
-// Split this way (loft#1426 M1, @PLN157 P1) the per-call cost is a bounds test,
-// three word stores and two `Cell` updates — the `RefCell<Vec>` form's borrow
-// flag, length update and re-borrowing pop measured ~7 ns of the ~18 ns a
-// native call costs.  Every reader slices `[..depth]`; none can fail the way a
-// `try_borrow` could, because a read never observes a half-made entry — the
-// depth is bumped only after the entry is fully written, and the readers
-// (frame renderers, `stack_trace()`) run between pushes, not inside one.
-thread_local! {
-    static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
-    /// `(name, file, declaration line, call site)` per frame: the call site is the line
-    /// this frame is calling from, written by [`cr_call_site`] before each call.
-    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32, u32)>> =
-        const { UnsafeCell::new(Vec::new()) };
-}
-
-/// Read the live frames — `CALL_FRAMES[..CALL_DEPTH]` — without copying.
-///
-/// The `min` clamp is load-bearing for the LEAN tier (@PLN157): a `--lean`
-/// binary advances the depth through [`cr_call_push_lean`] without writing
-/// frames, so the array can be shorter than the depth — its readers then see
-/// whatever named frames exist (none, usually) instead of panicking inside
-/// the diagnostic they serve.
-///
-/// SAFETY (of the internal `&*ptr`): the only `&mut` into `CALL_FRAMES` lives
-/// inside `cr_call_push`'s statement on this same thread and is gone by the
-/// time any reader runs; entries below `depth` are fully initialised because
-/// the depth is published after the write.
-fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)]) -> R) -> R {
-    let depth = CALL_DEPTH.get();
-    CALL_FRAMES.with(|frames| {
-        let v = unsafe { &*frames.get() };
-        f(&v[..depth.min(v.len())])
-    })
-}
-
-/// Where the running native frame was declared, for a RECOVERABLE fault's log line — the same
-/// position the halting path names on `--native` (`State::running_frame_declaration` is the
-/// interpreter's twin), because the generated code keeps no per-statement line.  `None` on the
-/// lean tier, which pushes no frames, and outside any loft frame.
-pub(crate) fn running_frame_position() -> Option<crate::lexer::Position> {
-    with_call_frames(|frames| {
-        frames
-            .last()
-            .map(|(_, file, line, _)| crate::lexer::Position {
-                file: crate::lexer::intern_file(file),
-                line: *line,
-                pos: 1,
-            })
-    })
-}
-
-/// The loft frames this native thread is inside, innermost first.
-///
-/// The `--native` counterpart of the interpreter's `State::current_call_chain`, in the
-/// same shape (bare function names) so that one renderer serves both backends —
-/// `RuntimeError::report_and_exit` attaches these to a fault raised by `assert` or
-/// `panic`, neither of which can see a `State` to read frames from.
-#[must_use]
-pub fn native_call_chain() -> Vec<String> {
-    with_call_frames(|b| {
-        b.iter()
-            .rev()
-            .map(|(nm, _, _, _)| (*nm).to_string())
-            .collect()
-    })
-}
-
-/// Push a frame onto the shadow call stack.  Called at the start of every
-/// generated function body.  The `&'static str` arguments are string literals
-/// embedded in the generated Rust code.
 #[inline]
 /// The program's own `.loft` path for a compiled program: the one its driver passes in
 /// `LOFT_NATIVE_MAIN_FILE` when it launches the binary, else `baked`.  A test/semantics build
@@ -6064,137 +5960,12 @@ pub fn main_file_or(baked: &'static str) -> &'static str {
     .unwrap_or(baked)
 }
 
-pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
-    // @PLN28 — native call-depth guard.  Generated Rust recurses one native
-    // frame per loft call, so unbounded recursion overflows the OS stack with
-    // an opaque `fatal runtime error: stack overflow, aborting`.  The
-    // interpreter caps recursion at `State::MAX_CALL_DEPTH` and renders a typed
-    // `StackOverflow`; mirror that here so both backends agree and native emits
-    // a clean, source-located error instead of an abort.  (The generated `main`
-    // runs on a large-stack thread — see `NATIVE_MAIN_STACK` — so this depth
-    // limit is what actually fires, well before the OS stack is exhausted.)
-    //
-    // loft#1058 — the check comes BEFORE the push, as `State::fn_call`'s does: a
-    // refused call never runs, so its frame is not part of the stack the diagnostic
-    // reports.  Pushing first and tripping after put the refused callee on top of the
-    // chain and made it one frame longer than the interpreter's — the two backends
-    // named different functions for one fault.  The position is read off the frame
-    // BELOW for the same reason: it is the function that is running.
-    let depth = CALL_DEPTH.get();
-    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
-        let (running_file, running_line) =
-            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln, _)| (*f, *ln)));
-        cr_stack_overflow(running_file, running_line);
-    }
-    CALL_FRAMES.with(|frames| {
-        // SAFETY: the exclusive borrow lasts only this statement, on this
-        // thread, and nothing else can run inside it.
-        let v = unsafe { &mut *frames.get() };
-        if depth < v.len() {
-            v[depth] = (name, file, line, 0);
-        } else {
-            v.push((name, file, line, 0));
-        }
-    });
-    CALL_DEPTH.set(depth + 1);
-    // @PLAN49 T1 — refresh the shared breadcrumb at every native fn
-    // entry so a watchdog-fired hard-kill identifies the most recent
-    // loft fn we entered.  Single combined call.  When the timeout
-    // is not armed, the body is just one relaxed atomic load + branch
-    // (no allocation, no mutex) — ~1-2 ns per fn entry.
-    crate::timeout::checkpoint_fn("run-native", name, file, line);
-}
-
-/// Record the line the running frame is calling FROM (loft#1753).  Emitted before each
-/// statement that calls into a frame, in a function that pushed a named frame, so that
-/// [`n_stack_trace`] reports each frame's `line` as the call site that entered it — the
-/// interpreter's `CallFrame.line`.  One store into this thread's frame array; the lean tier
-/// never emits it.
-#[inline]
-pub fn cr_call_site(line: u32) {
-    let depth = CALL_DEPTH.get();
-    if depth == 0 {
-        return;
-    }
-    CALL_FRAMES.with(|frames| {
-        // SAFETY: as in `cr_call_push` — an exclusive borrow for this statement only.
-        let v = unsafe { &mut *frames.get() };
-        if let Some(frame) = v.get_mut(depth - 1) {
-            frame.3 = line;
-        }
-    });
-}
-
 /// Native stack size for the generated `main` thread.  The OS main-thread
 /// stack (~8 MiB) overflows at a few thousand recursive loft calls — below the
 /// `MAX_CALL_DEPTH` (10 000) guard.  A generous, virtual (lazily-committed)
 /// stack holds 10 000 frames even for stack-heavy functions (~50 KiB/frame
 /// budget), so the depth guard fires cleanly before the OS stack is exhausted.
 pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
-
-/// Report the call-stack overflow and stop the program, through the renderer every
-/// other halting fault uses.  `#[cold]` / `inline(never)` keeps it off the hot
-/// call-entry path.
-///
-/// `file` / `line` are the string literals `cr_call_push` was emitted with — the
-/// declaration of the function whose entry exceeded the cap, which is the position the
-/// interpreter reports for the same fault (loft#1058).  Before this the two backends
-/// spelled one event two ways: no `-->` block or caret here, its own frame format, and
-/// the depth count only on this side.  The count now lives in
-/// `RuntimeErrorKind::describe()`, so BOTH backends carry it, and the frames come from
-/// the same `render_call_chain` the interpreter's go through.
-///
-/// The lazy-driver bypass @PLN133 S8 asks for is `report_and_exit`'s, shared with
-/// `panic` and `assert`: a fault inside a driver unwinds into `store_lazy_error` rather
-/// than halting the program.
-#[cold]
-#[inline(never)]
-fn cr_stack_overflow(file: &str, line: u32) -> ! {
-    crate::runtime_error::RuntimeError::stack_overflow(file, line).report_and_exit()
-}
-
-/// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap
-/// without the frame record.  A `--lean` binary trades the shadow stack's
-/// diagnostics — `stack_trace()` answers no frames, a native `assert`/`panic`
-/// carries no loft frame block, the watchdog breadcrumb is not refreshed —
-/// for a per-call cost of one bounds test and two `Cell` updates (measured
-/// ~1.2 ns against ~6.7 ns for the named prelude).  What it KEEPS is the
-/// depth cap itself, at the same `MAX_CALL_DEPTH` both backends share; the
-/// overflow report names this call's own entry site rather than the frame
-/// below (there is no frame below to read — the one spelling difference from
-/// the named tier).  [`CallGuard`] balances it unchanged: the pop is a bare
-/// decrement either way.
-#[inline]
-pub fn cr_call_push_lean(file: &'static str, line: u32) {
-    let depth = CALL_DEPTH.get();
-    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
-        cr_stack_overflow(file, line);
-    }
-    CALL_DEPTH.set(depth + 1);
-}
-
-/// Pop a frame from the shadow call stack.  Called at the end of every
-/// generated function body (including early returns via a drop guard).
-/// One `Cell` decrement — the entry itself stays behind as garbage the next
-/// push at this depth overwrites.
-#[inline]
-pub fn cr_call_pop() {
-    let depth = CALL_DEPTH.get();
-    if depth > 0 {
-        CALL_DEPTH.set(depth - 1);
-    }
-}
-
-/// RAII guard that pops the shadow call stack on drop, ensuring the stack
-/// stays balanced even when the function returns early.
-pub struct CallGuard;
-
-impl Drop for CallGuard {
-    #[inline]
-    fn drop(&mut self) {
-        cr_call_pop();
-    }
-}
 
 // The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
 // innermost frame last.  The `--native` half of the interpreter's `State::fnref_bufs`

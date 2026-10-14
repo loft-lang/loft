@@ -2548,8 +2548,7 @@ impl ShowDb<'_> {
 /// store number with a slot in `rec`, a native one its own reserved number — so a field or an
 /// element holding one renders as its kind rather than as either backend's numbers.
 pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
-    store_nr == super::COROUTINE_STORE
-        || store_nr == super::NATIVE_COROUTINE_STORE
+    store_nr == super::COROUTINE_STORE || store_nr == super::NATIVE_COROUTINE_STORE
 }
 
 #[cfg(test)]
