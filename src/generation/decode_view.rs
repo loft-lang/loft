@@ -106,7 +106,9 @@ fn op_name(data: &Data, d: u32) -> &str {
     }
 }
 
-/// A function with a loft body the region can re-emit.
+/// A function with a loft body the region can re-emit.  Its `native` name is no test: a
+/// library function the program also links from the library's own cdylib carries one, and
+/// its loft body is still the one this build emits.
 fn loft_fn(data: &Data, d: u32) -> bool {
     if (d as usize) >= data.definitions.len() {
         return false;
