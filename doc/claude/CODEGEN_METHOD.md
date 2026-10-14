@@ -290,13 +290,16 @@ question that nothing cheaper can.  In order:
    read the IR (`loft introspect`) and the emitted Rust (`--native-emit`) of the failing
    function, and point at the node or line that is wrong.  A fix built on a hypothesis that
    the artifact never showed is a build that may change nothing.
-2. **Compile questions go to `cargo check`**, not to a build.
+2. **Compile questions go to `cargo check`**, not to a build, and correctness questions to
+   the dev profile: it links its own `libloft.rlib` and runs the loft library with the same
+   debug assertions off, so it answers every gate below.  A release build answers a SPEED
+   question, or builds a binary that ships.
 3. **One heavy job at a time.**  A build, a corpus census, a `cargo test` of many binaries, a
    falsify run (two more full builds in their own target directories) and the drop gate
    (dozens of native compiles) each fill the machine; run beside one another they slow
    every one of them and the build being waited on most of all.
 4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites
-   it touches, `cargo test --release --test ownership_drop_gate` on both backends for
+   it touches, `cargo test --test ownership_drop_gate` on both backends for
    anything that changes what a value is held in or when it is released, the poison and
    stack sweeps (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`), the corpus census above, and both
    clippy legs.  A gate first run on GitHub after the push costs a gate run, a fix build and
@@ -374,7 +377,7 @@ every operand is an arm and the parser's own per-arm bind is the copy.  Where a 
 rewrite is unavoidable, keep the parser's `Set` and rewrite only the VALUE inside it, so the
 copy machinery around that statement still applies.
 
-**The instrument.** `cargo test --release --test ownership_drop_gate` — its copy census names
+**The instrument.** `cargo test --test ownership_drop_gate` — its copy census names
 the copy each cell owes and is what caught the second case.  A value cell cannot see a release
 at all, and `every_cell_releases_each_resource_once` cannot see WHICH record was released
 (loft#1617 lives in exactly that blind spot).

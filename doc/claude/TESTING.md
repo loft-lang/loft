@@ -307,11 +307,11 @@ missing baseline fails; it is never written on first sight.  Each run also print
 where the two backends disagree.
 
 ```bash
-cargo test --release --test ownership_drop_gate                            # both legs, ~40 s warm
-LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate     # only after reading the diff
+cargo test --test ownership_drop_gate                            # both legs, dev profile
+LOFT_BLESS_DROP_GATE=1 cargo test --test ownership_drop_gate     # only after reading the diff
 ```
 
-The native leg is four tests (`every_cell_releases_each_resource_once_on_native_0..3`, every 4th
+The native leg is eight tests (`every_cell_releases_each_resource_once_on_native_0..7`, every 8th
 cell from each offset) so no test outgrows the per-test duration gate.  Each checks, and under
 `LOFT_BLESS_DROP_GATE=1` rewrites, only its own cells' lines of the one native baseline — a merge
 under a lock file, so the bless command is unchanged and parallel chunks cannot clobber each other.
