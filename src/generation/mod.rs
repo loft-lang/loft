@@ -12431,7 +12431,7 @@ mod scrub_tests {
         const IMPORTED: &[&str] = &["codegen_runtime", "narrow"];
         /// Rewritten to `loft::<m>::` by `scrub_generated_crate_refs` and by
         /// `calls.rs`'s per-template substitution.
-        const REWRITTEN: &[&str] = &["rpc", "store", "state", "runtime_error"];
+        const REWRITTEN: &[&str] = &["store", "state", "runtime_error"];
         /// The generated crate's OWN item, so `crate::` is already right for it.
         const GENERATED_OWN: &[&str] = &["wasm"];
 

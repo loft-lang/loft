@@ -81,7 +81,7 @@ C121	code	src/use_analysis.rs::fn raise_copy_refusals; src/lease.rs::fn written_
 C122	code	src/generation/hoist.rs::(R-Escape)	ok	-	
 C123	code	src/data.rs::let shadowed_free; src/parser/definitions.rs::both-receiver-deprecated	ok	-	shares its refusal with C95
 C124	code	src/parser/mod.rs	ok	-	
-C125	code	src/data.rs::every heap value is one `DbRef` on the stack; src/generation/mod.rs::every heap value is one `DbRef` in native code	ok	-	
+C125	code	src/data.rs::every heap value is one `DbRef` on the stack; src/rust_spelling.rs::every heap value is one `DbRef` in native code	ok	-	
 C126	code	src/parser/definitions.rs::appears in no parameter	ok	-	
 C127	code	src/parser/fit.rs; src/parser/expressions.rs	ok	-	
 C128	code	src/parser/vectors.rs::fn yield_owned_closure	ok	-	

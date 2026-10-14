@@ -121,6 +121,13 @@ pub fn native_call_chain() -> Vec<String> {
 /// Push a frame onto the shadow call stack.  Called at the start of every
 /// generated function body.  The `&'static str` arguments are string literals
 /// embedded in the generated Rust code.
+///
+/// Deliberately NOT `#[inline]`.  Only the semantics tier (`--native`, the default backend
+/// and the test runner) emits this push — a `--native-release` program pushes through
+/// [`cr_call_push_lean`] — and that tier compiles the generated program at a low optimisation
+/// level.  An `#[inline]` function is compiled again INSIDE the program at that level instead
+/// of being called in its optimised form from the release `libloft`: measured on a
+/// call-heavy program (48 M named calls), 141 s without the attribute and 255 s with it.
 pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     // @PLN28 — native call-depth guard.  Generated Rust recurses one native
     // frame per loft call, so unbounded recursion overflows the OS stack with
