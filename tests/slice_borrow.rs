@@ -123,10 +123,17 @@ fn a_slice_that_escapes_or_has_no_borrowable_source_keeps_the_copy() {
     // A record FIELD bound from a slice is a store write, which copies whatever the
     // local beside it does.
     let b = body(&rust, "n_t7");
-    assert_eq!(count(b, "set_str("), 1, "t7: the field is written into the store");
+    assert_eq!(
+        count(b, "set_str("),
+        1,
+        "t7: the field is written into the store"
+    );
     // A generator keeps the copy: its locals live in the coroutine's struct.
     assert_eq!(
-        count(&rust, "self.var_t = (OpGetTextSub(var_line, 0_i64, 2_i64)).to_string()"),
+        count(
+            &rust,
+            "self.var_t = (OpGetTextSub(var_line, 0_i64, 2_i64)).to_string()"
+        ),
         1,
         "gen: the yielded slice is copied into the coroutine state"
     );
@@ -144,9 +151,17 @@ fn the_switch_restores_the_copy_and_leaves_the_sibling_clauses_on() {
         );
     }
     let b = body(&rust, "n_t3");
-    assert_eq!(count(b, "let mut var_t: String"), 1, "t3: `t` is an owned String");
+    assert_eq!(
+        count(b, "let mut var_t: String"),
+        1,
+        "t3: `t` is an owned String"
+    );
     // The walk clause of `(R-TextBorrow)` is untouched by the switch: the stdlib's join
     // still borrows its element.
     let j = body(&rust, "t_6vector_join");
-    assert_eq!(count(j, "let var_p: &str = "), 1, "join still binds its element as a `&str`");
+    assert_eq!(
+        count(j, "let var_p: &str = "),
+        1,
+        "join still binds its element as a `&str`"
+    );
 }
