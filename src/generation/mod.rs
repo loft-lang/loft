@@ -4647,6 +4647,7 @@ impl Output<'_> {
         if self.hoist_disabled {
             return hoist::LoopHoist::default();
         }
+        let tiers = self.hoist_tiers();
         hoist::hoistable(
             lp,
             self.data,
@@ -4654,15 +4655,7 @@ impl Output<'_> {
             self.def_nr,
             &mut self.hoist_cache,
             &mut self.scalar_write_cache,
-            hoist::HoistTiers {
-                in_place: !self.write_hoist_disabled,
-                scalars: !self.scalar_hoist_disabled,
-                push: !self.push_hoist_disabled,
-                mint: !self.mint_hoist_disabled,
-                record_push: !self.record_push_disabled,
-                heap_push: !self.heap_record_push_disabled,
-                rebound_movers: !self.rebound_mover_disabled,
-            },
+            tiers,
             (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
             Some(&self.hoist_owned),
             (!self.distinct_growth_disabled)
