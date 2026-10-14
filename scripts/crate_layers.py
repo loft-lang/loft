@@ -58,30 +58,30 @@ LAYERS: list[tuple[str, list[str]]] = [
         "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
         "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
         "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
-        "sandbox", "schema_sidecar", "script", "self_update", "siphash", "slot_alias", "spatial",
+        "sandbox", "schema_sidecar", "self_update", "siphash", "slot_alias", "spatial",
         "stack_census", "stack_verify", "stdlib_sources", "store", "store_budget", "store_census",
         "take_local", "text_calls", "text_run", "timeout", "tls", "trace", "trie_db", "triggers",
         "tuple_links", "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets",
         "wasm_gl",
     ]),
     ("front", [
-        "compile", "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
+        "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
         "forward_walk", "in_range", "ir_node", "ir_read", "ir_store", "lease", "ownership_cfg",
         "parser", "place_result", "rebind_place", "same_read", "scopes", "single_use", "spent",
         "typedef", "use_analysis",
     ]),
     ("gen", [
-        "ctor_literal", "debugger", "engine_host", "generation", "leaf_inline", "live_dispatch",
-        "live_reload", "rpc", "value_record",
+        "ctor_literal", "generation", "leaf_inline", "value_record",
     ]),
     ("runtime", [
-        "c_call", "codegen_runtime", "compiled_stdlib", "create", "extensions", "fill",
-        "fuzz_keyed", "fuzz_oracle", "introspect", "loop_kernels", "native", "native_gate",
-        "native_lib", "parallel", "profiler", "stack", "state", "stdlib_ops",
+        "c_call", "codegen_runtime", "compile", "compiled_stdlib", "create", "debugger",
+        "engine_host", "extensions", "fill", "fuzz_keyed", "fuzz_oracle", "introspect",
+        "live_dispatch", "live_reload", "loop_kernels", "native", "native_gate", "native_lib",
+        "parallel", "profiler", "rpc", "stack", "state", "stdlib_ops",
     ]),
     ("facade", [
-        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "serve", "startup_cache",
-        "wasm_debug", "wasm_entry", "wasm_threads",
+        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "script", "serve",
+        "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
     ]),
 ]
 
@@ -89,12 +89,12 @@ LAYERS: list[tuple[str, list[str]]] = [
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
-    ("core", "front"): 2,
+    ("core", "front"): 1,
     ("core", "runtime"): 8,
-    ("front", "gen"): 4,
-    ("front", "runtime"): 10,
-    ("gen", "facade"): 6,
-    ("gen", "runtime"): 9,
+    ("front", "gen"): 1,
+    ("front", "runtime"): 9,
+    ("gen", "runtime"): 1,
+    ("runtime", "facade"): 6,
 }
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
