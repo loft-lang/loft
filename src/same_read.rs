@@ -630,14 +630,18 @@ fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &
     let live: Vec<usize> = (0..block.operators.len())
         .filter(|i| !matches!(block.operators[*i], Value::Line(_)))
         .collect();
-    let (Some(&first), Some(&last)) = (live.first(), live.last()) else {
+    // The chain is the block's last `if`: the frees of the arms' text bindings follow it.
+    let (Some(&first), Some(&last)) = (
+        live.first(),
+        live.iter().rev().find(|i| matches!(block.operators[**i].unspan(), Value::If(..))),
+    ) else {
         return 0;
     };
     let Value::Set(subject, _) = block.operators[first].unspan() else {
         return 0;
     };
     let subject = *subject;
-    if first == last || !matches!(block.operators[last].unspan(), Value::If(..)) {
+    if first == last {
         return 0;
     }
     // The arm tests: the condition of each `if` down the chain's else-spine.
