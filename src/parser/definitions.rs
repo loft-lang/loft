@@ -1384,7 +1384,7 @@ impl Parser {
             && self.const_elem_unsupported(elem).is_none()
         {
             Self::sole_vector_literal(self.data.def(d_nr).code(), &self.data).filter(|lit| {
-                blocked = crate::compile::const_vector_blocker(lit, &self.data);
+                blocked = crate::const_literal::const_vector_blocker(lit, &self.data);
                 blocked.is_none()
             })
         } else {
@@ -1928,7 +1928,7 @@ impl Parser {
                     .const_elem_unsupported(elem)
                     .map(|what| format!("has {what}, which a constant cannot hold"))
                     .or_else(|| {
-                        crate::compile::const_vector_blocker(&val, &self.data)
+                        crate::const_literal::const_vector_blocker(&val, &self.data)
                             .map(|what| format!("is built from {what}"))
                     });
                 if let Some(what) = unsupported {
@@ -3568,7 +3568,7 @@ impl Parser {
                 let ctx = self.context as usize;
                 let body = self.data.definitions[ctx].code();
                 let fn_name = self.data.definitions[ctx].name();
-                self.vars.debug_dead_store_dump(fn_name, body, &self.data);
+                crate::use_analysis::debug_dead_store_dump(&self.vars, fn_name, body, &self.data);
             }
             // The lints read the body where it lives: `self.vars`, `self.lexer` and
             // `self.data` are disjoint fields, and the `&mut self` lints below borrow it

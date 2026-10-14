@@ -16950,8 +16950,8 @@ impl Parser {
         match tail.unspan() {
             Value::Call(op, _) => {
                 let def = self.data.def(*op);
-                crate::state::codegen::is_text_dest_native(def.name())
-                    || crate::state::codegen::is_cdylib_text_call(def)
+                crate::text_calls::is_text_dest_native(def.name())
+                    || crate::text_calls::is_cdylib_text_call(def)
             }
             Value::Return(inner) => self.native_text_call_tail(inner),
             _ => false,

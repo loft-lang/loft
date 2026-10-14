@@ -638,11 +638,11 @@ impl Parser {
         // value position — recurse into its args (nested natives), then wrap.
         let wrap_here = matches!(
             &*v,
-            Value::Call(op, _) if crate::state::codegen::is_text_dest_native(self.data.def(*op).name())
-                || crate::state::codegen::is_cdylib_text_call(self.data.def(*op))
+            Value::Call(op, _) if crate::text_calls::is_text_dest_native(self.data.def(*op).name())
+                || crate::text_calls::is_cdylib_text_call(self.data.def(*op))
                 // @PLN24 arc D — a `#c` binding returning text is a value-position
                 // producer like the other two, and needs the same work-text temp.
-                || crate::state::codegen::is_c_text_call(self.data.def(*op))
+                || crate::text_calls::is_c_text_call(self.data.def(*op))
         );
         if wrap_here {
             if let Value::Call(_, args) = v {
@@ -714,8 +714,8 @@ impl Parser {
     /// (nested natives still need a temp).  Any other shape walks normally.
     fn descend_skip_direct(&mut self, v: &mut Value) {
         if let Value::Call(op, args) = v.unspan_mut() {
-            let is_dest = crate::state::codegen::is_text_dest_native(self.data.def(*op).name())
-                || crate::state::codegen::is_cdylib_text_call(self.data.def(*op));
+            let is_dest = crate::text_calls::is_text_dest_native(self.data.def(*op).name())
+                || crate::text_calls::is_cdylib_text_call(self.data.def(*op));
             if is_dest {
                 for a in args.iter_mut() {
                     self.wrap_value_text_dest(a);

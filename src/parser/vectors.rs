@@ -6,6 +6,7 @@ use super::{
     v_block, v_if, v_loop, v_set,
 };
 use crate::data::Deps;
+pub(crate) use crate::data::{is_collection, is_keyed};
 
 /// The neutral record type of a captured fn-ref's closure half (loft#1869).
 pub(crate) const FN_RECORD: &str = "__fn_record";
@@ -8370,17 +8371,6 @@ pub(crate) fn declared_element(tp: &Type) -> bool {
     !tp.is_unknown() && !crate::data::Data::type_has_unresolved(tp)
 }
 
-pub(crate) fn is_keyed(tp: &Type) -> bool {
-    matches!(
-        tp.base(),
-        Type::Hash(_, _, _)
-            | Type::Sorted(_, _, _)
-            | Type::Index(_, _, _)
-            | Type::Radix(_, _, _)
-            | Type::Trie(_, _, _)
-    )
-}
-
 /// Is this a keyed collection, however it is REACHED — the SHAPE question, `&` link peeled.
 ///
 /// Reach for this wherever the answer decides what the collection IS: which kind's insert to
@@ -8407,24 +8397,6 @@ pub(crate) fn keyed_kind(tp: &Type) -> bool {
 /// records into a collection two frames down.
 pub(crate) fn owns_keyed_store(tp: &Type) -> bool {
     is_keyed(tp) && !matches!(tp.base(), Type::RefVar(_))
-}
-
-/// Does this type name any collection a `[…]` literal can build — keyed or vector?
-///
-/// Enforces @FR-Col-Store, whose store-backed set is exactly
-/// `Parts::{Vector, Hash, Sorted, Radix, Trie}`.  Checklist #4 in
-/// doc/claude/formal/IMPLEMENTATIONS.md: this is the `is_keyed` set plus `Vector`, and the
-/// two differ by that one variant BY DESIGN — not a drifted copy of each other.
-///
-/// That "one variant" is the whole difference, which is why the `Vector` arm reads
-/// `tp.base()` exactly as [`is_keyed`] does.  While it matched bare, the two predicates
-/// disagreed on a second axis nothing documented: a `vector<τ>?` was the one collection this
-/// answered "no" for, so `towards_set`'s collection interception — asked in PASS 1, before
-/// any `!first_pass` route can claim the statement — let a nullable vector append fall
-/// through to the generic operator lookup and be refused as *"No matching operator 'Add'"*
-/// (loft#1207).
-pub(crate) fn is_collection(tp: &Type) -> bool {
-    is_keyed(tp) || matches!(tp.peel_link(), Type::Vector(_, _))
 }
 
 /// What a `c += e` source IS, relative to the collection it is being appended to.

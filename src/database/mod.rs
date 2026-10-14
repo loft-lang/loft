@@ -12,6 +12,8 @@ mod format;
 mod io;
 pub mod journal;
 pub mod lazy;
+mod rebase;
+pub use rebase::StoreRebase;
 #[cfg(not(feature = "wasm"))]
 pub mod loft_file;
 mod search;
@@ -1261,8 +1263,8 @@ impl Stores {
         &mut self,
         worker: &mut Stores,
         parent_store_count: u16,
-    ) -> crate::parallel::StoreRebase {
-        let mut rebase = crate::parallel::StoreRebase::with_parent_count(parent_store_count);
+    ) -> StoreRebase {
+        let mut rebase = StoreRebase::with_parent_count(parent_store_count);
         let total = worker.allocations.len();
         for nr in (parent_store_count as usize)..total {
             if worker.allocations[nr].free {
@@ -1448,7 +1450,7 @@ mod worker_output_slot_tests {
 #[cfg(test)]
 mod store_rebase_tests {
     use super::DbRef;
-    use crate::parallel::StoreRebase;
+    use super::StoreRebase;
 
     #[test]
     fn translate_passes_through_unmapped() {

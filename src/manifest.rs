@@ -1948,3 +1948,104 @@ n_demo_fn_b = "demo_fn_b"
         let _ = crate::file_access::remove_file(&p);
     }
 }
+
+/// Where a library's functions execute.
+///
+/// Parsed from `[library] placement` in the library's own `loft.toml` — it is
+/// the library author's declaration, not the consumer's, because the library is
+/// what knows whether it is safe and worthwhile to isolate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Placement {
+    /// Ordinary in-process calls. The default, and what every library that
+    /// declares nothing gets.
+    #[default]
+    InProc,
+    /// A worker process of this machine holds the library; calls cross a shared
+    /// memory-mapped file.
+    Process,
+    /// A server somewhere else holds the library; calls cross a socket and the
+    /// call arena travels as bytes on it (@PLN119 arc E).
+    ///
+    /// The library declares that it is MEANT to run this way; WHERE is
+    /// deployment, and comes from the environment
+    /// (`LOFT_REMOTE_<NAME>=host:port`). A library author knows whether their
+    /// library is a service; only the operator knows which one.
+    Remote,
+}
+
+impl Placement {
+    /// Read a `placement = "..."` manifest value.
+    ///
+    /// # Errors
+    /// The spelling, when it is not one this version knows. A typo has to be
+    /// loud: silently treating `"proces"` as in-process would hand back a
+    /// program that runs correctly and isolates nothing, and the difference is
+    /// invisible in the output.
+    pub fn parse(s: &str) -> Result<Placement, String> {
+        match s.trim() {
+            "inproc" => Ok(Placement::InProc),
+            "process" => Ok(Placement::Process),
+            "remote" => Ok(Placement::Remote),
+            other => Err(format!(
+                "unknown placement \"{other}\" — expected \"inproc\", \"process\" or \"remote\""
+            )),
+        }
+    }
+
+    /// The manifest spelling of this placement — the exact inverse of [`Self::parse`].
+    ///
+    /// Written beside `parse` so the two cannot drift: a spelling that does not round-trip
+    /// would make the cache manifest replay a DIFFERENT placement than the one the parse
+    /// read, and the two placements are meant to be indistinguishable in behaviour — so
+    /// nothing in any output would show the difference.
+    #[must_use]
+    pub fn spelling(self) -> &'static str {
+        match self {
+            Placement::InProc => "inproc",
+            Placement::Process => "process",
+            Placement::Remote => "remote",
+        }
+    }
+
+    /// Does this placement put the library outside this process?
+    #[must_use]
+    pub fn is_out_of_process(self) -> bool {
+        matches!(self, Placement::Process | Placement::Remote)
+    }
+
+    /// The environment variable that names WHERE a `remote` library runs.
+    ///
+    /// `LOFT_REMOTE_<NAME>` with the name upper-cased and non-alphanumerics
+    /// folded to `_`, so `hex_world` reads `LOFT_REMOTE_HEX_WORLD`.
+    #[must_use]
+    pub fn address_var(library: &str) -> String {
+        let name: String = library
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("LOFT_REMOTE_{name}")
+    }
+
+    /// Where a `remote` library runs, or why that could not be answered.
+    ///
+    /// # Errors
+    /// No address configured. Refusing is the only honest answer: falling back
+    /// to in-process would run the library HERE, which for a library declared
+    /// remote is a different deployment with different data, not a slower one.
+    pub fn address_for(library: &str) -> Result<String, String> {
+        let var = Self::address_var(library);
+        match std::env::var(&var) {
+            Ok(v) if !v.trim().is_empty() => Ok(v.trim().to_string()),
+            _ => Err(format!(
+                "library '{library}' declares placement = \"remote\" but no address is \
+                 configured — set {var}=host:port to say where it runs"
+            )),
+        }
+    }
+}

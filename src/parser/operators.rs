@@ -5,6 +5,7 @@ use super::{
     AmpHead, Data, IntegerSpec, Level, OPERATORS, Parser, Position, Type, VOID_LEFT_OPERATORS,
     Value, diagnostic_format, rename, to_default, v_block, v_if, v_set,
 };
+pub(crate) use crate::variables::VecKey;
 
 // Operator parsing and type dispatch.
 
@@ -6503,23 +6504,6 @@ enum FaultKind {
     Rem,
     VectorIndex,
     TextIndex,
-}
-
-/// Identity of a "vector" a bounds guard can prove safe.  Either a bare
-/// local/parameter (`Var`) or a struct field read
-/// `OpGetField(Var(base), off, tp)`.  Skip-pattern 5 matches the guard's
-/// vec against the indexing's vec by this key, so
-/// `if i < len(self.v) { self.v[i] }` is proven exactly like the
-/// bare-local `if i < len(loc) { loc[i] }` form.  (A struct vector-field
-/// read COPIES post-@PLN85 #415, so the old `loc = self.v` alias trick is
-/// gone and value-correct code indexes the field directly.)
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum VecKey {
-    Var(u16),
-    Field(u16, i32, i32),
-    /// A field of an OPEN instance (@PLN165 D5), read through a deferred
-    /// `Parser::TV_FIELD`: `(base variable, open instance, field)`.
-    OpenField(u16, i32, i32),
 }
 
 /// `VecKey` of an expression used as a vector — the indexing's first arg

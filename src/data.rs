@@ -2329,6 +2329,37 @@ pub enum RetPeel {
     SignatureOnly,
 }
 
+/// Is this a keyed collection — `hash`, `sorted`, `index`, `radix` or `trie` — by its
+/// base type.  `parser::vectors` names the shape and ownership questions built on it.
+pub(crate) fn is_keyed(tp: &Type) -> bool {
+    matches!(
+        tp.base(),
+        Type::Hash(_, _, _)
+            | Type::Sorted(_, _, _)
+            | Type::Index(_, _, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
+    )
+}
+
+/// Does this type name any collection a `[…]` literal can build — keyed or vector?
+///
+/// Enforces @FR-Col-Store, whose store-backed set is exactly
+/// `Parts::{Vector, Hash, Sorted, Radix, Trie}`.  Checklist #4 in
+/// doc/claude/formal/IMPLEMENTATIONS.md: this is the `is_keyed` set plus `Vector`, and the
+/// two differ by that one variant BY DESIGN — not a drifted copy of each other.
+///
+/// That "one variant" is the whole difference, which is why the `Vector` arm reads
+/// `tp.base()` exactly as [`is_keyed`] does.  While it matched bare, the two predicates
+/// disagreed on a second axis nothing documented: a `vector<τ>?` was the one collection this
+/// answered "no" for, so `towards_set`'s collection interception — asked in PASS 1, before
+/// any `!first_pass` route can claim the statement — let a nullable vector append fall
+/// through to the generic operator lookup and be refused as *"No matching operator 'Add'"*
+/// (loft#1207).
+pub(crate) fn is_collection(tp: &Type) -> bool {
+    is_keyed(tp) || matches!(tp.peel_link(), Type::Vector(_, _))
+}
+
 impl Type {
     /// @PLN104 — renumber a FRAME-variable index (`from` → `to`) through every
     /// [`Deps`] this type carries, recursing into nested element / argument / return
@@ -2594,7 +2625,7 @@ impl Type {
                 if matches!(
                     inner.as_ref(),
                     Type::Reference(_, _) | Type::Enum(_, true, _)
-                ) || crate::parser::vectors::is_keyed(inner) =>
+                ) || is_keyed(inner) =>
             {
                 (inner, RetPeel::SignatureOnly)
             }
@@ -6334,7 +6365,7 @@ impl Clone for LazyDriverCache {
 #[derive(Default)]
 struct OpSetCache(
     #[allow(clippy::type_complexity)]
-    std::sync::Mutex<Option<(usize, std::sync::Arc<crate::use_analysis::OpSets>)>>,
+    std::sync::Mutex<Option<(usize, std::sync::Arc<crate::op_sets::OpSets>)>>,
 );
 
 impl Clone for OpSetCache {
@@ -6593,7 +6624,7 @@ pub struct Data {
     /// workers read from a `&Data` across threads.
     caller_index: std::sync::OnceLock<HashMap<u32, Vec<u32>>>,
     /// Lazy cache of the op-number sets the use/dead-store/ownership walks read
-    /// (see [`crate::use_analysis::OpSets`] and [`OpSetCache`]).
+    /// (see [`crate::op_sets::OpSets`] and [`OpSetCache`]).
     op_sets: OpSetCache,
     /// @PLN187 — the name-only types ([`Self::is_name_only`]).
     name_only: NameOnlyCache,
@@ -9471,7 +9502,7 @@ impl Data {
     /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
     /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
     fn identity_spelling_erasing(&self, tp: &Type) -> String {
-        if crate::parser::Parser::is_collection_type(tp.base()) {
+        if is_collection(tp.base()) {
             tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
         } else if let Type::Integer(spec) = tp.base() {
             // schema-key — loft#1418's forced WIDTH is part of which instance this is.
@@ -13665,7 +13696,7 @@ impl Data {
 
     /// The op-number sets the use / dead-store / ownership walks consult, built once.
     ///
-    /// See [`crate::use_analysis::OpSets`] for why a `Data`-lived cache is sound for
+    /// See [`crate::op_sets::OpSets`] for why a `Data`-lived cache is sound for
     /// these (def NAMES never change) when it is not for the body-derived facts of
     /// loft#854.  Rebuilding them per question was ~40 % of a warm-cache startup.
     ///
@@ -13676,7 +13707,7 @@ impl Data {
     /// so such a guard is compiled out of the library in every standard build.  So the
     /// definition count is part of the key — a changed table rebuilds rather than
     /// answering from sets that cannot describe it.
-    pub(crate) fn op_sets(&self) -> std::sync::Arc<crate::use_analysis::OpSets> {
+    pub(crate) fn op_sets(&self) -> std::sync::Arc<crate::op_sets::OpSets> {
         let n = self.definitions.len();
         let mut slot = self
             .op_sets
@@ -13688,7 +13719,7 @@ impl Data {
         {
             return std::sync::Arc::clone(cached);
         }
-        let sets = std::sync::Arc::new(crate::use_analysis::OpSets::build(self));
+        let sets = std::sync::Arc::new(crate::op_sets::OpSets::build(self));
         *slot = Some((n, std::sync::Arc::clone(&sets)));
         sets
     }

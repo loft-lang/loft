@@ -387,8 +387,10 @@ pub mod trace;
 pub mod btree;
 pub mod call_frames;
 pub mod codegen_runtime;
+pub mod const_literal;
 pub mod generation;
 pub mod loop_shape;
+pub mod op_sets;
 pub mod ops;
 #[cfg(test)]
 mod page_metrics;
@@ -401,6 +403,7 @@ mod radix_tree;
 mod spatial;
 pub mod store;
 pub mod store_budget;
+pub mod text_calls;
 pub mod trie_db;
 mod typedef;
 

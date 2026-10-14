@@ -9136,7 +9136,8 @@ extern crate loft;"
             let elem_tp = (**elem_tp_box).clone();
             // Refused at the declaration when it cannot be pre-built (`parse_constant`
             // asks the same question), so a failure here has already been reported.
-            let Ok(values) = crate::compile::extract_literal_values_public(def.code(), self.data)
+            let Ok(values) =
+                crate::const_literal::extract_literal_values_public(def.code(), self.data)
             else {
                 continue;
             };
@@ -9179,46 +9180,46 @@ extern crate loft;"
                         // One arm per field kind, exhaustively — the interpreter's
                         // `build_const_vectors` writes the same bytes from the same list.
                         match val {
-                            crate::compile::ConstField::Int(v) => {
+                            crate::const_literal::ConstField::Int(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_int(rec.rec, {at}, {v}_i64);"
                                 )?;
                             }
-                            crate::compile::ConstField::Long(v) => {
+                            crate::const_literal::ConstField::Long(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_long(rec.rec, {at}, {v}_i64);"
                                 )?;
                             }
-                            crate::compile::ConstField::Float(v) => {
+                            crate::const_literal::ConstField::Float(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_float(rec.rec, {at}, {});",
                                     rust_f64(*v)
                                 )?;
                             }
-                            crate::compile::ConstField::Single(v) => {
+                            crate::const_literal::ConstField::Single(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_single(rec.rec, {at}, {});",
                                     rust_f32(*v)
                                 )?;
                             }
-                            crate::compile::ConstField::Bool(v) => {
+                            crate::const_literal::ConstField::Bool(v) => {
                                 let byte = i32::from(*v);
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_byte(rec.rec, {at}, 0, {byte}_i32);"
                                 )?;
                             }
-                            crate::compile::ConstField::Char(v) => {
+                            crate::const_literal::ConstField::Char(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_u32_raw(rec.rec, {at}, {v}_u32);"
                                 )?;
                             }
-                            crate::compile::ConstField::Text(v) => {
+                            crate::const_literal::ConstField::Text(v) => {
                                 let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
                                 writeln!(
                                     w,
@@ -12760,11 +12761,11 @@ fn rust_f32(v: f32) -> String {
 /// same offsets with the same kinds — `(offset, the column's values)` — or `None` when the
 /// elements differ in shape (or there are none).
 fn const_columns(
-    values: &[crate::compile::ConstElement],
-) -> Option<Vec<(u32, Vec<&crate::compile::ConstField>)>> {
+    values: &[crate::const_literal::ConstElement],
+) -> Option<Vec<(u32, Vec<&crate::const_literal::ConstField>)>> {
     let first = values.first()?;
-    let kind = |f: &crate::compile::ConstField| std::mem::discriminant(f);
-    let mut columns: Vec<(u32, Vec<&crate::compile::ConstField>)> = first
+    let kind = |f: &crate::const_literal::ConstField| std::mem::discriminant(f);
+    let mut columns: Vec<(u32, Vec<&crate::const_literal::ConstField>)> = first
         .iter()
         .map(|(off, _)| (*off, Vec::with_capacity(values.len())))
         .collect();
@@ -12789,9 +12790,9 @@ fn write_const_columns(
     d_nr: u32,
     vec_tp: u16,
     count: usize,
-    columns: &[(u32, Vec<&crate::compile::ConstField>)],
+    columns: &[(u32, Vec<&crate::const_literal::ConstField>)],
 ) -> std::io::Result<()> {
-    use crate::compile::ConstField;
+    use crate::const_literal::ConstField;
     for (k, (_, col)) in columns.iter().enumerate() {
         let ty = match col.first() {
             Some(ConstField::Int(_) | ConstField::Long(_)) => "i64",

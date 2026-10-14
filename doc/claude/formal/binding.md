@@ -484,7 +484,7 @@ predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather tha
   Type::Vector(_, _))`, a set of ONE, so a keyed source took the deep-copy path and got its own
   store with `OpReplaceKeyed` filling it from the source.  The two collections were then
   independent — measured, after one write through each name `h` held `{1,3}` and `a` held
-  `{1,2}`, *both reporting length 2*.  The set now comes from `vectors::is_collection`, which
+  `{1,2}`, *both reporting length 2*.  The set now comes from `data::is_collection`, which
   `(Col-Store)` already defines as the `is_keyed` set plus `Vector`.
   ⚠ **This was NOT the broken emission path below**, though loft#1433 was filed as if it were
   ("the alias silently drops every append", which is how an EMPTY source presents).  The append
@@ -504,7 +504,7 @@ predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather tha
   predicates alone hands `append_source` a `RefVar` that matches no arm, and the
   `&vector<Row>` twin that always worked starts refusing.  Separately, two of the five kinds
   (`trie`, `spatial`) were an ICE through `&` at all — a deref allow-list listing kinds instead
-  of deriving them from `vectors::is_collection`.
+  of deriving them from `data::is_collection`.
   ⚠ **This entry previously said the refusal was the SAFER state and that "the fix belongs in
   the keyed emission path, not in the predicates".  That conclusion was exactly backwards, and
   the correction is worth more than the entry.**  The MEASUREMENTS behind it were real — the
