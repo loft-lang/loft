@@ -6228,7 +6228,7 @@ unsafe extern "C" fn _ffi_resize(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u
 pub fn c_library_available(name: &str, libs: &[(&str, &str)], syms: &[(&str, &[&str])]) -> bool {
     #[cfg(feature = "native-extensions")]
     {
-        crate::c_call::library_available_native(name, libs, syms)
+        crate::c_libs::library_available_native(name, libs, syms)
     }
     #[cfg(not(feature = "native-extensions"))]
     {

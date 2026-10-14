@@ -1028,7 +1028,7 @@ fn n_env_variables(stores: &mut Stores, stack: &mut DbRef) {
 fn n_c_library_available(stores: &mut Stores, stack: &mut DbRef) {
     let soname = stores.get::<crate::keys::Str>(stack);
     #[cfg(feature = "native-extensions")]
-    let ok = crate::c_call::library_available(soname.str());
+    let ok = crate::c_libs::library_available(soname.str());
     #[cfg(not(feature = "native-extensions"))]
     let ok = {
         let _ = soname;
@@ -1919,7 +1919,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
         let n_hidden_text = def
             .attributes
             .iter()
-            .filter(|a| crate::native_gate::is_text_work_buffer(&a.typedef))
+            .filter(|a| is_text_work_buffer(&a.typedef))
             .count();
         let n_hidden_dests = def
             .attributes
@@ -2071,7 +2071,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         let n_hidden_text = def
             .attributes
             .iter()
-            .filter(|a| crate::native_gate::is_text_work_buffer(&a.typedef))
+            .filter(|a| is_text_work_buffer(&a.typedef))
             .count();
         let n_hidden_dests = def
             .attributes
@@ -5560,4 +5560,12 @@ fn n_to_json_pretty_dest(stores: &mut Stores, stack: &mut DbRef) {
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
         .push_str(&out);
+}
+
+/// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
+/// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
+/// for each and passes `&mut`.  Shared with `native_lib` (the gate admits exactly
+/// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
+pub(crate) fn is_text_work_buffer(t: &crate::data::Type) -> bool {
+    matches!(t, crate::data::Type::RefVar(inner) if matches!(**inner, crate::data::Type::Text(_)))
 }

@@ -28,6 +28,7 @@
 //! its dynamic callee can't be proven native.
 
 use crate::data::{Data, DefType, Type, Value};
+pub(crate) use crate::native::is_text_work_buffer;
 use std::collections::HashSet;
 
 /// @PLN11 Arc N / N2 — the set of function `def_nr`s that can be `--native`-
@@ -308,14 +309,6 @@ fn walk(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> bool {
         | Value::FnRefDnr(_)
         | Value::RawExpr(_) => true,
     }
-}
-
-/// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
-/// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
-/// for each and passes `&mut`.  Shared with `native_lib` (the gate admits exactly
-/// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
-pub(crate) fn is_text_work_buffer(t: &Type) -> bool {
-    matches!(t, Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
 }
 
 #[cfg(test)]

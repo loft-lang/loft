@@ -106,19 +106,18 @@ BUDGET: dict[tuple[str, str], int] = {
 # (and `lib`'s macros); every reference out of the set is counted against RUNTIME_BUDGET, a
 # ratchet that only falls.  A module leaves the set only when nothing in the set names it.
 RUNTIME: list[str] = [
-    "arena", "btree", "c_call", "c_libs", "c_signature", "cache", "calc", "call_frames",
-    "codegen_runtime", "crash_report", "data_ref", "database", "diagnostic_render", "diagnostics",
-    "engine_host", "file_access", "fxhash", "git_query", "hash", "integrity", "json", "keys",
-    "lexer", "limits", "log_config", "logger", "loop_kernels", "narrow", "native", "native_gate",
-    "net", "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "par_pool",
-    "placement", "platform", "png_store", "process_run", "radix_db", "radix_tree",
-    "resolution_scope", "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar",
-    "siphash", "stack_verify", "store", "store_budget", "store_census", "timeout", "tls",
-    "trie_db", "vector", "wasm", "wasm_assets", "ws_handshake",
+    "arena", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime", "crash_report",
+    "data_ref", "database", "diagnostic_render", "diagnostics", "engine_host", "file_access",
+    "fxhash", "git_query", "hash", "integrity", "json", "keys", "lexer", "limits", "log_config",
+    "logger", "loop_kernels", "narrow", "native", "net", "net_profile", "op_census", "ops",
+    "page_metrics", "paged_reader", "par_pool", "placement", "platform", "png_store",
+    "process_run", "radix_db", "radix_tree", "resolution_scope", "rewrite_census", "runtime_abi",
+    "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store", "store_budget",
+    "store_census", "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets", "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 118
+RUNTIME_BUDGET: int = 94
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 
