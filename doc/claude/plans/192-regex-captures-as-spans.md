@@ -56,10 +56,11 @@ gave vectors a view (`OpSliceView`, a foreign span read-only under the store con
   surface built on that prediction was dropped with it.)
 - Today that record's text field is `OpGetTextSub(subject, a, b).to_string()` followed by a
   `set_str` into the record's store: one owned copy per field, on native as interpreted.
-  `(R-DecodeView)` is PROPOSED in the register and not built; its source today is a byte
-  vector, and the regex subject is a `text`.  So the zero-copy half of the goal is a
-  dependency on that rule's build, with one clause this plan contributes (§ P4), and never
-  something this library can deliver alone.
+  `(R-DecodeView)` instance 1 is BUILT, on branch `157-native-4x` (pushed, not yet on
+  `main`; § P4 says where).  Its source is a byte vector and the regex subject is a `text`,
+  and its view type is an ENUM, where `Match` is a struct.  So the zero-copy half of the goal
+  is the clause this plan contributes (§ P4), and never something this library can deliver
+  alone.
 - Every offset the engine answers is a code-point boundary (`.` on `"😀x"` spans bytes
   0..4; `(?-u:\xFF)` is refused), so a span can never cut a character where `"héllo"[-4..]`
   can.
@@ -247,7 +248,11 @@ from a clone by `--lib`, the prediction written before each ran.
 
 It is `(R-WorkView)` with the work buffer replaced by a parameter or local, under
 `(R-TextBorrow)`'s value-only reading — the same five conditions, so the analysis exists
-(`hoist::borrowed_text_walks` decides (1)–(3) for a walk).  Decided in the formal register
+(`hoist::borrowed_text_walks` decides (1)–(3) for a walk).  Its counterpart for a `match`
+statement — a text a pattern binds, copied into a `String` — is what is left on pluginabi
+`check_request` after `(R-DecodeView)` (its key bindings, priced −1.5 % of that row in
+`157-native-4x`'s `bench/portal/analysis/worklist.md` § 0); `arguments/parse`'s text copies
+are about 10 % of its row.  Nothing for either is built yet.  Decided in the formal register
 as a rule with its own `@FR-` tag, its code sites citing it, `make rule-coverage` counting it.
 
 ### P4 — what a `Match` needs from `(R-DecodeView)`
@@ -278,6 +283,47 @@ holder already.  Two things a `Match` needs that it does not have:
    The measurement that decides: `capture`'s twin under each, on `dump_ignored_tests`'s
    row.  Until then a `Match`'s texts are owned copies on both backends, and the consumer's
    `line[m.start..m.end]` is the view (P3).
+
+**Where instance 1 is.**  Branch `157-native-4x` (pushed to `origin`, not yet on `main`; JOINED into this branch, so every path below is in this tree):
+
+- Commits: `f00897790` (the build), `41b419bf8` (its docs), `cbd50ff8d` (the span helpers
+  read the frame once a call), `aed8e7da4` (why a library function's `native` mark does not
+  keep it out of a region); the row's price and result `1185b06a5`, `d9252256a`.
+- Admission and planning: `src/generation/decode_view.rs` (`view_types`, `root_frame`,
+  `region_of`, `plan`).  Emission, the `<f>__dv` twins: `src/generation/decode_view_emit.rs`.
+- Runtime: `src/codegen_runtime.rs`, the `dv_*` helpers (`DvFrame`, `dv_span_text`,
+  `dv_text`, `dv_put_span`, `dv_clear`), and the `Stores::dv_frame` field in
+  `src/database/mod.rs`.
+- Rule text: `doc/claude/formal/rewrites.md` § `(R-DecodeView)`; switches
+  `LOFT_NO_DECODE_VIEW` and `LOFT_TRACE_DECODE_VIEW` (`doc/claude/NATIVE_SWITCHES.md`).
+- Guard `tests/scripts/a-decoded-text-is-read-where-it-lies.loft`; pin `tests/decode_view.rs`
+  (the expected roots and twins).
+- Measured on pluginabi `check_request`: 7.55× → 5.07× its Rust twin
+  (`bench/portal/analysis/over-9x.md`, `bench/portal/analysis/worklist.md` § 0).
+- Joining the two branches: `157-native-4x` also extends `src/same_read.rs` with
+  `(R-SameRead)`'s get-or-insert clause (`057baaaed`), a file this branch also carries.
+
+**What the build decided for this clause:**
+
+1. **A view type is an ENUM today.**  The span word — `i64::MIN | (lo + 1) << 32 | n` — is
+   kept in the record's last 8 bytes, and only an enum of 16 bytes or more has those spare,
+   padded to its largest variant (`view_types`).  `Match` and `Group` are structs and have
+   no spare word, so the clause must decide where a struct keeps its span: a design
+   question, not only a new source.
+2. **One span per record.**  One spare word, so a variant with two text fields declines.
+   `Match` and `Group`, one text field each, fit.
+3. **The frame is a byte-vector parameter.**  A root is a function whose single byte-vector
+   parameter, not passed by `&`, is the frame; it sets `stores.dv_frame` for the call
+   through the `DvFrame` guard (`root_frame`).  A `text` subject is a new kind of frame, and
+   it may skip `dv_span_text`'s UTF-8 test, as stated above.
+4. **A vector of view records is already a holder.**  An element of a view type works (guard
+   cell c15, `mixed`), so `capture_all`'s `vector<Match>` should take the existing path
+   once `Match` is a view type.
+5. **What makes a root decline:** returning a decoded value from the root; a span variant's
+   record created on its own; a native function, a function reference, `yield` or `par`
+   reached by a decoded value; any read of a byte-string field.  A library's `pub fn` is
+   emitted inline into the consumer (§ P0 a), which is why the region's `loft_fn` test does
+   not look at `def.native`.
 
 ## Open design questions
 
