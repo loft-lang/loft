@@ -4,6 +4,10 @@
 // cell asserts the VALUES a hand computation gives; `LOFT_NO_SAME_READ=1` must answer the same.
 // The cells that matter most are the ones where the second lookup must NOT answer the first:
 // the arm changes the key (c2), inserts nothing (c3) or another key (c4).
+//
+// @falsified-by: tests/falsified/a-lookup-a-get-or-insert-repeats-is-made-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel, both backends — the patch drops the arm's second read.
+//   WITNESS: c1 answers 3076 for 3106: each key's first append is lost, `b` holding the miss.
 
 struct B { ck: integer, cx: integer, ixs: vector<integer> }
 struct F { buckets: hash<B[ck]> }

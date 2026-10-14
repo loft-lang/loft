@@ -377,7 +377,17 @@ impl Stores {
     /// — the record is claimed, keyed and finished through the general path, which files it
     /// before its other fields are written: a hash places an entry by its key alone, so that
     /// order lands where `record_finish` after the writes would.
-    pub fn keyed_entry_long(&mut self, data: &DbRef, parent_tp: u16, field: u16, key: i64) -> DbRef {
+    ///
+    /// # Panics
+    /// When `parent_tp` / `field` name no keyed collection with a key — the admission
+    /// (`generation::keyed_entry`) only emits this for an integer-keyed hash.
+    pub fn keyed_entry_long(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        key: i64,
+    ) -> DbRef {
         let tp = self.sub_record_type(parent_tp, field);
         let d = self.field_ref(data, parent_tp, field);
         if !self.live_scratches.iter().any(|(source, _)| *source == d)

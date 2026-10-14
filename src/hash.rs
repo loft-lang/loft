@@ -343,6 +343,10 @@ pub fn alloc_entry(hash: &DbRef, stride: u32, owner: u32, stores: &mut [Store]) 
 /// `None` when the table cannot be walked this way — no table yet, a table that borrows its
 /// entries, a key kind other than an 8-byte `integer` or `long` — and nothing was changed:
 /// the caller takes the general insert.
+///
+/// # Panics
+/// When the slot the arena just handed out cannot be addressed — the arena's own invariant,
+/// as in [`alloc_entry`].
 pub fn entry_long(
     hash: &DbRef,
     stores: &mut [Store],

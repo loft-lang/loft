@@ -10,6 +10,11 @@
 // the general path at run time (no table yet; a sorted snapshot of the hash live).
 //
 // @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-keyed-insert-writes-the-entry-its-key-names.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch overwrites in place while a sorted
+//   snapshot of the hash is live.
+//   WITNESS: under the patch c8 walks 6 where this file says 3: the overwritten key 3 stays in
+//   the walk a replace takes it out of.
 
 struct K { k: integer, v: integer, w: integer }
 struct H { h: hash<K[k]> }

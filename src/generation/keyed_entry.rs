@@ -128,10 +128,7 @@ fn heap_free_hash(stores: &Stores, parent_tp: u16, field: u16) -> Option<(u16, u
     let [k] = &t.keys[..] else {
         return None;
     };
-    if !matches!(k.type_nr.unsigned_abs(), 1 | 2)
-        || stores.is_linked(c)
-        || stores.owns_heap(c)
-    {
+    if !matches!(k.type_nr.unsigned_abs(), 1 | 2) || stores.is_linked(c) || stores.owns_heap(c) {
         return None;
     }
     Some((c, k.position))
@@ -181,10 +178,10 @@ pub fn site<'a>(
                 if name(data, *c) == "OpFinishRecord"
                     && a.get(1).is_some_and(|x| is_var(x, buf)) =>
             {
-                let [fc, _, ftp, ffld] = &a[..] else {
+                let [fin_coll, _, fin_tp, fin_fld] = &a[..] else {
                     return None;
                 };
-                if fc.unspan() != coll.unspan() || ftp != ptp || ffld != fld {
+                if fin_coll.unspan() != coll.unspan() || fin_tp != ptp || fin_fld != fld {
                     return None;
                 }
                 last = Some(j);
@@ -193,7 +190,9 @@ pub fn site<'a>(
             Value::Call(c, a)
                 if SETTERS.contains(&name(data, *c))
                     && a.first().is_some_and(|x| is_var(x, buf))
-                    && a.iter().skip(1).all(|x| mentions(x, buf) == 0 && !rebinds(x, &roots)) =>
+                    && a.iter()
+                        .skip(1)
+                        .all(|x| mentions(x, buf) == 0 && !rebinds(x, &roots)) =>
             {
                 let off = u16::try_from(int_of(a.get(1)?)?).ok()?;
                 if written.contains(&off) {

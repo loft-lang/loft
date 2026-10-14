@@ -285,12 +285,12 @@ fn absent_test<'a>(data: &Data, v: &'a Value) -> Option<(&'a Value, &'a Value)> 
         return None;
     };
     let [test] = &nargs[..] else { return None };
-    let Value::Call(conv, cargs) = test.unspan() else {
+    let Value::Call(to_bool, cargs) = test.unspan() else {
         return None;
     };
     let [read] = &cargs[..] else { return None };
     (data.def(*not).name() == "OpNot"
-        && data.def(*conv).name() == "OpConvBoolFromRef"
+        && data.def(*to_bool).name() == "OpConvBoolFromRef"
         && matches!(read.unspan(), Value::Call(op, _) if data.def(*op).name() == "OpGetRecord")
         && plain_read(data, read))
     .then_some((read, then_arm))

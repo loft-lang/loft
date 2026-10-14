@@ -5,6 +5,10 @@
 // (loft#703), so it takes no plain-vector snapshot: a FIELD did, and the renamed lookup read
 // the vector as a hash table — a crash on both backends for `hash`, a wrong count for `index`.
 // Every expected value is computed by hand in the cell's comment.
+//
+// @falsified-by: tests/falsified/2008-a-keyed-literal-reads-its-destination-as-it-began.patch — interpret exit 139 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the patch gives a keyed field the vector snapshot again; c1's lookup reads
+//   the vector as a hash table (SIGSEGV interpreted, a silent exit 1 native).
 
 struct C { k: integer, n: integer }
 struct HC { h: hash<C[k]> }
