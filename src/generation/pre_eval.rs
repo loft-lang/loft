@@ -678,6 +678,15 @@ impl Output<'_> {
         if let Value::Span(s) = v {
             return self.collect_pre_evals_inner(&s.1, result);
         }
+        // `@FR-R-Apart` — an element read, write or length of an apart value is no store
+        // access: its address is part of the rewritten mention, and only its index and
+        // value are expressions to search.
+        if let Some(operands) = self.apart_operands(v) {
+            for x in operands {
+                self.collect_pre_evals_inner(x, result)?;
+            }
+            return Ok(());
+        }
         if let Value::Set(_, rhs) = v {
             return self.collect_pre_evals_inner(rhs, result);
         }

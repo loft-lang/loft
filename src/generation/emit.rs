@@ -41,6 +41,10 @@ impl Output<'_> {
         // @PLN157 § V-ao (`@FR-R-Invariant`) — a chain an enclosing loop memoised emits
         // its memo's use; keyed on the node's address like the pre-eval above, and checked
         // after it so a `_pre_N` that carries the chain keeps its name.
+        // `@FR-R-Apart` — a mention of an apart variable is its value's (`apart_emit`).
+        if self.apart_ctx.is_some() && self.apart_expr(w, code)? {
+            return Ok(());
+        }
         if !self.invariant_hoists.is_empty()
             && let Some(memo) = self.active_invariant(code)
         {
@@ -3801,6 +3805,7 @@ impl Output<'_> {
         let block_serial = self.block_serial;
         // `@FR-R-PushFill`'s repeat-literal clause — the statement the fill already emitted.
         let mut repeat_skip: Option<usize> = None;
+        let mut apart_skip: Option<usize> = None;
         // `@FR-R-RefillText` — the statement holding the call an armed release waits for.
         let mut rt_call_at: Option<usize> = None;
         for (vnr, v) in operators.iter().enumerate() {
@@ -3838,6 +3843,17 @@ impl Output<'_> {
                 continue;
             }
             if repeat_skip.is_some_and(|last| vnr <= last) {
+                continue;
+            }
+            if apart_skip.is_some_and(|next| vnr < next) {
+                continue;
+            }
+            // `@FR-R-Apart` — a construction run of an apart variable, or a statement that
+            // mentions one, before any rewrite of the record form reads it.
+            if self.apart_ctx.is_some()
+                && let Some(next) = self.apart_statement(w, operators, vnr)?
+            {
+                apart_skip = Some(next);
                 continue;
             }
             // `@FR-R-RefillText` — an admitted pool statement keeps only its mint: the release

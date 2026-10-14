@@ -2417,6 +2417,61 @@ it said when the hold began.  The reader that stands behind a one-statement help
 the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, pins
 `tests/file_hold.rs`.
 
+### A record of fixed-length vectors travels as a value
+
+```
+  (R-Apart)      A value the compiler proves is never observed as a store value may be held
+                 in a representation of the compiler's choosing — no DbRef, no identity, no
+                 release a program can see — from its construction to its first BOUNDARY,
+                 where the ordinary store constructor converts it into the value the
+                 unrewritten program holds.  Every use between the two answers what the
+                 store path answers, faults and their reports included (H-Index,
+                 H-WriteOOB).  Instance 2, a RECORD OF FIXED-LENGTH FLOAT VECTORS: a struct
+                 whose every field is a `vector<float>` is a `[f64; N]` per field when every
+                 construction of it in admitted code builds each field as a literal of one
+                 length.  A TWIN of a function answering such a record through its buffer
+                 takes its record parameters as values, its numbers as themselves, and
+                 answers the value; it exists when every variable of the type in its body is
+                 apart or dead and every `return` answers an apart value.  In any body, a
+                 component of such variables — joined by the calls that build one from
+                 another, the buffers handed to those calls, the frees and aliases between
+                 them — is apart when each mention is a construction, an element read or
+                 write, a length, a twin call's destination or record argument, a free, a
+                 null init or a `return`; a `return` from a body that is no twin converts the
+                 value into the function's buffer.  A record parameter is apart only in a
+                 twin and only when nothing writes it; a variable only ever a twin call's
+                 buffer, an alias, a null init or a free is DEAD and emits nothing.  A
+                 component with any other mention stays in the store, and so does every
+                 component of a body with a `yield` or a parallel block.  Native, and not in
+                 a build that ships the live tier.
+```
+
+**In words.**  The store protocol is for data that lasts.  A matrix built, multiplied and
+rebound a hundred thousand times, and read once at the end, pays it per product: a buffer
+refilled with zeros, three vector headers derived, every element read through a bounds test,
+the two buffers exchanged.  None of that is observable while the value stays among the
+functions that build it, read it and hand it on, so those functions get twins that work on a
+Rust array, and the store sees the value once — where a function returns it to a caller that
+keeps it.  The length is a fact about the TYPE: every admitted construction must agree on
+it, and nothing the plan admits changes it (a push is no admitted mention), so an apart
+parameter has the layout its twin assumes.  A read out of range reports exactly what the store
+path reports (`Stores::index_or_raise_runtime`, the one definition) and answers null; `v[i]?`
+answers null quietly.  The fallback costs the rewrite, never a value: a mention the gate does
+not name keeps its whole component in the store, and an apart value is a distinct Rust type,
+so a mention the emitter fails to rewrite is a `rustc` type error.  A build that ships the live
+tier has no plan, since a twin's call would run the native body of a function flipped to the
+interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
+loop in them plans a header, a base or an address on a variable that is no longer a record.
+
+**BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
+regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
+`ap_set_f64` / `ap_store_f64`; `LOFT_NO_APART=1`, `LOFT_TRACE_APART=1`).  Not admitted yet: an
+element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
+text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
+Guard `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
+native-release`), pins and the out-of-range report `tests/apart_value.rs`.  Design:
+[APART_VALUES.md](../APART_VALUES.md).
+
 ### A walk of a scalar literal builds no vector
 
 ```

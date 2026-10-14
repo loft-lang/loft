@@ -352,6 +352,90 @@ pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -
     op_database_inner(cell, db, db_tp, true)
 }
 
+/// `@FR-R-Apart` — element `i` of a field held as a Rust array, read as the store path
+/// reads `v[i]` (`OpGetVector`, `@FR-H-Index`): a negative index counts from the end, and an
+/// index still out of range — or null — raises the recoverable error the store path raises
+/// (`Stores::index_or_raise_runtime`, the one definition) and answers null, NaN.
+#[inline]
+#[must_use]
+pub fn ap_get_f64<const N: usize>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    a: &[f64; N],
+    i: i64,
+) -> f64 {
+    if i >= 0 && (i as u64) < N as u64 {
+        return a[i as usize];
+    }
+    ap_index_slow(cell, i, N).map_or(f64::NAN, |f| a[f])
+}
+
+/// The nullable read `v[i]?` (`OpGetVectorNullable`): the same index, and null without a
+/// report for one out of range.
+#[inline]
+#[must_use]
+pub fn ap_get_f64_or_null<const N: usize>(a: &[f64; N], i: i64) -> f64 {
+    match crate::vector::elem_index(i, N as u32) {
+        Some(f) => a[f as usize],
+        None => f64::NAN,
+    }
+}
+
+/// `@FR-R-Apart` — a write of element `i` of a field held as a Rust array: the address the
+/// store path takes for it (`OpGetVector`) raises for an index out of range and writes
+/// nothing there (`@FR-H-WriteOOB`).
+#[inline]
+pub fn ap_set_f64<const N: usize>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    a: &mut [f64; N],
+    i: i64,
+    v: f64,
+) {
+    if i >= 0 && (i as u64) < N as u64 {
+        a[i as usize] = v;
+    } else if let Some(f) = ap_index_slow(cell, i, N) {
+        a[f] = v;
+    }
+}
+
+/// Every index the fast test does not take: the negative form, and the report.
+#[cold]
+#[inline(never)]
+fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Option<usize> {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    stores
+        .index_or_raise_runtime(i, n as u32)
+        .map(|f| f as usize)
+}
+
+/// `@FR-R-Apart` — the BOUNDARY: an apart record written into the return buffer `buf` with
+/// the steps its own constructor emits — the buffer kept when it holds a record, else minted
+/// (`OpDatabaseRefill`), then each `vector<float>` field emptied in place and its elements
+/// appended.  Answers the buffer, which is what the unrewritten function returns.
+pub fn ap_store_f64(
+    cell: &std::cell::UnsafeCell<Stores>,
+    mut buf: DbRef,
+    rec_tp: i32,
+    fields: &[(u32, &[f64])],
+) -> DbRef {
+    if buf.store_nr == u16::MAX || buf.rec == 0 {
+        buf = OpDatabaseRefill(cell, buf, rec_tp);
+    }
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    for (off, elems) in fields {
+        let fld = DbRef {
+            store_nr: buf.store_nr,
+            rec: buf.rec,
+            pos: buf.pos + off,
+        };
+        vector::clear_vector(&fld, &mut stores.allocations);
+        vector::pre_alloc_vector(&fld, elems.len() as u32, 8, &mut stores.allocations);
+        for v in *elems {
+            stores.append_f64(&fld, *v);
+        }
+    }
+    buf
+}
+
 /// `@FR-R-RefillBuffer` — the mint of a refilling callee's return buffer: a null buffer
 /// takes the kept store of the same type (its previous value still in it — the literal that
 /// follows writes every field, and empties each vector field in place); otherwise the

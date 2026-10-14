@@ -402,6 +402,16 @@ guard local (`codegen_runtime::FileCursor`) and writes the record when the loop 
 first bisect step for a wrong `f#next` or `f#index` after a loop that reads `f`, or a value
 read from the wrong offset inside one.  `LOFT_HOIST_VERIFY=1` is its falsifier: every held
 read and the guard's drop assert that the record still says what it said when the hold began.
+
+**`LOFT_NO_APART=1`** (`@FR-R-Apart`, default-ON, generation time, `--native-release` and every
+build that does not ship the live tier) keeps every record in the store from its construction —
+with it off, a record whose every field is a `vector<float>` of one length travels between the
+functions that build it, read and write its elements and hand it on as a Rust array, through
+their `__apv` twins, and is written into the store where a function returns it to a caller that
+keeps it.  The first bisect step for a wrong element, a wrong length or a missing out-of-range
+report out of such a record on a release build.  Its falsifier is this switch's A/B against the
+guard's hand-computed values; **`LOFT_TRACE_APART=1`** names every type, twin and region the plan
+admits and each component it keeps in the store, with the mention that kept it.
 A reader behind a one-statement helper is held only where the helper is inlined
 (`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
 

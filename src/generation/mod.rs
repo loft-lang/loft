@@ -9,6 +9,8 @@ use crate::ir_node::{IrBlock, IrNode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
 pub mod apart;
+mod apart_emit;
+pub mod apart_value;
 pub mod append_twin;
 mod calls;
 mod coroutine;
@@ -1122,6 +1124,13 @@ pub struct Output<'a> {
     /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
     /// for the whole program because the admission asks every call site.
     pub value_records: hoist::ValueRecords,
+    /// `@FR-R-Apart` — the program's apart types, twins and regions ([`apart_value::plan`]).
+    pub apart: apart_value::ApartPlan,
+    /// `@FR-R-Apart` — the plan for the body being emitted, whether a twin is being emitted,
+    /// and whether the value structs are written.
+    pub apart_ctx: Option<apart_emit::ApartCtx>,
+    pub apart_twin: bool,
+    pub apart_types_done: bool,
     /// Whether `value_records` has been computed for this program — a whole-program
     /// analysis asked once, whatever it answered (an empty answer is an answer).
     pub value_records_done: bool,
@@ -2511,6 +2520,10 @@ impl<'a> Output<'a> {
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
+            apart: apart_value::ApartPlan::default(),
+            apart_ctx: None,
+            apart_twin: false,
+            apart_types_done: false,
             value_records_done: false,
             value_record_locals: HashMap::new(),
             widening: None,
@@ -9784,6 +9797,22 @@ extern crate loft;"
                     );
                 }
             }
+            // `@FR-R-Apart` — after the value records, whose functions it leaves alone: a
+            // function that answers a tuple, or takes one, has no buffer to convert into.
+            let value_fns: crate::fxhash::FxHashSet<u32> = self
+                .value_records
+                .fns
+                .keys()
+                .copied()
+                .chain(self.value_records.params.keys().copied())
+                .collect();
+            // A build that ships the live tier keeps every call on the function a flip
+            // reaches: a twin's call would run the native body of a function flipped to the
+            // interpreter, so that build has no plan.
+            if !self.emit_live {
+                self.apart = apart_value::plan(self.data, self.stores, &value_fns);
+            }
+            self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();
@@ -9810,6 +9839,13 @@ extern crate loft;"
                 continue;
             }
             self.output_function(w, dnr, program_store.as_ref())?;
+            // `@FR-R-Apart` — the function's apart twin beside it: the same body over values.
+            if self.apart.twins.contains_key(&dnr) {
+                self.apart_twin = true;
+                let r = self.output_function(w, dnr, program_store.as_ref());
+                self.apart_twin = false;
+                r?;
+            }
             // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
             // with its invariant inputs as extra parameters.
             if let Some(inputs) = self.callee_inputs_of(dnr) {
@@ -10569,10 +10605,29 @@ extern crate loft;"
         Ok(())
     }
 
-    /// Use this to emit one loft function as a Rust function.
+    /// Use this to emit one loft function as a Rust function, under the `@FR-R-Apart`
+    /// context of its body: a twin or a region is emitted with the vector hoists off
+    /// (`apart_emit`'s header says why).
+    fn output_function(
+        &mut self,
+        w: &mut dyn Write,
+        def_nr: u32,
+        program_store: Option<&(Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        let saved_hoist = self.hoist_disabled;
+        self.apart_ctx = self.apart_ctx_for(def_nr);
+        if self.apart_ctx.is_some() {
+            self.hoist_disabled = true;
+        }
+        let r = self.output_function_body(w, def_nr, program_store);
+        self.hoist_disabled = saved_hoist;
+        self.apart_ctx = None;
+        r
+    }
+
     /// Every loft function receives `stores: &mut Stores` as its first implicit argument.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn output_function(
+    fn output_function_body(
         &mut self,
         w: &mut dyn Write,
         def_nr: u32,
@@ -10722,6 +10777,8 @@ extern crate loft;"
                 "__d"
             } else if self.vr_twin {
                 "__vr"
+            } else if self.apart_twin {
+                "__apv"
             } else {
                 ""
             }
@@ -10737,6 +10794,15 @@ extern crate loft;"
         for (i, a) in def.attributes().iter().enumerate() {
             if dropped == Some(i) {
                 continue;
+            }
+            // `@FR-R-Apart` — a twin takes its record parameters as values and no buffer.
+            match self.apart_twin_param(def_nr, i) {
+                apart_emit::TwinParam::Same => {}
+                apart_emit::TwinParam::Dropped => continue,
+                apart_emit::TwinParam::Value(p) => {
+                    write!(w, "{p}")?;
+                    continue;
+                }
             }
             // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
             // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
@@ -10790,7 +10856,9 @@ extern crate loft;"
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
-            if let Some(t) = &value_rec {
+            if let Some(t) = self.apart_twin_result(def_nr) {
+                write!(w, "-> {t} ")?;
+            } else if let Some(t) = &value_rec {
                 write!(w, "-> {t} ")?;
             } else if let Some(dt) = &self.dest_twin {
                 // `@FR-R-Destination` — the moved field is written into the caller's element;
@@ -10818,7 +10886,7 @@ extern crate loft;"
         // NULL SENTINEL only (no allocation; `OpFreeRef` no-ops on it); the
         // first body `Set(v, Null)` still emits `null_named` + `OpDatabase`
         // at its IR position via `predeclared`.
-        let mut vdb_prologue = String::new();
+        let mut vdb_prologue = self.apart_prologue();
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin
