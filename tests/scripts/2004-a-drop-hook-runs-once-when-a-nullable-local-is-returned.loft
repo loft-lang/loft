@@ -12,7 +12,12 @@
 // Every cell's trace is exact and hand-computed: `m` a mint, `G` the caller's read, `d` the
 // hook, each with the record's id.  A doubled release reads `m2,d7,G7,d7`.
 //
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/2004-a-drop-hook-runs-once-when-a-nullable-local-is-returned.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions on both backends — the patch makes the scope pass read the return's
+// copy bare only, so a copy under a presence test keeps its release in the frame.
+// WITNESS: on the patched tree both backends stop at `c1 nullable local, nullable result:
+// m2,d7,G7,d7, want m2,G7,d7`: the hook ran in the callee, before the caller's read.
+// HOLDS: nothing after the first cell is reached; the first cell is the defect itself.
 
 struct H { id: integer }
 struct SN { h: H? }

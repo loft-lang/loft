@@ -16677,6 +16677,9 @@ impl Parser {
         // (`@FR-N-Road`).
         let absent_guard = match orig.unspan() {
             Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
+            // A FIELD of a record that may be absent is absent with it (loft#2006).  The read
+            // is pure, so the test re-reads it.
+            Value::Call(_, _) if self.copy_source_may_be_absent(&orig) => Some(orig.clone()),
             Value::Call(d, _)
                 if *d == self.data.def_nr("OpGetDbRef")
                     && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
@@ -16842,6 +16845,19 @@ impl Parser {
         asks(self, v, &mut Vec::new())
     }
 
+    /// May the SOURCE of a whole-record copy be absent: a record local that may hold nothing
+    /// ([`Self::record_local_may_be_absent`]), or a FIELD PATH rooted at one — an inline
+    /// field of a record that is not there is not there (`o.inner` of a null `o`).
+    fn copy_source_may_be_absent(&self, src: &Value) -> bool {
+        match src.unspan() {
+            Value::Var(v) => self.record_local_may_be_absent(*v),
+            Value::Call(d, args) if *d == self.data.def_nr("OpGetField") && args.len() == 3 => {
+                self.copy_source_may_be_absent(&args[0])
+            }
+            _ => false,
+        }
+    }
+
     /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that
     /// may hold nothing at run time though it is no `null` literal?  A bare local is not asked
     /// (its own copy guards it); the arms of an `if` / `match` are, through their block and
@@ -16851,7 +16867,8 @@ impl Parser {
             match v.unspan() {
                 // A record local is such a leaf whatever its type: a dense one can hold the
                 // `null` its parameter was handed (`@FR-N-Store`).
-                Value::Var(x) => p.record_local_may_be_absent(*x),
+                // …and so is a field path rooted at one.
+                Value::Var(_) | Value::Call(_, _) => p.copy_source_may_be_absent(v),
                 // A literal's block ends in the buffer it just built, which is there.
                 Value::Block(bl) if bl.name == "Object" => false,
                 Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(p, x)),

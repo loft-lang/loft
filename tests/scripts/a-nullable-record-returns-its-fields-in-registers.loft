@@ -56,7 +56,8 @@ fn n8(n: integer) -> S? {
 fn n9(n: integer) -> S? { if n > 4 { null } else { S { a: n * n } } }
 fn n9f(n: integer) -> S? { n9(n) }
 fn n9r(n: integer) -> S? { return n9(n + 1); }
-// n10 — must DECLINE: its result is passed on whole and pushed into a vector.
+// n10 — its result is passed on whole and pushed into a vector: the tuple is written into the
+// element where it is present.
 fn n10(n: integer) -> S? { if n == 1 { null } else { S { a: n } } }
 fn take(s: S?) -> integer { s.a ?? -7 }
 // n11 — must DECLINE: discharged with a RECORD default (`?? S { … }`).
@@ -130,7 +131,7 @@ fn main() {
   // n9: forwarded both ways; 3*3 = 9, 4*4 = 16 through the `return` (n + 1), 5 is absent.
   assert((n9f(3).a ?? -1) == 9 && (n9r(3).a ?? -1) == 16 && !n9f(5) && !n9r(4), "n9");
 
-  // n10: passed on whole and pushed — the record road, the same values.
+  // n10: passed on whole and pushed — a present tuple is written into the element.
   v: vector<S> = [];
   for i in 0..3 {
     e = n10(i);

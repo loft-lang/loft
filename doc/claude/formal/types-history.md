@@ -1379,6 +1379,21 @@ Closed by it:
   interpreter and the record road.  Guards
   `1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft` and
   `2004-a-drop-hook-runs-once-when-a-nullable-local-is-returned.loft`.
+* **D-types-36** *(opened 2026-10-14; loft#2006)* — `(N-Store)`: the walk closed the copy
+  of a LOCAL and found the same answer in the copy a `return` makes of a FIELD.
+  `o = f(null); return o.inner` was a present record of zeros on both backends where
+  `(R-ReturnField)` declined the exit — a scalar record, a root typed `τ?` — and for every
+  such exit under `LOFT_NO_RETURN_FIELD=1`.  The rewrite matched the bare copy block only,
+  so a test in the parser alone would have cost every admitted exit its hand-over.  Both
+  halves landed together: the copy tests a field path rooted at a local by re-reading it
+  (the read is pure), and the rewrite rebuilds the tested spelling — the test, the copy, the
+  frees after it — into the bare block its one admission reads (`Cx::tested_exit`).  The
+  matrix (16 programs, a null root and a present one each, three roads, the rewrite on and
+  off) holds; the rewrite admits the same thirteen exits of its pinned guard and emits them
+  as before.  Guard `2006-a-returned-field-of-a-record-that-is-null-is-null.loft`.
+  STILL OPEN: the matrix found the same answer at two more roots — a CALL
+  (`return f(x).inner`, whose lift is bound inside the copy block, after any test) and an
+  element read out of range (`return w[i]`, `return w[i].a`).
 
 ## The presence walk of 2026-10-13 (loft#1993, loft#1994)
 

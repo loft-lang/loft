@@ -360,7 +360,7 @@ const NULLABLE_EXPECTED: &[(&str, Option<&str>)] = &[
     ("n_n12", Some("(i64, bool)")), // bound into a local declared `null`
     ("n_whole", Some("(i64, bool)")), // a dense tuple parameter, WIDENED
     ("n_fwdr", Some("(i64, bool)")), // a dense call forwarded beside `return null`
-    ("n_n10", None),               // passed on whole and pushed: the record road
+    ("n_n10", Some("(i64, bool)")), // passed on whole and pushed: written where present
     ("n_n11", None),               // a `??` with a record default
 ];
 

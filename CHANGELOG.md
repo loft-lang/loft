@@ -240,6 +240,10 @@ record whose fields were all zero, in both interpreted and compiled programs.  T
 `null`, as the parameter is.  A vector element or an inline field cannot be `null`: storing
 such a value into one still writes nothing.
 
+**A returned field of a record that is `null` is `null`.**  `o = f(x); return o.inner` answered
+a record of zeros when `o` was `null` and the returned record held only numbers, or when `o`
+was declared `O?`.  It answers `null`, as reading `o.inner.a` already did.
+
 **A drop hook runs once when a function returns a nullable local.**  With `fn OpDrop` defined
 for `H`, a function declared `-> H?` that returned a local declared `H?` ran the hook twice
 for one record: once inside the function, before the caller had read the result, and once

@@ -24,7 +24,9 @@
 //! store (a pooled `__ref_N` the root adopted, r12; an alias `q = p`, r5) is then skipped, and
 //! one that does not is freed as before.  Declines keep the copy: any other statement in the
 //! block, a root that is a parameter or a view, a source that is not a field path, a
-//! return buffer that is not the function's own.  `LOFT_NO_RETURN_FIELD=1` is the switch;
+//! return buffer that is not the function's own.  The exit reaches this pass in one of two
+//! spellings — the bare block, or the copy under a PRESENCE TEST of its source with the frees
+//! after it (`Cx::tested_exit`) — and one admission decides both.  `LOFT_NO_RETURN_FIELD=1` is the switch;
 //! `LOFT_TRACE_PLACE=1` names each admission and decline.  Both backends: decided in the
 //! scope pass on the settled IR, after the exit vector it may compose with.
 use crate::data::{Block, Data, Deps, Type, Value};
@@ -43,6 +45,8 @@ struct Ops {
     free_if_distinct: u32,
     free_text: u32,
     is_null: u32,
+    null_sentinel: u32,
+    distinct_store: u32,
 }
 
 impl Ops {
@@ -59,6 +63,8 @@ impl Ops {
             free_if_distinct: nr("OpFreeRefIfDistinct")?,
             free_text: nr("OpFreeText")?,
             is_null: nr("OpRefIsNull")?,
+            null_sentinel: nr("OpNullRefSentinel")?,
+            distinct_store: nr("OpDistinctStore")?,
         })
     }
 }
@@ -145,7 +151,124 @@ impl Cx<'_> {
                 }
             }
         }
+        if let Value::Block(bl) = node.unspan_mut()
+            && let Some((at, mut exit)) = self.tested_exit(&bl.operators)
+        {
+            match self.admit(&exit) {
+                Ok(src) => {
+                    self.fired += 1;
+                    if crate::keys::trace_place() {
+                        eprintln!(
+                            "[return-field] fn={} root={}: ADMITTED (presence-tested)",
+                            self.name,
+                            self.function.name(src.root)
+                        );
+                    }
+                    self.apply(&mut exit, &src);
+                    bl.operators.truncate(at);
+                    bl.operators.push(Value::Block(Box::new(exit)));
+                }
+                Err(why) => {
+                    if crate::keys::trace_place() {
+                        eprintln!(
+                            "[return-field] fn={}: DECLINED (presence-tested) — {why}",
+                            self.name
+                        );
+                    }
+                }
+            }
+        }
         node.for_each_child_mut(&mut |c| self.walk(c));
+    }
+
+    /// The exit in its PRESENCE-TESTED spelling, rebuilt as the bare exit block
+    /// [`Self::admit`] reads.  A return copy of a source that may be absent (`@FR-N-Store`: a
+    /// field of an owned record a null has reached) is
+    ///
+    /// ```text
+    /// ret = if OpRefIsNull(src) null else { mint; …; copy(src, rb); rb };
+    /// frees…;
+    /// return ret;
+    /// ```
+    ///
+    /// where the bare one is `{ mint; …; copy(src, rb); frees…; return rb }`.  The two differ
+    /// by the test and by where the frees stand, so the same admission decides both, and the
+    /// hand-over answers the test by itself: a field of a null root is null.  The release of
+    /// the function's own buffer that guards the mint (`if OpDistinctStore(rb, _) …`) goes
+    /// with the mint the rewrite removes.  `None` for any other statement list, which keeps
+    /// the tested copy.
+    fn tested_exit(&self, ops: &[Value]) -> Option<(usize, Block)> {
+        let (last, before) = ops.split_last()?;
+        let Value::Return(r) = last.unspan() else {
+            return None;
+        };
+        let Value::Var(ret) = r.unspan() else {
+            return None;
+        };
+        let at = before.iter().rposition(
+            |op| matches!(op.unspan(), Value::Set(v, val) if v == ret && self.tested_copy(val).is_some()),
+        )?;
+        let Value::Set(_, val) = before[at].unspan() else {
+            return None;
+        };
+        let copy = self.tested_copy(val)?;
+        let (tail, head) = copy.operators.split_last()?;
+        if !matches!(tail.unspan(), Value::Var(b) if *b == self.rb) {
+            return None;
+        }
+        let mut operators = head.to_vec();
+        operators.extend(
+            before[at + 1..]
+                .iter()
+                .filter(|op| !self.guards_own_buffer(op))
+                .cloned(),
+        );
+        operators.push(Value::Return(Box::new(Value::Var(self.rb))));
+        let mut exit = copy.clone();
+        exit.operators = operators;
+        Some((at, exit))
+    }
+
+    /// `if OpRefIsNull(src) null else { …; copy(src, rb); rb }` — the copy block, when the
+    /// test asks the very source the copy reads.
+    fn tested_copy<'v>(&self, val: &'v Value) -> Option<&'v Block> {
+        let Value::If(cond, absent, copy) = val.unspan() else {
+            return None;
+        };
+        let Value::Call(d, tested) = cond.unspan() else {
+            return None;
+        };
+        let null = matches!(absent.unspan(), Value::Call(n, a)
+            if *n == self.ops.null_sentinel && a.is_empty());
+        let Value::Block(bl) = copy.unspan() else {
+            return None;
+        };
+        if *d != self.ops.is_null || tested.len() != 1 || !null {
+            return None;
+        }
+        if bl.name != "materialized_view_return" {
+            return None;
+        }
+        let reads_tested = bl.operators.iter().any(|op| {
+            matches!(op.unspan(), Value::Call(c, args)
+                if *c == self.ops.copy
+                    && args.len() == 3
+                    && args[0].unspan() == tested[0].unspan())
+        });
+        reads_tested.then_some(bl)
+    }
+
+    /// The release of the function's own buffer where the exit minted one it does not
+    /// answer: `if OpDistinctStore(rb, <the buffer as it arrived>) OpFreeRefIfDistinct(rb, ret)`.
+    fn guards_own_buffer(&self, op: &Value) -> bool {
+        let Value::If(cond, free, _) = op.unspan() else {
+            return false;
+        };
+        let own = |v: &Value| matches!(v.unspan(), Value::Var(b) if *b == self.rb);
+        matches!(cond.unspan(), Value::Call(d, args)
+            if *d == self.ops.distinct_store && args.first().is_some_and(own))
+            && matches!(free.unspan(), Value::Call(d, args)
+                if *d == self.ops.free_if_distinct && args.first().is_some_and(own))
     }
 
     /// The root local of a field path — `OpGetField(… OpGetField(Var(root), _, _) …, _, _)`.

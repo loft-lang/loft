@@ -15,7 +15,13 @@
 // Every cell asserts a hand-computed value AND its presence, on both backends.
 //
 // @EXPECT_WARNING: is stored into parameter
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions on both backends — the patch gives the bind its unconditional copy
+// back: the interpreter mints the destination and copies into it, and the native record
+// road's presence test is constant false.
+// WITNESS: on the patched tree both backends stop at `c1 null 0`: a bind of a dense parameter
+// handed `null` is a present record of zeros.
+// HOLDS: every cell whose source is a record, and the two inline-slot cells.
 
 struct S { a: integer }
 struct T { a: integer, name: text }
@@ -112,6 +118,49 @@ fn i2(o: O, p: S) {
   o.inner = p;
 }
 
+// A field of a record the frame owns, returned through a local: the return hands the root's
+// store over in place of the tested copy (`@FR-R-ReturnField`), and a hand-over of a null
+// root is null.
+struct In { n: integer, tag: text }
+struct Pair { a: In, b: In }
+
+fn mk(n: integer) -> Pair {
+  Pair { a: In { n: n, tag: "a{n}" }, b: In { n: n + 1, tag: "b{n}" } }
+}
+
+fn through(p: Pair) -> Pair {
+  p
+}
+
+// h1 — the root is there.
+fn h1(n: integer) -> In {
+  d = mk(n);
+  v = d.a;
+  return v;
+}
+
+// h2 — the root is a call that answers the null it was handed.
+fn h2() -> In {
+  d = through(null);
+  v = d.a;
+  return v;
+}
+
+// h3 — the nullable result spelling of h2.
+fn h3() -> In? {
+  d = through(null);
+  v = d.a;
+  return v;
+}
+
+// h4 — a root that was there, rebound to a null answer.
+fn h4(n: integer) -> In {
+  d = mk(n);
+  d = through(null);
+  v = d.b;
+  return v;
+}
+
 fn main() {
   y = S { a: 41 };
 
@@ -153,6 +202,15 @@ fn main() {
   b10 = c10(t);
   assert(a10 == null && (a10.name ?? "none") == "none", "c10 null");
   assert((b10.a ?? -1) == 41 && (b10.name ?? "none") == "nm" && b10 != null, "c10 record");
+
+  a11 = h1(4);
+  assert((a11.n ?? -1) == 4 && (a11.tag ?? "none") == "a4" && a11 != null, "h1 {a11.n ?? -1}");
+  b11 = h2();
+  assert(b11 == null && (b11.n ?? -1) == -1, "h2 {b11.n ?? -1}");
+  c11 = h3();
+  assert(c11 == null && (c11.n ?? -1) == -1, "h3 {c11.n ?? -1}");
+  d11 = h4(6);
+  assert(d11 == null && (d11.n ?? -1) == -1, "h4 {d11.n ?? -1}");
 
   // 1000 calls, half of them null: 500 * 1 + 500 * 41.
   total = 0;
