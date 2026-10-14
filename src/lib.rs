@@ -460,6 +460,7 @@ pub mod fuzz_oracle;
 pub mod install;
 pub mod integrity;
 pub mod introspect;
+pub mod layout_schema;
 pub mod libscan;
 pub mod lockfile;
 pub mod log_config;
@@ -482,7 +483,6 @@ pub mod runtime_error;
 /// @PLN86 — sandbox policy model (capability-group allow-lists + the loft.toml parser).
 pub mod sandbox;
 /// @PLN97 Phase D — the schema-description sidecar (a store's self-describing layout identity).
-pub mod layout_schema;
 pub mod schema_sidecar;
 #[cfg(feature = "registry")]
 pub mod self_update;
