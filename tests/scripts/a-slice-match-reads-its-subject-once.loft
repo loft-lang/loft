@@ -9,6 +9,13 @@
 // c8 (a match inside an arm's body).  c7's guard grows the vector it matches: the tests that
 // run after a failed guard are the plain ones, inside the guarded arm.  A read is bound under
 // its own length test, so a subject shorter than a pattern reads nothing past its end.
+//
+// @falsified-by: tests/falsified/a-slice-match-reads-its-subject-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the VALUE channel on the interpreter, a refusal on native — the patch binds the
+//   shared reads BEFORE the subject: c4 reads the previous call's subject (`50,12,20,null,…`)
+//   and native cannot compile a read of the subject before its declaration.  A second plant,
+//   the element bound with no length test, is INERT: a read one past the end answers null on
+//   both backends and every arm test that could see it is behind its own length test.
 
 enum Tok { A { n: integer }, B { w: text }, C { n: integer } }
 struct Cur { const src: vector<Tok>, pos: integer }
