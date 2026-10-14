@@ -123,7 +123,10 @@ fn loft_fn(data: &Data, d: u32) -> bool {
 
 /// `vector<u8>`: a vector of integers that fit a byte.
 fn byte_vector(tp: &Type) -> bool {
-    let Type::Vector(e, _) = tp else {
+    // A `vector<u8>?` is one too (`@FR-N-Shape`): a callee parameter of that type is a
+    // vector the frame can be confused with, which is the safe answer for `not_frame`.
+    // `root_frame` refuses a nullable frame itself.
+    let Type::Vector(e, _) = tp.base() else {
         return false;
     };
     matches!(e.base(), Type::Integer(s) if s.min >= 0 && s.max <= 255)
@@ -343,16 +346,21 @@ impl Types<'_> {
         }
     }
 
+    /// Is the first argument a variable whose vector's elements hold no view type?
+    fn numbers_vector(&self, def_nr: u32, args: &[Value]) -> bool {
+        let Some(Value::Var(v)) = args.first().map(Value::unspan) else {
+            return false;
+        };
+        let tp = self.data.def(def_nr).variables().tp(*v).base();
+        matches!(tp, Type::Vector(e, _) if self.holds_type(e) == Holds::No)
+    }
+
     fn holds(&self, def_nr: u32, x: &Value) -> Holds {
         match x.unspan() {
             Value::Var(v) => self.holds_type(self.data.def(def_nr).variables().tp(*v)),
             Value::Call(d, args) => match op_name(self.data, *d) {
                 // An element of a vector of numbers holds nothing.
-                "OpGetVector" | "OpGetVectorNullable"
-                    if matches!(args.first().map(Value::unspan), Some(Value::Var(v))
-                        if matches!(self.data.def(def_nr).variables().tp(*v).base(),
-                            Type::Vector(e, _) if self.holds_type(e) == Holds::No)) =>
-                {
+                "OpGetVector" | "OpGetVectorNullable" if self.numbers_vector(def_nr, args) => {
                     Holds::No
                 }
                 "OpGetField"
@@ -873,7 +881,8 @@ fn root_frame(t: &Types<'_>, d: u32) -> Option<u16> {
         let pv = param_var(data, d, i)?;
         let tp = def.variables().tp(pv);
         if byte_vector(tp) {
-            if frame.is_some() || a.hidden {
+            // A nullable frame is not one: no read the region serves takes an absent vector.
+            if frame.is_some() || a.hidden || tp.peel_optional().1 {
                 return None;
             }
             frame = Some(pv);
