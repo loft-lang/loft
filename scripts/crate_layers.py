@@ -16,8 +16,11 @@ the exported macros by name — and answers:
                   exit 1 when a module is unassigned or a back-edge count exceeds BUDGET
   sites A B       every reference from module A to module B, by file:line
   move MOD LAYER  put module MOD in LAYER (rewrites LAYERS in this file, sorted)
-  lower           set every budget the tree has fallen below to the tree's count; it never
-                  raises one — an upward reference is cut, not budgeted
+  lower [--relayer]
+                  set every budget the tree has fallen below to the tree's count; it never
+                  raises one — an upward reference is cut, not budgeted.  `--relayer` is
+                  for a `move` that shifts references between pairs: it may raise a pair
+                  only when the TOTAL falls, and names each pair it raised
 
 Only the library is read: `src/main.rs`, `src/bin/` and `src/gendoc.rs` are binaries, which
 sit above every layer.  Comments are skipped; code in `#[cfg(test)]` blocks is counted,
@@ -50,11 +53,11 @@ LAYERS: list[tuple[str, list[str]]] = [
         "integrity", "ir_schema", "ir_schema_gen", "json", "keys", "lexer", "lib", "libscan",
         "limits", "literal_append", "lockfile", "log_config", "logger", "loop_shape", "manifest",
         "migrate_long", "narrow", "net", "net_profile", "null_census", "op_census", "op_sets",
-        "ops", "package", "package_layout", "page_metrics", "paged_reader", "parallel",
-        "placement", "platform", "platform_census", "png_store", "process_run", "pure_reuse",
-        "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
-        "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
-        "resolution_scope", "return_field", "rewrite_census", "runtime_error", "sandbox",
+        "ops", "package", "package_layout", "page_metrics", "paged_reader", "placement",
+        "platform", "platform_census", "png_store", "process_run", "pure_reuse", "radix_db",
+        "radix_tree", "registry", "registry_advisories", "registry_index", "registry_keys",
+        "registry_signing", "repeat_run", "repl_doc", "resolution", "resolution_scope",
+        "return_field", "rewrite_census", "runtime_abi", "runtime_error", "sandbox",
         "schema_sidecar", "script", "self_update", "siphash", "slot_alias", "spatial",
         "stack_census", "stack_verify", "stdlib_sources", "store", "store_budget", "store_census",
         "take_local", "text_calls", "text_run", "timeout", "tls", "trace", "trie_db", "triggers",
@@ -69,12 +72,12 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("gen", [
         "ctor_literal", "debugger", "engine_host", "generation", "leaf_inline", "live_dispatch",
-        "live_reload", "native", "rpc", "value_record",
+        "live_reload", "rpc", "value_record",
     ]),
     ("runtime", [
         "c_call", "codegen_runtime", "compiled_stdlib", "create", "extensions", "fill",
-        "fuzz_keyed", "fuzz_oracle", "introspect", "loop_kernels", "native_gate", "native_lib",
-        "profiler", "stack", "state", "stdlib_ops",
+        "fuzz_keyed", "fuzz_oracle", "introspect", "loop_kernels", "native", "native_gate",
+        "native_lib", "parallel", "profiler", "stack", "state", "stdlib_ops",
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "serve", "startup_cache",
@@ -87,11 +90,11 @@ LAYERS: list[tuple[str, list[str]]] = [
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
     ("core", "front"): 10,
-    ("core", "runtime"): 17,
-    ("front", "gen"): 11,
-    ("front", "runtime"): 9,
+    ("core", "runtime"): 12,
+    ("front", "gen"): 10,
+    ("front", "runtime"): 10,
     ("gen", "facade"): 6,
-    ("gen", "runtime"): 19,
+    ("gen", "runtime"): 9,
 }
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
@@ -420,6 +423,17 @@ def main(argv):
                 new[key] = have
             elif have > allowed:
                 raised.append(f"{key[0]} -> {key[1]}: {have} upward reference(s), budget {allowed}")
+        if raised and "--relayer" in argv:
+            total_now, total_was = sum(counts.values()), sum(BUDGET.values())
+            if total_now < total_was:
+                for key in counts:
+                    if counts[key] > BUDGET.get(key, 0):
+                        print(f"{key[0]} -> {key[1]}: budget {BUDGET.get(key, 0)} -> {counts[key]} "
+                              f"(re-layered; total {total_was} -> {total_now})")
+                        new[key] = counts[key]
+                raised = []
+            else:
+                print(f"--relayer refused: the total would go {total_was} -> {total_now}")
         rewrite_tables(LAYERS, new)
         for r in raised:
             print(f"NOT raised — cut these instead: {r}")

@@ -261,9 +261,9 @@ impl Output<'_> {
         //   - `Cell`  → emit `name(cell, args...)`     (default)
         //   - `None`  → emit `name(args...)`           (no implicit Stores)
         let abi = if *def_fn.code() == Value::Null {
-            crate::codegen_runtime::abi_of(def_fn.name())
+            crate::runtime_abi::abi_of(def_fn.name())
         } else {
-            crate::codegen_runtime::Abi::Cell
+            crate::runtime_abi::Abi::Cell
         };
         // @PLN157 § V-p — the TWIN form (`@FR-R-Inputs`): every invariant input of the callee
         // is a local the enclosing frames hold for the argument variable.  The definition
@@ -327,7 +327,7 @@ impl Output<'_> {
             if dest { "__d" } else { "" }
         )?;
         let mut first_arg = true;
-        if matches!(abi, crate::codegen_runtime::Abi::Cell) {
+        if matches!(abi, crate::runtime_abi::Abi::Cell) {
             write!(w, "cell")?;
             first_arg = false;
         }

@@ -2059,13 +2059,13 @@ impl Output<'_> {
             }
             // P199 — user-fn / Op-stub callees take `&UnsafeCell<Stores>`
             // (cell), not `&mut Stores` (stores).  Plan 09 phase 01 added
-            // per-fn ABI tagging via `crate::codegen_runtime::abi_of`:
+            // per-fn ABI tagging via `crate::runtime_abi::abi_of`:
             //   - Cell  → `name(cell, args...)`     (default)
             //   - None  → `name(args...)`           (no implicit Stores)
             let abi = if *def_fn.code() == Value::Null {
-                crate::codegen_runtime::abi_of(def_fn.name())
+                crate::runtime_abi::abi_of(def_fn.name())
             } else {
-                crate::codegen_runtime::Abi::Cell
+                crate::runtime_abi::Abi::Cell
             };
             // loft#1032 — a generator callee answers `Box<dyn LoftCoroutine>`, and every
             // caller holds the handle as a `DbRef` from the coroutine table, so the call
@@ -2081,7 +2081,7 @@ impl Output<'_> {
             }
             write!(w, "{}(", self.fn_ident(def_fn))?;
             let mut first_arg = true;
-            if matches!(abi, crate::codegen_runtime::Abi::Cell) {
+            if matches!(abi, crate::runtime_abi::Abi::Cell) {
                 write!(w, "cell")?;
                 first_arg = false;
             }

@@ -400,6 +400,7 @@ mod png_store;
 pub mod profiler;
 mod radix_db;
 mod radix_tree;
+pub mod runtime_abi;
 mod spatial;
 pub mod store;
 pub mod store_budget;

@@ -208,7 +208,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("OpReadFile", Box::new(file_ops::ReadFileEmitter));
     // `@FR-R-FoldCompare` — a text predicate over a case fold, answered without the fold.
     {
-        use crate::codegen_runtime::fold_op;
+        use crate::runtime_abi::fold_op;
         let ops = [fold_op::STARTS, fold_op::ENDS, fold_op::EQ, fold_op::NE];
         for (name, op) in FOLD_COMPARE_OPS.into_iter().zip(ops) {
             r.insert(name, Box::new(text_ops::FoldCompareEmitter { op }));
