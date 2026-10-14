@@ -273,6 +273,23 @@ impl Write for LoftFile {
     }
 }
 
+impl LoftFile {
+    /// Put the handle at the reading record's own position before a read: every `File`
+    /// record that names this handle keeps its own `#next` (`@FR-H-Handle`), and a copy
+    /// reads where ITS cursor says (loft#2005).  Free when the handle is already there,
+    /// which is every read of a record that alone uses its handle.
+    ///
+    /// # Errors
+    /// The OS error of the seek.
+    #[inline]
+    pub fn place(&mut self, pos: u64) -> io::Result<()> {
+        if self.at == Some(pos) {
+            return Ok(());
+        }
+        self.seek(SeekFrom::Start(pos)).map(|_| ())
+    }
+}
+
 impl Seek for LoftFile {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         // Already there: nothing moves, the buffer stays valid, the OS is not asked.
@@ -280,6 +297,18 @@ impl Seek for LoftFile {
             && x == a
         {
             return Ok(a);
+        }
+        // A position the buffer holds: the logical position moves inside it and the OS
+        // position (the buffer's end) stays, so two records taking turns on one handle
+        // do not refill it per read.
+        if let (SeekFrom::Start(x), Some(start)) =
+            (to, self.at.and_then(|a| a.checked_sub(self.pos as u64)))
+            && x >= start
+            && x < start + self.len as u64
+        {
+            self.pos = (x - start) as usize;
+            self.at = Some(x);
+            return Ok(x);
         }
         let to = match to {
             SeekFrom::Current(d) => SeekFrom::Current(d - self.ahead()),
@@ -395,6 +424,31 @@ mod tests {
         assert_eq!(f.stream_position().unwrap(), 4);
         drop(f);
         assert_eq!(crate::file_access::read(host(&p)).unwrap(), b"abcZef");
+        crate::file_access::remove_file(host(&p)).unwrap();
+    }
+
+    #[test]
+    fn a_placed_read_inside_the_buffer_reads_there_and_keeps_writes_in_place() {
+        let data: Vec<u8> = (0..100u8).collect();
+        let p = scratch("place", &data);
+        let mut f = open(&p);
+        let mut two = [0u8; 2];
+        f.read_exact(&mut two).unwrap();
+        // two readers taking turns: 2, back to 0, forward to 50, back to 4
+        for (at, want) in [(0u64, [0u8, 1]), (50, [50, 51]), (4, [4, 5])] {
+            f.place(at).unwrap();
+            f.read_exact(&mut two).unwrap();
+            assert_eq!(two, want);
+            assert_eq!(f.stream_position().unwrap(), at + 2);
+        }
+        // a write after a move inside the buffer lands at the logical position
+        f.place(10).unwrap();
+        f.write_all(b"XY").unwrap();
+        f.read_exact(&mut two).unwrap();
+        assert_eq!(two, [12, 13]);
+        drop(f);
+        let back = crate::file_access::read(host(&p)).unwrap();
+        assert_eq!(&back[9..13], &[9, b'X', b'Y', 12]);
         crate::file_access::remove_file(host(&p)).unwrap();
     }
 

@@ -2771,7 +2771,11 @@ pub fn OpReadFile<T: FileVal>(
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
     {
-        if is_text {
+        // The read starts at THIS record's `#next`, wherever another record that names the
+        // handle left it (`LoftFile::place`, loft#2005).
+        if f.place(next_pos as u64).is_err() {
+            0
+        } else if is_text {
             f.read(buf).unwrap_or(0)
         } else if f.read_exact(buf).is_ok() {
             n
@@ -2837,7 +2841,11 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
         .files
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
-        .and_then(loft_file_take::<W>);
+        .and_then(|f| {
+            f.place(next_pos as u64)
+                .ok()
+                .and_then(|()| loft_file_take::<W>(f))
+        });
     let nread = if let Some(b) = bytes {
         *val = decode_int::<W, SIGNED>(&b, little_endian);
         W
@@ -2911,10 +2919,21 @@ impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
         {
             return;
         }
+        let last = st.get_long(self.file.rec, self.file.pos + 8);
+        // A copy of the record may have moved the shared handle: the hold reads from THIS
+        // record's `#next`, and nothing in the loop moves the handle after this.
+        let placed = stores
+            .files
+            .get_mut(open_ref as usize)
+            .and_then(|x| x.as_mut())
+            .is_some_and(|f| f.place(next as u64).is_ok());
+        if !placed {
+            return;
+        }
         self.little_endian = format == 2;
-        self.last = st.get_long(self.file.rec, self.file.pos + 8);
+        self.last = last;
         self.next = next;
-        self.seen = (self.last, next);
+        self.seen = (last, next);
         self.handle = open_ref;
     }
 

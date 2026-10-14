@@ -626,3 +626,9 @@ read different bytes through the copy — the interpreter seeks to the copy's ow
 handle and one position.  Independent of the hold, which declines a loop naming two `File`
 variables; the cell names one record through two parameters instead.
 
+loft#2005 closed the other way the same day, which retired the handle-cursor price: on native
+a copy made BEFORE the first read already had a cursor of its own (each record opens its own
+handle), so "one position per handle" would have made `g = f` mean two things by when it ran.
+Each record keeps its position; native's read now places the handle at `#next` first
+(`LoftFile::place`, a compare when it is there), as writes, seeks and the interpreter did.
+
