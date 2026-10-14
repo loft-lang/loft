@@ -18,7 +18,10 @@ is built, as the rule says.
 import re
 import sys
 
-src = open(sys.argv[1]).read()
+if len(sys.argv) != 3 or sys.argv[1] in ("-h", "--help"):
+    print(__doc__)
+    sys.exit(0 if "--help" in sys.argv or "-h" in sys.argv else 2)
+src = open(sys.argv[1], encoding="utf-8").read()
 
 
 def body(name):
@@ -131,4 +134,4 @@ if PART != "bytes":
     c2 = once(c2, "n_pa_text(cell, {{", "n_pa_text_dv(cell, var_frame, {{")
 src = src.replace(c, c2)
 src += "\n" + "\n".join([d, rg, dec, g, p])
-open(sys.argv[2], "w").write(src)
+open(sys.argv[2], "w", encoding="utf-8").write(src)
