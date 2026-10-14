@@ -23,7 +23,10 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")
         .env_remove("LOFT_NO_PUSH_FILL")
-        .env_remove("LOFT_NO_PUSH_HOIST");
+        .env_remove("LOFT_NO_PUSH_HOIST")
+        // A `vector<float>` local these cells fill is an inline buffer under `@FR-R-Apart`'s
+        // instance 3: these pins are the fill's own evidence, measured with that rule off.
+        .env("LOFT_NO_APART_VECTOR", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

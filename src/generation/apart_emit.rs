@@ -225,8 +225,19 @@ impl Output<'_> {
             writeln!(w, ";")?;
             return Ok(Some(c.end));
         }
+        // A read or a length is a VALUE: it may be the block's tail, which a statement's `;`
+        // would turn into `()`, so the expression hook writes it where it stands.
+        let data = self.data;
+        let op = &ops[at];
+        if apart_vector::read(data, op).is_some()
+            || apart_value::element_read(data, op).is_some()
+            || apart_value::length_of(data, op).is_some()
+            || matches!(apart_vector::unary(data, op), Some(("len", _)))
+        {
+            return Ok(None);
+        }
         let mut probe: Vec<u8> = Vec::new();
-        if self.apart_expr(&mut probe, &ops[at])? {
+        if self.apart_expr(&mut probe, op)? {
             self.indent(w)?;
             w.write_all(&probe)?;
             writeln!(w, ";")?;

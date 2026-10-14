@@ -41,10 +41,6 @@ impl Output<'_> {
         // @PLN157 § V-ao (`@FR-R-Invariant`) — a chain an enclosing loop memoised emits
         // its memo's use; keyed on the node's address like the pre-eval above, and checked
         // after it so a `_pre_N` that carries the chain keeps its name.
-        // `@FR-R-Apart` — a mention of an apart variable is its value's (`apart_emit`).
-        if self.apart_ctx.is_some() && self.apart_expr(w, code)? {
-            return Ok(());
-        }
         if !self.invariant_hoists.is_empty()
             && let Some(memo) = self.active_invariant(code)
         {
@@ -121,6 +117,15 @@ impl Output<'_> {
         w: &mut dyn Write,
         node: IrNode,
     ) -> std::io::Result<()> {
+        // `@FR-R-Apart` — a mention of an apart variable is its value's (`apart_emit`).  Here,
+        // in the dispatch every emission path ends in, and not in `output_code_inner`: an
+        // `Insert`'s items and a template's bound operands reach this without passing it.
+        if self.apart_ctx.is_some()
+            && let Some(code) = node.native()
+            && self.apart_expr(w, code)?
+        {
+            return Ok(());
+        }
         match node.kind() {
             // Phase 09 step 0.7 — synthetic raw-expression passthrough (fn-ref
             // dispatch); emit the string verbatim.
@@ -212,13 +217,7 @@ impl Output<'_> {
                 for (vnr, v) in ops.iter().enumerate() {
                     self.indent(w)?;
                     self.indent += 1;
-                    // `@FR-R-Apart` — an item is a statement the apart hooks may own (a
-                    // `return` path's frees sit in an `Insert`), and it is written here
-                    // without passing `output_code_inner`.
-                    let apart = self.apart_ctx.is_some() && self.apart_expr(w, v.as_native())?;
-                    if !apart {
-                        self.output_code_node(w, v)?;
-                    }
+                    self.output_code_node(w, v)?;
                     self.indent -= 1;
                     if vnr < n - 1 {
                         writeln!(w, ";")?;

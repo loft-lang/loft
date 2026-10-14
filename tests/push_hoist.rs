@@ -48,7 +48,11 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // A `vector<float>` local these cells push to is an inline buffer under
+        // `@FR-R-Apart`'s instance 3, which takes the push header away: these pins are the
+        // push hoist's own evidence, measured with that rule off.
+        .env("LOFT_NO_APART_VECTOR", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }
