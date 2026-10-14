@@ -113,7 +113,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 | × | row | steps | lands at |
 |--:|---|---|---|
 | 7.68 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
-| 7.55 | `check_request` | `(R-DecodeView)`, priced −46 % | ≈ 4.1× |
+| 5.07 | `check_request` (7.55 before `(R-DecodeView)`) | the decode's result store minted and freed per call; the key bindings copied (S6) | on the line |
 | 7.44 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.38 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
 | 7.01 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
@@ -163,8 +163,10 @@ before it; the slowest row goes first; a step with no price is priced before it 
    and release 26 %, vector runtime 18 %; the 14 % that was text formatting is gone
    (`Str::to_string`, § 3 S13).  The run's text borrowed from its call's buffer, never copied
    to a local, prices at −3.4 % and is dropped.  Next: price X3.
-4. **`check_request` (7.55×)** — `(R-DecodeView)` priced at −46 % (1255 → 680 ns per
-   check, over-9x.md § pluginabi): ≈ 4.1×.  Build it; S8 after its decision (§ 6).
+4. **`check_request` (5.07×)** — `(R-DecodeView)` instance 1 is BUILT: 2.55 → 1.67 ms
+   (−34 %, 80 % of the −46 % hand price).  The row is on the line; what is left is flat —
+   the store `decode` mints and frees per call (~10 %), the entries vector's build, and the
+   key bindings copied (S6's match-binding clause, priced −1.5 %).
 5. **`field_add_cell` (7.68×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
    move with it.

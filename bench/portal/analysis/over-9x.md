@@ -350,7 +350,11 @@ every decoded text and byte string held as a span — offset and length — of t
 spare word of its 16-byte `CborValue` record; `decode`'s twins write the span where the owned
 form claims, and `pa_text` / `pa_get` read the frame in place.  1255 → **680 ns per check
 (−46 %)** on one core, every row's hash unchanged: the byte strings alone −26 % (no reader
-needs them), the texts alone −20 %.  That is 7.55× → ≈ 4.1× — under the cut.
+needs them), the texts alone −20 %.  **Built** (instance 1, `formal/rewrites.md` § A decoded text or byte
+string is a view into the frame): 2.55 → 1.67 ms per op, 7.55× → 5.07× recorded.  The 20 %
+it leaves of the price: the byte local's holder record (placed only on the fallback path, as
+priced), the key bindings copied into a `String` (−1.5 % borrowed, S6), and the span
+helpers' frame lookups.
 
 ### Order
 
