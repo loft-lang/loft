@@ -14,7 +14,8 @@
 // `walk_values`; `bytes_len` (a byte string read), `scribble` (the frame written), `keep` (a
 // decoded value returned) and `mixed_alone` (a span variant minted alone) decline.
 //
-// @falsified-by: tests/falsified/a-decoded-text-is-read-where-it-lies.patch — native exit 1 -> 0
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-decoded-text-is-read-where-it-lies.patch — pending
 //   CHANNEL: the VALUE channel, native only — the patch reads a span one byte late.
 
 enum Val {
