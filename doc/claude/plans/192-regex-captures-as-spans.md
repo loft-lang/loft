@@ -3,18 +3,12 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# <N> — Regex captures, find-all and replace: a `Match` written so the compiler can keep it a view
+# 192 — Regex captures, find-all and replace: a `Match` written so the compiler can keep it a view
 
-> **Identity.** This file takes the number the tracker returns: file the plan issue in
-> `loft-lang/plans` (one `status:*` + `subject:library` label), then rename this file to
-> `<N>-regex-captures-as-spans.md` and set the `@PLN<N>` below.  The `_PROPOSED` prefix
-> exists only because the number is minted by the tracker, never by scanning this directory
-> (loft-plan-workflow skill § A plan's identity).
-
-Plan issue: `@PLN<N>` (to file).  Library: [`loft-lang/loft-libs-core/regex`](https://github.com/loft-lang/loft-libs-core/tree/main/regex)
+Plan issue: [@PLN192](https://github.com/loft-lang/plans/issues/192) (`status:future`, `subject:libs`).  Library: [`loft-lang/loft-libs-core/regex`](https://github.com/loft-lang/loft-libs-core/tree/main/regex)
 (0.4.3).  Driver: [@PLN179 finding 011](179-scripts-in-loft/findings/011-regex-has-no-capture-groups.md)
 — four of the eight ports cite it, and it is why those ports read two to three times longer
-than their Python originals.  Value **F** (friction-free scripting) · effort **M**, in S
+than their Python originals.  Value **U** (ease of use — friction-free scripting) · effort **M**, in S
 steps that each finish inside the PR cadence.
 
 ## Status (REQUIRED)
@@ -179,7 +173,7 @@ the whole subject is the one copy no rule removes).
 ## Composition matrix — Stage A
 
 The cells, each hand-computed, `--interpret` and `--native`, graduated to
-`tests/scripts/<N>-regex-captures.loft` and the library's `tests/worked-examples.loft`
+`tests/scripts/192-regex-captures.loft` and the library's `tests/worked-examples.loft`
 (`@RGX-005` …):
 
 | axis | values |
