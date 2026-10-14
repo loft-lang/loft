@@ -45,24 +45,25 @@ SRC = ROOT / "src"
 LAYERS: list[tuple[str, list[str]]] = [
     ("core", [
         "api_diff", "api_surface", "arena", "base64", "btree", "build_phase", "byte_copy",
-        "c_shim", "c_signature", "cache", "cache_gc", "calc", "call_frames", "compact",
+        "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc", "call_frames", "compact",
         "const_eval", "coroutine_layout", "crash_report", "data", "data_ref", "data_store",
         "database", "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct",
         "doc_render", "documentation", "exit_record", "exit_vector", "ffi_deliver", "file_access",
-        "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts", "install",
-        "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "lexer", "lib",
-        "libscan", "limits", "literal_append", "lockfile", "log_config", "logger", "loop_shape",
-        "manifest", "migrate_long", "narrow", "net", "net_profile", "null_census", "op_census",
-        "op_sets", "ops", "package", "package_layout", "page_metrics", "paged_reader",
-        "placement", "platform", "platform_census", "png_store", "process_run", "pure_reuse",
-        "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
-        "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
-        "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
-        "sandbox", "schema_sidecar", "self_update", "siphash", "slot_alias", "spatial",
-        "stack_census", "stack_verify", "stdlib_sources", "store", "store_budget", "store_census",
+        "fnref", "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts",
+        "install", "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "lexer",
+        "lib", "libscan", "limits", "literal_append", "lockfile", "log_config", "logger",
+        "loop_kernels", "loop_shape", "manifest", "migrate_long", "narrow", "native_build", "net",
+        "net_profile", "null_census", "op_census", "op_layout", "op_sets", "ops", "package",
+        "package_layout", "page_metrics", "paged_reader", "placement", "platform",
+        "platform_census", "png_store", "process_run", "pure_reuse", "radix_db", "radix_tree",
+        "registry", "registry_advisories", "registry_index", "registry_keys", "registry_signing",
+        "repeat_run", "repl_doc", "resolution", "resolution_scope", "return_field",
+        "rewrite_census", "runtime_abi", "runtime_error", "rust_spelling", "sandbox",
+        "schema_sidecar", "self_update", "siphash", "slot_alias", "spatial", "stack_census",
+        "stack_verify", "stdlib_ops", "stdlib_sources", "store", "store_budget", "store_census",
         "take_local", "text_calls", "text_run", "timeout", "tls", "trace", "trie_db", "triggers",
         "tuple_links", "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets",
-        "wasm_gl",
+        "ws_handshake",
     ]),
     ("front", [
         "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
@@ -76,11 +77,11 @@ LAYERS: list[tuple[str, list[str]]] = [
     ("runtime", [
         "c_call", "codegen_runtime", "compile", "compiled_stdlib", "create", "debugger",
         "engine_host", "extensions", "fill", "fuzz_keyed", "fuzz_oracle", "introspect",
-        "live_dispatch", "live_reload", "loop_kernels", "native", "native_gate", "native_lib",
-        "parallel", "profiler", "rpc", "stack", "state", "stdlib_ops",
+        "live_dispatch", "live_reload", "native", "native_gate", "native_lib", "parallel",
+        "profiler", "stack", "state", "wasm_gl",
     ]),
     ("facade", [
-        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "script", "serve",
+        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "rpc", "script", "serve",
         "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
     ]),
 ]
@@ -89,12 +90,6 @@ LAYERS: list[tuple[str, list[str]]] = [
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
-    ("core", "front"): 1,
-    ("core", "runtime"): 8,
-    ("front", "gen"): 1,
-    ("front", "runtime"): 9,
-    ("gen", "runtime"): 1,
-    ("runtime", "facade"): 6,
 }
 
 BIN_FILES = {"main.rs", "gendoc.rs"}

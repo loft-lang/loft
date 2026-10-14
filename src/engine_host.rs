@@ -481,7 +481,7 @@ fn ws_upgrade(mut stream: TcpStream, udp_cookie: &str) -> Option<TcpStream> {
     if !is_upgrade {
         return None;
     }
-    let accept = crate::serve::ws_accept_key(&key);
+    let accept = crate::ws_handshake::ws_accept_key(&key);
     let udp_header = if udp_cookie.is_empty() {
         String::new()
     } else {

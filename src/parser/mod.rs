@@ -4165,6 +4165,20 @@ impl Parser {
         Ok(())
     }
 
+    /// A parser ready for a whole program to be loaded into it: the standard library from
+    /// `stdlib_dir` parsed, `lib_dirs` as the `use` search path, and the world OPEN — it is
+    /// parsed against again after compiling, so no whole-program signature rewrite.  The one
+    /// way the REPL session and the live-reload shadow start a program parse.
+    /// # Errors
+    /// As [`Self::parse_stdlib`].
+    pub fn open_program(stdlib_dir: &str, lib_dirs: &[String]) -> std::io::Result<Parser> {
+        let mut parser = Parser::new();
+        parser.data.open_world = true;
+        parser.lib_dirs = lib_dirs.to_vec();
+        parser.parse_stdlib(stdlib_dir)?;
+        Ok(parser)
+    }
+
     /// Load the standard library from `dir`, or — when there is no such directory — from
     /// the sources this binary embeds (loft#1801).  A binary copied onto the PATH or
     /// installed by `cargo install` has no `default/` beside it, but it carries the stdlib
@@ -21816,7 +21830,7 @@ impl Parser {
         // package that uses `lib/server`) lose their native bindings in
         // interpreter mode.
         if let Some(ref stem) = m.native
-            && let Some(path) = crate::extensions::host_native_lib(&pkg_dir, stem)
+            && let Some(path) = crate::native_build::host_native_lib(&pkg_dir, stem)
             && !self.pending_native_libs.contains(&path)
         {
             self.pending_native_libs.push(path);
@@ -22166,7 +22180,7 @@ impl Parser {
         // Pre-built location first, then auto-build from source (one home:
         // `extensions::resolve_native_lib`, shared with the warm-cache load).
         if let Some(ref stem) = m.native
-            && let Some(path) = crate::extensions::host_native_lib(pkg_dir, stem)
+            && let Some(path) = crate::native_build::host_native_lib(pkg_dir, stem)
             && !self.pending_native_libs.contains(&path)
         {
             self.pending_native_libs.push(path);

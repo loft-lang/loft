@@ -288,7 +288,7 @@ fn accumulates(add: &Value, vector: u16, index: u16, ops: &Ops) -> Option<u16> {
 fn count(n: &Value, v: u16) -> usize {
     let mut c = 0;
     n.any_node(&mut |x| {
-        if crate::value_record::names_var(x, v) {
+        if crate::ir_shape::names_var(x, v) {
             c += 1;
         }
         false

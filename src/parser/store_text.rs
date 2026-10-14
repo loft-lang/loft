@@ -97,13 +97,9 @@ impl Parser {
             if mask == 0 {
                 return;
             }
-            let candidates = crate::generation::fnref::dispatch_arms(
-                &self.data,
-                &HashSet::new(),
-                &fn_type,
-                args.len(),
-            )
-            .unwrap_or_default();
+            let candidates =
+                crate::fnref::dispatch_arms(&self.data, &HashSet::new(), &fn_type, args.len())
+                    .unwrap_or_default();
             for arm in candidates {
                 if memo.contains_key(&(arm.d_nr, mask))
                     || !matches!(self.data.def(arm.d_nr).code, Value::Block(_))

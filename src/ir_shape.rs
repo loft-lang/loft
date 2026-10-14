@@ -165,3 +165,43 @@ pub(crate) fn split_call(
     }
     Ok((buf, separator))
 }
+
+/// Does node `n` ITSELF name variable `v` — as a `Var`, or as one of the variants that
+/// carry a variable number outside a `Var` node?  Exhaustive, so a variant added later is a
+/// compile error here instead of a mention this pass cannot see.
+pub(crate) fn names_var(n: &Value, v: u16) -> bool {
+    match n {
+        Value::Var(x)
+        | Value::Set(x, _)
+        | Value::CallRef(x, _)
+        | Value::Iter(x, ..)
+        | Value::TupleGet(x, _)
+        | Value::TuplePut(x, ..)
+        | Value::FnRef(_, x, _)
+        | Value::FnRefDnr(x) => *x == v,
+        Value::Null
+        | Value::Line(_)
+        | Value::Span(_)
+        | Value::Int(_)
+        | Value::Enum(..)
+        | Value::Boolean(_)
+        | Value::Float(_)
+        | Value::Long(_)
+        | Value::Single(_)
+        | Value::Text(_)
+        | Value::Call(..)
+        | Value::Block(_)
+        | Value::Insert(_)
+        | Value::Return(_)
+        | Value::Break(_)
+        | Value::Continue(_)
+        | Value::If(..)
+        | Value::Loop(_)
+        | Value::Drop(_)
+        | Value::Keys(_)
+        | Value::Tuple(_)
+        | Value::Yield(_)
+        | Value::Parallel(_)
+        | Value::RawExpr(_) => false,
+    }
+}

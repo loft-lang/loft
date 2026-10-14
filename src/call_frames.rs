@@ -245,3 +245,70 @@ impl Drop for CallGuard {
         cr_call_pop();
     }
 }
+
+thread_local! {
+    /// loft#715 — `lib_idx + 1` while a shared-library bridge call is on this thread's
+    /// stack, 0 otherwise.  Read by [`current_shared_bridge`] on the fault path.
+    static IN_SHARED_BRIDGE: Cell<u16> = const { Cell::new(0) };
+}
+
+/// loft#715 — library slot → the bridge symbol it dispatches to.  Populated once
+/// at wiring; read only when a fault is raised while a bridge call is on the
+/// stack, so a bridge fault stops reading like a program fault.
+#[cfg(feature = "native-extensions")]
+static SHARED_LABELS: std::sync::Mutex<Option<std::collections::HashMap<u16, String>>> =
+    std::sync::Mutex::new(None);
+
+/// Record which bridge symbol each library slot dispatches to (`extensions`, at wiring).
+#[cfg(feature = "native-extensions")]
+pub fn label_shared_bridges(labels: impl Iterator<Item = (u16, String)>) {
+    let mut guard = SHARED_LABELS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let table = guard.get_or_insert_with(std::collections::HashMap::new);
+    for (lib_idx, sym) in labels {
+        table.insert(lib_idx, sym);
+    }
+}
+
+/// A shared-library bridge call on slot `lib_idx` starts on this thread.  One `Cell` write.
+#[inline]
+pub fn enter_shared_bridge(lib_idx: u16) {
+    IN_SHARED_BRIDGE.with(|c| c.set(lib_idx.wrapping_add(1)));
+}
+
+/// The bridge call on this thread has returned.
+#[inline]
+pub fn leave_shared_bridge() {
+    IN_SHARED_BRIDGE.with(|c| c.set(0));
+}
+
+/// loft#715 — the bridge symbol currently being dispatched on this thread, if any.
+///
+/// A fault raised while a shared-library bridge is on the stack is a BRIDGE
+/// fault, but it surfaced with the same words as a program fault: `Cannot add to
+/// none-structure '<type>'` names the type the index resolved to and nothing
+/// about who supplied the index — and because it is a non-unwinding panic the
+/// process aborts, so the surrounding harness reports only that the program
+/// never started.  Appending this turns "a type is wrong somewhere" into "this
+/// library's bridge passed something this loft cannot use".
+#[must_use]
+pub fn current_shared_bridge() -> Option<String> {
+    #[cfg(feature = "native-extensions")]
+    {
+        let marked = IN_SHARED_BRIDGE.with(Cell::get);
+        if marked == 0 {
+            return None;
+        }
+        let lib_idx = marked - 1;
+        let guard = SHARED_LABELS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(guard.as_ref().and_then(|t| t.get(&lib_idx)).map_or_else(
+            || format!("shared-library bridge (slot {lib_idx})"),
+            |sym| format!("shared-library bridge `{sym}`"),
+        ))
+    }
+    #[cfg(not(feature = "native-extensions"))]
+    None
+}

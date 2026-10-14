@@ -424,6 +424,16 @@ pub fn host_print(s: &str) {
     }
 }
 
+/// The `print` builtin: into the capture sink when a debug session captures this thread's
+/// output (`platform::print_or_capture`), else [`host_print`].  The stdlib's `print`
+/// template calls this, so neither the interpreter nor a generated program names the
+/// debug server that opens the sink.
+pub fn print_or_host(s: &str) {
+    if !crate::platform::print_or_capture(s) {
+        host_print(s);
+    }
+}
+
 pub use crate::platform::host_eprint;
 
 /// conditionally free `placeholder` — only when its `store_nr`

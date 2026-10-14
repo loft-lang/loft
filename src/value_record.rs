@@ -57,6 +57,7 @@
 use crate::data::{Block, Data, DefType, I64, Type, Value};
 use crate::database::{Parts, Stores};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
+pub(crate) use crate::ir_shape::names_var;
 
 /// `LOFT_NO_IR_VALUE_RECORD=1` leaves every small record to the native rewrite and the
 /// interpreter's buffer — the bisect step for a wrong field read out of a small-record call
@@ -776,46 +777,6 @@ fn is_header(n: &Value, buf: u16, ops: &Ops) -> bool {
 /// Does `n` mention variable `v` anywhere, in any spelling?
 fn mentions(n: &Value, v: u16) -> bool {
     n.any_node(&mut |c| names_var(c, v))
-}
-
-/// Does node `n` ITSELF name variable `v` — as a `Var`, or as one of the variants that
-/// carry a variable number outside a `Var` node?  Exhaustive, so a variant added later is a
-/// compile error here instead of a mention this pass cannot see.
-pub(crate) fn names_var(n: &Value, v: u16) -> bool {
-    match n {
-        Value::Var(x)
-        | Value::Set(x, _)
-        | Value::CallRef(x, _)
-        | Value::Iter(x, ..)
-        | Value::TupleGet(x, _)
-        | Value::TuplePut(x, ..)
-        | Value::FnRef(_, x, _)
-        | Value::FnRefDnr(x) => *x == v,
-        Value::Null
-        | Value::Line(_)
-        | Value::Span(_)
-        | Value::Int(_)
-        | Value::Enum(..)
-        | Value::Boolean(_)
-        | Value::Float(_)
-        | Value::Long(_)
-        | Value::Single(_)
-        | Value::Text(_)
-        | Value::Call(..)
-        | Value::Block(_)
-        | Value::Insert(_)
-        | Value::Return(_)
-        | Value::Break(_)
-        | Value::Continue(_)
-        | Value::If(..)
-        | Value::Loop(_)
-        | Value::Drop(_)
-        | Value::Keys(_)
-        | Value::Tuple(_)
-        | Value::Yield(_)
-        | Value::Parallel(_)
-        | Value::RawExpr(_) => false,
-    }
 }
 
 /// What one function's rewrite needs.

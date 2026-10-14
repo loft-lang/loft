@@ -7884,7 +7884,7 @@ impl Data {
     /// `@FR-R-OpPriority` — the number depends on the operator's priority (`#hot` / `#cold`,
     /// parsed before this runs): hot operators take the first slots, cold ones the last, the rest between, each
     /// class in declaration order — the slot order the `fill.rs` generator lays the tables
-    /// out in, from the class sizes it recorded there (`fill::OP_HOT`, `fill::OP_NORMAL`).
+    /// out in, from the class sizes it recorded there (`op_layout::OP_HOT`, `OP_NORMAL`).
     /// So every route that parses `default/` numbers it the same way, and `stdlib_ops::verify`
     /// still compares the result slot by slot.
     pub fn op_code(&mut self, def_nr: u32) {
@@ -7894,8 +7894,8 @@ impl Data {
         let class = usize::from(self.def(def_nr).op_priority);
         let base = [
             0,
-            crate::fill::OP_HOT,
-            crate::fill::OP_HOT + crate::fill::OP_NORMAL,
+            crate::op_layout::OP_HOT,
+            crate::op_layout::OP_HOT + crate::op_layout::OP_NORMAL,
         ][class];
         let code = base + self.op_next[class];
         self.op_next[class] += 1;

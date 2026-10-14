@@ -348,7 +348,7 @@ impl Stores {
             // stack.  A type index that resolves to a non-structure is a program
             // error from loft code and an ABI/type-table mismatch from a shared
             // library, and the two read identically without this.
-            _ => match crate::extensions::current_shared_bridge() {
+            _ => match crate::call_frames::current_shared_bridge() {
                 Some(bridge) => panic!(
                     "Cannot add to none-structure '{}' — raised inside {bridge}. \
                      The library passed a type index this loft's table does not \

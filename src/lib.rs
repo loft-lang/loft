@@ -385,7 +385,13 @@ pub mod vector;
 pub mod trace;
 
 pub mod btree;
+pub mod c_libs;
 pub mod call_frames;
+pub mod fnref;
+pub mod rust_spelling;
+pub mod native_build;
+pub mod op_layout;
+pub mod ws_handshake;
 pub mod codegen_runtime;
 pub mod const_literal;
 pub mod generation;

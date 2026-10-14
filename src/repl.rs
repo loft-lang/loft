@@ -1945,10 +1945,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if the stdlib directory cannot be read.
     pub fn new(stdlib_dir: &str) -> std::io::Result<Self> {
-        let mut parser = Parser::new();
-        // Parsed against again after compiling: no whole-program signature rewrite.
-        parser.data.open_world = true;
-        parser.parse_stdlib(stdlib_dir)?;
+        let parser = Parser::open_program(stdlib_dir, &[])?;
         Ok(Self {
             parser,
             stdlib_dir: stdlib_dir.to_string(),
@@ -2254,12 +2251,7 @@ impl ReplSession {
         // Both callers (the file-run debugger and the rpc/serve `launch`) want a *fresh* whole-
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
-        let mut parser = Parser::new();
-        // Parsed against again after compiling: no whole-program signature rewrite.
-        parser.data.open_world = true;
-        parser.lib_dirs = lib_dirs;
-        parser.parse_stdlib(&self.stdlib_dir)?;
-        self.parser = parser;
+        self.parser = Parser::open_program(&self.stdlib_dir, &lib_dirs)?;
         Ok(self.load_program_str(&src, path))
     }
 

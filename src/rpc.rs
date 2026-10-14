@@ -20,46 +20,12 @@
 
 use crate::json::{ParseError, Parsed};
 use crate::repl::ReplSession;
-use std::cell::RefCell;
 use std::io::{BufRead, Write};
 
-thread_local! {
-    /// While `Some`, the loft `print` builtin appends here instead of writing stdout —
-    /// so the program's output can be drained into `output` events.  `None` (the default)
-    /// is one branch on the print path.
-    static OUTPUT_SINK: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-/// Called by the `print` builtin (`fill.rs`): route the program's output to the capture
-/// sink when one is active (returns `true`), else let the caller write stdout (`false`).
-#[must_use]
-pub fn print_or_capture(text: &str) -> bool {
-    OUTPUT_SINK.with(|s| {
-        let mut b = s.borrow_mut();
-        if let Some(buf) = b.as_mut() {
-            buf.push_str(text);
-            true
-        } else {
-            false
-        }
-    })
-}
-
-pub(crate) fn capture_begin() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = Some(String::new()));
-}
-pub(crate) fn capture_end() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = None);
-}
-/// Take the captured program output since the last drain (empty if none / not capturing).
-fn capture_take() -> String {
-    OUTPUT_SINK.with(|s| {
-        s.borrow_mut()
-            .as_mut()
-            .map(std::mem::take)
-            .unwrap_or_default()
-    })
-}
+// The capture sink `print` writes into lives in `platform` (core): the interpreter's `print`
+// asks it through `codegen_runtime::print_or_host` without naming this module.
+pub use crate::platform::print_or_capture;
+use crate::platform::{capture_begin, capture_end, capture_take};
 
 /// An in-process debug session driven one wire-protocol line at a time — the seam both
 /// [`run_rpc`] (NDJSON on stdio) and the `loft-dap` DAP adapter drive the engine through,

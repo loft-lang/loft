@@ -8,8 +8,9 @@
 //! whose ABI changes breaks that join.  Asked a second way the two drift: the gate once
 //! tested "returns the same record as a `FnRef`'d function" and missed a lambda that
 //! reached a dispatch through a typed variable alone (@PLN157 § V-ah stage 1).
-use super::{Context, rust_type};
+use crate::data::Context;
 use crate::data::{Data, DefType, Type};
+use crate::rust_spelling::rust_type;
 use std::collections::HashSet;
 
 /// One arm of a fn-ref dispatch.

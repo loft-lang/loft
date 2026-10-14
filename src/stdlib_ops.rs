@@ -7,7 +7,7 @@
 //!
 //! The interpreter dispatches an operator by POSITION: `Data::op_code` hands every operator
 //! declaration in `default/*.loft` the next ordinal in parse order, and
-//! [`fill::OPERATORS`](crate::fill::OPERATORS) — generated from the same files — carries the
+//! `fill::OPERATORS` — generated from the same files — carries the
 //! body for each ordinal, with no name beside it.  So a binary from one tree run against
 //! another tree's `default/` does not fail: one declaration more or fewer moves every later
 //! body under the wrong opcode, and the run ends in a corrupt reference somewhere past the
@@ -40,7 +40,7 @@ pub fn verify(data: &Data, dir: &str) -> Result<(), String> {
         .map(|d_nr| data.def(d_nr))
         .filter(|def| def.is_operator() && def.op_code() != u16::MAX)
         .map(|def| (def.op_code(), def.name()));
-    verify_names(parsed, crate::fill::OPERATOR_NAMES, dir)
+    verify_names(parsed, crate::op_layout::OPERATOR_NAMES, dir)
 }
 
 /// The comparison behind [`verify`], on `(slot, name)` pairs so it can be tested without a
