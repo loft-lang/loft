@@ -7,7 +7,6 @@ use crate::data::{Attribute, Context, Data, DefType, Definition, Deps, I32, Inte
 use crate::fill::OPERATORS;
 use crate::keys::{DbRef, Key};
 use crate::log_config::{LogConfig, TailBuffer};
-use crate::native::FUNCTIONS;
 use crate::variables::size;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Error, Write};
@@ -1511,7 +1510,11 @@ impl State {
                     // indexing `FUNCTIONS` out of bounds (which crashed the
                     // trace logger mid-dump, masking the bug being traced).
                     let nr = self.code::<u16>() as usize;
-                    if let Some((name, _)) = FUNCTIONS.get(nr) {
+                    if let Some(name) = self
+                        .library_names
+                        .iter()
+                        .find_map(|(n, &v)| (usize::from(v) == nr).then_some(n))
+                    {
                         write!(log, "{name})")?;
                     } else {
                         write!(log, "lib_fn#{nr})")?;

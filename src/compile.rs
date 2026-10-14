@@ -122,7 +122,7 @@ pub fn byte_code_from(
         }
     }
     if start_d_nr == 0 {
-        native::init(state);
+        register_natives(state);
         register_native_stubs(state, data);
         // @PLN24 arc B — wire every `#c` declaration into the same static-call
         // table.  Registered under the def's OWN name, which is what the call
@@ -361,6 +361,29 @@ fn stub_symbol_now() -> String {
 #[cfg(any(test, feature = "fuzzing"))]
 pub(crate) fn is_native_not_loaded(msg: &str) -> bool {
     msg.starts_with("native function ") && msg.contains(" not loaded. Either")
+}
+
+/// Register the built-in natives into the interpreter's static-call table: the stdlib's
+/// (`native`), the `par` natives, and in the browser the web and kernel bridges.
+fn register_natives(state: &mut State) {
+    for (name, implement) in native::FUNCTIONS
+        .iter()
+        .chain(crate::parallel_natives::FUNCTIONS)
+    {
+        state.static_fn(name, *implement);
+    }
+    // TTT v3.5 — register the lib/web natives in the wasm-pack
+    // interpreter so `use web` programs run in the browser without a
+    // cdylib (which the browser can't load).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    for (name, implement) in native::WEB_FUNCTIONS_WASM {
+        state.static_fn(name, *implement);
+    }
+    // @PLN18 phase 07 — the browser kernel (see KERNEL_FUNCTIONS_WASM).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    for (name, implement) in native::KERNEL_FUNCTIONS_WASM {
+        state.static_fn(name, *implement);
+    }
 }
 
 /// PKG.1: For each `#native "symbol"` declaration, register a stub function

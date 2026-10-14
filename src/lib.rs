@@ -422,6 +422,7 @@ pub mod create;
 pub mod fill;
 pub mod par_pool;
 pub mod parallel;
+pub mod parallel_natives;
 pub mod platform;
 pub mod state;
 
@@ -429,7 +430,10 @@ pub mod compile;
 pub mod engine_host;
 pub mod extensions;
 pub mod git_query;
+pub mod live_control;
 pub mod live_dispatch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod live_rebuild;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod live_reload;
 pub mod process_run;

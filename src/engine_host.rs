@@ -1824,7 +1824,8 @@ pub fn n_kernel_default_host_dest(stores: &mut Stores, stack: &mut DbRef) {
 // `D!:` frames from a LOOPBACK peer (gated on LOFT_DEBUG_CONTROL=1) drive
 // the debugger loop: breakpoints, frame eval, resume, reload-now, rebuild,
 // swap.  THIS module is transport only — semantics (the parked State, the
-// pause loop, the mailbox) live in live_dispatch.  Replies are plain text
+// pause loop) live in live_dispatch, reached through `live_control` (the
+// mailbox and the handlers the live tier installs).  Replies are plain text
 // frames to the requesting client; `D:hit` notifications go to the client
 // that set the breakpoint.
 
@@ -1946,31 +1947,31 @@ static QUIT_AFTER_REPLY: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
     let reply: Option<String> = match cmd.split_once(' ').map_or((cmd, ""), |(a, b)| (a, b)) {
         ("bp", name) if !name.is_empty() => {
-            let ok = crate::live_dispatch::debug_set_bp(name, cid);
+            let ok = crate::live_control::debug_set_bp(name, cid);
             Some(format!("D:{} bp {name}", if ok { "ok" } else { "err" }))
         }
         ("flip", rest) => {
             let (name, on) = rest.split_once(' ').unwrap_or((rest, "1"));
-            let ok = crate::live_dispatch::set_flip(name, on != "0");
+            let ok = crate::live_control::set_flip(name, on != "0");
             Some(format!("D:flip {ok}"))
         }
         ("eval", name) if !name.is_empty() => {
-            crate::live_dispatch::debug_mailbox_push(crate::live_dispatch::DebugCmd::Eval(
+            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Eval(
                 name.to_string(),
                 cid,
             ));
             None // answered by the pause loop
         }
         ("resume", _) => {
-            crate::live_dispatch::debug_mailbox_push(crate::live_dispatch::DebugCmd::Resume(cid));
+            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Resume(cid));
             None
         }
         ("reload", _) => {
-            crate::live_dispatch::debug_mailbox_push(crate::live_dispatch::DebugCmd::Reload(cid));
+            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Reload(cid));
             None
         }
         ("rebuild", _) => {
-            let ok = crate::live_dispatch::n_rebuild_start_ctl();
+            let ok = crate::live_rebuild::n_rebuild_start_ctl();
             Some(format!(
                 "D:rebuild {}",
                 if ok { "started" } else { "refused" }
@@ -1978,11 +1979,11 @@ fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
         }
         ("rebuild?", _) => Some(format!(
             "D:rebuild {}",
-            crate::live_dispatch::rebuild_status_ctl()
+            crate::live_rebuild::rebuild_status_ctl()
         )),
         ("swap", artifact) => {
             let target = if artifact == "auto" || artifact.is_empty() {
-                crate::live_dispatch::rebuild_artifact_ctl()
+                crate::live_rebuild::rebuild_artifact_ctl()
             } else {
                 artifact.to_string()
             };

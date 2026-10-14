@@ -82,8 +82,8 @@ LAYERS: list[tuple[str, list[str]]] = [
     ("runtime", [
         "c_call", "codegen_runtime", "compile", "compiled_stdlib", "create", "debugger",
         "engine_host", "extensions", "fill", "fuzz_keyed", "fuzz_oracle", "introspect",
-        "live_dispatch", "live_reload", "native", "native_gate", "native_lib", "parallel",
-        "profiler", "stack", "state", "wasm_gl",
+        "live_control", "live_dispatch", "live_rebuild", "live_reload", "native", "native_gate",
+        "native_lib", "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "rpc", "script", "serve",
@@ -109,16 +109,16 @@ RUNTIME: list[str] = [
     "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime",
     "crash_report", "data_ref", "database", "diagnostic_render", "diagnostics", "engine_host",
     "file_access", "fxhash", "git_query", "hash", "integrity", "json", "keys", "lexer", "limits",
-    "lockfile", "log_config", "logger", "loop_kernels", "narrow", "native", "net", "net_profile",
-    "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
-    "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope", "rewrite_census",
-    "runtime_abi", "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store",
-    "store_budget", "store_census", "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets",
-    "ws_handshake",
+    "live_control", "live_rebuild", "lockfile", "log_config", "logger", "loop_kernels", "narrow",
+    "native", "net", "net_profile", "op_census", "ops", "page_metrics", "paged_reader",
+    "par_pool", "placement", "platform", "png_store", "process_run", "radix_db", "radix_tree",
+    "resolution_scope", "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar",
+    "siphash", "stack_verify", "store", "store_budget", "store_census", "timeout", "tls",
+    "trie_db", "vector", "wasm", "wasm_assets", "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 83
+RUNTIME_BUDGET: int = 36
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 

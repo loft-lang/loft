@@ -29,9 +29,12 @@ use crate::vector;
 // The worker pool lives in `par_pool` (the runtime a compiled program links); the
 // interpreter's worker programs below run on it.
 pub use crate::par_pool::set_par_trace;
+#[cfg(feature = "threading")]
+#[allow(unused_imports)]
+pub(crate) use crate::par_pool::with_pool;
 #[allow(unused_imports)]
 pub(crate) use crate::par_pool::{
-    WorkerTrace, map_workers, merge_batches, par_trace_enabled, parallel_workers, with_pool,
+    WorkerTrace, map_workers, merge_batches, par_trace_enabled, parallel_workers,
 };
 use std::sync::Arc;
 #[cfg(feature = "threading")]

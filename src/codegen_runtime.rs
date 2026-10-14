@@ -44,11 +44,11 @@ pub use crate::engine_host::typed::*;
 pub use crate::git_query::typed::*;
 // @PLN179 strand 4b — `lib/process`'s run, so a COMPILED script runs programs too.
 pub use crate::process_run::typed::*;
-// @PLN18 08-S2 — the live-flip surface (typed twin in live_dispatch).
-pub use crate::live_dispatch::n_live_flip;
+// @PLN18 08-S2 — the live-flip surface (it forwards to the live tier once that boots).
+pub use crate::live_control::n_live_flip;
 // @PLN18 08-S4 — the background-rebuild surface.
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::live_dispatch::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
+pub use crate::live_rebuild::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
 
 /// A tuple's `text` member in a `&str` slot (an argument, an `if` arm, a pre-bound block),
 /// whatever its source spelled: a `String` local or work text (`&String`), a literal or a
@@ -5712,7 +5712,7 @@ pub fn install_browser_panic_hook() {
             // spot in generated code or in loft's own runtime, which does not say what
             // the program was doing; the shadow call stack is the half a reader acts on.
             out.push_str(&browser_panic_frames());
-            crate::live_dispatch::wasm_host_log(&out);
+            crate::platform::wasm_host_log(&out);
         }));
     }
 }
