@@ -1235,17 +1235,6 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
 /// the Call function. We need a different mechanism.
 ///
 /// Solution: use a thread-local that `static_call` sets before invoking.
-/// The `--remap-path-prefix` flags for the machine doing the building.
-///
-/// Mirrors `scripts/repro-flags.sh`, which does the same for the release build.
-/// Both exist so a compiled artifact records `/cargo` and `/rustc` instead of
-/// whoever's home directory produced it — the difference between a release
-/// anyone can rebuild and one that only matches on the maintainer's laptop.
-// Not gated on `native-extensions`: its only caller, `auto_build_native`, is
-// not either, so gating it broke `--no-default-features` (E0425). Nothing in
-// the body needs the feature — it reads `rustc --print sysroot` and two env
-// vars.
-
 #[cfg(feature = "native-extensions")]
 fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
     // Read the current library index from the thread-local.
