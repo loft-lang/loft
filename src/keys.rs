@@ -1870,6 +1870,15 @@ pub fn exit_vector_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
 }
 
+/// `LOFT_NO_LITERAL_HOST=1` (scope pass, BOTH backends): a record literal whose vector field
+/// takes an owned local at its last use keeps its own store and the deep copy, instead of
+/// being claimed in the vector's store and taking it by a handle move — `@FR-R-MoveLast`'s
+/// host clause, the first bisect step for an emptied or freed vector field of a local literal.
+pub fn literal_host_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_HOST"))
+}
+
 /// `LOFT_NO_RETURN_FIELD=1` (scope pass, BOTH backends): the returned field of an owned local
 /// keeps the parser's copy into a minted return buffer instead of handing the local's store
 /// over at the field's position — the before-half of `(R-ReturnField)`'s A/B, and the first

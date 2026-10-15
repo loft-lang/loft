@@ -352,6 +352,7 @@ pub mod forward_walk;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod literal_append;
+pub mod literal_host;
 pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;

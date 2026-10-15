@@ -1,0 +1,162 @@
+// `@FR-R-MoveLast`'s host clause — a record literal whose vector field takes an owned local
+// at its last use is claimed in that local's store, and the field takes the vector by a
+// handle move instead of a deep copy of every element.  Every cell asserts the VALUES a hand
+// computation gives; `LOFT_NO_LITERAL_HOST=1` must answer the same.
+//
+// Admitted: c1 (the cursor shape — a call's result, its store a work buffer), c3 (exits before and after the literal),
+// c4 (repeated: the live record count holds once warm), c5 (two vector fields: the first
+// moved, the second copied into the store the first lives in).  c2 needs no rewrite: a
+// vector built in the body is built in the literal's field already.  Declined, the copy kept:
+// c6 (a later field of the same literal reads the source), d1 (the source read after the
+// literal), d2 (the source grown after it), d3 (the literal inside a loop), d4 (the source a
+// parameter: the caller's vector must stay whole), d5 (the literal aliased).
+
+enum Tok { A { n: integer }, B { w: text } }
+struct Cur { const src: vector<Tok>, pos: integer }
+struct Two { a: vector<Tok>, b: vector<Tok>, k: integer }
+struct Sized { src: vector<Tok>, n: integer }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+/// Even i is `A { n: i }`, odd i is `B { w: "w{i}" }`.
+fn toks(n: integer) -> vector<Tok> {
+  r: vector<Tok> = [];
+  for i in 0..n { if i % 2 == 0 { r += [A { n: i }] } else { r += [B { w: "w{i}" }] } }
+  r
+}
+
+/// A counts n, B counts 100 per character of w.
+fn walk(cur: Cur) -> integer {
+  s = 0;
+  while cur.pos < cur.src.len() {
+    match cur.src[cur.pos] { A { n } => s += n, B { w } => s += len(w) * 100 }
+    cur.pos += 1;
+  }
+  s
+}
+
+fn c1(n: integer) -> integer {
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  s = 0;
+  while cur.pos < cur.src.len() {
+    match cur.src[cur.pos] { A { n } => s += n, B { w } => s += len(w) * 100 }
+    cur.pos += 1;
+  }
+  s * 10 + cur.pos
+}
+
+fn c2(n: integer) -> integer {
+  xs: vector<Tok> = [];
+  for i in 0..n { xs += [A { n: i * 3 }] }
+  cur = Cur { src: xs, pos: 1 };
+  walk(cur)
+}
+
+fn c3(n: integer) -> integer {
+  if n == 0 { return -1; }
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  while cur.pos < cur.src.len() {
+    if cur.pos == 2 { return 1000 + len(cur.src) }
+    cur.pos += 1;
+  }
+  len(cur.src)
+}
+
+fn c5(n: integer) -> integer {
+  x = toks(n);
+  y = toks(n + 1);
+  two = Two { a: x, b: y, k: 7 };
+  len(two.a) * 100 + len(two.b) * 10 + two.k
+}
+
+fn c6(n: integer) -> integer {
+  t = toks(n);
+  sz = Sized { src: t, n: len(t) };
+  sz.n * 100 + len(sz.src)
+}
+
+fn d1(n: integer) -> integer {
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  len(t) * 100 + walk(cur)
+}
+
+fn d2(n: integer) -> integer {
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  t += [A { n: 50 }];
+  len(cur.src) * 100 + len(t)
+}
+
+fn d3(n: integer) -> integer {
+  s = 0;
+  for k in 1..n {
+    t = toks(k);
+    cur = Cur { src: t, pos: 0 };
+    s += walk(cur);
+  }
+  s
+}
+
+fn d4(v: vector<Tok>) -> integer {
+  cur = Cur { src: v, pos: 0 };
+  walk(cur)
+}
+
+fn d5(n: integer) -> integer {
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  other = cur;
+  other.pos = 2;
+  walk(other) * 10 + cur.pos
+}
+
+fn main() {
+  // c1 — toks(5) = A0 B"w1" A2 B"w3" A4: 0 + 2 + 4 + 200 + 200 = 406, pos ends at 5.
+  assert(c1(5) == 4065, "c1 {c1(5)}");
+  // c1 on an empty vector: nothing walked.
+  assert(c1(0) == 0, "c1 empty {c1(0)}");
+  // c2 — A0 A3 A6 A9 from pos 1: 3 + 6 + 9 = 18.
+  assert(c2(4) == 18, "c2 {c2(4)}");
+  // c3 — n 0 returns before the literal; n 6 returns at pos 2 with the length; n 2 runs out.
+  assert(c3(0) == -1 && c3(6) == 1006 && c3(2) == 2, "c3 {c3(0)},{c3(6)},{c3(2)}");
+  // c4 — repeated: the same value every pass, and no record left behind once warm.
+  // A live vector, so the count reads a store on both backends.
+  keep = toks(3);
+  r1 = 0;
+  r2 = 0;
+  s = 0;
+  for k in 0..40 {
+    s += c1(7);
+    if k == 9 { r1 = live_records(); }
+    if k == 39 { r2 = live_records(); }
+  }
+  // toks(7): A0 A2 A4 A6 = 12, B w1 w3 w5 = 600: 612 * 10 + 7 = 6127 per pass.
+  assert(s == 40 * 6127 && r1 > 0 && r2 == r1 && len(keep) == 3, "c4 {s} records {r1} -> {r2}");
+  // c5 — 4 and 5 tokens: 400 + 50 + 7.
+  assert(c5(4) == 457, "c5 {c5(4)}");
+  // c6 — the later field reads the source's length: 3 * 100 + 3.
+  assert(c6(3) == 303, "c6 {c6(3)}");
+  // d1 — the source read after the literal: 5 * 100 + 406.
+  assert(d1(5) == 906, "d1 {d1(5)}");
+  // d2 — the source grown after the literal: the cursor keeps 3, the source has 4.
+  assert(d2(3) == 304, "d2 {d2(3)}");
+  // d3 — toks(1..4): A0 = 0; A0 B"w1" = 200; A0 B A2 = 202: 402.
+  assert(d3(4) == 402, "d3 {d3(4)}");
+  // d4 — the caller's vector stays whole: 406, then still five tokens.
+  p = toks(5);
+  assert(d4(p) == 406 && len(p) == 5, "d4 {d4(p)} len {len(p)}");
+  // d5 — `other = cur` is a copy (B-Copy): it walks from pos 2, 2 + 200 + 4 = 206, and the
+  // literal's own pos stays 0.
+  assert(d5(5) == 2060, "d5 {d5(5)}");
+  println("ok");
+}
