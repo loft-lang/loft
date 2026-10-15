@@ -24,8 +24,8 @@
 <h1>regex guide</h1>
 <article>
 <p><a href="lib-regex.html">← regex</a> · <a href="lib-regex-api.html">API reference</a> · <a href="lib-regex-src.html">source</a></p>
-<p><code>regex</code> gives a <code>text</code> three methods: <code>search</code> for where a pattern first matches, <code>matches</code> for whether it matches at all, and <code>split_on</code> for the pieces between matches. Patterns are written inline and cached, so calling the same one in a loop is cheap.</p>
-<p>It is deliberately the SMALL-SCRIPT tool — log scanning, CLI fields, quick extraction — and not a parser. Grammars, ASTs and recursion are somebody else's job, and there is no <code>replace</code> or capture-group accessor yet.</p>
+<p><code>regex</code> gives a <code>text</code> six methods: <code>search</code> for where a pattern first matches, <code>matches</code> for whether it matches at all, <code>capture</code> and <code>capture_all</code> for a match with its groups, <code>replace_on</code> for the text with its matches replaced, and <code>split_on</code> for the pieces between matches.  Patterns are written inline and cached, so calling the same one in a loop is cheap.</p>
+<p>It is deliberately the SMALL-SCRIPT tool — log scanning, CLI fields, quick extraction — and not a parser. Grammars, ASTs and recursion are somebody else's job.</p>
 <p>⚠ <strong>The verbs are named around the stdlib, not after the usual regex words</strong>, and that is the first thing to know. <code>text</code> already has <code>find</code> (a LITERAL substring search) and <code>split</code> (on a CHARACTER), and a method wins name resolution over an imported free function — so a bare <code>find(pattern, line)</code> compiles, type-checks and answers the stdlib's literal search instead of this one. Hence <code>search</code> and <code>split_on</code>. <code>matches</code> is collision-free and keeps its bare name.</p>
 <pre><code><span class="kw">use</span> regex::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
@@ -40,7 +40,8 @@
 <pre><code>  <span class="fn-call">a_pattern_that_never_compiled</span>();
   <span class="fn-call">the_offset_is_a_byte</span>();
   <span class="fn-call">splitting_yields_the_gaps</span>();
-  <span class="fn-call">the_older_spellings_still_work</span>();
+  <span class="fn-call">pulling_a_value_out_of_a_match</span>();
+  <span class="fn-call">replacing_and_the_walk_idiom</span>();
 }</code></pre>
 <p>That prints:</p>
 <pre><code>  first number at byte 6
@@ -87,20 +88,42 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">1</span> <span class="kw">and</span> whole[<span class="nm">0</span>] == <span class="st">"nothing here"</span>, <span class="st">"no match: one piece, the whole text"</span>);</code></pre>
 <pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"split   : 'a,b;;c' on [,;] gives a, b, '' and c"</span>);
 }</code></pre>
-<h2 id="the-older-spelling-still-works-and-says-so">The older spelling still works, and says so</h2>
-<p>An earlier release shipped a prefixed method (<code>line.regex_find</code> / <code>line.regex_split</code>). It still works exactly as it did, and the compiler steers new calls to <code>search</code> / <code>split_on</code> so the surface converges on one spelling per operation.</p>
-<p>⚠ There is no free <code>find</code> / <code>split</code> in this library. A bare <code>find(pattern, input)</code> resolves the stdlib's <code>text</code> method and answers a literal search — with the arguments in the other order, which is why it type-checks.</p>
-<p>Running this section PRINTS an <code>advice[superseded-call]</code> line, and that is the steering channel working rather than a defect in the guide: the call below is deliberately the old spelling, so the compiler names the new one. Your own code sees the same line wherever you write it, which is how the surface converges without anything breaking.</p>
-<pre><code><span class="kw">fn</span> <span class="fn-call">the_older_spellings_still_work</span>() {
-  line = <span class="st">"order 1234"</span>;
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">regex_find</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"the prefixed method still answers"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"and is the same operation as search"</span>);</code></pre>
-<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"steering: regex_find still works, search is the one to write"</span>);
+<h2 id="pulling-a-value-out-of-a-match">Pulling a value out of a match</h2>
+<p><code>capture</code> answers the first match with its capture groups, or null. <code>m.group(1)</code> is the first group's text — null when that group did not take part, which is how an optional group or an alternation branch not taken reads. <code>m.text</code>, <code>m.start</code> and <code>m.end</code> are the whole match and its byte span; <code>m.named("…")</code> reads a <code>(?&lt;name&gt;…)</code> group.</p>
+<p>Nothing in a <code>Match</code> is a copy of the subject: its texts are slices of it, and on <code>--native</code> the compiler keeps them views where it can prove the subject outlives them.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">pulling_a_value_out_of_a_match</span>() {
+  line = <span class="st">"user=ada  shell=/bin/sh"</span>;
+  m = line.<span class="fn-call">capture</span>(<span class="st">"(\\w+)=(\\S+)"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m != <span class="kw">null</span>, <span class="st">"the line has a key=value pair"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="st">"user"</span> <span class="kw">and</span> m.<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"ada"</span>, <span class="st">"the first pair, by group number"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"user=ada"</span> <span class="kw">and</span> m.start == <span class="nm">0</span> <span class="kw">and</span> m.end == <span class="nm">8</span>, <span class="st">"the whole match and its byte span"</span>);</code></pre>
+<pre><code>  pairs = line.<span class="fn-call">capture_all</span>(<span class="st">"(?&lt;key&gt;\\w+)=(?&lt;val&gt;\\S+)"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(pairs) == <span class="nm">2</span>, <span class="st">"two pairs on the line, got {len(pairs)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pairs[<span class="nm">1</span>].<span class="fn-call">named</span>(<span class="st">"key"</span>) == <span class="st">"shell"</span> <span class="kw">and</span> pairs[<span class="nm">1</span>].<span class="fn-call">named</span>(<span class="st">"val"</span>) == <span class="st">"/bin/sh"</span>, <span class="st">"the second, by name"</span>);</code></pre>
+<pre><code>  opt = <span class="st">"ab"</span>.<span class="fn-call">capture</span>(<span class="st">"a(x)?b"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(opt != <span class="kw">null</span> <span class="kw">and</span> opt.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span>, <span class="st">"an optional group that matched nothing is null, not \"</span>\<span class="st">""</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"capture : {m.group(1)} is {m.group(2)}; {len(pairs)} pairs by name"</span>);
+}</code></pre>
+<h2 id="replacing-a-template-or-a-walk">Replacing — a template, or a walk</h2>
+<p><code>replace_on</code> replaces every match (or the first <code>limit</code> of them) with a template in which <code>$1</code> and <code>${name}</code> stand for a group and <code>$0</code> for the whole match.  When the replacement needs CODE — Python's <code>re.sub</code> with a callback — walk <code>capture_all</code> and build the result from the subject's own spans: four lines, and nothing is copied twice.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">replacing_and_the_walk_idiom</span>() {
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"2026-10-14"</span>.<span class="fn-call">replace_on</span>(<span class="st">"(\\d+)-(\\d+)-(\\d+)"</span>, <span class="st">"$3/$2/$1"</span>) == <span class="st">"14/10/2026"</span>, <span class="st">"a template"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a1b2c3"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]"</span>, <span class="st">"#"</span>, <span class="nm">2</span>) == <span class="st">"a#b#c3"</span>, <span class="st">"limit 2: the first two matches"</span>);</code></pre>
+<pre><code>  s = <span class="st">"one two three"</span>;
+  out = <span class="st">""</span>;
+  last = <span class="nm">0</span>;
+  <span class="kw">for</span> m <span class="kw">in</span> s.<span class="fn-call">capture_all</span>(<span class="st">"\\b[a-z]+\\b"</span>) {
+    out += s[last..m.start] + m.<span class="ty"><a href="stdlib-types.html">text</a></span>.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_uppercase</a></span>();
+    last = m.end;
+  }
+  out += s[last..];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">"ONE TWO THREE"</span>, <span class="st">"the walk idiom, got {out}"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"replace : 14/10/2026, and the walk gives {out}"</span>);
 }</code></pre>
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>
-<li><code>README.md</code> — the pattern syntax the Rust <code>regex</code> crate accepts, and the roadmap (<code>match_groups</code> and <code>replace</code> are the next increment).</li>
-<li><code>tests/worked-examples.loft</code> — <code>@RGX-001</code> … <code>@RGX-004</code>, the four contracts a signature cannot state, each a running test rather than a snippet.</li>
+<li><code>README.md</code> — the pattern syntax the Rust <code>regex</code> crate accepts, and what is not here (a <code>Regex</code> handle, a callback <code>replace</code>, lookaround).</li>
+<li><code>tests/worked-examples.loft</code> — <code>@RGX-001</code> … <code>@RGX-008</code>, the contracts a signature cannot state, each a running test rather than a snippet.</li>
 <li>The stdlib's own <code>find</code>, <code>split</code>, <code>contains</code> and <code>starts_with</code> for literal text work — they need no import and no pattern compilation.</li>
 </ul>
 
