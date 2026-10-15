@@ -37,8 +37,7 @@ pub fn in_lazy_driver() -> bool {
     IN_LAZY_DRIVER.with(std::cell::Cell::get)
 }
 
-/// Mark this thread as running (or no longer running) a lazy driver — the window
-/// [`in_lazy_driver`] answers for.
+/// Mark whether this thread runs a lazy driver — the window [`in_lazy_driver`] answers for.
 pub fn set_in_lazy_driver(inside: bool) {
     IN_LAZY_DRIVER.with(|f| f.set(inside));
 }

@@ -704,10 +704,9 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
-`D-types-36` opened 2026-10-14 and CLOSED 2026-10-15 (loft#2006): the copy a `return` makes
-tests its source at every root — a local, a field path, a call (bound first), an element or
-keyed read (re-read), a read whose index calls (read once).  The record is in
-[types-history.md](types-history.md).
+`D-types-36` (loft#2006) holds: the copy a `return` makes tests its source at every
+root — a local, a field path, a call (bound first), an element or keyed read (re-read), a
+read whose index calls (read once).  Its record is in [types-history.md](types-history.md).
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,

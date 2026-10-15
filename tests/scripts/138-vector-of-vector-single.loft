@@ -1,0 +1,53 @@
+// Regression for @P380 — building a `vector<vector<single>>` SIGSEGV'd on both
+// backends (the dominant crash in 93-vector-advanced.loft::test_vector_of_vectors).
+//
+// Root cause (fixed in src/parser/vectors.rs): a nested-vector literal's element
+// is a VECTOR HANDLE (a rec-id at offset 0), but the shallow element-type framing
+// made `OpNewRecord` default-init the fresh element as the inner SCALAR.  For a
+// 4-byte `single` that scalar's NaN null sentinel (0x7FC00000) is non-zero, so
+// `OpCopyRecord`'s leading `remove_claims` read it AS a garbage rec-id and
+// crashed.  (8-byte `integer`/`float` escaped: their sentinels' low-32 bits are
+// 0, read as the empty handle.)  Fix: zero the fresh handle slot before the copy
+// so `remove_claims` no-ops on the new element.
+//
+// `single` is the crashing case; `integer`/`float` are kept as the must-stay-green
+// siblings (the fix must not disturb them).
+
+fn test_p380_vov_single() {
+  a: vector<single> = [1.0f, 2.0f, 3.0f];
+  b: vector<single> = [4.0f, 5.0f, 6.0f];
+  vv = [a, b];
+  assert(vv.len() == 2, "single outer={vv.len()}");
+  assert(vv[0].len() == 3, "single inner0={vv[0].len()}");
+  assert(vv[0][0] == 1.0f, "single 00={vv[0][0]}");
+  assert(vv[0][2] == 3.0f, "single 02={vv[0][2]}");
+  assert(vv[1][0] == 4.0f, "single 10={vv[1][0]}");
+  assert(vv[1][2] == 6.0f, "single 12={vv[1][2]}");
+}
+
+// Build form via function-call elements (the test_vector_of_vectors shape).
+fn vov_single_make() -> vector<single> {
+  [7.0f, 8.0f, 9.0f]
+}
+fn test_p380_vov_single_call() {
+  a = vov_single_make();
+  b = vov_single_make();
+  vv = [a, b];
+  assert(vv.len() == 2, "call outer={vv.len()}");
+  assert(vv[1][2] == 9.0f, "call 12={vv[1][2]}");
+}
+
+// Siblings that must stay correct (8-byte element types).
+fn test_p380_vov_integer() {
+  a: vector<integer> = [1, 2, 3];
+  b: vector<integer> = [4, 5, 6];
+  vv = [a, b];
+  assert(vv[1][2] == 6, "int 12={vv[1][2]}");
+  assert(vv[0][1] == 2, "int 01={vv[0][1]}");
+}
+fn test_p380_vov_float() {
+  a: vector<float> = [1.0, 2.0, 3.0];
+  b: vector<float> = [4.0, 5.0, 6.0];
+  vv = [a, b];
+  assert(vv[1][2] == 6.0, "float 12={vv[1][2]}");
+}

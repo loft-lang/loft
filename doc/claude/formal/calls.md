@@ -451,12 +451,12 @@ measurement that closed it — is the companion [calls-history.md](calls-history
     than only under `LOFT_POISON=1` (loft#1494).
   - A branch arm that DIVERGES types `Void` because control left, not because the branch is a
     statement, so the native emitter's statement-discard must not claim it.  Guard
-    `loft-suite/attic/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` (loft#1495).
+    `tests/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` (loft#1495).
   - And the discard itself has to be TOTAL: a statement branch's arm must yield nothing in its
     BODY and in its TYPE alike, because the interpreter balances its eval stack against the
     type.  An arm keeping either half left the stack off by one in that half's direction and
     corrupted every local live across the branch.  Guard
-    `loft-suite/attic/scripts/1496-a-statement-branch-discards-every-arm.loft` (loft#1496).  Which side of
+    `tests/scripts/1496-a-statement-branch-discards-every-arm.loft` (loft#1496).  Which side of
     `(F-Block)` a branch is on is decided by whether anything FOLLOWS it — the arm itself cannot
     tell, and three arm-side discriminators were disproven before that one was used.
 - **Void tail discard (`F-Drop`)** — a function declared void whose body ends in a value runs
@@ -478,7 +478,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   `loft-suite/attic/scripts/1290-a-heap-parameter-rebind-is-local-in-every-spelling.loft`, with a FIELD
   write (`F-ParamHeap`), a `&` parameter (`F-ParamRef`) and a plain LOCAL as the controls.
   The VECTOR kind's `p = other` spelling was in neither oracle and answered wrong until
-  2026-09-05 (D-call-14): `loft-suite/rules/ownership/O-Proxy/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft`
+  2026-09-05 (D-call-14): `tests/scripts/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft`
   crosses it with a returned rebind, a rebind through a value branch, a double one, a loop and a
   read ahead of the rebind, with the mutate-through, a self arm and a `&` parameter as the
   controls.  The COLLECTION half is

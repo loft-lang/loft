@@ -12505,10 +12505,9 @@ fn resolve_test_target(arg: &str) -> String {
 /// for sibling dependencies, when it declares any), its `lib/` directory, and its
 /// own native library.
 ///
-/// ONE function for a single-file run and the `--tests <dir>` flag (loft#2010): the
-/// flag used to set none of these, so a suite run through it found the package's own
-/// modules only by the sibling-directory accident, while `loft test` and a single
-/// file found them — three spellings of one run answering differently.
+/// ONE function for a single-file run, `loft test` and the `--tests <dir>` flag
+/// (loft#2010): the three spellings of one run find the package's own modules the same
+/// way, never by the sibling-directory accident alone.
 fn add_package_paths(
     start: &std::path::Path,
     lib_dirs: &mut Vec<String>,

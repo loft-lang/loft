@@ -1,0 +1,83 @@
+// Regression for @P313 — VECTOR element-set of an inline struct literal that
+// embeds a nested struct-of-vectors must deep-copy EVERY element, not just the
+// first.  Sibling of @P311 (which was the keyed-collection SET path).
+//
+// Root cause (fixed): `vec[i] = Struct{ nested }` routes through
+// `copy_ref` → `OpCopyRecord(work_ref → vec[i], kt|0x8000)`.  The inline
+// literal's `Block "Object"` work-ref ALSO carries its own scope `OpFreeRef`,
+// so the 0x8000 "free source" bit double-freed it; the next iteration's
+// OpDatabase recycled the freed store and corrupted the nested-vector backings
+// of every element written before it (silent data loss; SIGSEGV under churn).
+// Fix: in copy_ref, set 0x8000 only for a struct-returning CALL source (an
+// unowned temporary), never for a Block literal (which owns a scope free).
+
+struct V {
+  a: vector<integer>,
+}
+struct Cont {
+  m: V,
+}
+
+fn mk(n: integer) -> V {
+  v: vector<integer> = [];
+  for j in 0..n { v += [j]; }
+  V { a: v }
+}
+
+fn mkc(n: integer) -> Cont {
+  Cont { m: mk(n) }
+}
+
+// The bug: inline struct literal as the whole-element-set RHS.
+fn test_p313_inline_literal_elem_set() {
+  xs: vector<Cont> = [];
+  for i in 0..4 { xs += [
+    Cont { m: V { a: [] } },
+  ]; }
+  for i in 0..4 {
+    cm = mk(30);
+    xs[i] = Cont { m: cm }; // inline struct literal, whole element-set
+  }
+  total = 0;
+  for x in xs { total = total + len(x.m.a); }
+  assert(len(xs) == 4, "p313: element count={len(xs)} (expect 4)");
+  assert(total == 120, "p313: total nested elems={total} (expect 120 = 4x30)");
+}
+
+// Struct-returning CALL element-set — keeps its 0x8000 (unowned temporary);
+// must stay correct AND leak-free after the fix.
+fn test_p313_struct_call_elem_set() {
+  xs: vector<Cont> = [];
+  for i in 0..5 { xs += [
+    Cont { m: V { a: [] } },
+  ]; }
+  for i in 0..5 { xs[i] = mkc(7); }
+  total = 0;
+  for x in xs { total = total + len(x.m.a); }
+  assert(total == 35, "p313 call: total={total} (expect 35 = 5x7)");
+}
+
+// Baselines that already worked (in-place build paths) — guard against
+// regressing them: field-of-element set + append, both with inline literals.
+fn test_p313_field_and_append_unaffected() {
+  xs: vector<Cont> = [];
+  for i in 0..3 { xs += [
+    Cont { m: V { a: [] } },
+  ]; }
+  for i in 0..3 {
+    xs[i].m = V { a: [1, 2, 3, 4] };
+  } // field-of-element set
+  ft = 0;
+  for x in xs { ft = ft + len(x.m.a); }
+  assert(ft == 12, "p313 field-set: total={ft} (expect 12 = 3x4)");
+
+  ys: vector<Cont> = [];
+  for i in 0..3 {
+    cm = mk(6); ys += [
+      Cont { m: cm },
+    ];
+  } // append inline literal
+  at = 0;
+  for y in ys { at = at + len(y.m.a); }
+  assert(at == 18, "p313 append: total={at} (expect 18 = 3x6)");
+}

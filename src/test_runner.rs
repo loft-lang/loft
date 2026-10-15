@@ -344,7 +344,7 @@ pub(crate) fn run_tests(
 
     // `LOFT_LEAK_CHECK=1` — a function that returns CLEANLY but leaves a store behind FAILS
     // (`@FR-H-FreeAll`: every store is freed exactly once by exit).  The corpus runner in
-    // `tests/wrap.rs` has gated the language corpus on this since @P317, and the suite that
+    // `tests/wrap.rs` gates the language corpus on this, and the suite that
     // runs the corpus through this runner instead (@PLN193) must not be weaker than the
     // harness it replaces.  Armed, not default: every library testbed runs `loft test`, and
     // a gate that turns a published library's CI red overnight is a breaking change

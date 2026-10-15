@@ -690,8 +690,8 @@ sequential feature numbers; those predate the issue-number convention and are no
 
 The topic files keep their sequential feature numbers (`01-integers.loft`, `05-enums.loft`,
 …); everything since is named by issue number.  `ls tests/scripts` is the list (about 440
-files since the corpus moved to the suite, 2026-10-15); `wordlist.txt` holds the edge-case
-keys `37-stress.loft` reads.
+files, the rest being cells of the suite); `wordlist.txt` holds the edge-case keys
+`37-stress.loft` reads.
 
 Run with:
 

@@ -2509,7 +2509,7 @@ not name keeps its whole component in the store, and an apart value is a distinc
 so a mention the emitter fails to rewrite is a `rustc` type error.  A build that ships the live
 tier has no plan, since a twin's call would run the native body of a function flipped to the
 interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
-loop in them plans a header, a base or an address on a variable that is no longer a record.
+loop in them plans a header, a base or an address on a variable the apart value replaced.
 
 An inline vector answers what the store's vector answers — empty at its init, an index from
 the end, an index out of range reported or, for `v[i]?`, null — and its loops plan no header,

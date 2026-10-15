@@ -1466,7 +1466,7 @@ mod tests {
         }
     }
 
-    /// @PLN11 arc D step D1 — `ir_store::save_data` / `open_data`:
+    /// `ir_store::save_data` / `open_data`:
     /// save the stdlib to a `.store` file, load it back (mmap, no re-parse),
     /// and confirm bit-for-bit equality.  Also checks that opening a missing
     /// file is a clean `NotFound` (the cache-miss path the caller falls back on).

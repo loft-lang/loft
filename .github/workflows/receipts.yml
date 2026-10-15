@@ -36,6 +36,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Where `.github/actions/checkout-suite` puts the language suite (@PLN193).
+  LOFT_SUITE_DIR: loft-suite
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
   PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
@@ -56,6 +58,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # The guards that moved to the language suite (@PLN193) still cite their patches here.
+      - uses: ./.github/actions/checkout-suite
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

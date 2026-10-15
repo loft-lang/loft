@@ -58,9 +58,13 @@ def citing_guards():
     """patch file name -> the guards whose `@falsified-by:` names it."""
     out = {}
     r = git("grep", "-l", "@falsified-by: tests/falsified/", "--", "tests/", check=False)
-    for g in sorted(set(r.stdout.split())):
-        if not g.endswith(".loft"):
-            continue
+    guards = [g for g in sorted(set(r.stdout.split())) if g.endswith(".loft")]
+    # The guards that moved to the language suite beside the tree (@PLN193) still cite their
+    # patches here; a suite path is read relative to this root (`../loft-suite/…`).
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import corpus
+    guards += [corpus.rel(p) for p in corpus.suite_files()]
+    for g in guards:
         text = (ROOT / g).read_text(encoding="utf-8", errors="replace")
         for name in re.findall(r"@falsified-by: tests/falsified/([^\s]+\.patch)", text):
             out.setdefault(name, []).append(g)
