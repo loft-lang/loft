@@ -18,7 +18,7 @@
 // @falsified-by: tests/falsified/a-loop-holds-its-header-across-a-text-write.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
 //   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch keeps the element
 //   base in a loop that grows its store through text sets, so t2's sum reads the scribbled
-//   old buffer.
+//   old buffer (`t2 null`).  A plain run stays green: the old bytes are not yet reused.
 
 struct Item { n: integer, t: text }
 struct Bag { names: vector<text?>, items: vector<Item>, label: text }
