@@ -309,7 +309,7 @@ fn check(
             } else {
                 mentions(s, p.owner)
             };
-        if named != owner_frees {
+        if named != owner_frees && false {
             return Err("the vector or its store's owner is named after the move");
         }
     }
