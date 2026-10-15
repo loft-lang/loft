@@ -36,6 +36,8 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 loft=""; jobs=4; only=""; keep=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --help|-h)
+      sed -n '2,/^set -u/{/^set -u/!s/^# \{0,1\}//p}' "$0"; exit 0 ;;
     --loft) loft="$2"; shift 2 ;;
     --jobs) jobs="$2"; shift 2 ;;
     --root) root="$2"; shift 2 ;;
