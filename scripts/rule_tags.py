@@ -587,6 +587,13 @@ def guard_for(n, tests_dir=None):
     tests_dir = tests_dir or TESTS
     hits = sorted(glob.glob(os.path.join(tests_dir, "scripts", f"{n}-*.loft")) +
                   glob.glob(os.path.join(tests_dir, "scripts", f"{n}[a-z]-*.loft")))
+    if not hits and tests_dir == TESTS:
+        # The guard may have moved to the language suite beside the tree (@PLN193): a rule
+        # cell or an attic program named the same way.
+        for sub in (("rules", "*", "*"), ("attic", "scripts")):
+            hits += glob.glob(os.path.join(SUITE_DIR, *sub, f"{n}-*.loft"))
+            hits += glob.glob(os.path.join(SUITE_DIR, *sub, f"{n}[a-z]-*.loft"))
+        hits.sort()
     if hits:
         return _rel(hits[0])
     needle = re.compile(rf"loft#{n}(?!\d)")

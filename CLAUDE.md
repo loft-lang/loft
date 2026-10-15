@@ -83,8 +83,19 @@ make check-rlib                          # 1s pre-flight: is libloft.rlib curren
                                          #   ~20 min, twice that with two gates live.
 ./scripts/find_problems.sh --bg|--peek|--wait   # background full-suite run + inspect/block
 cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole stdlib + every
-                                         #   tests/scripts file; run it after an IR-schema/
-                                         #   serialiser change (`make ci` runs it in the pool)
+                                         #   tests/scripts file + every program of the language
+                                         #   suite beside the tree (../loft-suite, LOFT_SUITE_DIR);
+                                         #   run it after an IR-schema/serialiser change
+                                         #   (`make ci` runs it in the pool)
+make suite ARGS="@FR-B-Copy --mode both" # the LANGUAGE SUITE (loft-lang/loft-suite, beside this
+                                         #   tree): one rule's cells on both backends, a chapter
+                                         #   (`--chapter heap`), or everything.  A new .loft test
+                                         #   is a CELL there, under its rule; `tests/scripts`
+                                         #   keeps only what this repo names — TESTING.md.  Every
+                                         #   corpus SWEEP (round-trip, leak scan, valgrind, switch
+                                         #   A/B, wasm, axes, …) walks the suite too, through
+                                         #   scripts/corpus_files.sh · scripts/corpus.py ·
+                                         #   tests/common/corpus.rs — the one list
 make release-gate                        # every nightly against THIS commit in ONE CI run, one
                                          #   verdict — the release evidence (`release-checklist`
                                          #   reads it by HEAD's sha).  The 03:00 daily starts

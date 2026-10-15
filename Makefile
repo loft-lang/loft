@@ -2709,7 +2709,7 @@ test-wasm:
 	if [ -z "$$WASMTIME" ] && [ -x "$$HOME/.wasmtime/bin/wasmtime" ]; then WASMTIME="$$HOME/.wasmtime/bin/wasmtime"; fi; \
 	if [ -n "$$WASMTIME" ]; then echo "Running wasm tests with wasmtime"; else echo "wasmtime not found — compile-only (install via: cargo install wasmtime-cli)"; fi; \
 	failed=0; \
-	for f in tests/docs/*.loft tests/scripts/*.loft; do \
+	for f in $$(scripts/corpus_files.sh); do \
 		printf "  %-45s" "$$f"; \
 		wasm=$$(mktemp /tmp/loft_wasm_XXXXXX.wasm); \
 		out=$$(./target/release/loft --native-wasm "$$wasm" "$$f" 2>&1); \

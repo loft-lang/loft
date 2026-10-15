@@ -67,7 +67,8 @@ export VG OUT
 if [ $# -gt 0 ]; then
   for a in "$@"; do [ -d "$a" ] && find "$a" -maxdepth 1 -name '*.loft' | sort || echo "$a"; done
 else
-  ls tests/scripts/*.loft tests/docs/*.loft
+  # tests/scripts, tests/docs and every program of the language suite beside the tree (@PLN193).
+  scripts/corpus_files.sh
 fi > "$OUT/list.txt"
 
 # One line per run: kind, unit, exit, invalid-access count, definitely-lost bytes, seconds.
@@ -77,7 +78,7 @@ check_one() {
   case "$u" in *::*) stem="$stem--${u#*::}";; esac
   log="$OUT/$kind-$stem.log"; t0=$(date +%s.%N)
   case "$kind" in
-    interp) case "$f" in tests/scripts/*) mode="--interpret --tests";; *) mode="--interpret";; esac
+    interp) case "$f" in tests/docs/*) mode="--interpret";; *) mode="--interpret --tests";; esac
             LOFT_TIMEOUT=300 LOFT_TIMEOUT_CLEAN_EXIT=1 $VG --log-file="$log" target/release/loft $mode "$u" >/dev/null 2>&1; rc=$? ;;
     native) LOFT_TIMEOUT=300 target/release/loft --native "$f" >/dev/null 2>&1 || { echo "native	$f	build-failed	-	-"; return; }
             dir=$(dirname "$f"); bin=$(ls -t "$dir"/.loft/cache/"$stem"-* 2>/dev/null | head -1)
@@ -108,7 +109,7 @@ export LOFT_STDLIB_CACHE=1
 SPLIT=${VG_SPLIT:-0.5}
 plan_one() {
   f=$1; t0=$(date +%s.%N)
-  case "$f" in tests/scripts/*) mode="--interpret --tests";; *) mode="--interpret";; esac
+  case "$f" in tests/docs/*) mode="--interpret";; *) mode="--interpret --tests";; esac
   out=$(LOFT_TIMEOUT=300 target/release/loft $mode "$f" 2>&1 | tr -d '\0')
   secs=$(echo "$(date +%s.%N) - $t0" | bc)
   fns=$(printf '%s\n' "$out" | sed -nE 's/.*\([0-9]+ fns?: (.*)\)$/\1/p' | head -1)

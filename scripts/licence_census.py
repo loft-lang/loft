@@ -118,6 +118,11 @@ def corpus_files(limit):
     files = []
     for d in CORPUS:
         files += sorted(p for p in (ROOT / d).rglob("*.loft") if p.is_file())
+    # Every program of the language suite beside the tree (@PLN193): the census counts the
+    # corpus it counted before the move.
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import corpus as corpus_mod
+    files += [pathlib.Path(p) for p in corpus_mod.suite_files()]
     files = [f for f in files if f.is_file()]
     return files[:limit] if limit else files
 

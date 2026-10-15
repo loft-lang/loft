@@ -47,7 +47,9 @@ one() {
   ( cd "$(dirname "$f")" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$(basename "$f")" >"$out" 2>"$out.err" )
 }
 export -f one; export root; export envs
-find "$root/tests/scripts" "$root/tests/docs" "$root/examples" -type f -name '*.loft' | LC_ALL=C sort > "$work/files"
+# tests/scripts, tests/docs, examples and every program of the language suite beside the
+# tree (@PLN193) — `scripts/corpus_files.sh` is the one list.
+"$(dirname "$0")/corpus_files.sh" --root "$root" --examples | sed "s#^#$root/#" > "$work/files"
 m=$(wc -l < "$work/files"); n=0; k=0; e=0
 [ "$m" -gt 0 ] || { echo "introspect_diff: no corpus under '$root' (tests/scripts, tests/docs, examples) — use --root" >&2; exit 2; }
 while IFS= read -r f; do

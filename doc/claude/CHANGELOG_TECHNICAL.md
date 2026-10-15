@@ -74,6 +74,26 @@ ratchet's own rule: a line goes when its file does), and the `@falsified-by` pat
 reported by `scripts/falsify-review.py`, never gated; they wait for the suite's own
 falsification path (P2b).  `tests/scripts` keeps 431 programs.
 
+**Every sweep that walked "every program" walks the suite's programs too** (owner's ask,
+the same evening: the procedures already in the list must still be tested, and a procedure
+that pointed at a moved guard points at its new home).  One list in three languages —
+`scripts/corpus_files.sh`, `scripts/corpus.py`, `tests/common/corpus.rs` — says what the
+corpus is: `tests/scripts`, `tests/docs`, the suite's `rules/*/*/` cells and its
+`attic/scripts/`, from `LOFT_SUITE_DIR` or `../loft-suite`; an absent checkout contributes
+nothing and SAYS so, so a sweep over 431 programs never reads as the sweep over 2300.  The
+readers: the IR codec round-trip (`tests/ir_schema_roundtrip.rs`, in the `test` pool), the
+ownership oracle's leak scan (`leak-scan`), the whole-corpus interpreter run
+(`wrap::loft_suite_whole_corpus`, nightly), the ASan leak gate, the valgrind sweep, the
+switch A/B, `make test-wasm` and `tests/wasm/suite.mjs`, `matrix_axes.py`,
+`licence_census.py`, `vacuity-sweep.py`, `diag_position_audit.py`, `introspect_diff.sh`,
+`null_census_sweep.sh`, the receipts census (`falsify-review.py`), and `rule_tags.py`'s
+guard-for-issue lookup.  The per-commit corpus RUNNERS (`wrap`'s and `native`'s chunks) do
+not: the suite's own runner and the required check carry those programs.  On a runner the
+suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-suite/`,
+`LOFT_SUITE_DIR` set at workflow level) in every job that walks it: `test`, `leak-scan`,
+`index-hygiene`, `language-suite`, the nightly `asan-leak-gate`, `valgrind` and
+`release-gate-sweeps`, and `switch-ab`.
+
 ### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
 
 - `tests/common/lanes.rs`: `lanes(cap)` is the pool a test may run — `UNDER_NEXTEST` (8)

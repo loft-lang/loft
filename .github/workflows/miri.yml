@@ -108,6 +108,9 @@ permissions:
   contents: read
 
 env:
+  # Where `.github/actions/checkout-suite` puts the language suite (@PLN193); a job
+  # without that step reads an empty suite and says so.
+  LOFT_SUITE_DIR: loft-suite
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
   PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
@@ -459,6 +462,8 @@ jobs:
             extra_filter: ' | test(deep_nesting_guard)'
     steps:
       - uses: actions/checkout@v5
+      # The sweep walks the language suite's programs too (@PLN193).
+      - uses: ./.github/actions/checkout-suite
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Install mold
@@ -593,7 +598,7 @@ jobs:
           LOFT_LEAK_DUMP: '1'
         run: >
           ABIN=target/${{ matrix.target }}/release/loft
-          bash scripts/asan_leak_scan.sh tests/scripts/*.loft tests/docs/*.loft
+          bash scripts/asan_leak_scan.sh $(scripts/corpus_files.sh)
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -1031,6 +1036,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
+      # The sweep walks the language suite's programs too (@PLN193).
+      - uses: ./.github/actions/checkout-suite
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -1113,6 +1120,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
+      # The sweep walks the language suite's programs too (@PLN193).
+      - uses: ./.github/actions/checkout-suite
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

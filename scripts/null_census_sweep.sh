@@ -19,5 +19,5 @@ while IFS= read -r f; do
   files=$((files+1)); total=$((total+n))
   echo "$n $f"
   [ "$n" != 0 ] && printf '%s\n' "$out" | grep '^null-census: where' | sed 's/^/     /'
-done < <(find "$root/tests/scripts" "$root/tests/docs" "$root/examples" -name '*.loft' | sort)
+done < <("$(dirname "$0")/corpus_files.sh" --root "$root" --examples | sed "s#^#$root/#")
 echo "TOTAL nested=$total files=$files failed=$failed"

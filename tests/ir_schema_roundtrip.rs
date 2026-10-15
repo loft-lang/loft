@@ -265,6 +265,9 @@ fn tests_scripts_round_trip_body() {
         .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     scripts.sort();
+    // The language suite beside the tree carries the corpus now (@PLN193); the codec is
+    // asked of every program it was asked of before the move.
+    scripts.extend(common::corpus::suite_programs());
 
     let mut scripts_checked = 0usize;
     let mut defs_checked = 0usize;
@@ -344,6 +347,9 @@ fn corpus_store_codec_round_trips_body() {
         .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     scripts.sort();
+    // The language suite beside the tree carries the corpus now (@PLN193); the codec is
+    // asked of every program it was asked of before the move.
+    scripts.extend(common::corpus::suite_programs());
     let mut checked = 0usize;
     for script in &scripts {
         let mut p = loft::parser::Parser::new();

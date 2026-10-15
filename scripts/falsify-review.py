@@ -100,7 +100,11 @@ def main():
     # Receipts this census has no grammar for, held APART from `rows` so that `--check` — the
     # gate's input — is unchanged by construction.  Counting them is the whole point: see below.
     optouts, unclassified = [], []
-    for f in sorted(p for p in Path("tests/scripts").glob("*.loft") if p.is_file()):
+    # The guards here, then every program of the language suite beside the tree (@PLN193):
+    # a receipt moved with its guard and is still read.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from corpus import corpus_files
+    for f in (Path(p) for p in corpus_files(docs=False)):
         if not f.is_file():
             continue          # `.loft/` is a cache DIRECTORY and matches this glob
         block = receipt_of(f)

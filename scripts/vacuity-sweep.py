@@ -24,8 +24,11 @@ suite will ever report.
     python3 scripts/vacuity-sweep.py
 """
 import re, subprocess, sys, os, glob, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from corpus import corpus_files, rel
 BITES, VACUOUS, MALFORMED, SKIP = [], [], [], []
-files = sorted(glob.glob("tests/scripts/*.loft"))
+# The programs here, then every program of the language suite beside the tree (@PLN193).
+files = [rel(p) for p in corpus_files(docs=False)]
 for f in files:
     src = open(f).read()
     m = re.search(r'\bassert\(', src)

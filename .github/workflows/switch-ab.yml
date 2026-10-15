@@ -37,6 +37,9 @@ permissions:
   contents: read
 
 env:
+  # The language suite (@PLN193), beside `loft-src/`; absolute, since the script runs
+  # from inside that tree.
+  LOFT_SUITE_DIR: ${{ github.workspace }}/loft-suite
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
   PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
@@ -98,6 +101,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: loft-src
+      - name: Checkout the language suite (its programs are in the A/B too)
+        if: steps.sel.outputs.run == 'true'
+        uses: ./loft-src/.github/actions/checkout-suite
+        with:
+          pin: loft-src/tests/loft-suite.pin
 
       - name: Checkout the public consumers
         if: steps.sel.outputs.run == 'true'

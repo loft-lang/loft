@@ -32,7 +32,7 @@
 # cover (see `subject_paths`).  `--full` always runs them.
 HEAVY_BINARIES=(
   deliver_wasm         # 1011s /  17 tests — cross-target delivery matrix
-  ir_schema_roundtrip  #  360s /   8 tests — IR codec over every tests/scripts file
+  ir_schema_roundtrip  #  360s /   8 tests — IR codec over every tests/scripts file + the language suite
   exit_codes           #  210s /  26 tests — spawns a process per case
   codegen_emitter      #  187s /  21 tests — rustc per case
   multiplayer_v5       #  126s /   5 tests — networked, serialised

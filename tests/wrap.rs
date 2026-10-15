@@ -420,6 +420,13 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
         .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
+    // The whole-corpus run (no chunk) takes every program of the language suite beside the
+    // tree too (@PLN193): the interaction ACROSS programs is what this run exists for, and
+    // the moved programs are still programs.  The per-commit chunks do not — the suite's own
+    // runner and the required `Language suite` check carry them.
+    if chunk.is_none() {
+        files.extend(common::corpus::suite_programs());
+    }
     // `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` — run only a WINDOW of the sorted corpus.
     //
     // The instrument for a fault that only appears in the whole-corpus run: one script
