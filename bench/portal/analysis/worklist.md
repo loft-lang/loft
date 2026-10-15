@@ -172,6 +172,18 @@ instructions (`memcmp` included), the map encoder 51.7 → 47.0 M, the row's TIM
 row is the rank loops themselves (`encode_map__ap` 22 % of the map encoder: `koff[j] ?? 0`,
 `klen[j] ?? 0` per pair) and the twin's O(n²) is the same algorithm.
 
+**X9 on cbor `encode_bytes`, PRICED: the bytes are already one block copy** (`(R-ByteCopy)`: the
+per-byte loop's in-range fast path is `Stores::append_text_bytes`); what each `CText` arm pays
+is the match BINDING — `CText { value }` copies the record's 256-byte text into a `String`
+(`get_str(…).to_string()`, a `malloc`, a copy, a `free`) before the block copy reads it.  The
+binding borrowed instead (`&str` off the store, as `(R-TextBorrow)` binds a walk's element):
+403.5 → 349 µs (−13.5 %, ≈ 4.5× — under the line), `encode` −1.4 %, six interleaved rounds,
+hashes equal.  This is S6's match-binding clause; its soundness condition is the borrow's: no
+statement of the arm may grow or rewrite the store the text lives in.  Here the arm writes the
+return buffer only, and the matched value is a parameter — the versioned clause's test
+(`(R-Alias)`: the parameter's store is not the buffer's), or a proof the arm writes none of the
+value's store.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
