@@ -6,7 +6,7 @@ fix: `pattern.glob() -> vector<text>` in the on-demand `script` library (README 
 ref: `pattern.glob()` in `script` 0.1.1 (registry, 2026-10-13), name order, dot-names skipped as the shell's; scripts/wasm_bundle_stamp re-twinned over it 2026-10-14 (SCOREBOARD.md) — `"../default/*.loft".glob()` for the four lines
 probe: 008.probe.loft
 expect: refused
-checked: f570a06e
+checked: 52bab212
 holds: no
 
 no path pattern: bash's `default/*.loft` is a `list_dir` + an `ends_with` filter + a path join, four lines for one word
