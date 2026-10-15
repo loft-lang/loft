@@ -4993,12 +4993,20 @@ fn frame_minted_locals(
         {
             let def = data.def(*d);
             let slot_write = matches!(def.name(), "OpDatabase" | "OpDatabaseNP");
+            // A callee's hidden RETURN BUFFER is handed by slot so the callee can build into
+            // it; the store it builds in is that buffer's own (a fresh one from a null slot),
+            // so the local stays minted.  What the callee writes elsewhere is the writer
+            // test's question (`callee_writes_only_its_buffer`).
+            let buffer_at = (!matches!(def.code(), Value::Null))
+                .then(|| def.hidden_return_buffer_attr())
+                .flatten();
             for (i, a) in args.iter().enumerate() {
                 if let Value::Var(x) = a.unspan() {
-                    let by_slot = def.attributes().get(i).is_some_and(|at| {
-                        (at.constant && !(slot_write && i == 0))
-                            || matches!(at.typedef.base(), Type::RefVar(_))
-                    });
+                    let by_slot = Some(i) != buffer_at
+                        && def.attributes().get(i).is_some_and(|at| {
+                            (at.constant && !(slot_write && i == 0))
+                                || matches!(at.typedef.base(), Type::RefVar(_))
+                        });
                     if by_slot {
                         set.remove(x);
                     }
