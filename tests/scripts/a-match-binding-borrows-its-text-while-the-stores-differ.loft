@@ -16,7 +16,8 @@
 //
 // @falsified-by: tests/falsified/a-match-binding-borrows-its-text-while-the-stores-differ.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
 //   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch drops the writer
-//   test, so t3's arm borrows its text across the log's growth and reads scribbled bytes.
+//   test, so t3's arm borrows its text across the log's growth and reads the scribble
+//   (`t3 165,165,`).  A plain run passes: the old bytes are not yet reused.
 
 enum Val {
   VInt { n: integer },

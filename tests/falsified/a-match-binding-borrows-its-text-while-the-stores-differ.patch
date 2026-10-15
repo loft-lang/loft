@@ -1,0 +1,13 @@
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index d7c41aeb3..cb5f50ce1 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -4778,7 +4778,7 @@ pub fn borrowed_store_texts(
+                     &mut cache,
+                     &mut active,
+                     Some(vars),
+-                ) {
++                ).filter(|_| false) {
+                     Some(w2) => Err(w2),
+                     None => param_roots_of(body, v, data, vars)
+                         .ok_or("a binding not rooted in a parameter"),

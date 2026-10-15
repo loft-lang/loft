@@ -2129,7 +2129,40 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  copy runs only when the parameter's store is not the buffer's, so
                  no step of the loop can grow, free or rewrite the element's
                  bytes; the plain copy keeps the copy of `p`.
+                 TESTED CLAUSE: a statement-bound text LOCAL the store-read clause
+                 declines only because its scope also writes the function's RETURN
+                 BUFFER is admitted when, over the innermost block holding its
+                 non-literal mentions (a literal bind, the null text's bind and the
+                 release do not count) whose value is no text, every writer names
+                 a frame-minted store or the buffer — the buffer seeded as minted;
+                 a user callee counts when its own body writes nothing but the
+                 hidden buffer it is handed and that buffer is minted here (a call
+                 back into a body under check answers yes); `OpPutRef` binds a
+                 local and writes no store; `OpAppendVector`'s source is read — and
+                 every binding's read is rooted in a parameter.  Each such bind
+                 tests at run time that every root parameter's store is not the
+                 buffer's: it borrows when they differ and copies into a backing
+                 `String` when one does not.  A tested local is no source of
+                 another borrow.
 ```
+
+**The tested clause, in words.**  cbor's `encode` binds `CText { value }` out of its
+parameter and appends the text's bytes to the result, building the header through `head`,
+which writes nothing but the buffer it is handed; the store-read clause declined the bind for
+those two writers, so each text was copied into a `String` before the bytes were copied again.
+`encode` also runs as its append twin, whose buffer is the caller's vector, so the store the
+bind must be apart from is known only at run time — one compare, as the versioned clause makes
+for a loop.  cbor `encode_bytes` 396.5 → 356.9 µs (−10 %, of a −10.5 % hand price), `encode`
+−2.6 %, hashes unchanged.  Counting a call that builds into a minted buffer as a minted value,
+and a callee's buffer argument as staying minted, also admits a borrow in glb's
+`glb_light_node_json` under the plain clause.  Switch `LOFT_NO_TESTED_BORROW` (the copy
+again); `LOFT_TRACE_TEXT_BORROW=1` names each tested borrow and, for a refused one, the writer
+and the block it was judged over.  Sites: `hoist::borrowed_store_texts` (`tested`),
+`hoist::tested_scope`, `hoist::callee_writes_only_its_buffer`, `hoist::param_roots_of`, the
+bind in `Output::output_set`.  Guard
+`tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft` (falsified under
+`LOFT_POISON=1` by a plant that drops the writer test: t3 reads the scribble), pin
+`tests/tested_text_borrow.rs`.
 
 **The versioned clause, in words.**  `arguments`' `classify` walks `argv`, a parameter, and
 appends a token per word to its result, which a caller could hand in sharing `argv`'s store;

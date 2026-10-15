@@ -120,6 +120,13 @@ loop's header hold again — with it off, a loop that appends records with text 
 reading another vector keeps that vector's header.  First bisect step for a wrong element read
 in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**`LOFT_NO_TESTED_BORROW=1`** (`@FR-R-TextBorrow`'s tested clause, default-ON, generation
+time) makes a text a `match` arm or a statement binds out of a parameter's record copy itself
+again where its scope also writes the return buffer — with it off, such a bind borrows the
+record's bytes while a run-time compare finds the parameter's store and the buffer's apart.
+First bisect step for a wrong text read from a match binding on native; `LOFT_POISON=1` is the
+falsifier.
+
 **`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
 makes a loop that writes a text field or element decline its header hold again — with it off,
 such a loop holds the headers of the vectors it reads, and an element base only for a vector

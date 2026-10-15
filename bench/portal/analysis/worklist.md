@@ -182,7 +182,9 @@ hashes equal.  This is S6's match-binding clause; its soundness condition is the
 statement of the arm may grow or rewrite the store the text lives in.  Here the arm writes the
 return buffer only, and the matched value is a parameter — the versioned clause's test
 (`(R-Alias)`: the parameter's store is not the buffer's), or a proof the arm writes none of the
-value's store.
+value's store.  BUILT as `(R-TextBorrow)`'s tested clause (`LOFT_NO_TESTED_BORROW`, native): the bind
+borrows under the run-time store compare and copies otherwise — 396.5 → 356.9 µs (−10 %,
+≈ 4.65×), `encode` −2.6 %; the row has left the cut.
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land

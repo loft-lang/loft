@@ -688,7 +688,8 @@ cbor	bd4932067	R-RefillBuffer	2
 cbor	bd4932067	R-RetAdopt	3
 cbor	bd4932067	R-Reuse	8
 cbor	bd4932067	R-SingleUse	7
-cbor	bd4932067	R-TextBorrow	11
+cbor	bd4932067	R-TextBorrow	13
+cbor	bd4932067	R-TextBorrow/tested	2
 cbor	bd4932067	R-TextClear	29
 cbor	bd4932067	R-TextRun	1
 cbor	bd4932067	R-View	5
@@ -898,7 +899,7 @@ glb	b3cb7445f	R-RepeatRun	16
 glb	b3cb7445f	R-RetAdopt	5
 glb	b3cb7445f	R-Reuse	7
 glb	b3cb7445f	R-SingleUse	3
-glb	b3cb7445f	R-TextBorrow	14
+glb	b3cb7445f	R-TextBorrow	16
 glb	b3cb7445f	R-TextClear	37
 glb	b3cb7445f	R-ValueLocal	91
 glb	b3cb7445f	R-ValueRecord	9
@@ -1765,7 +1766,8 @@ pluginabi	33aa4cc2c	R-RetAdopt	4
 pluginabi	33aa4cc2c	R-ReturnField	1
 pluginabi	33aa4cc2c	R-Reuse	11
 pluginabi	33aa4cc2c	R-SingleUse	2
-pluginabi	33aa4cc2c	R-TextBorrow	11
+pluginabi	33aa4cc2c	R-TextBorrow	13
+pluginabi	33aa4cc2c	R-TextBorrow/tested	2
 pluginabi	33aa4cc2c	R-TextClear	94
 pluginabi	33aa4cc2c	R-TextRun	1
 pluginabi	33aa4cc2c	R-View	5
@@ -2147,7 +2149,8 @@ zttext	bd4932067	R-Reuse	6
 zttext	bd4932067	R-SameRead	1
 zttext	bd4932067	R-Scalar	3
 zttext	bd4932067	R-SingleUse	14
-zttext	bd4932067	R-TextBorrow	16
+zttext	bd4932067	R-TextBorrow	17
+zttext	bd4932067	R-TextBorrow/tested	1
 zttext	bd4932067	R-TextClear	61
 zttext	bd4932067	R-ValueLocal	13
 zttext	bd4932067	R-ValueRecord	3

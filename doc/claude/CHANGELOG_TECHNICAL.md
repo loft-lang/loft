@@ -10,7 +10,7 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
-### `arguments/parse` 7.3× → 3.8×: seven rewrites on what a slice match, a literal, a text field and a walk read (2026-10-15)
+### `arguments/parse` 7.3× → 3.8× by seven rewrites, and a match binding that borrows under a store test (2026-10-15)
 
 - **`(R-SameRead)`'s match clause** — a slice `match` binds the subject's length and each
   integer computation of one element two arm tests make once, before the first test
@@ -47,6 +47,12 @@ All notable changes to the loft language and interpreter.
   `LOFT_NO_DISTINCT_VERSION` / `LOFT_NO_TEXT_BORROW`).  Guard
   `a-walk-borrows-its-word-in-the-versioned-copy.loft`, pin `tests/versioned_text_walk.rs`;
   `tween/value` −9.0 % beside it.
+
+- **`(R-TextBorrow)`'s tested clause** — a statement-bound text local whose scope also writes
+  the return buffer borrows its parameter's text under a run-time compare of the two stores,
+  copying when they coincide (`hoist::borrowed_store_texts`'s `tested`, native,
+  `LOFT_NO_TESTED_BORROW`).  Guard `a-match-binding-borrows-its-text-while-the-stores-differ.loft`,
+  pin `tests/tested_text_borrow.rs`; cbor `encode_bytes` −10 %.
 
 ### A keyed insert writes its entry, a decoded text is read where it lies, a record of texts is released by plan (2026-10-14)
 
