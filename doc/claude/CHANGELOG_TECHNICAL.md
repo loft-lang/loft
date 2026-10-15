@@ -10,6 +10,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
+
+- `tests/common/lanes.rs`: `lanes(cap)` is the pool a test may run — `UNDER_NEXTEST` (8)
+  when nextest runs other tests beside it (`NEXTEST=1`), the box's cores by hand.  The native
+  corpus runner, the drop gate, the poison census and the feature examples size their pools
+  with it; none reads `available_parallelism()` bare any more.
+- `.config/nextest.toml`: one `profile.default` override gives every pool-spawning test
+  `threads-required = 8`, so nextest counts the workers against the run's thread budget
+  (and the group's).  The 24-slot pool therefore holds at most three native chunks at once,
+  24 `rustc`, and never 6 × 24 beside 24 others — the 184 contending threads of 2026-10-15.
+- `native::pool_tests_declare_their_lanes_to_nextest` holds the constant, the override and
+  the list of pool-spawning tests to one another.
+
 ### The browser client reports a server that is not there (loft#2003, 2026-10-13)
 
 - The rule that settled it: one client script, any kernel

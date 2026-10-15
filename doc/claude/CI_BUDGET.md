@@ -605,6 +605,19 @@ does not belong on a PR, however cheap it is.**
 | **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
 
+### A test that spawns a pool declares its share
+
+nextest runs `NEXTEST_TEST_THREADS` tests side by side, and a test that sizes an inner pool
+from the core count multiplies that: six native corpus chunks at 24 `rustc` each in
+`heavy-wide`, beside a 24-slot pool and a drop-gate chunk's 24 spawned `loft`s, was **184
+contending threads**, and the box hung (2026-10-15).  So every test that spawns workers
+carries `threads-required` in `.config/nextest.toml` and sizes its pool from
+`common::lanes::lanes(cap)`, which answers the same number under nextest
+(`UNDER_NEXTEST`) and the cores by hand; `native::pool_tests_declare_their_lanes_to_nextest`
+fails when a pool-spawning test is missing from the override.  A new test that spawns
+processes in parallel joins that override's filter, or it reintroduces the multiplication.
+The wider cure — the corpus leaving the crate for a suite of its own — is @PLN193.
+
 ### The test step runs in two passes
 
 `make ci` and `ci.yml`'s Test step run nextest twice.  The MAIN pass (`--profile ci`) runs

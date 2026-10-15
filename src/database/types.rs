@@ -1872,7 +1872,6 @@ impl Stores {
     /// `__nullable<S>` element keeps S's keys inside the `Some` variant's inline payload, so
     /// indexing the enum's own field list finds none of them.  Same rule as [`Self::hash`] and
     /// [`Self::create_key`] — one question, one answer, whichever kind asks it.
-
     pub fn field_name(&self, content: u16, key: &[String], name: &mut String) -> Vec<u16> {
         let owner = self.key_owner(content);
         let mut key_nrs = Vec::new();

@@ -805,11 +805,11 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
 /// How many of `jobs` native compiles [`run_native_jobs`] runs at once.
 fn native_lanes(jobs: usize) -> usize {
     // Layer 3: scale worker count to temp-fs headroom.  On a roomy disk this is
-    // just min(cpus, jobs); on a tight RAM-backed tmpfs it clamps down so N
-    // concurrent compiles can't exhaust memory and hang the machine.
-    let cpu_max = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
+    // just min(share, jobs); on a tight RAM-backed tmpfs it clamps down so N
+    // concurrent compiles can't exhaust memory and hang the machine.  The share is
+    // what nextest was told (`common::lanes`), never the bare core count: 24 lanes
+    // per chunk beside a 24-slot pool was the storm that hung the box (@PLN193 P0).
+    let cpu_max = common::lanes::lanes(usize::MAX);
     loft::platform::native_worker_count(cpu_max, jobs, &native_scratch(), PER_WORKER_TMP)
 }
 
@@ -1460,6 +1460,54 @@ fn native_script_chunks_cover_the_corpus() {
     let src = fa::read_to_string(file!()).expect("read tests/native.rs");
     for n in names {
         assert!(src.contains(&format!("{n} = ")), "{n} is generated");
+    }
+}
+
+/// Every test that spawns a worker pool declares its lanes to nextest, and the two numbers
+/// are ONE number (@PLN193 P0).  `common::lanes::UNDER_NEXTEST` sizes the pool; the
+/// `threads-required` override in `.config/nextest.toml` is what nextest counts against the
+/// run's thread budget — a pool-spawning test missing from that override runs its workers
+/// beside a full pool again, which is the multiplication that hung the box at 184 threads.
+#[test]
+fn pool_tests_declare_their_lanes_to_nextest() {
+    let toml = fa::read_to_string(".config/nextest.toml").expect("read .config/nextest.toml");
+    let want = format!("threads-required = {}", common::lanes::UNDER_NEXTEST);
+    // The override block that carries `threads-required`: from its `[[profile.…` header to
+    // the next header.
+    let blocks: Vec<&str> = toml.split("[[profile.").collect();
+    let block = blocks
+        .iter()
+        .find(|b| b.lines().any(|l| l.trim() == want))
+        .unwrap_or_else(|| panic!("no override in .config/nextest.toml carries `{want}`"));
+    assert!(
+        block.starts_with("default.overrides]]"),
+        "the `{want}` override must be a profile.default override, so every profile inherits it"
+    );
+    let filter = block
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("filter = "))
+        .expect("the threads-required override has a filter");
+    // Every pool-spawning test, by the pattern its filter must contain.
+    for needle in [
+        "native_scripts_[0-9]+",
+        "native_dir",
+        "native_reference",
+        "native_learn_loft_samples",
+        "native_comparisons",
+        "native_features",
+        "native_limits_at_full_size",
+        "every_cell_releases_each_resource_once_on_native_[0-9]+",
+        "every_cell_releases_each_resource_once_on_the_interpreter",
+        "the_census_names_the_copy_each_cell_makes",
+        "a_refused_cell_is_a_compile_error_and_a_once_cell_is_not",
+        "every_emitted_copy_of_a_droppable_has_a_lease_verdict",
+        "the_zero_on_claim_census_only_shrinks",
+        "features_examples_interpret",
+    ] {
+        assert!(
+            filter.contains(needle),
+            "`{needle}` spawns a worker pool but is not in the threads-required filter:\n{filter}"
+        );
     }
 }
 

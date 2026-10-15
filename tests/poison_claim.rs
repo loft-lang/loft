@@ -10,6 +10,8 @@
 //! on zeros rather than paying a memset on every claim.  The number only moves DOWN — a
 //! new dependence is a regression, and the remaining ones are named in
 //! `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § Zero-on-claim.
+mod common;
+
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -69,9 +71,8 @@ fn depends_on_zero_claim(script: &Path) -> bool {
 /// they run several at a time: run one after another, the census grows with the corpus and
 /// outran the suite's per-test ceiling on every CI host.
 fn census(scripts: &[PathBuf]) -> Vec<String> {
-    let workers = std::thread::available_parallelism()
-        .map_or(2, std::num::NonZero::get)
-        .min(8);
+    // The share nextest was told about (`common::lanes`), never the bare core count.
+    let workers = common::lanes::lanes(8);
     let next = AtomicUsize::new(0);
     let hits: Mutex<Vec<bool>> = Mutex::new(vec![false; scripts.len()]);
     std::thread::scope(|s| {

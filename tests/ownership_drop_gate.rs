@@ -51,6 +51,8 @@
 //!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --test ownership_drop_gate
 //!           (writes `ownership_drop_gate.baseline` and `ownership_drop_gate.native.baseline`)
 
+mod common;
+
 use loft::file_access as fa;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -1124,10 +1126,11 @@ fn for_each_cell<T: Send>(
         .collect()
 }
 
+/// At most `cap` workers, and never more than the share nextest was told about
+/// (`common::lanes`): every test here that calls it carries `threads-required` in
+/// `.config/nextest.toml`.
 fn workers(cap: usize) -> usize {
-    std::thread::available_parallelism()
-        .map_or(2, std::num::NonZero::get)
-        .min(cap)
+    common::lanes::lanes(cap)
 }
 
 // ── the baseline ────────────────────────────────────────────────────────────────────────────
