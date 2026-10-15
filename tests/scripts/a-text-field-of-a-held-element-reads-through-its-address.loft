@@ -1,0 +1,111 @@
+// `@FR-R-RecPtr`'s text clause — a TEXT field of a record element that a loop walks through a
+// held header and base is read through the element's address: the field's record number is
+// one load at that address, and the text is sliced off the store span derived beside the
+// base, where the store read resolved the store, the record and the text per element.
+// Native only (an emitter rewrite); every cell asserts the VALUES a hand computation gives,
+// `LOFT_NO_TEXT_FIELD=1` must answer the same, and `LOFT_HOIST_VERIFY=1` checks each read
+// against the store.
+//
+// Admitted: t1 (an equality search over names, the empty one and a multi-byte one among
+// them), t2 (the prefix walk: the field read twice under `len > 0`), t3 (two text fields of
+// one element, at offsets past the first), t4 (an in-place scalar write in the same walk),
+// t5 (the search called from a loop over the same vector: its twin takes the caller's held
+// base).  Declined, the store read kept: t6 (the walk appends to another vector of the same
+// store, which may move the records it reads), t7
+// (the walk sets a text field, then reads it).
+
+struct Opt { long: text, n: integer, short: text }
+struct Args { options: vector<Opt>, hits: integer, extra: vector<Opt> }
+
+fn find(self: Args, name: text) -> integer {
+  for o in self.options {
+    if o.long == name { return o#index }
+  }
+  -1
+}
+
+fn prefix(self: Args, p: text) -> integer {
+  m = 0;
+  for o in self.options {
+    if o.long.len() > 0 && o.long.starts_with(p) { m += o.n }
+  }
+  m
+}
+
+fn shorts(self: Args) -> text {
+  r = "";
+  for o in self.options { r += "{o.short}{len(o.long)};" }
+  r
+}
+
+fn bump(self: Args, p: text) -> integer {
+  for o in self.options {
+    if o.long.starts_with(p) { o.n += 100 }
+  }
+  t = 0;
+  for o in self.options { t += o.n }
+  t
+}
+
+fn all(self: Args, names: vector<text>) -> integer {
+  s = 0;
+  for nm in names {
+    s = s * 10 + find(self, nm) + 1;
+    self.hits += len(self.options);
+  }
+  s
+}
+
+fn grow(self: Args) -> text {
+  r = "";
+  for o in self.options {
+    self.extra += [Opt { long: "{o.long}+", n: 0, short: "" }];
+    r += "{o.long},";
+  }
+  r
+}
+
+fn rename(v: vector<Opt>) -> text {
+  r = "";
+  for o in v {
+    o.long = "{o.long}!";
+    r += o.long;
+  }
+  r
+}
+
+fn mk() -> Args {
+  Args { options: [
+    Opt { long: "verbose", n: 1, short: "v" },
+    Opt { long: "", n: 2, short: "q" },
+    Opt { long: "version", n: 4, short: "V" },
+    Opt { long: "café", n: 8, short: "c" }], hits: 0, extra: [] }
+}
+
+fn main() {
+  a = mk();
+  // t1 — the exact names: version 2, café 3, the empty name 1, a miss -1.
+  t1 = "{find(a, "version")},{find(a, "café")},{find(a, "")},{find(a, "x")}";
+  assert(t1 == "2,3,1,-1", "t1 {t1}");
+  // t2 — "ver" sums verbose 1 + version 4; "" every non-empty name 1 + 4 + 8; "caf" café 8.
+  t2 = "{prefix(a, "ver")},{prefix(a, "")},{prefix(a, "caf")}";
+  assert(t2 == "5,13,8", "t2 {t2}");
+  // t3 — each element's short name and its long name's character count (café: 4).
+  assert(shorts(a) == "v7;q0;V7;c4;", "t3 {shorts(a)}");
+  // t4 — "ver" adds 100 to verbose and version: 101 + 2 + 104 + 8.
+  b = mk();
+  assert(bump(b, "ver") == 215, "t4 {bump(b, "ver")}");
+  // t5 — finds 2, 0, -1, 3 give digits 3, 1, 0, 4; each pass counts four options.
+  c = mk();
+  t5 = all(c, ["version", "verbose", "nope", "café"]);
+  assert(t5 == 3104 && c.hits == 16, "t5 {t5} hits {c.hits}");
+  // t6 — the four names read while each is copied, with a `+`, into the same store.
+  g = mk();
+  t6 = grow(g);
+  assert(t6 == "verbose,,version,café," && len(g.extra) == 4 && g.extra[3].long == "café+",
+    "t6 {t6} {len(g.extra)}");
+  // t7 — each name read back after its write.
+  h = mk().options;
+  assert(rename(h) == "verbose!!version!café!", "t7 {rename(h)}");
+  println("ok");
+}
