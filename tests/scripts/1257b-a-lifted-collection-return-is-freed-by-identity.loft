@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A closure's COLLECTION `??` return is freed by store IDENTITY, so the mint arm does not
 // leak and the borrow arm is not taken (loft#1257, `formal/closures.md` D-clo-14).
@@ -51,8 +54,8 @@ fn test_the_mint_arm_of_a_collection_return_is_freed_per_call() {
   none: vector<integer>? = null;
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for _ in 0..70000 { s += g(none)[1]; }
-  assert(s == 560000, "vector mint sum: got {s}");
+  for _ in 0..1400 { s += g(none)[1]; }
+  assert(s == 11200, "vector mint sum: got {s}");
 }
 
 fn test_the_keyed_kinds_reach_the_same_answer() {
@@ -61,8 +64,8 @@ fn test_the_keyed_kinds_reach_the_same_answer() {
   hs: hash<Rk1257[k]>? = null;
   g = fn(q: hash<Rk1257[k]>?) -> hash<Rk1257[k]> { q ?? [Rk1257 { k: 7, v: 14 }] };
   s = 0;
-  for _ in 0..70000 { s += len(g(hs)); }
-  assert(s == 70000, "hash mint sum: got {s}");
+  for _ in 0..1400 { s += len(g(hs)); }
+  assert(s == 1400, "hash mint sum: got {s}");
 }
 
 fn test_the_borrow_arm_keeps_the_callers_own_collection() {
@@ -149,8 +152,8 @@ fn test_the_argument_spelling_is_an_axis() {
 
   empty = Box1257 { xs: null };
   m = 0;
-  for _ in 0..70000 { m += g(empty.xs)[1]; }
-  assert(m == 560000, "field-argument mint sum: got {m}");
+  for _ in 0..1400 { m += g(empty.xs)[1]; }
+  assert(m == 11200, "field-argument mint sum: got {m}");
 
   vs: vector<vector<integer>> = [[41, 42], [51, 52]];
   e = 0;
@@ -167,8 +170,8 @@ fn test_the_shapes_one_axis_away_are_unmoved() {
   // `formal/closures.md` D-clo-7 and stays open; and the named twin is the direct call.
   p = fn(k: integer) -> vector<integer> { [7, 8] };
   s = 0;
-  for _ in 0..70000 { s += p(0)[1]; }
-  assert(s == 560000, "a pure mint: got {s}");
+  for _ in 0..1400 { s += p(0)[1]; }
+  assert(s == 11200, "a pure mint: got {s}");
 
   c: vector<integer>? = [41, 42];
   h = fn(k: integer) -> vector<integer> { c ?? [7, 8] };

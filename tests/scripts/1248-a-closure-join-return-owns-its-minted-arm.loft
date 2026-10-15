@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A closure whose return may BORROW or may MINT owns the minted arm (loft#1248).
 //
@@ -68,8 +71,8 @@ fn test_the_minted_arm_of_an_inline_closure_join_is_freed_per_call() {
   none: P1248? = null;
   g = fn(q: P1248?) -> P1248 { q ?? P1248 { n: 7 } };
   s = 0;
-  for _ in 0..70000 { s += g(none).n; }
-  assert(s == 490000, "inline sum: got {s}");
+  for _ in 0..1400 { s += g(none).n; }
+  assert(s == 9800, "inline sum: got {s}");
 }
 
 fn test_the_minted_arm_of_a_bound_closure_join_is_freed_per_call() {
@@ -79,8 +82,8 @@ fn test_the_minted_arm_of_a_bound_closure_join_is_freed_per_call() {
   none: P1248? = null;
   g = fn(q: P1248?) -> P1248 { q ?? P1248 { n: 7 } };
   s = 0;
-  for _ in 0..70000 { r = g(none); s += r.n; }
-  assert(s == 490000, "bound sum: got {s}");
+  for _ in 0..1400 { r = g(none); s += r.n; }
+  assert(s == 9800, "bound sum: got {s}");
 }
 
 fn test_the_borrow_arm_leaves_the_caller_its_own_record_bound() {
@@ -116,8 +119,8 @@ fn test_the_witness_reached_through_a_capture_owns_its_minted_arm() {
   c1248: P1248? = null;
   g = fn(k: integer) -> P1248 { c1248 ?? P1248 { n: 7 } };
   s = 0;
-  for _ in 0..70000 { s += g(0).n; }
-  assert(s == 490000, "capture-witness sum: got {s}");
+  for _ in 0..1400 { s += g(0).n; }
+  assert(s == 9800, "capture-witness sum: got {s}");
 }
 
 fn test_a_capture_borrow_arm_leaves_the_caller_its_own_record() {

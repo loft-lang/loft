@@ -547,7 +547,7 @@ jobs:
         # deliberately-faulting fixtures run under the gate; the only exclusions are the
         # toolchain-sensitive meta-tests and the two "spawns a build" tests below.
         # `--profile sanitizer` is `ci` for the sanitizer build; the corpus runner that once
-        # needed a longer ceiling under ASan (loft#1527) is chunked (`loft_suite_00..07`).
+        # needed a longer ceiling under ASan (loft#1527) is chunked (`loft_suite_00..15`).
         run: >
           cargo +nightly nextest run --profile sanitizer --release --no-fail-fast
           --target ${{ matrix.target }}
@@ -1143,7 +1143,7 @@ jobs:
         run: cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored
 
       # The whole `tests/scripts` corpus in ONE process.  The per-commit run is chunked
-      # (`loft_suite_00..07`), which keeps each test under the duration gate but gives up the
+      # (`loft_suite_00..15`), which keeps each test under the duration gate but gives up the
       # interaction ACROSS chunks — one script corrupting shared state that a later, innocent
       # one dies of (how loft#920 was found).  This is that run, nightly; its `#[ignore]`
       # reason names this job.

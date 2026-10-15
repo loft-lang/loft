@@ -676,6 +676,11 @@ pub struct Stores {
     /// don't rely on adoption — `copy_from_worker` reads through the
     /// graft swap regardless of slot reuse.
     pub disable_slot_reuse: bool,
+    /// The store table's ceiling: a store numbered at or past it is the "store table
+    /// exhausted" refusal.  65535 (the null sentinel) unless a test LOWERED it
+    /// (`LOFT_STORE_LIMIT`, `// @STORE_LIMIT:`), so a guard crosses it in a few hundred
+    /// evaluations instead of 65535.
+    pub store_limit: u16,
     /// `LOFT_UAF` use-after-free detector: slots freed by the CURRENT op
     /// (`free_named` pushes; the dispatch loop drains + scans after the op).
     /// Always empty when the detector is off.  See `keys::uaf_check_enabled`.
@@ -802,6 +807,7 @@ impl Clone for Stores {
             frame_yield: false,
             poison_free: self.poison_free,
             disable_slot_reuse: self.disable_slot_reuse,
+            store_limit: self.store_limit,
             uaf_freed_this_op: Vec::new(),
             worker_slot_dispenser: None,
             worker_allocated_indices: Vec::new(),
@@ -1569,6 +1575,7 @@ impl Stores {
             frame_yield: false,
             poison_free: false,
             disable_slot_reuse: false,
+            store_limit: crate::keys::store_limit(),
             uaf_freed_this_op: Vec::new(),
             worker_slot_dispenser: None,
             worker_allocated_indices: Vec::new(),

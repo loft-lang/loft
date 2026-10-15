@@ -831,21 +831,23 @@ impl Stores {
         // every store ever made, freed or not — the mode retires each freed
         // number so a stale reference can never reach a new store, and a run
         // that frees and re-mints more than 65535 cannot be checked that way.
-        if slot == u16::MAX {
+        if slot >= self.store_limit {
             let live = self.allocations.iter().filter(|s| !s.free).count();
             let reuse_off = self.disable_slot_reuse || crate::keys::no_slot_reuse();
+            let limit = self.store_limit;
             assert!(
                 !reuse_off,
                 "store table exhausted by the checking mode, not by a leak: this run made \
-                     65535 stores and {live} are live.  LOFT_STRICT_STORES (and \
+                     {limit} stores and {live} are live.  LOFT_STRICT_STORES (and \
                      LOFT_NO_SLOT_REUSE) never reuse a freed store number, so that a stale \
                      reference cannot reach a newer store, and store_nr is u16.  This program \
                      frees and re-mints more stores than the mode can track: check it with a \
                  smaller loop count, or run it without the switch."
             );
             panic!(
-                "store table exhausted: 65535 stores live at once (store_nr is u16; 65535 \
-                 is the null sentinel).  This usually indicates a store leak — run with \
+                "store table exhausted: {limit} stores live at once (store_nr is u16; 65535 \
+                 is the null sentinel, and a test may lower the ceiling).  This usually \
+                 indicates a store leak — run with \
                  LOFT_STORES=timeline, which lists the live stores by type and says whether \
                  they are a LEAK or a large but clean working set."
             );
@@ -3045,6 +3047,7 @@ impl Stores {
             frame_yield: false,
             poison_free: self.poison_free,
             disable_slot_reuse: self.disable_slot_reuse,
+            store_limit: self.store_limit,
             uaf_freed_this_op: Vec::new(),
             worker_slot_dispenser: None,
             worker_allocated_indices: Vec::new(),

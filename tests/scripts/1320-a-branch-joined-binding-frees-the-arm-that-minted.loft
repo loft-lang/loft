@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A binding joined from BRANCH ARMS whose tails are fn-ref `??` calls frees the arm that
 // MINTED (loft#1320, `formal/ownership.md` D-own-8 Face A's first measured symptom).
@@ -47,8 +50,8 @@ fn test_the_mint_arm_of_a_vector_branch_is_freed_per_evaluation() {
   n2: vector<integer>? = null;
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for i in 0..70000 { r = if i % 2 == 0 { g(n1) } else { g(n2) }; s += r[1]; }
-  assert(s == 560000, "vector branch mint sum: got {s}");
+  for i in 0..1400 { r = if i % 2 == 0 { g(n1) } else { g(n2) }; s += r[1]; }
+  assert(s == 11200, "vector branch mint sum: got {s}");
 }
 
 fn test_a_match_arm_is_the_same_branch() {
@@ -56,8 +59,8 @@ fn test_a_match_arm_is_the_same_branch() {
   n2: vector<integer>? = null;
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for i in 0..70000 { r = match i % 2 { 0 => { g(n1) }, _ => { g(n2) } }; s += r[1]; }
-  assert(s == 560000, "match branch mint sum: got {s}");
+  for i in 0..1400 { r = match i % 2 { 0 => { g(n1) }, _ => { g(n2) } }; s += r[1]; }
+  assert(s == 11200, "match branch mint sum: got {s}");
 }
 
 fn test_a_record_branch_owns_through_the_bound_spelling() {
@@ -65,8 +68,8 @@ fn test_a_record_branch_owns_through_the_bound_spelling() {
   n2: P1320? = null;
   g = fn(q: P1320?) -> P1320 { q ?? P1320 { n: 7 } };
   s = 0;
-  for i in 0..70000 { r = if i % 2 == 0 { g(n1) } else { g(n2) }; s += r.n; }
-  assert(s == 490000, "record branch mint sum: got {s}");
+  for i in 0..1400 { r = if i % 2 == 0 { g(n1) } else { g(n2) }; s += r.n; }
+  assert(s == 9800, "record branch mint sum: got {s}");
 }
 
 fn test_a_keyed_branch_reaches_the_op_that_materialises_it() {
@@ -76,16 +79,16 @@ fn test_a_keyed_branch_reaches_the_op_that_materialises_it() {
   n2: hash<K1320[k]>? = null;
   g = fn(q: hash<K1320[k]>?) -> hash<K1320[k]> { q ?? [K1320 { k: 7, v: 14 }] };
   s = 0;
-  for i in 0..70000 { r = if i % 2 == 0 { g(n1) } else { g(n2) }; s += len(r); }
-  assert(s == 70000, "keyed branch mint sum: got {s}");
+  for i in 0..1400 { r = if i % 2 == 0 { g(n1) } else { g(n2) }; s += len(r); }
+  assert(s == 1400, "keyed branch mint sum: got {s}");
 }
 
 fn test_the_bound_vector_spelling_in_a_loop_is_freed_per_call() {
   none: vector<integer>? = null;
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for _ in 0..70000 { t = g(none); s += t[1]; }
-  assert(s == 560000, "bound vector mint sum: got {s}");
+  for _ in 0..1400 { t = g(none); s += t[1]; }
+  assert(s == 11200, "bound vector mint sum: got {s}");
 }
 
 fn test_a_binding_declared_outside_the_loop_keeps_its_arm_alive() {
@@ -98,8 +101,8 @@ fn test_a_binding_declared_outside_the_loop_keeps_its_arm_alive() {
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   t: vector<integer> = [];
   s = 0;
-  for i in 0..70000 { t = if i % 2 == 0 { g(n1) } else { g(n2) }; s += t[1]; }
-  assert(s == 560000, "outer-declared mint sum: got {s}");
+  for i in 0..1400 { t = if i % 2 == 0 { g(n1) } else { g(n2) }; s += t[1]; }
+  assert(s == 11200, "outer-declared mint sum: got {s}");
   assert(t[1] == 8, "the binding after the loop: got {t[1]}");
 }
 
@@ -110,8 +113,8 @@ fn test_a_branch_consumed_as_a_call_argument() {
   n2: vector<integer>? = null;
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for i in 0..70000 { s += second1320(if i % 2 == 0 { g(n1) } else { g(n2) }); }
-  assert(s == 560000, "call-argument mint sum: got {s}");
+  for i in 0..1400 { s += second1320(if i % 2 == 0 { g(n1) } else { g(n2) }); }
+  assert(s == 11200, "call-argument mint sum: got {s}");
 }
 
 fn second1320(v: vector<integer>) -> integer { v[1] }

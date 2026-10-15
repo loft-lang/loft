@@ -22,6 +22,23 @@ All notable changes to the loft language and interpreter.
   in a generic template.  `(R-ReturnField)` hands the call-root exits over as before.
   `D-types-36` is closed.
 
+### Tests prove a limit at a small size, and a corpus chunk says where its time went (2026-10-15)
+
+- **Lowered limits** (`limits::Limits` on `Data`; `@LIMIT`, `@FRAME_LIMIT`, `LOFT_LIMIT`,
+  `LOFT_FRAME_LIMIT`).  Every enforcement site of the count and the frame reads the program's
+  limits, which a test can only LOWER.  The four `@C149` guards prove their relations at 20
+  (30 and 6540 bytes for the frame margin); the full-size files are `tests/limits_full/`, run
+  nightly.  Compiling depth costs roughly its square, so the nesting guard took 55 s.
+- **A lowered store ceiling** (`Stores::store_limit`; `@STORE_LIMIT`, `LOFT_STORE_LIMIT`).  The
+  leak guards that crossed the 65535-store ceiling with 70 000-iteration loops run at 1310
+  with every count / 50: 19 files, 1–3 s each on the interpreter instead of up to 55 s.
+- **`common::timing::Suite`.**  A corpus chunk prints each program's CPU and wall time, a
+  watchdog names the program still running when the chunk passes its 220 s budget (which
+  survives nextest's kill at 300 s), and a chunk whose CPU passes the budget fails with its
+  slowest programs listed.
+- **Sixteen interpreter chunks** (`loft_suite_00..15`, was eight).  Measured on the dev
+  profile: 133–169 s of CPU a chunk, every one inside its 220 s budget.
+
 ### Every whole-record copy tests its source (loft#1997, loft#2004, 2026-10-13)
 
 - **One answer for three decoders** (`@FR-N-Store`, `@FR-B-Copy`, `@FR-N-Road`).

@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A closure's `??` over a CAPTURE owns its minted arm whichever other captures it holds
 // (`formal/closures.md` D-clo-7, the last open half of loft#1248).
@@ -46,16 +49,16 @@ fn test_two_store_bearing_captures_own_the_minted_record() {
   d: P1248b = P1248b { n: 3 };
   g = fn(k: integer) -> P1248b { c ?? P1248b { n: 7 + d.n - 3 } };
   s = 0;
-  for _ in 0..70000 { s += g(0).n; }
-  assert(s == 490000, "two-capture record sum: got {s}");
+  for _ in 0..1400 { s += g(0).n; }
+  assert(s == 9800, "two-capture record sum: got {s}");
 }
 
 fn test_a_single_captured_collection_owns_its_minted_arm() {
   c: vector<integer>? = null;
   g = fn(k: integer) -> vector<integer> { c ?? [7, 8] };
   s = 0;
-  for _ in 0..70000 { s += g(0)[1]; }
-  assert(s == 560000, "single-capture vector sum: got {s}");
+  for _ in 0..1400 { s += g(0)[1]; }
+  assert(s == 11200, "single-capture vector sum: got {s}");
 }
 
 fn test_two_captured_collections_and_a_capture_beside_a_pure_mint() {
@@ -63,15 +66,15 @@ fn test_two_captured_collections_and_a_capture_beside_a_pure_mint() {
   d: vector<integer> = [3];
   g = fn(k: integer) -> vector<integer> { c ?? [7 + d[0], 8] };
   s = 0;
-  for _ in 0..70000 { s += g(0)[1]; }
-  assert(s == 560000, "two-capture vector sum: got {s}");
+  for _ in 0..1400 { s += g(0)[1]; }
+  assert(s == 11200, "two-capture vector sum: got {s}");
 
   // A store-bearing capture READ by a closure that mints unconditionally: nothing can be
   // borrowed, and reading presence as danger cost this shape the same leak.
   h = fn(k: integer) -> vector<integer> { [7 + d[0], 8] };
   t = 0;
-  for _ in 0..70000 { t += h(0)[1]; }
-  assert(t == 560000, "capture beside a pure mint: got {t}");
+  for _ in 0..1400 { t += h(0)[1]; }
+  assert(t == 11200, "capture beside a pure mint: got {t}");
 }
 
 fn test_the_borrow_arm_leaves_the_capture_intact() {

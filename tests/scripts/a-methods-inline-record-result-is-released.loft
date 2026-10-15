@@ -1,3 +1,6 @@
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 // A declared METHOD's record result used inline — `get(w, i).a`, the free spelling of a
 // method — is released once per call.
 //
@@ -33,9 +36,9 @@ fn inner_of(self: Box2) -> Cell { self.inner }
 fn main() {
   w = World { cells: [Cell { a: 1 }, Cell { a: 2 }] };
   n = 0;
-  for k in 0..70000 { n += get(w, k & 1).a; }
-  assert(n == 105000, "l1: {n}");
-  for k in 0..70000 { get(w, k & 1); }
+  for k in 0..1400 { n += get(w, k & 1).a; }
+  assert(n == 2100, "l1: {n}");
+  for k in 0..1400 { get(w, k & 1); }
   m = 0;
   for k in 0..10 { m += w.get(k & 1).a; }
   assert(m == 15, "l3: {m}");

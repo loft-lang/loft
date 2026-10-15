@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A binding assigned a VIEW on one path and a delivered collection on another keeps the dep the
 // view arm set (loft#1333, `formal/ownership.md` @FR-O-Complete).
@@ -137,7 +140,7 @@ fn test_an_empty_literal_then_a_fn_ref_rebind() {
   // and aborts on both backends.
   m = fn(i: integer) -> vector<integer> { [i, i + 1] };
   x: vector<integer> = [];
-  for i in 0..70000 { x = m(i); }
-  assert(len(x) == 2, "length after 70000 rebinds: got {len(x)}");
-  assert(x[0] == 69999, "the last value: got {x[0]}");
+  for i in 0..1400 { x = m(i); }
+  assert(len(x) == 2, "length after 1400 rebinds: got {len(x)}");
+  assert(x[0] == 1399, "the last value: got {x[0]}");
 }

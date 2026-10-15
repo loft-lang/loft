@@ -1641,7 +1641,7 @@ jobs:
       # `--profile sanitizer`: `ci`'s settings for the sanitizer build.  It once carried a
       # longer ceiling for `loft_suite`, which ran every `tests/scripts` program inside one test
       # process and under `-Zsanitizer=address` was the leg's whole clock; the corpus runner is
-      # chunked now (`loft_suite_00..07`) and the profile adds no per-test raise.  `ci`'s 600 s ceiling was
+      # chunked now (`loft_suite_00..15`) and the profile adds no per-test raise.  `ci`'s 600 s ceiling was
       # 587 s on the previous green run and killed at 600 s on the next commit that added
       # one script (run 34980517571: 2022 passed, 0 failed, 1 timed out).  The `sanitizer`
       # profile in `.config/nextest.toml` is `ci` with that one test's ceiling raised, made

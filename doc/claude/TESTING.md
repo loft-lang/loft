@@ -467,7 +467,7 @@ Named test entrypoints in `tests/wrap.rs`:
 |---|---|---|
 | `dir` | All `tests/docs/*.loft` files + HTML doc regeneration | Skips files listed in `SUITE_SKIP` |
 | `comparisons` | All `tests/comparisons/*.loft` files | The comparison pages' claims |
-| `loft_suite_00` … `loft_suite_07` | `tests/scripts/*.loft`, split in eight chunks | Skips files in `ignored_scripts()`; `loft_suite_chunks_cover_the_corpus` pins the count |
+| `loft_suite_00` … `loft_suite_15` | `tests/scripts/*.loft`, split in sixteen chunks, each held to a 220 s CPU budget (`common::timing::Suite`) | Skips files in `ignored_scripts()`; `loft_suite_chunks_cover_the_corpus` pins the count |
 | `loft_suite_whole_corpus` | The whole corpus in ONE process, in order | `#[ignore]`d — the nightly release-gate job; `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` bisect over it |
 | `library_suite` | The library packages' own tests | Skips per `LIB_PKGS_SKIP` / `LIB_TESTS_SKIP` |
 | one per topic file | `integers` → `01-integers.loft`, `files` → `19-files.loft`, … | The `script_test!` list in `tests/wrap.rs` |
