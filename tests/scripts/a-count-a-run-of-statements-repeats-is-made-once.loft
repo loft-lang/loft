@@ -7,8 +7,7 @@
 //
 // Bound: q1 (`place_line`'s shape — a box pushed between three counts of one run text), q4
 // (the count only: the local the sum reads is assigned between).  Kept: q2 (the read text is
-// rewritten between, a write into a record not minted), q3 (the read vector grows between: the
-// minted record joins it).
+// replaced between, a write into a record not minted), q3 (the read vector grows between).
 //
 struct Run { str: text, style: integer }
 struct Box { ks: integer, ke: integer, style: integer }
@@ -28,12 +27,12 @@ fn place(rs: vector<Run>, base: integer) -> text {
   "{t}ce={ce}"
 }
 
-fn rewrite(rs: vector<Run>) -> text {
+fn rewrite(rs: vector<Run>, w: Run) -> text {
   t = "";
   for rj in 0..len(rs) {
     r = rs[rj]?;
     a = 100 + len(r.str);
-    r.str = "{r.str}xyz";
+    r.str = w.str;
     b = 100 + len(r.str);
     t += "{a},{b};";
   }
@@ -64,10 +63,11 @@ fn main() {
   // q1 — "ab" (2), "héé" (3 characters, 5 bytes), "" from 10: boxes 10-12, 12-15, 15-15.
   q1 = place([Run { str: "ab", style: 1 }, Run { str: "héé", style: 2 }, Run { str: "", style: 3 }], 10);
   assert(q1 == "10-12/1;12-15/2;15-15/3;ce=15", "q1 {q1}");
-  // q2 — the text is rewritten between the two counts: 102 then 105, 100 then 103.
-  q2 = rewrite([Run { str: "hi", style: 1 }, Run { str: "", style: 2 }]);
-  assert(q2 == "102,105;100,103;", "q2 {q2}");
-  // q3 — the vector the count reads grows between: 21 then 31.
+  // q2 — the text is replaced by "abcde" between the two counts: 102 then 105, 100 then 105.
+  q2 = rewrite([Run { str: "hi", style: 1 }, Run { str: "", style: 2 }], Run { str: "abcde", style: 0 });
+  assert(q2 == "102,105;100,105;", "q2 {q2}");
+  // q3 — the vector the count reads grows between: 21 then 31 (a vector's length is a call
+  // the clause does not admit, so this cell holds whatever the type condition says).
   v: vector<Run> = [Run { str: "a", style: 1 }, Run { str: "b", style: 2 }];
   q3 = grow(v);
   assert(q3 == "21,31" && len(v) == 3, "q3 {q3}");
