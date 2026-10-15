@@ -21,6 +21,10 @@ The bundle contains the fully-parsed IR (`Data`) for the entire program prefix:
 every `default/*.loft` file, every `use`-d library, and the user script.  It is
 keyed on a drift manifest holding a SHA-256 of each parsed source's bytes
 (`cache::file_hash`), so any source edit invalidates the cache automatically.
+Beside the parse, the manifest carries what the cold run SAID: its diagnostics (`diag`
+lines) and the views the scope pass copied out of their containers (`mview` lines, the
+`advice:` sentences `copy_manifest` prints), replayed on a warm load so a program reports
+the same on every run — the parser and the scope pass do not run on one.
 
 ## Default-on behaviour and the off switch
 
@@ -225,6 +229,23 @@ arguments (loft#916 — the suite form is a DIRECTORY, which only became nameabl
 `cache::prune_program_cache()` is called after each cold save.  It evicts the
 oldest `(.store + .manifest)` pairs until the cache directory is under
 `LOFT_CACHE_MAX_MB` (default **512 MiB**).
+
+## Does a warm run answer as a cold one?  `make warm-diff`
+
+Nothing under cargo exercises the cache (the corpus runner parses in process), so a warm
+run that differs from a cold one is a user's to find.  `scripts/warm_diff.sh` runs every
+corpus file (`tests/scripts`, `tests/docs`, `examples`) through five lanes in a private
+cache seeded with the stdlib caches — `ref` (`LOFT_NO_CACHE=1`), `prime` (the cold save),
+`warm` (the bundle load), and under `LOFT_CODEGEN_STORE=1` `sprime` (cold, codegen from a
+materialised store) and `skel` (the skeleton load) — and compares each lane's exit code,
+stdout and stderr with `ref`.  One line per differing file names the lanes; a file where
+every lane differs is nondeterministic (a clock, a pid in its output) and reported apart,
+and the differing outputs stay under the directory the verdict names.  A report, by hand,
+after a change to the bundle, the manifest, the scope pass or what a run prints before its
+first statement; exit 0 only when every deterministic file agrees.  The `skel` lane answers
+WRONG and the switch stays an experiment (loft#2012): the decisions that copy a record out
+of a callee's view read other functions' bodies natively, and the skeleton leaves every
+body it does not generate empty.
 
 ## See also — the startup-cache design
 

@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A warm run says which views were copied out; `make warm-diff` asks whether it answers as a cold one (2026-10-15)
+
+- `scripts/warm_diff.sh` runs every corpus file through the cold reference, the cold save,
+  the warm bundle load and the two `LOFT_CODEGEN_STORE=1` lanes in a private cache and
+  compares exit code, stdout and stderr: nothing under cargo exercises the cache, so a warm
+  run that differed was a user's to find.  Its first run over 2466 files: 46 warm runs silent
+  where the cold run printed an `advice:` naming a view copied out of its container (the
+  scope pass notes them, and a warm load runs no scope pass; loft#2013), and 73 answering WRONG under
+  `LOFT_CODEGEN_STORE` (loft#2012: the copy decisions read callees' bodies natively, and the
+  skeleton leaves them empty).  The manifest now carries the views as `mview` lines and both
+  warm paths (the bundle load and the native fast path) replay them; the switch stays an
+  experiment.  Cell `a_warm_run_says_which_views_were_copied_out`; STARTUP_CACHE.md § Does a
+  warm run answer as a cold one.
+
 ### A warm start no longer reads the stdlib sources (2026-10-15)
 
 - Every run read and hashed `default/*.loft` twice — for the program bundle's stdlib key

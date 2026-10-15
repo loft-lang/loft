@@ -105,7 +105,9 @@ measurements reframed the cost/benefit and point to a clear priority order:
    `arc_e_program_cache` / `g2_m6_warm_store` / `p254_cache_poisoning` suites.
 
 2. **Do NOT chase E2 / the full native-graph drop for perf right now.**  The
-   key measured finding: **M6-warm gives only ~5%** because it skips only the
+   key measured finding: **M6-warm gives only ~5%** (and `make warm-diff` reads it
+   WRONG on 76 corpus files, loft#2012 — the skeleton's empty bodies are read by every
+   decision that is not the body being generated) because it skips only the
    *body* trees (20% of `read_data` — see #3's breakdown), not the def-fields +
    variable tables (80%) that dominate.  The *real* M6/E2 prize is skipping the
    **entire** `read_data` reconstruction — but on the stdlib that is only **~0.7 ms**

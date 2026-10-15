@@ -505,6 +505,54 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
     let _ = fa::remove_dir_all(&cache);
     let _ = fa::remove_dir_all(&cache_x);
 }
+/// The `advice:` lines naming a view copied out of its container come from the scope pass,
+/// which a warm load does not run: a program said on its first run what it never said again
+/// (`scripts/warm_diff.sh`, 46 corpus files).  The manifest's `mview` lines replay them.
+#[test]
+fn a_warm_run_says_which_views_were_copied_out() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_mview_{pid}.loft"));
+    let cache = tmp.join(format!("loft_mview_cache_{pid}"));
+    let _ = fa::remove_dir_all(&cache);
+    fa::create_dir_all(&cache).expect("create cache dir");
+    // `w` views a field of `h`; reassigning `h` copies `w` out, and the author is told.
+    fa::write(
+        &script,
+        "struct MvBox { n: integer }\nstruct MvHolder { b: MvBox, tag: integer }\nfn main() {\n  h = MvHolder { b: MvBox { n: 30 }, tag: 1 };\n  w = h.b;\n  h = MvHolder { b: MvBox { n: 40 }, tag: 2 };\n  print(\"{w.n} {h.b.n}\\n\");\n}\n",
+    )
+    .expect("write script");
+    let run = || -> (String, String) {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg("--interpret")
+            .arg(&script)
+            .current_dir(workspace_root())
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env_remove("LOFT_NO_CACHE")
+            .env_remove("LOFT_CODEGEN_STORE")
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .expect("failed to invoke loft binary");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (out_cold, err_cold) = run();
+    assert_eq!(out_cold.trim(), "30 40", "the cold run: {err_cold}");
+    assert!(
+        err_cold.contains("`w` was copied out of `h`"),
+        "the cold run must print the advice this compares; got: {err_cold}"
+    );
+    let (out_warm, err_warm) = run();
+    assert_eq!(out_cold, out_warm, "a warm run must answer as the cold one");
+    assert_eq!(
+        err_cold, err_warm,
+        "a warm run must say which views were copied out, as the cold run did"
+    );
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache);
+}
 /// `introspect` always PARSES: a warm bundle carries no variable table, so under a cache hit
 /// the dump rendered every variable as `name(65535)` and the slot table's number and span
 /// columns as `-` — two runs of one binary read as two different compilers, which is the
