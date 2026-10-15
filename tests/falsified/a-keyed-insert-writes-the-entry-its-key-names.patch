@@ -1,7 +1,9 @@
+diff --git a/src/database/structures.rs b/src/database/structures.rs
+index a3a77ace..09747d07 100644
 --- a/src/database/structures.rs
 +++ b/src/database/structures.rs
-@@ -380,7 +380,7 @@
-     pub fn keyed_entry_long(&mut self, data: &DbRef, parent_tp: u16, field: u16, key: i64) -> DbRef {
+@@ -390,7 +390,7 @@ impl Stores {
+     ) -> DbRef {
          let tp = self.sub_record_type(parent_tp, field);
          let d = self.field_ref(data, parent_tp, field);
 -        if !self.live_scratches.iter().any(|(source, _)| *source == d)

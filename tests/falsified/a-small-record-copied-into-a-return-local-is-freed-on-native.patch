@@ -1,8 +1,8 @@
 diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 2549d53a..163bb7b9 100644
+index 451f243a..9902b47d 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -14732,21 +14732,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+@@ -15628,21 +15628,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
                  return None;
              }
              let tp = vars.tp(*var);
@@ -25,4 +25,4 @@ index 2549d53a..163bb7b9 100644
 +            if vars.rebind_orig(*var).is_some() {
                  return None;
              }
-             // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
+             // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
