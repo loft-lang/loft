@@ -120,6 +120,12 @@ loop's header hold again — with it off, a loop that appends records with text 
 reading another vector keeps that vector's header.  First bisect step for a wrong element read
 in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**`LOFT_NO_CALL_TEXT_BORROW=1`** (`@FR-R-TextBorrow`'s call clause, default-ON, generation
+time) makes a text local bound to a call that fills a work buffer copy the call's text into a
+`String` again — with it off, the local borrows the work text, and a text set reads it in
+place.  First bisect step for a wrong text read from such a local on native; `LOFT_POISON=1`
+is the falsifier.
+
 **`LOFT_NO_TESTED_BORROW=1`** (`@FR-R-TextBorrow`'s tested clause, default-ON, generation
 time) makes a text a `match` arm or a statement binds out of a parameter's record copy itself
 again where its scope also writes the return buffer — with it off, such a bind borrows the

@@ -196,7 +196,10 @@ and only `set_str` reads it): 10.92 → 10.00 ms (−8.4 %, ≈ 5.14× — just 
 buffer, bound to a local read only as a text value, needs no copy — the format clause of
 `(R-TextBorrow)` for a call.  The rest of X3 — a run that IS a view of the character buffer, as
 the twin's `&[char]` is — needs a type change (a `text` over a `vector<character>` slice, or a
-measure over characters) and has no hand form.
+measure over characters) and has no hand form.  The borrow BUILT as `(R-TextBorrow)`'s call
+clause (`LOFT_NO_CALL_TEXT_BORROW`, native), the run's field set reading the work text in
+place too: 10.90 → 10.25 ms (−5.9 %, ≈ 5.28× — still over the line); the hand form and the
+build run the same 659 M instructions, the gap between their times is layout.
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land

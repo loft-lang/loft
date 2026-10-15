@@ -14,7 +14,9 @@
 //
 // @falsified-by: tests/falsified/a-call-text-is-borrowed-from-its-work-buffer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
 //   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch drops the test that
-//   every return is the work buffer, so w3's `s` borrows a name out of the store its walk grows.
+//   every return is the work buffer, so w3's `s` borrows a name out of the store its walk grows
+//   and reads the scribble where `abcdef` stood.  A plain run passes: the old bytes are not yet
+//   reused.
 
 struct Run { str: text, style: integer }
 struct Piece { start: integer, count: integer, style: integer }

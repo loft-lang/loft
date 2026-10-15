@@ -54,6 +54,11 @@ All notable changes to the loft language and interpreter.
   `LOFT_NO_TESTED_BORROW`).  Guard `a-match-binding-borrows-its-text-while-the-stores-differ.loft`,
   pin `tests/tested_text_borrow.rs`; cbor `encode_bytes` −10 %.
 
+- **`(R-TextBorrow)`'s call clause** — a text local bound to a call whose result is its own
+  work text borrows that text, and a store write reads it in place (`hoist::own_call_work`,
+  native, `LOFT_NO_CALL_TEXT_BORROW`).  Guard `a-call-text-is-borrowed-from-its-work-buffer.loft`,
+  pin `tests/call_text_borrow.rs`; `flow_layout_full` −5.9 %.
+
 ### A keyed insert writes its entry, a decoded text is read where it lies, a record of texts is released by plan (2026-10-14)
 
 - **`(R-KeyedEntry)`** — an integer-keyed hash insert of a heap-free element answers the entry

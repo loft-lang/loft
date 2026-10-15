@@ -335,7 +335,7 @@
 13_stdlib_text	-	R-RetAdopt	3
 13_stdlib_text	-	R-SingleUse	3
 13_stdlib_text	-	R-SplitTable	1
-13_stdlib_text	-	R-TextBorrow	17
+13_stdlib_text	-	R-TextBorrow	21
 13_stdlib_text	-	R-TextClear	37
 13_stdlib_text	-	R-View	2
 13_stdlib_text	-	R-Wrapper	10
@@ -527,7 +527,7 @@
 18_consumer_crawler	-	R-RetAdopt	4
 18_consumer_crawler	-	R-Scalar	16
 18_consumer_crawler	-	R-SingleUse	11
-18_consumer_crawler	-	R-TextBorrow	30
+18_consumer_crawler	-	R-TextBorrow	31
 18_consumer_crawler	-	R-TextClear	61
 18_consumer_crawler	-	R-TypedRead	2
 18_consumer_crawler	-	R-View	13
@@ -599,7 +599,7 @@ arguments	bd4932067	R-RetAdopt	4
 arguments	bd4932067	R-SameRead	2
 arguments	bd4932067	R-SingleUse	4
 arguments	bd4932067	R-SplitTable	3
-arguments	bd4932067	R-TextBorrow	22
+arguments	bd4932067	R-TextBorrow	23
 arguments	bd4932067	R-TextClear	59
 arguments	bd4932067	R-View	24
 arguments	bd4932067	R-Wrapper	19
@@ -726,7 +726,7 @@ crypto	bd4932067	R-RangedCall	4
 crypto	bd4932067	R-RecPtr	2
 crypto	bd4932067	R-RetAdopt	3
 crypto	bd4932067	R-SingleUse	2
-crypto	bd4932067	R-TextBorrow	11
+crypto	bd4932067	R-TextBorrow	27
 crypto	bd4932067	R-TextClear	83
 crypto	bd4932067	R-View	8
 crypto	bd4932067	R-WorkBuffer	3
@@ -899,7 +899,7 @@ glb	b3cb7445f	R-RepeatRun	16
 glb	b3cb7445f	R-RetAdopt	5
 glb	b3cb7445f	R-Reuse	7
 glb	b3cb7445f	R-SingleUse	3
-glb	b3cb7445f	R-TextBorrow	16
+glb	b3cb7445f	R-TextBorrow	17
 glb	b3cb7445f	R-TextClear	37
 glb	b3cb7445f	R-ValueLocal	91
 glb	b3cb7445f	R-ValueRecord	9
@@ -1038,7 +1038,7 @@ hex_body	3bdb69ef2	R-RetAdopt	3
 hex_body	3bdb69ef2	R-Reuse	4
 hex_body	3bdb69ef2	R-SingleUse	12
 hex_body	3bdb69ef2	R-SplitTable	2
-hex_body	3bdb69ef2	R-TextBorrow	11
+hex_body	3bdb69ef2	R-TextBorrow	14
 hex_body	3bdb69ef2	R-TextClear	52
 hex_body	3bdb69ef2	R-ValueLocal	6
 hex_body	3bdb69ef2	R-ValueRecord	3
@@ -1084,7 +1084,7 @@ hex_draw	3bdb69ef2	R-SameRead	1
 hex_draw	3bdb69ef2	R-Scalar	519
 hex_draw	3bdb69ef2	R-SingleUse	14
 hex_draw	3bdb69ef2	R-SplitTable	3
-hex_draw	3bdb69ef2	R-TextBorrow	14
+hex_draw	3bdb69ef2	R-TextBorrow	17
 hex_draw	3bdb69ef2	R-TextClear	53
 hex_draw	3bdb69ef2	R-TypedRead	18
 hex_draw	3bdb69ef2	R-ValueLocal	47
@@ -1127,7 +1127,7 @@ hex_edge	3bdb69ef2	R-RetAdopt	3
 hex_edge	3bdb69ef2	R-SameRead	1
 hex_edge	3bdb69ef2	R-Scalar	251
 hex_edge	3bdb69ef2	R-SingleUse	6
-hex_edge	3bdb69ef2	R-TextBorrow	13
+hex_edge	3bdb69ef2	R-TextBorrow	15
 hex_edge	3bdb69ef2	R-TextClear	39
 hex_edge	3bdb69ef2	R-TypedRead	18
 hex_edge	3bdb69ef2	R-View	5
@@ -1170,7 +1170,7 @@ hex_field	3bdb69ef2	R-Reuse	2
 hex_field	3bdb69ef2	R-SameRead	1
 hex_field	3bdb69ef2	R-Scalar	346
 hex_field	3bdb69ef2	R-SingleUse	5
-hex_field	3bdb69ef2	R-TextBorrow	15
+hex_field	3bdb69ef2	R-TextBorrow	17
 hex_field	3bdb69ef2	R-TextClear	40
 hex_field	3bdb69ef2	R-TypedRead	18
 hex_field	3bdb69ef2	R-VecCopy	3
@@ -1223,7 +1223,7 @@ hex_fit	3bdb69ef2	R-SameRead	1
 hex_fit	3bdb69ef2	R-Scalar	669
 hex_fit	3bdb69ef2	R-SingleUse	22
 hex_fit	3bdb69ef2	R-SplitTable	5
-hex_fit	3bdb69ef2	R-TextBorrow	14
+hex_fit	3bdb69ef2	R-TextBorrow	24
 hex_fit	3bdb69ef2	R-TextClear	93
 hex_fit	3bdb69ef2	R-TypedRead	18
 hex_fit	3bdb69ef2	R-ValueLocal	53
@@ -1272,7 +1272,7 @@ hex_form	3bdb69ef2	R-SameRead	1
 hex_form	3bdb69ef2	R-Scalar	266
 hex_form	3bdb69ef2	R-SingleUse	11
 hex_form	3bdb69ef2	R-SplitTable	3
-hex_form	3bdb69ef2	R-TextBorrow	14
+hex_form	3bdb69ef2	R-TextBorrow	19
 hex_form	3bdb69ef2	R-TextClear	60
 hex_form	3bdb69ef2	R-TypedRead	18
 hex_form	3bdb69ef2	R-ValueLocal	14
@@ -1350,7 +1350,7 @@ hex_place	3bdb69ef2	R-SameRead	1
 hex_place	3bdb69ef2	R-Scalar	306
 hex_place	3bdb69ef2	R-SingleUse	11
 hex_place	3bdb69ef2	R-SplitTable	3
-hex_place	3bdb69ef2	R-TextBorrow	14
+hex_place	3bdb69ef2	R-TextBorrow	17
 hex_place	3bdb69ef2	R-TextClear	53
 hex_place	3bdb69ef2	R-TypedRead	18
 hex_place	3bdb69ef2	R-ValueLocal	17
@@ -1403,7 +1403,7 @@ hex_recover	3bdb69ef2	R-SameRead	1
 hex_recover	3bdb69ef2	R-Scalar	250
 hex_recover	3bdb69ef2	R-SingleUse	12
 hex_recover	3bdb69ef2	R-SplitTable	3
-hex_recover	3bdb69ef2	R-TextBorrow	14
+hex_recover	3bdb69ef2	R-TextBorrow	23
 hex_recover	3bdb69ef2	R-TextClear	76
 hex_recover	3bdb69ef2	R-TypedRead	18
 hex_recover	3bdb69ef2	R-ValueLocal	11
@@ -1449,7 +1449,7 @@ hex_roof	3bdb69ef2	R-RetAdopt	3
 hex_roof	3bdb69ef2	R-SameRead	1
 hex_roof	3bdb69ef2	R-Scalar	499
 hex_roof	3bdb69ef2	R-SingleUse	17
-hex_roof	3bdb69ef2	R-TextBorrow	13
+hex_roof	3bdb69ef2	R-TextBorrow	15
 hex_roof	3bdb69ef2	R-TextClear	39
 hex_roof	3bdb69ef2	R-TypedRead	18
 hex_roof	3bdb69ef2	R-ValueLocal	1
@@ -1495,7 +1495,7 @@ hex_shape	3bdb69ef2	R-SameRead	1
 hex_shape	3bdb69ef2	R-Scalar	360
 hex_shape	3bdb69ef2	R-SingleUse	14
 hex_shape	3bdb69ef2	R-SplitTable	3
-hex_shape	3bdb69ef2	R-TextBorrow	14
+hex_shape	3bdb69ef2	R-TextBorrow	17
 hex_shape	3bdb69ef2	R-TextClear	53
 hex_shape	3bdb69ef2	R-TypedRead	18
 hex_shape	3bdb69ef2	R-ValueLocal	25
@@ -1584,7 +1584,7 @@ hex_way	3bdb69ef2	R-RetAdopt	3
 hex_way	3bdb69ef2	R-SameRead	1
 hex_way	3bdb69ef2	R-Scalar	246
 hex_way	3bdb69ef2	R-SingleUse	7
-hex_way	3bdb69ef2	R-TextBorrow	13
+hex_way	3bdb69ef2	R-TextBorrow	15
 hex_way	3bdb69ef2	R-TextClear	39
 hex_way	3bdb69ef2	R-TypedRead	18
 hex_way	3bdb69ef2	R-View	5
@@ -1647,7 +1647,7 @@ html	dd260f04c	R-Range	4
 html	dd260f04c	R-RecPtr	1
 html	dd260f04c	R-RetAdopt	3
 html	dd260f04c	R-SingleUse	2
-html	dd260f04c	R-TextBorrow	12
+html	dd260f04c	R-TextBorrow	14
 html	dd260f04c	R-TextClear	37
 html	dd260f04c	R-View	2
 html	dd260f04c	R-Wrapper	6
@@ -1675,8 +1675,8 @@ markdown	dd260f04c	R-RetAdopt	4
 markdown	dd260f04c	R-SingleUse	2
 markdown	dd260f04c	R-SliceBorrow	7
 markdown	dd260f04c	R-SplitTable	4
-markdown	dd260f04c	R-TextBorrow	33
-markdown	dd260f04c	R-TextClear	146
+markdown	dd260f04c	R-TextBorrow	58
+markdown	dd260f04c	R-TextClear	145
 markdown	dd260f04c	R-View	4
 markdown	dd260f04c	R-Wrapper	7
 markdown	dd260f04c	R-ZeroCount	24
@@ -1766,7 +1766,7 @@ pluginabi	33aa4cc2c	R-RetAdopt	4
 pluginabi	33aa4cc2c	R-ReturnField	1
 pluginabi	33aa4cc2c	R-Reuse	11
 pluginabi	33aa4cc2c	R-SingleUse	2
-pluginabi	33aa4cc2c	R-TextBorrow	13
+pluginabi	33aa4cc2c	R-TextBorrow	26
 pluginabi	33aa4cc2c	R-TextBorrow/tested	2
 pluginabi	33aa4cc2c	R-TextClear	94
 pluginabi	33aa4cc2c	R-TextRun	1
@@ -1894,7 +1894,7 @@ ssh	0b6f24637	R-RangedCall	1
 ssh	0b6f24637	R-RecPtr	1
 ssh	0b6f24637	R-RetAdopt	3
 ssh	0b6f24637	R-SingleUse	2
-ssh	0b6f24637	R-TextBorrow	11
+ssh	0b6f24637	R-TextBorrow	12
 ssh	0b6f24637	R-TextClear	30
 ssh	0b6f24637	R-ValueLocal	8
 ssh	0b6f24637	R-ValueRecord	1
@@ -2097,7 +2097,7 @@ web	0b6f24637	R-RecPtr	2
 web	0b6f24637	R-RetAdopt	3
 web	0b6f24637	R-SingleUse	2
 web	0b6f24637	R-SplitTable	1
-web	0b6f24637	R-TextBorrow	16
+web	0b6f24637	R-TextBorrow	18
 web	0b6f24637	R-TextClear	38
 web	0b6f24637	R-ValueLocal	9
 web	0b6f24637	R-ValueRecord	2
@@ -2149,7 +2149,7 @@ zttext	bd4932067	R-Reuse	6
 zttext	bd4932067	R-SameRead	1
 zttext	bd4932067	R-Scalar	3
 zttext	bd4932067	R-SingleUse	14
-zttext	bd4932067	R-TextBorrow	17
+zttext	bd4932067	R-TextBorrow	23
 zttext	bd4932067	R-TextBorrow/tested	1
 zttext	bd4932067	R-TextClear	61
 zttext	bd4932067	R-ValueLocal	13

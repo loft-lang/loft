@@ -2144,7 +2144,28 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  buffer's: it borrows when they differ and copies into a backing
                  `String` when one does not.  A tested local is no source of
                  another borrow.
+                 CALL CLAUSE: a text LOCAL bound to a call of a user function with
+                 one hidden `&text` work buffer whose every return (and tail) is that
+                 buffer, handed a `default ref` block over a work local of the
+                 frame that nothing else names but its declaration and its releases,
+                 BORROWS the work text as the format clause's local borrows its
+                 format — under the same conditions on the local — and, holding no
+                 store's bytes, is read in place by a store write
+                 (`Output::text_value_unborrowed`).  A release emits no code on
+                 native, so an early exit's does not end the text.
 ```
+
+**The call clause, in words.**  zttext's `slice_runs` binds `s = buf_slice_text(…)`, whose
+result is the work text the call fills, and sets it into a run: the bind copied the work text
+into a `String` and the field set copied that again (a text set copies a borrowed text first,
+in case the borrow names the store being written).  Both copies are gone.
+`flow_layout_full` 10.90 → 10.25 ms (−5.9 %; the hand form −8.4 % runs the same 659 M
+instructions, so the rest is layout), hashes unchanged.  Switch `LOFT_NO_CALL_TEXT_BORROW`.
+Sites: `hoist::own_call_work`, `StoreTextBorrows::work` (`Output::work_text_locals`), the
+bind's `.str()` in `Output::output_set`.  Guard
+`tests/scripts/a-call-text-is-borrowed-from-its-work-buffer.loft` (falsified under
+`LOFT_POISON=1` by a plant that drops the return test: w3 reads the scribble), pin
+`tests/call_text_borrow.rs`.
 
 **The tested clause, in words.**  cbor's `encode` binds `CText { value }` out of its
 parameter and appends the text's bytes to the result, building the header through `head`,
