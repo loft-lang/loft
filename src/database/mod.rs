@@ -1934,7 +1934,7 @@ impl Stores {
         // read, and `elem_index` is the in-range test `index_or_raise_runtime` applies, so
         // only an index it would raise on reaches the outlined raise (`@FR-R-Cold`).
         let (v_rec, len) = crate::vector::rec_and_len(db, &self.allocations);
-        if let Some(f) = crate::vector::elem_index(index, len) {
+        if let Some(f) = crate::vector::elem_index(index, len.saturating_sub(1)) {
             return crate::keys::DbRef {
                 store_nr: db.store_nr,
                 rec: v_rec,
