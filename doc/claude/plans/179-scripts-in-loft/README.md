@@ -36,8 +36,9 @@ library from any working directory; it leaves when the library is published.  **
 wrote these by hand switched to it on 2026-10-14 and findings 004, 005 and 008 are struck,
 as is 011: regex 0.5.0 (@PLN192) is published and `tests/dump_ignored_tests` reads the
 reason and the name as the originals' capture groups.  `scripts/rule_predicate_audit` is
-on the library's set (`script` 0.2.0, merged, release and registry entry pending the
-maintainer's run): its twin is green against the checkout and red in CI until then.
+on the library's set (`script` 0.2.0, in the registry since 2026-10-14), its twin green in
+CI over the registry copy — which took a loft fix: a registry dependency's type and builder
+triggers are derived from its extracted copy, as a `path =` dependency's are.
 Finding 009 closed with `exit(code)` in the stdlib the same day, and
 016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
 `lib/process/tests/command.loft`).
