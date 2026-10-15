@@ -5277,9 +5277,13 @@ fn foreign_store_writer(
                 }
                 return false;
             }
+            // Given the variable table, `OpPutRef` is no writer either: it binds a reference
+            // LOCAL (the slot rule has already taken that local out of `minted`, so a write
+            // through it later is judged as one through a store it may name).
             if native_op_is_store_free(def)
                 || IN_PLACE_SET_OPS.contains(&name)
                 || text_stack_ref(name, args, vars)
+                || (vars.is_some() && name == "OpPutRef")
             {
                 return false;
             }
