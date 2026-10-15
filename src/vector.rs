@@ -689,7 +689,12 @@ pub fn is_absent_collection(db: &DbRef, stores: &[Store]) -> bool {
 /// one question — how many elements does this source have — and `nullref` is a RUNTIME null of
 /// a non-nullable type.  A source whose TYPE is `τ?` never reaches here: it is refused at parse
 /// time, since `types.md` admits no implicit unwrap (`Parser::iterator`).
-#[inline]
+///
+/// `#[inline(always)]` because emitted code calls it once per unheld length read and LLVM,
+/// left to `#[inline]`, kept the call: a call and two null tests around one load.  It is
+/// [`rec_and_len`]'s length, spelled out rather than called: through that call LLVM inlined
+/// it less well, and `arguments/parse` measured 2.5 % slower.
+#[inline(always)]
 pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     // A null vector (absent) and an unallocated/empty vector both have length 0;
     // the null sentinel is checked first so it never indexes stores[u16::MAX].
@@ -702,6 +707,26 @@ pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
         0
     } else {
         store.get_u32_raw(v_rec, 4)
+    }
+}
+
+/// The vector's element record and its length, from ONE read of its header — what every
+/// element read needs, so `get_vector` and `Stores::vec_get_or_raise_runtime` resolve the
+/// store, the collection slot and the length once rather than once for the record and again
+/// for the length.  A null vector (absent), an unallocated one (`rec == 0`), a slot at
+/// `pos == 0` and an absent collection all answer `(0, 0)`: no records, no elements.  The
+/// null sentinel is checked first so it never indexes `stores[u16::MAX]`.
+#[inline]
+pub fn rec_and_len(db: &DbRef, stores: &[Store]) -> (u32, u32) {
+    if db.is_null() || db.rec == 0 || db.pos == 0 {
+        return (0, 0);
+    }
+    let store = keys::store(db, stores);
+    let v_rec = store.collection_rec(db.rec, db.pos);
+    if v_rec == 0 {
+        (0, 0)
+    } else {
+        (v_rec, store.get_u32_raw(v_rec, 4))
     }
 }
 
@@ -773,9 +798,8 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
             db.store_nr, db.rec, db.pos
         );
     }
-    let store = keys::store(db, stores);
-    let v_rec = store.collection_rec(db.rec, db.pos);
-    match elem_index(from, length_vector(db, stores)) {
+    let (v_rec, len) = rec_and_len(db, stores);
+    match elem_index(from, len) {
         None => DbRef::NULL,
         Some(f) => DbRef {
             store_nr: db.store_nr,
