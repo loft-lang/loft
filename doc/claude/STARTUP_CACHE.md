@@ -243,9 +243,9 @@ every lane differs is nondeterministic (a clock, a pid in its output) and report
 and the differing outputs stay under the directory the verdict names.  A report, by hand,
 after a change to the bundle, the manifest, the scope pass or what a run prints before its
 first statement; exit 0 only when every deterministic file agrees.  The `skel` lane answers
-WRONG and the switch stays an experiment (loft#2012): the decisions that copy a record out
-of a callee's view read other functions' bodies natively, and the skeleton leaves every
-body it does not generate empty.
+WRONG (loft#2012), which is why the switch is off: the decisions that copy a record out of
+a callee's view read other functions' bodies natively, and the skeleton leaves every body
+it does not generate empty.
 
 ## See also — the startup-cache design
 
