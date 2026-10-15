@@ -201,6 +201,18 @@ clause (`LOFT_NO_CALL_TEXT_BORROW`, native), the run's field set reading the wor
 place too: 10.90 → 10.25 ms (−5.9 %, ≈ 5.28× — still over the line); the hand form and the
 build run the same 659 M instructions, the gap between their times is layout.
 
+**`place_line` PRICED** (six interleaved rounds, hashes equal, 10.26 ms at `0bc13b3c4`).  Two
+thirds of what runs under it is its two `slice_runs` calls per token (126 M instructions
+each of 374 M), and those are mostly the result buffer's bookkeeping, not the cut: the refill
+protocol (`refill_keep_open`/`close`, `OpDatabaseRefill`, `clear_vector`) ~50 M, each run's
+record mint and finish ~40 M, and `return runs` calling `vector_replace` on the buffer's own
+vector — a no-op that pays `deliver_vector_parse_errors` and two slot reads before its
+identity test — 17 M.  P1, the self-replace dropped (`runs` is the buffer's own field):
+9.86 ms (−3.9 %).  P2, `len(r.str)` counted once per run where `place_line` counts the same
+unchanged text three times: 10.13 ms (−1.3 %).  Both: 9.55 ms (−6.9 %, ≈ 4.92× — under the
+line).  P1 is general (any result built in its buffer and returned); P2 is a pure count of a
+text no statement between writes, which `(R-SameRead)` binds only within one statement.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
