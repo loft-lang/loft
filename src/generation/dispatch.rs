@@ -130,6 +130,7 @@ impl Output<'_> {
         if !self.in_coroutine_body
             && !self.declared.contains(&var)
             && self.borrowed_text_locals.contains_key(&var)
+            && !self.borrowed_store_locals.contains(&var)
             && matches!(to.unspan(), Value::Call(..))
         {
             let name = sanitize(self.data.def(self.def_nr).variables().name(var));
@@ -172,6 +173,16 @@ impl Output<'_> {
                 write!(w, "var_{name} = ")?;
             }
             let Some(test) = tested else {
+                // `@FR-R-TextBorrow`'s call clause: a user call answers a `Str` over the work
+                // text it filled; the slot is its `&str`.
+                if matches!(to.unspan(), Value::Call(d, _)
+                    if (*d as usize) < self.data.definitions.len()
+                        && !matches!(self.data.def(*d).code(), Value::Null))
+                {
+                    write!(w, "(")?;
+                    self.output_code_inner(w, to)?;
+                    return write!(w, ").str()");
+                }
                 return self.output_code_inner(w, to);
             };
             write!(w, "{{ let __t: &str = ")?;

@@ -1104,6 +1104,9 @@ pub struct Output<'a> {
     /// borrows while those parameters' stores are not the buffer's and copies into its
     /// `__own_` backing `String` otherwise ([`hoist::StoreTextBorrows::tested`]).
     pub tested_store_texts: HashMap<u16, Vec<u16>>,
+    /// `@FR-R-TextBorrow`'s format and call clauses — the borrowed locals whose bytes are the
+    /// frame's own work texts, never a store's ([`hoist::StoreTextBorrows::work`]).
+    pub work_text_locals: HashSet<u16>,
     /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
     /// value slice of a parameter, for the rewrite census; rebuilt per function.
     pub slice_borrow_count: usize,
@@ -2542,6 +2545,7 @@ impl<'a> Output<'a> {
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
             tested_store_texts: HashMap::new(),
+            work_text_locals: HashSet::new(),
             slice_borrow_count: 0,
             versioned_text_walks: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
@@ -3060,6 +3064,7 @@ impl Output<'_> {
             .collect();
         self.borrowed_store_locals.clear();
         self.tested_store_texts.clear();
+        self.work_text_locals.clear();
         self.slice_borrow_count = 0;
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
@@ -3075,6 +3080,7 @@ impl Output<'_> {
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
             self.tested_store_texts = store.tested;
+            self.work_text_locals = store.work;
             self.slice_borrow_count = store.slices.len();
             walks
         };
@@ -6589,7 +6595,8 @@ impl Output<'_> {
 
     /// A text VALUE that borrows no store memory, so a store write may read its bytes where
     /// they are instead of copying them first (`OpSetText`'s claim can move the store a
-    /// borrowed text points into): a literal, the null text (`OpConvTextFromNull`, the static
+    /// borrowed text points into): a literal, a local borrowing the frame's own work text, the
+    /// null text (`OpConvTextFromNull`, the static
     /// `STRING_NULL` bytes — `x.f = null` copied them into a `String` per write), an owned text
     /// local, or a block that answers one — the synthesised text a decoder builds into its
     /// work string.  Anything else answers no and is copied: a copy is never wrong.
@@ -6597,6 +6604,8 @@ impl Output<'_> {
     pub fn text_value_unborrowed(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Text(_) => true,
+            // A local borrowing the frame's own work text: no store holds its bytes.
+            Value::Var(w) if self.work_text_locals.contains(w) => true,
             Value::Call(d, args) => {
                 args.is_empty()
                     && (*d as usize) < self.data.definitions.len()

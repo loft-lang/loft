@@ -4553,6 +4553,9 @@ pub struct StoreTextBorrows {
     /// those parameters' stores is not the buffer's, which the bind tests at run time and
     /// copies otherwise.
     pub tested: HashMap<u16, Vec<u16>>,
+    /// The admitted locals that borrow only the frame's own work texts (a format's, a call's)
+    /// or literals: no store holds their bytes, so a store write may read them in place.
+    pub work: HashSet<u16>,
 }
 
 /// `@FR-R-TextBorrow`'s store-read clause — the text variables of this function that BORROW
@@ -4655,7 +4658,9 @@ pub fn borrowed_store_texts(
     // in the body — so only the bind's next run rewrites it.  The format must not read the
     // local it binds (its old value would still borrow the text being rewritten) and no
     // other variable may be bound from the local (the copy would outlive that rewrite).
-    let fmt_own = |to: &Value| own_format_work(body, to, data).is_some();
+    let fmt_own = |to: &Value| {
+        own_format_work(body, to, data).is_some() || own_call_work(body, to, data).is_some()
+    };
     let mut fmt_bound: HashSet<u16> = HashSet::new();
     body.any_node(&mut |n| {
         if let Value::Set(v, to) = n
@@ -4700,6 +4705,7 @@ pub fn borrowed_store_texts(
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
             Value::Block(_) => fmt_own(to),
+            Value::Call(..) if fmt_own(to) => true,
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4751,6 +4757,7 @@ pub fn borrowed_store_texts(
                 matches!(to.unspan(), Value::Text(_)) || fmt_own(to)
             })
         {
+            out.work.insert(v);
             continue;
         }
         // `@FR-R-SliceBorrow` — a slice of a plain parameter names no store either: its
@@ -4817,6 +4824,7 @@ pub fn borrowed_store_texts(
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
             Value::Block(_) => fmt_own(to),
+            Value::Call(..) if fmt_own(to) => true,
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4841,6 +4849,7 @@ pub fn borrowed_store_texts(
         }
     }
     out.tested.retain(|v, _| locals.contains(v));
+    out.work.retain(|v| locals.contains(v) || temps.contains(v));
     // `@FR-R-SliceBorrow` — the admitted locals with a slice among their bindings, for the
     // census and the trace.
     let slices: HashSet<u16> = locals
@@ -4859,7 +4868,7 @@ pub fn borrowed_store_texts(
             } else if out.tested.contains_key(v) {
                 "a parameter's text while its store is not the return buffer's"
             } else if fmt_bound.contains(v) {
-                "a format's work text"
+                "a format's or a call's work text"
             } else {
                 "a parameter's text"
             };
@@ -4932,6 +4941,103 @@ fn own_format_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
             .count(),
         _ => 0,
     };
+    (mentions(body) == mentions(to) + bookkeeping).then_some(work)
+}
+
+/// `@FR-R-TextBorrow`'s call clause — the work text of the call `to` when the call's result
+/// IS that work text and the text is the call's OWN: `to` calls a user function with one
+/// hidden `&text` work buffer whose every return (and tail) is that buffer, the caller hands
+/// it a `default ref` block over its own work local, and nothing else in `body` names that
+/// local but its declaration and release (the format clause's bookkeeping).  Only another
+/// run of this call rewrites the text, so a local bound to it may borrow it as the format
+/// clause's local borrows its format.  `LOFT_NO_CALL_TEXT_BORROW=1` turns the clause off.
+fn own_call_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| !std::env::var("LOFT_NO_CALL_TEXT_BORROW").is_ok_and(|v| v != "0")) {
+        return None;
+    }
+    let Value::Call(d, args) = to.unspan() else {
+        return None;
+    };
+    if (*d as usize) >= data.definitions.len() {
+        return None;
+    }
+    let callee = data.def(*d);
+    if matches!(callee.code(), Value::Null)
+        || !matches!(callee.returned().base(), Type::Text(_))
+        || callee.text_work_buffers() != 1
+    {
+        return None;
+    }
+    let wi = callee.attributes().iter().position(|a| {
+        a.hidden && matches!(&a.typedef, Type::RefVar(t) if matches!(**t, Type::Text(_)))
+    })?;
+    let out = callee.variables().var(&callee.attributes()[wi].name);
+    if out == u16::MAX {
+        return None;
+    }
+    // Every return of the callee answers its work buffer.
+    let is_out = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == out);
+    if callee
+        .code()
+        .any_node(&mut |n| matches!(n, Value::Return(r) if !is_out(r)))
+    {
+        return None;
+    }
+    if let Value::Block(top) = callee.code().unspan()
+        && let Some(tail) = top.operators.last()
+        && !matches!(tail.unspan(), Value::Return(_))
+        && !is_out(tail)
+    {
+        return None;
+    }
+    // The caller's work local, handed through a `default ref` block.
+    let Value::Block(b) = args.get(wi)?.unspan() else {
+        return None;
+    };
+    if b.name != "default ref" {
+        return None;
+    }
+    let work = match b.operators.first().map(Value::unspan) {
+        Some(Value::Set(w, init)) if matches!(init.unspan(), Value::Text(_)) => *w,
+        _ => return None,
+    };
+    let mentions = |node: &Value| {
+        let mut c = 0usize;
+        node.any_node(&mut |n| {
+            if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == work) {
+                c += 1;
+            }
+            false
+        });
+        c
+    };
+    // The declaration among the outermost statements, and EVERY release of the work local:
+    // an early exit releases it before its `return`, and a release emits no code on native
+    // (the work `String` lives to the frame's end), so none ends the borrow's text early.
+    let declared = match body.unspan() {
+        Value::Block(top) => top
+            .operators
+            .iter()
+            .filter(|st| {
+                matches!(st.unspan(), Value::Set(w, init)
+                    if *w == work && matches!(init.unspan(), Value::Text(_)))
+            })
+            .count(),
+        _ => 0,
+    };
+    let mut released = 0usize;
+    body.any_node(&mut |n| {
+        if let Value::Call(f, a) = n
+            && (*f as usize) < data.definitions.len()
+            && data.def(*f).name() == "OpFreeText"
+            && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(w) if *w == work))
+        {
+            released += 1;
+        }
+        false
+    });
+    let bookkeeping = declared + released;
     (mentions(body) == mentions(to) + bookkeeping).then_some(work)
 }
 

@@ -1,0 +1,92 @@
+// `@FR-R-TextBorrow`'s call clause — a text local bound to a call whose result IS the call's
+// own work text (the callee's one hidden `&text` buffer, every return of it that buffer) borrows
+// that text instead of copying it, and a store write reads it in place: only another run of the
+// same call rewrites the work text.  A call whose callee may return something else — a
+// parameter — keeps the copy.  Native only (an emitter rewrite); every cell asserts the VALUES a
+// hand computation gives, and `tests/call_text_borrow.rs` runs them under `LOFT_POISON=1`
+// (every growth moves the store and scribbles the old bytes) with `LOFT_NO_CALL_TEXT_BORROW=1`
+// on and off.
+//
+// Borrowed: w1 (`slice_runs`' shape — a run per overlapping piece, its text cut from a character
+// buffer by a call and set into the run — with the early exit that releases the work text before
+// returning).  Copied: w2 and w3 (`pick` returns its first argument when it is long, so its
+// result may be a parameter's text; w3's walk then grows the store that text lives in).
+//
+// @falsified-by: tests/falsified/a-call-text-is-borrowed-from-its-work-buffer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
+//   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch drops the test that
+//   every return is the work buffer, so w3's `s` borrows a name out of the store its walk grows.
+
+struct Run { str: text, style: integer }
+struct Piece { start: integer, count: integer, style: integer }
+struct Doc { buf: vector<character>, pieces: vector<Piece>, names: vector<text>, log: vector<text>, pad: text }
+
+fn clampi(x: integer, lo: integer, hi: integer) -> integer { if x < lo { lo } else if x > hi { hi } else { x } }
+
+fn cut(buf: vector<character>, start: integer, count: integer) -> text {
+  out: text = "";
+  for j in start..(start + count) { ch = buf[j]?; out += "{ch}"; }
+  return out;
+}
+
+fn runs(d: Doc, a: integer, b: integer) -> vector<Run> {
+  rs: vector<Run> = [];
+  if b <= a { return rs; }
+  cum = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    ps = cum;
+    pe = cum + p.count;
+    lo = clampi(a, ps, pe);
+    hi = clampi(b, ps, pe);
+    if hi > lo {
+      s = cut(d.buf, p.start + (lo - ps), hi - lo);
+      rs += [Run { str: s, style: p.style }];
+    }
+    cum = pe;
+  }
+  rs
+}
+
+fn pick(a: text, b: text) -> text {
+  if len(a) > 3 { return a; }
+  out: text = "";
+  out += b;
+  out += a;
+  out
+}
+
+fn tagged(d: Doc) -> text {
+  r = "";
+  for i in 0..len(d.names) {
+    s = pick(d.names[i], "<");
+    d.log += ["{s} with {d.pad}"];
+    r += "{s};";
+  }
+  r
+}
+
+fn show(rs: vector<Run>) -> text {
+  t = "";
+  for r in rs { t += "{r.str}/{r.style};"; }
+  t
+}
+
+fn main() {
+  pad = "";
+  for _ in 0..10000 { pad += "0123456789"; }
+  d = Doc { buf: ['h', 'e', 'l', 'l', 'o', 'w', 'o', 'r', 'l', 'd'],
+            pieces: [Piece { start: 0, count: 5, style: 1 }, Piece { start: 5, count: 5, style: 2 }],
+            names: ["ab", "abcdef", "x", "longer"], log: [], pad: pad };
+  // w1 — [3, 7) cuts "lo" from the first piece (style 1) and "wo" from the second (style 2); an
+  // empty range answers no run.
+  w1 = show(runs(d, 3, 7));
+  assert(w1 == "lo/1;wo/2;" && len(runs(d, 5, 5)) == 0, "w1 {w1}");
+  // w2 — short names are prefixed with "<", long ones answered as they are.
+  w2 = "{pick("ab", "<")},{pick("abcdef", "<")}";
+  assert(w2 == "<ab,abcdef", "w2 {w2}");
+  // w3 — the four names through `pick`, each logged with the 100 000-byte pad.
+  w3 = tagged(d);
+  assert(w3 == "<ab;abcdef;<x;longer;" && len(d.log) == 4 && d.log[1].starts_with("abcdef with 0123")
+    && size(d.log[3]) == 6 + 6 + 100000, "w3 {w3} {len(d.log)}");
+  println("ok");
+}
