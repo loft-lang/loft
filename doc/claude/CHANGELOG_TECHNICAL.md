@@ -39,6 +39,17 @@ at the move); `tests/index_hygiene.rs` checks those rows against that repository
 suite's `rules/` as a guard directory by default, so `coverage` keeps reporting the 412
 guarded rules once the programs leave this tree (335 come from the suite alone).
 
+**The suite is a repository and a CI job** (2026-10-15, later the same day): the GitHub
+repository `loft-lang/loft-suite` holds the seeded tree, and `tests/loft-suite.pin` here
+names the commit loft's CI checks out — pinned like a library, so a behaviour change is a
+loft PR plus a suite PR and the loft PR bumps the pin.  The `language-suite` job in `ci.yml`
+builds the release binary and runtime library from the test job's cache, runs
+`loft-suite check` and then every rule cell on both backends, and keeps the junit; it runs
+on every diff (a docs-only one pays the cached build) and on every push to main, and is to be
+a REQUIRED check once it has reported green on a PR — only then do the 711 cells leave
+`tests/scripts`, so no PR ever runs without the corpus.  `make suite ARGS="@FR-B-Copy
+--mode both"` runs a selection by hand against the checkout beside this one.
+
 ### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
 
 - `tests/common/lanes.rs`: `lanes(cap)` is the pool a test may run — `UNDER_NEXTEST` (8)

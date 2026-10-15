@@ -1086,6 +1086,16 @@ free-licences:  ## @PLN155: how many pieces of code decide *is a free needed her
 nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twin's?
 	@python3 scripts/nullable_road.py $(ARGS)
 
+# @PLN193 — the language suite (loft-lang/loft-suite) checked out BESIDE this tree, run
+# against this tree's release binary (`LOFT=` names another).  CI runs it at the commit
+# `tests/loft-suite.pin` names; by hand it runs whatever that checkout has.
+#   make suite                                # every rule cell, interpreter
+#   make suite ARGS="@FR-B-Copy --mode both"  # one rule, both backends (the rlib must be current)
+#   make suite ARGS="--chapter ownership"
+.PHONY: suite
+suite:  ## @PLN193: the language suite beside this checkout (../loft-suite or LOFT_SUITE_DIR) against target/release/loft
+	@python3 $${LOFT_SUITE_DIR:-../loft-suite}/loft-suite run --loft $(or $(LOFT),$(CURDIR)/target/release/loft) $(ARGS)
+
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this
 # is the single worked-through list, generated so it cannot drift from the repo.

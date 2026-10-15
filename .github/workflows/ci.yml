@@ -1296,6 +1296,69 @@ jobs:
         # the count may fall and may not rise.  Advisory like the rest of this job.
         run: make optional-ratchet
 
+  # @PLN193 — the language suite (loft-lang/loft-suite): the rule-linked corpus, one cell per
+  # program under the formal rule it cites, run through `loft --tests` on BOTH backends against
+  # the release binary this commit builds, at the suite commit `tests/loft-suite.pin` names.
+  # loft pins the suite the way it pins a library: a behaviour change is a loft PR plus a
+  # suite PR, and the loft PR bumps the pin.  REQUIRED, and on every diff: it is the check
+  # that carries the corpus as it leaves `tests/scripts` (the `wrap::loft_suite_NN` and
+  # `native::native_scripts_NN` chunks), so no PR may run without it; a docs-only diff pays
+  # the cached build and a run it cannot fail.  Runs on every push to main too — the nightly
+  # reading of the rules.  The leak gate (`LOFT_LEAK_CHECK`) is armed by the runner itself.
+  language-suite:
+    # @windows-exempt: one platform's reading of the rules; the corpus runs on windows-latest daily through the in-repo chunks
+    name: Language suite (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Which suite commit this tree pins
+        id: pin
+        run: echo "ref=$(grep -v '^#' tests/loft-suite.pin | head -1)" >> "$GITHUB_OUTPUT"
+      - name: Check out the suite at the pinned commit
+        uses: actions/checkout@v5
+        with:
+          repository: loft-lang/loft-suite
+          ref: ${{ steps.pin.outputs.ref }}
+          path: loft-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
+      # Read-only, from the `test` job's cache, as `index-hygiene` does: the path list must stay
+      # IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      # `--lib` for the canonical `libloft.rlib` the native lane links (see the `test` job).
+      - name: Build the release loft binary and the runtime library the native lane links
+        run: cargo build --release --lib --bin loft
+      - name: Every cell sits under a rule it cites
+        run: python3 loft-suite/loft-suite check
+      - name: Run the rules on both backends
+        run: >
+          python3 loft-suite/loft-suite run --loft target/release/loft --mode both
+          --jobs 4 --timeout 300 --junit target/loft-suite-junit.xml
+      - name: Keep the suite junit
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: loft-suite-junit
+          path: target/loft-suite-junit.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
   # The ownership oracle's leak scan over `tests/scripts` (`LOFT_OWN_ORACLE=check-leak`): a
   # STATIC check that every store a function owns is freed or handed on, on every path — the
   # paths the runtime leak check only sees when a test executes them.  Held at 0 findings by
