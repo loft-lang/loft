@@ -4978,7 +4978,7 @@ fn own_call_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
     }
     // Every return of the callee answers its work buffer.
     let is_out = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == out);
-    if callee
+    if false && callee
         .code()
         .any_node(&mut |n| matches!(n, Value::Return(r) if !is_out(r)))
     {
