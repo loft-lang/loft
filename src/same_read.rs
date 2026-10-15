@@ -703,35 +703,14 @@ fn bind_sequences(
             if matches!(step(data, &ops[i]), Some(Step::Assign(v, _)) if reads.contains(&v)) {
                 continue;
             }
-            let mut live: Vec<u16> = fresh.iter().map(|(e, _)| *e).collect();
-            let mut users: Vec<usize> = Vec::new();
-            for (j, s) in ops.iter().enumerate().skip(i + 1) {
-                match step(data, s) {
-                    Some(Step::Line) => {}
-                    Some(Step::Assign(v, val)) => {
-                        if evaluates(val, &cand) {
-                            users.push(j);
-                        }
-                        if reads.contains(&v) {
-                            break;
-                        }
-                        live.retain(|e| *e != v);
-                    }
-                    Some(Step::Fill(e, rest)) if live.contains(&e) => {
-                        if rest.iter().any(|r| evaluates(r, &cand)) {
-                            users.push(j);
-                        }
-                    }
-                    Some(Step::Finish(e)) if live.contains(&e) => {}
-                    _ => break,
-                }
-            }
+            let live: Vec<u16> = fresh.iter().map(|(e, _)| *e).collect();
+            let users = run_users(data, &ops[i + 1..], &cand, &reads, live);
             if users.is_empty() {
                 continue;
             }
             let t = vars.add_unique("same_read", &tp, scope);
-            for k in std::iter::once(i).chain(users) {
-                let n = replace_in_step(data, &mut ops[k], &cand, t);
+            for k in std::iter::once(i).chain(users.into_iter().map(|j| i + 1 + j)) {
+                let n = replace_in_step(&mut ops[k], &cand, t);
                 debug_assert!(n > 0);
             }
             bindings.push((i, Value::Set(t, Box::new(cand.clone()))));
@@ -764,11 +743,47 @@ fn bind_sequences(
     (out, bound)
 }
 
+/// The statements of `after` that evaluate `cand` again before anything can change it, as
+/// indexes into `after`: the run ends at the first statement the clause cannot see through, a
+/// field write into a record not in `live` (the block's minted records), or an assignment to a
+/// local in `reads` (which may itself be the run's last user).
+fn run_users(
+    data: &Data,
+    after: &[Value],
+    cand: &Value,
+    reads: &[u16],
+    mut live: Vec<u16>,
+) -> Vec<usize> {
+    let mut users: Vec<usize> = Vec::new();
+    for (j, s) in after.iter().enumerate() {
+        match step(data, s) {
+            Some(Step::Line) => {}
+            Some(Step::Assign(v, val)) => {
+                if evaluates(val, cand) {
+                    users.push(j);
+                }
+                if reads.contains(&v) {
+                    break;
+                }
+                live.retain(|e| *e != v);
+            }
+            Some(Step::Fill(e, rest)) if live.contains(&e) => {
+                if rest.iter().any(|r| evaluates(r, cand)) {
+                    users.push(j);
+                }
+            }
+            Some(Step::Finish(e)) if live.contains(&e) => {}
+            _ => break,
+        }
+    }
+    users
+}
+
 /// Replace `e` by local `t` in the values of statement `s` (an assignment's value, a field
 /// write's operands); answers how many.
-fn replace_in_step(data: &Data, s: &mut Value, e: &Value, t: u16) -> usize {
+fn replace_in_step(s: &mut Value, e: &Value, t: u16) -> usize {
     match s {
-        Value::Span(b) => replace_in_step(data, &mut b.1, e, t),
+        Value::Span(b) => replace_in_step(&mut b.1, e, t),
         Value::Set(_, v) => replace_expr(v, e, t),
         Value::Call(_, args) => args[1..].iter_mut().map(|a| replace_expr(a, e, t)).sum(),
         _ => 0,

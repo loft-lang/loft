@@ -10,6 +10,11 @@
 // a view of a store the function minted, and on one path is rebuilt in the buffer from `other`)
 // and s3 (`pick` builds `b` in the buffer and `a` in a store of its own, and returns `a` early).
 //
+// @falsified-by: tests/falsified/a-vector-delivered-into-its-own-buffer-is-not-copied.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch drops a view's delivery into ANY
+//   buffer and stops asking what follows, so `swap_in(0)` answers an empty buffer (`s2
+//   [7,8,9]|[]`).  Each of the three tests alone keeps every cell here: in the parser's output a
+//   view of a store other than the buffer is also rebound or freed after its binding.
 struct Run { str: text, style: integer }
 
 fn build(a: integer, b: integer) -> vector<Run> {

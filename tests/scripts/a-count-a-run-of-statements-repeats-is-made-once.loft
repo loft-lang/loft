@@ -9,6 +9,12 @@
 // (the count only: the local the sum reads is assigned between).  Kept: q2 (the read text is
 // replaced between, a write into a record not minted), q3 (the read vector grows between).
 //
+// @falsified-by: tests/falsified/a-count-a-run-of-statements-repeats-is-made-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch lets a field write into a record
+//   the block did not mint stand between two counts, so q2 counts the text it replaced
+//   (`q2 102,102;100,100;`).  The type condition is defensive: the read a minted record's
+//   append can change is a collection's length, a call (`t_6vector_len`) the clause does not
+//   admit — q3 holds it.
 struct Run { str: text, style: integer }
 struct Box { ks: integer, ke: integer, style: integer }
 

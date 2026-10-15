@@ -13,11 +13,15 @@
 //! statement list (so exactly once per call, and before every replace it can reach), and
 //! after that binding neither the view nor `B` is assigned, re-pointed by an operator that writes a variable's slot, or freed.
 //! One IR rewrite on the closed program, so both backends get it; `LOFT_NO_SELF_REPLACE=1`
-//! is the switch.
+//! is the switch, `LOFT_TRACE_SELF_REPLACE=1` names each function that drops one.
 use crate::data::{Data, DefType, Value};
 
 fn off() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_SELF_REPLACE").is_ok_and(|v| v != "0"))
+}
+
+fn trace() -> bool {
+    crate::env_once!(std::env::var("LOFT_TRACE_SELF_REPLACE").is_ok_and(|v| v != "0"))
 }
 
 /// May the call `op(args)` change which record `Var(v)` names?  A variable handed to an
@@ -98,7 +102,11 @@ pub fn rewrite_program(data: &mut Data) {
         }
         let mut code = std::mem::replace(&mut data.definitions[d_nr].code, Value::Null);
         if let Value::Block(b) = code.unspan_mut() {
-            fired += drop_in(data, &mut b.operators, replace, field);
+            let n = drop_in(data, &mut b.operators, replace, field);
+            if n > 0 && trace() {
+                eprintln!("self-replace: {} drops {n}", data.def(d).name());
+            }
+            fired += n;
         }
         data.definitions[d_nr].code = code;
     }
