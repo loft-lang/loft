@@ -5198,8 +5198,8 @@ thread_local! {
 
 /// The tested clause's callee — does user function `d` write no store but the hidden return
 /// buffer it is handed, and is that buffer, at this call, a store in `minted`?  Its own body
-/// answers by [`foreign_store_writer`] with its buffer seeded as minted; a recursive cycle
-/// answers no.
+/// answers by [`foreign_store_writer`] with its buffer seeded as minted; a call back into a
+/// body under check answers yes.
 fn callee_writes_only_its_buffer(
     d: u32,
     args: &[Value],
@@ -5218,8 +5218,11 @@ fn callee_writes_only_its_buffer(
     let Some(rb) = retbuf_var(data, d) else {
         return false;
     };
+    // A recursive call answers yes while its own body is being checked: the property is
+    // that every write lands in the buffer handed in, so a write that breaks it is in a
+    // body this walk reads (the greatest fixpoint, as `in_place_only_writer` assumes none).
     if !BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().insert(d)) {
-        return false;
+        return true;
     }
     let cvars = def.variables();
     let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
@@ -5298,6 +5301,10 @@ fn foreign_store_writer(
                         named = true;
                     }
                 } else if names_a_store(&at.typedef) {
+                    // `OpAppendVector`'s source is READ (copied from), never written.
+                    if name == "OpAppendVector" && i == 1 {
+                        continue;
+                    }
                     if !minted_expr(a, data, minted) {
                         why = Some("a writer to a store the frame did not mint in its scope");
                         return true;
