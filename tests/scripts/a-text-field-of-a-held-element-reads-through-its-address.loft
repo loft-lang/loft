@@ -13,6 +13,10 @@
 // base).  Declined, the store read kept: t6 (the walk appends to another vector of the same
 // store, which may move the records it reads), t7
 // (the walk sets a text field, then reads it).
+//
+// @falsified-by: tests/falsified/a-text-field-of-a-held-element-reads-through-its-address.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's)
+//   CHANNEL: the VALUE channel on native — the patch reads every text field at offset 0, so
+//   t1's search compares the wrong bytes and finds nothing it should (`t1 -1,-1,1,-1`).
 
 struct Opt { long: text, n: integer, short: text }
 struct Args { options: vector<Opt>, hits: integer, extra: vector<Opt> }

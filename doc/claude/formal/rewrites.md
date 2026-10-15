@@ -1188,7 +1188,14 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  holds (R-Base), the address is `base + idx * size` when `idx` is
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
-                 resolved.  THE PATH CLAUSE: a scalar field of r reached through
+                 resolved.  THE TEXT CLAUSE: under the base clause, a TEXT field of r
+                 (`OpGetText(r, off)`) is a fusable read too — its record number one
+                 load at the address, the text sliced off the store span derived
+                 beside the base (R-Base's text clause), since a record element's
+                 texts are records of its vector's store; null past the end, as the
+                 store read of the null record answers.  A view whose only use is
+                 such a read takes its address on this clause alone.  An address
+                 taken any other way serves no text read.  THE PATH CLAUSE: a scalar field of r reached through
                  INLINE sub-records — `r.pos.x`, OpGet<K>(OpGetField(r, off(pos), _),
                  off(x)) — is r's field at the SUMMED offset, a fusable read or
                  write like a direct one: OpGetField adds a constant to the DbRef's
@@ -1237,7 +1244,11 @@ vector view; this is the same promise for a RECORD view, whose derivation is an 
 rather than a header.  Sound for the reason (R-Base) is: nothing in the remainder can move
 the record's bytes, and a freed record's read is excluded by order (the releases a block
 ends with follow the last use).  Switch
-`LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`, one rule);
+`LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`, one rule; `LOFT_NO_TEXT_FIELD` the text
+clause alone, `vector::rec_text`, guard
+`tests/scripts/a-text-field-of-a-held-element-reads-through-its-address.loft` — on
+`arguments/parse`, whose option search compares each option's long name, 22.09 → 18.64 ms
+native alone, −15.6 %);
 falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
@@ -5091,6 +5102,14 @@ first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
 ### A text predicate over a case fold is answered without building the fold
 
 ```
+  (R-ZeroCount)  a comparison of a text's CHARACTER count with the zero boundary —
+                 `len(t) ⋈ 0` or `0 ⋈ len(t)` for ⋈ ∈ { ==, !=, <, <= } (`>` and `>=`
+                 arrive swapped), `len(t) >= 1`, `len(t) < 1` — reads the BYTE count
+                 `size(t)` instead: a text has no characters exactly when it has no
+                 bytes, the absent text included (L-Null-Text: both answer 0), and
+                 neither count is negative, so a comparison that only tells zero from
+                 non-zero answers the same over either.  `len(t) == 1` and
+                 `len(t) > 1` count characters and are not folded.
   (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
                  one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
                  to_uppercase }, where the fold's value has that ONE mention (a
@@ -5106,6 +5125,14 @@ first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
                  written.  Any other mention of the fold — a bind read elsewhere,
                  a return, a link, a capture, a non-text-value op — declines.
 ```
+
+**In words.** (R-ZeroCount): `len(name) > 0` counted every character of the name to learn
+whether there is one.  One IR rewrite on the closed program (`src/zero_count.rs`, switch
+`LOFT_NO_ZERO_COUNT`, guard `tests/scripts/a-zero-length-test-counts-no-characters.loft`),
+so both backends read the byte count; `arguments/parse` 22.09 → 20.50 ms native alone
+(−7.2 %), interpreted −1.6 % on layout-pinned builds (INTERPRETER_PERFORMANCE.md § pin the
+layout first — the unpinned pair read +8–13 % cycles on every lane at equal instructions,
+the shift a compile-time-only module made to the dispatch loop's placement).
 
 **In words.** `h.to_lowercase().starts_with(prefix)` is a question, not a text: the fold
 exists only to be compared.  Unicode case is not byte-local (U+212A KELVIN SIGN lowercases

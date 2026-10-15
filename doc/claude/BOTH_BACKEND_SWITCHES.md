@@ -89,6 +89,11 @@ tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
 `(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
 34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+**`LOFT_NO_ZERO_COUNT=1`** (`@FR-R-ZeroCount`, on the closed program, BOTH backends) keeps
+`len(t) > 0` and every other comparison of a text's character count with the zero boundary
+counting characters — with it off, each reads the byte count (`size(t)`), which answers the
+same: a text has no characters exactly when it has no bytes.  The first bisect step for a
+wrong emptiness answer; `len(t) == 1` and `len(t) > 1` are never folded.
 **`LOFT_NO_LITERAL_HOST=1`** (`(R-MoveLast)`'s host clause, `@FR-R-MoveLast`, decided in the
 scope pass after the forwarded results, BOTH backends) keeps a record literal bound to a local
 (`cur = Cur { src: toks, pos: 0 }`) minting a store of its own and deep-copying the vector

@@ -256,6 +256,14 @@ rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loo
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
+`--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
+store, the record and the text at each read again — with it off, the view's address from
+the held base serves the read: the field's record number one load through it, the text
+sliced off the store span beside the base (`vector::rec_text`).  The first bisect step for a
+wrong or stale text field read in a walk on native; `LOFT_HOIST_VERIFY=1` compares every
+such read with the store's, and `LOFT_NO_TEXT_BASE=1` (`(R-Base)`'s text clause) switches it
+off too.
 **`LOFT_NO_BASE_RECPTR=1`** (`@FR-R-RecPtr`'s base clause, default-ON, generation time,
 `--native` only) makes the loop variable of `for e in v` resolve the store for its address
 again — with it off, the address is the loop's held element base plus index times size
