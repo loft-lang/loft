@@ -186,6 +186,18 @@ value's store.  BUILT as `(R-TextBorrow)`'s tested clause (`LOFT_NO_TESTED_BORRO
 borrows under the run-time store compare and copies otherwise — 396.5 → 356.9 µs (−10 %,
 ≈ 4.65×), `encode` −2.6 %; the row has left the cut.
 
+**X3 on `flow_layout_full`, PRICED in part** (six interleaved rounds, hashes equal, 10.92 ms at
+`c7f19c25a`).  Each run of `slice_runs` pays for its text three times: `buf_slice_text` pushes
+the characters into the caller's work `String`, the bind `s = buf_slice_text(…)` copies that
+into a local `String` (`.to_string()`), and the run's field set copies it into the runs store.
+The local borrowed from the work buffer instead (`Str::str()`; the work text is the call's own
+and only `set_str` reads it): 10.92 → 10.00 ms (−8.4 %, ≈ 5.14× — just over the line),
+`insert_text` and `invert` level.  The mechanism is general: a call's text result in a work
+buffer, bound to a local read only as a text value, needs no copy — the format clause of
+`(R-TextBorrow)` for a call.  The rest of X3 — a run that IS a view of the character buffer, as
+the twin's `&[char]` is — needs a type change (a `text` over a `vector<character>` slice, or a
+measure over characters) and has no hand form.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
