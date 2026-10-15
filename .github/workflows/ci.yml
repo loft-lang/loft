@@ -1249,12 +1249,16 @@ jobs:
     # @windows-exempt: platform-free — checks the tracker index text
     name: doc index hygiene (ubuntu, advisory)
     runs-on: ubuntu-latest
+    env:
+      # Where the suite checkout below lands: the default is a sibling of the repository,
+      # which a runner's workspace has no room for.  Read by the indexer, the hygiene test,
+      # `rule_tags.py` and `decisions.py` alike.
+      LOFT_SUITE_DIR: loft-suite
     steps:
       - uses: actions/checkout@v5
       # The language suite beside the tree (@PLN193): the index enumerates it, so a decision
       # or a rule whose only guard is a suite cell is seen as guarded here as it is on a box
-      # with the checkout.  Same pin as the `language-suite` job; `LOFT_SUITE_DIR` names
-      # where it landed, since the default is a sibling of the repository.
+      # with the checkout.  Same pin as the `language-suite` job.
       - name: Which suite commit this tree pins
         id: pin
         run: echo "ref=$(grep -v '^#' tests/loft-suite.pin | head -1)" >> "$GITHUB_OUTPUT"
