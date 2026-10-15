@@ -7,6 +7,10 @@
 // an ASCII and a multi-byte text), c2 (the boundary at 1: `>= 1`, `< 1`), c3 (a field's text,
 // the walk shape of `find_long_opt`).  Left alone, the count kept: c4 (`== 1` and `> 1`, which
 // a byte count answers differently for `é`, one character in two bytes, and `日本`, two in six).
+//
+// @falsified-by: tests/falsified/a-zero-length-test-counts-no-characters.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch admits `len(t) == 1`, which a byte
+//   count answers false for `é` (two bytes): c4 reads `0,10,10,0`.
 
 struct Opt { name: text, n: integer }
 
