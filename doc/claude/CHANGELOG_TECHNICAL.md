@@ -45,9 +45,12 @@ names the commit loft's CI checks out — pinned like a library, so a behaviour 
 loft PR plus a suite PR and the loft PR bumps the pin.  The `language-suite` job in `ci.yml`
 builds the release binary and runtime library from the test job's cache, runs
 `loft-suite check` and then every rule cell on both backends, and keeps the junit; it runs
-on every diff (a docs-only one pays the cached build) and on every push to main, and is to be
-a REQUIRED check once it has reported green on a PR — only then do the 711 cells leave
-`tests/scripts`, so no PR ever runs without the corpus.  `make suite ARGS="@FR-B-Copy
+on every diff (a docs-only one pays the cached build) and on every push to main.  Its first
+run (dispatched on the branch) was green in 7 min: 3 min cached build, then 1422/1422 lanes
+in 215 s wall at 4 jobs, the native median 1.2 s a cell.  On that reading the owner made it a
+REQUIRED context of `main` the same day (`Language suite (ubuntu-latest)`, beside the three
+`Test` legs, `Clippy` and `Format`) — so the 711 cells can leave `tests/scripts` with no PR
+ever running without the corpus.  `make suite ARGS="@FR-B-Copy
 --mode both"` runs a selection by hand against the checkout beside this one.
 
 ### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
