@@ -164,6 +164,14 @@ store's blocks must know — the coalescing sweep, `claims_rebuild`, `usage`, an
 `LOFT_POISON`'s scribble and `LOFT_STRICT_STORES` — and the lists must be flushed into the tree
 before a claim grows the store, or freed space is never merged.
 
+**cbor `encode`'s slice compare PRICED and DROPPED** (six interleaved rounds, hashes equal): `key_lt`
+answering two in-range key spans with one slice compare (`a < b` over the held buffer, the
+loop kept for a span past the end, where it reads a missing byte as 0) — `key_lt` 13.56 → 8.84 M
+instructions (`memcmp` included), the map encoder 51.7 → 47.0 M, the row's TIME level (8.46 →
+8.47 ms): the keys are a few bytes, so the call costs what the loop did.  What is left of the
+row is the rank loops themselves (`encode_map__ap` 22 % of the map encoder: `koff[j] ?? 0`,
+`klen[j] ?? 0` per pair) and the twin's O(n²) is the same algorithm.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
