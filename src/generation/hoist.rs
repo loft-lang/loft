@@ -4548,6 +4548,11 @@ pub struct StoreTextBorrows {
     /// `@FR-R-SliceBorrow` — the admitted locals with a value slice among their bindings,
     /// counted apart for the rewrite census.
     pub slices: HashSet<u16>,
+    /// The tested clause — admitted locals whose scope also writes the hidden RETURN BUFFER,
+    /// each with the parameters its reads are rooted in: the borrow holds only while each of
+    /// those parameters' stores is not the buffer's, which the bind tests at run time and
+    /// copies otherwise.
+    pub tested: HashMap<u16, Vec<u16>>,
 }
 
 /// `@FR-R-TextBorrow`'s store-read clause — the text variables of this function that BORROW
@@ -4728,6 +4733,10 @@ pub fn borrowed_store_texts(
     }
     // The store condition, over each borrow's scope.
     let minted = frame_minted_locals(data, vars, body, &[]);
+    let minted_rb = (tested_borrow_enabled())
+        .then(|| retbuf_var(data, def_nr))
+        .flatten()
+        .map(|rb| frame_minted_locals(data, vars, body, &[rb]));
     let mut cache: HashMap<u32, bool> = HashMap::new();
     let mut active: HashSet<u32> = HashSet::new();
     for v in temps
@@ -4755,15 +4764,46 @@ pub fn borrowed_store_texts(
         }
         let scope = mention_scope(body, v);
         if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
+            // The tested clause: a local whose only other writers name the return buffer
+            // (or a callee's buffer it is handed) borrows while its parameters' stores are
+            // not the buffer's — a run-time test at each bind, a copy where it fails.
+            if let Some(m) = minted_rb.as_ref()
+                && locals.contains(&v)
+            {
+                let tested =
+                    match foreign_store_writer(scope, data, m, &mut cache, &mut active, Some(vars))
+                    {
+                        Some(w2) => Err(w2),
+                        None => param_roots_of(body, v, data, vars)
+                            .ok_or("a binding not rooted in a parameter"),
+                    };
+                match tested {
+                    Ok(roots) => {
+                        out.tested.insert(v, roots);
+                        continue;
+                    }
+                    Err(w2) if trace => eprintln!(
+                        "[text-borrow] {}: `{}` not tested either — {w2}",
+                        def.name(),
+                        vars.name(v)
+                    ),
+                    Err(_) => {}
+                }
+            }
             temps.remove(&v);
             locals.remove(&v);
             why.insert(v, w);
         }
     }
     // A local whose source was just refused has lost its borrow's source: repeat the
-    // binding test until nothing moves.
+    // binding test until nothing moves.  A TESTED local is no source: its bind may answer
+    // its own copy, which the next bind overwrites.
     loop {
-        let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
+        let admitted: HashSet<u16> = temps
+            .union(&locals)
+            .copied()
+            .filter(|v| !out.tested.contains_key(v))
+            .collect();
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
             Value::Block(_) => fmt_own(to),
@@ -4790,6 +4830,7 @@ pub fn borrowed_store_texts(
             why.insert(v, "bound from a text that does not borrow");
         }
     }
+    out.tested.retain(|v, _| locals.contains(v));
     // `@FR-R-SliceBorrow` — the admitted locals with a slice among their bindings, for the
     // census and the trace.
     let slices: HashSet<u16> = locals
@@ -5082,6 +5123,93 @@ fn collect_void_blocks<'a>(node: &'a Value, out: &mut Vec<&'a Value>) {
     }
 }
 
+/// `LOFT_NO_TESTED_BORROW=1` — `@FR-R-TextBorrow`'s tested clause off: a text local whose
+/// scope writes the return buffer copies again.
+fn tested_borrow_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_TESTED_BORROW").is_ok_and(|v| v != "0"))
+}
+
+/// The parameters text local `v`'s reads are rooted in — every binding a text literal, a
+/// plain text parameter (the caller's `&str`, no store) or `OpGetText(R, f)` with `R` a
+/// projection of a parameter — or `None` when a binding is anything else.
+fn param_roots_of(
+    body: &Value,
+    v: u16,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Option<Vec<u16>> {
+    fn root(r: &Value, data: &Data, vars: &crate::variables::Function) -> Option<u16> {
+        match r.unspan() {
+            Value::Var(p) if vars.is_argument(*p) => Some(*p),
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                root(args.first()?, data, vars)
+            }
+            _ => None,
+        }
+    }
+    let mut roots: Vec<u16> = Vec::new();
+    let mut ok = true;
+    body.any_node(&mut |n| {
+        if let Value::Set(x, to) = n
+            && *x == v
+        {
+            match to.unspan() {
+                Value::Text(_) | Value::Null => {}
+                Value::Var(s) if vars.is_argument(*s) => {}
+                _ => match call_named(to, data, "OpGetText")
+                    .and_then(|a| a.first())
+                    .and_then(|r| root(r, data, vars))
+                {
+                    Some(p) if !roots.contains(&p) => roots.push(p),
+                    Some(_) => {}
+                    None => ok = false,
+                },
+            }
+        }
+        false
+    });
+    (ok && !roots.is_empty()).then_some(roots)
+}
+
+thread_local! {
+    static BUFFER_WRITERS_OPEN: std::cell::RefCell<HashSet<u32>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+/// The tested clause's callee — does user function `d` write no store but the hidden return
+/// buffer it is handed, and is that buffer, at this call, a store in `minted`?  Its own body
+/// answers by [`foreign_store_writer`] with its buffer seeded as minted; a recursive cycle
+/// answers no.
+fn callee_writes_only_its_buffer(
+    d: u32,
+    args: &[Value],
+    data: &Data,
+    minted: &HashSet<u16>,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let def = data.def(d);
+    let Some(attr) = def.hidden_return_buffer_attr() else {
+        return false;
+    };
+    if !matches!(args.get(attr).map(Value::unspan), Some(Value::Var(x)) if minted.contains(x)) {
+        return false;
+    }
+    let Some(rb) = retbuf_var(data, d) else {
+        return false;
+    };
+    if !BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().insert(d)) {
+        return false;
+    }
+    let cvars = def.variables();
+    let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
+    let clean =
+        foreign_store_writer(def.code(), data, &inner, cache, active, Some(cvars)).is_none();
+    BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().remove(&d));
+    clean
+}
+
 /// The first reason running `node` might grow, free or rewrite a text block of a store the
 /// frame did NOT mint — or `None` when every store writer names only `minted` stores or sets
 /// a scalar in place.  A native writer must NAME what it writes: a store operand, or a slot
@@ -5119,6 +5247,8 @@ fn foreign_store_writer(
             if !matches!(def.code(), Value::Null) {
                 if call_writes_store(*d, data, cache, active, None)
                     && !in_place_only_writer(*d, data, cache, active, None)
+                    && !(vars.is_some()
+                        && callee_writes_only_its_buffer(*d, args, data, minted, cache, active))
                 {
                     why = Some("a callee that writes a store in its scope");
                     return true;

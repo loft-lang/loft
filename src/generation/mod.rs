@@ -1099,6 +1099,11 @@ pub struct Output<'a> {
     /// [`Output::borrowed_text_locals`] ([`hoist::borrowed_store_texts`]): every `Set` of
     /// one binds its `&str` slot.
     pub borrowed_store_locals: HashSet<u16>,
+    /// `@FR-R-TextBorrow`'s tested clause — the [`Output::borrowed_store_locals`] whose scope
+    /// writes the return buffer, with the parameters their reads are rooted in: each bind
+    /// borrows while those parameters' stores are not the buffer's and copies into its
+    /// `__own_` backing `String` otherwise ([`hoist::StoreTextBorrows::tested`]).
+    pub tested_store_texts: HashMap<u16, Vec<u16>>,
     /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
     /// value slice of a parameter, for the rewrite census; rebuilt per function.
     pub slice_borrow_count: usize,
@@ -2536,6 +2541,7 @@ impl<'a> Output<'a> {
             text_field_disabled: std::env::var("LOFT_NO_TEXT_FIELD").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
+            tested_store_texts: HashMap::new(),
             slice_borrow_count: 0,
             versioned_text_walks: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
@@ -3053,6 +3059,7 @@ impl Output<'_> {
             .copied()
             .collect();
         self.borrowed_store_locals.clear();
+        self.tested_store_texts.clear();
         self.slice_borrow_count = 0;
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
@@ -3067,6 +3074,7 @@ impl Output<'_> {
             let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
+            self.tested_store_texts = store.tested;
             self.slice_borrow_count = store.slices.len();
             walks
         };
