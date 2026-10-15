@@ -1,0 +1,190 @@
+// `@FR-H-ClearRelease`'s record clause, by plan — a record whose heap is texts, and vectors
+// whose elements own texts at most, is released by its type's plan: each text deleted, each vector's element texts and
+// then its block, every field cleared, in the order the type walk releases them.  Every cell
+// rebuilds its record many times through one binding, so each pass releases the last one;
+// it asserts the VALUES a hand computation gives AND that the live-record count does not move
+// between an early pass and a late one — a release that misses a text answers every value
+// right and grows that count.  The two passes compared build records of the same shape.  `LOFT_NO_RELEASE_PLAN=1` must answer the same.
+//
+// Admitted: c1 (inline records of texts, a vector of two-text records, a vector of text),
+// c2 (a text beside a vector of scalars), c3 (an absent vector field), c4 (empty texts and
+// vectors), c6 (a text two records deep inside a vector element).  Declined to the walk: c5
+// (an element of five texts, an enum payload, a vector of vectors).  c7 replaces an element
+// of a vector of such records, which releases the old element by its plan.  A plan runs only
+// where a record is released in a store that lives on — a buffer reused per pass (c1, c2,
+// c5's elements) or an element written over (c3, c6, c7); a store dropped whole needs none.
+//
+// @falsified-by: tests/falsified/a-record-of-texts-is-released-by-its-plan.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the leak channel — the patch keeps each vector element's texts; every value
+//   holds and c1's live-record count grows from 52 at pass 5 to 148 at pass 17.  A second
+//   plant, the record's own texts kept, fails the same way on both backends.
+
+struct Box2 { x: integer, y: integer }
+struct Btn { id: integer, at: Box2, label: text, key: text, on: boolean }
+struct Lst { at: Box2, items: vector<text>, sel: integer }
+struct Bar { at: Box2, msg: text }
+struct Pan { at: Box2, btns: vector<Btn>, lst: Lst, bar: Bar }
+
+struct Mix { name: text, xs: vector<integer>, n: integer }
+struct Opt { name: text, tags: vector<text>? }
+
+struct Five { a: text, b: text, c: text, d: text, e: text }
+enum Pay { Nothing, Named { who: text, n: integer } }
+struct Wide { fs: vector<Five>, p: Pay, vv: vector<vector<integer>> }
+
+struct In { t: text }
+struct Row { a: In, b: text, k: integer }
+struct Deep { rows: vector<Row> }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+fn pan(i: integer) -> Pan {
+  bs: vector<Btn> = [];
+  for k in 0..(i % 4) + 2 {
+    bs += [Btn { id: k, at: Box2 { x: k, y: i }, label: "b{k}-{i}", key: "{k}", on: k == i % 3 }];
+  }
+  its: vector<text> = [];
+  for k in 0..i % 3 { its += ["item{k}"]; }
+  Pan { at: Box2 { x: 0, y: 0 }, btns: bs, lst: Lst { at: Box2 { x: 1, y: 2 }, items: its, sel: i % 3 },
+        bar: Bar { at: Box2 { x: 3, y: 4 }, msg: "frame {i}" } }
+}
+
+// Sum of every text length, the button count times 100 and the item count times 10000.
+fn pan_sig(p: const Pan) -> integer {
+  s = len(p.bar.msg) + len(p.btns) * 100 + len(p.lst.items) * 10000;
+  for b in p.btns { s += len(b.label) + len(b.key); }
+  for t in p.lst.items { s += len(t); }
+  s
+}
+
+fn mix(i: integer) -> Mix {
+  xs: vector<integer> = [];
+  for k in 0..i % 5 { xs += [k * i]; }
+  Mix { name: "m{i}", xs: xs, n: i }
+}
+
+fn opt(i: integer) -> Opt {
+  if i % 2 == 0 { return Opt { name: "even{i}", tags: null }; }
+  Opt { name: "odd", tags: ["t{i}", "u"] }
+}
+
+fn wide(i: integer) -> Wide {
+  fs: vector<Five> = [Five { a: "a{i}", b: "bb", c: "c", d: "", e: "eeeee" }];
+  vv: vector<vector<integer>> = [[i, i], [i]];
+  p = if i % 2 == 0 { Named { who: "w{i}", n: i } } else { Pay.Nothing };
+  Wide { fs: fs, p: p, vv: vv }
+}
+
+fn deep(i: integer) -> Deep {
+  rs: vector<Row> = [];
+  for k in 0..3 { rs += [Row { a: In { t: "in{k}{i}" }, b: "row{k}", k: k + i }]; }
+  Deep { rows: rs }
+}
+
+fn main() {
+  // c1 — the panel shape, rebuilt 24 times.  Pass i: (i % 4) + 2 buttons, labels "b{k}-{i}"
+  // (3 + digits(i) chars) and keys of one char; i % 3 items of 5 chars; "frame {i}" is
+  // 6 + digits(i).  Pass 13: 3 buttons (300) with labels of 5 chars and keys of 1 (18),
+  // 1 item (10000 + 5), msg 8: 10331.
+  c1 = 0; l5 = 0; l17 = 0; last = "";
+  for i in 0..24 {
+    p = pan(i);
+    if i == 13 { c1 = pan_sig(p); }
+    if i == 5 { l5 = live_records(); }
+    if i == 17 { l17 = live_records(); }
+    if i == 23 { last = "{p.btns[2].label} {p.lst.items[1]} {p.bar.msg}"; }
+  }
+  assert(c1 == 10331, "c1 sig {c1}");
+  assert(l5 == l17, "c1 live {l5} -> {l17}");
+  assert(last == "b2-23 item1 frame 23", "c1 last {last}");
+
+  // c2 — a text beside a vector of scalars.  Pass 19: "m19", xs = 0, 19, 38, 57 (sum 114).
+  l5 = 0; l20 = 0;
+  for i in 0..24 {
+    m = mix(i);
+    if i == 5 { l5 = live_records(); }
+    if i == 20 { l20 = live_records(); }
+    if i == 19 {
+      s = 0;
+      for x in m.xs { s += x; }
+      assert(m.name == "m19" && len(m.xs) == 4 && s == 114, "c2 {m.name} {s}");
+    }
+  }
+  assert(l5 == l20, "c2 live {l5} -> {l20}");
+
+  // c3 — an absent vector field on even passes, two tags on odd, each written over an
+  // element of a vector, which releases the element it replaces.
+  os: vector<Opt> = [opt(0), opt(1)];
+  l5 = 0; l17 = 0; tagged = 0; last = "";
+  for i in 0..24 {
+    os[i % 2] = opt(i);
+    o = os[i % 2]?;
+    if o.tags != null { tagged += len(o.tags?); }
+    if i == 5 { l5 = live_records(); }
+    if i == 17 { l17 = live_records(); }
+    if i == 23 { last = "{o.name} {o.tags?[0]}"; }
+  }
+  assert(tagged == 24 && last == "odd t23", "c3 {tagged} {last}");
+  assert(l5 == l17, "c3 live {l5} -> {l17}");
+
+  // c4 — empty texts and empty vectors: a panel of pass 0 has two buttons, no items.
+  e = Pan { at: Box2 { x: 0, y: 0 }, btns: [], lst: Lst { at: Box2 { x: 0, y: 0 }, items: [], sel: 0 },
+            bar: Bar { at: Box2 { x: 0, y: 0 }, msg: "" } };
+  for i in 0..6 {
+    e = Pan { at: Box2 { x: i, y: 0 }, btns: [Btn { id: i, at: Box2 { x: 0, y: 0 }, label: "", key: "", on: false }],
+              lst: Lst { at: Box2 { x: 0, y: 0 }, items: [""], sel: 0 }, bar: Bar { at: Box2 { x: 0, y: 0 }, msg: "" } };
+  }
+  assert(e.at.x == 5 && len(e.btns) == 1 && e.btns[0].label == "" && len(e.lst.items) == 1, "c4");
+
+  // c5 — declined to the walk: five texts per element, an enum payload, a vector of vectors.
+  l5 = 0; l17 = 0; last = "";
+  for i in 0..24 {
+    w = wide(i);
+    if i == 5 { l5 = live_records(); }
+    if i == 17 { l17 = live_records(); }
+    if i >= 22 {
+      who = match w.p { Named { who, n } => "{who}{n}", Nothing => "none" };
+      last += "{w.fs[0].a} {w.fs[0].e} {who} {len(w.vv[0])};";
+    }
+  }
+  assert(last == "a22 eeeee w2222 2;a23 eeeee none 2;", "c5 {last}");
+  assert(l5 == l17, "c5 live {l5} -> {l17}");
+
+  // c6 — a text two records deep inside a vector element, over an element as c3: rows
+  // k = 0..2 of pass 17 read
+  // "in{k}17" (5 chars), "row{k}" (4) and k + 17: 27 + 54 = 81.
+  ds: vector<Deep> = [deep(0), deep(1)];
+  l5 = 0; l17 = 0; c6 = 0; last = "";
+  for i in 0..24 {
+    ds[i % 2] = deep(i);
+    d = ds[i % 2]?;
+    if i == 17 { for r in d.rows { c6 += len(r.a.t) + len(r.b) + r.k; } }
+    if i == 5 { l5 = live_records(); }
+    if i == 17 { l17 = live_records(); }
+    if i == 23 { last = d.rows[2].a.t; }
+  }
+  assert(c6 == 81 && last == "in223", "c6 {c6} {last}");
+  assert(l5 == l17, "c6 live {l5} -> {l17}");
+
+  // c7 — an element of a vector of panels replaced: the old element is released by its plan.
+  ps: vector<Pan> = [pan(1), pan(2)];
+  l5 = 0; l17 = 0;
+  for i in 0..24 {
+    ps[i % 2] = pan(i);
+    if i == 5 { l5 = live_records(); }
+    if i == 17 { l17 = live_records(); }
+  }
+  // ps[0] = pan(22): 4 buttons, 1 item; ps[1] = pan(23): 5 buttons, 2 items.
+  assert(len(ps[0].btns) == 4 && len(ps[1].btns) == 5 && ps[1].lst.items[1] == "item1", "c7");
+  assert(ps[0].bar.msg == "frame 22" && ps[0].btns[3].label == "b3-22", "c7 msg");
+  assert(l5 == l17, "c7 live {l5} -> {l17}");
+
+  println("ok");
+}

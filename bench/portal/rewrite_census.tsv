@@ -574,10 +574,11 @@ arguments	bd4932067	R-Range	30
 arguments	bd4932067	R-RangedCall	2
 arguments	bd4932067	R-RecPtr	11
 arguments	bd4932067	R-RetAdopt	4
+arguments	bd4932067	R-SameRead	2
 arguments	bd4932067	R-SingleUse	4
 arguments	bd4932067	R-SplitTable	3
-arguments	bd4932067	R-TextBorrow	20
-arguments	bd4932067	R-TextClear	59
+arguments	bd4932067	R-TextBorrow	22
+arguments	bd4932067	R-TextClear	57
 arguments	bd4932067	R-View	24
 arguments	bd4932067	R-Wrapper	19
 assets	ac5049fe4	R-Base	38
@@ -1136,7 +1137,7 @@ hex_field	3bdb69ef2	R-Reuse	2
 hex_field	3bdb69ef2	R-SameRead	1
 hex_field	3bdb69ef2	R-Scalar	346
 hex_field	3bdb69ef2	R-SingleUse	5
-hex_field	3bdb69ef2	R-TextBorrow	13
+hex_field	3bdb69ef2	R-TextBorrow	15
 hex_field	3bdb69ef2	R-TextClear	40
 hex_field	3bdb69ef2	R-TypedRead	18
 hex_field	3bdb69ef2	R-VecCopy	3
@@ -1627,9 +1628,10 @@ markdown	dd260f04c	R-Range	24
 markdown	dd260f04c	R-RecPtr	1
 markdown	dd260f04c	R-RetAdopt	4
 markdown	dd260f04c	R-SingleUse	2
+markdown	dd260f04c	R-SliceBorrow	7
 markdown	dd260f04c	R-SplitTable	4
-markdown	dd260f04c	R-TextBorrow	21
-markdown	dd260f04c	R-TextClear	149
+markdown	dd260f04c	R-TextBorrow	33
+markdown	dd260f04c	R-TextClear	146
 markdown	dd260f04c	R-View	4
 markdown	dd260f04c	R-Wrapper	7
 mesh3d	b3cb7445f	H-SwapRebind	1

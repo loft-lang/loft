@@ -1,0 +1,13 @@
+diff --git a/src/same_read.rs b/src/same_read.rs
+index e145f6c88..bd6d30100 100644
+--- a/src/same_read.rs
++++ b/src/same_read.rs
+@@ -740,7 +740,7 @@ fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &
+         }
+     }
+     let bound = before.len();
+-    let tail = block.operators.split_off(last);
++    let tail = block.operators.split_off(first);
+     block.operators.extend(before);
+     block.operators.extend(tail);
+     bound

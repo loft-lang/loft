@@ -1,0 +1,143 @@
+// `@FR-R-SameRead`'s match clause — a slice `match` reads its subject's length, and each
+// integer computation of one element (a variant number, a scalar element), ONCE before its
+// arm tests, where each arm's test read them again.  Every cell asserts the VALUES a hand
+// computation gives; `LOFT_NO_MATCH_READ=1` must answer the same.
+//
+// Admitted: c1 and c2 (a cursor match: element 0's variant tested by four arms), c3 (a plain
+// match in a loop, its subject a different vector each pass, an empty one among them), c4
+// (scalar elements tested against literals), c5 (narrow elements), c6 (guarded arms),
+// c8 (a match inside an arm's body).  c7's guard grows the vector it matches: the tests that
+// run after a failed guard are the plain ones, inside the guarded arm.  A read is bound under
+// its own length test, so a subject shorter than a pattern reads nothing past its end.
+//
+// @falsified-by: tests/falsified/a-slice-match-reads-its-subject-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the VALUE channel on the interpreter, a refusal on native — the patch binds the
+//   shared reads BEFORE the subject: c4 reads the previous call's subject (`50,12,20,null,…`)
+//   and native cannot compile a read of the subject before its declaration.  A second plant,
+//   the element bound with no length test, is INERT: a read one past the end answers null on
+//   both backends and every arm test that could see it is behind its own length test.
+
+enum Tok { A { n: integer }, B { w: text }, C { n: integer } }
+struct Cur { const src: vector<Tok>, pos: integer }
+
+fn run(toks: vector<Tok>, from: integer) -> integer {
+  cur = Cur { src: toks, pos: from };
+  s = 0;
+  while cur.pos < cur.src.len() {
+    code = match cur {
+      [ A { n }, B { w } ] => { s += n * 100 + len(w); 1 },
+      [ A { n } ] => { s += n; 1 },
+      [ B { w } ] => { s += len(w) * 10; 1 },
+      [ C { n } ] => { s += n * 1000; 1 },
+      _ => 0,
+    };
+    if code == 0 { break }
+  }
+  s
+}
+
+fn sc(v: vector<integer>) -> integer {
+  match v {
+    [1, x] => 10 + x,
+    [1, ..] => 20,
+    [2, x, y] => 30 + x + y,
+    [x] => 40 + x,
+    _ => 50,
+  }
+}
+
+fn nb(v: vector<u8>) -> integer {
+  match v {
+    [x, y] if x == y => 1,
+    [x, ..] if x > 100 => 2,
+    [_, y] => 3 + y as integer,
+    _ => 4,
+  }
+}
+
+fn gd(v: vector<Tok>) -> integer {
+  match v {
+    [A { n }, ..] if n > 5 => 1000 + n,
+    [A { n }, B { w }] => n * 10 + len(w),
+    [A { n }, ..] => n,
+    _ => -1,
+  }
+}
+
+fn grow(v: vector<integer>) -> boolean {
+  v += [9];
+  false
+}
+
+fn gw(v: vector<integer>) -> integer {
+  match v {
+    [1] if grow(v) => 0,
+    [1, x] => 10 + x,
+    [1] => 1,
+    _ => 2,
+  }
+}
+
+fn nest(v: vector<Tok>, w: vector<integer>) -> integer {
+  match v {
+    [A { n }, ..] => match w { [1, x] => n * 100 + x, [1] => n * 10, _ => n },
+    [B { w: t }] => len(t),
+    _ => -1,
+  }
+}
+
+fn main() {
+  t: vector<Tok> = [A { n: 3 }, B { w: "xy" }, B { w: "abc" }, C { n: 4 }, A { n: 5 }];
+  // c1 — [A3, Bxy] 302, [Babc] 30, [C4] 4000, [A5] 5 (no B after it): 4337.
+  assert(run(t, 0) == 4337, "c1 {run(t, 0)}");
+  // c2 — from -2 the first read is element 3 (C4: 4000, pos -1), then element 4 (A5, whose
+  // next element is index 0, A3, not a B: 5, pos 0), then c1's 4337: 8342.
+  assert(run(t, -2) == 8342, "c2 {run(t, -2)}");
+
+  // c3 — inline, one subject per pass.
+  subjects: vector<vector<Tok>> = [
+    [A { n: 1 }, B { w: "xy" }], [A { n: 2 }], [A { n: 3 }, C { n: 1 }], [B { w: "q" }],
+    [C { n: 1 }, C { n: 2 }], [], [C { n: 5 }], [B { w: "z" }, A { n: 1 }]];
+  c3 = "";
+  for sv in subjects {
+    r = match sv {
+      [A { n }, B { w }] => n * 10 + len(w),
+      [A { n }, ..] => 100 + n,
+      [B { w }] => 200 + len(w),
+      [C { n }, C { n: m }] => 300 + n + m,
+      [] => 400,
+      _ => 500,
+    };
+    c3 += "{r},";
+  }
+  assert(c3 == "12,102,103,201,303,400,500,500,", "c3 {c3}");
+
+  // c4 — scalar elements: [1,5] 15, [1,2,3] 20, [2,3,4] 37, [7] 47, [2] 42, [] 50, [3,3] 50.
+  c4 = "";
+  for xs in [[1, 5], [1, 2, 3], [2, 3, 4], [7], [2], [], [3, 3]] { c4 += "{sc(xs)},"; }
+  assert(c4 == "15,20,37,47,42,50,50,", "c4 {c4}");
+
+  // c5 — narrow elements: [7,7] 1, [200,1] 2, [5,6] 9, [5] 4, [] 4.
+  c5 = "";
+  for bs in [[7 as u8, 7 as u8], [200 as u8, 1 as u8], [5 as u8, 6 as u8], [5 as u8]] {
+    c5 += "{nb(bs)},";
+  }
+  e: vector<u8> = [];
+  c5 += "{nb(e)},";
+  assert(c5 == "1,2,9,4,4,", "c5 {c5}");
+
+  // c6 — guarded arms: [A9] 1009, [A2,Bab] 22, [A3,C1] 3, [A7,Bab] 1007, [Bx] -1.
+  c6 = "{gd([A { n: 9 }])},{gd([A { n: 2 }, B { w: "ab" }])},{gd([A { n: 3 }, C { n: 1 }])},";
+  c6 += "{gd([A { n: 7 }, B { w: "ab" }])},{gd([B { w: "x" }])}";
+  assert(c6 == "1009,22,3,1007,-1", "c6 {c6}");
+
+  // c7 — the guard appends 9 to the subject and fails, so the arms after it see [1, 9]: 19.
+  g: vector<integer> = [1];
+  assert(gw(g) == 19, "c7 {gw([1])}");
+
+  // c8 — a match in an arm's body: [A4]+[1,7] 407, [A4]+[1] 40, [A4]+[2] 4, [Bxyz] 3, [] -1.
+  c8 = "{nest([A { n: 4 }], [1, 7])},{nest([A { n: 4 }], [1])},{nest([A { n: 4 }], [2])},";
+  c8 += "{nest([B { w: "xyz" }], [])},{nest([], [1])}";
+  assert(c8 == "407,40,4,3,-1", "c8 {c8}");
+  println("ok");
+}

@@ -2219,6 +2219,7 @@ impl Stores {
             t.prefill.forget();
             t.heap_slots.forget();
             t.plain_vectors.forget();
+            t.release_plan.forget();
             t.parents.retain(|&p| p < keep);
         }
         self.names.retain(|_, &mut nr| nr < keep);
@@ -3460,6 +3461,59 @@ impl std::fmt::Debug for PlainVectors {
     }
 }
 
+/// One step of a record type's RELEASE PLAN ([`ReleasePlan`]): a text at a byte offset, or
+/// a `vector<E>` whose `size`-byte elements own texts at the first `n` of `texts` (none for
+/// elements that own no heap, `[0]` for a `vector<text>`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RelSlot {
+    Text(u32),
+    Vector {
+        off: u32,
+        size: u32,
+        texts: [u16; 4],
+        n: u8,
+    },
+}
+
+/// The RELEASE PLAN of a record of this type — every heap slot in field order, nested
+/// inline records flattened, when each is a text or a vector whose elements own texts at
+/// most ([`RelSlot`]).  `None` inside for any other owner, which the type walk releases.
+/// Derived, like [`HeapSlots`].
+#[derive(Default, Clone)]
+pub struct ReleasePlan(std::sync::OnceLock<Option<Box<[RelSlot]>>>);
+
+impl ReleasePlan {
+    #[inline]
+    pub(super) fn get(&self) -> Option<&Option<Box<[RelSlot]>>> {
+        self.0.get()
+    }
+
+    pub(super) fn set(&self, plan: Option<Box<[RelSlot]>>) {
+        let _ = self.0.set(plan);
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal plans.
+impl PartialEq for ReleasePlan {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for ReleasePlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(Some(s)) => write!(f, "ReleasePlan({})", s.len()),
+            Some(None) => f.write_str("ReleasePlan(walk)"),
+            None => f.write_str("ReleasePlan(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3487,6 +3541,7 @@ pub struct Type {
     pub(super) prefill: PrefillImage,
     pub(super) heap_slots: HeapSlots,
     pub(super) plain_vectors: PlainVectors,
+    pub(super) release_plan: ReleasePlan,
 }
 
 impl Type {
@@ -3545,6 +3600,7 @@ impl Type {
             prefill: PrefillImage::default(),
             heap_slots: HeapSlots::default(),
             plain_vectors: PlainVectors::default(),
+            release_plan: ReleasePlan::default(),
         }
     }
 
@@ -3620,6 +3676,7 @@ impl Type {
             prefill: PrefillImage::default(),
             heap_slots: HeapSlots::default(),
             plain_vectors: PlainVectors::default(),
+            release_plan: ReleasePlan::default(),
         }
     }
 
@@ -3640,6 +3697,7 @@ impl Type {
             prefill: PrefillImage::default(),
             heap_slots: HeapSlots::default(),
             plain_vectors: PlainVectors::default(),
+            release_plan: ReleasePlan::default(),
         }
     }
 

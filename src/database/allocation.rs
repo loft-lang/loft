@@ -6,7 +6,7 @@
 // @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::btree;
-use crate::database::types::HeapSlot;
+use crate::database::types::{HeapSlot, RelSlot};
 use crate::database::{Parts, Stores, WorkerStores};
 use crate::hash;
 use crate::keys::DbRef;
@@ -202,6 +202,13 @@ const PLAIN_MAX: usize = 8;
 fn plain_vector_records_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !std::env::var("LOFT_NO_PLAIN_VECTOR_RECORDS").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_NO_RELEASE_PLAN=1` — a record whose heap is texts and vectors of text-owning
+/// elements is released by the type walk instead of its plan (`Stores::release_by_plan`).
+fn release_plan_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_RELEASE_PLAN").is_ok_and(|v| v != "0"))
 }
 
 /// `LOFT_NO_HEAP_FREE_VECTOR_COPY=1` — a deep copy of a vector whose elements own no heap
@@ -4449,6 +4456,9 @@ impl Stores {
                 if !borrowed && self.owns_plain_vectors(tp) && self.release_plain_vectors(rec, tp) {
                     return;
                 }
+                if !borrowed && self.release_by_plan(rec, tp) {
+                    return;
+                }
                 // A record whose heap slots are all empty RIGHT NOW frees nothing either —
                 // a reused return buffer is released before every refill (`@FR-H-ClearRelease`),
                 // and most refills follow a result that held no heap.
@@ -5398,6 +5408,193 @@ impl Stores {
             if cur != 0 {
                 store.delete(cur);
                 store.set_u32_raw(rec.rec, pos, 0);
+            }
+        }
+        true
+    }
+
+    /// The release plan of `tp` ([`RelSlot`]), derived on the first ask and cached on its row.
+    fn release_plan_of(&self, tp: u16) -> Option<([RelSlot; PLAIN_MAX], usize)> {
+        let row = self.types.get(tp as usize)?;
+        if row.release_plan.get().is_none() {
+            row.release_plan.set(self.derive_release_plan(tp));
+        }
+        let plan = row.release_plan.get()?.as_deref()?;
+        let mut held = [RelSlot::Text(0); PLAIN_MAX];
+        held[..plan.len()].copy_from_slice(plan);
+        Some((held, plan.len()))
+    }
+
+    fn derive_release_plan(&self, tp: u16) -> Option<Box<[RelSlot]>> {
+        if !release_plan_enabled()
+            || !matches!(
+                self.types.get(tp as usize)?.parts,
+                Parts::Struct(_) | Parts::EnumValue(..)
+            )
+            || self.type_holds_file(tp)
+        {
+            return None;
+        }
+        let mut out = Vec::new();
+        self.collect_release_slots(tp, 0, &mut out, &mut Vec::new())?;
+        (1..=PLAIN_MAX)
+            .contains(&out.len())
+            .then(|| out.into_boxed_slice())
+    }
+
+    /// The plan's slots of a `tp` record placed `base` bytes into its parent, in field order
+    /// — the order `remove_struct_claims` releases them in.  `None` for any field the plan
+    /// cannot express: an enum, a view or a linked group, a collection other than a vector,
+    /// a vector whose elements own anything but texts.
+    fn collect_release_slots(
+        &self,
+        tp: u16,
+        base: u32,
+        out: &mut Vec<RelSlot>,
+        seen: &mut Vec<u16>,
+    ) -> Option<()> {
+        if seen.contains(&tp) {
+            return None;
+        }
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(tp as usize)?.parts
+        else {
+            return None;
+        };
+        seen.push(tp);
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if !f.other_indexes.is_empty() {
+                return None;
+            }
+            let off = base + u32::from(f.position);
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Base if f.content == 5 => out.push(RelSlot::Text(off)),
+                Parts::Struct(_) => self.collect_release_slots(f.content, off, out, seen)?,
+                Parts::Vector(elem) => {
+                    let elem = *elem;
+                    let size = u32::from(self.size(elem));
+                    if self.is_linked(elem) || size == 0 {
+                        return None;
+                    }
+                    let mut texts = [0u16; 4];
+                    let n = if elem == 5 {
+                        1
+                    } else if !self.type_owns_heap(elem) {
+                        0
+                    } else {
+                        let slots = self.text_slots(elem)?;
+                        if slots.len() > texts.len() {
+                            return None;
+                        }
+                        for (t, o) in texts.iter_mut().zip(&slots) {
+                            *t = u16::try_from(*o).ok()?;
+                        }
+                        slots.len()
+                    };
+                    out.push(RelSlot::Vector {
+                        off,
+                        size,
+                        texts,
+                        n: n as u8,
+                    });
+                }
+                _ => return None,
+            }
+        }
+        seen.pop();
+        Some(())
+    }
+
+    /// `@FR-H-ClearRelease` — `remove_claims_mode` for a record with a release plan: each text deleted, each
+    /// vector's element texts and then its block, the fields cleared — what the type walk
+    /// does for such a record, in its order, without asking each field's type what it is.
+    /// `false`, with nothing done, for a type without a plan and when any pointer it would
+    /// follow lies past the store or a vector's length does not fit: the walk then reads
+    /// that record and refuses what is wrong with it.
+    #[inline(never)]
+    fn release_by_plan(&mut self, rec: &DbRef, tp: u16) -> bool {
+        let Some((plan, count)) = self.release_plan_of(tp) else {
+            return false;
+        };
+        let plan = &plan[..count];
+        let store = self.store_mut(rec);
+        let capacity = store.capacity_words();
+        let capacity_bytes = u64::from(capacity) * 8;
+        let outside = |p: u32| p != 0 && p != DbRef::ABSENT_REC && p >= capacity;
+        for slot in plan {
+            let (RelSlot::Text(off) | RelSlot::Vector { off, .. }) = *slot;
+            let pos = rec.pos + off;
+            if u64::from(pos) + 4 > capacity_bytes {
+                return false;
+            }
+            let cur = store.get_u32_raw(rec.rec, pos);
+            match *slot {
+                RelSlot::Text(_) => {
+                    if cur != 0 && cur >= capacity {
+                        return false;
+                    }
+                }
+                RelSlot::Vector { size, texts, n, .. } => {
+                    if outside(cur) {
+                        return false;
+                    }
+                    if cur == 0 || cur == DbRef::ABSENT_REC {
+                        continue;
+                    }
+                    let length = store.get_u32_raw(cur, 4);
+                    if u64::from(length) * u64::from(size) + 8 > capacity_bytes {
+                        return false;
+                    }
+                    for i in 0..length {
+                        for &t in &texts[..n as usize] {
+                            let p = store.get_u32_raw(cur, 8 + size * i + u32::from(t));
+                            if p != 0 && p >= capacity {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for slot in plan {
+            match *slot {
+                RelSlot::Text(off) => {
+                    let pos = rec.pos + off;
+                    let cur = store.get_u32_raw(rec.rec, pos);
+                    if cur != 0 {
+                        store.delete(cur);
+                        store.set_u32_raw(rec.rec, pos, 0);
+                    }
+                }
+                RelSlot::Vector {
+                    off,
+                    size,
+                    texts,
+                    n,
+                } => {
+                    let pos = rec.pos + off;
+                    let cur = store.get_u32_raw(rec.rec, pos);
+                    if cur != 0 && cur != DbRef::ABSENT_REC {
+                        let length = store.get_u32_raw(cur, 4);
+                        for i in 0..length {
+                            for &t in &texts[..n as usize] {
+                                let at = 8 + size * i + u32::from(t);
+                                let p = store.get_u32_raw(cur, at);
+                                if p != 0 {
+                                    store.delete(p);
+                                    store.set_u32_raw(cur, at, 0);
+                                }
+                            }
+                        }
+                        store.delete(cur);
+                    }
+                    if cur != 0 {
+                        store.set_u32_raw(rec.rec, pos, 0);
+                    }
+                }
             }
         }
         true

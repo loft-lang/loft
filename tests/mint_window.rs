@@ -191,3 +191,15 @@ fn the_switch_restores_the_store_write() {
         );
     }
 }
+
+/// `@FR-R-KeyedEntry` takes m7's hash inserts from the mint window; with it switched off the
+/// window still holds their addresses, so the clause it took over keeps its evidence.
+#[test]
+fn the_hash_inserts_are_windows_without_the_keyed_entry() {
+    let got = counts(&emit("nokeyed", &[("LOFT_NO_KEYED_ENTRY", "1")]));
+    assert_eq!(
+        got.get("n_m7").copied().unwrap_or_default(),
+        (3, 6),
+        "n_m7 under LOFT_NO_KEYED_ENTRY: (element addresses, field writes through one)"
+    );
+}

@@ -4968,6 +4968,18 @@ native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  S
                  a key it filed or did not).  The variable itself is bound — `b = t`
                  between two record locals is a copy, which would leave `b` no view of the
                  entry — so neither the condition nor the arm may name `b`.
+                 THE MATCH CLAUSE: the pattern tests of a slice `match` (each `if` down
+                 its arm chain's else-spine), when every one is pure, read the subject's
+                 length once, and each INTEGER computation of one element `subject[b + k]`
+                 (`b` the cursor's position or none, `k >= 0`: a variant number, a scalar
+                 element) that two of them make, bound before the first test as
+                 `t = if b + k + 1 <= len { e } else { 0 }`.  An occurrence is replaced
+                 only where the tests enclosing it prove `b + n <= len` with `n > k` (a
+                 length test, or an exact `len == n`), so the bound value is the read's own
+                 value there and no read is made that the plain chain does not make.  The
+                 tests run one after another with nothing between them; an arm's bindings,
+                 its body and its guard are never changed, and the tests a failed guard
+                 falls through to run inside that arm, as written.
 ```
 
 **In words.** Applied by: `same_read::rewrite_program`, in the IR phase (both backends; native
@@ -4983,6 +4995,10 @@ positions.  Measured on `index_read` by the hand-written form: −31 % interpret
 (the guard clause; zttext `locate`'s shape),
 `tests/scripts/a-lookup-a-get-or-insert-repeats-is-made-once.loft` (the get-or-insert clause;
 gridmesh `field_add_cell`'s bucket, whose two lookups were 18 % of what `(R-KeyedEntry)` left of the row) and
+`tests/scripts/a-slice-match-reads-its-subject-once.loft` (the match clause; `arguments`'
+`parse`, whose cursor match tested element 0's variant in up to five arms per token:
+25.23 → 24.01 ms native, −0.8 % interpreted; `LOFT_NO_MATCH_READ=1` switches the clause off
+alone) and
 `tests/same_read.rs`
 (which statements bind; the cells with the rewrite off).
 
