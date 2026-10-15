@@ -979,7 +979,7 @@ impl Parser {
                 // the method then reads a misaligned slot → garbage value / the
                 // `codegen.rs:2669` +8 drift.  This is the same shape the P103
                 // guard in `parse_append_vector` already rejects for
-                // `f([1,2] + [3])` (tests/scripts/102-expected-errors.loft):
+                // `f([1,2] + [3])` (loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft):
                 // inline vector concat consumed by a call/sub-expression must be
                 // assigned to a variable first.  Fire the same clean error here
                 // instead of silently corrupting.  Direct assignment `v = (a+c)`

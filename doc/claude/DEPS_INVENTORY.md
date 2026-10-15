@@ -224,7 +224,7 @@ wide to combine with other work.
       are all false positives of the retired positional decode on field /
       enum-arm returns that copy into the retbuf; freeing the source is
       correct, and re-adding the read would leak it).
-      Regression: `tests/scripts/297-closure-factory-explicit-return.loft`
+      Regression: `loft-suite/attic/scripts/297-closure-factory-explicit-return.loft`
       (both backends).  Residuals found en route, NOT step-5 scope:
       armed-lib-debug builds (`profile.dev.package.loft`
       debug-assertions=true) are globally red at baseline
@@ -236,4 +236,4 @@ wide to combine with other work.
       (pass-1 multi-return-site growth is sound and pass-stable; only
       PASS-2 growth is dangerous, and the assert now guards exactly
       that).  See STABILITY_HOTSPOTS § H1 retired note;
-      `tests/scripts/298-multi-return-site-ref-buffer.loft`.
+      `loft-suite/attic/scripts/298-multi-return-site-ref-buffer.loft`.

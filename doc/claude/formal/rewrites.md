@@ -208,7 +208,7 @@ one shape, asked by the gate, the collector and the emitter), `KeepRangeEmitter`
 declines as before); under `LOFT_NO_KEEP_RANGE` the runtime's copy form takes the
 re-derive branch.  Falsifier `LOFT_HOIST_VERIFY=1` (`vector::verify_kept_header`: the
 refreshed header against one derived from the record after every pop).  Guard
-`tests/scripts/1014-keep-range-refresh.loft` (a stack popped while read, a `hi` past the
+`loft-suite/rules/rewrites/R-Refresh/1014-keep-range-refresh.loft` (a stack popped while read, a `hi` past the
 length, a pop to empty then pushes, two stacks in one body, a pop from both ends under
 `len(v)`, a negative bound).
 
@@ -249,10 +249,10 @@ versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` deci
 `StoreFacts::distinct` reads its assumed pairs at the roots of both sides — an adopted local
 and its `__vdb` witness among them, the witness assumed but never tested (the adoption leaves
 it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
-`tests/scripts/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
+`loft-suite/rules/rewrites/R-Alias/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
 (graphics' `polygon_crossings`: 8.1× → 5.4× of its twin) and
-`tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`
-(`mesh_to_floats`'s shape) and `tests/scripts/a-versioned-loop-sees-its-adopted-buffer.loft`
+`loft-suite/rules/rewrites/R-Alias/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`
+(`mesh_to_floats`'s shape) and `loft-suite/rules/rewrites/R-Alias/a-versioned-loop-sees-its-adopted-buffer.loft`
 (the caller hands the parameter's own record as the buffer: the test fails, the plain loop runs).
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
@@ -1010,7 +1010,7 @@ hot half lost its inline and the walk its registers — the exception (R-Cold)'s
 names).
 `LOFT_HOIST_VERIFY=1` re-derives header, base and span at every read.  A twin's input
 base carries no span, and such a read keeps the store-resolving form.  Switch
-`LOFT_NO_TEXT_BASE`; cells `tests/scripts/158-text-base.loft` b1–b8 (falsified by the
+`LOFT_NO_TEXT_BASE`; cells `loft-suite/rules/rewrites/R-Base/158-text-base.loft` b1–b8 (falsified by the
 past-the-end arm answering the element before it); pins `tests/text_borrow.rs`.  Sites:
 `Output::fused_text_read`, the span beside each base in `Output::bind_loop_headers` and
 `Output::bind_view_header`, the arm in `LazySplitNextEmitter`, the pre-eval exemption in
@@ -1022,7 +1022,7 @@ the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::r
 closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
 header, a record's address and a mint group's path).  Measured before it: `g.tags`' header
 hoisted across `e = h[i]`, native read `h[0]`'s tags on every pass (15 for 16, every
-switch on or off); cells `tests/scripts/158-link-rebind.loft` l1–l7.
+switch on or off); cells `loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft` l1–l7.
 **The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
 `OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
 `e = tbl[i]?` mints an ABSENT record element into — whatever the record holds.  The
@@ -1245,7 +1245,7 @@ the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_vie
 (the read and the write), `Output::output_record_tuple` and
 `Output::write_tuple_through_address` (the tuple clause), `vector::rec_ptr` / `rec_get` /
 `rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
-`tests/scripts/a-value-record-is-copied-through-one-address.loft`, pins
+`loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft`, pins
 `tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
 the same gate admits it once the `Optional` is peeled — the loop body reads every field of
@@ -1473,7 +1473,7 @@ ENUM pushes (`OpPushBoolean`, `OpPushEnum`) are the byte kind at bias 0 — thei
 holds, the enum null 255 included, so their element is the value itself, spelled `as u8`
 because a boolean's native value is a `bool` (`hoist::push_value_cast`); being unbiased, their
 one-value slice fill IS admitted, and a `true`, `false` or enum literal is a simple invariant
-for it.  Cells: `tests/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
+for it.  Cells: `loft-suite/attic/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
 Applied by: native generator.  Its clause on the parser's `OpPreAllocVector` is one fact with
 `(R-FirstClaim)`, which the interpreter's generator applies where no header is held.
 
@@ -2141,7 +2141,7 @@ format refills it, and each run of the format rebinds the local — the old borr
 then, unless the format reads the local itself (refused) or another variable took the
 borrow over (refused).  rustc checks the same borrow, so a wrong admission is a refused
 compile rather than a wrong answer.  Cells
-`tests/scripts/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
+`loft-suite/rules/rewrites/R-TextBorrow/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
 
@@ -2267,7 +2267,7 @@ it dropped its allocation and claimed and regrew a new one on every pass: zttext
 the `&text` parameter.  Emptied in place the buffer is claimed once per activation.
 `materialise` 500 → 206 µs, `seg` 950 → 665 µs on arm64 macOS, hashes unchanged.
 Switch `LOFT_NO_TEXT_CLEAR`; census `R-TextClear`, one per emission.  Cells
-`tests/scripts/an-emptied-text-keeps-no-old-content.loft` (c1–c6: every cell refills a
+`loft-suite/attic/scripts/an-emptied-text-keeps-no-old-content.loft` (c1–c6: every cell refills a
 text that held MORE than it is refilled with; with the clear replaced by a no-op, c1
 reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
 `Output::output_set_inner`.
@@ -2414,7 +2414,7 @@ compile time, and a reload that stalled on the bytes just written.  The decode i
 generic one's, arm for arm, so the answer cannot differ; what moved is when it is decided.
 
 **BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
-guard `tests/scripts/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
+guard `loft-suite/rules/rewrites/R-TypedRead/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
 ### A loop that alone sees its file holds the cursor
 
@@ -2643,7 +2643,7 @@ gridmesh `field_add_cell` 22.97 → 15.06 ms, `build_index` 10.16 → 7.49 ms (h
 the repeated-key half alone −26 %).  Switch `LOFT_NO_KEYED_ENTRY`.  Falsifier
 `LOFT_KEYED_VERIFY=1`, which looks every answered entry up again through the general
 entry and panics where the two differ.  Cells
-`tests/scripts/a-keyed-insert-writes-the-entry-its-key-names.loft`.  Sites:
+`loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft`.  Sites:
 `generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
 `Stores::keyed_entry_long`, `hash::entry_long`.
 
@@ -2713,7 +2713,7 @@ handed `head` the return buffer.  Switch `LOFT_NO_FORWARD_RESULT`;
 `LOFT_TRACE_FORWARD_RESULT=1` names each admission and decline.  Site:
 `forward_result::rewrite`, in the scope pass after `(R-ExitVector)`, so both backends
 read it.  Guard
-`tests/scripts/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.loft`.
+`loft-suite/attic/scripts/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.loft`.
 
 ### A helper's arithmetic is plain where its caller bounded the arguments
 
@@ -2747,7 +2747,7 @@ store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
 (`range_guard_for`, `ranged_call`, `variant_ranges`), `range.rs` (`Ranges`, the seeded
 `range_vars`, `call_range`), the `For`-block arm in `emit.rs`, the variant loop in
 `output_functions`.  Guard
-`tests/scripts/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.loft`.
+`loft-suite/rules/rewrites/R-RangedCall/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.loft`.
 
 ### A filling loop is one slice fill
 
@@ -2887,7 +2887,7 @@ interpreter stops dispatching every element: bench 14's `sum` went from 1,174,38
 is exactly `end = len(v); idx = -1; loop { i = step; { acc = acc + v[i] } }` over 8-byte
 integer elements, the summed vector the ranged one, the loop's own variables mentioned nowhere
 else.  Switch `LOFT_NO_LOOP_KERNELS` (the loop stays, native's own clause then takes it);
-cells `tests/scripts/a-reduction-loop-is-one-kernel-call.loft`.
+cells `loft-suite/attic/scripts/a-reduction-loop-is-one-kernel-call.loft`.
 
 ### A witnessed buffer is allocated once, not minted per call
 
@@ -3093,7 +3093,7 @@ refused.
 
 **The pool** (loft#1697; `Parser::pooled_work_buffer`, opened by
 `patch_work_buffer_callers`; `LOFT_NO_WORK_BUFFER_POOL`; guard
-`tests/scripts/a-frame-pools-its-work-buffers-across-call-sites.loft`).  Per site, the
+`loft-suite/rules/rewrites/R-WorkBuffer/a-frame-pools-its-work-buffers-across-call-sites.loft`).  Per site, the
 transitive clause multiplied buffers up the call tree: a library of 100 functions of 150 calls
 each gave every function 150 hidden parameters and `main` 15 002 locals, and the promotion
 fixpoint re-ran the scope pass on each function up to twelve times — 96 s where the build
@@ -3502,7 +3502,7 @@ are the two instruments: `scripts/native_call_census.py` (which fast-path symbol
 still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
 `#[inline]` functions rustc declined — an `#[inline]` function with an out-of-line
 symbol and self time is the candidate).  The fold clause's cells are
-`tests/scripts/fused-element-read-resolves-every-index.loft` e1–e7 (falsified by a fold
+`loft-suite/rules/rewrites/R-Cold/fused-element-read-resolves-every-index.loft` e1–e7 (falsified by a fold
 that drops the from-the-end resolution: `--native` fails e1, the verifier names index −2),
 and `vector::elem_index`'s own unit tests.  Fold sites: `vector::get_elem_at`,
 `vector::get_elem_hoisted`.  Outlined sites: `vector::text_elem_cold`,
@@ -3911,7 +3911,7 @@ answered here rather than decided in the code.
                  dispatch reaches.
 ```
 
-**The nested clause** (cells `tests/scripts/158-nested-value-record.loft` n1–n14,
+**The nested clause** (cells `loft-suite/attic/scripts/158-nested-value-record.loft` n1–n14,
 the moved pin `tests/nested_field.rs` n12).  A record whose fields are scalars and inline
 sub-records of scalars — `Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }`, eight floats two
 structs deep — rides the tuple like a flat one: `hoist::type_layout` recurses into an inline
@@ -3935,7 +3935,7 @@ per scalar, so a store record handed to one costs eight loads where the callee m
 the new width.
 
 **The body clause** (loft#1697; cells
-`tests/scripts/a-literal-table-is-built-from-its-constant.loft`, switch `LOFT_NO_CONST_VIEW`).
+`loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft`, switch `LOFT_NO_CONST_VIEW`).
 A call `(R-Const)` must decline — the result stored into a field, returned, written — still
 ran the function, and the function built its vector one push per literal: a 115 000-element
 terrain table was a 115 000-line function.  The function's own body now builds its fresh
@@ -4152,7 +4152,7 @@ to bisect to.
   `resolve_move(from: Vec3, …)`, whose body only builds `Vec3`s through `vec3`, carries its
   parameters, and `vec3` stops being consumed as a record at those sites (the moros/dryopea
   lane: `vec3` and `hex_to_world` tuples, four mints and frees fewer per `resolve_move`).
-  Cells `tests/scripts/158-a-callees-own-buffer-is-a-fresh-record.loft` (c4b and c5b are
+  Cells `loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft` (c4b and c5b are
   the aliasing negatives: a parameter that names the record written reads the write back,
   which a tuple copy could not).  Declines:
   a parameter the body rebinds, a nullable or `&` one, a record with a view leaf, a
@@ -4169,7 +4169,7 @@ to bisect to.
   nested call argument had left the outer call's callee naming the inner one.  A `(R-RecPtr)`
   view handed to a tuple parameter keeps its address for the hand-off, exactly as it did for
   the twin's inputs, and the site reads the fields through it.  The cells:
-  `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft` (18, every alias
+  `loft-suite/attic/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft` (18, every alias
   route that must decline beside the shapes that admit; receipt: a sabotage of the
   write-set test fails c3 on native, `1` for `5`); the value-record pins
   (`tests/value_record.rs`) carry the three predictions the rule flips (a result passed to
@@ -4180,7 +4180,7 @@ to bisect to.
   parameter into a fresh local (`q = p` declines as an untyped mint), and the
   loop-invariant element reads the price named.
 
-**The width, the discharged return, the field write and the terminal copy (@PLN158; cells `tests/scripts/158-a-seven-field-record-returns-by-value.loft`).**  Six
+**The width, the discharged return, the field write and the terminal copy (@PLN158; cells `loft-suite/rules/rewrites/R-ValueRecord/158-a-seven-field-record-returns-by-value.loft`).**  Six
 fields became eight — moros's `Hex` has seven, and a tuple past the register file is
 returned through the caller's stack slot, still nothing beside a store record.  Three
 admissions beside it, each the one thing that kept `map_get_hex` off the value path:
@@ -4249,7 +4249,7 @@ counted range over a literal end (`if 100000 <= i break`) one compare-and-jump: 
 ops a round in every `for … in 0..LITERAL`.  It extends the fused compare's KINDS (`GT`,
 `GE`), not the op set.  Effect: 3 ops a round on a literal-ended loop; the `12_drawing` hash
 loop −5 to −8 % (pinned layout).  Switch `LOFT_NO_FUSE`.  Guard
-`tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft` (`test_literal_on_the_left`).
+`loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft` (`test_literal_on_the_left`).
 
 ### A reservation the append repeats is not emitted
 
@@ -4399,7 +4399,7 @@ on its first run: a `par` worker claims its text work buffers IN the stack store
 it — that path is `claim_in_stack` now.  A stale base is invisible while only the fast path
 uses it (the freed buffer still holds what it wrote), so the guard reaches one slot both ways.
 Effect (pinned layout): −8 to −17 % per routine.  Not available in a debug-assertions build,
-which runs the checked stack path.  Guards `tests/scripts/a-stack-that-grows-mid-call-keeps-every-frame.loft`,
+which runs the checked stack path.  Guards `loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft`,
 `rpc.rs`'s continue-after-step-back cell, `par_nested`, the `store::tests` refusal pair.
 
 ### A crash context is derived, not written per op
@@ -4466,7 +4466,7 @@ What it removes is the store-then-load of the two fields from one op to the next
 op behind the previous op's write on the critical path.  Effect, against the plain table in the
 same binary: the dispatch-bound bench rows −11 to −20 %, a call-bound row unchanged.
 `LOFT_NO_REGISTER_TABLE=1` dispatches the plain table.  Guarded by every interpreted test, and
-by `tests/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table.loft` with
+by `loft-suite/attic/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table.loft` with
 `LOFT_NO_HOT=1`, which runs every operator through these entries.
 
 ### An op's operands are checked once
@@ -4513,9 +4513,9 @@ stack-underflow or operand report is out of line (`stack_underflow`, `code_out_o
 formatted `assert!` takes its argument's address and puts the whole view back in memory.
 Effect, against `LOFT_NO_HOT=1` in the same binary: the dispatch-bound bench rows −15 to −22 %,
 a call-bound row unchanged.  `LOFT_NO_HOT=1` runs every operator through the register table.
-Guard `tests/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table.loft`, with its
+Guard `loft-suite/attic/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table.loft`, with its
 planted defects named in its header; the fused hot operators' own guard is
-`tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft`.
+`loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft`.
 
 ### A `par` worker runs on the lean loop
 
@@ -4537,7 +4537,7 @@ worker instantiation leaves that test out (`lean_stop(true)`).  The remembered d
 reset wherever `fn_positions` is rebuilt.  Effect on a one-thread `par` over a 1000-element
 vector: 306 → 175 ms, the same as the loop without `par`; four threads 92 → 49 ms.
 `LOFT_NO_WORKER_LEAN=1` runs a worker on the checked loop.  Guard
-`tests/scripts/a-par-worker-runs-on-the-lean-loop.loft`; the stop path is falsified by
+`loft-suite/rules/rewrites/R-WorkerLean/a-par-worker-runs-on-the-lean-loop.loft`; the stop path is falsified by
 `runtime_errors::i1056_a_par_worker_fault_names_the_workers_own_frames` and the placement-parity
 library-fault cells (the receipt is in the guard's header).
 
@@ -4590,7 +4590,7 @@ cycles on every element (measured: 22 M blocked loads in a 20 M-push loop, +8 %
 cycles, until both helpers were `#[inline(always)]` and the two append branches stopped
 meeting in one `Option`).  Effect (pinned layout, against R-CodeBase): matrix_mul −16 %,
 sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guard
-`tests/scripts/an-element-read-in-range-answers-what-the-full-path-answers.loft`.
+`loft-suite/rules/rewrites/R-ElementPath/an-element-read-in-range-answers-what-the-full-path-answers.loft`.
 
 ## A leaf's body in place of its call — four rules over one IR pass
 
@@ -4991,11 +4991,11 @@ version compared reads exactly and bound nothing: the two spellings carry differ
 positions.  Measured on `index_read` by the hand-written form: −31 % interpreted.
 `LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
 `tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft`,
-`tests/scripts/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft`
+`loft-suite/rules/rewrites/R-SameRead/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft`
 (the guard clause; zttext `locate`'s shape),
 `tests/scripts/a-lookup-a-get-or-insert-repeats-is-made-once.loft` (the get-or-insert clause;
 gridmesh `field_add_cell`'s bucket, whose two lookups were 18 % of what `(R-KeyedEntry)` left of the row) and
-`tests/scripts/a-slice-match-reads-its-subject-once.loft` (the match clause; `arguments`'
+`loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft` (the match clause; `arguments`'
 `parse`, whose cursor match tested element 0's variant in up to five arms per token:
 25.23 → 24.01 ms native, −0.8 % interpreted; `LOFT_NO_MATCH_READ=1` switches the clause off
 alone) and
@@ -5158,7 +5158,7 @@ fold bound to a local and read twice (declines); the switch A/B over `server`'s 
 emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` ask ONE
 predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
 fold's block is neither lifted nor built; guard
-`tests/scripts/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
+`loft-suite/rules/rewrites/R-FoldCompare/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
 the operand clause below.
 
 ```
@@ -5279,7 +5279,7 @@ Native only; the interpreter copies and is the reference.
 
 **BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
 `emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
-`tests/scripts/a-call-result-appended-is-built-in-the-destination.loft`).
+`loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
 
 ### A call whose result is moved whole into an element builds it there
 
@@ -5333,7 +5333,7 @@ relocates the field into e and reads the scalars back.
 **BUILT** (`src/generation/destination.rs` — `shape` for the callee, `site` for the chain;
 the twin's hooks in `emit.rs`, its call name in `calls.rs`, its emission and live arm in
 `mod.rs`; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
-`tests/scripts/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
+`loft-suite/rules/rewrites/R-Destination/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
 Native only; the interpreter moves as before and is the reference.
 
 ### A fn-ref whose every target answers a value record answers the tuple
@@ -5374,7 +5374,7 @@ which consumed it as a record while `measure`'s arms kept theirs.
 `fnref_value` / `fnref_param` read by `value_shape`, `site_walk` and `local_uses_ok`; the
 dispatch's tuple mode in `emit.rs`; `fnref::dispatch_arms` narrowed to the record;
 `value_record::rewrite_program` leaves the arms; `LOFT_NO_FNREF_VALUE`, `LOFT_TRACE_VALUEREC`;
-guard `tests/scripts/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; measured in
+guard `loft-suite/rules/rewrites/R-FnRefValue/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; measured in
 `bench/portal/analysis/over-9x.md` § zttext).
 
 ### A lookup's found entry is answered as a view the caller reads in place
@@ -5412,7 +5412,7 @@ its text claim per lookup; `pa_get` is the shape of every `match`-based finder. 
 ownership question it raised is settled by @C122 and @C139: a representation is the
 compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
 `LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
-`src/generation/view_return.rs`; guard `tests/scripts/a-found-entry-is-read-where-it-lies.loft`.
+`src/generation/view_return.rs`; guard `loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft`.
 
 ### A decoded text or byte string is a view into the frame
 
@@ -5514,7 +5514,7 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   free of the buffer the table leaves dead.  **BUILT** for the walk: `borrowed_text_walks`
   reads each statement of the loop as emitted (`as_emitted_by_tables`, `src/generation/
   hoist.rs`), every other statement judged unchanged; guard
-  `tests/scripts/a-walked-text-borrows-beside-a-split-table.loft`, whose element-replacing
+  `loft-suite/rules/rewrites/R-TextBorrow/a-walked-text-borrows-beside-a-split-table.loft`, whose element-replacing
   cell is the one a dangling borrow fails.  Still PROPOSED: `(R-Header)`'s loop clause
   admitting by the same verdict.
 - **The match-binding clause, for `(R-TextBorrow)`.**  A text bound by a match pattern that

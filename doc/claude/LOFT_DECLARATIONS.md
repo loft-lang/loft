@@ -131,8 +131,8 @@ The KEYED collections are not an exception. A `&` alias to a `hash` / `sorted` /
 names read the same length; a `&` keyed PARAMETER appends through to the caller's collection
 the same way. A keyed collection is already a store handle, so the `&`-free spelling reaches
 the caller's collection too — the two spellings differ only in whether the bind copies, and
-for a keyed collection neither does. Guards: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`
-(the alias, every kind, both names read) and `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft`
+for a keyed collection neither does. Guards: `loft-suite/rules/binding/B-Ref-Alias/1433-a-keyed-alias-is-a-link-not-a-copy.loft`
+(the alias, every kind, both names read) and `loft-suite/rules/binding/B-Ref-Uniform/1445-a-keyed-parameter-appends-through-its-link.loft`
 (the parameter). Everything else on this page — `insert` / `reverse` / `sort` / `reserve` and
 the generics over `vector<T>` (`sum`, `min_of`, `max_of`) — goes through a `&` as stated.
 
@@ -242,7 +242,7 @@ In library/default files, `size(n)` specifies the storage size in bytes:
 pub type u8 = integer limit(0, 255) size(1);
 ```
 
-Catalogue: @F46; guard: `tests/scripts/78-type-aliases.loft`, `tests/scripts/167-a-size-is-written-in-a-type-alias.loft`.
+Catalogue: @F46; guard: `tests/scripts/78-type-aliases.loft`, `loft-suite/rules/layout/L-Narrow-Alias/167-a-size-is-written-in-a-type-alias.loft`.
 
 ### Library imports
 

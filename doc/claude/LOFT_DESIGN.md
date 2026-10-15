@@ -233,7 +233,7 @@ so growing it is a mutation of the shared store rather than a local act.
 parameter gives that function a different vector and leaves the caller's alone
 (`F-ParamRebind`); through a `&vector<T>` the caller sees the new vector. So reach for `&` when
 the function REPLACES, not when it appends (guard
-`tests/scripts/1251-a-heap-parameter-is-shared-not-copied.loft`).
+`loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft`).
 
 ### Polymorphic text methods on struct-enum variants
 

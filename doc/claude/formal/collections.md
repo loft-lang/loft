@@ -69,7 +69,7 @@ has neither: no byte string (and `""` is a different value — `(L-Null-Text)`),
 curve.  So both refuse a `?` on a key at the declaration, naming it.  The three VALUE-keyed kinds
 do not ask: `hash` keys on the value, where an absent key is a value like any other, and `sorted`
 and `index` order by it, where `(L-Null)`'s in-band sentinel puts an absence first, below every
-present key — measured in `tests/scripts/1429b-the-kinds-that-do-hold-an-absent-key.loft`, which
+present key — measured in `loft-suite/attic/scripts/1429b-the-kinds-that-do-hold-an-absent-key.loft`, which
 is also where the two refusals' advertised cures are checked.  Asked as a bare `Type::Text`, the
 kind test read a `text?` as "not a text", which let it take a spatial AXIS' place: accepted,
 iterating its records, and answering null for a point just inserted — loft#799's failure reached
@@ -95,11 +95,11 @@ with fields is a record.
 
 *Anchors:* `Parser::check_key_is_value` / `mutable_key_part` (`src/parser/definitions.rs`),
 asked from the `hash`, `sorted` and `index` arms of the type parser;
-`tests/scripts/a-key-field-is-an-immutable-value.loft` and
+`loft-suite/rules/collections/Col-Key/a-key-field-is-an-immutable-value.loft` and
 `…-a-struct-key-field-is-refused.loft`.
 
 *Anchors:* `Type::{Vector,Hash,Sorted,Index,Radix,Trie}` (src/data.rs); DATABASE.md:693,:704; spatial
-surface tests/scripts/48-spatial-construct-free.loft; trie `Parts::Trie` (database/mod.rs:194) + @PLN134. **To decide when writing:** which formers
+surface loft-suite/attic/scripts/48-spatial-construct-free.loft; trie `Parts::Trie` (database/mod.rs:194) + @PLN134. **To decide when writing:** which formers
 live here vs in types.md's former list (recommend: types.md gains the one-line formers; collections.md
 owns their *operations + order*).
 
@@ -122,7 +122,7 @@ owns their *operations + order*).
                 An ABSENT collection counts 0 at every kind — a `<kind>?` handed to `len` is
                 `(N-Store)`'s store (a warning), and 0 is the one value @C80 leaves it.
 ```
-*Anchor:* tests/scripts/48-spatial-construct-free.loft (construct/append/len).
+*Anchor:* loft-suite/attic/scripts/48-spatial-construct-free.loft (construct/append/len).
 
 **An absent destination is instantiated, not refused (`Col-Insert-Absent`).**  `s.items:
 vector<It>?` holding null and then `s.items += [x]` leaves `s.items` holding `[x]`; a local, an
@@ -130,7 +130,7 @@ element or a parameter of a nullable collection type behaves the same, and so do
 kind (loft#1213 is the keyed FIELD half of it).  So does a LINK to a null local (a `&τ?`
 parameter, `c = &a`, a closure capture) and a local set back to `null`: each reaches the same
 slot, which the local is given, marked absent, before it is shared or re-nulled
-(`tests/scripts/c118-an-append-reaches-an-absent-collection-through-a-link.loft`).  This is deliberately the opposite answer from
+(`loft-suite/attic/scripts/c118-an-append-reaches-an-absent-collection-through-a-link.loft`).  This is deliberately the opposite answer from
 iteration: a `for` over a nullable collection is refused until discharged
 ([iteration.md](iteration.md)), because a loop body binds a dense element and the only way
 there is an unwrap, while an insert has no such binding — its only question is *which store*,
@@ -194,7 +194,7 @@ Two source shapes the rule deliberately does NOT license, each with its own answ
 ```
 *Anchor:* `database/search.rs::set_keyed` (`insert_keyed_copy_at`, `keys::set_key`), both
 backends — the subscript's keys ride the op exactly as `OpGetRecord`'s do.  Guard
-`tests/scripts/a-keyed-assignment-places-its-record-under-the-subscript.loft`.
+`loft-suite/rules/collections/Col-Assign/a-keyed-assignment-places-its-record-under-the-subscript.loft`.
 
 **Why the subscript, and not the record's own key field (owner ruling 2026-09-28,
 loft#1716).**  Until then the subscript was parsed and dropped: `c[5] = K { key: 9 }` landed
@@ -219,7 +219,7 @@ collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves
                     other key stays reachable and unchanged — keys are not positions, so nothing
                     is renumbered.
 ```
-*Anchor:* tests/scripts/200-vector-stays-dense.loft (density); measured for the keyed kinds —
+*Anchor:* loft-suite/attic/scripts/200-vector-stays-dense.loft (density); measured for the keyed kinds —
 `s[30] = null` on a `sorted<Elm[key]>` leaves `s[10]` and `s[50]` intact.
 
 **Why this rule is load-bearing beyond collections.** `Col-RemoveDense` is exactly what makes a
@@ -394,7 +394,7 @@ independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
 > only its `till`: `s[-2..]` answered `""` where `v[-2..]` answered the last two, on both
 > backends, with `s[..-1]` right beside it — three implementations of one operation, and the one
 > that had it right (`ops::sub_text`, which INTERNALS.md documents as end-relative on both ends)
-> was the unused one. Pinned by `tests/scripts/a-negative-slice-bound-counts-from-the-end.loft`,
+> was the unused one. Pinned by `loft-suite/rules/collections/Slice-Value/a-negative-slice-bound-counts-from-the-end.loft`,
 > which reads every text cell against the vector cell for the same bound.
 
 > **The subject's evaluation count is part of this rule because leaving it out was silently
@@ -412,7 +412,7 @@ independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
 > error."* And `Parser::is_repeatable_place` is the shared answer to *"is repeating this
 > free?"*, already used by the nullable-slot read for the same reason; a variable and a
 > projection chain ARE free to repeat, which is what keeps the ordinary `v[a..b]` from gaining a
-> name or a copy. Pinned by `tests/scripts/1521-a-slice-evaluates-its-subject-once.loft`, whose
+> name or a copy. Pinned by `loft-suite/attic/scripts/1521-a-slice-evaluates-its-subject-once.loft`, whose
 > first cell is an evaluation COUNT and so fails on the parent with no instrument armed.
 
 ### 1.6 Keyed range-slice iterators — `Slice-KeyedIter` (`D-key-1`, the shipped decided edge)
@@ -444,7 +444,7 @@ STDLIB.md:281. sorted-slice design: [../plans/38-sorted-slice/](../plans/38-sort
 > **`Slice-Box` was the Morton INTERVAL until loft#800** — `[code(x1,y1), code(x2,y2)]`, a superset
 > Z-order threads out of the box and back, which this rule once stated as a deliberate contract
 > (`INV-Superset`, now `INV-BoxExact`) for the caller to filter.  The surface (STDLIB.md, LOFT.md) has promised the
-> exact box since, and `radix_db::box_range` walks it (@PLN136); `tests/scripts/800-spatial-box-containment.loft`
+> exact box since, and `radix_db::box_range` walks it (@PLN136); `loft-suite/attic/scripts/800-spatial-box-containment.loft`
 > pins it.  The rule text was the last place the superset survived (re-measured 2026-09-28).
 >
 > **`Slice-Open`/`Slice-Cap` HELD only from 2026-08-19** (loft#1002). Until then both lowered to
@@ -622,16 +622,16 @@ insert) and `Stores::link_record_siblings` (its sibling half alone, `OpLinkRecor
 record leaving, and the element-level writes through the vector member);
 `Stores::insert_keyed_copy` (`src/database/search.rs`, the one keyed insert both the
 point write and the bulk fill take); DATABASE.md § Clearing one member of a linked group;
-tests/scripts/a-group-element-written-through-the-vector-member-reaches-every-member.loft;
-tests/scripts/a-keyed-view-joins-a-nullable-element-vector.loft;
-tests/scripts/a-collection-group-does-not-depend-on-declaration-order.loft;
-tests/scripts/1158-a-group-forms-whichever-member-is-declared-first.loft;
-tests/scripts/1152-a-vector-value-into-a-group-reaches-every-member.loft;
-tests/scripts/1159-a-keyed-collection-filled-from-a-vector-value.loft;
-tests/scripts/a-nullable-keyed-member-joins-its-group.loft;
-tests/scripts/1160-a-variant-binding-write-means-the-field-write.loft;
+loft-suite/rules/collections/Col-Group/a-group-element-written-through-the-vector-member-reaches-every-member.loft;
+loft-suite/attic/scripts/a-keyed-view-joins-a-nullable-element-vector.loft;
+loft-suite/attic/scripts/a-collection-group-does-not-depend-on-declaration-order.loft;
+loft-suite/rules/collections/Col-Group/1158-a-group-forms-whichever-member-is-declared-first.loft;
+loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft;
+loft-suite/rules/collections/Col-Insert/1159-a-keyed-collection-filled-from-a-vector-value.loft;
+loft-suite/rules/collections/Col-Group/a-nullable-keyed-member-joins-its-group.loft;
+loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft;
 tests/scripts/927-trie-spatial-linked-group.loft;
-tests/scripts/901-linked-group-fill.loft.
+loft-suite/rules/collections/Col-Group/901-linked-group-fill.loft.
 
 ---
 
@@ -683,7 +683,7 @@ VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
   and `:n` from every origin (`48b-spatial-slice.loft`), and a cap below one answering none
   (`a-slice-cap-below-zero-answers-no-records.loft`).
 - `Col-Lookup` nullable (absent key ⟹ null, discharge required) — pinned by
-  `tests/scripts/1120-one-null-question-for-a-collection.loft`, which scores `??`, `== null` and the
+  `loft-suite/attic/scripts/1120-one-null-question-for-a-collection.loft`, which scores `??`, `== null` and the
   condition position against each other so no two of them can drift apart again.  Its defaults are
   never `[]`: see `D-col-null` for why that is the whole difficulty.
 

@@ -89,7 +89,7 @@ site.)
 arguments already in hand.  The compiler either replays the default's expression at the call site
 (substituting the call's own arguments for the earlier parameters) or lowers it into a small
 function that takes them — which one is an implementation choice, and neither may change the
-answer.  Guarded by `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft` (the
+answer.  Guarded by `loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft` (the
 values) and `a-match-default-over-records-compiles.loft` (a lowered default well-formed where its
 argument is), and `1758-a-text-tuple-default-answers-what-its-argument-would.loft` (a lowered default
 returning a lifetime-bearing tuple is boxed like a declared one and unboxed where it becomes the
@@ -200,7 +200,7 @@ F-ParamHeap), so the rule keys on the aliasing relation, not on the token."* LOF
 vector append and the reference's Vector chapter both promised that `v += [x]` on a non-`&`
 parameter was callee-local; it never was, on either backend, and the rules said so from the other
 end (loft#1251). Pinned by
-`tests/scripts/1251-a-heap-parameter-is-shared-not-copied.loft` — a table over
+`loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft` — a table over
 {append, element write, remove, clear, replace} × {plain, `&`} × {vector, hash, sorted}, plus the
 bind and slice controls that make the three cases distinguishable.
 
@@ -287,7 +287,7 @@ spellings ask it.  An operator is a third spelling of its `Op<Name>` call and as
 (`Parser::user_op_method`), and so does a bounded generic's monomorph: the slot's incumbent is
 only the overload declared FIRST, so `a - 1` reaches `OpMin(self: V, o: integer)` in either
 declaration order beside `OpMin(self: V, o: V)`
-(`tests/scripts/1817-an-operator-reaches-every-overload-of-its-second-operand.loft`).
+(`loft-suite/rules/calls/F-Recv/1817-an-operator-reaches-every-overload-of-its-second-operand.loft`).
 
 The site this rule is about is the one that ENUMERATES: the synthesised variant dispatcher
 (@F20) walks the implementations of an enum's variants, and asked for a bare
@@ -300,7 +300,7 @@ five lines above it (loft#1427). One home answers it: `Data::receiver_def_nr`.
 *Anchors:* `Data::receiver_def_nr` (`src/data.rs`), its three readers in
 `src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `refuse_uncovered_variants`) and
 `one_implementation_per_variant`, which keeps a variant's DENSE overload where both are
-declared — the one a direct call takes; `tests/scripts/1427-a-nullable-receiver-implements-its-variant.loft`,
+declared — the one a direct call takes; `loft-suite/rules/calls/F-Recv/1427-a-nullable-receiver-implements-its-variant.loft`,
 `1427b-…`, and the refusal half in `tests/parse_errors.rs`
 (`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
 cannot see.
@@ -339,7 +339,7 @@ stdlib method is this refusal (@C95).  A generic template is keyed the same way,
 `fn pick<T>(self: vector<T>)` beside `fn pick<T>(v: vector<T>)` is refused too.
 
 *Anchors:* `Data::add_fn` (`src/data.rs`, `shadowed_method` / `shadowed_free`);
-`tests/scripts/a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`;
+`loft-suite/attic/scripts/a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`;
 DESIGN_DECISIONS.md @C123.
 
 ### A library's surface is its `pub` items, by either spelling
@@ -434,7 +434,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   struct or vector literal) and every type; so is a block as an `if` arm, and one after a
   side-effecting statement. A block bound directly by an assignment (`x = { 5 }`) always
   was. The two legitimate discards are the controls: a `for` body's tail (loft#725) and a
-  void function's (`F-Drop`). Guard `tests/scripts/nested-block-in-value-position.loft`,
+  void function's (`F-Drop`). Guard `loft-suite/attic/scripts/nested-block-in-value-position.loft`,
   both backends.
 
   ⚠ *"The value flows out to whatever reads it"* is the half that took three more measurements,
@@ -446,17 +446,17 @@ measurement that closed it — is the companion [calls-history.md](calls-history
     of that had been cured in `block_result` since @PLN85; the collection half had not, and no
     consumer could cure it — five of them read such a block by wrapping it from outside, and the
     two that were correct were the two that sink their copy in.  Guard
-    `tests/scripts/1494-a-nested-block-yielding-a-locals-collection-copies-it.loft`, whose
+    `loft-suite/attic/scripts/1494-a-nested-block-yielding-a-locals-collection-copies-it.loft`, whose
     `two_blocks` cell is the one that makes the use-after-free show in the VALUE channel rather
     than only under `LOFT_POISON=1` (loft#1494).
   - A branch arm that DIVERGES types `Void` because control left, not because the branch is a
     statement, so the native emitter's statement-discard must not claim it.  Guard
-    `tests/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` (loft#1495).
+    `loft-suite/attic/scripts/1495-a-diverging-arm-beside-a-value-arm-still-yields.loft` (loft#1495).
   - And the discard itself has to be TOTAL: a statement branch's arm must yield nothing in its
     BODY and in its TYPE alike, because the interpreter balances its eval stack against the
     type.  An arm keeping either half left the stack off by one in that half's direction and
     corrupted every local live across the branch.  Guard
-    `tests/scripts/1496-a-statement-branch-discards-every-arm.loft` (loft#1496).  Which side of
+    `loft-suite/attic/scripts/1496-a-statement-branch-discards-every-arm.loft` (loft#1496).  Which side of
     `(F-Block)` a branch is on is decided by whether anything FOLLOWS it — the arm itself cannot
     tell, and three arm-side discriminators were disproven before that one was used.
 - **Void tail discard (`F-Drop`)** — a function declared void whose body ends in a value runs
@@ -464,7 +464,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   tuple, a narrow `u8`) and every tail shape (a call, a bare literal, an operator expression, a
   struct literal, an `if`, a nested block), in `main` and in an ordinary function alike. The
   `;` form and a block in VALUE position are the controls. Guard
-  `tests/scripts/void-fn-value-tail.loft`, both backends.
+  `loft-suite/attic/scripts/void-fn-value-tail.loft`, both backends.
 - **Arity (`F-Arity`)** — `f(1)` for `fn f(a, b: integer)` (no default) → "missing argument for
   parameter 'b' … too few arguments"; `f(1, 2, 3)` for a 2-param `f` → "Too many parameters"; a
   `b = 5` default or a `b: integer?` nullable parameter may be omitted.
@@ -475,20 +475,20 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   `o[0]==1`; only a `&`-param would write back. The rule names two spellings, so the oracle
   crosses the RIGHT-HAND SIDE with the type: {struct, struct-enum} × {literal, call, another
   local}, both backends, in
-  `tests/scripts/1290-a-heap-parameter-rebind-is-local-in-every-spelling.loft`, with a FIELD
+  `loft-suite/attic/scripts/1290-a-heap-parameter-rebind-is-local-in-every-spelling.loft`, with a FIELD
   write (`F-ParamHeap`), a `&` parameter (`F-ParamRef`) and a plain LOCAL as the controls.
   The VECTOR kind's `p = other` spelling was in neither oracle and answered wrong until
-  2026-09-05 (D-call-14): `tests/scripts/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft`
+  2026-09-05 (D-call-14): `loft-suite/rules/ownership/O-Proxy/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft`
   crosses it with a returned rebind, a rebind through a value branch, a double one, a loop and a
   read ahead of the rebind, with the mutate-through, a self arm and a `&` parameter as the
   controls.  The COLLECTION half is
-  `tests/scripts/1294-a-keyed-parameter-rebind-is-local.loft` — all five keyed kinds
+  `loft-suite/attic/scripts/1294-a-keyed-parameter-rebind-is-local.loft` — all five keyed kinds
   (`hash`, `sorted`, `index`, `spatial`, `trie` are what `is_keyed` names) crossed with the
   same right-hand sides plus the empty literal, a CONDITIONAL rebind and a double one, with
   the vector kind and an append (`F-ParamGrow`) as its controls. Its whole row wrote back to
   the caller: a keyed `=` lowers to `OpReplaceKeyed`, which deep-copies into the store the
   target's slot names, and for a parameter that is the CALLER's (loft#1294).  The NULLABLE
-  row is `tests/scripts/1295-a-nullable-parameter-rebind-has-an-owner.loft`, and it moves a
+  row is `loft-suite/attic/scripts/1295-a-nullable-parameter-rebind-has-an-owner.loft`, and it moves a
   different channel: the caller's VALUE was right there all along and the store the callee
   minted had no owner, one orphaned record per call (loft#1295).  `τ?` and `τ` share sentinel
   storage, so a nullable parameter is still a parameter.
@@ -510,7 +510,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   read in the caller was a use-after-free.  Both answered CORRECTLY at the call, which is why
   the issue that found the leak scored the value ✔ and never saw the alias: it takes a later
   mutation of the source to see one and a store-slot recycle to see the other.  The oracle is
-  `tests/scripts/1303-an-amp-write-back-leaves-the-caller-owning-its-store.loft` — the source
+  `loft-suite/attic/scripts/1303-an-amp-write-back-leaves-the-caller-owning-its-store.loft` — the source
   crossed with the type: {caller-reachable parameter, callee local, field} × {`hash`, `sorted`,
   `index`, `spatial`, `trie`, struct, struct-enum}, with a minting CALL (already correct — its
   buffer is a temp nothing else names, the transfer `(O-Move)` describes), the `vector` kind
@@ -520,7 +520,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   materialisation is what keeps the refusal (loft#1303).
 - **Return independence (`F-Ret`)** — `a = mk(); a[0]=99; b = mk()` leaves `b[0]==1`.  The
   NULLABLE record return, which has no delivery buffer, is pinned apart in
-  `tests/scripts/1337-a-view-of-a-local-returned-through-a-nullable-return-is-copied.loft`:
+  `loft-suite/rules/calls/F-Ret/1337-a-view-of-a-local-returned-through-a-nullable-return-is-copied.loft`:
   a walker's local rebound through its own reference field, a projection inside an `if` arm
   beside a `null` and beside a literal, the walk that ends at null, eight nullable controls
   and the two dense twins — each read after a filler allocation, both backends

@@ -4083,7 +4083,7 @@ impl Stores {
             // A stored 12-byte `DbRef` — the closure half of a `fn(…)` struct field — is
             // deliberately NOT re-pointed: the copy keeps the source's pointer and ALIASES
             // its closure record, which is why a bound fn-ref field read is marked
-            // `skip_free` (`tests/scripts/85-poison-return-tail-uaf.loft` t5).
+            // `skip_free` (`loft-suite/attic/scripts/85-poison-return-tail-uaf.loft` t5).
             //
             // ⚠ That is sound only because the copy can never outlive the source, and
             // what guarantees it lives in ANOTHER file: #318 refuses a capturing-closure

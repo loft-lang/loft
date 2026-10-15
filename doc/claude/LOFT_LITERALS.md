@@ -68,7 +68,7 @@ transform: fn(integer) -> integer = fn(x: integer) -> integer { x * 2 }
 
 Short-form parameter types are inferred from the expected `fn(T1, T2) -> R` type
 **wherever there is one** — the position does not matter, only that something names the
-signature (guard `tests/scripts/1067-lambda-expected-type.loft`):
+signature (guard `loft-suite/attic/scripts/1067-lambda-expected-type.loft`):
 
 | where | example |
 |---|---|
@@ -209,7 +209,7 @@ as a crash much later in an unrelated function that touched the same value.
   `&vector<τ>` is shared (the same DbRef), a `&integer` / `&text` is copied at creation
   like any scalar.  The one refusal is a WRITE to a captured `&` scalar — the copy could
   not reach the caller — and it is named, with the cure (`local = p; …; p = local;`).
-  Guard `tests/scripts/1276-a-closure-captures-a-ref-parameter.loft`.
+  Guard `loft-suite/attic/scripts/1276-a-closure-captures-a-ref-parameter.loft`.
 
 `spatial` is not an exception to any of this: it stores a non-capturing `fn` field and calls
 it (`for e in sp { e.f(21) }` answers), and it refuses a capturing one with the same message
@@ -247,10 +247,10 @@ a line indented less than the base comes out flush, and a TAB-indented line is l
 alone (a tab is not a space, so there is nothing to count).  The first and last lines
 are dropped when they contain only whitespace.  Text on the line of the OPENING backtick
 is content but never the base — its column is the statement's, not the block's — so the
-base comes from the next line (guard `tests/scripts/a-backtick-first-line-text-does-not-set-the-base.loft`).
+base comes from the next line (guard `loft-suite/attic/scripts/a-backtick-first-line-text-does-not-set-the-base.loft`).
 
 Interpolation is no exception — a block with `{…}` in it dedents exactly like one
-without (guard `tests/scripts/990-backtick-dedent-with-holes.loft`).
+without (guard `loft-suite/attic/scripts/990-backtick-dedent-with-holes.loft`).
 
 `{` opens an interpolation hole here as it does in `"…"`, so a literal brace is written
 `{{` — which is what the `void main() {{` below is doing.
@@ -436,5 +436,5 @@ Rules worth knowing:
   also means a format string in argument position inside a hole
   (`"{ build("p{n}q") }"`) is text, so build it in a local first.
 
-`tests/scripts/interpolation-hook.loft` is a complete worked example, and
+`loft-suite/attic/scripts/interpolation-hook.loft` is a complete worked example, and
 `tests/fixtures/sqldb/sql/src/sql.loft` is a real one.

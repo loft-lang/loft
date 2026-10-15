@@ -86,8 +86,8 @@ fit-failure yields null rather than stopping the program.
 type's default)
 
 **Verified by.** `formal/types.md` `(N-Reserve)`, `formal/operational.md` `(E-Uncomp)` /
-`(E-Uncomp-NN)` · `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft` ·
-`tests/scripts/1246-a-nullable-narrow-slot-answers-null.loft` · `tests/docs/23-safety.loft` · **`tests/comparisons/null.loft`**
+`(E-Uncomp-NN)` · `loft-suite/attic/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft` ·
+`loft-suite/rules/operational/E-Uncomp/1246-a-nullable-narrow-slot-answers-null.loft` · `tests/docs/23-safety.loft` · **`tests/comparisons/null.loft`**
 
 **Seen from.** vs Rust §2 (against `Option<T>`) · vs Python §2 (against a universal `None`) ·
 OCAML_BAR D1
@@ -254,8 +254,8 @@ is read-only and a write to it is a compile error. Under WASM it runs sequential
 [@C143](DESIGN_DECISIONS.md) (a rendered record shows its null fields)
 
 **Verified by.** `tests/docs/30-formatting.loft` · **`tests/comparisons/formatting.loft`** ·
-`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` ·
-`tests/scripts/a-record-renders-its-null-fields.loft`
+`loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft` ·
+`loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft`
 
 **Seen from.** vs Rust §13 · vs Python §6
 

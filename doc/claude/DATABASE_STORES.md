@@ -184,7 +184,7 @@ file, one that never called the edited code. The enclosing function's size was
 never the defect; it was what made the frame big enough to cross the initial
 claim. That is also why the shape resisted every attempt to shrink it: the axis
 it needed was stack DEPTH, and a matrix that varies the expression while holding
-the function fixed cannot reach it. `tests/scripts/935-stack-store-growth.loft`
+the function fixed cannot reach it. `loft-suite/attic/scripts/935-stack-store-growth.loft`
 is the depth axis in fifteen lines.
 
 ### Constant store (`CONST_STORE`)

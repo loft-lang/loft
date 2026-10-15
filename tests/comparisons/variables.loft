@@ -36,7 +36,7 @@ fn test_first_assignment_declares_and_infers() {
   assert(x == 43, "no `let`, no `mut` — and the write lands");
   // The inference is STATIC, which is the half that separates loft from Python: the type is
   // fixed at the first assignment, and a later value of another type is a compile error, not
-  // a rebinding.  That refusal is pinned in tests/scripts/102-expected-errors.loft
+  // a rebinding.  That refusal is pinned in loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft
   // ("cannot change type"); it cannot also be pinned here, because this file must compile.
   t = "forty-two";
   assert(size(t) == 9, "a text local inferred from its first value");

@@ -5229,7 +5229,7 @@ impl Definition {
     /// `render(p) -> Canvas { cv = alloc_canvas(…); cv }` the inner adoption
     /// makes `cv` the outer buffer, which is the caller's recycled `__ref_N`, and
     /// successive loop iterations then read each other's values.
-    /// `tests/scripts/143-plan51-cluster3-mixed-lit-call.loft` fails on iteration
+    /// `loft-suite/attic/scripts/143-plan51-cluster3-mixed-lit-call.loft` fails on iteration
     /// 2 with a stale element.  @PLN130 has the measurement (probes 21/22 cover
     /// only flat, single-level calls — which is why they said it was safe).
     #[must_use]

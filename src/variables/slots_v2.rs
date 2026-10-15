@@ -287,7 +287,7 @@ pub fn assign_slots_v2(
 // No synthetic Rust-level unit tests here.  V2 correctness is
 // verified against real `.loft` programs:
 //
-//   - `tests/scripts/96-slot-assign.loft` — patterns historically
+//   - `loft-suite/attic/scripts/96-slot-assign.loft` — patterns historically
 //     prone to slot-assignment bugs; executed by `loft_suite` in
 //     `tests/wrap.rs`.
 //   - `tests/slot_v2_baseline.rs` — 29 Phase-0 fixtures, each a

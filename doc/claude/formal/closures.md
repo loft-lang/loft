@@ -290,9 +290,9 @@ the companion [closures-history.md](closures-history.md).
   per-variant, and struct-in-vector all carry one and call it back out, on both backends.
 - **…and a place that ALREADY holds one takes a new fn-ref (`L-Escape`, D-clo-3)** — a live
   local, a live tuple member (guard
-  `tests/scripts/fn-ref-reassignment-tops-up-the-pair.loft`), and a struct field, a vector
+  `loft-suite/attic/scripts/fn-ref-reassignment-tops-up-the-pair.loft`), and a struct field, a vector
   element, an element's field, a field's element and a `&`-parameter's field (guard
-  `tests/scripts/fn-ref-assigned-into-a-field.loft`), from a bare name, an inline lambda
+  `loft-suite/attic/scripts/fn-ref-assigned-into-a-field.loft`), from a bare name, an inline lambda
   (capturing or not), a non-capturing local and a call — including over a field that already
   owns a closure record, and 200 times in a loop without the store growing. A source the
   LITERAL refuses (an `if`/`match` arm, P215; a capturing source into a collection, #247)

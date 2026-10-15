@@ -22,9 +22,12 @@ suites, the generated and matrix tests, and the gates every test passes through.
 
 The suite has three homes for a test, in the order to reach for them:
 
-1. **`tests/scripts/*.loft`** — the language corpus: a self-contained loft program per file,
-   run on the interpreter by `tests/wrap.rs` and on `--native` by `tests/native.rs`.  The
-   default home for a new test ([§ `tests/scripts/`](#testsscripts--standalone-loft-test-suite)).
+1. **A cell in the language suite** (`loft-lang/loft-suite`, checked out beside this tree):
+   a self-contained loft program under the formal rule it exercises,
+   `rules/<chapter>/<rule>/<file>.loft`, run on both backends through `loft --tests` by
+   `make suite` here and by the required `Language suite` check on every PR (@PLN193).  The
+   default home for a new language test.  **`tests/scripts/*.loft`** keeps only the programs
+   something in this repository names ([§ `tests/scripts/`](#testsscripts--the-programs-this-repository-names)).
 2. **`tests/docs/*.loft`** — the user documentation: each file is a page and a runnable
    program.
 3. **`tests/*.rs`** — Rust integration tests, for what a script cannot express: an exact
@@ -615,22 +618,35 @@ tests/
 
 ---
 
-## `tests/scripts/` — standalone loft test suite
+## `tests/scripts/` — the programs this repository names
 
-**Purpose: the primary, long-term comprehensive test suite for the loft language.**
-Every language feature and standard-library function should eventually have coverage here.
-Each file is a self-contained loft program: its `fn main()` or its `test_*` functions assert
-correct behaviour.  No HTML generation, no `@NAME`/`@TITLE` headers.  It runs through the
-`loft` binary or through `tests/wrap.rs` (the `loft_suite_*` chunks), and under `--native`
-through `tests/native.rs`.
+**The comprehensive language suite lives OUTSIDE this repository** (@PLN193):
+`loft-lang/loft-suite`, one cell per program under the formal rule it cites
+(`rules/<chapter>/<rule>/<file>.loft`), with the inherited unclaimed corpus in its `attic/`.
+Every cell is a self-contained loft program — its `fn main()` or its `test_*` functions
+assert correct behaviour, no HTML generation, no `@NAME`/`@TITLE` headers — run through
+`loft --tests` on both backends, with the leak gate armed (`LOFT_LEAK_CHECK=1`).  It runs
+here by `make suite ARGS="@FR-B-Copy --mode both"` against the checkout beside this tree,
+and on every PR as the required `Language suite` check, at the suite commit
+`tests/loft-suite.pin` names.  `make index` and `./scripts/idx tag:@FR-…` list a rule's
+cells there beside the code sites here.
+
+`tests/scripts/` keeps the programs that cannot leave: **a program stays here when something
+in this repository names it** — a Rust test (`tests/windows_rules.rs`'s table, `wrap.rs`'s
+per-file rows, `leak.rs`'s parses, a `workspace_root().join("tests/scripts/…")`), a script,
+a Makefile target, a workflow, a `@ARGS --lib`/`--project` line that needs this tree, or the
+documentation's worked-example registry (`examples-index.tsv`: the `@AAA-###` tags the
+stdlib's `// Example:` lines and the feature catalogue resolve).  Everything else is a cell.
+It still runs through `tests/wrap.rs` (the `loft_suite_*` chunks) and `tests/native.rs`.
 
 ### Design intent and growth policy
 
-`tests/scripts/` is the canonical place for new tests. When adding a feature, fixing a bug, or
-covering an untested language behaviour, the default choice is to extend an existing script or
-add a new one — not to add a Rust `.rs` test.
+A new language test is a CELL: written against ONE rule, placed under it in the suite, run
+against that rule before it is committed (`make suite ARGS="@FR-<rule>"`), and landed as a
+suite PR whose commit the loft PR pins.  Extend `tests/scripts/` only for a program the list
+above pins here, and never add a Rust `.rs` test for what a loft program can express.
 
-**Add to `tests/scripts/` when:**
+**Write a cell when:**
 - Testing language semantics: operators, control flow, type coercion, collections, formatting, etc.
 - Testing standard-library functions.
 - Covering an edge case in correct (non-error) code.
@@ -673,8 +689,9 @@ mis-file — rename it).  The original topic suites (`01-integers`, `05-enums`, 
 sequential feature numbers; those predate the issue-number convention and are not renamed.
 
 The topic files keep their sequential feature numbers (`01-integers.loft`, `05-enums.loft`,
-…); everything since is named by issue number.  `ls tests/scripts` is the list (about 1800
-files); `wordlist.txt` holds the edge-case keys `37-stress.loft` reads.
+…); everything since is named by issue number.  `ls tests/scripts` is the list (about 440
+files since the corpus moved to the suite, 2026-10-15); `wordlist.txt` holds the edge-case
+keys `37-stress.loft` reads.
 
 Run with:
 

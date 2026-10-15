@@ -1251,6 +1251,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The language suite beside the tree (@PLN193): the index enumerates it, so a decision
+      # or a rule whose only guard is a suite cell is seen as guarded here as it is on a box
+      # with the checkout.  Same pin as the `language-suite` job; `LOFT_SUITE_DIR` names
+      # where it landed, since the default is a sibling of the repository.
+      - name: Which suite commit this tree pins
+        id: pin
+        run: echo "ref=$(grep -v '^#' tests/loft-suite.pin | head -1)" >> "$GITHUB_OUTPUT"
+      - name: Check out the suite at the pinned commit
+        uses: actions/checkout@v5
+        with:
+          repository: loft-lang/loft-suite
+          ref: ${{ steps.pin.outputs.ref }}
+          path: loft-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold

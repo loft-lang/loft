@@ -264,7 +264,7 @@ So it is a trade with a loser: an UNRESERVED fill of a very large hash is ~20 % 
 (one more rebuild, of a bigger table) and the bucket array doubles — 3–6 bytes an entry
 beside the ~16+ the entry itself takes.  Lookups win at both sizes, and `reserve(h, n)`
 removes the fill's half of the price.  The hash-size cell
-(`tests/scripts/pln110-size-hash.loft`) exists to notice exactly this kind of change and
+(`loft-suite/rules/collections/Col-Bucket/pln110-size-hash.loft`) exists to notice exactly this kind of change and
 did NOT: it sampled at 3, 13 and 39 entries, which both rules answer alike.  It samples
 both sides of every rebuild now, and fails at its first rung under the old rule.
 

@@ -293,7 +293,7 @@ the type:
 > and `to_json()` emitted the loft literal `'q'` — not JSON — so a struct with a character
 > field could not round-trip through loft's own parser. On the wire a character is now a
 > one-character JSON **string**; a number is still read as its codepoint. Guarded by
-> `tests/scripts/character-across-the-json-surface.loft` on both backends, and the reason
+> `loft-suite/attic/scripts/character-across-the-json-surface.loft` on both backends, and the reason
 > the interpolation channel still differs (concatenation skips a bare `'\0'`) is the
 > collision this row names. QUALITY.md § `character` on the JSON surface.
 | `Float` / `Single` | in-band sentinel = a reserved `NaN` |
@@ -732,7 +732,7 @@ aborted the compiler.  Closed by marking a promoted `text?` local on its `Functi
 (`mark_nullable_text_buffer`, carried across passes), read where the null store is checked and
 converted.  An author's `&text` and a buffer promoted from a non-null `text` keep the refusal.
 Pass 2 now follows pass 1 for an author's local, loft#1099's rule.  Guard
-`tests/scripts/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
+`loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
 
 `D-Comp-Decl` opened and closed 2026-09-25 (found by a perf probe and fixed in the session;
 no issue, this box could not authenticate to GitHub): a comprehension REPLACED its declared
@@ -762,9 +762,9 @@ types occupy the same bytes?"*, answered *yes* for any two tuples, so a `(intege
 integer(-6, 6))` body into a `vector<(integer, integer)>` read as one layout — it now asks
 each member.  Not changed: an INFERRED comprehension of a narrowed body still types `vector<integer(-6, 6)>`,
 as an inferred scalar does under `(N-Arith)`, and the slots that refuse it keep refusing it.
-Guards `tests/scripts/a-comprehension-takes-its-declared-element-type.loft` (both backends,
+Guards `loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft` (both backends,
 every value hand-computed, the grid past its initial allocation) and
-`tests/scripts/a-struct-literal-refuses-a-vector-of-another-element-width.loft`.  Three
+`loft-suite/attic/scripts/a-struct-literal-refuses-a-vector-of-another-element-width.loft`.  Three
 findings beside it wait to be filed in
 [plans/157-native-4x-drawing/to-file-comprehension-follow-ups.md](../plans/157-native-4x-drawing/to-file-comprehension-follow-ups.md):
 a typed local `v: vector<P?> = [for … { P { … } }]` refused since the 2026.8.0 release (the

@@ -104,7 +104,7 @@ neither advance nor reach its end.
 > (loft#1525). Deciding the stop on the value just YIELDED removes the need for `b + 1` to exist,
 > which is why the rule says it. The half-open form is unaffected — its test fires before the
 > step — and so is any inclusive range whose end is below the maximum. Pinned by
-> `tests/scripts/1525-an-inclusive-range-stops-on-the-value-it-yielded.loft`. Text iterates by **Unicode codepoint** — each
+> `loft-suite/attic/scripts/1525-an-inclusive-range-stops-on-the-value-it-yielded.loft`. Text iterates by **Unicode codepoint** — each
 `c` is a `character` (a scalar value), and a combining sequence is **multiple** iterations, NOT
 one: `for c in "e" + U+0301 + "X"` runs **three** times with `c#index = 0, 1, 3` (the combining
 accent is its own codepoint at byte 1, 2 bytes wide), because loft iterates **codepoints, not
@@ -130,8 +130,8 @@ place itself, or a place holding it (`st` holds `st.n`); a write into the place 
 under `len(w)`), a sibling field, and a write through a callee are not reported, and the loop's
 answer is the rule's in all of them.  The cursor over a COLLECTION is the one re-read left, and
 a body cannot grow the collection it walks (`Cannot add elements to 'v' while it is being
-iterated`).  Pinned by `tests/scripts/iter-text-source-once.loft` and
-`tests/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`.
+iterated`).  Pinned by `loft-suite/attic/scripts/iter-text-source-once.loft` and
+`loft-suite/attic/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`.
 
 > **Combinators are vector methods, not text methods.** `t.map(…)` / `t.filter(…)` are **not**
 > valid — `.map`/`.filter`/`.reduce` (`I-Map`/`I-Filter`/`I-Reduce`) dispatch on a vector (or a
@@ -210,8 +210,8 @@ case past it (QUALITY-history.md B8i).
   `integer` maximum runs three rounds and stops, on both backends, whether the loop runs as
   written or a native rewrite replaces it: the slice fill, the push fill, the push window and
   the comprehension answer the same elements and leave no `m + 1` behind.  Guards
-  `tests/scripts/1525-an-inclusive-range-stops-on-the-value-it-yielded.loft` (the loop) and
-  `tests/scripts/an-inclusive-fast-path-never-forms-the-end-plus-one.loft` (the rewrites).
+  `loft-suite/attic/scripts/1525-an-inclusive-range-stops-on-the-value-it-yielded.loft` (the loop) and
+  `loft-suite/rules/iteration/I-RangeIncl/an-inclusive-fast-path-never-forms-the-end-plus-one.loft` (the rewrites).
 - **Empty/null (`I-Empty` / `I-NullSrc`)** — `for x in [] { … }` and a `for` over a null
   collection both run the body zero times and continue.
 - **Fresh result (`I-Comp`)** — `ys = xs.map(f)` leaves `xs` unchanged (a new store, `H-Alloc`).

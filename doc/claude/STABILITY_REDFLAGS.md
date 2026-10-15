@@ -505,7 +505,7 @@ per-width audit and obvious the moment the widths share a home.
 Verified across both `min` axes (`Byte` at 0 and 10, `Short` at 0 and 1000, `ShortRaw`
 elements at 1000) — a sentinel test that compares a DECODED value only holds at `min == 0`,
 which is what made the original `limit(10,255)?` cell read `265 == 255`. Guarded by the
-extended `tests/scripts/narrow-null-render.loft` on both backends, falsified by removing
+extended `loft-suite/attic/scripts/narrow-null-render.loft` on both backends, falsified by removing
 the new `Int` arm.
 
 ---
@@ -801,7 +801,7 @@ Three things from that are worth more than the fix:
 
   The survivor was **`xs[(0, 0)..: lim()]`** — a spatial slice's count limit, refused as
   "spatial slice limit must be an integer" when `lim` is declared lower. Fixed here, same
-  cure, guarded on both backends by `tests/scripts/forward-spatial-slice-limit.loft`.
+  cure, guarded on both backends by `loft-suite/attic/scripts/forward-spatial-slice-limit.loft`.
   Nobody writes a spatial slice when guessing at shapes, which is exactly why the sweep
   missed it and the list did not.
 

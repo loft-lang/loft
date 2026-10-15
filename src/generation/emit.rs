@@ -3808,7 +3808,7 @@ impl Output<'_> {
         // collapse pass can rewrite it to `return call(...)` — otherwise
         // the local `String` ret-temp drops at function exit and the
         // returned `Str` raw ptr dangles
-        // (`tests/scripts/86-interfaces.loft::if_label`).
+        // (`loft-suite/attic/scripts/86-interfaces.loft::if_label`).
         let has_ret_temp = matches!(bl.result, Type::Text(_))
             && bl.operators.iter().any(|op| {
                 matches!(op.unspan(), Value::Set(v, _) if

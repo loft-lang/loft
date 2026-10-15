@@ -21,7 +21,7 @@ garbage collector or a borrow checker, neither fitting the store heap; a copy su
 **Revisit when.** A critical program cannot be written ergonomically with these captures AND an
 alternative is prototyped without destabilising the store-based heap.  Decided 2026-04, amended
 2026-05-13 — [record](DESIGN_DECISIONS-history.md#c38--closure-capture-is-copy-at-definition).
-**Holds at:** `tests/scripts/56-closures.loft::test_capture_timing`.
+**Holds at:** `loft-suite/attic/scripts/56-closures.loft::test_capture_timing`.
 **Catalogue:** @F22 (closures & lambdas).
 
 ## C74 — A mutated scalar may be captured by only ONE closure
@@ -55,7 +55,7 @@ emitted code).
 2026-10-05 (loft#1867, loft#1877) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
 **Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
 `capture_adoption::claimed_into_delivered`;
-`tests/scripts/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.
+`loft-suite/rules/closures/L-Escape/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
 ## C77 — Binding ownership: heap aliases by default; `&` binds a live reference
@@ -142,7 +142,7 @@ the path the heap invariant rests on, for a drop that cannot fail or report.
 **Revisit when.** A consumer churns a long-lived collection of live resources (a connection pool
 that evicts, a cache of open handles).  Decided 2026-08-11, revised by @C121 — [record](DESIGN_DECISIONS-history.md#c111--a-drop-cascade-reaches-a-containers-death-not-an-elements-removal).
 **Holds at:** `formal/heap.md` (H-Drop), (H-Drop-Not); `scopes::copy_moves_drop_from`;
-`tests/scripts/a-whole-value-copy-of-a-droppable-releases-once.loft`.
+`loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft`.
 **Catalogue:** @F-drop (`OpDrop`, @PLN125 arc B) · loft#849
 
 ## C115 — a closure cannot write through a captured `&` scalar parameter, and cannot rebind a captured heap parameter
@@ -240,7 +240,7 @@ read-before-write stayed invisible until a different filler ran.
 **Revisit when.** Not stated.  Decided 2026-10-05 — [record](DESIGN_DECISIONS-history.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written).
 **Holds at:** `@C137` — the rule `(H-Claim)` in [formal/heap.md](formal/heap.md); the nightly
 `poison-claim` job (`LOFT_POISON_CLAIM=1` over both backends); guard
-`tests/scripts/a-par-text-result-leaves-its-output-record-intact.loft`.
+`loft-suite/rules/heap/H-Claim/a-par-text-result-leaves-its-output-record-intact.loft`.
 **Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads @C125
 
 
@@ -261,7 +261,7 @@ between two kinds of value — the compiler proves where a view is the same valu
 **Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
 **Holds at:** `@C141` — the rule `(R-DecodeView)` in [formal/rewrites.md](formal/rewrites.md)
 (instance 1 built: `src/generation/decode_view.rs`); guards
-`tests/scripts/a-decoded-text-keeps-its-value-when-the-frame-changes.loft` (the boundary: a
+`loft-suite/attic/scripts/a-decoded-text-keeps-its-value-when-the-frame-changes.loft` (the boundary: a
 decoded value keeps its bytes when its frame is written, grown, cleared or gone) and
 `tests/scripts/a-decoded-text-is-read-where-it-lies.loft` (the rule's own cells).
 **Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads @C122, @C125 · [APART_VALUES.md](APART_VALUES.md)
@@ -301,14 +301,14 @@ the removed record leaves its mark instead of a list of referrers; the mark cost
 rules `(H-LongRef)`, `(H-ShortRef)`, `(H-Removed)`, `(H-RefElem)`, `(H-RefHome)` and `(H-RefSet)`
 in [formal/heap.md](formal/heap.md), with the code sites that keep each, and no open
 deviation; guards
-`tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft`,
-`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft`,
-`tests/scripts/a-cleared-vector-releases-the-records-a-reference-named.loft`,
-`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
-`tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`,
-`tests/scripts/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft`,
-`tests/scripts/a-stored-reference-its-record-outlives-reads-it.loft` and
-`tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
+`loft-suite/rules/heap/H-LongRef/a-stored-reference-keeps-its-record-when-the-collection-moves.loft`,
+`loft-suite/rules/heap/H-Removed/a-stored-reference-to-a-removed-record-reads-null.loft`,
+`loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft`,
+`loft-suite/rules/heap/H-RefHome/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
+`loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`,
+`loft-suite/rules/heap/H-RefHome/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft`,
+`loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft` and
+`loft-suite/rules/heap/H-Stride/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads @C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)
 
 ## C150 — A collection's size() reports its representation, which the compiler may size
@@ -328,7 +328,7 @@ at each doubling (gridmesh `build_index`: −45 % with the reservation).
 growth ladder's step — then `size` grows a second, layout-free spelling, not the ladder back.
 Decided 2026-10-08 — [record](DESIGN_DECISIONS-history.md#c150--a-collections-size-reports-its-representation-which-the-compiler-may-size).
 **Holds at:** `@C150` — `(R-PushFill)`'s hash clause in [formal/rewrites.md](formal/rewrites.md);
-guard `tests/scripts/a-counted-hash-fill-reserves-its-table.loft` (the reserved table's size
-beside unchanged values); `tests/scripts/pln110-size-hash.loft` measures the growth ladder
+guard `loft-suite/rules/rewrites/R-PushFill/a-counted-hash-fill-reserves-its-table.loft` (the reserved table's size
+beside unchanged values); `loft-suite/rules/collections/Col-Bucket/pln110-size-hash.loft` measures the growth ladder
 with fills the clause does not take.
 **Catalogue:** `bench/portal/analysis/keyed.md` · reads @C122

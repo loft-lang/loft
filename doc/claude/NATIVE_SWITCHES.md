@@ -614,7 +614,7 @@ local or an admitted call as it is and reads the fields off any other record at 
 the first bisect step for a wrong field read through a small-record parameter on native.
 The interpreter is the values oracle; `LOFT_TRACE_VALUEREC=1` names each parameter
 carried and each declined with the reason, and the aliasing cells are
-`tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
+`loft-suite/attic/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
 
 **`LOFT_NO_VIEW_FIELD=1`** (@PLN164 C5 and E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`,
 **default-ON**, generation time, `--native` only) restores the record form —

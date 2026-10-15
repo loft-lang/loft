@@ -415,7 +415,7 @@ a call-index (`w[idx()].y += 5` calls `idx()` once, and reads/writes the same el
 and nested indices (`m[i()][j()] += n` evaluates `i()` once and `j()` once, not per read/write
 or per nesting level). Contrast `E-Asgn`: a plain `x = v` already writes its place once, so
 there is no double-eval to close. [DESIGN_DECISIONS.md @C92](../DESIGN_DECISIONS.md); verified
-both backends — `tests/scripts/pln102-f2-place-once.loft`.
+both backends — `loft-suite/attic/scripts/pln102-f2-place-once.loft`.
 
 **Step 4 is `(E-Op)` on BOTH operand types, and step 5 writes the result.** The operator is
 resolved on the place's type and the right side's OWN type, exactly as the plain `place op e`
@@ -425,8 +425,8 @@ refused naming all three (*"`+=` on integer with float computes float, which the
 cannot hold"*). A right-side struct literal is a value of its own, never built into the place.
 At a RECORD place (a field, an element, a `&` link to one) step 5 copies the composed record
 into the place, as `=` does there. Oracles:
-`tests/scripts/1819-a-compound-assignment-computes-its-operator-on-both-operand-types.loft`,
-`tests/scripts/1819b-a-compound-result-the-place-cannot-hold-is-refused.loft`.
+`loft-suite/rules/operational/E-Asgn-Compound/1819-a-compound-assignment-computes-its-operator-on-both-operand-types.loft`,
+`loft-suite/rules/operational/E-Asgn-Compound/1819b-a-compound-result-the-place-cannot-hold-is-refused.loft`.
 
 ### Compound assignment through a discharge — the `?` is on the READ
 
@@ -460,7 +460,7 @@ binds, never off the spelling the author wrote. `w[idx()]? += 1` therefore calls
 off the original spelling instead it calls twice and reads one element while writing the
 next, which is the corruption the once-only rule exists to prevent.
 [DESIGN_DECISIONS.md @C92](../DESIGN_DECISIONS.md), [types.md (N-Default)](types.md);
-verified both backends — `tests/scripts/1205-a-discharged-place-writes-through-to-its-place.loft`.
+verified both backends — `loft-suite/attic/scripts/1205-a-discharged-place-writes-through-to-its-place.loft`.
 
 **A discharge INTERIOR to the place is a different question, and this rule does not reach it.**
 `h.i?.x = …` discharges `h.i` and then names `.x`, so the target is an interior place
@@ -473,8 +473,8 @@ was mutated in silence and the caller saw the new value, on both backends, with 
 (loft#1211). One home answers what a discharge was applied to for both questions, so which
 place a discharged TARGET was reading and which binding a write THROUGH one reaches cannot
 drift apart; verified both backends —
-`tests/scripts/1211-a-const-binding-holds-through-an-interior-discharge.loft`,
-`tests/scripts/1211b-a-place-behind-an-interior-discharge-is-written.loft`.
+`loft-suite/rules/binding/Const-Value/1211-a-const-binding-holds-through-an-interior-discharge.loft`,
+`loft-suite/attic/scripts/1211b-a-place-behind-an-interior-discharge-is-written.loft`.
 
 ---
 
@@ -502,7 +502,7 @@ continues; `(i64::MAX + 1) ?? 0` is `0` (E-Coalesce); `integer` null is `i64::MI
 (E-Truthy) is checkable the same way and needs the RAW compare to see it: `b: boolean =
 true && maybe()` is `false`, so `b == false` is true and `b == null` is false — `!b` cannot
 tell those apart, because `!` is itself a truthiness position. Guard
-`tests/scripts/a-boolean-operator-answers-a-definite-boolean.loft`.
+`loft-suite/rules/operational/E-Truthy/a-boolean-operator-answers-a-definite-boolean.loft`.
 D-op-1/D-op-2's falsifier is any program where the interpreter and `--native` disagree —
 e.g. #433's cbor `read_value` (interp `20`, native E0308 pre-fix). When the rules become the
 shared oracle, that disagreement is the definitional error, and this doc is the definition it

@@ -188,7 +188,7 @@ Both ends clamp, a reversed range gives `""`, and a negative bound counts from t
 them, and the character at each position is the same value `s[…]` reads there.  The
 count is a fact about the text, never about the characters in it: a text carrying a
 NUL (`text_from_bytes([65, 0, 66])`) yields all three, with the NUL position reading
-as `null` (guard `tests/scripts/text-nul-iteration-755.loft`).  A NUL therefore round-trips
+as `null` (guard `loft-suite/attic/scripts/text-nul-iteration-755.loft`).  A NUL therefore round-trips
 through `byte_at`, not through iteration; see
 [CAVEATS.md](CAVEATS.md#accepted-trade-offs-not-scheduled-for-change).
 
@@ -441,7 +441,7 @@ coordinate key fields (@PLN48):
 There are no `.near`/`.within`/`.nearest` methods — proximity is ordinary
 range slicing. The BOX form gives exactly the records inside the box and
 nothing outside it, in the collection's own order (guard
-`tests/scripts/800-spatial-box-containment.loft`). A corner-swapped axis names the
+`loft-suite/attic/scripts/800-spatial-box-containment.loft`). A corner-swapped axis names the
 same box.
 
 The two OPEN forms walk outward from the query point in both directions, so
@@ -750,7 +750,7 @@ joined = words.reduce("", |a, w| { "{a}{w}" });   // one string from a vector<te
 
 A COLLECTION accumulator (`v.reduce([], f)`) works, and its type is the fold's: `f: fn(U, T)
 -> U` names `U`, and the init only has to be assignable to it, so a bare `[]` is not asked
-what it is.  Guard `tests/scripts/956-reduce-untyped-accumulator.loft`.
+what it is.  Guard `loft-suite/attic/scripts/956-reduce-untyped-accumulator.loft`.
 
 All three accept either a function's bare name or a lambda expression:
 

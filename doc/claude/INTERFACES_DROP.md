@@ -178,9 +178,9 @@ whose connection is shut inside that body is still live when the shut happens.
 @PLN138's `lazy_fetch` closes its cursor explicitly for exactly that reason.
 
 Shipped as @PLN125 arc B, with the owner rule and the container cascade added by
-@PLN139 (loft#849). `tests/scripts/pln125-b-drop.loft` is the hook's behaviour
+@PLN139 (loft#849). `loft-suite/rules/binding/B-Scope/pln125-b-drop.loft` is the hook's behaviour
 matrix, with two unrelated consumers (a transaction and a lease) because a hook
 with one user is a hook whose invariant is untested;
-`tests/scripts/139-drop-cascade.loft` is the container half. The design reasoning
+`loft-suite/rules/binding/B-Copy/139-drop-cascade.loft` is the container half. The design reasoning
 is [plans/23-db-clients/LIFETIME_AND_PROCEDURES.md](plans/23-db-clients/LIFETIME_AND_PROCEDURES.md)
 and [plans/139-drop-cascade.md](plans/139-drop-cascade.md).

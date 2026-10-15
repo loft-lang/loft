@@ -256,6 +256,12 @@ fn check_new_decisions_are_guarded(index: &str) {
         "library guard(s) cite {dangling:?}, which name no entry in \
          doc/claude/DESIGN_DECISIONS_*.md (index/library_guards.json; `./scripts/idx tag:<tag>`)"
     );
+    // A guard is a test under `tests/` here, or a program of the language suite beside this
+    // tree (@PLN193), a rule cell or an attic program alike: the index carries the suite's
+    // rows under its directory prefix, and a decision whose only guard moved there with the
+    // corpus is still kept.
+    let suite_dir = std::env::var("LOFT_SUITE_DIR").unwrap_or_else(|_| "../loft-suite".to_string());
+    let suite_guard = format!("\"file\":\"{suite_dir}/");
     let unguarded: Vec<&&str> = ids
         .iter()
         .filter(|id| {
@@ -263,7 +269,9 @@ fn check_new_decisions_are_guarded(index: &str) {
             let here = index
                 .lines()
                 .find(|l| l.trim_start().starts_with(&key))
-                .is_some_and(|bucket| bucket.contains("\"file\":\"tests/"));
+                .is_some_and(|bucket| {
+                    bucket.contains("\"file\":\"tests/") || bucket.contains(&suite_guard)
+                });
             let in_a_library = library.iter().any(|tag| *tag == format!("@C{id}"));
             !here && !in_a_library
         })

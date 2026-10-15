@@ -6,7 +6,7 @@
 
 > **Status: implemented (I1–I9).**  P136 (use-after-free in a bounded for-loop over a
 > struct vector) is fixed — re-verified clean on both backends, poison-clean, 2026-07-05.
-> `tests/scripts/86-interfaces.loft` is the guard suite; note its
+> `loft-suite/attic/scripts/86-interfaces.loft` is the guard suite; note its
 > `test_bounded_for_loop_struct` is still **commented out** behind a now-stale "crashes"
 > note and should be re-enabled (the case it guards passes). Strict spec:
 > [formal/interfaces.md](formal/interfaces.md).
@@ -426,7 +426,7 @@ The index type is whatever the method declares (a row addressed by column name t
 `x[a..b]`, `x[i] = v` — is one refusal naming that cure, and an interface cannot require
 `op []`, since no type could meet it.  A type defined `fn OpIndex` for `x[i]` until @C132
 retired it with every other `fn Op…` (@PLN182 Q10); `tests/scripts/pln125-c-index.loft` keeps
-that arc's cases running through `at`, and `tests/scripts/996-opindex-composite-subscript.loft`
+that arc's cases running through `at`, and `loft-suite/attic/scripts/996-opindex-composite-subscript.loft`
 pins the refusal.
 
 ## Associated types — an interface that names a companion type

@@ -253,7 +253,7 @@ Every deviation this doc has carried is closed; the record is in the companion
   about the same rule, and this is the one a reader of the rules meets.  A conformance line is a
   measurement, not a restatement of the rule above it.
 - **Delegation (`G-Delegate`)** —
-  `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`: the statements before a
+  `loft-suite/rules/coroutines/G-Next/a-delegations-prefix-runs-once-per-activation.loft`: the statements before a
   `yield from` run once per activation (a counter, three statements, a loop, and an append to a
   vector the program reads afterwards), a delegation before and after a lazily-lowered loop, an
   prefix between two of them, and a consumer that stops after one value — values on both
@@ -263,26 +263,26 @@ Every deviation this doc has carried is closed; the record is in the companion
   `tests/coroutine_matrix.rs`'s X5 column crosses delegation with the yielded TYPE — integer,
   text, record, tuple, float, single and enum.
   A delegated FN-REF — `yield from` a generator yielding lambdas — is
-  `tests/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft`, values on both
+  `loft-suite/attic/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft`, values on both
   backends.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
-- **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a
+- **Ownership (`G-Own`)** — `loft-suite/rules/coroutines/G-Own/1589-a-yielded-record-is-the-consumers.loft`: a
   record returned past its generator, a drained and a broken `for`, a `match`, `yield from`, a
   loop-body yield, copies of a local, a member, a parameter, a text-holding record and a
   vector, and a tuple copied, drained and kept — values, drop traces and a clean store census
   on both backends.
-- **Holding (`G-Hold`)** — `tests/scripts/1585-a-generator-can-be-held-in-a-field-or-an-element.loft`:
+- **Holding (`G-Hold`)** — `loft-suite/rules/coroutines/G-Hold/1585-a-generator-can-be-held-in-a-field-or-an-element.loft`:
   a vector, a struct field, a nested record, a vector field and a tuple member holding a
   generator; the round-robin scheduler; a field, an element and a local given a new generator;
   a removal by index and by `#remove`, of a handle and of a record holding one; views out of a
   field, an element and a `for`; a local that views on one path and owns on another; records
   holding generators yielded and kept — values on both backends, and the leak gate says every
   frame was released once.  A vector of vectors of them, at death and with a row removed:
-  `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c12`.  A keyed
+  `loft-suite/rules/heap/H-Drop/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c12`.  A keyed
   collection of records holding them — `sorted`, `hash`, `index`, `spatial`, as a local, a
   field, rebound, a record taken out, nested, and beside a hook that stays unrun:
-  `tests/scripts/1601-a-generator-held-in-a-keyed-collection-is-released.loft`.
+  `loft-suite/rules/coroutines/G-Hold/1601-a-generator-held-in-a-keyed-collection-is-released.loft`.
 - **Interchangeable at `for` (`G-For`)** — `for x in gen() { … }` and `for x in vec { … }`
   visit their elements by the same loop; swapping a generator for the equivalent vector changes
   only timing, not the values or their order.

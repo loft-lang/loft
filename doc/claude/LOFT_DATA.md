@@ -523,7 +523,7 @@ un-upgraded candidates in the current libraries, highest-leverage first:
 - **`Version`** (registry semver — hand-rolled parse + compare), **`Angle`**, and
   a units family (`ByteSize`, `Money` / `Decimal`) round out the list.
 
-Guards: `tests/scripts/511-first-grade-operators.loft`, `tests/scripts/512-first-grade-format.loft`, `tests/scripts/513-first-grade-conversions.loft`.
+Guards: `loft-suite/attic/scripts/511-first-grade-operators.loft`, `tests/scripts/512-first-grade-format.loft`, `loft-suite/rules/operators/Op-Conv/513-first-grade-conversions.loft`.
 
 ---
 
@@ -661,7 +661,7 @@ assert(condition, "message")
 
 Panics at runtime if the condition is false.
 
-Catalogue: @F44; guard: `tests/scripts/1147-assert-eq-reports-both-sides-at-the-call-site.loft`.
+Catalogue: @F44; guard: `loft-suite/attic/scripts/1147-assert-eq-reports-both-sides-at-the-call-site.loft`.
 
 ---
 
@@ -690,8 +690,8 @@ except a struct-enum value, whose size is computed at runtime from the variant i
 An absent struct-enum value holds no variant and sizes as its type, like `sizeof(Shape)`.
 
 Catalogue: @F45; guards: `tests/scripts/89-sizeof.loft`,
-`tests/scripts/1779-sizeof-of-an-expression-is-sizeof-of-its-type.loft`,
-`tests/scripts/1781-sizeof-and-type-name-read-a-tuple-type.loft`.
+`loft-suite/attic/scripts/1779-sizeof-of-an-expression-is-sizeof-of-its-type.loft`,
+`loft-suite/attic/scripts/1781-sizeof-and-type-name-read-a-tuple-type.loft`.
 
 ---
 

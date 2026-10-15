@@ -495,7 +495,7 @@ widening answers wrong on `--native` (`D-own-38`).
 > therefore NOT measured by them: a fn-ref whose TARGET cannot be resolved — a fn-typed
 > parameter or field — which is loft#1327 and reads `Owned` at every site that frees on the
 > oracle; a `&` binding as an arm (it keeps the alias it had — a struct-`Enum` variable arm
-> copies as a struct's does, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
+> copies as a struct's does, `loft-suite/rules/binding/B-Copy/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
 
@@ -663,7 +663,7 @@ analysis directly (the certifier sidesteps it).
   allocation between them, at the nullable and dense parameter spellings and across a branch
   over both arms, while the same call in the frame that OWNS the closure and a named function
   passed through the same parameter are unchanged. Both backends. Guard
-  `tests/scripts/1327-an-opaque-fn-ref-return-may-be-its-argument.loft`, 6 cells.
+  `loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft`, 6 cells.
   ⚠ Declining a free normally trades an over-free for a leak; here it costs nothing, because
   the fn-ref call's own runtime buffer already owns what the closure minted. Measured at 70 000
   default-arm calls past the store table, both backends — not assumed.
@@ -675,7 +675,7 @@ analysis directly (the certifier sidesteps it).
   loft#1328)** — `x = m(i)` in a loop over a fn-ref `m` completes at 70 000 iterations on both
   backends, at a nullable reference, a dense one and a keyed collection, with the direct-call
   spelling and a destination-reading callee as controls. Guard
-  `tests/scripts/1328-a-fn-ref-rebind-frees-the-store-it-displaces.loft`, 6 cells.
+  `loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces.loft`, 6 cells.
   ⚠ The exit-leak gate cannot see this class: the frame frees everything, so a 1000-iteration
   cell reports no leak on either backend and the defect is entirely in the PEAK. The 65 535-store
   table is what turns that watermark into an accept/reject split — the channel a guard can
@@ -692,7 +692,7 @@ analysis directly (the certifier sidesteps it).
   walk saw two definition numbers and returned "names TWO targets", the answer reserved for a
   slot two lambdas were assigned to. A capture is a payload, not a candidate; the target is
   what the right-hand side YIELDS. Guard
-  `tests/scripts/1329-a-fn-ref-vector-rebind-frees-the-store-it-displaces.loft`, 8 cells, 5 of
+  `loft-suite/rules/ownership/O-NoDiverge/1329-a-fn-ref-vector-rebind-frees-the-store-it-displaces.loft`, 8 cells, 5 of
   which fail on `a8c0b74d`; the other 3 are its controls.
   ⚠ The NULLABLE spelling could not be measured at all until a third reader was fixed: a
   lambda declaring `-> vector<τ>?` aborted the compiler on the H5 two-pass contract, because
@@ -713,7 +713,7 @@ analysis directly (the certifier sidesteps it).
   the variable reads 52) and leaves no store unfreed: straight-line, twice over, in a 200-turn
   loop, at the `|x|` spelling, beside an untouched second capture, and for a closure that
   ESCAPES its defining frame. Both backends. Guard
-  `tests/scripts/1324-a-reassigned-capture-suppresses-the-store-the-record-holds.loft`,
+  `loft-suite/rules/ownership/O-Latest/1324-a-reassigned-capture-suppresses-the-store-the-record-holds.loft`,
   12 cells.
   ⚠ It closed a use-after-free as well as the filed leak, and that is what says the cure had
   to NAME the right store rather than decline: the suppression was reading
@@ -726,7 +726,7 @@ analysis directly (the certifier sidesteps it).
   delivered through the caller's own `__ref_N` buffer keeps the caller's container intact over
   five borrows, while the mint arm of the same closure still costs no store per call at 70 000
   iterations and a MINTING argument (`g(mk())`) is still adopted. Both backends. Guard
-  `tests/scripts/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft`,
+  `loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft`,
   14 cells, 8 of which fail on `b1bd3212`; the other 6 are its controls.
   ⚠ Its two interpolated cells are interpolated deliberately: `s += g(vs[0])[1]` and
   `c = g(pick(vs, 0))[1]` are CORRECT on the broken build, so the accumulate and bind

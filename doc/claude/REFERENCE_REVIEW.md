@@ -615,7 +615,7 @@ zero-padding reach floats and added `{3.125:08.2}` → `00003.12` to its own cha
 comparison pages still said the flag is "dropped for floats", four chapters later, and the
 vs-Python page said it in Python's own vocabulary. The instruction was already written down
 here; what it lacked was a guard, and
-`tests/scripts/the-comparison-pages-draw-the-line-where-it-is.loft` is now it.
+`loft-suite/attic/scripts/the-comparison-pages-draw-the-line-where-it-is.loft` is now it.
 
 ⚠ **Read why a control is RED before believing its verdict.** `make falsify` reported that
 guard as falsified on all four rows — a clean result, and wrong: the control had failed with
@@ -826,7 +826,7 @@ holds `""` compares equal and measures 0. So the parenthetical named the one tes
 cannot see a mismatch, in a doc whose entire subject is telling a mismatch apart — the exact
 defect `as_bool` had just been fixed for, re-introduced next door as a sentence. It rode in
 under a commit whose message is about something else and whose fix was correct.
-`tests/scripts/json-extractors-say-how-a-mismatch-is-told-apart.loft` pins all four
+`loft-suite/attic/scripts/json-extractors-say-how-a-mismatch-is-told-apart.loft` pins all four
 extractors; its `as_text` half is deliberately un-falsifiable, because no build answers
 differently and only a cell could ever have caught the claim.
 

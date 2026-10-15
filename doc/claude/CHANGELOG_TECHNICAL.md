@@ -53,6 +53,27 @@ REQUIRED context of `main` the same day (`Language suite (ubuntu-latest)`, besid
 ever running without the corpus.  `make suite ARGS="@FR-B-Copy
 --mode both"` runs a selection by hand against the checkout beside this one.
 
+**The moved programs left `tests/scripts`** (owner's ask, the same evening): 1914 files
+(701 rule cells, 1213 attic programs), each byte-identical in the suite at the pinned commit
+before its removal here.  The partition was corrected on the way, both times by a reference
+census over the whole tree with whole-name matching — the seed's pinning had read only
+`tests/scripts/<name>` in Rust sources: 53 programs a Rust test names bare
+(`tests/windows_rules.rs`), through `wrap.rs`'s per-file rows or `leak.rs`'s parses, or
+that the Makefile's threading A/B runs, and 31 worked-example files whose `@AAA-###` tags
+the stdlib's `// Example:` lines and the feature catalogue resolve through
+`examples-index.tsv`, and 2 that open another corpus program by its `tests/scripts/` path,
+went back to loft and out of the suite.  The rule that decides is now
+written in TESTING.md: a program stays here when a white-box test, a script, a workflow or
+the documentation's example registry names it; everything else is a cell.  Live docs,
+Rust and loft sources that named a moved file by path now name its suite path
+(`loft-suite/rules/<chapter>/<rule>/<file>`, 343 mentions in 88 files); history docs, plan
+data and the census TSVs keep the old paths as written, except three markdown links the
+link gate flagged, now code spans.  `tests/falsified.baseline` shrank by 626 lines (the
+ratchet's own rule: a line goes when its file does), and the `@falsified-by` patches under
+`tests/falsified/` whose hunks touch a moved guard no longer apply here — 15 of 34,
+reported by `scripts/falsify-review.py`, never gated; they wait for the suite's own
+falsification path (P2b).  `tests/scripts` keeps 431 programs.
+
 ### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
 
 - `tests/common/lanes.rs`: `lanes(cap)` is the pool a test may run — `UNDER_NEXTEST` (8)

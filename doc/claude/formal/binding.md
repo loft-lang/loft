@@ -272,7 +272,7 @@ COLLECTION projection off an OWNED base — which is exactly `OWNERSHIP_MODEL §
 `af = bx.v`.
 
 **The whole boundary is pinned in one place:**
-`tests/scripts/bind-copies-or-views-the-whole-boundary.loft`, seventeen cells, measured identical
+`loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft`, seventeen cells, measured identical
 on both backends.  Ask it rather than re-deriving: the cells existed before, scattered across four
 files, and no single one said what the rule was.
 
@@ -291,7 +291,7 @@ the block can read. And a LOOP body's own disturbances precede every use on the 
 the back edge is a second disturbance a single forward reading cannot see. Both halves of that
 are what `a = w.inner` inside `for … { w = Outer{inner: a}; a = w.inner }` needs: the container
 is reassigned around a live view, so B-View materialises it and says so. Pinned by
-`tests/scripts/1184-a-view-assigned-back-onto-its-own-source.loft`, whose last two cells are the
+`loft-suite/rules/binding/B-View/1184-a-view-assigned-back-onto-its-own-source.loft`, whose last two cells are the
 control — an UNDISTURBED view still aliases and still writes through, on both backends.
 
 ### `const` — the immutability axis (binding-const vs value-const, @PLN40, shipped)
@@ -583,4 +583,4 @@ check at all. Both appended into the CALLER on both backends while the parameter
 `const`. It is asked once now, ahead of the route dispatch, because whether a write is
 allowed is a property of the BINDING and never of the route that lowers it —
 `Parser::guard_const_write`, called from `parse_assign_op_inner`. The crossing the oracle
-was missing is `tests/scripts/const-binds-through-every-append-route.loft`.
+was missing is `loft-suite/rules/binding/Const-Value/const-binds-through-every-append-route.loft`.

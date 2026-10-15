@@ -181,7 +181,7 @@ assignment or a literal field from a call.  Declined where an argument reaches t
 where the callee MINTS a record into its buffer (a projection chain does; a returned
 collection literal's wrapper mint answers the place, so it is placed), for a struct-enum
 variant's field read through a variant check, and for a literal's `?` field (the replace is
-what leaves it absent).  `tests/scripts/a-literal-vector-field-is-built-in-its-field.loft` is
+what leaves it absent).  `loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft` is
 the literal's guard.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
@@ -517,7 +517,7 @@ is right-associated in the SCOPES pass instead (**`LOFT_NO_COALESCE_REASSOC=1`**
 destination gate, the bisect step for that spelling).  A hoist that holds a whole LOCAL rather
 than a projection — `(e as B?) ?? d`, `(if c { s } else { null }) ?? d` — is read by the arm lift
 as that local, so the destination copies it as `(B-Copy)` says
-(`tests/scripts/1752-a-coalesce-over-a-whole-local-copies.loft`); a projection subject
+(`loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft`); a projection subject
 keeps the view.  Beside them,
 **`LOFT_NO_CHAIN_ARM_SINK=1`** stops a chain BLOCK being a sunk ARM of a branch — with it off,
 `x: H = if c { s.h ?? b } else { mk(3) }` writes the chain out as a statement of its own, but ONLY
@@ -580,7 +580,7 @@ and an empty displaced list, 27 % of mesh3d's `sphere` on both backends.  The sh
 `Parts::Vector` field, no sibling sharing its records; a struct-enum variant, a `__nullable<S>`
 element's field, a keyed field and a linked group keep the general path.  First bisect step for
 a wrong or missing element out of an append to a struct's vector field; guard
-`tests/scripts/a-record-appended-to-a-struct-field-vector-takes-the-plain-path.loft`.
+`loft-suite/attic/scripts/a-record-appended-to-a-struct-field-vector-takes-the-plain-path.loft`.
 
 ## Runtime: keyed collections
 
@@ -744,7 +744,7 @@ answers at every claim.
 whose elements own no heap list and visit every element after its one block copy again — with
 it off, that walk is skipped, as the record arm already skips a record that owns no heap.
 First bisect step for a copied record whose vector reads the source's data; guard
-`tests/scripts/157-a-heap-free-vector-copies-in-one-block.loft`.
+`loft-suite/attic/scripts/157-a-heap-free-vector-copies-in-one-block.loft`.
 
 **`LOFT_NO_PLAIN_VECTOR_RECORDS=1`** (runtime, BOTH backends) sends a record that owns plain
 vectors and nothing else — every field that owns heap a `vector<E>` whose elements own none —
@@ -755,7 +755,7 @@ and copied as one piece, or freed and its field cleared, with no descent through
 types.  A field holding anything but an empty handle or a block that fits its store sends the
 release back to the walk, which reports it.  First bisect step for a copied record whose vector
 reads its source's data, or a store that grows across rebinds of such a record; guard
-`tests/scripts/157-a-record-of-plain-vectors-copies-and-releases-by-its-fields.loft`.
+`loft-suite/attic/scripts/157-a-record-of-plain-vectors-copies-and-releases-by-its-fields.loft`.
 
 **`LOFT_NO_RELEASE_PLAN=1`** (runtime, BOTH backends) sends a record whose heap is texts and
 vectors of text-owning elements through the walk of its type again when it is released in a
@@ -765,7 +765,7 @@ most four texts): each text deleted, each vector's element texts and then its bl
 cleared, in the walk's order.  A pointer past the store or a length that does not fit sends the
 release back to the walk, which reports it.  First bisect step for a store that grows across
 rebinds of such a record, or a text that reads freed bytes after one; guard
-`tests/scripts/a-record-of-texts-is-released-by-its-plan.loft`.
+`loft-suite/rules/heap/H-ClearRelease/a-record-of-texts-is-released-by-its-plan.loft`.
 
 **A removed record a stored reference named leaves a tombstone (default-ON, both backends,
 `@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`

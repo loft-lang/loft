@@ -543,7 +543,7 @@ impl Parser {
     /// site that asked the better one: its `&&` could no longer be reached for a
     /// borrowing callee, so the bracket never licensed the free and the minting arm
     /// of a borrowing signature leaked one store per call
-    /// (`tests/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`).
+    /// (`loft-suite/attic/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`).
     /// `formal/ownership.md` had already written that outcome down — *"answering the
     /// callee-side half alone would also close the use-after-free, but
     /// conservatively"*.  The two questions are kept apart here so neither can veto

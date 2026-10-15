@@ -264,7 +264,7 @@ The record, and every closed deviation, are in the companion
   on both sides (a struct return carries a hidden buffer an interface declaration does not), and
   the re-ask goes through `possible_with_signature`, the resolver monomorphisation already uses,
   so the two cannot disagree about which definition a signature names.  Oracle:
-  `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
+  `loft-suite/attic/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
 - **The parameter LIST is part of the signature (`G-Sat`)** — a member of the right arity whose
   parameters are other types does not satisfy the bound: `operator minus(self: W, o: integer)`
   alone leaves `W` short of `Subtractable`, refused as *"'minus' takes 'integer' where the
@@ -274,7 +274,7 @@ The record, and every closed deviation, are in the companion
   Where the name carries an overload set, the member that takes the list is the one satisfying
   it and the one the monomorph binds (`Data::operator_member_with` answers both).  `==` is the
   content comparison for every type (`(G-Sat-Eq)`), as the concrete `a == b` is.  Oracle:
-  `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
+  `loft-suite/rules/interfaces/G-Sat/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
 - **The RETURN is part of the signature (`G-Sat`)** — `fn size(self: A) -> float` leaves `A` short
   of `interface Sz { fn size(self: Self) -> integer }`, refused as *"'size' returns 'float' but
   the interface declares 'integer'"*; the generic was typed with the interface's return and would
@@ -283,15 +283,15 @@ The record, and every closed deviation, are in the companion
   peeled; a member returning nothing meets only a member declared to return nothing, and a
   member whose interface member returns nothing may return a value, which the generic discards.
   A return typed by the interface's associated type asks nothing.  Oracles:
-  `tests/scripts/1927-a-member-returning-another-type-does-not-satisfy-a-bound.loft`,
-  `tests/scripts/1927b-a-member-returning-the-declared-type-satisfies-a-bound.loft`.
+  `loft-suite/attic/scripts/1927-a-member-returning-another-type-does-not-satisfy-a-bound.loft`,
+  `loft-suite/attic/scripts/1927b-a-member-returning-the-declared-type-satisfies-a-bound.loft`.
 - **A template member is not a concrete function (`G-Sat`)** — `operator plus<U>(self: W, o: U)`
   alone leaves `W` short of `Addable`, refused as *"'plus' is a template, and a bound takes a
   concrete 'plus' of its signature"*.  A concrete member of the set beside the template
   satisfies and is what the monomorph binds, in either declaration order.  At a CONCRETE site
   the operator reaches the template as its call spelling does, instantiated at the operand
-  types (`F-Recv`).  Oracles: `tests/scripts/1826-an-operator-reaches-a-template-member-as-its-call-does.loft`,
-  `tests/scripts/1826b-a-template-member-alone-does-not-satisfy-a-bound.loft`.
+  types (`F-Recv`).  Oracles: `loft-suite/rules/calls/F-Recv/1826-an-operator-reaches-a-template-member-as-its-call-does.loft`,
+  `loft-suite/rules/interfaces/G-Sat/1826b-a-template-member-alone-does-not-satisfy-a-bound.loft`.
 - **No dynamic dispatch (`G-Scope`)** — `x: Sizable = Box{…}` is rejected; an interface names a
   generic bound, never a variable's type.
 - **A header binds its OWN variable (`G-Gen`)** — `fn one<T: HasSize1>(x: T)` beside

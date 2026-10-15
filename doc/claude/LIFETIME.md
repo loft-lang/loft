@@ -211,7 +211,7 @@ records too, but their removal path reads `rec` as an inline index and was wrong
 before this, so widening to them would compound a different bug. They are not
 reachable from loft syntax today.
 
-Guard: `tests/scripts/removal-frees-what-the-element-owned.loft` (five
+Guard: `loft-suite/attic/scripts/removal-frees-what-the-element-owned.loft` (five
 collection shapes, measured by record count so allocator rounding cannot mask
 it, plus a reuse check that the freed blocks are taken back rather than
 re-grown).
@@ -243,7 +243,7 @@ which made the fault read as type-specific rather than as the omission it was.
 `--native` derives this separately and was always correct — a divergence worth
 remembering when a fault appears on one backend only.
 
-Guard: `tests/scripts/keyed-collection-in-both-if-arms.loft` (every keyed kind,
+Guard: `loft-suite/attic/scripts/keyed-collection-in-both-if-arms.loft` (every keyed kind,
 two- and three-arm chains, an arm that never appends, and a repeat loop so a
 per-pass store leak shows as growth).
 
@@ -319,7 +319,7 @@ the body, `Function::entry_witness`), guards the buffer's exit frees with
 (`OpFreeRefIfDistinct(v, entry)`, or `OpFreeRefUnlessEntry` where the displaced store is
 already on the stack) — the interpreter's twin of native's `_rb_w_<buf>`.  On a native value
 record the buffer is a phantom and the witness is the null reference.
-`LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1's null buffer; `tests/scripts/164-adopt-buffer-reuse.loft`
+`LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1's null buffer; `loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft`
 and `tests/adopt_buffer_reuse.rs` are the receipts.
 
 **A call result with ONE owning destination is built where it will live and stored there by
@@ -421,7 +421,7 @@ element's mint.  `LOFT_NO_NESTED_IN_PLACE=1` builds and copies again and
 `LOFT_NO_APPEND_STAGING=1` restores the unstaged order;
 `plans/164-activation-arena/bytecode-comparisons/C6-nested-literal-cells.loft`,
 `tests/nested_in_place.rs` and
-`tests/scripts/1548-an-appended-literal-reads-its-own-container.loft` are the receipts.
+`loft-suite/attic/scripts/1548-an-appended-literal-reads-its-own-container.loft` are the receipts.
 
 **A returned record's vector field is a VIEW of the place the value already lives in (@PLN164
 E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`; `--native`).**  A function that answers
@@ -463,8 +463,8 @@ parameter where the container is a caller's, declines.  `LOFT_NO_ELEMENT_PLACE=1
 to @PLN157's local vectors and `LOFT_NO_ELEMENT_FIRST=1` restores the temp store and the copy,
 `LOFT_TRACE_ELEMFIRST=1` names every admission and decline;
 `tests/scripts/164-element-place.loft`, `tests/element_first.rs` and the two guards
-`tests/scripts/a-rebound-element-first-temp-keeps-its-copy.loft` and
-`tests/scripts/an-element-view-read-before-an-element-first-append-is-not-moved.loft` are the
+`loft-suite/rules/rewrites/R-ElemFirst/a-rebound-element-first-temp-keeps-its-copy.loft` and
+`loft-suite/rules/binding/B-Disturb/an-element-view-read-before-an-element-first-append-is-not-moved.loft` are the
 receipts.
 
 **A branch join carries what EITHER arm borrows (loft#978).**  `it = if fresh { Item {

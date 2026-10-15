@@ -1847,7 +1847,7 @@ impl Stores {
         // `+1` encoding reserves raw 0, so `min + 65535` is the value that cannot be
         // stored here; it read back as null before by COLLIDING with the sentinel, and now
         // it is written as null deliberately.  Same observable answer, stated rather than
-        // stumbled into — `tests/scripts/389-narrow-runtime-collision.loft` pins it.
+        // stumbled into — `loft-suite/attic/scripts/389-narrow-runtime-collision.loft` pins it.
         let store = if crate::store::Store::short_fits(min, val) {
             val
         } else {
@@ -2033,7 +2033,7 @@ impl Stores {
     /// `@FR-H-WriteOOB` — the fast path's own test admits only `0 <= index < len`, so a
     /// negative index (which names an element from the END, `@FR-H-Index`) and an absent one
     /// are BOTH the cold path's to decide; the fast path never writes what the twin would
-    /// not.  The guard is `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`.
+    /// not.  The guard is `loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft`.
     ///
     /// # Panics
     ///

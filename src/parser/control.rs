@@ -4360,7 +4360,7 @@ impl Parser {
         //     reasoning).  Probes 03, 04, 07, 11, 25, 26, 28 remain
         //     leaky; their substitution requires extending into IR
         //     wrappers which is parser-invasive (an earlier attempt
-        //     broke tests/scripts/87-store-leaks.loft because
+        //     broke loft-suite/attic/scripts/87-store-leaks.loft because
         //     conditional Sets to cv interact with paired_witness in
         //     ways that a blanket "substitute every Set(cv, Call)"
         //     doesn't handle correctly).
@@ -7394,7 +7394,7 @@ impl Parser {
         // `match_arm_types_unify` strips the wrapper rather than requiring the two to agree.
         // So it is not a conversion question, and asking `convert` for it re-points the
         // sibling arm's value — the extractor pattern's wildcard stopped answering its own
-        // literal (`tests/scripts/35-nested-match.loft`).  A `&τ` on EITHER side is passed
+        // literal (`loft-suite/attic/scripts/35-nested-match.loft`).  A `&τ` on EITHER side is passed
         // through: an arm whose borrow also needs a width change keeps the gap the wrapper
         // already had, and narrowing it further needs the borrow to convert, not this site.
         if matches!(t, Type::RefVar(_)) || matches!(expected, Type::RefVar(_)) {
@@ -22722,7 +22722,7 @@ impl Parser {
         // compiler temps (the `_`/`#` name exclusion); both live in `is_user_var`.
         // If a future change sets `is_defined` out of this source order, the
         // monotonicity `debug_assert!` in `note_mutation`/`note_param` and the
-        // `tests/scripts/171-parallel-armlocal-ok.loft` arm-local-compiles guard
+        // `loft-suite/attic/scripts/171-parallel-armlocal-ok.loft` arm-local-compiles guard
         // are the alarms.
         let enclosing: Vec<bool> = (0..self.vars.count())
             .map(|v| self.vars.is_defined(v))

@@ -64,7 +64,7 @@ tables.
   scalars still behave as value copies.
   Design history (closed by @PLAN22):
   [plans/finished/22-mutable-closures/](plans/finished/22-mutable-closures).
-  Regression guard: `tests/scripts/56-closures.loft::test_capture_timing`.
+  Regression guard: `loft-suite/attic/scripts/56-closures.loft::test_capture_timing`.
 
 - **@PLN35 Phase 7 — streaming `match` over an `iterator<T>` is EAGER (materialise-then-match).**
   `match some_iter { … }` pulls the whole coroutine into a buffer `vector<T>` (behind the Cursor
@@ -91,14 +91,14 @@ tables.
     while every other accessor read past it.
   * `chr(0)` answers `""` for the same reason, and `text_from_bytes([0])` — a lone NUL —
     is the null text, which has no characters: `len`, `size` and iteration all say so
-    (guard `tests/scripts/1795-an-absent-text-has-no-characters.loft`).
+    (guard `loft-suite/rules/layout/L-Null-Text/1795-an-absent-text-has-no-characters.loft`).
 
   So a NUL survives a round trip through **bytes** (`byte_at` / `text_from_bytes`) but not
   through **characters**.  A decoder that must preserve NULs should walk
   `for i in 0..size(s) { s.byte_at(i) }` and keep the data as `vector<u8>`.  Giving
   `character` a null distinct from 0 would fix this properly; it is a representation change
   across both backends with no consumer asking for it yet.
-  Guard `tests/scripts/text-nul-iteration-755.loft`.
+  Guard `loft-suite/attic/scripts/text-nul-iteration-755.loft`.
 
 ---
 
@@ -202,7 +202,7 @@ moved from `sev:low` to `silent-wrong` while nobody was looking. Its title was w
 plain `fn f(v: vector<integer>)` was affected identically and a generic over a STRUCT element
 was fine, so the axis was never the generic. It was the `par` element STRIDE for a nested
 vector, computed from the inner element's type — fixed the same day, guard
-`tests/scripts/1033-a-par-worker-gets-the-right-nested-vector.loft`.
+`loft-suite/attic/scripts/1033-a-par-worker-gets-the-right-nested-vector.loft`.
 
 **#1030 / #1009 / #1296 — settled, and since @C127 the answer is a rule rather than a table.**
 A width type's out-of-range `+=` no longer keeps `260`. It takes **the type's DEFAULT** —
@@ -483,7 +483,7 @@ for the full operation set (construct/append/iterate/`len()`/range slices).
 **Tests:** `tests/parse_errors.rs::spatial_needs_coordinate_keys`,
 `::spatial_rejects_more_than_three_axes` (the old `spatial_not_implemented*`
 tests no longer exist).  Guard scripts:
-`tests/scripts/48-spatial-construct-free.loft`,
+`loft-suite/attic/scripts/48-spatial-construct-free.loft`,
 `tests/scripts/48b-spatial-slice.loft`.
 
 ### ~~P344~~ — a reused loop-variable name must keep a consistent type

@@ -43,7 +43,9 @@ tests/leak_cross_mode.rs::issue1369_nullable_rebind_absent_source_leak_free_both
 tests/leak_cross_mode.rs::p297_nested_call_arg_temp_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
 tests/leak_cross_mode.rs::p298_const_struct_arg_call_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
 tests/leak_cross_mode.rs::plain_call_to_loop_local_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
+tests/native.rs::native_limits_at_full_size	the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored
 tests/ownership_fuzz_gate.rs::fuzz_gate_map54_full_replay	full both-backends replay (rustc per cell) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_fuzz_gate fuzz_gate_map54_full_replay -- --ignored`
 tests/ownership_oracle.rs::oracle_fact_is_backend_identical_si2	native backend needs rustc per run — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored`
 tests/ownership_oracle.rs::oracle_leak_scan_ratchet	sweeps tests/scripts under check-leak — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored`
+tests/wrap.rs::limits_at_full_size	the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored
 tests/wrap.rs::loft_suite_whole_corpus	the whole tests/scripts corpus in one process — the nightly release-gate job (miri.yml); run with --ignored

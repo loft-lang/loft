@@ -2228,7 +2228,7 @@ impl State {
         // before read and must NOT allocate (allocating leaks them — they carry
         // no `OpFreeRef`).  No owned-vector case needs the vector site changed,
         // so de-conflating there only over-reaches.  See
-        // `tests/scripts/122-keyed-return-local-allocates.loft`.
+        // `loft-suite/attic/scripts/122-keyed-return-local-allocates.loft`.
         //
         // ⚠ loft#1155 — the de-conflation DROPPED that second half here rather than renaming
         // it, and a keyed match binding then allocated a store and orphaned it the moment the

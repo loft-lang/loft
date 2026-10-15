@@ -653,7 +653,7 @@ pub(super) fn store_confinement(
     // blocks does not confine, because freeing a confined block store while the local still
     // holds it returns the wrong element on the branch that did NOT run.  That shape refuted
     // the first gate design and is pinned by
-    // `tests/scripts/reassign-across-sibling-blocks.loft`, which asserts the same answers
+    // `loft-suite/attic/scripts/reassign-across-sibling-blocks.loft`, which asserts the same answers
     // with the recovery on and off.
     let recover = crate::env_once!(std::env::var("LOFT_NO_CONF_RECOVER").is_err());
     let mut out: BTreeMap<u16, (u16, u16)> = BTreeMap::new();

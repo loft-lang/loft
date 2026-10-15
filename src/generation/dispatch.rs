@@ -1819,7 +1819,7 @@ impl Output<'_> {
         // generic INSTANCE's selecting tail is the shape: its `if` lowers as a statement
         // join whose arms each bind the join local from a parameter's view, where the
         // source-level function lifts each arm into an expression the tuple path already
-        // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
+        // read (`loft-suite/rules/rewrites/R-ValueRecord/157-value-tail.loft` t14 — E0308 without this line).
         if let (Some(d_nr), Value::Var(src)) =
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
             && variables.record_copy_source(self.data, var, *src).is_some()

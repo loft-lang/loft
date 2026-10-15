@@ -93,7 +93,7 @@ answer, and this table is re-measured whenever an entry changes.
   plain loop (the kernel sums in blocks and checks overflow once per block; the loop checks per
   element, which is the 4.9×).
 - **Removal.** Both ratios at 2× or under.  Today over 150× and 4.9×.
-- **Guard.** `tests/scripts/a-reduction-loop-is-one-kernel-call.loft` (the rewrite's soundness
+- **Guard.** `loft-suite/attic/scripts/a-reduction-loop-is-one-kernel-call.loft` (the rewrite's soundness
   cell is `another vector`); `tests/bounded_sum.rs` pins the emission.
 
 ## Open
@@ -129,6 +129,6 @@ and an interpreted program runs them compiled.  Measured at the retirement, best
 
 The ports, through the twin: `dump_ignored_tests` 626 ms → 655 ms, `opl_points` (200k lines)
 1.77 s → 1.62 s, identical on every channel.  Their guards stay, renamed for the rules they pin
-(`tests/scripts/a-text-split-keeps-its-edge-rules.loft`,
+(`loft-suite/attic/scripts/a-text-split-keeps-its-edge-rules.loft`,
 `tests/scripts/a-file-lines-keeps-its-line-rules.loft`), and their plants in the loft bodies
 turn them red on both backends.

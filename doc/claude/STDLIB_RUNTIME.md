@@ -216,7 +216,7 @@ for f in t.fields {
   variable — call it one frame out and pass the values in.
 
 The two halves have one consumer each in the tree:
-`tests/scripts/pln127-reflect-consumer.loft` generates `CREATE TABLE` from a loft
+`loft-suite/attic/scripts/pln127-reflect-consumer.loft` generates `CREATE TABLE` from a loft
 struct through the type half alone, and `tests/fixtures/sqldb/round_trip.loft`
 builds an `INSERT`'s values through this one (@PLN23 S5) — walking the table
 definition's columns, each of which carries the byte position of the field that
@@ -355,7 +355,7 @@ every time.
 
 Two clocks, answering two different questions. Both return loft's 64-bit `integer`, which a
 millisecond epoch stamp needs. See [tests/docs/22-time.loft](../../tests/docs/22-time.loft) for the
-chapter and `tests/scripts/the-reference-clock-units-are-the-ones-it-names.loft` for the
+chapter and `loft-suite/attic/scripts/the-reference-clock-units-are-the-ones-it-names.loft` for the
 guard that pins the units against each other.
 
 | Function | Description |

@@ -3347,7 +3347,7 @@ pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
 /// [`crate::generation::container_element_base`] — while the free sweep reads the ORACLE.
 /// A `par` body's element bind is typed without a dep and classifies `Borrowed`, so it sits
 /// in the gap: adding the spellings makes the arm allocate a store the sweep then declines
-/// to free. Measured on `tests/scripts/1040-generic-par-worker-in-generic-fn.loft` — three
+/// to free. Measured on `loft-suite/attic/scripts/1040-generic-par-worker-in-generic-fn.loft` — three
 /// leaked `Cell` records, both backends. The arm's own premise says why: it assumes empty
 /// deps mean `scopes.rs` STRIPPED them and a free therefore exists, which holds for the
 /// reassigned-container case it was written for and not for a dep that was never set.
