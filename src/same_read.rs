@@ -717,7 +717,7 @@ fn bind_sequences(
                         }
                         live.retain(|e| *e != v);
                     }
-                    Some(Step::Fill(e, rest)) if live.contains(&e) => {
+                    Some(Step::Fill(e, rest)) if live.contains(&e) || e != u16::MAX => {
                         if rest.iter().any(|r| evaluates(r, &cand)) {
                             users.push(j);
                         }

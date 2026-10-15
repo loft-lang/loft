@@ -62,14 +62,14 @@ fn drop_in(data: &Data, ops: &mut [Value], replace: u32, field: u32) -> usize {
     let mut dropped = 0;
     for (k, x, b) in views {
         let after = &ops[k + 1..];
-        if x == b || disturbed(data, after, x) || disturbed(data, after, b) {
+        if x == b {
             continue;
         }
         for s in &mut ops[k + 1..] {
             s.map_nodes(&mut |n| {
                 if let Value::Call(op, args) = n.unspan()
                     && *op == replace
-                    && matches!(args.first().map(Value::unspan), Some(Value::Var(d)) if *d == b)
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(_)))
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Var(s)) if *s == x)
                 {
                     *n = Value::Insert(Vec::new());
