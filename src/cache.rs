@@ -515,7 +515,7 @@ fn stdlib_stamp(default_dir: &str) -> Option<String> {
     let entries = crate::file_access::read_dir(default_dir).ok()?;
     let mut files: Vec<(String, u64, u128)> = Vec::new();
     for path in &entries {
-        if path.extension() != Some("loft") {
+        if !crate::file_access::has_extension(path, "loft") {
             continue;
         }
         let meta = crate::file_access::metadata(path).ok()?;
@@ -526,7 +526,7 @@ fn stdlib_stamp(default_dir: &str) -> Option<String> {
             .ok()?
             .as_nanos();
         files.push((
-            path.file_name().unwrap_or_default().to_string(),
+            crate::file_access::file_name(path).unwrap_or_default(),
             meta.len(),
             mtime,
         ));
@@ -1502,7 +1502,7 @@ mod tests {
             crate::file_access::read_dir(&dir)
                 .unwrap()
                 .iter()
-                .filter(|p| p.extension() == Some("stamp"))
+                .filter(|p| crate::file_access::has_extension(*p, "stamp"))
                 .count()
         };
         assert_eq!(stamps(), 1, "the first call wrote its stamp");
@@ -1519,14 +1519,11 @@ mod tests {
         );
         assert_ne!(changed.1, first.1);
         // Only the mtime moves: the sources are read again and the key is the same.
-        let f = crate::file_access::open_with(
-            lib.join("01_a.loft"),
-            std::fs::OpenOptions::new().write(true),
+        crate::file_access::set_modified(
+            crate::file_access::PathText::from_os(&lib.join("01_a.loft")),
+            std::time::SystemTime::now() + std::time::Duration::from_secs(5),
         )
         .unwrap();
-        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
-            .unwrap();
-        drop(f);
         assert_eq!(
             stdlib_fingerprint_in(&lib_s, &dir),
             Some(changed),
