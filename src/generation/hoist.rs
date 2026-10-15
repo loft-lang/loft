@@ -4336,6 +4336,121 @@ pub fn borrowed_text_walks(
     out
 }
 
+/// `@FR-R-TextBorrow`'s versioned clause — the loop variables of text walks that borrow
+/// their element in `@FR-R-Alias`'s versioned copy only: [`borrowed_text_walks`] declined
+/// the walk for writing a store, every writer in its rest names a store this frame minted
+/// or the hidden return buffer (or a local bound from it), and the walked vector's dep chain
+/// ends at a PARAMETER.  The copy runs only when that parameter's store is not the return
+/// buffer's, so no write of the loop can grow, free or rewrite the store the element's bytes
+/// live in — the walk clause's own condition, proven by the copy's run-time test instead of
+/// by the absence of writes.  Answers each loop variable with that parameter and the borrow.
+#[must_use]
+pub fn versioned_text_walks(
+    data: &Data,
+    def_nr: u32,
+    sliced: &BTreeSet<u16>,
+    tables: &BTreeMap<u16, SplitTable>,
+) -> HashMap<u16, (u16, TextBorrow)> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
+    let mut out = HashMap::new();
+    let Some(rb) = retbuf_var(data, def_nr) else {
+        return out;
+    };
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    let minted = frame_minted_locals(data, vars, body, &[rb]);
+    // The parameter a variable's dep chain ends at, through single-dep views.
+    let root = |v: u16| -> Option<u16> {
+        let mut cur = v;
+        for _ in 0..16 {
+            if vars.is_argument(cur) {
+                return Some(cur);
+            }
+            let [d] = vars.tp(cur).depend()[..] else {
+                return None;
+            };
+            cur = d;
+        }
+        None
+    };
+    let mut cache: HashMap<u32, bool> = HashMap::new();
+    let mut active: HashSet<u32> = HashSet::new();
+    body.any_node(&mut |n| {
+        let Value::Loop(lp) = n else {
+            return false;
+        };
+        if lp.name != "For loop" || lp.operators.is_empty() {
+            return false;
+        }
+        let Some((p, _index, vec, read)) = text_walk_head(&lp.operators[0], data) else {
+            return false;
+        };
+        if sliced.contains(&vec) || !matches!(vars.tp(p).base(), Type::Text(_)) {
+            return false;
+        }
+        let rest: Vec<Value> = lp.operators[1..]
+            .iter()
+            .map(|s| as_emitted_by_tables(s, tables, data))
+            .collect();
+        if !rest.iter().any(|s| may_write_store(s, data, &mut cache)) {
+            return false; // the walk clause's own: no copy needed
+        }
+        let verdict = match root(vec) {
+            Some(r) if r != rb && crate::data::is_dbref(vars.tp(r).base()) => {
+                if let Some(why) = lp.operators[1..]
+                    .iter()
+                    .find_map(|s| text_escapes(s, p, data))
+                {
+                    Err(why)
+                } else if let Some(why) = rest
+                    .iter()
+                    .find_map(|s| foreign_store_writer(s, data, &minted, &mut cache, &mut active))
+                {
+                    Err(why)
+                } else {
+                    Ok(r)
+                }
+            }
+            _ => Err("the walked vector is no parameter's"),
+        };
+        match verdict {
+            Ok(r) => {
+                if trace {
+                    eprintln!(
+                        "[text-borrow] {}: `{}` borrows its element in the copy versioned on `{}`",
+                        def.name(),
+                        vars.name(p),
+                        vars.name(r)
+                    );
+                }
+                out.insert(
+                    p,
+                    (
+                        r,
+                        TextBorrow {
+                            read: Some(read.clone()),
+                        },
+                    ),
+                );
+            }
+            Err(why) if trace => {
+                eprintln!(
+                    "[text-borrow] {}: `{}` no versioned borrow — {why}",
+                    def.name(),
+                    vars.name(p)
+                );
+            }
+            Err(_) => {}
+        }
+        false
+    });
+    out
+}
+
 /// `@FR-R-TextBorrow`'s discharge clause — the `__ncc_N` temps of this function that hold a
 /// split TABLE's element read for a `?` / `??` discharge (`parts[i]?`, `parts[i] ?? d`),
 /// where every mention of the temp is a text-value read: the temp BORROWS the slice the
@@ -4613,7 +4728,7 @@ pub fn borrowed_store_texts(
         }
     }
     // The store condition, over each borrow's scope.
-    let minted = frame_minted_locals(data, vars, body);
+    let minted = frame_minted_locals(data, vars, body, &[]);
     let mut cache: HashMap<u32, bool> = HashMap::new();
     let mut active: HashSet<u32> = HashSet::new();
     for v in temps
@@ -4827,9 +4942,10 @@ fn frame_minted_locals(
     data: &Data,
     vars: &crate::variables::Function,
     body: &Value,
+    seeds: &[u16],
 ) -> HashSet<u16> {
     let mut set: HashSet<u16> = (0..vars.count())
-        .filter(|&v| !vars.is_argument(v) && names_a_store(vars.tp(v)))
+        .filter(|&v| (!vars.is_argument(v) || seeds.contains(&v)) && names_a_store(vars.tp(v)))
         .collect();
     body.any_node(&mut |n| {
         if let Value::Call(d, args) = n

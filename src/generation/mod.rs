@@ -1102,6 +1102,10 @@ pub struct Output<'a> {
     /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
     /// value slice of a parameter, for the rewrite census; rebuilt per function.
     pub slice_borrow_count: usize,
+    /// `@FR-R-TextBorrow`'s versioned clause — the walk variables that borrow their element in
+    /// `@FR-R-Alias`'s versioned copy only, each with the parameter the copy must have tested
+    /// apart from the return buffer ([`hoist::versioned_text_walks`]); rebuilt per function.
+    pub versioned_text_walks: HashMap<u16, (u16, hoist::TextBorrow)>,
     /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
@@ -2533,6 +2537,7 @@ impl<'a> Output<'a> {
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
             slice_borrow_count: 0,
+            versioned_text_walks: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
@@ -3064,6 +3069,11 @@ impl Output<'_> {
             self.borrowed_store_locals = store.locals;
             self.slice_borrow_count = store.slices.len();
             walks
+        };
+        self.versioned_text_walks = if self.text_borrow_disabled || self.distinct_version_disabled {
+            HashMap::new()
+        } else {
+            hoist::versioned_text_walks(self.data, def_nr, &sliced, &self.split_tables)
         };
         self.char_walks = if self.char_walk_disabled {
             BTreeMap::new()
@@ -4566,16 +4576,40 @@ impl Output<'_> {
         // holds (the function clause, an outer loop) would gain the copy no more than an
         // element base, which measured LESS than the duplicated loop costs (graphics'
         // `polygon_crossings`, +8 % on `fill_polygon`).
-        let mut gained: Vec<u16> = versioned
-            .vectors
-            .iter()
-            .filter(|(p, _)| {
-                params.contains(&p.0)
-                    && !plain.vectors.iter().any(|(q, _)| q == p)
-                    && self.active_vec_header(p).is_none()
-            })
-            .map(|(p, _)| p.0)
-            .collect();
+        // A path's root counts through its dep chain: `for e in v` walks a hidden local bound
+        // to the parameter `v`, whose header the copy holds once `v` is tested apart.
+        let param_root = |v: u16| -> Option<u16> {
+            let mut cur = v;
+            for _ in 0..16 {
+                if params.contains(&cur) {
+                    return Some(cur);
+                }
+                let [d] = vars.tp(cur).depend()[..] else {
+                    return None;
+                };
+                cur = d;
+            }
+            None
+        };
+        let mut gained: Vec<u16> = Vec::new();
+        for (p, _) in &versioned.vectors {
+            if !plain.vectors.iter().any(|(q, _)| q == p)
+                && self.active_vec_header(p).is_none()
+                && let Some(r) = param_root(p.0)
+                && !gained.contains(&r)
+            {
+                gained.push(r);
+            }
+        }
+        // `@FR-R-TextBorrow`'s versioned clause — the walk this loop IS borrows its element
+        // in the copy: a gain the header count does not see.
+        if let Some(Value::Set(w, _)) = lp.operators.first().map(Value::unspan)
+            && let Some((r, _)) = self.versioned_text_walks.get(w)
+            && params.contains(r)
+            && !gained.contains(r)
+        {
+            gained.push(*r);
+        }
         // `@FR-R-RecPtr` under the same assumption: a record VIEW of a parameter's element,
         // read field by field in the loop, takes its address only when the buffer's growth is
         // proven to leave the parameter's store alone — a gain of its own, which the header
@@ -6527,7 +6561,21 @@ impl Output<'_> {
         let vars = self.data.def(self.def_nr).variables();
         // `@FR-N-Shape` — `.base()`: a `text?` variable is the same slot, its null the sentinel.
         matches!(vars.tp(v).base(), Type::Text(_))
-            && (vars.is_argument(v) || self.borrowed_text_locals.contains_key(&v))
+            && (vars.is_argument(v)
+                || self.borrowed_text_locals.contains_key(&v)
+                || self.versioned_borrow(v).is_some())
+    }
+
+    /// `@FR-R-TextBorrow`'s versioned clause — `v`'s borrow while the copy that assumes its
+    /// parameter apart from the return buffer is being emitted, and `None` everywhere else
+    /// (the plain copy, and any code outside the loop).
+    #[must_use]
+    pub fn versioned_borrow(&self, v: u16) -> Option<&hoist::TextBorrow> {
+        let (root, borrow) = self.versioned_text_walks.get(&v)?;
+        self.assumed_distinct
+            .iter()
+            .any(|&(p, _)| p == *root)
+            .then_some(borrow)
     }
 
     /// The complement of [`Output::text_borrowed`] over text variables: `v` is a text
