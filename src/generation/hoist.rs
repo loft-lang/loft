@@ -4970,7 +4970,7 @@ fn own_call_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
         return None;
     }
     let wi = callee.attributes().iter().position(|a| {
-        a.hidden && matches!(&a.typedef, Type::RefVar(t) if matches!(**t, Type::Text(_)))
+        a.hidden && matches!(a.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
     })?;
     let out = callee.variables().var(&callee.attributes()[wi].name);
     if out == u16::MAX {
