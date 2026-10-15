@@ -5,8 +5,8 @@
 //!
 //! The end-to-end guard cannot see this (both forms answer the same numbers); what
 //! changed is the emitted Rust, so the three shapes are pinned here: a loop that writes
-//! no store reads `__vh_N.len`; a loop that appends keeps the runtime read, because it
-//! hoisted nothing; and a length read outside any loop keeps it too.  Measured: the
+//! no store reads `__vh_N.len`; a loop that appends keeps the runtime read outside its
+//! versioned copy; and a length read outside any loop keeps it too.  Measured: the
 //! rewrite alone halves a 200 000-element sum loop (645k → 330k ns/op).
 use loft::file_access as fa;
 use std::path::PathBuf;
@@ -61,10 +61,14 @@ fn a_hoisted_loop_reads_its_bound_from_the_header_and_the_others_keep_the_runtim
         hoisted.matches("length_vector(").count() <= 1,
         "only the fallback copy may still read the length at run time:\n{hoisted}"
     );
+    // An appending loop holds `xs`'s header only in `@FR-R-Alias`'s versioned copy, which runs
+    // when the result's store is not `xs`'s; the plain copy keeps the runtime read.
     let appending = fn_of(&rs, "n_copy_appending");
     assert!(
-        !appending.contains("vec_header(") && appending.contains("length_vector("),
-        "an appending loop hoists nothing and keeps the runtime read:\n{appending}"
+        appending.contains("length_vector(")
+            && (!appending.contains("vec_header(")
+                || appending.contains("versioned on distinct stores")),
+        "an appending loop holds a header only in its versioned copy:\n{appending}"
     );
     let outside = fn_of(&rs, "n_count");
     assert!(

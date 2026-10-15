@@ -4578,24 +4578,11 @@ impl Output<'_> {
         // `polygon_crossings`, +8 % on `fill_polygon`).
         // A path's root counts through its dep chain: `for e in v` walks a hidden local bound
         // to the parameter `v`, whose header the copy holds once `v` is tested apart.
-        let param_root = |v: u16| -> Option<u16> {
-            let mut cur = v;
-            for _ in 0..16 {
-                if params.contains(&cur) {
-                    return Some(cur);
-                }
-                let [d] = vars.tp(cur).depend()[..] else {
-                    return None;
-                };
-                cur = d;
-            }
-            None
-        };
         let mut gained: Vec<u16> = Vec::new();
         for (p, _) in &versioned.vectors {
             if !plain.vectors.iter().any(|(q, _)| q == p)
                 && self.active_vec_header(p).is_none()
-                && let Some(r) = param_root(p.0)
+                && let Some(r) = self.param_root(p.0, &params)
                 && !gained.contains(&r)
             {
                 gained.push(r);
@@ -4637,6 +4624,23 @@ impl Output<'_> {
         Some((tests, pairs))
     }
 
+    /// The member of `params` that `v`'s dep chain ends at, through single-dep views (sixteen
+    /// steps at most), or `None` when it branches, ends elsewhere, or runs longer.
+    fn param_root(&self, v: u16, params: &[u16]) -> Option<u16> {
+        let vars = self.data.def(self.def_nr).variables();
+        let mut cur = v;
+        for _ in 0..16 {
+            if params.contains(&cur) {
+                return Some(cur);
+            }
+            let [d] = vars.tp(cur).depend()[..] else {
+                return None;
+            };
+            cur = d;
+        }
+        None
+    }
+
     /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
     /// declines as things stand and admits once the `assumed` pairs — each parameter against
     /// the return buffer and the names it goes by — hold apart.
@@ -4649,21 +4653,7 @@ impl Output<'_> {
         if self.record_ptr_disabled || self.distinct_growth_disabled {
             return Vec::new();
         }
-        let vars = self.data.def(self.def_nr).variables();
-        let root = |v: u16| -> Option<u16> {
-            let mut cur = v;
-            for _ in 0..16 {
-                if params.contains(&cur) {
-                    return Some(cur);
-                }
-                let deps: Vec<u16> = vars.tp(cur).depend().clone();
-                let [d] = deps[..] else {
-                    return None;
-                };
-                cur = d;
-            }
-            None
-        };
+        let root = |v: u16| self.param_root(v, params);
         // Every statement list inside the loop — the loop's own, where a `for` binds its
         // element, and each block's — with each statement that binds a view of a parameter.
         let mut sites: Vec<(Vec<Value>, usize, u16)> = Vec::new();
