@@ -382,6 +382,7 @@ pub mod value_record;
 mod variables;
 pub mod vec_copy;
 pub mod vector;
+pub mod zero_count;
 
 pub mod trace;
 

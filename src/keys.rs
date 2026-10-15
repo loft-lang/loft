@@ -1879,6 +1879,15 @@ pub fn literal_host_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_HOST"))
 }
 
+/// `LOFT_NO_ZERO_COUNT=1` (closed program, BOTH backends): `len(t) > 0` and the other
+/// comparisons of a text's character count against the zero boundary keep counting
+/// characters, instead of reading the byte count — `@FR-R-ZeroCount`'s A/B, and the first
+/// bisect step for a wrong emptiness answer.
+pub fn zero_count_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ZERO_COUNT"))
+}
+
 /// `LOFT_NO_RETURN_FIELD=1` (scope pass, BOTH backends): the returned field of an owned local
 /// keeps the parser's copy into a minted return buffer instead of handing the local's store
 /// over at the field's position — the before-half of `(R-ReturnField)`'s A/B, and the first
