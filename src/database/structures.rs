@@ -365,6 +365,57 @@ impl Stores {
         }
     }
 
+    /// `@FR-R-KeyedEntry` — the record `c += [T{k: key, …}]` writes its other fields into, with
+    /// the key already written and the record already filed: the entry under `key` when there
+    /// is one, else a fresh one.  The emitter calls it in place of `record_new` … `record_finish`
+    /// for an element type that owns no heap (`generation::keyed_entry`), so on a repeated key
+    /// the overwrite IS the replace (`@FR-Col-Insert`: latest insert wins) and nothing is
+    /// claimed or released.
+    ///
+    /// Where the one-walk form cannot serve — no table yet, a sorted snapshot of this
+    /// collection live (a replace takes the displaced record out of it, an overwrite would not)
+    /// — the record is claimed, keyed and finished through the general path, which files it
+    /// before its other fields are written: a hash places an entry by its key alone, so that
+    /// order lands where `record_finish` after the writes would.
+    ///
+    /// # Panics
+    /// When `parent_tp` / `field` name no keyed collection with a key — the admission
+    /// (`generation::keyed_entry`) only emits this for an integer-keyed hash.
+    pub fn keyed_entry_long(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        key: i64,
+    ) -> DbRef {
+        let tp = self.sub_record_type(parent_tp, field);
+        let d = self.field_ref(data, parent_tp, field);
+        if !self.live_scratches.iter().any(|(source, _)| *source == d)
+            && let Some(rec) = crate::hash::entry_long(
+                &d,
+                &mut self.allocations,
+                &self.types[tp as usize].keys,
+                key,
+                data.rec,
+            )
+        {
+            if keys::keyed_verify() {
+                let found = self.find(&d, tp, &[keys::Content::Long(key)]);
+                assert!(
+                    (found.rec, found.pos) == (rec.rec, rec.pos),
+                    "LOFT_KEYED_VERIFY: key {key} answers {found:?} where the entry is {rec:?}"
+                );
+            }
+            return rec;
+        }
+        let rec = self.record_new(data, parent_tp, field);
+        let k = &self.types[tp as usize].keys[0];
+        let at = rec.pos + u32::from(k.position);
+        self.store_mut(&rec).set_int(rec.rec, at, key);
+        self.record_finish(data, &rec, parent_tp, field);
+        rec
+    }
+
     /**
     # Panics
     When the implementation is not yet written

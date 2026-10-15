@@ -1780,6 +1780,14 @@ pub fn apart_headers_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APART_HEADERS"))
 }
 
+/// `LOFT_NO_FILE_HOLD=1` — every scalar read of a file goes through its `File` record
+/// (`@FR-R-FileHold` off): the first bisect step for a wrong `f#next` or `f#index` after a
+/// loop that reads `f`, or a value read from the wrong offset inside one.
+pub fn file_hold_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FILE_HOLD"))
+}
+
 /// `LOFT_NO_RESULT_BUFFER=1` — a call's vector result that is only read where it stands
 /// keeps the buffer its frame mints (`@FR-R-WorkBuffer`'s result clause off).  The bisect
 /// step between `LOFT_NO_WORK_BUFFER` and the rest of the rule: a stale or leaked element of

@@ -2460,11 +2460,11 @@ impl ReplSession {
         // the parent dir too when dependencies exist (sibling packages).
         let manifest = crate::manifest::read_manifest(&root.join("loft.toml").to_string_lossy())
             .unwrap_or_default();
-        let entry = manifest.entry.unwrap_or_else(|| "src".to_string());
-        let src_dir = std::path::Path::new(&entry)
-            .parent()
-            .map_or_else(|| "src".to_string(), |p| p.to_string_lossy().into_owned());
-        let mut lib_dirs = vec![root.join(&src_dir).to_string_lossy().into_owned()];
+        let mut lib_dirs = vec![
+            root.join(manifest.source_dir())
+                .to_string_lossy()
+                .into_owned(),
+        ];
         if !manifest.dependencies.is_empty()
             && let Some(parent) = root.parent()
         {

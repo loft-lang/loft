@@ -12,14 +12,21 @@ pub(crate) use crate::rust_spelling::{is_raw_scalar_ref, link_base_type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
 pub mod apart;
+mod apart_emit;
+pub mod apart_value;
+pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
+pub mod decode_view;
+mod decode_view_emit;
 pub mod destination;
 mod dispatch;
 mod emit;
+pub mod file_hold;
 pub use crate::fnref;
 pub mod hoist;
+pub mod keyed_entry;
 pub mod keyed_place;
 pub mod non_sentinel;
 pub(crate) mod ops;
@@ -1087,6 +1094,9 @@ pub struct Output<'a> {
     /// [`Output::borrowed_text_locals`] ([`hoist::borrowed_store_texts`]): every `Set` of
     /// one binds its `&str` slot.
     pub borrowed_store_locals: HashSet<u16>,
+    /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
+    /// value slice of a parameter, for the rewrite census; rebuilt per function.
+    pub slice_borrow_count: usize,
     /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
@@ -1124,6 +1134,19 @@ pub struct Output<'a> {
     /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
     /// for the whole program because the admission asks every call site.
     pub value_records: hoist::ValueRecords,
+    /// `@FR-R-Apart` — the program's apart types, twins and regions ([`apart_value::plan`]).
+    pub apart: apart_value::ApartPlan,
+    /// `@FR-R-Apart` — the plan for the body being emitted, whether a twin is being emitted,
+    /// and whether the value structs are written.
+    pub apart_ctx: Option<apart_emit::ApartCtx>,
+    pub apart_twin: bool,
+    /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
+    /// its `__dv` twin.
+    pub dv: decode_view::DvPlan,
+    pub dv_active: bool,
+    /// The node a hook is re-emitting through the ordinary path, which it must not take again.
+    pub dv_bypass: usize,
+    pub apart_types_done: bool,
     /// Whether `value_records` has been computed for this program — a whole-program
     /// analysis asked once, whatever it answered (an empty answer is an answer).
     pub value_records_done: bool,
@@ -1331,6 +1354,9 @@ pub struct Output<'a> {
     /// null sentinel again, so the candidate mints its own on every call.  The bisect step
     /// for a stale or shared scratch vector in a function reached through a function value.
     pub fnref_work_disabled: bool,
+    /// `@FR-R-FileHold` — the files whose cursor an enclosing loop holds, innermost last,
+    /// each with the guard local that holds it.
+    pub file_holds: Vec<(u16, String)>,
     /// Does any definition of the program take a work buffer (`Attribute::work_buffer`)?
     /// Asked once: a program with none lends nothing.
     any_work_buffer: std::cell::OnceCell<bool>,
@@ -2334,6 +2360,7 @@ impl<'a> Output<'a> {
             text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
+            slice_borrow_count: 0,
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
@@ -2345,6 +2372,13 @@ impl<'a> Output<'a> {
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
+            apart: apart_value::ApartPlan::default(),
+            apart_ctx: None,
+            apart_twin: false,
+            dv: decode_view::DvPlan::default(),
+            dv_active: false,
+            dv_bypass: 0,
+            apart_types_done: false,
             value_records_done: false,
             value_record_locals: HashMap::new(),
             widening: None,
@@ -2402,6 +2436,7 @@ impl<'a> Output<'a> {
             named_frame: false,
             fnref_work: false,
             fnref_work_disabled: std::env::var("LOFT_NO_FNREF_WORK_BUFFER").is_ok_and(|v| v != "0"),
+            file_holds: Vec::new(),
             any_work_buffer: std::cell::OnceCell::new(),
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
@@ -2623,7 +2658,12 @@ impl Output<'_> {
     /// this (#305).
     #[must_use]
     pub fn fn_ident(&self, def: &crate::data::Definition) -> String {
-        disambiguated_fn_ident(&self.dup_fn_names, def)
+        let id = disambiguated_fn_ident(&self.dup_fn_names, def);
+        if self.dv_renames(def) {
+            format!("{id}__dv")
+        } else {
+            id
+        }
     }
 
     /// The Rust place for loft variable `var` — the generator's struct field when the
@@ -2842,6 +2882,7 @@ impl Output<'_> {
             .copied()
             .collect();
         self.borrowed_store_locals.clear();
+        self.slice_borrow_count = 0;
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
@@ -2855,6 +2896,7 @@ impl Output<'_> {
             let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
+            self.slice_borrow_count = store.slices.len();
             walks
         };
         self.char_walks = if self.char_walk_disabled {
@@ -2967,6 +3009,7 @@ impl Output<'_> {
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
         fired("R-TextBorrow", self.borrowed_text_locals.len());
+        fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
         fired("R-LoopRecord", self.loop_records.len());
@@ -4486,22 +4529,15 @@ impl Output<'_> {
         if self.hoist_disabled {
             return hoist::LoopHoist::default();
         }
-        hoist::hoistable(
+        let tiers = self.hoist_tiers();
+        let mut verdict = hoist::hoistable(
             lp,
             self.data,
             self.stores,
             self.def_nr,
             &mut self.hoist_cache,
             &mut self.scalar_write_cache,
-            hoist::HoistTiers {
-                in_place: !self.write_hoist_disabled,
-                scalars: !self.scalar_hoist_disabled,
-                push: !self.push_hoist_disabled,
-                mint: !self.mint_hoist_disabled,
-                record_push: !self.record_push_disabled,
-                heap_push: !self.heap_record_push_disabled,
-                rebound_movers: !self.rebound_mover_disabled,
-            },
+            tiers,
             (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
             Some(&self.hoist_owned),
             (!self.distinct_growth_disabled)
@@ -4513,7 +4549,23 @@ impl Output<'_> {
                     assumed: &self.assumed_distinct,
                 })
                 .as_ref(),
-        )
+        );
+        // `@FR-R-Apart` instance 3 — an apart vector is no store vector: no path rooted at it
+        // or at a companion takes a header, and a loop whose only growth was such a vector
+        // grows no store.
+        if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs)
+            && !vecs.is_empty()
+        {
+            verdict.vectors.retain(|(p, _)| !vecs.holds(p.0));
+            verdict.pushes.retain(|(p, _)| !vecs.holds(p.0));
+            verdict.mint_pushes.retain(|(p, _)| !vecs.holds(p.0));
+            let movers = verdict.movers.len();
+            verdict.movers.retain(|m| !vecs.holds(*m));
+            if movers > 0 && verdict.movers.is_empty() {
+                verdict.growth_free = true;
+            }
+        }
+        verdict
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -4537,7 +4589,11 @@ impl Output<'_> {
         {
             HashSet::new()
         } else {
-            hoist::nest_read_paths(lp, self.data)
+            let mut paths = hoist::nest_read_paths(lp, self.data);
+            if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs) {
+                paths.retain(|p| !vecs.holds(p.0));
+            }
+            paths
         };
         let hoisted = self.compute_loop_hoist(lp);
         let hoist::LoopHoist {
@@ -4824,6 +4880,63 @@ impl Output<'_> {
         self.push_headers.push(push_frame);
         self.mint_push_headers.push(mint_frame);
         Ok(opened)
+    }
+
+    /// `@FR-R-FileHold` — before the loop `lp` is written: when it may read one `File`
+    /// through a held cursor ([`file_hold::held_file`]) and no enclosing loop holds that file
+    /// already, open a block, bind the guard in it and remember it for the reads.  Answers
+    /// whether a block was opened; [`Self::end_file_hold`] closes it after the loop, which is
+    /// where the guard drops and the record gets its cursor back.
+    pub(super) fn begin_file_hold(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || !crate::keys::file_hold_enabled() {
+            return Ok(false);
+        }
+        let typed = |args: &[Value]| ops::file_ops::typed_read(self, args).is_some();
+        let Some(f) = file_hold::held_file(lp, self.data, self.def_nr, &typed) else {
+            return Ok(false);
+        };
+        if self.file_holds.iter().any(|(held, _)| *held == f) {
+            return Ok(false);
+        }
+        self.hoist_counter += 1;
+        let name = format!("__fc_{}", self.hoist_counter);
+        let operand = self.expr_string(&Value::Var(f))?;
+        let check = if self.hoist_verify { "true" } else { "false" };
+        writeln!(
+            w,
+            "{{ //@FR-R-FileHold the file's cursor, held across the loop"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {name} = codegen_runtime::FileCursor::<{check}>::hold(cell, {operand});"
+        )?;
+        self.indent(w)?;
+        crate::rewrite_census::fired("R-FileHold", 1);
+        self.file_holds.push((f, name));
+        Ok(true)
+    }
+
+    /// Close what [`Self::begin_file_hold`] opened.
+    pub(super) fn end_file_hold(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
+        if opened {
+            self.file_holds.pop();
+            write!(w, " }}")?;
+        }
+        Ok(())
+    }
+
+    /// The guard that holds `f`'s cursor here, if a loop around this point holds it.
+    pub(crate) fn file_hold(&self, f: u16) -> Option<&str> {
+        self.file_holds
+            .iter()
+            .rev()
+            .find(|(held, _)| *held == f)
+            .map(|(_, name)| name.as_str())
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.
@@ -9622,6 +9735,32 @@ extern crate loft;"
                     );
                 }
             }
+            // `@FR-R-Apart` — after the value records, whose functions it leaves alone: a
+            // function that answers a tuple, or takes one, has no buffer to convert into.
+            let value_fns: crate::fxhash::FxHashSet<u32> = self
+                .value_records
+                .fns
+                .keys()
+                .copied()
+                .chain(self.value_records.params.keys().copied())
+                .collect();
+            // A build that ships the live tier keeps every call on the function a flip
+            // reaches: a twin's call would run the native body of a function flipped to the
+            // interpreter, so that build has no plan.
+            if !self.emit_live {
+                self.apart = apart_value::plan(self.data, self.stores, &value_fns);
+                self.dv = decode_view::plan(self.data, self.stores);
+                // A function both plans re-emit would need a twin of a twin.
+                if self
+                    .dv
+                    .region
+                    .iter()
+                    .any(|d| self.apart.twins.contains_key(d))
+                {
+                    self.dv = decode_view::DvPlan::default();
+                }
+            }
+            self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();
@@ -9648,6 +9787,13 @@ extern crate loft;"
                 continue;
             }
             self.output_function(w, dnr, program_store.as_ref())?;
+            // `@FR-R-Apart` — the function's apart twin beside it: the same body over values.
+            if self.apart.twins.contains_key(&dnr) {
+                self.apart_twin = true;
+                let r = self.output_function(w, dnr, program_store.as_ref());
+                self.apart_twin = false;
+                r?;
+            }
             // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
             // with its invariant inputs as extra parameters.
             if let Some(inputs) = self.callee_inputs_of(dnr) {
@@ -9655,6 +9801,7 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
+            self.output_dv_twins(w, dnr, program_store.as_ref())?;
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
@@ -9666,6 +9813,31 @@ extern crate loft;"
                 return Ok(());
             }
         }
+    }
+
+    /// `@FR-R-DecodeView` — a region function's `__dv` twin beside it, and its inputs twin.
+    fn output_dv_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        if !self.dv.region.contains(&dnr) {
+            return Ok(());
+        }
+        self.dv_active = true;
+        let r = self.output_function(w, dnr, program_store);
+        let r = r.and_then(|()| match self.callee_inputs_of(dnr) {
+            Some(inputs) => {
+                self.twin = Some(inputs);
+                let r = self.output_function(w, dnr, program_store);
+                self.twin = None;
+                r
+            }
+            None => Ok(()),
+        });
+        self.dv_active = false;
+        r
     }
 
     /// `@FR-R-Destination` — the destination twins calls asked for: each callee's body with
@@ -9682,13 +9854,16 @@ extern crate loft;"
             .iter()
             .position(|r| !self.dest_emitted.contains(r))
         {
-            let (dnr, vo) = self.dest_requests[at];
-            self.dest_emitted.insert((dnr, vo));
+            let (key, vo) = self.dest_requests[at];
+            self.dest_emitted.insert((key, vo));
+            let dnr = key & !decode_view::DV_BIT;
             let Some(Some(shape)) = self.dest_memo.get(&(dnr, vo)).cloned() else {
                 continue;
             };
             self.dest_twin = Some(shape);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.dest_twin = None;
             r?;
             any = true;
@@ -9711,10 +9886,12 @@ extern crate loft;"
             .iter()
             .position(|r| !self.vr_emitted.contains(r))
         {
-            let dnr = self.vr_requests[at];
-            self.vr_emitted.insert(dnr);
+            let key = self.vr_requests[at];
+            self.vr_emitted.insert(key);
             self.vr_twin = true;
-            let r = self.output_function(w, dnr, program_store);
+            self.dv_active = key & decode_view::DV_BIT != 0;
+            let r = self.output_function(w, key & !decode_view::DV_BIT, program_store);
+            self.dv_active = false;
             self.vr_twin = false;
             r?;
             any = true;
@@ -9735,14 +9912,17 @@ extern crate loft;"
             .iter()
             .position(|r| !self.ap_emitted.contains(r))
         {
-            let dnr = self.ap_requests[at];
-            self.ap_emitted.insert(dnr);
+            let key = self.ap_requests[at];
+            self.ap_emitted.insert(key);
+            let dnr = key & !decode_view::DV_BIT;
             let Some(b) = append_twin::buffer(self.data, dnr) else {
                 continue;
             };
             self.append_twin_buf = Some(b);
             self.append_twin_views = append_twin::views(self.data.def(dnr).variables(), b);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.append_twin_buf = None;
             self.append_twin_views.clear();
             r?;
@@ -9764,8 +9944,9 @@ extern crate loft;"
             .iter()
             .position(|r| !self.rg_emitted.contains(r))
         {
-            let (dnr, twin) = self.rg_requests[at];
-            self.rg_emitted.insert((dnr, twin));
+            let (key, twin) = self.rg_requests[at];
+            self.rg_emitted.insert((key, twin));
+            let dnr = key & !decode_view::DV_BIT;
             if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
                 eprintln!(
                     "ranged-call: emits {}{}__rg",
@@ -9784,7 +9965,9 @@ extern crate loft;"
             }
             self.range_override.push(std::rc::Rc::new(facts));
             self.emitting_ranged = true;
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.emitting_ranged = false;
             self.range_override.pop();
             self.twin = None;
@@ -9806,10 +9989,13 @@ extern crate loft;"
             .iter()
             .position(|r| !self.rt_emitted.contains(r))
         {
-            let dnr = self.rt_requests[at];
-            self.rt_emitted.insert(dnr);
+            let key = self.rt_requests[at];
+            self.rt_emitted.insert(key);
+            let dnr = key & !decode_view::DV_BIT;
             self.refill_twin_buf = hoist::retbuf_var(self.data, dnr);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.refill_twin_buf = None;
             r?;
             self.output_ranged_variants(w, program_store)?;
@@ -10406,10 +10592,33 @@ extern crate loft;"
         Ok(())
     }
 
-    /// Use this to emit one loft function as a Rust function.
+    /// Use this to emit one loft function as a Rust function, under the `@FR-R-Apart`
+    /// context of its body: a twin or a region is emitted with the vector hoists off
+    /// (`apart_emit`'s header says why).
+    fn output_function(
+        &mut self,
+        w: &mut dyn Write,
+        def_nr: u32,
+        program_store: Option<&(Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        let saved_hoist = self.hoist_disabled;
+        self.apart_ctx = self.apart_ctx_for(def_nr);
+        if self
+            .apart_ctx
+            .as_ref()
+            .is_some_and(|c| c.twin || !c.roles.is_empty())
+        {
+            self.hoist_disabled = true;
+        }
+        let r = self.output_function_body(w, def_nr, program_store);
+        self.hoist_disabled = saved_hoist;
+        self.apart_ctx = None;
+        r
+    }
+
     /// Every loft function receives `stores: &mut Stores` as its first implicit argument.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn output_function(
+    fn output_function_body(
         &mut self,
         w: &mut dyn Write,
         def_nr: u32,
@@ -10559,6 +10768,8 @@ extern crate loft;"
                 "__d"
             } else if self.vr_twin {
                 "__vr"
+            } else if self.apart_twin {
+                "__apv"
             } else {
                 ""
             }
@@ -10574,6 +10785,15 @@ extern crate loft;"
         for (i, a) in def.attributes().iter().enumerate() {
             if dropped == Some(i) {
                 continue;
+            }
+            // `@FR-R-Apart` — a twin takes its record parameters as values and no buffer.
+            match self.apart_twin_param(def_nr, i) {
+                apart_emit::TwinParam::Same => {}
+                apart_emit::TwinParam::Dropped => continue,
+                apart_emit::TwinParam::Value(p) => {
+                    write!(w, "{p}")?;
+                    continue;
+                }
             }
             // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
             // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
@@ -10627,7 +10847,9 @@ extern crate loft;"
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
-            if let Some(t) = &value_rec {
+            if let Some(t) = self.apart_twin_result(def_nr) {
+                write!(w, "-> {t} ")?;
+            } else if let Some(t) = &value_rec {
                 write!(w, "-> {t} ")?;
             } else if let Some(dt) = &self.dest_twin {
                 // `@FR-R-Destination` — the moved field is written into the caller's element;
@@ -10655,7 +10877,8 @@ extern crate loft;"
         // NULL SENTINEL only (no allocation; `OpFreeRef` no-ops on it); the
         // first body `Set(v, Null)` still emits `null_named` + `OpDatabase`
         // at its IR position via `predeclared`.
-        let mut vdb_prologue = String::new();
+        let mut vdb_prologue = self.apart_prologue();
+        vdb_prologue.push_str(&self.dv_prologue(def_nr));
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin

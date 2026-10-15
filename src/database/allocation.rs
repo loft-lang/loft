@@ -3072,6 +3072,7 @@ impl Stores {
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: Vec::new(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: self.start_time,
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]

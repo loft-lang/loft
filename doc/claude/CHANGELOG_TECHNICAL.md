@@ -262,6 +262,49 @@ All notable changes to the loft language and interpreter.
   default, so the operator's own lowering stays on the channel that discounts it.
 - Still open, tracked as loft#1990: `(R-ValueRecord)` declines a `-> S?` whose result joins
   a built record with a dense view.
+### A registry dependency fires its type and builder triggers (2026-10-15)
+
+- `Parser::trigger_map` derived a declared dependency's triggers from a sibling, a `path =`
+  or a `lib/<dep>` package only, and left a registry dependency to the catalogue, which
+  carries methods and builders and no types: `names: sorted<Word[key]>` over `script =
+  ">=0.2"` was "Undefined type Word" while the `path =` form of the same package fired.
+  `registry_dep_root` now reads the extracted copy in place — the version `loft.lock` pins
+  when it is in the cache, else the newest cached copy the declared range admits — a pure
+  read of the lock and the cache directory.  Cell
+  `a_registry_dependency_fires_its_type_and_builder_triggers` (tests/builder_trigger.rs,
+  both backends, under a private `LOFT_HOME`).
+
+### The catalog trigger map reads each package's newest loadable release (2026-10-14)
+
+- `registry_index::providers_of` took the union of every published version's triggers, so
+  a spelling a release dropped (regex 0.5.0 retired `regex_find`) still loaded the package
+  from a bare call, which then failed on an unknown method.  It now reads the release
+  `loft install` would choose for an undeclared consumer (`find_best_version` on `"*"`:
+  yanked, prerelease and floor-refused versions skipped); a package with no loadable
+  release answers nothing.  The sidecar carries a `derivation` stamp (2) beside the index
+  stamp, so a sidecar an older loft derived is rebuilt once rather than trusted until the
+  index moves.  PKG_REGISTRY.md § Derived trigger sidecar.
+
+### Builder triggers — the declared half of the auto-use surface (2026-10-14)
+
+- `[triggers] builders = ["set"]` (`Manifest::trigger_builders`): the free `pub fn`s a
+  consumer may call bare.  `triggers::derive_triggers(source, builders)` keeps a listed name
+  only when the source declares it as a free `pub fn` (`Triggers::builders`); the registry
+  entry carries it as `"set:fn"` beside the `"name:receiver"` methods, `loft publish` warns
+  on a listed name the entry file lacks, and the collision pre-check covers it.
+- The parser's auto-use scan collects bare calls minus the file's own `fn` declarations
+  (`libscan::scan_bare_calls_and_fn_declarations`); a name the stdlib or a loaded file
+  defines (`def_nr("n_<name>")`) is never a trigger; the declared packages' builder map
+  (`auto_use_builder_map`) is asked first, then the catalog's.  A fired name is imported
+  alone (`ImportSpec::Names`), as a type trigger is — the library's qualifier is all a load
+  binds (@C98).
+- The derived sidecar (`~/.loft/registry/triggers.json`) carries `builders` beside
+  `triggers`; `trigger_providers` skips `:fn` entries, `builder_providers` takes them, and a
+  sidecar written without the key reads as stale, so an upgraded loft rebuilds it once.
+- Why declared, not derived: a method or a type trigger takes no name from the program's
+  file, a free function does, so the author chooses the few worth a bare name and the shared
+  namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
+  cells `tests/builder_trigger.rs` on both backends.
 
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 

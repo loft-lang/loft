@@ -1,0 +1,292 @@
+// `@FR-R-DecodeView` (@C141) instance 1 — a text or byte-string field of a decoded enum value holds a
+// span of the frame it was decoded from, inside the region of functions that decode the frame
+// and only read the result (`--native-release`).  Every cell asserts the VALUES a hand
+// computation gives; the interpreter keeps every field owned and is the oracle, and
+// `LOFT_NO_DECODE_VIEW=1` must answer the same.
+//
+// The decoder is cbor's `read_value` in miniature, so the copies `(R-ByteCopy)` and
+// `(R-TextRun)` see are the shapes the rule takes: a frame is `[tag, …]` with tag 1 an
+// integer (one byte, minus 100), 2 a text and 3 a byte string (a length byte, then the bytes),
+// 4 a map (a count byte, then key / value pairs).
+//
+// Predictions (`tests/decode_view.rs` pins them on the emitted Rust): roots `lookup`,
+// `shout`, `measure`, `nested`, `first_key`, `count_unread`, `copied`, `mixed` and
+// `walk_values`; `bytes_len` (a byte string read), `scribble` (the frame written), `keep` (a
+// decoded value returned) and `mixed_alone` (a span variant minted alone) decline.
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-decoded-text-is-read-where-it-lies.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch reads a span one byte late.
+//   WITNESS: under the patch c1 answers `-` where this file says `apply`: the map's keys,
+//   read a byte late, never equal "op".
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both — only native's values move.
+
+enum Val {
+  VNull,
+  VInt { value: integer },
+  VText { value: text },
+  VBytes { value: vector<u8> },
+  VMap { entries: vector<Entry> },
+}
+
+struct Entry {
+  key: Val,
+  value: Val,
+}
+
+struct Dec {
+  value: Val,
+  next: integer,
+  ok: boolean,
+}
+
+fn read_v(bytes: vector<u8>, pos: integer, depth: integer) -> Dec {
+  n = len(bytes);
+  if pos + 1 >= n || depth > 8 { return Dec { value: VNull, next: pos, ok: false }; }
+  tag = bytes[pos] ?? 0;
+  arg = bytes[pos + 1] ?? 0;
+  at = pos + 2;
+  if tag == 1 { return Dec { value: VInt { value: arg - 100 }, next: at, ok: true }; }
+  if tag == 3 {
+    if at + arg > n { return Dec { value: VNull, next: pos, ok: false }; }
+    bs: vector<u8> = [];
+    for k in 0..arg { bs += [bytes[at + k] ?? 0]; }
+    return Dec { value: VBytes { value: bs }, next: at + arg, ok: true };
+  }
+  if tag == 2 {
+    if at + arg > n { return Dec { value: VNull, next: pos, ok: false }; }
+    tb: vector<u8> = [];
+    for k in 0..arg { tb += [bytes[at + k] ?? 0]; }
+    return Dec { value: VText { value: text_from_bytes(tb) }, next: at + arg, ok: true };
+  }
+  if tag == 4 {
+    entries: vector<Entry> = [];
+    p = at;
+    mok = true;
+    for _ in 0..arg {
+      if mok {
+        kd = read_v(bytes, p, depth + 1);
+        if kd.ok {
+          vd = read_v(bytes, kd.next, depth + 1);
+          if vd.ok {
+            kv = kd.value;
+            vv = vd.value;
+            entries += [Entry { key: kv, value: vv }];
+            p = vd.next;
+          } else { mok = false; }
+        } else { mok = false; }
+      }
+    }
+    if !mok { return Dec { value: VNull, next: pos, ok: false }; }
+    return Dec { value: VMap { entries: entries }, next: p, ok: true };
+  }
+  return Dec { value: VNull, next: pos, ok: false };
+}
+
+fn dec(bytes: vector<u8>) -> Dec { read_v(bytes, 0, 0) }
+
+/// The entry of map `m` under text key `key`, or null.
+fn get(m: Val, key: text) -> Val {
+  match m {
+    VMap { entries } => {
+      for e in entries {
+        match e.key { VText { value } => { if value == key { return e.value; } }, _ => {} }
+      }
+    },
+    _ => {}
+  }
+  return VNull;
+}
+
+/// A text value as itself, "-" for anything else — the reader the region and `main` share.
+fn text_of(v: Val) -> text {
+  match v { VText { value } => { return "{value}"; }, _ => {} }
+  return "-";
+}
+
+// ── the roots ──────────────────────────────────────────────────────────────
+
+/// c1 — a lookup by key, compared and formatted (check_request's shape).
+fn lookup(frame: vector<u8>, key: text) -> text {
+  d = dec(frame);
+  if !d.ok { return "bad"; }
+  text_of(get(d.value, key))
+}
+
+/// c2 — a decoded text formatted into another.
+fn shout(frame: vector<u8>) -> text {
+  d = dec(frame);
+  match d.value { VText { value } => { return "<{value}!>"; }, _ => {} }
+  return "?";
+}
+
+/// c3 — a decoded text's length in bytes and in characters, and a walk over its characters.
+fn measure(frame: vector<u8>) -> text {
+  d = dec(frame);
+  match d.value {
+    VText { value } => {
+      vowels = 0;
+      for c in value { if c == 'a' || c == 'e' || c == 'o' { vowels += 1; } }
+      return "{size(value)}/{len(value)}/{vowels}";
+    },
+    _ => {}
+  }
+  return "?";
+}
+
+/// c10 — a map inside a map, read by the readers recursively.
+fn nested(frame: vector<u8>, outer: text, inner: text) -> text {
+  d = dec(frame);
+  text_of(get(get(d.value, outer), inner))
+}
+
+/// c11 — the first key of a map, by position.
+fn first_key(frame: vector<u8>) -> text {
+  d = dec(frame);
+  match d.value {
+    VMap { entries } => { if len(entries) > 0 { return text_of(entries[0].key); } },
+    _ => {}
+  }
+  return "?";
+}
+
+/// c6 — how many entries there are: their byte strings are decoded and never read.
+fn count_unread(frame: vector<u8>) -> integer {
+  d = dec(frame);
+  match d.value { VMap { entries } => { return len(entries); }, _ => {} }
+  return -1;
+}
+
+/// c7 — a byte string's length: a read of a byte span, so the root keeps it owned.
+fn bytes_len(frame: vector<u8>, key: text) -> integer {
+  d = dec(frame);
+  match get(d.value, key) { VBytes { value } => { return len(value); }, _ => {} }
+  return -1;
+}
+
+/// c8 — the frame written after the decode: the text is what the decode read.
+fn scribble(frame: vector<u8>) -> text {
+  d = dec(frame);
+  frame[2] = 88;
+  frame[3] = 88;
+  match d.value { VText { value } => { return "{value}"; }, _ => {} }
+  return "?";
+}
+
+/// c9 — the decoded value returned out of the frame's function.
+fn keep(frame: vector<u8>) -> Val {
+  d = dec(frame);
+  return d.value;
+}
+
+/// c12 — a decoded value copied into a local, then read through the copy.
+fn copied(frame: vector<u8>) -> text {
+  d = dec(frame);
+  c = get(d.value, "op");
+  c2 = c;
+  "{text_of(c2)}+{text_of(c)}"
+}
+
+/// c15 — a value decoded and one built here, in a vector's element, handed to the same
+/// reader.
+fn mixed(frame: vector<u8>) -> text {
+  d = dec(frame);
+  mine: vector<Val> = [VText { value: "own" }];
+  "{text_of(get(d.value, "op"))}/{text_of(mine[0])}"
+}
+
+/// c15b — the same with the built value a record of its own: the variant's record has no
+/// room for a span word, so the root keeps every field owned.
+fn mixed_alone(frame: vector<u8>) -> text {
+  d = dec(frame);
+  mine = VText { value: "own" };
+  "{text_of(get(d.value, "op"))}/{text_of(mine)}"
+}
+
+/// c16 — values read one after another at their offsets, each into the buffer the last
+/// one used: an integer, a text, and a text that is not UTF-8.
+fn walk_values(frame: vector<u8>) -> text {
+  out = "";
+  p = 0;
+  for _ in 0..3 {
+    d = read_v(frame, p, 0);
+    if !d.ok { return "{out}|bad"; }
+    out += "[{text_of(d.value)}]";
+    p = d.next;
+  }
+  out
+}
+
+/// The frame of map `{ "op": "apply", "st": <3 bytes>, "id": 7 }` — a text first, a byte
+/// string and an integer after it.
+fn op_frame() -> vector<u8> {
+  [4, 3,
+   2, 2, 111, 112,  2, 5, 97, 112, 112, 108, 121,
+   2, 2, 115, 116,  3, 3, 9, 8, 7,
+   2, 2, 105, 100,  1, 107]
+}
+
+fn main() {
+  f = op_frame();
+  // c1 — "op" is "apply"; "id" is no text; "zz" is absent.
+  assert(lookup(f, "op") == "apply", "c1 op: {lookup(f, \"op\")}");
+  assert(lookup(f, "id") == "-", "c1 id: {lookup(f, \"id\")}");
+  assert(lookup(f, "zz") == "-", "c1 zz: {lookup(f, \"zz\")}");
+  assert(lookup([4, 9], "op") == "bad", "c1 truncated");
+
+  // c2 — a top-level text, formatted.
+  t: vector<u8> = [2, 4, 104, 97, 108, 111];
+  assert(shout(t) == "<halo!>", "c2: {shout(t)}");
+
+  // c3 — "caféo": 6 bytes, 5 characters, vowels a, o (é is not one).
+  m: vector<u8> = [2, 6, 99, 97, 102, 195, 169, 111];
+  assert(measure(m) == "6/5/2", "c3: {measure(m)}");
+
+  // c4 — invalid UTF-8 (a lone continuation byte) decodes to the empty text, as owned.
+  bad: vector<u8> = [2, 3, 97, 128, 98];
+  assert(shout(bad) == "<!>", "c4: {shout(bad)}");
+
+  // c5 — an empty text.
+  e: vector<u8> = [2, 0];
+  assert(shout(e) == "<!>", "c5: {shout(e)}");
+
+  // c6 — three entries, their byte string never read.
+  assert(count_unread(f) == 3, "c6: {count_unread(f)}");
+
+  // c7 — the byte string read: 3 bytes.
+  assert(bytes_len(f, "st") == 3, "c7: {bytes_len(f, \"st\")}");
+
+  // c8 — "hi" decoded, then the frame's bytes overwritten: the text stays "hi", the frame
+  // the caller holds is changed.
+  s: vector<u8> = [2, 2, 104, 105];
+  assert(scribble(s) == "hi", "c8 text");
+  assert((s[2] ?? 0) == 88, "c8 the caller's frame was written");
+
+  // c9 — the returned value carries its text.
+  k = keep(op_frame());
+  assert(text_of(get(k, "op")) == "apply", "c9: {text_of(get(k, \"op\"))}");
+
+  // c10 — { "a": { "b": "deep" } }.
+  n: vector<u8> = [4, 1, 2, 1, 97, 4, 1, 2, 1, 98, 2, 4, 100, 101, 101, 112];
+  assert(nested(n, "a", "b") == "deep", "c10: {nested(n, \"a\", \"b\")}");
+  assert(nested(n, "a", "x") == "-", "c10 absent");
+
+  // c11 — the first key; and the shared reader on a value built here, owned.
+  assert(first_key(f) == "op", "c11: {first_key(f)}");
+  own = VText { value: "mine" };
+  assert(text_of(own) == "mine", "c11 owned: {text_of(own)}");
+
+  // c12 — the copy and the original both read "apply".
+  assert(copied(f) == "apply+apply", "c12: {copied(f)}");
+
+  // c15 — the decoded text and the owned one.
+  assert(mixed(f) == "apply/own", "c15: {mixed(f)}");
+  assert(mixed_alone(f) == "apply/own", "c15b: {mixed_alone(f)}");
+
+  // c16 — `-5`, then "hi", then "a<0x80>" which decodes to the empty text.
+  w: vector<u8> = [1, 95, 2, 2, 104, 105, 2, 2, 97, 128];
+  assert(walk_values(w) == "[-][hi][]", "c16: {walk_values(w)}");
+
+  println("ok");
+}

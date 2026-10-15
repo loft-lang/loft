@@ -606,3 +606,29 @@ Measured wrong on the way: two binaries run side by side on one core through
 `paste <(a) <(b)` read a row +15 % slower whose code was byte for byte the same; run one
 after the other the row is level.
 
+## 2026-10-14 — `(R-FileHold)` and `(R-InlineLeaf)`'s reader clause
+
+The worklist's X8, priced on the crawler lane's `read_i16_vec` (`while i < n { out +=
+[read_one_i16(bf)]; … }`, 150 000 values a load): 1.47 → 0.84 ms by hand, with bare locals
+and with a guard value whose drop writes the record — the same figure, so the guard was built
+and no exit is enumerated.  Built: 1.47 → 0.84 ms, the hand price, hash unchanged.
+
+Priced beside it and not built: the cursor kept in the HANDLE, the record's two fields left
+alone while a handle is open — 1.47 → 1.01 ms, for every scalar read on both backends and
+with no gate.  It moves where `f#next` and `f#index` are read from (two parser forms, the
+stdlib's `position` and `seek`, twenty-odd runtime sites across the two backends and the
+host bridge), which is a change of the cursor's model; the hold changes none of it.
+
+Found on the way, in a cell first written with `g = f` (loft#2005): a copy of a `File` record made
+after its first read shares the handle and keeps its own `#next`, and the two backends then
+read different bytes through the copy — the interpreter seeks to the copy's own position
+(`-47`), native reads at the handle's (`-44`) and reports the copy's.  `heap.md` states one
+handle and one position.  Independent of the hold, which declines a loop naming two `File`
+variables; the cell names one record through two parameters instead.
+
+loft#2005 closed the other way the same day, which retired the handle-cursor price: on native
+a copy made BEFORE the first read already had a cursor of its own (each record opens its own
+handle), so "one position per handle" would have made `g = f` mean two things by when it ran.
+Each record keeps its position; native's read now places the handle at `#next` first
+(`LoftFile::place`, a compare when it is there), as writes, seeks and the interpreter did.
+

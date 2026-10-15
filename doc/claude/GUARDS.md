@@ -241,6 +241,10 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   runner then reports a wild swing, `the control does not build`.  The cure is a hand
   re-derivation: apply the patch in a scratch worktree, fix the new site the way the patch
   fixes the others, write `git diff` back as the receipt, and re-score it.
+- **A rewrite only the release build makes is falsified there.**  A guard whose rule acts on
+  `--native-release` alone (an IR-phase rewrite, `@FR-R-Apart`) carries
+  `// @falsify-tier: native-release`, and `falsify.sh` then runs its native side on that tier;
+  on plain `--native` the defect is in code the run never reaches, and the receipt reads INERT.
 - **A guard covering TWO defects holds only ONE patch.**  Keep it for the receipt that moves on
   more channels and backends, record the other as its own `@falsified-at:` block with CHANNEL /
   WITNESS / HOLDS, and say in the file which receipt the patch belongs to

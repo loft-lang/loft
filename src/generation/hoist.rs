@@ -4083,6 +4083,9 @@ pub struct StoreTextBorrows {
     /// The admitted LOCALS: bound by a statement of the body, so every `Set` of one binds a
     /// `&str` slot (`Output::output_set`).
     pub locals: HashSet<u16>,
+    /// `@FR-R-SliceBorrow` — the admitted locals with a value slice among their bindings,
+    /// counted apart for the rewrite census.
+    pub slices: HashSet<u16>,
 }
 
 /// `@FR-R-TextBorrow`'s store-read clause — the text variables of this function that BORROW
@@ -4134,6 +4137,18 @@ pub fn borrowed_store_texts(
             && !already.contains_key(&v)
             && matches!(vars.tp(v).base(), Type::Text(_))
     };
+    // `@FR-R-SliceBorrow` — a value slice of a plain text PARAMETER (`&str` of the
+    // caller's, never `&text`, never rebound) or of an admitted local is one more source a
+    // local may borrow: the `&str` the slice answers names the bytes its source does, so
+    // nothing this frame can do moves them.  A slice of an OWNED local declines here (its
+    // buffer can grow under the borrow; that clause needs the path condition).
+    // `LOFT_NO_SLICE_BORROW=1` keeps the copy for this clause alone.
+    let slice_disabled = std::env::var("LOFT_NO_SLICE_BORROW").is_ok_and(|v| v != "0");
+    let plain_text_arg = |s: u16| {
+        vars.is_argument(s) && matches!(vars.tp(s).base(), Type::Text(_)) && !rebound.contains(&s)
+    };
+    let slice_of =
+        |to: &Value| call_named(to, data, "OpGetTextSub").and_then(|a| as_var(a.first()));
     // The discharge temps: one bind, to a parameter's text.
     let mut temps: HashSet<u16> = HashSet::new();
     body.any_node(&mut |n| {
@@ -4222,7 +4237,11 @@ pub fn borrowed_store_texts(
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
             }
-            _ => param_read(to),
+            _ => {
+                param_read(to)
+                    || (!slice_disabled
+                        && slice_of(to).is_some_and(|s| plain_text_arg(s) || admitted.contains(&s)))
+            }
         };
         let temp_ok = |to: &Value| param_read(to);
         let mut drop: Vec<(u16, &'static str)> = Vec::new();
@@ -4263,6 +4282,15 @@ pub fn borrowed_store_texts(
         {
             continue;
         }
+        // `@FR-R-SliceBorrow` — a slice of a plain parameter names no store either: its
+        // bytes are the caller's `&str`, which no store write of this frame can move.
+        if !slice_disabled
+            && text_bound_only_by(body, v, &|to: &Value| {
+                matches!(to.unspan(), Value::Text(_)) || slice_of(to).is_some_and(plain_text_arg)
+            })
+        {
+            continue;
+        }
         let scope = mention_scope(body, v);
         if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
             temps.remove(&v);
@@ -4281,7 +4309,11 @@ pub fn borrowed_store_texts(
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
             }
-            _ => param_read(to),
+            _ => {
+                param_read(to)
+                    || (!slice_disabled
+                        && slice_of(to).is_some_and(|s| plain_text_arg(s) || admitted.contains(&s)))
+            }
         };
         let lost: Vec<u16> = locals
             .iter()
@@ -4296,9 +4328,22 @@ pub fn borrowed_store_texts(
             why.insert(v, "bound from a text that does not borrow");
         }
     }
+    // `@FR-R-SliceBorrow` — the admitted locals with a slice among their bindings, for the
+    // census and the trace.
+    let slices: HashSet<u16> = locals
+        .iter()
+        .copied()
+        .filter(|&v| {
+            body.any_node(
+                &mut |n| matches!(n, Value::Set(x, to) if *x == v && slice_of(to).is_some()),
+            )
+        })
+        .collect();
     if trace {
         for v in temps.iter().chain(locals.iter()) {
-            let what = if fmt_bound.contains(v) {
+            let what = if slices.contains(v) {
+                "a slice of a parameter's text"
+            } else if fmt_bound.contains(v) {
                 "a format's work text"
             } else {
                 "a parameter's text"
@@ -4321,6 +4366,7 @@ pub fn borrowed_store_texts(
         out.borrows.insert(*v, TextBorrow { read: None });
     }
     out.locals = locals;
+    out.slices = slices;
     out
 }
 

@@ -1,0 +1,337 @@
+<!--
+Copyright (c) 2026 Jurjen Stellingwerff
+SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+
+# 192 — Regex captures, find-all and replace: a `Match` written so the compiler can keep it a view
+
+Plan issue: [@PLN192](https://github.com/loft-lang/plans/issues/192) (`status:future`, `subject:libs`).  Library: [`loft-lang/loft-libs-core/regex`](https://github.com/loft-lang/loft-libs-core/tree/main/regex)
+(0.5.0).  Driver: [@PLN179 finding 011](179-scripts-in-loft/findings/011-regex-has-no-capture-groups.md)
+— four of the eight ports cite it, and it is why those ports read two to three times longer
+than their Python originals.  Value **U** (ease of use — friction-free scripting) · effort **M**, in S
+steps that each finish inside the PR cadence.
+
+## Status (REQUIRED)
+
+Open — the library half shipped: regex 0.5.0 is in the registry (P1, P2, P5, P7), and
+`tests/dump_ignored_tests` is re-twinned over `capture`, which struck @PLN179 finding 011
+(the register's longest-open clarity reason).  P3, the compiler's `(R-SliceBorrow)`, is
+built and pinned.  Open: P4 (a `Match` as an apart value, waiting on its rule) and P6 (the
+`Pattern` typed-format target, waiting for a port that interpolates into a pattern).  The
+P0 probes ran first (both backends, the scratch clone of the library): three claims held,
+one fell and rerouted the representation (§ The invariant), and `split_on` was found to
+answer wrongly at a piece boundary (§ P0 d).  The legacy design in
+[lib_plans/57-regex](../lib_plans/57-regex/README.md) stands on its feature table and its
+"a library, not syntax" argument; this plan replaces its `Regex` handle and decides what a
+`Match` holds.
+
+## Goal (REQUIRED)
+
+A loft script pulls a value out of a text the way Python does (`m.group(1)`, `re.findall`,
+`re.sub`), with no `use` line, with every offset a byte position on a code-point boundary,
+written in the one shape under which the compiler keeps every text it answers a VIEW of the
+subject on `--native` — no copy where the Rust version copies none — while the interpreter
+copies and is the oracle.
+
+## The invariant (design-protocol step 1)
+
+> **A `Match` is a record whose every text field is constructed as a slice of the subject
+> and read only as a value, so that `(R-Apart)` — the rule under which a value never
+> observed as a store value takes the representation the compiler chooses — holds it as a
+> value whose texts borrow the subject for the frame, with no regex-shaped clause.  Its offsets are byte positions on code-point boundaries, the engine's guarantee,
+> asserted at ONE native.  Nothing in the surface chooses a representation; the compiler
+> proves where a view is the same value (@C125), and where the proof fails the field is an
+> owned copy that answers the same.**
+
+Under this rule a case nobody tested behaves like the tested ones for the same reason: the
+library writes the plain program (a record, a slice, a field read) and the span-or-copy
+decision has one home, the rewrite register.  The regex library adds no representation of
+its own — which is what "the loft way to represent a read-only slice" means here: @PLN174
+gave vectors a view (`OpSliceView`, a foreign span read-only under the store contract), and
+@C141 gives a decoded text the same, decided by proof, never by a type the programmer holds.
+
+**What the probes decided** (§ P0, run before this was written):
+
+- A library's `pub fn` is emitted INLINE into the consumer's `--native` program, before and
+  after its `native-auto` cdylib exists.  So the construction of a `Match` and every read of
+  it sit in one compilation unit, which is what `(R-Apart)`'s proof reads.  (The
+  prediction was the opposite — a record copied across a cdylib ABI — and a spans-only
+  surface built on that prediction was dropped with it.)
+- Today that record's text field is `OpGetTextSub(subject, a, b).to_string()` followed by a
+  `set_str` into the record's store: one owned copy per field, on native as interpreted.
+  A match result does not last — it has the lifetime of a `match` statement's bindings —
+  so the copy is removed by holding the `Match` as a VALUE whose texts borrow the subject
+  (`(R-Apart)`, § P4), never by a span kept in the record; the zero-copy half of the goal
+  is that instance, and never something this library can deliver alone.
+- Every offset the engine answers is a code-point boundary (`.` on `"😀x"` spans bytes
+  0..4; `(?-u:\xFF)` is refused), so a span can never cut a character where `"héllo"[-4..]`
+  can.
+
+**Re-assertion sites (step 2).**  Two, both loud when omitted: ONE native answers every
+span (`n_spans`; a second span-producing native is the defect), and ONE loft function builds
+a `Match` from spans (`match_at`), so the slice-of-subject shape the rule admits is spelled
+once.  The boundary guarantee is the Rust `regex` crate's over `&str`, probed, pinned by
+cells, re-derived nowhere.
+
+## The surface
+
+All methods are `self: text` and so become auto-use triggers (`src/triggers.rs` derives them
+from `pub fn f(self: T, …)`; `[triggers] enabled` is the library's whole declaration): a
+script writes `line.capture("…")` with no `use`, as it writes `line.matches("…")` today.
+A library struct's fields must be declared `pub` to be read by a consumer (measured in P0 a).
+
+```loft
+pub struct Group { pub text: text?, pub start: integer, pub end: integer }   // null: did not take part
+pub struct Match {
+  pub text: text,             // the whole match — subject[start..end]
+  pub start: integer,         // bytes, on code-point boundaries
+  pub end: integer,           // exclusive
+  pub groups: vector<Group>,  // group 1 .. n; group 0 is the match itself
+  pub names: vector<text>,    // "" for an unnamed group
+}
+
+pub fn capture(self: text, pattern: text) -> Match?             // first match with its groups
+pub fn capture_all(self: text, pattern: text) -> vector<Match>  // every non-overlapping match
+pub fn replace_on(self: text, pattern: text, template: text, limit: integer = 0) -> text
+pub fn group(self: Match, i: integer) -> text?                  // self.groups[i - 1]?.text
+pub fn named(self: Match, name: text) -> text?
+```
+
+```loft
+// finding 011's three shapes, as they read with this surface
+m = line.capture("^(\\w+)=(.+)$");
+if m != null {
+  key = m.group(1)?;                       // a borrow of line on native once P4 holds m apart
+  value = m.group(2)?;
+}
+for h in header.capture_all("HTTP/(?<maj>\\d)\\.(?<min>\\d)") {
+  version(h.named("maj")?, h.named("min")?);
+}
+out = "";                                  // re.sub with a callback: the walk idiom
+last = 0;
+for m in s.capture_all("\\b[a-z]+\\b") {
+  out += s[last..m.start] + m.text.to_uppercase();
+  last = m.end;
+}
+out += s[last..];
+```
+
+**Built as the rule admits it.**  `match_at` constructs every text field as a slice of its
+`self` parameter — `Match { text: self[s..e], … }`, `Group { text: self[gs..ge], … }` — and
+returns the record to the caller that passed `self` — the frame that holds the subject, which
+is where an apart `Match` lives (§ P4).  `capture_all` builds a `vector<Match>` the same way.  A consumer that keeps a
+`Match` past its subject (stores it in a longer-lived record, returns it from the frame that
+owns the subject) is the rule's decline case: the field is an owned copy and the program
+answers the same — the cell that proves it is in the matrix.
+
+**Names.**  The library's rule stands: the pattern-taking twin of a stdlib text verb takes a
+distinct name, because a bare method call resolves the stdlib first and the wrong one still
+compiles (`@RGX-001`).  The stdlib's text methods today: `find rfind replace split
+split_text contains starts_with ends_with join trim* to_*case char_slice byte_at len size
+is_*`.  So `replace_on` beside `split_on`, `capture` / `capture_all` beside `search`.
+`group` and `named` live on `Match`, so no future stdlib text method can take them.
+
+**Broken patterns.**  `@RGX-003` stands for the value channel (a miss, never a fault), and
+gains the @C80 channel the stdlib uses for an unguarded `÷ 0`: the first use of a pattern
+that does not compile logs ONE warning naming the pattern and the parser's message.  The
+cache already remembers a failed pattern as `None`; it remembers the message too.
+
+**`search` becomes honest** (`@RGX-002`'s second half): its declared `integer` return
+answers null on a miss.  It is redeclared `integer?` in the same release, which is the
+@PLN102 rule for a not-found case and a signature change `api_compatible_with` records.
+
+## Code points
+
+- **Offsets are bytes**, the unit of `size`, `s[a..b]`, `find` and `byte_at` — never
+  `len`'s character count.  Every span starts and ends on a code-point boundary because the
+  engine matches `&str` by `char`: `.` is one code point, a class is Unicode (`\w` takes `é`,
+  `\p{L}` the letters, `\d` the Unicode digits), `\b` is the Unicode word boundary, `(?i)`
+  is simple case folding, and a pattern that could match inside a code point is an invalid
+  pattern (logged as above).  Measured: § P0 c.
+- **No normalisation.**  A precomposed `é` and `e` + U+0301 are different texts to the
+  engine, as they are to `==`; a cell pins it with `len` beside the match.
+- **A character count of a prefix** (a column, a caret) is a stdlib question, not a regex
+  one: `len(line[..m.start])` copies on both backends today (loft#1728 pinned
+  `len(v[a..b])`).  The one-line home is `text.char_index(byte: integer) -> integer`, the
+  inverse `char_slice` lacks; listed under open questions, never built here.
+
+## How it stays out of the way (the built-in feel), and what it must not do
+
+| today | after |
+|---|---|
+| `line.matches(p)` loads the library from a bare method call | unchanged; the new verbs derive their triggers the same way |
+| `search` answers null from an `integer` | `integer?` |
+| a broken pattern is a silent miss | a miss, plus one warning per pattern |
+| `split_on` re-slices `rest = input[pos..n]` per piece, so `^` and `\b` match again at every boundary: `"abab".split_on("^ab")` answers three pieces | rebuilt on the engine's `find_at(input, pos)`: one match, `["", "ab"]` (§ P0 d) |
+| pattern literals are text; an interpolated value becomes syntax | P6 (optional): `p: Pattern = "^{name}="` through the typed-format target (`(F-Target)`, @PLN124) — literal runs are syntax, holes are escaped, a `Pattern` type trigger loads the library; a `text` pattern stays accepted |
+
+Not done here, each a decision rather than an omission: a `Regex` handle (the cache makes a
+compile step a worse API); a callback `replace` (closures do not cross a placed library,
+PLACEMENT.md rule 3 — the walk idiom above is four lines); a lazy `iterator<Match>` (a
+generator declines every span rule; `capture_all` answers a vector); a pure-loft engine
+(57-regex phase 1, still future); a `Match` that remembers its subject (a text field holding
+the whole subject is the one copy no rule removes).
+
+## Composition matrix — Stage A
+
+The cells, each hand-computed, `--interpret` and `--native`, graduated to the library's
+`tests/captures.loft` and `tests/worked-examples.loft` (`@RGX-005` …), which its CI runs on
+both backends; this repository runs the published release through the re-twinned
+`tests/dump_ignored_tests` (`make script-twins`), not through a corpus file — a
+`tests/scripts` cell cannot name a registry package:
+
+| axis | values |
+|---|---|
+| subject | ASCII · multibyte before the match · multibyte inside it · empty · match at byte 0 · match at the end · an empty match (`a*` on `"b"`) |
+| pattern | no group · one group · an optional group that did not take part (`null` text) · nested groups · alternation choosing a group · a named group · `(?i)` · `\p{L}` · `^` and `\b` against a second match · a broken pattern |
+| count | 0 · 1 · many non-overlapping (`aa` on `"aaa"` is one) |
+| holder (P4's cells) | the `Match` read in the frame that passed the subject · stored into a longer-lived vector (declines) · returned from the frame that owns the subject (declines) · the subject appended to after the capture (declines, value right) · a generator |
+| limit | `replace_on` with 0 · 1 · more than the matches |
+
+`python3 scripts/matrix_axes.py file <guard>` says which values the cells reach.
+
+## Sub-arcs
+
+| Item | Source | Verify (goes RED if the phase is wrong) | Status |
+|---|---|---|---|
+| **P0** probe the four claims (XS) | § P0 | a prediction written before each run | **Done** — a, b held in the value channel; a's representation claim fell; d found the defect |
+| **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | **Shipped** — regex 0.5.0 (registry, 2026-10-14; `regex/tests/captures.loft`, 21 tests both backends, the guide identical on both); `tests/dump_ignored_tests` re-twinned over `capture` the same day, finding 011 struck |
+| **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | **Shipped** in 0.5.0; the `^` / `\b` cells are green |
+| **P3** `(R-SliceBorrow)`: a text local bound to a slice of a parameter is a `&str` (S, compiler, native) | § P3 | emission pins `tests/slice_borrow.rs`; cells `tests/scripts/192-slice-borrow.loft` under `LOFT_NO_SLICE_BORROW=1`; the census row `R-SliceBorrow`; a planted admission of any text variable turns the pins red | **Built** — the slice arm of `(R-TextBorrow)`'s store-read clause; a slice of an OWNED local is the clause left open |
+| **P4** `(R-Apart)` instance 4: a `Match` held as a value whose text fields borrow the subject for the frame; the match-binding clause beside it (M, compiler, native) | § P4 | the consumer's emission holds no `set_str` / `.to_string()` for a text field; the holder-axis cells (stored, returned, subject written, generator: the store form, value right); `make perf-check` on the two ports' rows | Open — no stored span: `(R-DecodeView)` is for values that last, and a match result does not |
+| **P5** the broken-pattern warning (XS, library) | § Broken patterns | the warning in `.loft/log.txt` once per pattern per process, absent on the second use; `@RGX-003` re-measured | **Shipped** in 0.5.0 — one `WARN` line through `log_warn`, the `[divide_by_zero]` channel |
+| **P6** `Pattern` typed-format target (S, library, optional) | § built-in feel | a hole holding `.` matches only a literal dot; the type trigger loads the library with no `use`; `(F-Target-Pos)`: an argument position does not target | Open |
+| **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | **Shipped** — 0.5.0, `api_compatible_with = "0.5.0"`, published 2026-10-14 |
+
+P1 → P2 → P5 → P7 ship as one library release (0.5.0), each a commit the testbed gates
+alone (LIBRARY_AUTHORING.md § The testbed).  P3 is independent and pays for every script
+that slices (finding 002's tokenisers, every `find` → `s[a..b]`).  P4 waits on its rule.  P6
+waits for a port that interpolates into a pattern.
+
+### P0 — the probes, the predictions, the results
+
+Throwaways under the scratchpad, `--interpret`, `--native` and `--native-emit`, the library
+from a clone by `--lib`, the prediction written before each ran.
+
+- **(a) A record with a text field answered by a dependency's `pub fn` crosses the cdylib
+  ABI as a copy.**  A path library `rowlib` answering `Row { t: self[1..3], n: 1 }`, the
+  consumer emitted before and after a `--native` run built `rowlib/native-auto/`.
+  *Predicted:* a `set_text` across an ABI call.  *Measured:* `t_4text_head` is emitted in
+  the consumer's own Rust both times, called directly from `n_main`; the field is
+  `OpGetTextSub(var_self, 1, 3).to_string()` + `set_str` — the copy is real, the ABI is not.
+  **Fell**: the representation question is the rewrite register's, not the library's.
+- **(b) `t = line[a..b]` bound to a local is a `String` today on native.**  *Predicted and
+  measured:* `let mut var_t: String = OpGetTextSub(var_line, 2, 5).to_string();` — P3's gap,
+  one `.to_string()` the proof removes.
+- **(c) Every offset the engine answers is a code-point boundary.**  *Predicted and measured,
+  both backends:* `"héllo wörld".search("w.r")` → 7; `"😀x".search(".")` → 0 and `"x"` at 4;
+  `"abc".search("(?-u:\xFF)")` → null; `"é".matches("^.$")` → true.
+- **(d) `split_on` loses `^` and `\b` context at a piece boundary.**  *Predicted and
+  measured, both backends:* `"abab".split_on("^ab")` → `[][][]` and `"abab".split_on("\\bab")`
+  → `[][][]`, where one match (`[][ab]`) is correct.  A library defect, fixed in P2 with the
+  cells as its receipt.
+
+### P3 — `(R-SliceBorrow)`, the small compiler step
+
+```
+  (R-SliceBorrow) a text LOCAL t bound ONCE to a value slice s[a..b] of a text s that is a
+                  parameter or a local of this frame, where (1) s is not written, rebound,
+                  linked or released on any path from the bind to the last read of t;
+                  (2) t is read only as a text VALUE ((R-TextBorrow)'s reading: an operand,
+                  a `text` argument the callee does not store, the source of a format or a
+                  bind into another slot, `size`, a comparison, a walk of its characters);
+                  (3) t is never written, linked, returned, stored, captured, yielded or
+                  handed to a `&text` parameter; (4) a bind inside a loop reaches only reads
+                  of the same iteration; (5) the function is not a generator —
+                  is a `&str` into s: no `String` is built.  Declines, keeping the copy,
+                  when any of (1)–(5) is unproved.  Native only; the interpreter copies and
+                  is the oracle.  Switch `LOFT_NO_SLICE_BORROW`; `LOFT_HOIST_VERIFY=1`
+                  re-reads the slice as the owned text at t's last read and compares.
+```
+
+It is `(R-WorkView)` with the work buffer replaced by a parameter or local, under
+`(R-TextBorrow)`'s value-only reading — the same five conditions, so the analysis exists
+(`hoist::borrowed_text_walks` decides (1)–(3) for a walk).  Its counterpart for a `match`
+statement — a text a pattern binds, copied into a `String` — is what is left on pluginabi
+`check_request` after `(R-DecodeView)` (its key bindings, priced −1.5 % of that row in
+`157-native-4x`'s `bench/portal/analysis/worklist.md` § 0); `arguments/parse`'s text copies
+are about 10 % of its row.  Nothing for either is built yet.  Decided in the formal register
+as a rule with its own `@FR-` tag, its code sites citing it, `make rule-coverage` counting it.
+
+### P4 — a `Match` is an apart value: its texts borrow the subject for the frame
+
+A regex result has the lifetime of a `match` statement's bindings.  In `match p { Pair { key,
+value } => … }` the bindings are read for the arm and gone with it, and native binds each as a
+`&str` into the subject's field with no `String` built (the store-read clause of
+`(R-TextBorrow)`, measured on a parameter subject).  `m = line.capture("(\\w+)=(.+)")` is the
+same statement one level up: read in the frame that holds `line`, then gone.  So the `Match`
+does not need a span kept in a store record at all — it needs to not be a store record while
+it is read, which is `(R-Apart)` (APART_VALUES.md, built in instances 1–3): *a value the
+compiler proves is never observed as a store value may be held in any representation it
+likes, converted to the ordinary store form at its first boundary.*
+
+**Instance 4 — a record whose text fields borrow.**  A `Match` built by the inlined
+`capture_from` is held as a Rust value, `Match<'h> { text: &'h str, start, end, groups:
+Vec<Group<'h>>, names }` — the engine's own `Captures<'h>` — with every text field a `&str`
+into the subject, under the proof P3 makes for a slice (the subject is a plain parameter, or a
+local that borrows one, and is not written while the value lives).  Instances 1 and 2
+declined an element that OWNS heap (a `vector<text>`); a `&str` owns nothing, which is the
+whole point.  The allow-list, each answer equal to the store path's: a field read (`m.text`,
+`m.start`), an element read and `len` of `groups`, `group` and `named` (region twins over
+the value), a walk of `capture_all`'s vector, a format or comparison of a text field, the
+null test.  The boundary, where the store form is built with its copies as today: the value
+stored into a collection or record that outlives the frame, returned past the subject's
+frame, handed to a native or a `par` body, yielded.  The interpreter is untouched and stays
+the oracle.
+
+**Why not `(R-DecodeView)`.**  Its instance 1 (`src/generation/decode_view.rs`,
+`157-native-4x`, joined here; the rule text, switches, guard and pin are in the register,
+NATIVE_SWITCHES.md, `tests/scripts/a-decoded-text-is-read-where-it-lies.loft` and
+`tests/decode_view.rs`) keeps a decoded value's span in the record's last eight bytes
+because decoded values LAST: held in a store, put in collections, looked up later.  That is
+what forces a span word, hence its constraints — a view type is an enum of 16 bytes or more
+with that word spare, one span per record, the frame a byte-vector parameter — and the
+question this section asked before, where a STRUCT keeps its span.  A `Match` never lasts,
+so the question is struck: there is no stored span.  Decode-view stays what it was built for.
+
+**The sibling clause.**  The match-binding clause proposed for `(R-TextBorrow)` (a text a
+pattern binds, read only as a value in its arm, borrows the field when the subject is a
+LOCAL the frame built — the parameter case is built) is the same lifetime one construct
+over; the `check_request` keys it was priced on (−1.5 % of the row) are its first cells.
+
+**Cells (the matrix's holder axis, both backends):** the `Match` read in the frame that
+passed the subject (apart); every group read through `group` and `named`; `capture_all`
+walked; a `Match` stored into a longer-lived vector (the boundary: the store form, value
+right); one returned from the frame that owns the subject (boundary); the subject appended
+to after the capture (declines, value right); a generator (declines).  Verify: the emission
+of `capture`'s consumer holds no `set_str` and no `.to_string()` for a text field;
+`LOFT_NO_APART=1` (its switch) restores the store form; `make perf-check` on the two ports'
+rows.
+
+## Open design questions
+
+1. **`text.char_index(byte) -> integer`** — the inverse of `char_slice`, so a span's column
+   is one call and no copy.  Stdlib, one line, its own guard; recommended, filed as its own
+   XS issue rather than widened into this plan.
+2. **Does an installed, prebuilt library inline the same way a `--lib` path library does?**
+   P0 a measured the path form; the registry form is the same package directory, so the
+   prediction is yes — one cell on the library's testbed before P1 closes.
+3. **The warning's channel on the browser target** (no stderr): the library's wasm bridge
+   routes it through `log_warn`, which the host already captures — verified on the `--html`
+   target in the parity gate (loft-ship skill).
+
+## See also
+
+- [179-scripts-in-loft](179-scripts-in-loft/README.md) — the driver; findings 002, 011, 015.
+- [lib_plans/57-regex](../lib_plans/57-regex/README.md) — the legacy design (feature table,
+  the library-not-syntax argument).
+- [formal/rewrites.md](../formal/rewrites.md) `(R-DecodeView)`, `(R-TextBorrow)`,
+  `(R-WorkView)`; [formal/collections.md](../formal/collections.md) `(Slice-Value)`;
+  [formal/formatting.md](../formal/formatting.md) `(F-Target)`.
+- [DESIGN_DECISIONS_OWNERSHIP.md](../DESIGN_DECISIONS_OWNERSHIP.md) @C141, @C125;
+  [DESIGN_DECISIONS_VALUES.md](../DESIGN_DECISIONS_VALUES.md) @C139;
+  [DESIGN_DECISIONS_FAILURE.md](../DESIGN_DECISIONS_FAILURE.md) @C80;
+  [174-foreign-stores](174-foreign-stores/README.md).
+- [LIBRARY_AUTHORING.md](../LIBRARY_AUTHORING.md) § The library contract (rules 7, 10, 11);
+  [PLACEMENT.md](../PLACEMENT.md); [COMPATIBILITY.md](../COMPATIBILITY.md);
+  [STDLIB.md § Bytes and code points](../STDLIB.md).

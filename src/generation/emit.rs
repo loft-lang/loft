@@ -128,6 +128,23 @@ impl Output<'_> {
         w: &mut dyn Write,
         node: IrNode,
     ) -> std::io::Result<()> {
+        // `@FR-R-Apart` — a mention of an apart variable is its value's (`apart_emit`).  Here,
+        // in the dispatch every emission path ends in, and not in `output_code_inner`: an
+        // `Insert`'s items and a template's bound operands reach this without passing it.
+        if self.apart_ctx.is_some()
+            && let Some(code) = node.native()
+            && self.apart_expr(w, code)?
+        {
+            return Ok(());
+        }
+        // `@FR-R-DecodeView` — a span field's write and a span text's read, in the same
+        // dispatch for the same reason.
+        if !self.dv.region.is_empty()
+            && let Some(code) = node.native()
+            && self.dv_expr(w, code)?
+        {
+            return Ok(());
+        }
         match node.kind() {
             // Phase 09 step 0.7 — synthetic raw-expression passthrough (fn-ref
             // dispatch); emit the string verbatim.
@@ -903,6 +920,7 @@ impl Output<'_> {
             Value::Loop(lp) => {
                 // A loop nested inside this one is asked anew (`distinct_version`).
                 self.in_distinct_copy = false;
+                let file_held = self.begin_file_hold(w, lp)?;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
                 // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
                 // here instead, so its store survives the iteration: the per-pass mint takes
@@ -1070,6 +1088,7 @@ impl Output<'_> {
                     write!(w, "}} /*@FR-R-CharWalk*/")?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
+                self.end_file_hold(w, file_held)?;
             }
             Value::Set(var, to) => self.output_set(w, *var, to)?,
             Value::If(test, true_v, false_v) => self.output_if(w, test, true_v, false_v)?,
@@ -3215,6 +3234,69 @@ impl Output<'_> {
         Ok(())
     }
 
+    /// `@FR-R-KeyedEntry`: the literal's values staged in program order, the entry under the
+    /// key answered (filed already, its key written), then the other fields written into it.
+    fn output_keyed_entry(
+        &mut self,
+        w: &mut dyn Write,
+        ke: &super::keyed_entry::Site<'_>,
+    ) -> std::io::Result<()> {
+        self.dest_counter += 1;
+        let site = self.dest_counter;
+        self.indent(w)?;
+        writeln!(w, "{{ //@FR-R-KeyedEntry")?;
+        let mut writes: Vec<Value> = Vec::new();
+        let mut key: Option<String> = None;
+        let mut nth = 0usize;
+        for op in &ke.writes {
+            let Value::Call(d, args) = op.unspan() else {
+                continue;
+            };
+            let is_key = args.get(2).is_some_and(|a| std::ptr::eq(a, ke.key));
+            let mut staged: Vec<Value> = Vec::with_capacity(args.len());
+            for (i, a) in args.iter().enumerate() {
+                if i == 0 {
+                    staged.push(Value::RawExpr(format!("__ke{site}")));
+                } else if super::keyed_place::constant(a) {
+                    staged.push(a.clone());
+                } else {
+                    let name = format!("__kv{site}_{nth}");
+                    nth += 1;
+                    self.indent(w)?;
+                    write!(w, "let {name} = ")?;
+                    self.output_code_inner(w, a)?;
+                    writeln!(w, ";")?;
+                    staged.push(Value::RawExpr(name));
+                }
+            }
+            if is_key {
+                key = Some(match staged.get(2) {
+                    Some(Value::RawExpr(n)) => n.clone(),
+                    _ => self.expr_string(ke.key)?,
+                });
+            } else {
+                writes.push(Value::Call(*d, staged));
+            }
+        }
+        let key = key.unwrap_or_else(|| "i64::MIN".to_string());
+        let coll = self.expr_string(ke.coll)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
+            ke.parent_tp, ke.field
+        )?;
+        for wr in &writes {
+            self.indent(w)?;
+            self.output_code_inner(w, wr)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-KeyedEntry", 1);
+        Ok(())
+    }
+
     /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
     /// each call into its destination and its `ok` arm with the moves gone — the element
     /// finished only where the plain form moved every result, and each destination filled so
@@ -3817,6 +3899,7 @@ impl Output<'_> {
         let block_serial = self.block_serial;
         // `@FR-R-PushFill`'s repeat-literal clause — the statement the fill already emitted.
         let mut repeat_skip: Option<usize> = None;
+        let mut apart_skip: Option<usize> = None;
         // `@FR-R-RefillText` — the statement holding the call an armed release waits for.
         let mut rt_call_at: Option<usize> = None;
         for (vnr, v) in operators.iter().enumerate() {
@@ -3854,6 +3937,17 @@ impl Output<'_> {
                 continue;
             }
             if repeat_skip.is_some_and(|last| vnr <= last) {
+                continue;
+            }
+            if apart_skip.is_some_and(|next| vnr < next) {
+                continue;
+            }
+            // `@FR-R-Apart` — a construction run of an apart variable, or a statement that
+            // mentions one, before any rewrite of the record form reads it.
+            if self.apart_ctx.is_some()
+                && let Some(next) = self.apart_statement(w, operators, vnr)?
+            {
+                apart_skip = Some(next);
                 continue;
             }
             // `@FR-R-RefillText` — an admitted pool statement keeps only its mint: the release
@@ -3903,6 +3997,18 @@ impl Output<'_> {
             {
                 self.output_push_run(w, &run, operators, vnr)?;
                 repeat_skip = Some(run.last);
+                continue;
+            }
+            // `@FR-R-KeyedEntry` — a keyed insert of a heap-free literal written into the entry
+            // its key names: a repeated key overwrites in place instead of claiming a slot,
+            // replacing the entry and releasing it.
+            if super::keyed_entry::enabled()
+                && !self.in_coroutine_body
+                && let Some(ke) =
+                    super::keyed_entry::site(operators, vnr, self.data, self.stores, self.def_nr)
+            {
+                self.output_keyed_entry(w, &ke)?;
+                repeat_skip = Some(ke.last);
                 continue;
             }
             // loft#1753 — a statement that calls into a frame first records the line it calls

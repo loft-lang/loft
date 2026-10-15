@@ -336,7 +336,7 @@ Four gates:
 | Schema lint | Required fields, correct types, `schema_version` unchanged | Typo in field name, wrong type (`size` as string instead of int), forgot `published` |
 | Tarball verify | Download `url`, hash it, compare to PR's `sha256` | Re-uploaded the GitHub release asset after opening the PR; pasted wrong sha256 |
 | Reproducible-build re-check | Clone the repo at the tag the release `url` names, run `loft package`, compare sha256 | Source repo's tag points at different bytes than the uploaded tarball; build environment leaked content (e.g. uncommitted files) into the tarball |
-| Trigger uniqueness | Every Tier-1 `method:receiver` trigger is owned by at most one package across the whole registry | Your `[triggers]`-enabled package declares a `pub fn` method-on-type (`matches:text`, …) that another package already claims |
+| Trigger uniqueness | Every Tier-1 `method:receiver` trigger, and every `name:fn` builder, is owned by at most one package across the whole registry | Your `[triggers]`-enabled package declares a `pub fn` method-on-type (`matches:text`, …) or lists a builder (`set:fn`) that another package already claims |
 
 If a gate fails, CI surfaces the error as a PR comment.  Fix
 the underlying cause, push to your PR branch, CI re-runs.
@@ -350,7 +350,9 @@ the underlying cause, push to your PR branch, CI re-runs.
 > about to claim is already taken (checked against your cached
 > catalog); gate 4 enforces it as a hard reject.  The fix is to rename
 > the method, or drop the `[triggers]` opt-in and let consumers reach
-> your library with an explicit `use`.
+> your library with an explicit `use`.  A builder (`[triggers] builders`,
+> the free functions a consumer may call bare) is held to the same rule
+> under the name `set:fn`.
 
 When all four gates pass, a registry maintainer reviews the
 PR — typically a sanity check on the description, homepage URL,

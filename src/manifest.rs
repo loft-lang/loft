@@ -319,6 +319,15 @@ pub struct Manifest {
     /// source-scanned `#native` symbols).  The resolver side that acts on this
     /// is separate, future work; today this is parsed metadata.
     pub trigger_enabled: bool,
+    /// `[triggers] builders = ["set"]` — the BUILDER triggers: the free `pub fn`s a consumer
+    /// may call bare (`set(words)`) and have this library auto-loaded, the one place a
+    /// library puts a name into a program's own namespace without being named.  Declared,
+    /// never derived — every other trigger is read from the source, but a free function
+    /// reaches the shared namespace, so the author lists the few that are worth it, and the
+    /// derivation checks each against the source (a `pub fn` without a receiver).  A
+    /// program's own definition of the name wins; `<pkg>::<name>` always reaches the
+    /// library's.
+    pub trigger_builders: Vec<String>,
     /// @PLN100 Slice 2 — `[build] default-targets = [...]`: which targets
     /// `loft build` makes when given no target names.  Empty → the driver falls
     /// back to `["native"]` so a zero-config project still builds.
@@ -340,6 +349,35 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// The entry file, relative to the package root: `[library] entry`, else the
+    /// default `src/<name>.loft`; `None` with neither an entry nor a name.
+    #[must_use]
+    pub fn entry_or_default(&self) -> Option<String> {
+        self.entry
+            .clone()
+            .or_else(|| self.name.as_ref().map(|n| format!("src/{n}.loft")))
+    }
+
+    /// The directory the package's own modules live in, relative to its root: the
+    /// entry's directory, or `src` when no `[library] entry` is declared.  An entry at
+    /// the root (`entry = "main.loft"`) answers the root itself, `""`.
+    ///
+    /// The ONE place this is derived (loft#2010): three copies read the absent entry
+    /// as the path `src` and took its parent, `""`, so a package without an explicit
+    /// entry put its ROOT on the import path and its own `src/` modules were not found.
+    #[must_use]
+    pub fn source_dir(&self) -> std::path::PathBuf {
+        self.entry.as_ref().map_or_else(
+            || std::path::PathBuf::from("src"),
+            |e| {
+                std::path::Path::new(e)
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default()
+            },
+        )
+    }
+
     /// @PLN100 Slice 2 — the `[build.target.<name>]` entry for `name`, creating an
     /// empty one on first mention so later `[build.target.<name>.requires]` lines
     /// attach to the same target regardless of section order.
@@ -748,6 +786,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("wasm.bridge", "host_js") => m.wasm_bridge_host_js = Some(value.scalar()),
         ("wasm.bridge.routes", _) => m.wasm_bridge_routes.push((key.to_string(), value.scalar())),
         ("triggers", "enabled") => m.trigger_enabled = value.is_true(),
+        ("triggers", "builders") => m.trigger_builders = value.list(),
         _ => {}
     }
 }
@@ -1472,6 +1511,19 @@ mod tests {
         );
         let m = read_manifest(p.to_str().unwrap()).unwrap();
         assert!(m.trigger_enabled, "[triggers] enabled = true should parse");
+    }
+
+    #[test]
+    fn parses_trigger_builders() {
+        let p = write_temp(
+            "builders",
+            "[package]\nname = \"script\"\n\n[triggers]\nenabled = true\nbuilders = [\"set\", \"counter\"]\n",
+        );
+        let m = read_manifest(p.to_str().unwrap()).unwrap();
+        assert_eq!(
+            m.trigger_builders,
+            vec!["set".to_string(), "counter".to_string()]
+        );
     }
 
     #[test]

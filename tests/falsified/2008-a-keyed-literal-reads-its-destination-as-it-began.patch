@@ -1,0 +1,11 @@
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -4998,7 +4998,7 @@
+     /// kind: its lookups do not read one (loft#2008).
+     pub(crate) fn keyed_destination(&self, vec: u16, dest: &Value) -> bool {
+         self.keyed_local_kind(vec)
+-            || matches!(dest.unspan(), Value::Call(d, a)
++            || false && matches!(dest.unspan(), Value::Call(d, a)
+                 if *d == self.data.def_nr("OpGetField")
+                     && matches!(a.get(2).map(Value::unspan), Some(Value::Int(t))
+                         if u16::try_from(*t).is_ok_and(|t| self.database.is_keyed_collection(t))))

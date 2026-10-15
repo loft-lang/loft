@@ -225,6 +225,14 @@ fn test_the_auto_use_trigger_surface() {
   type_trigger = "Matcher";
   assert(size(type_trigger) > 0 && find(type_trigger, ":") < 0, "a type trigger is just the name");
 
+  // The one DECLARED half: a builder is a free function the author lists, because a bare
+  // `set(words)` takes a name in the program's own file where a method or a type takes none.
+  // In the index it is the receiver `fn`, so a `.set(` method and a bare `set(` stay apart.
+  builders = "[triggers]\nenabled = true\nbuilders = [\"set\"]\n";
+  assert(find(builders, "builders = [") > 0, "the list is the author's, one line");
+  builder_trigger = "set:fn";
+  assert(builder_trigger.ends_with(":fn"), "a builder's receiver is `fn`");
+
   // What is never derived: the namespace.  `<lib>::<anything>` resolves without a trigger at
   // all, so it is the spelling that always works and never needs the index.
   qualified = "regex::find";

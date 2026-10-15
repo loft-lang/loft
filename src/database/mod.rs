@@ -687,6 +687,9 @@ pub struct Stores {
     /// Script-level arguments (set by the CLI after parsing its own flags).
     /// When non-empty, `os_arguments()` returns these instead of raw `std::env::args`.
     pub user_args: Vec<String>,
+    /// `@FR-R-DecodeView` — the byte frame the running decode region's spans read: set by a
+    /// region's root for the length of its call (`codegen_runtime::DvFrame`), null outside one.
+    pub dv_frame: DbRef,
     /// Monotonic timestamp captured at `Stores::new()`.  Used by `ticks()` to return
     /// microseconds elapsed since program start; cloned into worker Stores unchanged so
     /// all threads share the same reference point.
@@ -786,6 +789,7 @@ impl Clone for Stores {
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: self.user_args.clone(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: self.start_time,
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1554,6 +1558,7 @@ impl Stores {
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: Vec::new(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: Instant::now(),
             // `Stores::new()` must not call `Instant::now()` or
@@ -1901,10 +1906,21 @@ impl Stores {
         index: i64,
     ) -> crate::keys::DbRef {
         let len = crate::vector::length_vector(db, &self.allocations);
-        // @FR-H-Index — the native half of the one normalisation: negative counts from the
-        // end, and only a STILL-out-of-range index is out of bounds.  Kept byte-for-byte with
-        // `State::vec_get_or_raise` because a divergence here is a different program, not a
-        // different speed.
+        if self.index_or_raise_runtime(index, len).is_none() {
+            // `nullref`, the one value spelling of absence (`DbRef::or_null`,
+            // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
+            return crate::keys::DbRef::NULL_REPORTED;
+        }
+        crate::vector::get_vector(db, size, index, &self.allocations)
+    }
+
+    /// @FR-H-Index — the native half of the one normalisation, for a vector of `len`
+    /// elements: negative counts from the end, and only a STILL-out-of-range index is out
+    /// of bounds, which raises `NegativeIndex` or `IndexOutOfBounds` and answers `None`.
+    /// Kept byte-for-byte with `State::vec_get_or_raise` because a divergence here is a
+    /// different program, not a different speed; `vec_get_or_raise_runtime` and the
+    /// `@FR-R-Apart` element helpers (`codegen_runtime::ap_get_f64`) share it.
+    pub fn index_or_raise_runtime(&mut self, index: i64, len: u32) -> Option<u32> {
         let normalized = if index < 0 {
             index + i64::from(len)
         } else {
@@ -1914,17 +1930,15 @@ impl Stores {
             self.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::NegativeIndex {
                 idx: index,
             });
-            // `nullref`, the one value spelling of absence (`DbRef::or_null`,
-            // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
-            return crate::keys::DbRef::NULL_REPORTED;
+            return None;
         }
         if normalized >= i64::from(len) {
             self.raise_recoverable_runtime(
                 crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds { idx: index, len },
             );
-            return crate::keys::DbRef::NULL_REPORTED;
+            return None;
         }
-        crate::vector::get_vector(db, size, index, &self.allocations)
+        Some(normalized as u32)
     }
 
     /// `vec_get_or_raise_runtime` with the store resolution and the length load supplied

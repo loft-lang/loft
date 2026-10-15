@@ -845,12 +845,11 @@ A call such as `a = f(a)` is decided inside `f`.  `return p` of a parameter copi
 the caller still holds, so for a refusing type `f` is refused there.  The loft spelling of that
 idiom does not return the value: `f` writes through its parameter, which aliases the caller's.
 
-**Why the verdict is read off the line.**  The first version of these rules, the same day, made a
-copy of a value that is not used afterwards a move.  Then `x = a; send(x)` compiled and
-`x = a; send(x); send(a)` failed at its FIRST line: a later line decided what an earlier one
-meant.  Correct and incorrect code looked the same to anyone who does not know how the compiler
-reasons, and the owner rules that out — a programmer must be able to judge from the code whether
-it is valid.  Liveness may still decide an optimisation (`(H-Elide)`), never validity.  A
+**Why the verdict is read off the line.**  A programmer must be able to judge from the code
+whether it is valid, so no later line decides what an earlier one means: made by liveness,
+`x = a; send(x)` would compile and `x = a; send(x); send(a)` fail at its FIRST line
+(heap-history.md § The drop rule before the copy refusal).  Liveness may still decide an
+optimisation (`(H-Elide)`), never validity.  A
 droppable is a corner of the language with a clean workaround in nearly every case — build the
 value where it belongs, pass it, borrow it — so the strict rule costs little.  It also keeps a
 library that holds a connection readable: every use of `self.db` is a borrow in plain sight, and
@@ -864,10 +863,9 @@ structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-hist
 
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
-`1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
-identical on both backends.  The copy rules conform: `(H-Copy-Refuse)` and
-`(H-Spent)` are compile-time errors (`D-heap-8`, closed), `(H-Copy-Lease)` runs `OpCopy` on every
-copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D-heap-11`.
+`1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), identical on both
+backends.  `(H-Copy-Refuse)` and `(H-Spent)` are compile-time errors (`D-heap-8`), `(H-Copy-Lease)`
+runs `OpCopy` on every copy a leasing type makes (`D-heap-9`), `(H-View-Drop)` is `D-heap-11`.
 `tests/ownership_drop_gate.rs` classifies every generated cell under these rules and ties each
 cell that disagrees to its deviation; `tests/copy_lease.rs` holds the leasing cells.  Sites: the
 deaths are `scopes::displaced_drop` and `scopes::scope_end_drop`; a release moves across a copy
@@ -884,8 +882,10 @@ residue is `open_file_handles_entry`.  Guards, both backends:
 `a-file-local-moved-into-a-structure-keeps-its-handle.loft` (a moved `File` keeps its handle)
 and `a-file-dying-anywhere-releases-its-handle.loft` (each death releases — the leak report is
 its channel).  `(H-Copy-Refuse)` and `(H-Spent)` reach declared droppables only, so a `File`
-copy whose two structures both stay in use compiles, and the two share one handle and one
-position; whether that copy is refused is with the owner.
+copy whose two structures both stay in use compiles (whether it is refused is with the owner).
+The two share one handle, each with its OWN position: an access starts at the record's `#next`
+wherever the other left the handle (`LoftFile::place`, once per `(R-FileHold)` hold), so a copy
+means the same before or after the source's first read — `a-copied-file-reads-at-its-own-cursor.loft`.
 
 ### The soundness bridge — a well-typed program never faults a free
 

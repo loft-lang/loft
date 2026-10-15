@@ -1,0 +1,94 @@
+// loft#2008 — a record literal appended to a KEYED collection it also reads.  `(E-Asgn-Compound)`
+// reduces the whole right-hand side before anything is appended, so every read sees the
+// collection as the statement began: a lookup of the key being replaced reads the old entry,
+// and a second element's read does not see the first.  A keyed destination is built THROUGH
+// (loft#703), so it takes no plain-vector snapshot: a FIELD did, and the renamed lookup read
+// the vector as a hash table — a crash on both backends for `hash`, a wrong count for `index`.
+// Every expected value is computed by hand in the cell's comment.
+//
+// @falsified-by: tests/falsified/2008-a-keyed-literal-reads-its-destination-as-it-began.patch — interpret exit 139 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the patch gives a keyed field the vector snapshot again; c1's lookup reads
+//   the vector as a hash table (SIGSEGV interpreted, a silent exit 1 native).
+
+struct C { k: integer, n: integer }
+struct HC { h: hash<C[k]> }
+struct IC { x: index<C[k]> }
+struct SC { s: sorted<C[k]> }
+struct Ctr { n: integer }
+
+fn bump_ref(h: &hash<C[k]>) {
+  h += [C{k: 9, n: (h[9]?.n ?? 0) + 1}];
+}
+
+fn tick(c: Ctr) -> integer {
+  c.n += 1;
+  c.n
+}
+
+fn main() {
+  // c1 — a hash FIELD, the key present: three bumps of k=9 from n=1 read 2, 3, 4.
+  c = HC{h: []};
+  c.h += [C{k: 9, n: 1}];
+  for _ in 0..3 { c.h += [C{k: 9, n: (c.h[9]?.n ?? 0) + 1}]; }
+  assert(len(c.h) == 1 && c.h[9].n == 4, "c1 {len(c.h)} {c.h[9].n}");
+
+  // c2 — the read through a closure capture: 3 bumps, then one of +10.
+  c2 = HC{h: []};
+  for _ in 0..3 { c2.h += [C{k: 9, n: (c2.h[9]?.n ?? 0) + 1}]; }
+  f = fn() { c2.h += [C{k: 9, n: (c2.h[9]?.n ?? 0) + 10}]; };
+  f();
+  assert(len(c2.h) == 1 && c2.h[9].n == 13, "c2 {c2.h[9].n}");
+
+  // c3 — the hash field of an ELEMENT; its sibling element untouched.
+  xs: vector<HC> = [HC{h: []}, HC{h: []}];
+  for _ in 0..3 { xs[1].h += [C{k: 9, n: (xs[1].h[9]?.n ?? 0) + 1}]; }
+  assert(len(xs[1].h) == 1 && xs[1].h[9].n == 3 && len(xs[0].h) == 0, "c3 {xs[1].h[9].n}");
+
+  // c4 — an INDEX field: three bumps read 1, 2, 3 (it answered 1 — silently).
+  ic = IC{x: []};
+  for _ in 0..3 { ic.x += [C{k: 9, n: (ic.x[9]?.n ?? 0) + 1}]; }
+  assert(len(ic.x) == 1 && ic.x[9].n == 3, "c4 {ic.x[9].n}");
+
+  // c5 — a SORTED field: 3 bumps, then a second key whose count read sees one entry.
+  sc = SC{s: []};
+  for _ in 0..3 { sc.s += [C{k: 9, n: (sc.s[9]?.n ?? 0) + 1}]; }
+  sc.s += [C{k: 4, n: len(sc.s)}];
+  assert(len(sc.s) == 2 && sc.s[9].n == 3 && sc.s[4].n == 1, "c5 {sc.s[9].n} {sc.s[4].n}");
+
+  // c6 — a keyed LOCAL and a `&hash` parameter, the controls that were already right.
+  h: hash<C[k]> = [];
+  for _ in 0..3 { h += [C{k: 9, n: (h[9]?.n ?? 0) + 1}]; }
+  for _ in 0..2 { bump_ref(h); }
+  assert(len(h) == 1 && h[9].n == 5, "c6 {h[9].n}");
+
+  // c7 — two elements, each reading the count: both see the empty collection (0, 0), at a
+  // field and at a local.
+  c7 = HC{h: []};
+  c7.h += [C{k: 4, n: len(c7.h)}, C{k: 5, n: len(c7.h)}];
+  h7: hash<C[k]> = [];
+  h7 += [C{k: 4, n: len(h7)}, C{k: 5, n: len(h7)}];
+  assert(c7.h[4].n == 0 && c7.h[5].n == 0, "c7 field {c7.h[4].n} {c7.h[5].n}");
+  assert(h7[4].n == 0 && h7[5].n == 0, "c7 local {h7[4].n} {h7[5].n}");
+
+  // c8 — two elements, the first with an effect: values in source order, before any append —
+  // tick() = 1, then tick() + len = 2 + 0.
+  t1 = Ctr{n: 0};
+  c8 = HC{h: []};
+  c8.h += [C{k: 1, n: tick(t1)}, C{k: 2, n: tick(t1) + len(c8.h)}];
+  t2 = Ctr{n: 0};
+  h8: hash<C[k]> = [];
+  h8 += [C{k: 1, n: tick(t2)}, C{k: 2, n: tick(t2) + len(h8)}];
+  assert(c8.h[1].n == 1 && c8.h[2].n == 2, "c8 field {c8.h[1].n} {c8.h[2].n}");
+  assert(h8[1].n == 1 && h8[2].n == 2, "c8 local {h8[1].n} {h8[2].n}");
+
+  // c9 — a plain VECTOR field keeps its snapshot: [1] grows by (last + 1, len) three times.
+  v = HV{v: [1]};
+  for _ in 0..3 { v.v += [v.v[len(v.v) - 1]? + 1, len(v.v)]; }
+  o = "";
+  for x in v.v { o += "{x},"; }
+  assert(o == "1,2,1,2,3,4,5,", "c9 {o}");
+
+  println("ok");
+}
+
+struct HV { v: vector<integer> }

@@ -2145,6 +2145,45 @@ compile rather than a wrong answer.  Cells
 compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
 `hoist::borrowed_store_texts`.
 
+### A slice of a parameter is read where it lies
+
+```
+  (R-SliceBorrow) a text LOCAL t whose every binding is a value slice s[a..b] (R-Slice-Value)
+                  of a plain text PARAMETER s — not `&text`, not rebound by the body — or of a
+                  local that itself borrows under this rule or (R-TextBorrow)'s store-read
+                  clause, and whose every mention is a text VALUE read by that clause's
+                  reading (an operand at a `text` position, the source of a bind into another
+                  slot, `size`, a comparison, a walk of its characters, its own release) —
+                  never a rebind to a built text, an append, a `&t` link, a `&text` argument,
+                  a tuple, a store, a return, a capture or a yield — is the `&str` the slice
+                  answers: no `String` is built, and a slice of t reads the same bytes.  A
+                  slice of a plain parameter names no store, so the store-read clause's store
+                  condition is not asked of it.  Declines, keeping the copy: a slice of an
+                  OWNED local (its buffer can grow under the borrow; the path condition is a
+                  later clause), of a `&text` or rebound parameter, a record FIELD bound from
+                  a slice (a store write), a generator.  Native only; the interpreter copies
+                  the slice into the local as the IR spells it and is the oracle.
+```
+
+**In words.**  `t = line[2..5]` was `OpGetTextSub(line, 2, 5).to_string()`: the slice op
+already answers a `&str` into the parameter, and the bind copied it into an owned `String`
+for every script that cuts a field out of a line — the regex consumer's
+`key = line[m.start..m.end]` (@PLN192), finding 002's tokenisers, every `find` followed by a
+slice.  The parameter's bytes are the caller's for the whole frame, so the one condition that
+makes a borrow of them wrong is the local escaping the frame or being written, which is what
+(R-TextBorrow)'s reading already decides; the rule is that clause with a slice as one more
+source.  rustc checks the same borrow, so a wrong admission — a slice of a local that is
+appended to while the borrow lives — is a refused compile, never a wrong answer; the planted
+defect that widens the source to any text variable turns the emission pins red (2 of 3) while
+every cell's VALUE holds.  Switch `LOFT_NO_SLICE_BORROW` (this clause alone;
+`LOFT_NO_TEXT_BORROW` keeps the copy everywhere); trace `LOFT_TRACE_TEXT_BORROW=1`
+names each local as "a slice of a parameter's text" or its decline.  Cells
+`tests/scripts/192-slice-borrow.loft` (t1–t12, both backends); pins `tests/slice_borrow.rs`.
+Sites: the slice arm of `hoist::borrowed_store_texts` (`plain_text_arg`, `slice_of`), the
+store-condition skip beside the format clause's, `Output::slice_borrow_count` for the census.
+What it does not do: the texts INSIDE a record — a `Match`'s `text`, a `Group`'s — are store
+fields, which (R-DecodeView) answers with a span, not this rule.
+
 ### A character walk steps an ASCII byte in one move
 
 ```
@@ -2377,6 +2416,118 @@ generic one's, arm for arm, so the answer cannot differ; what moved is when it i
 **BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
 guard `tests/scripts/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
+### A loop that alone sees its file holds the cursor
+
+```
+  (R-FileHold)   In a loop L and a variable f of type `File`: when f is the ONE variable
+                 named in L whose type can hold a `File` — the type itself, a record with a
+                 `File` field at any depth, a collection or tuple of one, a function value,
+                 an iterator, a struct-enum — and every mention of f in L is the file
+                 operand of an `(R-TypedRead)` read, and L holds no call through a function
+                 value, no function value built, no `yield` and no parallel body, then the
+                 reads of f in L move `#index` and `#next` in two locals, and f's record is
+                 given both when L is left: at its end, a `break`, a `return` out of it and
+                 an unwinding panic alike.  Each read decodes as `(R-TypedRead)` does; a
+                 short read leaves its local unchanged and `#next` where it was.  While f's
+                 record names no open handle or no position — a file not read yet, an
+                 absent one, a directory — nothing is held: the read goes through the
+                 record, which opens the handle, and the hold begins after it.  A loop
+                 inside L reads through L's hold.  Native only.
+```
+
+**In words.**  A read moves the cursor in the `File` record: it resolves the record's store,
+reads its format, handle and `#next`, and writes `#index` and `#next` back, per value.  What
+makes those writes necessary is somebody else looking at the record between two reads, and
+that is a question about TYPES: a `File` record is reached through a value whose type holds a
+`File`, and a call reaches only what its arguments reach.  So when f is the only such value the
+loop names, and the loop names it only to read, nothing in the loop — a callee included — can
+ask for the cursor, seek, write or close the file, or free the record; the record is observed
+again at the earliest when the loop is left, and it is correct there.  The gate counts, it does
+not search: a second `File` variable declines even when it is another file, since two
+parameters may name one record.  The holder is a guard value whose drop writes the record, so
+no way out of the loop is a case the generator enumerates.
+
+**BUILT** (`generation::file_hold::held_file` the gate, `Output::begin_file_hold` /
+`end_file_hold` the loop's block, `ops::file_ops::ReadFileEmitter` the read, runtime
+`codegen_runtime::FileCursor`; `LOFT_NO_FILE_HOLD=1`).  The falsifier is
+`LOFT_HOIST_VERIFY=1`: every held read and the drop assert that the record still says what
+it said when the hold began.  The reader that stands behind a one-statement helper
+(`read_one(bf)`) is in the loop by `(R-InlineLeaf)`'s reader clause, on the builds that run
+the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, pins
+`tests/file_hold.rs`.
+
+### A record of fixed-length vectors travels as a value
+
+```
+  (R-Apart)      A value the compiler proves is never observed as a store value may be held
+                 in a representation of the compiler's choosing — no DbRef, no identity, no
+                 release a program can see — from its construction to its first BOUNDARY,
+                 where the ordinary store constructor converts it into the value the
+                 unrewritten program holds.  Every use between the two answers what the
+                 store path answers, faults and their reports included (H-Index,
+                 H-WriteOOB).  Instance 2, a RECORD OF FIXED-LENGTH FLOAT VECTORS: a struct
+                 whose every field is a `vector<float>` is a `[f64; N]` per field when every
+                 construction of it in admitted code builds each field as a literal of one
+                 length.  A TWIN of a function answering such a record through its buffer
+                 takes its record parameters as values, its numbers as themselves, and
+                 answers the value; it exists when every variable of the type in its body is
+                 apart or dead and every `return` answers an apart value.  In any body, a
+                 component of such variables — joined by the calls that build one from
+                 another, the buffers handed to those calls, the frees and aliases between
+                 them — is apart when each mention is a construction, an element read or
+                 write, a length, a twin call's destination or record argument, a free, a
+                 null init or a `return`; a `return` from a body that is no twin converts the
+                 value into the function's buffer.  Such a body is rewritten only when it calls
+                 a twin: it is emitted with the vector hoists off, which a body that only builds
+                 or writes a value in place would pay for in its store reads.  A record parameter is apart only in a
+                 twin and only when nothing writes it; a variable only ever a twin call's
+                 buffer, an alias, a null init or a free is DEAD and emits nothing.  A
+                 component with any other mention stays in the store, and so does every
+                 component of a body with a `yield` or a parallel block.  Native, and not in
+                 a build that ships the live tier.  Instance 3, a `vector<float>` LOCAL: a
+                 local, or a work-buffer parameter (`R-WorkBuffer`, whose incoming content the
+                 body never reads), is an inline buffer with a heap spill when each mention is
+                 its empty init, a push, a reservation, an element read or write, a length, a
+                 `clear` or a free, and each variable serving it — the store a local is minted
+                 into, the save of a work buffer's incoming value — has no other mention.
+                 Nothing of it crosses into the store, so this instance needs no plan of the
+                 whole program and is made in every native build.
+```
+
+**In words.**  The store protocol is for data that lasts.  A matrix built, multiplied and
+rebound a hundred thousand times, and read once at the end, pays it per product: a buffer
+refilled with zeros, three vector headers derived, every element read through a bounds test,
+the two buffers exchanged.  None of that is observable while the value stays among the
+functions that build it, read it and hand it on, so those functions get twins that work on a
+Rust array, and the store sees the value once — where a function returns it to a caller that
+keeps it.  The length is a fact about the TYPE: every admitted construction must agree on
+it, and nothing the plan admits changes it (a push is no admitted mention), so an apart
+parameter has the layout its twin assumes.  A read out of range reports exactly what the store
+path reports (`Stores::index_or_raise_runtime`, the one definition) and answers null; `v[i]?`
+answers null quietly.  The fallback costs the rewrite, never a value: a mention the gate does
+not name keeps its whole component in the store, and an apart value is a distinct Rust type,
+so a mention the emitter fails to rewrite is a `rustc` type error.  A build that ships the live
+tier has no plan, since a twin's call would run the native body of a function flipped to the
+interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
+loop in them plans a header, a base or an address on a variable that is no longer a record.
+
+An inline vector answers what the store's vector answers — empty at its init, an index from
+the end, an index out of range reported or, for `v[i]?`, null — and its loops plan no header,
+push header or base on it: the loop verdict (`Output::compute_loop_hoist`) drops every path
+rooted at it, and a loop whose only growth was such a vector grows no store.
+
+**BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
+regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
+`ap_set_f64` / `ap_store_f64`; instance 3: `generation::apart_vector::roles` the gate, runtime
+`codegen_runtime::ApVec`; `LOFT_NO_APART=1` both, `LOFT_NO_APART_VECTOR=1` instance 3,
+`LOFT_TRACE_APART=1`).  Not admitted yet: an
+element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
+text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
+Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
+native-release`) and `a-local-float-vector-lives-in-an-inline-buffer.loft`; pins and both
+out-of-range reports `tests/apart_value.rs`.  Design:
+[APART_VALUES.md](../APART_VALUES.md).
+
 ### A walk of a scalar literal builds no vector
 
 ```
@@ -2454,10 +2605,47 @@ the native run of the cells, panics under the verify naming both answers, and pa
 under the switch).  Cells `tests/scripts/158-keyed-fast-paths.loft`; pin
 `tests/keyed_fast_paths.rs::a_hash_lookup_by_one_integer_key_takes_the_typed_entry`.
 Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_long_key`,
-`codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half — a keyed append
-that skips the per-element type-table walk the same way — is not built: its emission
-runs through the mint and push rewrites (`hoist::mint_path`), and it is priced at ~300 of
-an insert's 2,100 instructions.
+`codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
+below, for an element that owns no heap.
+
+### A keyed insert writes the entry its key names
+
+```
+  (R-KeyedEntry)  c += [T{k: e₀, f₁: e₁, …}] where c is a `hash<T[k]>` with ONE key of
+                  `integer` width, T owns no heap, no linked group holds T's records
+                  (`@FR-Col-Group`), and the literal writes EVERY field of T — the plain
+                  claim (`OpNewRecord`), field writes and file (`OpFinishRecord`) — is
+                  emitted as: the values e₀ … eₙ evaluated in source order into temps,
+                  then ONE probe for e₀ that answers the entry already under that key or
+                  a fresh one, its key written and filed in the bucket the probe ended
+                  on, then the other temps written into that entry.  A repeated key
+                  therefore overwrites the entry it finds: what `(Col-Insert)`'s
+                  replacement leaves (every field of the new record, under the same key,
+                  in the same bucket), with no slot claimed and none released.
+```
+
+**In words.** The plain form builds the record before it knows whether its key is
+present, so a repeated key costs a claimed arena slot, zeroed and written, then the probe,
+then the old entry released.  The rule asks the key first.  The order the program sees is
+the plain form's: its values are evaluated while its entry is claimed but not filed, and
+nothing a value can read sees an unfiled entry, so evaluating them before the probe
+changes no value.  A held view of the old entry is not a witness either, because a view
+taken while its collection grows is copied out (the advice says so).  Hash iteration runs
+in key order through a sorted snapshot, so where the entry sits is not observable.  Where a
+snapshot of the collection is LIVE, a replace takes the displaced record out of it and an
+overwrite would not.  So `Stores::keyed_entry_long` takes the general path there at run
+time, and also where the collection has no table yet: it claims, writes the key and files
+the record through `record_finish` first, which a hash may do because it places an entry
+by its key alone.  The heap-free condition is what makes an overwrite release nothing: a
+replaced text or vector would otherwise be stranded.  A miss pays one walk and the arena
+index the claim answers (no `arena::index_of` scan to recover it), so new keys gain too:
+gridmesh `field_add_cell` 22.97 → 15.06 ms, `build_index` 10.16 → 7.49 ms (hand price of
+the repeated-key half alone −26 %).  Switch `LOFT_NO_KEYED_ENTRY`.  Falsifier
+`LOFT_KEYED_VERIFY=1`, which looks every answered entry up again through the general
+entry and panics where the two differ.  Cells
+`tests/scripts/a-keyed-insert-writes-the-entry-its-key-names.loft`.  Sites:
+`generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
+`Stores::keyed_entry_long`, `hash::entry_long`.
 
 ### A result vector adopts the return buffer
 
@@ -4771,6 +4959,15 @@ native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  S
                  program spelled it twice — a fault is owed a report, not a count
                  (owner, 2026-10-11).  A defended site's silent operator is another
                  operator than the reporting one and is never the same computation.
+                 THE GET-OR-INSERT CLAUSE: `if !c[k] { … }` with no `else`, followed
+                 directly by an assignment whose value is the same keyed read `c[k]` (a
+                 plain read: read operators, locals and literals), moves the assignment
+                 `b = c[k]` before the `if`, tests `b`, and ends the arm with `b = c[k]`.
+                 On a hit nothing ran between the two reads; on a miss the arm's last read
+                 is the plain second read, after everything the arm did (a key it changed,
+                 a key it filed or did not).  The variable itself is bound — `b = t`
+                 between two record locals is a copy, which would leave `b` no view of the
+                 entry — so neither the condition nor the arm may name `b`.
 ```
 
 **In words.** Applied by: `same_read::rewrite_program`, in the IR phase (both backends; native
@@ -4783,7 +4980,10 @@ positions.  Measured on `index_read` by the hand-written form: −31 % interpret
 `LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
 `tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft`,
 `tests/scripts/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft`
-(the guard clause; zttext `locate`'s shape) and `tests/same_read.rs`
+(the guard clause; zttext `locate`'s shape),
+`tests/scripts/a-lookup-a-get-or-insert-repeats-is-made-once.loft` (the get-or-insert clause;
+gridmesh `field_add_cell`'s bucket, whose two lookups were 18 % of what `(R-KeyedEntry)` left of the row) and
+`tests/same_read.rs`
 (which statements bind; the cells with the rewrite off).
 
 ### `(R-InlineLeaf)` takes a tuple result
@@ -4827,6 +5027,28 @@ build is checked by `tests/leaf_inline.rs`.  Built: gridmesh `emit_segment` 17.5
 (8.25× → 3.40× its Rust twin, native), the probe of four parallel appends 15 → 6 ms.
 `LOFT_NO_INLINE_APPENDER=1` keeps every appender's calls.  Guard:
 `tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft`.
+
+### `(R-InlineLeaf)` takes a reader
+
+```
+  (R-InlineLeaf) + A leaf with a scalar or scalar-tuple result may take `File` parameters,
+                 when its body names each only as the file operand of a read into one of
+                 its own scalar locals (`OpReadFile(f, OpCreateStack(t), n, τ)` as a
+                 statement of a block).  At a call whose file arguments are plain
+                 variables holding the record and whose arguments call no user code, it is
+                 replaced by its body with each file read in place; any other call stays.
+                 A local a read writes through its address carries no range into the
+                 body's reductions.
+```
+
+**In words.** Applied by: `leaf_inline::variables` (the `File` parameters), `read` (the
+statement), `file_uses` (nothing but reads), `appender_site` (the call) and `expand` (the
+file in place).  Why it pays: behind a call the file is an argument, and a loop that hands
+its file to a call cannot hold the cursor (`(R-FileHold)`); inlined, the read is the loop's
+own.  A leaf that asks its file for anything else — `bf#next`, a seek, a text read — keeps
+its call.  The call-site restriction is the appender clause's, for the same reason.
+`LOFT_NO_INLINE_READER=1` keeps every reader's calls.  Guard:
+`tests/scripts/a-file-read-loop-holds-its-cursor.loft`, pins `tests/leaf_inline.rs`.
 
 ### A text discharge that assigns a local is read straight into it
 
@@ -5229,17 +5451,41 @@ keeps every use one that reads.  (5) is the one way a span and a copy can differ
 A run-time tag in the field ("owned or span?") was the other representation.  It is
 declined here because every `text` field read in every program would test it (@C125).
 
-The ceiling, measured on pluginabi `check_request` (over-9x.md): building no text or byte
-string at all takes the row from 3.95 to 2.54 ms (−36 %); the spans' own bookkeeping comes
-out of that.  Reach: every decoder of a frame read once (cbor's `decode`, the web stack's
-request handlers).  Switch `LOFT_NO_DECODE_VIEW`; trace `LOFT_TRACE_DECODE_VIEW` names the
-holder or site that declined.  Falsifier: `LOFT_HOIST_VERIFY=1` re-reads each span as the
-owned text and compares; cells on both backends with hand-computed values — the
-`check_request` shape; B appended to after decode and before the lookup (declines, value
-right); R stored into a vector that outlives B (declines); invalid UTF-8 in a text span (the
-converted owned text); a decoded value returned from the function that owns B (declines); and
-a planted defect that admits a site writing B must read the wrong bytes under the verify
-switch.
+**Instance 1, built** (`src/generation/decode_view.rs` decides, `decode_view_emit.rs`
+writes).  The twin layout is the record itself: an ENUM whose every text- or
+byte-string-carrying variant leaves the record's last eight bytes free keeps the span there —
+the frame's bytes `[lo, lo + n)` under the sign bit, `0` for the owned form — with the field
+itself null, so a release frees nothing for it and a copy or a shallow move carries the word
+with the record's bytes.  A variant minted as a record of its own is the variant's size and
+has no such room: a region that mints one declines.
+- The ROOT is a function whose one byte-vector parameter B (not `&`, no other parameter but
+  numbers, texts and hidden buffers) it hands to a call answering a decoded value; it names B
+  as the frame for the length of its call (`codegen_runtime::DvFrame`).  (1) is the read-only
+  walk: B and every parameter it is handed to may be read for a length, read under a getter,
+  sliced or text-run, and handed to a region call — anything else, an element address outside
+  a getter included, declines.  (2) and (3) are the region's closure: every loft function a
+  value of the enum (or a record or collection holding one) reaches joins the region, the
+  root may not return one, and a native, a function reference, a `yield` or a `par` declines.
+- Every region function is re-emitted as its `__dv` twin, beside its own body for the callers
+  outside.  A text run of a parameter that is B at every call writes the span when its guard
+  holds and the bytes are UTF-8 — (5) — and the owned text otherwise; a byte slice sets its
+  local's span word, the local's move writes it, and the local's holder is placed only on the
+  guard's fallback path.  Every other write of a span field clears the word.
+- (4) in instance 1: a text field is read through `OpGetText`, which answers the frame's bytes
+  for a span; a byte-string field is never READ in a region — a read declines the root.
+- Not yet admitted: a frame held in a local of the root, a struct (no free bytes), a byte
+  string read as a value.
+
+Measured on pluginabi `check_request` (over-9x.md): 2.57 → 1.64 ms per op on one core
+(−36 %, against −46 % priced), every row's hash unchanged.  Switch `LOFT_NO_DECODE_VIEW`;
+trace `LOFT_TRACE_DECODE_VIEW` names each root admitted and each one declined with the
+mention that declined it.  Guard `tests/scripts/a-decoded-text-is-read-where-it-lies.loft`,
+its value cells hand-computed on both backends — a lookup by key, a format, a length and a
+character walk, invalid UTF-8, an empty text, unread byte strings, a nested map, a copy, an
+owned value beside a decoded one, a pooled buffer refilled with an integer and then texts,
+and the declines: a byte string read, the frame written after the decode, a decoded value
+returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
+pin `tests/decode_view.rs` holds the roots and the region.
 
 ### Proposed clauses on existing rules
 

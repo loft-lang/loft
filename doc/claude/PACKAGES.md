@@ -141,6 +141,27 @@ placement = "process"       # @PLN119 — run this library in a WORKER PROCESS, 
 math = ">=0.1"              # from registry or ~/.loft/lib/
 utils = { path = "../utils" }  # local path (development)
 
+[triggers]
+enabled = true              # auto-use: a consumer that calls one of this
+                            # package's METHODS (`line.matches(p)`) or names one
+                            # of its TYPES (`c: Command = …`) loads it with no
+                            # `use`.  Both halves are DERIVED from the `pub`
+                            # declarations at publish time; nothing is listed.
+                            # A consumer derives them from each DECLARED
+                            # dependency's own source — a sibling, a `path =`,
+                            # a `lib/<dep>` or a registry package's extracted
+                            # copy (the lock's pin) — and from the catalogue
+                            # for a package nothing declares (methods and
+                            # builders only: the index carries no types).
+builders = ["set"]          # the one declared half: the free `pub fn`s a consumer
+                            # may call BARE (`set(words)`) and have this package
+                            # loaded.  A builder takes a name in the program's own
+                            # namespace, so the author lists the few worth it; the
+                            # program's own `fn set` wins, and `<pkg>::set(…)`
+                            # always reaches the library's.  A listed name the
+                            # entry file does not declare as a free `pub fn` is
+                            # dropped, with a warning at `loft publish`.
+
 [native]
 # Rust crate in native/ — compiled to rlib (interpreter/native) or
 # wasm (WASM target) at install time or first use.
@@ -242,7 +263,11 @@ pub fn transform(canvas: Canvas, mat: math.Mat4) -> Canvas {
 
 When the compiler encounters `use math;` it searches:
 
-1. **Local `src/`** — sibling files in the same package
+1. **Local `src/`** — sibling files in the same package.  Inside a package, its own
+   `[package] name` binds its own entry, whatever its directory is called — a package is
+   identified by its manifest, not its path (`tests/own_package_resolution.rs`).  Every
+   spelling of a test run (`loft test`, `--tests <dir>`, one file) puts the package's
+   source directory on the import path
 2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`: the importing
    package's, then the **root project's**, so a path the root declares answers a `use`
    anywhere in the program, however deep (`tests/transitive_binding.rs`)

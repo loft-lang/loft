@@ -23,6 +23,13 @@
 //! loop where its push windows reach them: one call per element otherwise re-resolved every
 //! field's vector from the store on each append.
 //!
+//! The READER clause admits a scalar leaf with `File` parameters that it only reads scalars
+//! from (`bf#read(2) as i16`: an `OpReadFile` into one of its own scalar locals).  At a call
+//! whose file argument is a plain variable and whose arguments call no user code, the body
+//! replaces the call with the file read in place, so the read sits in the caller's loop
+//! where a held cursor reaches it (`@FR-R-FileHold`): behind a call, every value moved the
+//! cursor through the `File` record.
+//!
 //! Inside an inlined body, and only there — straight-line code over locals no one else
 //! reads — three reductions follow, each answering exactly what it replaces:
 //!
@@ -41,7 +48,8 @@
 //! entries (`loft test`'s coverage, `Data::observes_entries`), whose report would otherwise
 //! name an inlined function as never called.  Switches: `LOFT_NO_INLINE_LEAF=1` (the whole pass),
 //! `LOFT_NO_MASK_RANGE=1`, `LOFT_NO_SINGLE_USE=1`, `LOFT_NO_SCALE_FOLD=1`,
-//! `LOFT_NO_INLINE_APPENDER=1` (the appender clause);
+//! `LOFT_NO_INLINE_APPENDER=1` (the appender clause), `LOFT_NO_INLINE_READER=1` (the reader
+//! clause);
 //! `LOFT_TRACE_INLINE_LEAF=1` names every inlined call and every reduction.
 use crate::data::{Block, Data, DefType, Type, Value};
 use crate::generation::range::{Range, range, range_vars};
@@ -68,6 +76,10 @@ fn off_scale() -> bool {
 
 fn off_appender() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_INLINE_APPENDER").is_ok_and(|v| v != "0"))
+}
+
+fn off_reader() -> bool {
+    crate::env_once!(std::env::var("LOFT_NO_INLINE_READER").is_ok_and(|v| v != "0"))
 }
 
 /// An instrument that attributes work to FUNCTIONS is armed (`LOFT_PROFILE`,
@@ -137,8 +149,8 @@ struct Leaf {
     /// The body's result, a final `return` unwrapped.
     tail: Value,
     result: Type,
-    /// The appender clause: the record parameters the body appends to, read in place at the
-    /// call; empty for a scalar leaf.
+    /// The record parameters read in place at the call: the ones the appender clause appends
+    /// to, or the `File`s the reader clause reads from; empty for a scalar leaf.
     records: Vec<u16>,
     /// The appender clause: a void body of statements with no result to copy.
     appender: bool,
@@ -201,11 +213,63 @@ fn pure(data: &Data, v: &Value, assigned: &mut HashSet<u16>, nodes: &mut usize) 
             let Some((last, init)) = body.split_last() else {
                 return false;
             };
-            init.iter().all(|s| statement(data, s, assigned, nodes))
+            init.iter()
+                .all(|s| statement(data, s, assigned, nodes) || read(data, s, assigned, nodes))
                 && pure(data, last, assigned, nodes)
         }
         _ => false,
     }
+}
+
+/// `@FR-R-InlineLeaf`'s reader clause: `OpReadFile(f, OpCreateStack(t), n, tp)` as a
+/// statement — a read of `n` bytes from the file `f` into the local `t`, which it assigns.
+/// Which variable `f` is, and that the body names it nowhere else, is checked apart
+/// ([`file_uses`]); a body with no `File` parameter has no variable this could type-check
+/// with.
+fn read(data: &Data, v: &Value, assigned: &mut HashSet<u16>, nodes: &mut usize) -> bool {
+    *nodes += 1;
+    let Value::Call(op, args) = v.unspan() else {
+        return false;
+    };
+    if data.def(*op).name() != "OpReadFile" {
+        return false;
+    }
+    let [file, slot, bytes, tp] = args.as_slice() else {
+        return false;
+    };
+    let Value::Call(address, of) = slot.unspan() else {
+        return false;
+    };
+    let [Value::Var(t)] = of.as_slice() else {
+        return false;
+    };
+    if data.def(*address).name() != "OpCreateStack" || !matches!(file.unspan(), Value::Var(_)) {
+        return false;
+    }
+    assigned.insert(*t);
+    literal(tp) && pure(data, bytes, assigned, nodes)
+}
+
+/// How often `f` is named in `v`, and how often as the file operand of an `OpReadFile`: equal
+/// when the body uses the file parameter for nothing but reads.
+fn file_uses(data: &Data, v: &Value, f: u16) -> (usize, usize) {
+    let (mut all, mut read) = (0, 0);
+    v.any_node(&mut |n| {
+        match n {
+            Value::Var(x) if *x == f => all += 1,
+            // A write of the parameter is a use the read count never matches.
+            Value::Set(x, _) if *x == f => all += 1,
+            Value::Call(op, args)
+                if data.def(*op).name() == "OpReadFile"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == f) =>
+            {
+                read += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    (all, read)
 }
 
 /// An assignment of a pure expression — the only statement a leaf's blocks may hold before
@@ -327,6 +391,55 @@ fn admit_appender(
     })
 }
 
+/// A leaf's variables for the caller: every one's name and type, the record parameters read
+/// in place at the call (the appender clause's records, the reader clause's files) and the
+/// temporaries the body never reads.  Any other variable that is not a scalar declines.
+#[expect(clippy::type_complexity, reason = "three plain lists, built together")]
+fn variables(
+    data: &Data,
+    def: &crate::data::Definition,
+    appender: bool,
+) -> Result<(Vec<(String, Type)>, Vec<u16>, Vec<u16>), &'static str> {
+    let fv = &def.variables;
+    let mut vars = Vec::new();
+    let mut records = Vec::new();
+    let mut unused = Vec::new();
+    // `@FR-R-InlineLeaf`'s reader clause: the `File` parameters of a leaf with a result.
+    let file = if appender || off_reader() {
+        u32::MAX
+    } else {
+        data.def_nr("File")
+    };
+    for v in 0..fv.count() {
+        if fv.is_captured(v) {
+            return Err("a captured variable");
+        }
+        if !scalar(fv.tp(v)) {
+            let in_place = fv.is_argument(v)
+                && match fv.tp(v) {
+                    Type::Reference(d, _) => appender || (*d == file && file != u32::MAX),
+                    _ => false,
+                };
+            if in_place {
+                records.push(v);
+            } else if appender
+                && !fv.is_argument(v)
+                && !def
+                    .code()
+                    .any_node(&mut |n| matches!(n, Value::Var(x) if *x == v))
+            {
+                // A temporary the parser declared and the fused push no longer reads
+                // (`_elm_1` of `r.f += [e]`): not copied into the caller.
+                unused.push(v);
+            } else {
+                return Err("a non-scalar variable");
+            }
+        }
+        vars.push((fv.name(v).to_string(), fv.tp(v).clone()));
+    }
+    Ok((vars, records, unused))
+}
+
 /// The leaf a call of `d` may be replaced by, or `None` — and why, for the trace.
 fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     let def = data.def(d);
@@ -350,31 +463,7 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
         return Err("a non-scalar result");
     }
     let fv = &def.variables;
-    let mut vars = Vec::new();
-    let mut records = Vec::new();
-    let mut unused = Vec::new();
-    for v in 0..fv.count() {
-        if fv.is_captured(v) {
-            return Err("a captured variable");
-        }
-        if !scalar(fv.tp(v)) {
-            if appender && fv.is_argument(v) && matches!(fv.tp(v), Type::Reference(..)) {
-                records.push(v);
-            } else if appender
-                && !fv.is_argument(v)
-                && !def
-                    .code()
-                    .any_node(&mut |n| matches!(n, Value::Var(x) if *x == v))
-            {
-                // A temporary the parser declared and the fused push no longer reads
-                // (`_elm_1` of `r.f += [e]`): not copied into the caller.
-                unused.push(v);
-            } else {
-                return Err("a non-scalar variable");
-            }
-        }
-        vars.push((fv.name(v).to_string(), fv.tp(v).clone()));
-    }
+    let (vars, records, unused) = variables(data, def, appender)?;
     if appender && records.is_empty() {
         return Err("a void body with no record to append to");
     }
@@ -414,6 +503,12 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     if nodes > MAX_NODES {
         return Err("a body too large to copy into every call site");
     }
+    for &f in &records {
+        let (all, read) = file_uses(data, def.code(), f);
+        if all != read {
+            return Err("a reader that uses its file other than to read a scalar");
+        }
+    }
     Ok(Leaf {
         name: def.name().to_string(),
         params,
@@ -422,7 +517,7 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
         stmts: init.iter().map(|s| (*s).clone()).collect(),
         tail,
         result: def.returned.clone(),
-        records: Vec::new(),
+        records,
         appender: false,
         unused: Vec::new(),
     })
@@ -528,11 +623,11 @@ fn expand(
     }))
 }
 
-/// `@FR-R-InlineLeaf`'s appender clause at one call site: each record argument a plain
-/// variable holding the record itself (not a `&` link, whose variable is not the record), and
-/// no argument calling user code — so nothing between the call and its body can rebind the
-/// variable the appends now read in place.  Any other site keeps its call.  A scalar leaf
-/// passes untouched.
+/// `@FR-R-InlineLeaf`'s appender and reader clauses at one call site: each record argument a
+/// plain variable holding the record itself (not a `&` link, whose variable is not the
+/// record), and no argument calling user code — so nothing between the call and its body can
+/// rebind the variable the appends, or the file reads, now name in place.  Any other site
+/// keeps its call.  A scalar leaf passes untouched.
 fn appender_site(
     leaf: &Leaf,
     args: &[Value],
@@ -693,6 +788,16 @@ impl Reduce<'_> {
             Value::Call(op, args) => {
                 for a in args.iter_mut() {
                     self.masks(a, facts);
+                }
+                // The reader clause: a local written through its address (`OpReadFile` into
+                // `OpCreateStack(t)`) carries no range from the assignment before it.
+                for a in args.iter() {
+                    if let Value::Call(address, of) = a.unspan()
+                        && let [Value::Var(t)] = of.as_slice()
+                        && self.data.def(*address).name() == "OpCreateStack"
+                    {
+                        facts.remove(t);
+                    }
                 }
                 if *op == self.ops.land_int
                     && args.len() == 2

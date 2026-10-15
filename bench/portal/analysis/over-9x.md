@@ -343,7 +343,17 @@ the routine's total 62.6 → 53.7 ms alone on one core (−14 %, against −10 %
 left before it is the § above: `pa_get` answered a deep copy of the entry it found, its key
 compares copy each key, `pa_text` copies the value twice more, and `decode` still claims,
 fills and frees four texts and two byte strings per frame the twin never materialises —
-`(R-DecodeView)` (@C141), whose ceiling was measured at 3.95 → 2.54 ms (−36 %).
+`(R-DecodeView)` (@C141).
+
+**`(R-DecodeView)` priced on today's tree** (`pluginabi_check_request/price_decode_view.py`):
+every decoded text and byte string held as a span — offset and length — of the frame, in the
+spare word of its 16-byte `CborValue` record; `decode`'s twins write the span where the owned
+form claims, and `pa_text` / `pa_get` read the frame in place.  1255 → **680 ns per check
+(−46 %)** on one core, every row's hash unchanged: the byte strings alone −26 % (no reader
+needs them), the texts alone −20 %.  **Built** (instance 1, `formal/rewrites.md` § A decoded text or byte
+string is a view into the frame): 2.55 → 1.67 ms per op, 7.55× → 5.07× recorded.  Of the 20 %
+of the price it leaves, the parts measured: the key bindings copied into a `String` (−1.5 %
+borrowed, S6) and the span helpers' frame lookups (−1 % with one lookup per call, taken).
 
 ### Order
 

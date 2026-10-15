@@ -1,5 +1,6 @@
 # @PLN184 D4 — each script's cheapest invocation, run nightly on windows-latest (.github/workflows/windows-scripts.yml).
 # A script not listed is counted by src/platform_census.rs (only falls).  Format: <script><TAB><arguments>
+bench/portal/analysis/over-9x/pluginabi_check_request/price_decode_view.py	--help
 bench/portal/analysis/x2/price_cbor_encode.py	--help
 bench/portal/analysis/x8/price_binary_read.py	--help
 bench/run_bench.sh	--help

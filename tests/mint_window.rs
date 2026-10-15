@@ -31,8 +31,10 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_m5b", 0, 0),
     // Two literal groups, four elements.
     ("n_m6", 4, 8),
-    // Keyed inserts: the claimed record takes the address, the finish files it by its key.
-    ("n_m7", 3, 6),
+    // Keyed inserts: the sorted insert's claimed record takes the address and the finish
+    // files it by its key; the hash insert is `(R-KeyedEntry)`'s — one probe answers the
+    // entry under the key and the values are written into it, no record claimed, no window.
+    ("n_m7", 1, 2),
     ("n_m10", 1, 2),
     ("n_m11", 2, 4),
     // m12's and m13's callees answer a TUPLE (two and seven scalars), delivered into the

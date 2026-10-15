@@ -2865,6 +2865,13 @@ reverse hand-off for a copy of what the caller holds and the field hand-off (`Op
 a copy the rules accept either leases or does not exist, and a read through a member of a call
 result is a view of the call's record.
 
+The first version of the copy rules, written the same day as the refusal, made a copy of a
+value that is not used afterwards a MOVE.  Then `x = a; send(x)` compiled and
+`x = a; send(x); send(a)` failed at its FIRST line: a later line decided what an earlier one
+meant, and correct and incorrect code looked the same to anyone who does not know how the
+compiler reasons.  The owner ruled that out, which is why `heap.md` reads the verdict off the
+line (moved out of `heap.md` § The drop rules, 2026-10-14).
+
 ## (H-RefHome): a home moves out instead of being refused (2026-10-11)
 
 As first written, `(H-RefHome)` refused every holder that outlived the variable holding its

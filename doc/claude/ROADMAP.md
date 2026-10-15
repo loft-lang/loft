@@ -100,6 +100,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 
 | Plan | status | What it is |
 |---|---|---|
+| [@PLN192](https://github.com/loft-lang/plans/issues/192) | future | Regex captures, find-all and replace — a `Match` whose texts the compiler can keep a view of the subject ([plan](plans/192-regex-captures-as-spans.md)) |
 | [@PLN171](https://github.com/loft-lang/plans/issues/171) | future | LSP / DAP follow-ups |
 | [@PLN66](https://github.com/loft-lang/plans/issues/66) | future | Viewer ↔ LSP bridge |
 | [@PLN70](https://github.com/loft-lang/plans/issues/70) | future | Viewer generalisation |

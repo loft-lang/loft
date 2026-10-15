@@ -597,6 +597,23 @@ impl Stores {
         tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::Vector(_))
     }
 
+    /// Is `tp` a keyed collection — a kind that places its records by key, so a copy of it
+    /// as a plain vector is not the same collection and its lookups do not read one?
+    #[must_use]
+    pub fn is_keyed_collection(&self, tp: u16) -> bool {
+        tp != u16::MAX
+            && (tp as usize) < self.types.len()
+            && matches!(
+                self.types[tp as usize].parts,
+                Parts::Sorted(..)
+                    | Parts::Ordered(..)
+                    | Parts::Hash(..)
+                    | Parts::Index(..)
+                    | Parts::Radix(..)
+                    | Parts::Trie(..)
+            )
+    }
+
     /// The plain vector that FIELD `field` of the plain struct `parent_tp` holds, as
     /// `(the field's byte position, the vector's type)` — the container a record append
     /// spelled `OpNewRecord(R, parent_tp, field)` grows (`@FR-R-Mint`'s field clause).

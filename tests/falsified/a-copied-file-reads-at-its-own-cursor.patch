@@ -1,0 +1,15 @@
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -2841,11 +2841,7 @@
+         .files
+         .get_mut(file_ref as usize)
+         .and_then(|x| x.as_mut())
+-        .and_then(|f| {
+-            f.place(next_pos as u64)
+-                .ok()
+-                .and_then(|()| loft_file_take::<W>(f))
+-        });
++        .and_then(loft_file_take::<W>);
+     let nread = if let Some(b) = bytes {
+         *val = decode_int::<W, SIGNED>(&b, little_endian);
+         W

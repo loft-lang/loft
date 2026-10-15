@@ -184,8 +184,9 @@ impl Output<'_> {
         if site {
             self.ap_site_next = None;
         }
-        if !self.ap_requests.contains(&d) {
-            self.ap_requests.push(d);
+        let key = self.dv_key(d);
+        if !self.ap_requests.contains(&key) {
+            self.ap_requests.push(key);
         }
         crate::rewrite_census::fired("R-AppendTwin", 1);
         true
@@ -199,8 +200,9 @@ impl Output<'_> {
             .dest_site_next
             .is_some_and(|(c, at, _)| c == self.current_call_def && at == vals.as_ptr() as usize);
         if dest && let Some((c, _, vo)) = self.dest_site_next.take() {
-            if !self.dest_requests.contains(&(c, vo)) {
-                self.dest_requests.push((c, vo));
+            let key = (self.dv_key(c), vo);
+            if !self.dest_requests.contains(&key) {
+                self.dest_requests.push(key);
             }
             crate::rewrite_census::fired("R-Destination", 1);
         }
@@ -224,8 +226,9 @@ impl Output<'_> {
         }
         self.vr_site_next = None;
         let callee_nr = self.current_call_def;
-        if !self.vr_requests.contains(&callee_nr) {
-            self.vr_requests.push(callee_nr);
+        let key = self.dv_key(callee_nr);
+        if !self.vr_requests.contains(&key) {
+            self.vr_requests.push(key);
         }
         crate::rewrite_census::fired("R-ViewReturn", 1);
         let flag = self.vr_flag_pending.take().unwrap_or_default();
@@ -462,8 +465,9 @@ impl Output<'_> {
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
         crate::rewrite_census::fired("R-RefillText", usize::from(twin));
         if twin {
-            if !self.rt_requests.contains(&self.current_call_def) {
-                self.rt_requests.push(self.current_call_def);
+            let key = self.dv_key(self.current_call_def);
+            if !self.rt_requests.contains(&key) {
+                self.rt_requests.push(key);
             }
             return Ok((false, true));
         }

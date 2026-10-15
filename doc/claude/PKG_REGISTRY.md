@@ -226,7 +226,7 @@ only sets one explicitly once the corresponding feature ships.
 | `…data_compatible_with` | new entries | Bare version.  The oldest release whose stored / wire data this version still reads.  Separate from `api_compatible_with` because the failures differ in kind: an API break costs a recompile, a data break costs someone's stored file.  `hex_terrain` is the worked example — it kept its API and changed what it computed over stored heights, which one number cannot express. |
 | `…subpath` | for monorepos | Package directory within the release repo (e.g. `crypto` inside `loft-libs-core`).  The loft-lang libraries are **domain monorepos** (`loft-libs-core`/`-net`/`-graphics`/`-game`/`-world`/`-assets`/`-docs`) tagged `<pkg>-v<version>`, so `subpath` tells the installer where the package lives in the unpacked tarball.  Omit for a one-repo-per-package layout. |
 | `…deps` | no | Inter-package dependencies.  Resolved during install; failures abort before any download. |
-| `…triggers` | no | Array of `"name:receiver"` strings (e.g. `"matches:text"`) — Tier-1 lazy-load triggers derived from this version's `pub fn` method surface at publish time, so a consumer's resolver can map `obj.method()` to the owning package without having the source.  Populated when the package opts into `[triggers]`; globally unique across the registry (enforced at PR gate 4, see REGISTRY_SUBMIT.md § Trigger uniqueness). |
+| `…triggers` | no | Array of `"name:receiver"` strings (e.g. `"matches:text"`) — Tier-1 lazy-load triggers derived from this version's `pub fn` method surface at publish time, so a consumer's resolver can map `obj.method()` to the owning package without having the source — and `"name:fn"` entries (`"set:fn"`) for the builders the manifest's `[triggers] builders` declares, so a bare `set(…)` can be mapped the same way (PACKAGES.md § Manifest).  Populated when the package opts into `[triggers]`; globally unique across the registry (enforced at PR gate 4, see REGISTRY_SUBMIT.md § Trigger uniqueness).  The consumer's derived sidecar (`~/.loft/registry/triggers.json`) keeps the two kinds under `triggers` and `builders`. |
 | `…api` | no | Array of `{sig, doc}` — one entry per `pub` item (struct/fn) in this version's source, extracted by the same `parse_pkg_api` `loft api` uses, so `loft search` can answer "is there a function that does X, and how do I call it" without the source.  Per-version (an old pin still describes what it actually shipped); re-derived by the registry from source so it can't drift.  Empty for indexes published before this field existed. |
 | `…conflicts` | no | **(Schema slot — resolver support deferred.)** Array of package names + version constraints that cannot coexist with this version in the same dependency graph.  Inspired by Debian's `Conflicts:`.  Reserved field so the schema doesn't need a bump when the resolver gains support.  Omitted (not emitted as `[]`) on every version in the live index today. |
 | `…replaces` | no | **(Schema slot — resolver support deferred.)** Array of packages this version takes over from (rename / fork takeover).  Inspired by Debian's `Replaces:`.  Omitted today, same as `conflicts`. |
@@ -437,9 +437,14 @@ today's index, `loft --check` on a four-line program cost **1.05 s and
 344 MB RSS**, all of it `api` rows the compiler never looks at.
 
 The sidecar holds just the map, stamped with the index's byte length +
-mtime.  A missing or mismatched stamp rebuilds it from the index and
-writes it back, so the parse lands once per index rather than once per
-compile; the registry commands that fetch an index refresh it from the
+mtime and the derivation that produced it.  The map reads each package's
+NEWEST loadable release only — yanked, prerelease and floor-refused
+versions skipped, as `loft install` chooses — so a spelling an older
+release carried and the current one dropped does not load the package
+to fail on an unknown method.
+A missing or mismatched stamp, or a sidecar without the `derivation`
+key this loft writes, rebuilds it from the index and writes it back, so
+the parse lands once per index rather than once per compile; the registry commands that fetch an index refresh it from the
 copy they already hold (`install::load_index_inner`).  Same program,
 same 100× index, with the sidecar: **0.04 s and 11.7 MB** — the cost of
 having no catalog at all.  It is derived data: any doubt rebuilds it,

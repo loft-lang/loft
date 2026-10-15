@@ -169,6 +169,17 @@ the copy.  Its FORMAT clause is under the same switch: a text local bound to a f
 string (`cs = "{c}"`) whose work text is the format's own reads that work text as a `&str`
 instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads the local,
 and a local copied into another variable, keep the copy.
+**`LOFT_NO_SLICE_BORROW=1`** (`@FR-R-SliceBorrow`, default-ON, generation time, `--native`
+only) makes a text local bound to a value slice of a plain text parameter — `t = line[2..5]`,
+or a slice of a local that itself borrows — copy the slice into a `String` again; with it
+off, `t` is bound as the `&str` the slice answers (`let var_t: &str = OpGetTextSub(…)`) and
+read bare, where every mention of `t` is a text VALUE read (the reading of
+`LOFT_NO_TEXT_BORROW` above).  The first bisect step for a wrong or stale text read through
+a slice-bound local on native; `LOFT_TRACE_TEXT_BORROW=1` names each such local as "a slice
+of a parameter's text" or its decline.  An append to `t`, a rebind to a built text, a `&t`
+link, `t` handed to a `&text` parameter, tupled or returned, a slice of a `&text` or rebound
+parameter, a slice of an OWNED local and a generator keep the copy.  `LOFT_NO_TEXT_BORROW=1`
+turns this clause off with the rest.
 **`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
 only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
 local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
@@ -394,6 +405,39 @@ fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
 `OpReadFileInt::<W, SIGNED>`, width and sign fixed at the site and the bytes taken by value
 from the file's buffer (`binary_read` 2.54 → 1.91 ms).  The first bisect step for a wrong
 value or a wrong `#next` out of such a read; the interpreter's read is the reference.
+
+**`LOFT_NO_FILE_HOLD=1`** (`@FR-R-FileHold`, default-ON, generation time, `--native` only)
+sends every scalar file read through the `File` record again — with it off, a loop that
+reads one file and names nothing else that can hold a `File` moves `#index` and `#next` in a
+guard local (`codegen_runtime::FileCursor`) and writes the record when the loop is left.  The
+first bisect step for a wrong `f#next` or `f#index` after a loop that reads `f`, or a value
+read from the wrong offset inside one.  `LOFT_HOIST_VERIFY=1` is its falsifier: every held
+read and the guard's drop assert that the record still says what it said when the hold began.
+
+**`LOFT_NO_APART=1`** (`@FR-R-Apart`, default-ON, generation time, `--native-release` and every
+build that does not ship the live tier) keeps every record in the store from its construction —
+with it off, a record whose every field is a `vector<float>` of one length travels between the
+functions that build it, read and write its elements and hand it on as a Rust array, through
+their `__apv` twins, and is written into the store where a function returns it to a caller that
+keeps it.  The first bisect step for a wrong element, a wrong length or a missing out-of-range
+report out of such a record on a release build.  Its falsifier is this switch's A/B against the
+guard's hand-computed values; **`LOFT_TRACE_APART=1`** names every type, twin and region the plan
+admits and each component it keeps in the store, with the mention that kept it.
+**`LOFT_NO_APART_VECTOR=1`** turns off instance 3 alone (`LOFT_NO_APART=1` turns off both): a
+`vector<float>` local, or a work buffer, that never leaves its function lives in the store again
+— with it off, it is an inline buffer with a heap spill (`codegen_runtime::ApVec`), on every
+native build.  The first bisect step for a wrong element or length out of such a local.
+
+**`LOFT_NO_DECODE_VIEW=1`** (`@FR-R-DecodeView`, default-ON, generation time, every build that
+does not ship the live tier) keeps every decoded text and byte string owned — with it off, a
+function that hands its read-only byte frame to a decoder answering an enum value has that
+value's text and byte-string fields written as spans of the frame, inside the `__dv` twins of
+every function the value reaches, and read from the frame in place.  The first bisect step for
+a wrong decoded text on a release build.  Its falsifier is this switch's A/B against the guard's
+hand-computed values; **`LOFT_TRACE_DECODE_VIEW=1`** names each root the plan admits and each
+one it declines, with the mention that declined it.
+A reader behind a one-statement helper is held only where the helper is inlined
+(`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
 
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
@@ -714,6 +758,12 @@ build its literal in a store of its own and copy it in again — with it on, the
 staged, the record under the key is removed, a fresh one is claimed in the collection's store
 and written, and the subscript's key links it — and is the first bisect step for a wrong value,
 key or count after a keyed literal assignment on native.
+**`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
+hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
+repeated key — with it on, one probe answers the entry the key names and the literal's staged
+values are written into it — and is the first bisect step for a wrong value or count after a
+keyed insert on native; `LOFT_KEYED_VERIFY=1` checks every answered entry against the general
+lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
 is the first bisect step for a freed, leaked or wrong lookup result on native;

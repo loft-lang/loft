@@ -188,6 +188,11 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
   else
     MODE_I=(--tests); MODE_N=(--tests --native)
   fi
+  # A guard of a rewrite that a build shipping the live tier never makes (an IR-phase rewrite,
+  # `@FR-R-Apart`) names the release tier, or its native side runs code the defect is not in.
+  if grep -qE '^// @falsify-tier: native-release' "$1"; then
+    MODE_N=(--native-release)
+  fi
 }
 [ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD"
 
