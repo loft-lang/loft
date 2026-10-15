@@ -14,6 +14,9 @@
 // @falsified-by: tests/falsified/a-literal-takes-a-dead-vector-into-its-store.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: the VALUE channel on both backends — the patch admits a source named after the
 //   move, so c6's later field reads the moved-out vector as empty (`c6 3` for 303).
+//   A second plant, the literal's exit free left a store-level `OpFreeRef` (the owner's store
+//   then freed twice, the literal's free first), is INERT: a free of a store already free is
+//   a no-op and nothing is claimed between the two, so the distinct-free is the defensive form.
 
 enum Tok { A { n: integer }, B { w: text } }
 struct Cur { const src: vector<Tok>, pos: integer }

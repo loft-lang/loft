@@ -89,6 +89,15 @@ tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
 `(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
 34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+**`LOFT_NO_LITERAL_HOST=1`** (`(R-MoveLast)`'s host clause, `@FR-R-MoveLast`, decided in the
+scope pass after the forwarded results, BOTH backends) keeps a record literal bound to a local
+(`cur = Cur { src: toks, pos: 0 }`) minting a store of its own and deep-copying the vector
+local its field takes, though that local is dead after it.  With it off, the literal is claimed
+in the vector's store (`OpPlaceRecord(toks, …)` where `OpDatabase` stood), the field takes the
+vector by a handle move (`OpMoveVector`) and the literal's exit free becomes
+`OpFreeRefIfDistinct(cur, owner)` before the owner's own.  It is the first bisect step for an
+EMPTY vector field of a local literal, or a vector local that reads empty after one;
+`LOFT_TRACE_PLACE=1` names each admission and decline (`[literal-host]`).
 **`LOFT_NO_RETURN_FIELD=1`** (`(R-ReturnField)`, `@FR-R-ReturnField`, decided in the scope
 pass after the exit vector, BOTH backends) keeps the parser's copy at an exit that returns a
 FIELD of an owned record local (`p = mk(n); return p.a`, or `v = p.a; return v`): the return

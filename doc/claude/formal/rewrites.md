@@ -3570,6 +3570,23 @@ insert; the type's heap facts are cached, so the answer is one lookup.  `insert_
                  `y` up to `x` — the free-source copy, which exchanges the two stores
                  where it can (@FR-H-SwapIn) — and nulls `y`'s witness; a source read
                  or grown after the rebind keeps the copy.
+                 THE HOST CLAUSE: a record LITERAL bound to a fresh local, whose
+                 vector field takes a vector local at its last use, is the cross-store
+                 pair turned around — the literal is CLAIMED IN the vector's store,
+                 where the vector already lives, and the field takes it by a HANDLE
+                 MOVE (the slot's record number moves, the source slot is zeroed; no
+                 element and no heap claim moves).  The vector's store must be OWNED
+                 by this frame — the local itself, or the one local it depends on, a
+                 work buffer a call filled — and the literal's exit free becomes a
+                 store free only where the literal's store is not that one, standing
+                 before the owner's free in the same statement list.  Asked on the
+                 function's own statement list (the literal is minted once): after the
+                 move neither the vector nor its owner is named but by the owner's
+                 frees; the literal is bound only by its null init and its mint, never
+                 aliased, returned or handed to an op that takes it as an owner.  A
+                 later field of the same literal that reads the vector, a literal in
+                 a loop, a parameter's vector, and a reference homed in either
+                 store (H-RefHome) keep the copy.
   (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
                  function's exit only inside the literal built into the return
                  buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its
@@ -3724,7 +3741,11 @@ in the @PLN157 shape with its own switch and cells: the callee clause above
 the nested literal (`LOFT_NO_NESTED_IN_PLACE`).  Each implementation admits less than its
 rule — the B2 relocation only a destination in an element appended to a PARAMETER's
 collection, outside a loop, with no second destination or host — and a narrower admission
-costs the rewrite and never a value.  The declines written into the rules above are the
+costs the rewrite and never a value.  (R-MoveLast)'s host clause is built in `src/literal_host.rs`
+(switch `LOFT_NO_LITERAL_HOST`, its admissions and declines under `LOFT_TRACE_PLACE=1`, guard
+`tests/scripts/a-literal-takes-a-dead-vector-into-its-store.loft`): the cursor `cur = Cur {
+src: toks, pos: 0 }` of `arguments/parse` measured 24.04 → 22.08 ms native (−8.2 %, about 90 %
+of its −9.1 % hand price), interpreted −0.9 %, hash equal.  The declines written into the rules above are the
 ones a MEASUREMENT bought (@PLN164's README § C1, § C2 *The restrictions, re-derived*).
 *The chain form of the callee clause (`place_result::chain_writes_buffer`):*
 `return mk(n)` hands the buffer through, and the exit test read it as an exit answering
