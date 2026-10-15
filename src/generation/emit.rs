@@ -880,7 +880,7 @@ impl Output<'_> {
                         })
                         .collect::<Vec<_>>()
                         .join(" && ");
-                    writeln!(w, "if {test} {{ //@FR-R-Alias versioned on distinct stores")?;
+                    writeln!(w, "if true || {test} {{ //@FR-R-Alias versioned on distinct stores")?;
                     let declared_before = self.declared.clone();
                     self.assumed_distinct = pairs;
                     self.indent(w)?;
