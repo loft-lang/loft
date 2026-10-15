@@ -10,6 +10,26 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The three red shards of the joined branch (2026-10-15)
+
+Three classes of red on `tuxedo-pr1988-next`, each older than the corpus move and each from
+a joined sibling commit; the owner asked for them fixed.  (1) The browser bundle's source
+stamp had moved (`src/native.rs` and `src/wasm.rs` shrank by 1.5k lines under a sibling's
+refactor) and three `engine_host_connector` tests refuse to report on a bundle built from
+another tree: `derive.yml` rebuilt it on a runner (aee71d247).  (2) `tests/pure_reuse.rs`'s
+pin lost `n_spanned`: 523ae2572 (the second half of loft#2006) binds the call a record-field
+projection is rooted at to `_ret_root_N` first and wraps the tested copy in a `return_source`
+block, and `pure_reuse::natural_projection` read only the bare spelling — it now reads the
+bound one, the same projection through its local.  (3) `tests/value_record.rs`: the gate named six pins, the tables hold 26 rows that
+emit a `__retbuf` again (8 of the 15 nullable returns, 10 of the 19 joins): 932209dc4 (a store-identity test between a join's result and its arm
+is never a constant) declines every tail that joins a BUILD with a view, a parameter or
+`null`, the `?` default's exit release being guarded by such a test against the result.  That
+rule closed a double release, and the pins were not re-measured with it (green at their own
+commit cd77d264a, red at 523ae2572's parent).  Re-pinned as declined, each row and the three
+follow-on assertions naming loft#2014, which carries the way back: where both operands are value locals the guard is moot,
+to be proven on the drop gate.  Shipped speed is the owner's first priority, so the decline is
+recorded as a loss, never as the design.
+
 ### `loft --tests` gates leaks under `LOFT_LEAK_CHECK=1` (@PLN193 P2, 2026-10-15)
 
 The language suite (loft-lang/loft-suite) runs every cell through `loft --tests`, the runner

@@ -277,6 +277,52 @@ fn natural_projection(
         Value::Return(r) => r.unspan(),
         v => v,
     };
+    // A record-field projection whose root is the call binds the call to a local first
+    // (loft#2006, `return_source`: `_ret_root = inner(x); <the copy of _ret_root.k, tested>`),
+    // so the read is rooted at that local and the call is the block's first statement.  The
+    // wrapper is the same projection, read through its local.
+    if let Value::Block(b) = e
+        && b.name == "return_source"
+    {
+        let body = significant(&b.operators);
+        // The bind is the first statement that binds a call of an effect-free function; the
+        // preparation of that call's own buffer (`if OpRefIsNull(buf) … else OpClear(…)`)
+        // may stand before it.
+        let (at, d, inner, args) = body.iter().enumerate().find_map(|(i, op)| {
+            let Value::Set(d, call) = op.unspan() else {
+                return None;
+            };
+            let (inner, args) = inner_call(data, w, free, call)?;
+            Some((i, d, inner, args))
+        })?;
+        let on_d = |b: &Value| matches!(b.unspan(), Value::Var(x) if x == d);
+        let mut copied = None;
+        for op in &body[at + 1..] {
+            op.walk(&mut |v| {
+                if let Value::Block(m) = v.unspan()
+                    && m.name == "materialized_view_return"
+                    && copied.is_none()
+                {
+                    copied = m.operators.iter().find_map(|o| match o.unspan() {
+                        Value::Call(c, cargs) if data.def(*c).name() == "OpCopyRecord" => {
+                            cargs.first()
+                        }
+                        _ => None,
+                    });
+                }
+            });
+        }
+        let (read, consts) = read_of(data, copied?, &on_d)?;
+        if data.def(read).name() != "OpGetField" {
+            return None;
+        }
+        return Some(Projection {
+            inner,
+            args,
+            read,
+            consts,
+        });
+    }
     let read = match e {
         Value::Block(b) if b.name == "materialized_view_return" => {
             b.operators.iter().find_map(|o| match o.unspan() {
@@ -314,6 +360,14 @@ pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Project
     let body = significant(&bl.operators);
     if let [only] = body.as_slice() {
         return natural_projection(data, w, free, only);
+    }
+    // The bound spelling of the natural projection (loft#2006, `return_source`) may stand
+    // beside the witness bind of the wrapper's own buffer; it is still the whole body.
+    if let Some(rs) = body
+        .iter()
+        .find(|o| matches!(o.unspan(), Value::Block(b) if b.name == "return_source"))
+    {
+        return natural_projection(data, w, free, rs);
     }
     let Value::Set(d, call) = body.first()?.unspan() else {
         return None;
@@ -373,7 +427,18 @@ fn returns_field_copy(code: &Value) -> bool {
         Some(v) => v,
         None => return false,
     };
+    // The bound spelling (loft#2006, `return_source`) holds the same materialised copy,
+    // tested, after the bind of its root.
+    let mut holds_copy = false;
+    tail.walk(&mut |v| {
+        if let Value::Block(b) = v.unspan()
+            && b.name == "materialized_view_return"
+        {
+            holds_copy = true;
+        }
+    });
     matches!(tail, Value::Block(b) if b.name == "materialized_view_return")
+        || (matches!(tail, Value::Block(b) if b.name == "return_source") && holds_copy)
 }
 
 /// Is `r` the materialised copy of variable `v` into the return buffer?
