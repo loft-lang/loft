@@ -371,6 +371,7 @@ pub mod return_field;
 pub mod rewrite_census;
 pub mod same_read;
 pub mod scopes;
+pub mod self_replace;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;

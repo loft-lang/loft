@@ -65,6 +65,8 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     crate::forward_walk::rewrite_program(data);
     // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
     crate::same_read::rewrite_program(data);
+    // `@FR-R-SelfReplace` — a vector delivered into the buffer it already is, dropped.
+    crate::self_replace::rewrite_program(data);
     // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
     crate::in_range::rewrite_program(data);
     // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
