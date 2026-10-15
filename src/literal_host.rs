@@ -274,6 +274,8 @@ fn store_owner(function: &Function, src: u16) -> Option<u16> {
     {
         return None;
     }
+    // @FR-O-Proxy asks alloc — which store the literal is CLAIMED in; whether that store is
+    // released is read off the frees the scope pass already wrote (`pairing`), never off this.
     match function.tp(src).depend().as_slice() {
         [] => Some(src),
         [o] if local(*o) && function.tp(*o).depend().is_empty() => Some(*o),
