@@ -14,9 +14,9 @@ with what takes each under the line.
 last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
 `0d40d53d0`): 185 routines, 74 over the bar, three classes with a median over it (alloc-temp,
-record-field, keyed).  It is the only file measured whole at a recent tree: `results/laptop.tsv`
-(x86-64) holds fresh rows (`f7f23c5b5`) for every row it had at 4.3× or worse and for the
-regressions below, and older ones for everything else; § 0 ends with that host's cut.  A row leaves this file when the latest run of EVERY host puts it under the bar; a
+record-field, keyed).  `results/laptop.tsv` (x86-64) is measured whole at `cbe54eaa2`: 160
+routines, 81 over the bar, 46 over 3×, 11 over 5× — every lane that builds on that box (drawing,
+graphics, text2d, stage and assets do not: X11); § 0 ends with that host's cut.  A row leaves this file when the latest run of EVERY host puts it under the bar; a
 unit leaves when it is built, and its record goes to its analysis file's § Built.
 
 | what is known about the row | rows | next action |
@@ -101,12 +101,12 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Fourteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
-this box; the rows below re-measured at `53b8b8172`, every hash equal to its twin's); `map_json` (2.68×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.59×, S3) and
-`field_add_cell` (4.54×, X5 a and c) have left the cut, and `insert_text`
-reads on either side of the line from one run to the next.  The three `tuple_link_*` rows the file
-still carries are of routines the bench no longer has.  Where each one's time
-goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
+Eleven rows read over 5× in `results/laptop.tsv` (the full run at `cbe54eaa2`, every hash
+equal to its twin's); `map_json` (2.85×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.24×,
+S3), `field_add_cell` (4.63×, X5 a and c), `arguments/parse` (3.76×, X7) and `binary_read`
+(4.23×, X8) have left the cut.  The table below is the cut as it was ordered; the re-profile
+under it (`1ed832afe`) is where each remaining row's time goes now, and supersedes
+[rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
 for the row at its figure, and a figure marked *est.* was read off a profile and never
 hand-priced (such a figure has paid about two thirds, same section).
 
@@ -196,7 +196,7 @@ before it; the slowest row goes first; a step with no price is priced before it 
    keys' arena claims.
 6. **`panel_build`** — S9 is sized and its release half built: the release plan,
    7.44× → 6.00×.  What is left is the frees and claims themselves.
-7. **`arguments/parse` (7.34×)** — X7: the match clause is built (−4.9 %), and so is the
+7. **`arguments/parse` — LEFT the cut (3.76× at `cbe54eaa2`)** — X7: the match clause is built (−4.9 %), and so is the
    dead token vector moved into the cursor record (`(R-MoveLast)`'s host clause, −8.2 %);
    the text field read through the held base and `len(t) > 0` as a byte test are built too
    (−23.4 % together).  Re-profiled: the checked element read (`vec_get_or_raise_runtime`,
@@ -435,7 +435,18 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   arguments of the package's own compile (`LOFT_NATIVE_RUSTC_ARGS`; the script's header has
   the commands).  Needed by every bench whose library ships a cdylib (`server`, `pluginabi`
   through crypto, `web`, `ssh`).
-- No script attributes a profile's samples to one routine of a lane (rules.md § Change 6).
+- No script attributes a profile's samples to one routine of a lane (rules.md § Change 6);
+  callgrind does, by instructions: `valgrind --tool=callgrind --toggle-collect='*<symbol>'
+  <bin> --n 1` counts only what runs under that routine's function, so the function list of
+  the run IS the routine's profile.  Toggle on the routine's own symbol (`nm -C <bin>`): the
+  bench's `bench_*` drivers are usually inlined into `main` and collect nothing.
+- A profile of the RUNTIME by line needs an rlib with line tables:
+  `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cargo build --release --lib --target-dir
+  <dir outside /tmp>`, then the package's rustc arguments file with `--extern loft=`,
+  `dependency=`, `loft_ffi=` and the `ring` path pointed at that directory, and
+  `hand_price.sh <rs> <bin> <args>` — the same code (equal instruction counts), now
+  attributed to `store.rs` lines.  A RUNTIME change is priced the same way: one emitted
+  source compiled against a saved copy of the tip's `libloft.rlib` and against the probe's.
   On Linux the method is `perf` samples windowed by time (rustc-vs-twin.md § Method notes).
   On macOS, `sample <pid>` over a `--native-release --names` build gives the call tree;
   a routine's share is its `n_bench_<row>` (or op helper) subtree.  `--names` disables

@@ -10,6 +10,64 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `arguments/parse` 7.3× → 3.8×: seven rewrites on what a slice match, a literal, a text field and a walk read (2026-10-15)
+
+- **`(R-SameRead)`'s match clause** — a slice `match` binds the subject's length and each
+  integer computation of one element two arm tests make once, before the first test
+  (`same_read::bind_match_reads`, both backends, `LOFT_NO_MATCH_READ`).  Guard
+  `a-slice-match-reads-its-subject-once.loft`.
+- **`(R-MoveLast)`'s host clause** — a record literal holding a vector that is dead after it
+  is claimed in that vector's store and takes the vector's handle instead of a deep copy
+  (`literal_host::rewrite`, both backends, `LOFT_NO_LITERAL_HOST`).  Guard
+  `a-literal-takes-a-dead-vector-into-its-store.loft`.
+- **`(R-ZeroCount)`** — `len(t)` compared against the zero boundary reads the byte count, not
+  the character count (`zero_count::rewrite_program`, both backends, `LOFT_NO_ZERO_COUNT`).
+  Guard `a-zero-length-test-counts-no-characters.loft`.
+- **`(R-RecPtr)`'s text clause** — a text field of a held vector's record element is read
+  through the element's address and the store's text span (`vector::rec_text`, native,
+  `LOFT_NO_TEXT_FIELD`).  Guard `a-text-field-of-a-held-element-reads-through-its-address.loft`.
+- **`(R-Cold)`'s one-read clause** — a checked element read resolves the store, the element
+  record and the length once (`vector::rec_and_len`); `vec_get_or_raise_runtime` answers an
+  in-range index inline and outlines the raise, `length_vector` is `#[inline(always)]`, and
+  `get_vector_hoisted`'s end-of-walk half is outlined (`get_vector_cold`).  Runtime, no switch
+  (a layout discipline).  Guard `a-checked-element-read-answers-from-one-header-read.loft`;
+  `chunk_lookup` −14.6 %, `slope_path_with_undo` −15.6 %, `resolve_move` −11.1 % beside it.
+- **`(R-Header)`'s text clause** — a loop the header gate declines only for its text sets
+  holds its headers: a text set changes no vector's record or length.  It may grow the store,
+  so a base is kept only for a vector proven apart from every text set's root, and a loop that
+  also pushes declines (`hoist::hoistable`'s second verdict under `HoistTiers::text_set`,
+  native, `LOFT_NO_TEXT_SET_HEADER`).  `x.f = null` writes the static null text instead of
+  copying it into a `String` (`Output::text_value_unborrowed`).  Guard
+  `a-loop-holds-its-header-across-a-text-write.loft`, pin `tests/text_set_header.rs`.
+- **`(R-Alias)`'s versioned clause counts a walked path for its parameter, and
+  `(R-TextBorrow)`'s versioned clause** — `for e in v` over a parameter that appends to the
+  result now versions on `v`'s store, and inside the copy a text walk borrows its element
+  when every writer names a frame-minted store or the return buffer
+  (`hoist::versioned_text_walks`, `Output::versioned_borrow`, `Output::param_root`, native,
+  `LOFT_NO_DISTINCT_VERSION` / `LOFT_NO_TEXT_BORROW`).  Guard
+  `a-walk-borrows-its-word-in-the-versioned-copy.loft`, pin `tests/versioned_text_walk.rs`;
+  `tween/value` −9.0 % beside it.
+
+### A keyed insert writes its entry, a decoded text is read where it lies, a record of texts is released by plan (2026-10-14)
+
+- **`(R-KeyedEntry)`** — an integer-keyed hash insert of a heap-free element answers the entry
+  its key names in one probe and overwrites a repeated key in place (`generation::keyed_entry`,
+  `Stores::keyed_entry_long`, native, `LOFT_NO_KEYED_ENTRY`).  Guard
+  `a-keyed-insert-writes-the-entry-its-key-names.loft`.
+- **`(R-SameRead)`'s get-or-insert clause** — `if !h[k] { h += […] }; b = h[k]` looks the key
+  up once (`same_read::bind_get_or_insert`, both backends).  Guard
+  `a-lookup-a-get-or-insert-repeats-is-made-once.loft`.  `field_add_cell` 7.68× → 4.54× with
+  the clause above; loft#2008 (a keyed literal read its destination after the insert) fixed in
+  `snapshot_read_destination`.
+- **`(R-DecodeView)` instance 1** — a decoded value's texts and byte strings are views into the
+  input frame (C141): `<f>__dv` twins (`generation::decode_view`, native,
+  `LOFT_NO_DECODE_VIEW`).  Guard `a-decoded-text-is-read-where-it-lies.loft`; `check_request`
+  7.55× → 5.07×.
+- **The release plan** — a record whose heap is texts and vectors of text-owning elements is
+  released by its type's plan instead of the type walk (`Stores::release_by_plan`, runtime,
+  both backends, `LOFT_NO_RELEASE_PLAN`).  Guard `a-record-of-texts-is-released-by-its-plan.loft`;
+  `panel_build` 7.44× → 6.00×.
+
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 
 - **loft#1987** — `Scopes::scan_args` records where each argument's hoisted operations start
