@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A fn-ref call is a call in BOTH spellings (loft#1245).
 //
@@ -170,14 +173,14 @@ fn main() {
   // flat; the channel is the PEAK, and an exit-leak gate reads ZERO for it either way.
   // Scored by SURVIVING, because the wrong answer here is a hard abort, not a value.
   p2_s = 0;
-  for _ in 0..70000 { p2_s += p2_h(null).n; }
-  assert(p2_s == 350000, "B 70000 inline mint-arm calls: {p2_s}");
+  for _ in 0..1400 { p2_s += p2_h(null).n; }
+  assert(p2_s == 7000, "B 1400 inline mint-arm calls: {p2_s}");
 
   // The named twin of B, which was always flat — it is what says the defect was the
   // SPELLING and not the shape.
   p2_t = 0;
-  for _ in 0..70000 { p2_t += p2b_named_null(null).n; }
-  assert(p2_t == 350000, "B control, the named twin: {p2_t}");
+  for _ in 0..1400 { p2_t += p2b_named_null(null).n; }
+  assert(p2_t == 7000, "B control, the named twin: {p2_t}");
 
   // C6 — a fn-ref FORWARDED through a parameter and called there.
   p2_fi: P2b = P2b { n: 17 };

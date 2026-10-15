@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A VECTOR local rebound from a fn-ref call frees the store it displaces, at the dense and the
 // nullable spelling, and through a forwarding frame (loft#1329, `formal/ownership.md`
@@ -74,9 +77,9 @@ fn test_a_dense_vector_rebound_from_a_fn_ref() {
   // The filed shape. `--native` held one store per iteration where the interpreter was flat.
   m = fn(i: integer) -> vector<integer> { [i, i + 1] };
   x: vector<integer> = [];
-  for i in 0..70000 { x = m(i); }
+  for i in 0..1400 { x = m(i); }
   assert(len(x) == 2, "the length: got {len(x)}");
-  assert(x[0] == 69999, "the last value: got {x[0]}");
+  assert(x[0] == 1399, "the last value: got {x[0]}");
 }
 
 fn test_a_nullable_vector_rebound_from_a_fn_ref() {
@@ -85,9 +88,9 @@ fn test_a_nullable_vector_rebound_from_a_fn_ref() {
   // stopped aborting the compiler, and then broken on BOTH backends.
   m = fn(i: integer) -> vector<integer>? { [i, i + 1] };
   x: vector<integer>? = null;
-  for i in 0..70000 { x = m(i); }
+  for i in 0..1400 { x = m(i); }
   assert(len(x ?? []) == 2, "the length: got {len(x ?? [])}");
-  assert((x ?? [0])[0] == 69999, "the last value: got {(x ?? [0])[0]}");
+  assert((x ?? [0])[0] == 1399, "the last value: got {(x ?? [0])[0]}");
 }
 
 fn test_a_fn_ref_that_forwards_to_another_fn_ref() {
@@ -98,9 +101,9 @@ fn test_a_fn_ref_that_forwards_to_another_fn_ref() {
   inner = fn(i: integer) -> vector<integer> { [i, i + 1] };
   fwd = fn(i: integer) -> vector<integer> { inner(i) };
   x: vector<integer> = [];
-  for i in 0..70000 { x = fwd(i); }
+  for i in 0..1400 { x = fwd(i); }
   assert(len(x) == 2, "the length: got {len(x)}");
-  assert(x[0] == 69999, "the last value: got {x[0]}");
+  assert(x[0] == 1399, "the last value: got {x[0]}");
 }
 
 fn test_the_direct_call_spelling_is_unmoved() {
@@ -108,8 +111,8 @@ fn test_the_direct_call_spelling_is_unmoved() {
   // free. A direct call is handed a caller-local `__ref_N` buffer and reuses it every
   // iteration.
   x: vector<integer> = [];
-  for i in 0..70000 { x = mk1329(i); }
-  assert(x[0] == 69999, "the last value: got {x[0]}");
+  for i in 0..1400 { x = mk1329(i); }
+  assert(x[0] == 1399, "the last value: got {x[0]}");
 }
 
 fn test_a_closure_that_hands_back_its_capture() {
@@ -120,7 +123,7 @@ fn test_a_closure_that_hands_back_its_capture() {
   base: vector<integer> = [7, 8];
   m = fn(i: integer) -> vector<integer> { base };
   x: vector<integer> = [];
-  for i in 0..70000 { x = m(i); }
+  for i in 0..1400 { x = m(i); }
   assert(x[0] == 7, "the value through x: got {x[0]}");
   assert(base[0] == 7, "the capture is intact: got {base[0]}");
   assert(len(base) == 2, "the capture's length: got {len(base)}");
@@ -132,7 +135,7 @@ fn test_a_callee_that_reads_the_destination() {
   // would hand it a released record, and freeing the SAME store would release a live one.
   m = fn(v: vector<integer>) -> vector<integer> { [len(v) + 1] };
   x: vector<integer> = [0];
-  for _ in 0..70000 { x = m(x); }
+  for _ in 0..1400 { x = m(x); }
   assert(len(x) == 1, "the length: got {len(x)}");
   assert(x[0] == 2, "the accumulated value: got {x[0]}");
 }

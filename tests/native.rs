@@ -284,6 +284,8 @@ struct NativeJob {
     /// Path: `{binary}.key`.  Content: hex-encoded 64-bit FNV-1a hash of the
     /// `.rs` source bytes concatenated with the rlib identity bytes.
     key_file: PathBuf,
+    /// The program's `// @STORE_LIMIT:` — handed to the binary as `LOFT_STORE_LIMIT`.
+    store_limit: Option<u16>,
 }
 
 /// FNV-1a 64-bit hash — deterministic, no external deps.
@@ -354,8 +356,10 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // wrap.rs's loft_suite (e.g. tests/lib/importlib.loft for
     // 88-imports.loft).  Only `--lib <dir>` is recognised; other
     // CLI-side flags are ignored at this layer.
+    let mut store_limit = None;
     if let Ok(src) = fa::read_to_string(entry) {
         p.data.limits = loft::limits::Limits::from_annotations(&src);
+        store_limit = loft::limits::Limits::store_limit_annotation(&src);
         for line in src.lines().take(20) {
             if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
                 let mut tokens = args.split_whitespace();
@@ -555,6 +559,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
         tmp_rs,
         binary,
         key_file,
+        store_limit,
     })
 }
 
@@ -761,6 +766,9 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     let leak_check = std::env::var_os("LOFT_NATIVE_LEAK_CHECK").is_some();
     let mut cmd = loft::platform::process::harness_command(&job.binary);
     cmd.current_dir(&cwd);
+    if let Some(n) = job.store_limit {
+        cmd.env("LOFT_STORE_LIMIT", n.to_string());
+    }
     let (run_status, leaked) = if leak_check {
         let out = cmd.output()?;
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1179,7 +1187,13 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         .filter(|(i, _)| i % NATIVE_SCRIPT_CHUNKS == chunk)
         .map(|(_, p)| p)
         .collect();
-    native_scripts_run(files)
+    native_scripts_run(
+        files,
+        common::timing::Suite::start(
+            &format!("native_scripts_{chunk:02}"),
+            common::timing::CHUNK_BUDGET,
+        ),
+    )
 }
 
 /// The limit guards at the real limits (`tests/limits_full/`) on `--native`.  The per-commit
@@ -1198,11 +1212,15 @@ fn native_limits_at_full_size() -> std::io::Result<()> {
         .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
-    native_scripts_run(files)
+    native_scripts_run(
+        files,
+        common::timing::Suite::unbounded("native_limits_at_full_size"),
+    )
 }
 
-/// Compile and run `files` on `--native`, with the corpus's skip rules.
-fn native_scripts_run(files: Vec<PathBuf>) -> std::io::Result<()> {
+/// Compile and run `files` on `--native`, with the corpus's skip rules, reported through
+/// `suite`: one line per program generated, one for the batch that compiles and runs them.
+fn native_scripts_run(files: Vec<PathBuf>, suite: common::timing::Suite) -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     let mut not_generated: Vec<String> = Vec::new();
@@ -1246,6 +1264,8 @@ fn native_scripts_run(files: Vec<PathBuf>) -> std::io::Result<()> {
         // Linux, where a test thread has 2 MiB — so a program the CLI compiles is not refused
         // here for the depth of its expressions (a 100-term nested sum needs more than 2 MiB
         // on aarch64).  A panic joins as `Err`, the same verdict `catch_unwind` gave.
+        let name = fa::file_name(&entry).unwrap_or_default();
+        let unit = suite.begin(&format!("{name} (generate)"));
         let prepared = std::thread::scope(|sc| {
             std::thread::Builder::new()
                 .stack_size(8 << 20)
@@ -1253,13 +1273,17 @@ fn native_scripts_run(files: Vec<PathBuf>) -> std::io::Result<()> {
                 .expect("spawn the compile thread")
                 .join()
         });
+        suite.end(&format!("{name} (generate)"), unit);
         match prepared {
             Ok(Ok(job)) => jobs.push(job),
             Ok(Err(e)) => not_generated.push(format!("{entry:?} (prepare error: {e})")),
             Err(_) => not_generated.push(format!("{entry:?} (codegen panic)")),
         }
     }
+    let batch = format!("rustc + run, {} programs", jobs.len());
+    let unit = suite.begin(&batch);
     let ran = run_native_jobs(jobs, rlib_info);
+    suite.end(&batch, unit);
     if !not_generated.is_empty() {
         println!("  not generated: {}", not_generated.join(", "));
         return Err(std::io::Error::other(format!(
@@ -1268,7 +1292,8 @@ fn native_scripts_run(files: Vec<PathBuf>) -> std::io::Result<()> {
             not_generated.join(", ")
         )));
     }
-    ran
+    ran?;
+    suite.finish()
 }
 
 /// How many tests the native script corpus is split across — see [`native_scripts_chunk`].

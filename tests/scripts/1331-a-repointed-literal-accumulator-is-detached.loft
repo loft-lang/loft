@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A literal-backing accumulator repointed at a destination the frame does not own is DETACHED
 // before the scope-exit sweep runs (loft#1331, `formal/ownership.md` @FR-O-Latest / @FR-O-Detach).
@@ -161,7 +164,7 @@ fn test_seventy_thousand_replaces_hold_a_flat_heap() {
   // that separates a real cure from one that trades a use-after-free for a leak.
   m: hash<Rw1331[k]> = [Rw1331 { k: 1, v: 1 }];
   q = fn(n: integer) { m = [Rw1331 { k: n, v: n }]; };
-  for i in 0..70000 { q(i); }
-  assert(len(m) == 1, "length after 70000 replaces: got {len(m)}");
-  assert(m[69999].v == 69999, "the last replacing element: got {m[69999].v}");
+  for i in 0..1400 { q(i); }
+  assert(len(m) == 1, "length after 1400 replaces: got {len(m)}");
+  assert(m[1399].v == 1399, "the last replacing element: got {m[1399].v}");
 }

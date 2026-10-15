@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // Every path of a value branch has a binding of its own, so the ownership fact is true on
 // every path (`formal/ownership.md` D-own-8, `(O-Complete)`; loft#1323, loft#1320's residual).
@@ -58,14 +61,14 @@ fn test_a_closure_mint_arm_beside_a_variable_arm_is_freed() {
   cp = [41, 42, 43];
   m = fn(k: integer) -> vector<integer> { [7, 8] };
   s = 0;
-  for i in 0..140000 { r = if i % 2 == 0 { m(0) } else { cp }; s += r[1]; }
-  assert(s == 70000 * 8 + 70000 * 42, "closure mint beside a variable: got {s}");
+  for i in 0..2800 { r = if i % 2 == 0 { m(0) } else { cp }; s += r[1]; }
+  assert(s == 1400 * 8 + 1400 * 42, "closure mint beside a variable: got {s}");
   assert(cp[1] == 42 && len(cp) == 3, "the variable arm's source: {len(cp)} {cp[1]}");
   cpr = P1323 { n: 41 };
   mr = fn(k: integer) -> P1323 { P1323 { n: k } };
   t = 0;
-  for i in 0..140000 { r2 = if i % 2 == 0 { mr(7) } else { cpr }; t += r2.n; }
-  assert(t == 70000 * 7 + 70000 * 41, "closure record mint beside a variable: got {t}");
+  for i in 0..2800 { r2 = if i % 2 == 0 { mr(7) } else { cpr }; t += r2.n; }
+  assert(t == 1400 * 7 + 1400 * 41, "closure record mint beside a variable: got {t}");
   assert(cpr.n == 41, "the record variable arm's source: {cpr.n}");
 }
 
@@ -74,8 +77,8 @@ fn test_a_closure_mint_arm_beside_a_join_arm_is_freed() {
   m = fn(k: integer) -> vector<integer> { [7, 8] };
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for i in 0..140000 { r = if i % 2 == 0 { m(0) } else { g(some) }; s += r[1]; }
-  assert(s == 70000 * 8 + 70000 * 42, "closure mint beside a join arm: got {s}");
+  for i in 0..2800 { r = if i % 2 == 0 { m(0) } else { g(some) }; s += r[1]; }
+  assert(s == 1400 * 8 + 1400 * 42, "closure mint beside a join arm: got {s}");
   assert(len(some ?? []) == 2 && (some ?? [])[0] == 41, "the join arm's source: {len(some ?? [])}");
 }
 
@@ -98,8 +101,8 @@ fn test_a_closure_view_collection_is_owned_at_a_plain_bind() {
   bag.items[1] = 99;
   assert(t[1] == 42, "the closure view is delivered as a copy: got {t[1]}");
   s = 0;
-  for _ in 0..140000 { t2 = h(bag); s += t2[0]; }
-  assert(s == 140000 * 41, "the delivered copies leaked or misread: got {s}");
+  for _ in 0..2800 { t2 = h(bag); s += t2[0]; }
+  assert(s == 2800 * 41, "the delivered copies leaked or misread: got {s}");
   assert(len(bag.items) == 2 && bag.items[1] == 99, "the source after the loop: {len(bag.items)}");
 }
 
@@ -109,8 +112,8 @@ fn test_a_local_bound_at_two_sites_from_two_bases() {
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   t: vector<integer> = [];
   s = 0;
-  for i in 0..140000 { if i % 2 == 0 { t = g(n1); } else { t = g(n2); } s += t[1]; }
-  assert(s == 140000 * 8, "two-site local, every path minting: got {s}");
+  for i in 0..2800 { if i % 2 == 0 { t = g(n1); } else { t = g(n2); } s += t[1]; }
+  assert(s == 2800 * 8, "two-site local, every path minting: got {s}");
   some: vector<integer>? = [41, 42];
   none: vector<integer>? = null;
   u: vector<integer> = [];
@@ -124,8 +127,8 @@ fn test_a_base_reassigned_after_the_bind() {
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   a: vector<integer>? = null;
   s = 0;
-  for _ in 0..140000 { u = g(a); a = null; s += u[1]; }
-  assert(s == 140000 * 8, "reassigned base, every path minting: got {s}");
+  for _ in 0..2800 { u = g(a); a = null; s += u[1]; }
+  assert(s == 2800 * 8, "reassigned base, every path minting: got {s}");
   b: vector<integer>? = [51, 52];
   w = g(b);
   b = [61, 62, 63];
@@ -168,27 +171,27 @@ fn test_a_declared_local_re_bound_from_a_join_in_a_loop() {
   assert(len(keep) == 300 && keep[299][1] == 300, "keep: {len(keep)} {keep[299][1]}");
   u: vector<integer> = [5, 6];
   w = 0;
-  for _ in 0..140000 { u = g(none); w += u[1]; }
-  assert(w == 140000 * 8, "declared then joined, mint arm: got {w}");
+  for _ in 0..2800 { u = g(none); w += u[1]; }
+  assert(w == 2800 * 8, "declared then joined, mint arm: got {w}");
   cp = [61, 62];
   v: vector<integer> = [];
   x = 0;
-  for i in 0..140000 { if i % 2 == 0 { v = g(none); } else { v = cp; } x += v[1]; }
-  assert(x == 70000 * 8 + 70000 * 62, "a variable site beside a join site: got {x}");
+  for i in 0..2800 { if i % 2 == 0 { v = g(none); } else { v = cp; } x += v[1]; }
+  assert(x == 1400 * 8 + 1400 * 62, "a variable site beside a join site: got {x}");
   assert(cp[1] == 62 && len(cp) == 2, "the variable site's source: {len(cp)}");
 }
 
 fn test_a_coalesce_hoist_owns_a_call_subject() {
   d = P1323 { n: 7 };
   s = 0;
-  for i in 0..140000 { r = mk1323(i) ?? d; s += r.n; }
-  assert(s == 139999 * 140000 / 2, "named mint subject: got {s}");
+  for i in 0..2800 { r = mk1323(i) ?? d; s += r.n; }
+  assert(s == 2799 * 2800 / 2, "named mint subject: got {s}");
   assert(d.n == 7, "the default after a named mint subject: {d.n}");
   none: P1323? = null;
   g = fn(q: P1323?) -> P1323 { q ?? P1323 { n: 3 } };
   t = 0;
-  for _ in 0..140000 { r2 = g(none) ?? d; t += r2.n; }
-  assert(t == 140000 * 3, "closure join subject, mint arm: got {t}");
+  for _ in 0..2800 { r2 = g(none) ?? d; t += r2.n; }
+  assert(t == 2800 * 3, "closure join subject, mint arm: got {t}");
   some: P1323? = P1323 { n: 41 };
   u = 0;
   for _ in 0..1000 { r3 = g(some) ?? d; u += r3.n; }
@@ -198,11 +201,11 @@ fn test_a_coalesce_hoist_owns_a_call_subject() {
   assert((some ?? P1323 { n: -1 }).n == 41, "the borrow arm's source after a write: {(some ?? P1323 { n: -1 }).n}");
   m = fn(k: integer) -> P1323 { P1323 { n: k } };
   w = 0;
-  for i in 0..140000 { r5 = m(i) ?? d; w += r5.n; }
-  assert(w == 139999 * 140000 / 2, "closure mint subject: got {w}");
+  for i in 0..2800 { r5 = m(i) ?? d; w += r5.n; }
+  assert(w == 2799 * 2800 / 2, "closure mint subject: got {w}");
   x = 0;
-  for _ in 0..140000 { r6 = d1323(none) ?? d; x += r6.n; }
-  assert(x == 140000 * 7, "named join subject, mint arm: got {x}");
+  for _ in 0..2800 { r6 = d1323(none) ?? d; x += r6.n; }
+  assert(x == 2800 * 7, "named join subject, mint arm: got {x}");
   assert(d.n == 7, "the default at the end: {d.n}");
 }
 
@@ -215,8 +218,8 @@ fn test_the_shapes_one_axis_away_are_unmoved() {
   bag = Bag1323 { items: [41, 42] };
   d = [7, 8];
   t = 0;
-  for i in 0..140000 { r2 = if i % 2 == 0 { get_items1323(bag) } else { d }; t += r2[1]; }
-  assert(t == 70000 * 42 + 70000 * 8, "named vector view arm: got {t}");
+  for i in 0..2800 { r2 = if i % 2 == 0 { get_items1323(bag) } else { d }; t += r2[1]; }
+  assert(t == 1400 * 42 + 1400 * 8, "named vector view arm: got {t}");
   assert(len(bag.items) == 2 && d[1] == 8, "their sources: {len(bag.items)} {d[1]}");
   vv: vector<vector<integer>> = [[41, 42], [43, 44]];
   idx = fn(w: vector<vector<integer>>) -> vector<integer> { w[0] };
@@ -237,8 +240,8 @@ fn test_a_forwarding_closure_arm_is_witnessed_by_the_declared_dep() {
   fwd = fn(q: vector<integer>?) -> vector<integer> { inner(q) };
   none: vector<integer>? = null;
   s = 0;
-  for i in 0..70000 { r = if i % 2 == 0 { fwd(none) } else { fwd(none) }; s += r[1]; }
-  assert(s == 70000 * 8, "forwarding mint arms: got {s}");
+  for i in 0..1400 { r = if i % 2 == 0 { fwd(none) } else { fwd(none) }; s += r[1]; }
+  assert(s == 1400 * 8, "forwarding mint arms: got {s}");
   // The over-free direction, which the ceiling above cannot see: two iterations already
   // empty the source while the value still reads right, so this asserts the SOURCE.
   c: vector<integer>? = [41, 42];
@@ -255,12 +258,12 @@ fn test_a_forwarding_closure_arm_is_witnessed_by_the_declared_dep() {
   mkr = fn(k: integer) -> P1323 { P1323 { n: k } };
   fwdr = fn(k: integer) -> P1323 { mkr(k) };
   w = 0;
-  for i in 0..70000 { r4 = if i % 2 == 0 { fwdr(1) } else { fwdr(2) }; w += r4.n; }
-  assert(w == 35000 * 3, "forwarding record arms: got {w}");
+  for i in 0..1400 { r4 = if i % 2 == 0 { fwdr(1) } else { fwdr(2) }; w += r4.n; }
+  assert(w == 700 * 3, "forwarding record arms: got {w}");
   x: vector<integer> = [];
   y = 0;
-  for _ in 0..70000 { x = fwd(none); y += x[1]; }
-  assert(y == 70000 * 8, "forwarding rebind, no branch: got {y}");
+  for _ in 0..1400 { x = fwd(none); y += x[1]; }
+  assert(y == 1400 * 8, "forwarding rebind, no branch: got {y}");
 }
 
 fn main() {

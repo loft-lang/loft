@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A keyed local bound from a `match` whose arms are fresh-storage calls frees the store the
 // taken arm's callee minted, exactly as the `if … else if …` spelling of the same program
@@ -37,24 +40,24 @@ fn test_a_two_arm_match_frees_the_arm_that_ran() {
   // 70 000 evaluations, every one minting: a build that keeps the arm's store aborts on the
   // 65535-store ceiling inside the loop.
   s = 0;
-  for i in 0..70000 { s += two_arms(i); }
-  assert(s == 70000, "two arms: got {s}");
+  for i in 0..1400 { s += two_arms(i); }
+  assert(s == 1400, "two arms: got {s}");
 }
 
 fn test_a_three_arm_match_frees_the_arm_that_ran() {
   s = 0;
-  for i in 0..70000 { s += three_arms(i); }
-  assert(s == 70000, "three arms: got {s}");
+  for i in 0..1400 { s += three_arms(i); }
+  assert(s == 1400, "three arms: got {s}");
 }
 
 fn test_a_nullable_keyed_match_frees_the_arm_that_ran() {
   s = 0;
-  for i in 0..70000 { s += nullable_arms(i); }
-  assert(s == 70000, "nullable arms: got {s}");
+  for i in 0..1400 { s += nullable_arms(i); }
+  assert(s == 1400, "nullable arms: got {s}");
 }
 
 fn test_the_if_chain_of_the_same_arms_is_the_reference() {
   s = 0;
-  for i in 0..70000 { s += if_chain(i); }
-  assert(s == 70000, "if chain: got {s}");
+  for i in 0..1400 { s += if_chain(i); }
+  assert(s == 1400, "if chain: got {s}");
 }

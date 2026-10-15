@@ -196,6 +196,18 @@ SITES only, so resolving an arbitrary allocation pc through it returns the neare
 file costs more than one that stays quiet, so the report prints the pc and stops there;
 `LOFT_STORES=timeline` resolves the same pc against the denser per-run table.
 
+## Store-count ceiling (`LOFT_STORE_LIMIT`, `// @STORE_LIMIT:`)
+
+The store table holds 65535 stores at once (`store_nr` is a `u16`; 65535 is the null
+sentinel), and past that a run stops with "store table exhausted".  A guard that proves a
+store LEAK uses exactly that: a build holding one store per evaluation crosses the ceiling
+inside its loop.  At 65535 such a loop costs tens of seconds per cell, so a test may LOWER the
+ceiling — `LOFT_STORE_LIMIT=<n>` for a `loft` run (the native binary reads it too), and
+`// @STORE_LIMIT: <n>` in the first 20 lines of a corpus script for both runners — and scale
+its loops with it.  The leak guards use 1310 (65535 / 50) with every loop count / 50, which
+keeps each loop's margin over the ceiling.  It can only lower the ceiling; `Stores::store_limit`
+is checked where a store number is handed out.
+
 ## Hang guard (`LOFT_MAX_OPS`)
 
 > **Reach for `perf` FIRST when the hang is in a build you already have.**  This guard needs a

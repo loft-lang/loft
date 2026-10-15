@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A record returned by a fn-ref call whose TARGET is unresolved (a fn-typed parameter) has one
 // owner, whichever function the value holds (loft#1659, `formal/ownership.md` @FR-O-Unknown,
@@ -27,7 +30,7 @@
 //   CHANNEL: the store ceiling (the 70 000-call cells: `store table exhausted`) and the value
 //   (the capture cells read a freed record's bytes; the two write-through cells read the
 //   caller's capture changed — `formal/closures.md` D-clo-42).
-//   WITNESS: on the control, `inline1659(mk1659, 70000)` panics with `store table exhausted` in
+//   WITNESS: on the control, `inline1659(mk1659, 1400)` panics with `store table exhausted` in
 //   `src/database/allocation.rs`, and `bound1659` over the capture-or-mint closure answers
 //   `-1.0697e+305`-scale garbage where 25 is right.
 //   HOLDS: the LEAK count and the stack-store free refusal are equal on both trees and both
@@ -79,15 +82,15 @@ fn inlinen1659(f: fn(integer) -> S1659?, n: integer) -> float {
 
 fn test_an_inline_result_is_released_per_call() {
   // The filed shape: 70 000 > the store table, so a build holding one store per call never
-  // reaches the assert.  Σ (i & 7) over 0..70000 = 8750 × 28.
-  t = inline1659(mk1659, 70000);
-  assert(t == 245000.0, "inline sum: got {t}");
+  // reaches the assert.  Σ (i & 7) over 0..1400 = 8750 × 28.
+  t = inline1659(mk1659, 1400);
+  assert(t == 4900.0, "inline sum: got {t}");
 }
 
 fn test_a_bound_result_is_released_per_call() {
   // The control for the spelling: binding first was already clean, and must stay so.
-  t = bound1659(mk1659, 70000);
-  assert(t == 245000.0, "bound sum: got {t}");
+  t = bound1659(mk1659, 1400);
+  assert(t == 4900.0, "bound sum: got {t}");
 }
 
 fn test_a_capture_or_mint_bound_leaves_the_capture() {
@@ -148,8 +151,8 @@ fn rebind1659(f: fn(integer) -> S1659, n: integer) -> S1659 {
 }
 
 fn test_a_rebound_local_releases_what_it_displaces() {
-  // The reassignment spelling, past the table; the last value is 69999 & 7.
-  x = rebind1659(mk1659, 70000);
+  // The reassignment spelling, past the table; the last value is 1399 & 7.
+  x = rebind1659(mk1659, 1400);
   assert(x.v == 7.0, "the last value: got {x.v}");
 }
 
@@ -181,8 +184,8 @@ fn nested1659(f: fn(integer) -> S1659, m: fn(S1659) -> float, n: integer) -> flo
 }
 
 fn test_an_inline_result_handed_to_another_fn_ref() {
-  t = nested1659(mk1659, fn(s: S1659) -> float { s.v }, 70000);
-  assert(t == 245000.0, "nested sum: got {t}");
+  t = nested1659(mk1659, fn(s: S1659) -> float { s.v }, 1400);
+  assert(t == 4900.0, "nested sum: got {t}");
 }
 
 fn discard1659(f: fn(integer) -> S1659, n: integer) -> integer {
@@ -192,8 +195,8 @@ fn discard1659(f: fn(integer) -> S1659, n: integer) -> integer {
 }
 
 fn test_a_discarded_result_is_released() {
-  c = discard1659(mk1659, 70000);
-  assert(c == 70000, "the count: got {c}");
+  c = discard1659(mk1659, 1400);
+  assert(c == 1400, "the count: got {c}");
 }
 
 fn fwd1659(f: fn(integer) -> S1659, i: integer) -> S1659 { h = f(i); h }
@@ -203,8 +206,8 @@ fn test_a_forwarded_result_is_released_per_call() {
   // hands its fn-ref stores up to its caller, so the loop's frame is the one that must not
   // collect them.
   t = 0.0;
-  for i in 0..70000 { t += height1659(fwd1659(mk1659, i)); }
-  assert(t == 245000.0, "forwarded sum: got {t}");
+  for i in 0..1400 { t += height1659(fwd1659(mk1659, i)); }
+  assert(t == 4900.0, "forwarded sum: got {t}");
 }
 
 fn shape1659(i: integer) -> Sh1659 {
@@ -226,8 +229,8 @@ fn shapes1659(f: fn(integer) -> Sh1659, n: integer) -> float {
 
 fn test_a_struct_enum_result_is_released_per_call() {
   // 35 000 × 1.0 + 35 000 × 2.0.
-  t = shapes1659(shape1659, 70000);
-  assert(t == 105000.0, "enum sum: got {t}");
+  t = shapes1659(shape1659, 1400);
+  assert(t == 2100.0, "enum sum: got {t}");
 }
 
 fn through1659(f: fn(S1659) -> S1659, s: S1659, n: integer) -> float {

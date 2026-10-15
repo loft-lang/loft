@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A closure called through a fn-TYPED PARAMETER may hand back its argument, and the caller must
 // not free it (loft#1327, `formal/ownership.md` @FR-O-Move).
@@ -93,8 +96,8 @@ fn test_the_mint_arm_costs_no_store_per_call() {
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   none: vector<integer>? = null;
   t = 0;
-  for i in 0..70000 { t += plain1327(none, g); }
-  assert(t == 560000, "the mint-arm sum: got {t}");
+  for i in 0..1400 { t += plain1327(none, g); }
+  assert(t == 11200, "the mint-arm sum: got {t}");
 }
 
 fn test_the_same_call_in_the_frame_that_owns_the_closure() {

@@ -82,6 +82,19 @@ impl Limits {
         Limits::lowered(read("// @LIMIT:"), read("// @FRAME_LIMIT:"))
     }
 
+    /// A corpus script's `// @STORE_LIMIT: n` (`crate::keys::store_limit` for a `loft` run):
+    /// the store table's ceiling, lowered so a guard that proves a leak by crossing it
+    /// crosses it after `n` evaluations.  It belongs to the RUN, not the compile, so it is
+    /// not part of [`Limits`]; the runners hand it to the stores they build.
+    #[must_use]
+    pub fn store_limit_annotation(source: &str) -> Option<u16> {
+        source
+            .lines()
+            .take(20)
+            .find_map(|l| l.trim().strip_prefix("// @STORE_LIMIT:"))
+            .and_then(|v| v.trim().parse::<u16>().ok())
+    }
+
     /// Each limit the lower of the two — a second source can only lower what the first set.
     #[must_use]
     pub fn min(self, other: Limits) -> Self {

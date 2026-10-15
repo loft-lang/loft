@@ -1,3 +1,6 @@
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 // @PLN150 — *does a fn-ref call hand back a store the caller may free?*  The callee answers PER
 // RUN: a capture on one arm, its own mint on the other.  `COPY_FREE_SOURCE` (the `0x8000` bit on
 // `OpCopyRecord`) claims "the source is a callee's fresh temporary nobody else frees", and it is
@@ -154,14 +157,14 @@ fn test_the_direct_call_is_unchanged() {
 //
 // It is a WATERMARK defect, and that is why it needs a cell of its own: the allocation and free
 // COUNTS were unchanged, every value was right, and the leak gate saw nothing — the only signal
-// is how many stores are live at once.  The scale is the assertion: at 70000 calls the store
+// is how many stores are live at once.  The scale is the assertion: at 1400 calls the store
 // table (a `u16`, 65535 slots) is exhausted and the run stops, where a released buffer keeps
 // the working set flat.  A four-iteration cell like the ones above cannot see it.
 fn test_a_borrowed_return_still_releases_the_calls_own_buffer() {
   cap = P1185 { n: 3 };
   g = fn(k: integer) -> P1185 { cap };
   s = 0;
-  for _ in 0..70000 { s += g(0).n; }
-  assert(s == 210000, "70000 calls each answering the captured struct, got {s}");
+  for _ in 0..1400 { s += g(0).n; }
+  assert(s == 4200, "1400 calls each answering the captured struct, got {s}");
   assert(cap.n == 3, "the capture survives all of them: got {cap.n}");
 }

@@ -2659,6 +2659,20 @@ pub fn no_slot_reuse() -> bool {
     *NR.get_or_init(|| env_set("LOFT_NO_SLOT_REUSE") || strict_stores())
 }
 
+/// `LOFT_STORE_LIMIT=<n>` — LOWER the store table's ceiling from 65535 to `n` live stores
+/// (`crate::limits` § the store ceiling): a guard proves a leak by crossing the ceiling, and at
+/// `n` it crosses after `n` evaluations instead of 65535.  It can only lower it.
+#[must_use]
+pub fn store_limit() -> u16 {
+    static SL: OnceLock<u16> = OnceLock::new();
+    *SL.get_or_init(|| {
+        std::env::var("LOFT_STORE_LIMIT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map_or(u16::MAX, |n| u16::try_from(n).unwrap_or(u16::MAX))
+    })
+}
+
 /// `LOFT_TRACE_DB=1` — print every record allocation (`OpDatabase`) with the type it
 /// allocates and the `DbRef` the target slot held on entry.  Reach for it when a store
 /// slot looks like it has two owners: the entry `DbRef` is what says whether an

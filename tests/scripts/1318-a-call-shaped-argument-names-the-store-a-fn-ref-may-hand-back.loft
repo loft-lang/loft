@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A fn-ref whose `??` may hand back its ARGUMENT must not have that argument's store adopted
 // by the caller, and the caller can only refuse the adoption if it can NAME the store
@@ -158,8 +161,8 @@ fn test_a_minting_argument_is_still_adopted() {
   // this cell into 70 000 leaked stores and abort at the ceiling.
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for _ in 0..70000 { s += g(mint1318())[1]; }
-  assert(s == 2940000, "minting-argument sum: got {s}");
+  for _ in 0..1400 { s += g(mint1318())[1]; }
+  assert(s == 58800, "minting-argument sum: got {s}");
 }
 
 fn test_the_mint_arm_still_costs_no_store_per_call() {
@@ -168,8 +171,8 @@ fn test_the_mint_arm_still_costs_no_store_per_call() {
   empty: vector<vector<integer>> = [];
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   s = 0;
-  for _ in 0..70000 { s += g(pick1318(empty, 0))[1]; }
-  assert(s == 560000, "mint-arm sum: got {s}");
+  for _ in 0..1400 { s += g(pick1318(empty, 0))[1]; }
+  assert(s == 11200, "mint-arm sum: got {s}");
 }
 
 fn test_both_arms_alternate_over_one_call_site() {

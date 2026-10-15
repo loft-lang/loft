@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A binding whose right-hand side is a branch JOIN copies on every arm a plain bind would
 // have copied (loft#1321, `formal/binding.md` D-bind-16 — `(B-Copy)`'s join face).
@@ -130,8 +133,8 @@ fn test_an_accessor_view_arm_copies_on_both_backends() {
   assert(it3.v == 7, "the default arm of the accessor join aliased: got {it3.v}");
   // 70 000 > the 65535-store ceiling: a build whose copies are owned by nobody aborts.
   s = 0;
-  for _ in 0..70000 { it4 = get1321(bag) ?? d; s += it4.v; }
-  assert(s == 70000 * 55, "accessor-join copies leaked or misread: got {s}");
+  for _ in 0..1400 { it4 = get1321(bag) ?? d; s += it4.v; }
+  assert(s == 1400 * 55, "accessor-join copies leaked or misread: got {s}");
 }
 
 fn test_a_closure_view_arm_copies_on_both_backends() {
@@ -142,8 +145,8 @@ fn test_a_closure_view_arm_copies_on_both_backends() {
   bag.items[0].v = 66;
   assert(it2.v == 41, "the closure-view arm of a join: got {it2.v} (a view says 66)");
   s = 0;
-  for _ in 0..70000 { it3 = h(bag) ?? d; s += it3.v; }
-  assert(s == 70000 * 66, "closure-view-join copies leaked or misread: got {s}");
+  for _ in 0..1400 { it3 = h(bag) ?? d; s += it3.v; }
+  assert(s == 1400 * 66, "closure-view-join copies leaked or misread: got {s}");
 }
 
 fn test_a_null_nullable_subject_binds_the_default_by_copy() {
