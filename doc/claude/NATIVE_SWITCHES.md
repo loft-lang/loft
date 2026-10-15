@@ -120,6 +120,12 @@ loop's header hold again — with it off, a loop that appends records with text 
 reading another vector keeps that vector's header.  First bisect step for a wrong element read
 in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
+makes a loop that writes a text field or element decline its header hold again — with it off,
+such a loop holds the headers of the vectors it reads, and an element base only for a vector
+whose store no text set in it writes.  First bisect step for a stale length or element read in
+a loop that assigns texts; `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1` are the falsifiers.
+
 **`LOFT_NO_APART_HEADERS=1`** (`@FR-R-Header`'s apart clause, default-ON) makes a loop the
 header gate declines hold no header at all again.  By default such a loop still keeps the
 header and element base of each vector it only READS — its length, its elements, their

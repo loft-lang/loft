@@ -551,6 +551,19 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  whose key is present leaves room unused, bounded by the trip count.
                  `size(h)` reports the representation, so it answers the reserved
                  table (@C150).
+                 THE TEXT CLAUSE: a loop the gate declines only for its TEXT SETS —
+                 a text field or element assigned (`OpSetText`, `OpSetTextReplace`),
+                 its target and value still judged as any operand — holds its
+                 headers all the same: a text set claims the new text's record and
+                 frees the old one, which changes no vector's record or length.  It
+                 may grow the store it writes, so the loop is not growth-free: a
+                 vector keeps its BASE only when its store is proven apart from the
+                 ROOT of every text set's target (`@FR-R-Base`'s growth clause), and
+                 none when a target's root is unnamed.  A loop that also pushes,
+                 mints or reserves declines as before, and the clause is the loop
+                 verdict's alone — a record view's address and a push header, which
+                 hold the store's memory, keep declining a text set.  No scalar
+                 hoists in such a loop (the write set does not type a text set).
 ```
 
 ```
@@ -590,6 +603,19 @@ falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `generation::apart` (`apart_headers`, `
 `tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft`; pin
 `tests/apart_headers.rs`.  cbor `encode` (x86-64): 10.52 → 8.42 ms, hash unchanged — its
 emit loop reads `ranks`, `koff`, `klen` and `keybuf` and calls the recursive `encode`.
+
+**The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
+self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its
+element per pass because a text write declined the gate, which is the right answer for an
+address and the wrong one for a header.  arguments/parse 14.70 → 13.72 ms (−6.7 %, of a
+−9.1 % hand price), hash unchanged, together with the null text written as its static bytes
+rather than a `String` copy (`Output::text_value_unborrowed`).  Switch
+`LOFT_NO_TEXT_SET_HEADER=1`; `LOFT_TRACE_HOIST_DECLINE=1` names a loop that writes a text and
+also grows; falsifiers `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1`.  Sites: `hoist::hoistable`
+(the second verdict, under `HoistTiers::text_set`), `hoist::text_set_roots`.  Guard
+`tests/scripts/a-loop-holds-its-header-across-a-text-write.loft` (falsified under
+`LOFT_POISON=1` by a plant that keeps the base: t2 reads `null`); pin
+`tests/text_set_header.rs`.
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
