@@ -235,8 +235,10 @@ length, a pop to empty then pushes, two stacks in one body, a pop from both ends
                  apart, and so is every view rooted in the parameter (its element views
                  included), so the parameter's headers and those views' record addresses
                  (R-RecPtr) are kept.  The original loop runs when the test fails.  The
-                 copy is emitted only when it gains a header no enclosing frame holds or
-                 a record address the plain loop declines.
+                 copy is emitted only when it gains a header no enclosing frame holds, a
+                 record address the plain loop declines, or a walk's borrowed element
+                 (R-TextBorrow's versioned clause); a path counts for the PARAMETER its
+                 dep chain ends at — `for e in v` walks a hidden local bound to `v`.
 ```
 
 **In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
@@ -2117,7 +2119,32 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  text-value read, as above.  Only another run of the same format
                  rewrites the work text, and that run rebinds the local.  No store
                  condition: the work text is the frame's own `String`.
+                 VERSIONED CLAUSE: a walk the vector condition declines only for
+                 its store writes keeps the borrow inside (R-Alias)'s versioned
+                 copy when W's dep chain ends at a PARAMETER and every store writer
+                 in the loop's rest names a frame-minted store or the return buffer
+                 (or a local bound from it) — the store-read clause's writer test,
+                 the buffer seeded as minted, and the address of a text local
+                 (`OpCreateStack`, the slot a callee formats into) no writer.  The
+                 copy runs only when the parameter's store is not the buffer's, so
+                 no step of the loop can grow, free or rewrite the element's
+                 bytes; the plain copy keeps the copy of `p`.
 ```
+
+**The versioned clause, in words.**  `arguments`' `classify` walks `argv`, a parameter, and
+appends a token per word to its result, which a caller could hand in sharing `argv`'s store;
+so the walk copied each word and held no header for `argv`.  Under the copy's test both hold:
+the word is read off the held base and text span as a `&str`.  arguments/parse 13.68 →
+12.94 ms (−5.4 %, of a −6.1 % hand price), hash unchanged; counting a walked path for the
+parameter its dep chain ends at also versions two loops of `tween`'s `ease_sweep`, whose
+`value` row moved 11.95 → 10.87 ms (−9.0 %).  Switches `LOFT_NO_DISTINCT_VERSION` (no copy,
+so no borrow) and `LOFT_NO_TEXT_BORROW`; `LOFT_TRACE_TEXT_BORROW=1` names each versioned
+borrow and why one declined.  Sites: `hoist::versioned_text_walks`, `Output::versioned_borrow`
+(read by `Output::text_borrowed` and the walk's verify read), `Output::distinct_version`.
+Guard `tests/scripts/a-walk-borrows-its-word-in-the-versioned-copy.loft`, pin
+`tests/versioned_text_walk.rs` (its falsification is `none`, as for the versioned clause: no
+caller reaches the plain copy, and an older gate declines every loop that writes the
+parameter's store).
 
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
 allocation and a copy per element — and the loop hoisted NOTHING, because its element read

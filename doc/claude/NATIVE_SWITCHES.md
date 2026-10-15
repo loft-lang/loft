@@ -489,7 +489,8 @@ checks every plain operator.
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores
 differ, keeping the parameter's headers and its element views' record addresses there
-(`fill_polygon` 8.1× → 5.4×) — and is the first bisect step for a wrong value read from a
+(`fill_polygon` 8.1× → 5.4×), and borrowing a walk's text element instead of copying it
+(`@FR-R-TextBorrow`'s versioned clause) — and is the first bisect step for a wrong value read from a
 parameter inside a loop that appends to the result on native.  `LOFT_TRACE_RECPTR=1` names
 each address the copy binds.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
