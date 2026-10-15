@@ -150,6 +150,20 @@ each (the free tree's descent, a split and the remainder's insert, the claim set
 that have freed blocks; `arguments/parse`'s claims (wilderness, few) priced at −0.7 % and say
 nothing of these.
 
+**The allocator's small-block free list PRICED** (a runtime A/B: each bench's emitted source
+compiled against the tip's `libloft.rlib` and the probe's, six interleaved rounds, every hash
+equal).  The probe parks a freed block of at most 16 words on a list for its exact size, its
+header left positive so no neighbour coalesces into it, and a claim of that size pops one
+before the tree is asked.  `panel_build` 4.45 → 3.78 ms (−15.2 %, ≈ 5.04× — on the line),
+`truncate_to` −12.8 %, `map_json` −4 %; `encode_bytes` −2.9 %, `flow_layout_full` −2.4 %,
+`forms_upto` −1.8 %, `arguments/parse` −1.2 %; `check_request`, `invert`, `insert_text`, cbor
+`encode`, `resolve_move` and `slope_path_with_undo` within ±1 %.  A 64-word bound priced the
+same; peak memory level (10.8 → 10.9 MB on lane 17).  The build is more than the probe: a
+parked block is a third block state (neither claimed nor in the tree), which every walk of a
+store's blocks must know — the coalescing sweep, `claims_rebuild`, `usage`, an image's save,
+`LOFT_POISON`'s scribble and `LOFT_STRICT_STORES` — and the lists must be flushed into the tree
+before a claim grows the store, or freed space is never merged.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
