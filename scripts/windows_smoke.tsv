@@ -16,6 +16,8 @@ scripts/claim.py	--help
 scripts/clippy-review.py	--help
 scripts/close-shipped-plans.sh	--help
 scripts/contract_labels.py	--help
+scripts/corpus.py	--help
+scripts/corpus_files.sh	--help
 scripts/crate_layers.py	--help
 scripts/decisions.py	--help
 scripts/doc-review.sh	--help

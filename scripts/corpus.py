@@ -64,3 +64,13 @@ def rel(path):
         return os.path.relpath(path, ROOT)
     except ValueError:
         return path
+
+
+if __name__ == "__main__":
+    # `python3 scripts/corpus.py [--no-docs] [--examples]` prints the list, one path per line —
+    # the same answer `scripts/corpus_files.sh` gives.
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+    for p in corpus_files(docs="--no-docs" not in sys.argv, examples="--examples" in sys.argv):
+        print(rel(p))

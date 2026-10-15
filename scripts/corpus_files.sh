@@ -30,6 +30,7 @@ while [ $# -gt 0 ]; do
     --no-docs) docs=0 ;;
     --no-scripts) scripts=0 ;;
     --no-suite) suite=0 ;;
+    -h|--help) sed -n '5,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "corpus_files.sh: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
