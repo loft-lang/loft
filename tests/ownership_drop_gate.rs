@@ -1267,7 +1267,7 @@ fn native_gate_chunk(chunk: usize) {
 }
 
 /// How many tests the native leg is split across — see [`native_gate_chunk`].
-const NATIVE_GATE_CHUNKS: usize = 8;
+const NATIVE_GATE_CHUNKS: usize = 16;
 
 #[test]
 fn every_cell_releases_each_resource_once_on_native_0() {
@@ -1307,6 +1307,46 @@ fn every_cell_releases_each_resource_once_on_native_6() {
 #[test]
 fn every_cell_releases_each_resource_once_on_native_7() {
     native_gate_chunk(7);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_8() {
+    native_gate_chunk(8);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_9() {
+    native_gate_chunk(9);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_10() {
+    native_gate_chunk(10);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_11() {
+    native_gate_chunk(11);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_12() {
+    native_gate_chunk(12);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_13() {
+    native_gate_chunk(13);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_14() {
+    native_gate_chunk(14);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_15() {
+    native_gate_chunk(15);
 }
 
 /// [`check_baseline`] for one chunk: only the lines naming `names` are this chunk's to compare —

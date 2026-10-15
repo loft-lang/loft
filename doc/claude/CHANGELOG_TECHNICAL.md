@@ -114,6 +114,13 @@ All notable changes to the loft language and interpreter.
   slowest programs listed.
 - **Sixteen interpreter chunks** (`loft_suite_00..15`, was eight).  Measured on the dev
   profile: 133–169 s of CPU a chunk, every one inside its 220 s budget.
+- **The other chunked suites, sized on what they measured** (dev profile, a loaded machine).
+  The native corpus runs 64 chunks (was 32): 94–139 s of wall, 52–69 s charged — a parallel
+  `rustc` batch is charged its CPU divided by the compiles it ran at once
+  (`Suite::end_parallel`), since its raw CPU (640–800 s a chunk) is not time the chunk holds.
+  The drop gate's native leg runs 16 (was 8): 85–91 s.  The IR decode test parsed the
+  standard library once per PROGRAM; it parses it once per chunk now (639 s -> 273 s a chunk)
+  and runs 16 chunks (was 8): 125–175 s.
 
 ### Every whole-record copy tests its source (loft#1997, loft#2004, 2026-10-13)
 

@@ -1312,7 +1312,7 @@ mod decode_tests {
             .unwrap_or_else(|e| std::panic::resume_unwind(e));
     }
 
-    const DECODE_CHUNKS: usize = 8;
+    const DECODE_CHUNKS: usize = 16;
 
     macro_rules! decode_chunks {
         ($($name:ident = $k:expr),* $(,)?) => {$(
@@ -1332,6 +1332,14 @@ mod decode_tests {
         a_decoded_program_compiles_to_the_bytecode_of_its_parse_5 = 5,
         a_decoded_program_compiles_to_the_bytecode_of_its_parse_6 = 6,
         a_decoded_program_compiles_to_the_bytecode_of_its_parse_7 = 7,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_8 = 8,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_9 = 9,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_10 = 10,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_11 = 11,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_12 = 12,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_13 = 13,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_14 = 14,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_15 = 15,
     );
 
     /// Every `chunk`-th program of the sorted `tests/scripts` + `tests/oracle` corpus.
@@ -1358,6 +1366,14 @@ mod decode_tests {
         let filter = std::env::var("LOFT_DECODE_FILTER").unwrap_or_default();
         let mut diverged = Vec::new();
         let mut compared = 0usize;
+        // The standard library is parsed ONCE per chunk, from source (the codec under test must
+        // not be its own oracle), and each program starts from a copy — as the corpus runners'
+        // `parsed_default` does.  Parsing it per program was most of the chunk's time.
+        let (std_data, std_db) = {
+            let mut p = crate::parser::Parser::new();
+            p.parse_dir("default", true, false).expect("parse default/");
+            (p.data, p.database)
+        };
         for path in &files {
             let name = path.to_string_lossy().into_owned();
             if !name.contains(&filter) {
@@ -1365,7 +1381,8 @@ mod decode_tests {
             }
             let src = crate::file_access::read_to_string(path).unwrap_or_default();
             let mut p = crate::parser::Parser::new();
-            p.parse_dir("default", true, false).expect("parse default/");
+            p.data = std_data.clone();
+            p.database = std_db.clone();
             for line in src.lines().filter(|l| l.contains("@ARGS:")) {
                 let words: Vec<&str> = line.split_whitespace().collect();
                 for w in words.windows(2) {

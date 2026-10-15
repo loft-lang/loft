@@ -311,7 +311,7 @@ cargo test --test ownership_drop_gate                            # both legs, de
 LOFT_BLESS_DROP_GATE=1 cargo test --test ownership_drop_gate     # only after reading the diff
 ```
 
-The native leg is eight tests (`every_cell_releases_each_resource_once_on_native_0..7`, every 8th
+The native leg is sixteen tests (`every_cell_releases_each_resource_once_on_native_0..15`, every 16th
 cell from each offset) so no test outgrows the per-test duration gate.  Each checks, and under
 `LOFT_BLESS_DROP_GATE=1` rewrites, only its own cells' lines of the one native baseline — a merge
 under a lock file, so the bless command is unchanged and parallel chunks cannot clobber each other.
