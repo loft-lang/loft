@@ -4406,10 +4406,9 @@ pub fn versioned_text_walks(
                     .find_map(|s| text_escapes(s, p, data))
                 {
                     Err(why)
-                } else if let Some(why) = rest
-                    .iter()
-                    .find_map(|s| foreign_store_writer(s, data, &minted, &mut cache, &mut active))
-                {
+                } else if let Some(why) = rest.iter().find_map(|s| {
+                    foreign_store_writer(s, data, &minted, &mut cache, &mut active, Some(vars))
+                }) {
                     Err(why)
                 } else {
                     Ok(r)
@@ -4755,7 +4754,7 @@ pub fn borrowed_store_texts(
             continue;
         }
         let scope = mention_scope(body, v);
-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
             temps.remove(&v);
             locals.remove(&v);
             why.insert(v, w);
@@ -5089,13 +5088,16 @@ fn collect_void_blocks<'a>(node: &'a Value, out: &mut Vec<&'a Value>) {
 /// operand spelled as a variable (`OpDatabase(v, tp)`), each one minted; a writer that names
 /// none (a generator's resume, a store-minting cast), or takes an operand of another kind (a
 /// fn-ref, a tuple), is refused.  A user callee may run only if it writes no store, or writes
-/// one only in place.
+/// one only in place.  Given the variable table, the address of a TEXT local
+/// (`OpCreateStack`, the slot a callee formats into) is no writer either: it names the frame's
+/// own `String`, never store memory — the same allowance the header gate makes.
 fn foreign_store_writer(
     node: &Value,
     data: &Data,
     minted: &HashSet<u16>,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    vars: Option<&crate::variables::Function>,
 ) -> Option<&'static str> {
     let mut why = None;
     node.any_node(&mut |n| match n {
@@ -5123,7 +5125,10 @@ fn foreign_store_writer(
                 }
                 return false;
             }
-            if native_op_is_store_free(def) || IN_PLACE_SET_OPS.contains(&name) {
+            if native_op_is_store_free(def)
+                || IN_PLACE_SET_OPS.contains(&name)
+                || text_stack_ref(name, args, vars)
+            {
                 return false;
             }
             let mut named = false;

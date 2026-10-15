@@ -1,0 +1,85 @@
+// `@FR-R-TextBorrow`'s versioned clause — a walk of a PARAMETER's texts that appends to the
+// function's result borrows each word, and holds the parameter's header and element base, in
+// `@FR-R-Alias`'s versioned copy: the copy runs only when the parameter's store is not the
+// return buffer's, so the appends cannot move the words' bytes.  The plain copy, which runs
+// otherwise, copies each word as before.  A walk that ALSO writes the parameter's own store
+// keeps the copy in both.  Native only (an emitter rewrite); every cell asserts the VALUES a
+// hand computation gives, and `tests/versioned_text_walk.rs` runs them under
+// `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1` (every growth moves the store and scribbles the old
+// bytes), with `LOFT_NO_DISTINCT_VERSION=1` and `LOFT_NO_TEXT_BORROW=1`.
+//
+// Borrowed in the copy: v1 (`classify`'s shape: each word lexed and appended as a record whose
+// text is the word or a slice of it), v2 (a word compared, measured and handed to a reader
+// callee before the append).  Copied: v3 (the walk also appends a padded copy of each word to
+// a log in the parameter's own record — a growth of the store the words live in).
+//
+// @falsified-by: tests/falsified/a-walk-borrows-its-word-in-the-versioned-copy.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
+//   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch drops the writer
+//   test, so v3's walk borrows its word across the log's growth and reads scribbled bytes.
+
+struct Tok { kind: integer, word: text }
+struct Rec { words: vector<text>, log: vector<text>, n: integer }
+
+fn lex(argv: vector<text>) -> vector<Tok> {
+  toks: vector<Tok> = [];
+  for arg in argv {
+    if arg == "--" {
+      toks += [Tok { kind: 0, word: "" }];
+    } else if arg.starts_with("--") {
+      toks += [Tok { kind: 2, word: arg[2..] }];
+    } else if len(arg) > 1 && arg.starts_with("-") {
+      toks += [Tok { kind: 1, word: arg[1..] }];
+    } else {
+      toks += [Tok { kind: 3, word: arg }];
+    }
+  }
+  toks
+}
+
+fn known(names: vector<text>, w: text) -> integer {
+  for n in names { if n == w { return 1 } }
+  0
+}
+
+fn measure(names: vector<text>, argv: vector<text>) -> vector<integer> {
+  out: vector<integer> = [];
+  for a in argv {
+    out += [len(a) * 10 + known(names, a)];
+  }
+  out
+}
+
+fn logged(r: Rec) -> vector<integer> {
+  res: vector<integer> = [];
+  for w in r.words {
+    r.log += ["{w}, logged with padding long enough to move the store it lands in"];
+    res += [len(w)];
+  }
+  res
+}
+
+fn show(t: vector<Tok>) -> text {
+  s = "";
+  for k in t { s += "{k.kind}{k.word};"; }
+  s
+}
+
+fn main() {
+  // v1 — "--verbose" a long name, "-ab" a cluster, "x.txt" a word, "--" the separator, "-" a
+  // word (one character).
+  v1 = show(lex(["--verbose", "-ab", "x.txt", "--", "-", "--out=f"]));
+  assert(v1 == "2verbose;1ab;3x.txt;0;3-;2out=f;", "v1 {v1}");
+  // v2 — lengths 7, 2, 4 times ten, plus 1 where the word is a known name ("ab", "seed").
+  m = measure(["ab", "seed"], ["verbose", "ab", "seed"]);
+  assert(len(m) == 3 && m[0] == 70 && m[1] == 21 && m[2] == 41, "v2 {m[0]},{m[1]},{m[2]}");
+  // v3 — 40 words "w0".."w39": lengths 2 (ten of them) and 3 (thirty) sum 110; the log holds
+  // all 40.
+  r = Rec { words: [], log: [], n: 0 };
+  for k in 0..40 { r.words += ["w{k}"]; }
+  lv = logged(r);
+  t3 = 0;
+  for x in lv { t3 += x; }
+  assert(len(lv) == 40 && t3 == 110 && len(r.log) == 40 && r.log[39].starts_with("w39, logged"),
+    "v3 {len(lv)} {t3} {len(r.log)}");
+  println("ok");
+}
