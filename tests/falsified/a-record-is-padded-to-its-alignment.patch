@@ -1,8 +1,8 @@
 diff --git a/src/calc.rs b/src/calc.rs
-index 816a94b31..e7cdc3961 100644
+index c0f12af25..51073aaef 100644
 --- a/src/calc.rs
 +++ b/src/calc.rs
-@@ -92,13 +92,6 @@
+@@ -103,13 +103,6 @@ pub fn calculate_positions(
              }
          }
      }
@@ -16,11 +16,11 @@ index 816a94b31..e7cdc3961 100644
      let mut result = Vec::new();
      for (_, pos) in positions {
          result.push(pos);
-diff --git a/src/data.rs b/src/data.rs
-index 132a6e970..b24fb0785 100644
---- a/src/data.rs
-+++ b/src/data.rs
-@@ -5106,7 +5106,8 @@
+diff --git a/src/database/field_groups.rs b/src/database/field_groups.rs
+index 010473bbc..ad03f4b39 100644
+--- a/src/database/field_groups.rs
++++ b/src/database/field_groups.rs
+@@ -120,7 +120,8 @@ impl LinkedFieldGroup {
              offsets[i] = pos;
              pos += size;
          }
@@ -31,10 +31,10 @@ index 132a6e970..b24fb0785 100644
  
      /// Per-member offsets inside a group in WRITTEN order — the index group's layout; a
 diff --git a/src/database/types.rs b/src/database/types.rs
-index a19ad4576..3a300bc5b 100644
+index 567f9abdf..4bfe3a602 100644
 --- a/src/database/types.rs
 +++ b/src/database/types.rs
-@@ -1468,9 +1468,6 @@
+@@ -1484,9 +1484,6 @@ impl Stores {
                  _ => {}
              }
          }

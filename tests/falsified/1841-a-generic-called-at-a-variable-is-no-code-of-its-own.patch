@@ -1,8 +1,8 @@
 diff --git a/src/compile.rs b/src/compile.rs
-index e377bb6bf..8a21eae8e 100644
+index eec19ab22..ddf5192c4 100644
 --- a/src/compile.rs
 +++ b/src/compile.rs
-@@ -145,12 +145,7 @@ pub fn byte_code_from(
+@@ -151,12 +151,7 @@ pub fn byte_code_from(
          None
      };
      for d_nr in start_d_nr..data.definitions() {
@@ -17,10 +17,10 @@ index e377bb6bf..8a21eae8e 100644
          }
          // loft#665 piece 3 — publish which definition is being generated, so an
 diff --git a/src/data.rs b/src/data.rs
-index 1b2f14acc..5144c8e2b 100644
+index 3aaae436c..c15dee055 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -11186,32 +11186,6 @@ impl Data {
+@@ -10763,32 +10763,6 @@ impl Data {
          }
      }
  
@@ -53,11 +53,11 @@ index 1b2f14acc..5144c8e2b 100644
      /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
      /// variant of a generic enum, whose payload is typed by the template's variables — each
      /// instance has variants of its own.
-diff --git a/src/generation/fnref.rs b/src/generation/fnref.rs
-index 178505ffc..fef497f18 100644
---- a/src/generation/fnref.rs
-+++ b/src/generation/fnref.rs
-@@ -64,11 +64,7 @@ pub fn dispatch_arms(
+diff --git a/src/fnref.rs b/src/fnref.rs
+index 68222cba6..95bb4aa4d 100644
+--- a/src/fnref.rs
++++ b/src/fnref.rs
+@@ -65,11 +65,7 @@ pub fn dispatch_arms(
          if !matches!(def.def_type(), DefType::Function) {
              continue;
          }
@@ -71,10 +71,10 @@ index 178505ffc..fef497f18 100644
          }
          // A closure-capturing lambda has a hidden `__closure` param as its last
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index ddc3be082..b529abe26 100644
+index 1e2a5296b..69fe398f3 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -9043,10 +9043,7 @@ extern crate loft;"
+@@ -9636,10 +9636,7 @@ extern crate loft;"
              }
          }
          for dnr in from..till {
@@ -87,10 +87,10 @@ index ddc3be082..b529abe26 100644
              }
              if let Some(r) = reachable
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 36853b768..8ff75a071 100644
+index f35366ae8..c698900a3 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -11569,17 +11569,21 @@ impl Parser {
+@@ -11853,17 +11853,21 @@ impl Parser {
      /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
      /// at a real type is its own answer; one at a variable stands for its template.
      fn placeholder_instance_template(&self, d: u32) -> u32 {
