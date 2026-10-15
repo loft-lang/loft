@@ -10,7 +10,12 @@
 // ends; c2 an empty vector, past every end; c3 record elements, a field of each; c4 a text
 // element from the end; c5 a write through a checked read, read back; c6 a vector read after
 // it grew (its records moved); c7 the reset-loop shape, a text write per index up to the
-// length; c8 the lengths themselves.
+// length; c8 the lengths themselves.  The `??` reads of c1–c4 go through `get_vector`; the
+// writes of c5 and c7 through `--native`'s checked read.
+//
+// @falsified-by: tests/falsified/a-checked-element-read-answers-from-one-header-read.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the patch is the native checked read's)
+//   CHANNEL: the VALUE channel on native — the patch answers one element short, so `b.xs[-1] = 7`
+//   writes element 1 and c5 reads `10,7,30`.
 
 struct Item { n: integer, t: text }
 struct Bag { xs: vector<integer>, names: vector<text>, rs: vector<Item> }

@@ -1127,8 +1127,17 @@ pub fn get_vector_hoisted<const VERIFY: bool>(
             pos: checked_vec_pos(from as u32, size),
         }
     } else {
-        get_vector(db, size, from, stores)
+        get_vector_cold(db, size, from, stores)
     }
+}
+
+/// [`get_vector_hoisted`]'s out-of-range half, outlined (`@FR-R-Cold`): a held walk reaches it
+/// once, at its end, and `get_vector` inlined there grew every held loop's body — `mesh_aabb`
+/// measured 68 % slower with it inline.
+#[cold]
+#[inline(never)]
+fn get_vector_cold(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
+    get_vector(db, size, from, stores)
 }
 
 /// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
