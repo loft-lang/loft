@@ -19768,24 +19768,32 @@ impl Parser {
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
                     for (dep, value) in &man.dependencies {
                         // PURE lookups only: a sibling package, a `path =` dependency, the
-                        // project's `lib/<dep>` — by path, never through `lib_path`, whose
-                        // side effects queue every dependency of the manifest found above
-                        // the file as a dependency of that file (a root manifest with
-                        // registry packages loaded `graphics` into a one-line script and
-                        // crashed the compiler in `imaging`).  A registry dependency's
-                        // triggers come from the catalogue instead.
+                        // project's `lib/<dep>`, or a registry dependency's EXTRACTED copy
+                        // under the cache (the lock's pin, else the newest cached copy its
+                        // range admits) — by path, never through `lib_path`, whose side
+                        // effects queue every dependency of the manifest found above the
+                        // file as a dependency of that file (a root manifest with registry
+                        // packages loaded `graphics` into a one-line script and crashed the
+                        // compiler in `imaging`).  The catalogue is the fallback for a
+                        // package nothing declares, and it carries no TYPE triggers: a
+                        // registry dependency read only through it left `names:
+                        // sorted<Word[key]>` undefined while the `path =` form of the same
+                        // package fired (@PLN179 finding 018's registry half).
                         let entry = self
                             .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
                             .map(|r| r.entry)
                             .or_else(|| Self::dep_entry_by_path(&d, dep, value));
-                        if let Some(entry) = entry
-                            && let Some(root) = std::path::Path::new(&entry)
+                        let root = match entry {
+                            Some(entry) => std::path::Path::new(&entry)
                                 .parent()
                                 .and_then(|p| p.parent())
-                        {
+                                .map(std::path::Path::to_path_buf),
+                            None => Self::registry_dep_root(&d, dep, value),
+                        };
+                        if let Some(root) = root {
                             Self::add_pkg_triggers(
                                 &root.join("loft.toml"),
-                                root,
+                                &root,
                                 &mut map,
                                 &mut types,
                                 &mut builders,
@@ -19819,6 +19827,46 @@ impl Parser {
         let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
         let entry = root.join(entry);
         crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
+    }
+
+    /// The extracted copy of a REGISTRY dependency `dep` declared as `value` by the manifest
+    /// in `d`: the version `d/loft.lock` pins when that copy is in the cache, else the newest
+    /// cached copy this loft can load that satisfies the declared range.  A pure read of the
+    /// lock and the cache directory — no index, no network, nothing queued; `None` for a
+    /// `path =` dependency (those resolve by path) and when nothing is extracted yet (the
+    /// install that follows loads the package the ordinary way, and its triggers fire from
+    /// the next parse).
+    #[cfg(feature = "registry")]
+    fn registry_dep_root(
+        d: &std::path::Path,
+        dep: &str,
+        value: &str,
+    ) -> Option<std::path::PathBuf> {
+        if crate::manifest::extract_path_dep(value).is_some() {
+            return None;
+        }
+        if let Ok(Some(lock)) = crate::lockfile::read_lockfile(&d.join("loft.lock"))
+            && let Some(pin) = lock.packages.iter().find(|p| p.name == dep)
+        {
+            let root = crate::registry_index::cache_dir().join(format!("{dep}-{}", pin.version));
+            if crate::file_access::exists(root.join("loft.toml")) {
+                return Some(root);
+            }
+        }
+        let constraints: Vec<String> = crate::manifest::extract_version_req(value)
+            .map(|v| vec![v.to_string()])
+            .unwrap_or_default();
+        crate::registry_index::newest_cached_loadable_satisfying(dep, &constraints)
+            .map(|(_, dir)| dir)
+    }
+
+    #[cfg(not(feature = "registry"))]
+    fn registry_dep_root(
+        _d: &std::path::Path,
+        _dep: &str,
+        _value: &str,
+    ) -> Option<std::path::PathBuf> {
+        None
     }
 
     /// Report the manifests read since the last call that the lexer could not read

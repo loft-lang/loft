@@ -147,6 +147,12 @@ enabled = true              # auto-use: a consumer that calls one of this
                             # of its TYPES (`c: Command = …`) loads it with no
                             # `use`.  Both halves are DERIVED from the `pub`
                             # declarations at publish time; nothing is listed.
+                            # A consumer derives them from each DECLARED
+                            # dependency's own source — a sibling, a `path =`,
+                            # a `lib/<dep>` or a registry package's extracted
+                            # copy (the lock's pin) — and from the catalogue
+                            # for a package nothing declares (methods and
+                            # builders only: the index carries no types).
 builders = ["set"]          # the one declared half: the free `pub fn`s a consumer
                             # may call BARE (`set(words)`) and have this package
                             # loaded.  A builder takes a name in the program's own

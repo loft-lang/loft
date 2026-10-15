@@ -123,3 +123,57 @@ fn a_declared_name_the_source_does_not_carry_as_a_free_fn_never_fires() {
         let _ = fa::remove_dir_all(&dir);
     }
 }
+
+/// A REGISTRY dependency fires its type and builder triggers like a `path =` one: the
+/// extracted copy under the cache (`LOFT_HOME/.loft/registry/<pkg>-<version>`, the lock's pin)
+/// is read in place.  Before, only the catalogue answered for a registry dependency, and
+/// it carries no types: `x: sorted<Bag[key]>` was "Undefined type Bag" without a `use`.
+#[test]
+fn a_registry_dependency_fires_its_type_and_builder_triggers() {
+    let home = std::env::temp_dir().join(format!("loft_builder_home_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&home);
+    let pkg = home
+        .join(".loft")
+        .join("registry")
+        .join("builder_pkg-0.1.0");
+    fa::create_dir_all(pkg.join("src")).expect("mkdir");
+    for f in ["loft.toml", "src/builder_pkg.loft"] {
+        fa::copy(root().join("tests/lib/builder_pkg").join(f), pkg.join(f)).expect("copy");
+    }
+    let dir = std::env::temp_dir().join(format!("loft_builder_{}_registry", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("mkdir");
+    fa::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"usesbag\"\nversion = \"0.1.0\"\n\n[dependencies]\nbuilder_pkg = \">=0.1\"\n",
+    )
+    .expect("manifest");
+    fa::write(
+        dir.join("loft.lock"),
+        "schema_version = 1\n\n[[package]]\nname = \"builder_pkg\"\nversion = \"0.1.0\"\nurl = \"\"\nsha256 = \"\"\nsource = \"registry\"\n",
+    )
+    .expect("lock");
+    fa::write(
+        dir.join("p.loft"),
+        "fn main() {\n  b = bag([\"pear\", \"apple\", \"pear\"]);\n  x: sorted<Bag[key]> = b;\n  println(\"{x.size()} {b.has(\\\"apple\\\")}\");\n}\n",
+    )
+    .expect("script");
+    for backend in ["--interpret", "--native"] {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(backend)
+            .arg(dir.join("p.loft"))
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_HOME", &home)
+            .current_dir(std::env::temp_dir())
+            .output()
+            .expect("spawn loft");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.trim_end() == "2 true",
+            "[{backend}] the registry dependency's type or builder trigger did not fire:\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&home);
+}

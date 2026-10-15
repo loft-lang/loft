@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A registry dependency fires its type and builder triggers (2026-10-15)
+
+- `Parser::trigger_map` derived a declared dependency's triggers from a sibling, a `path =`
+  or a `lib/<dep>` package only, and left a registry dependency to the catalogue, which
+  carries methods and builders and no types: `names: sorted<Word[key]>` over `script =
+  ">=0.2"` was "Undefined type Word" while the `path =` form of the same package fired.
+  `registry_dep_root` now reads the extracted copy in place — the version `loft.lock` pins
+  when it is in the cache, else the newest cached copy the declared range admits — a pure
+  read of the lock and the cache directory.  Cell
+  `a_registry_dependency_fires_its_type_and_builder_triggers` (tests/builder_trigger.rs,
+  both backends, under a private `LOFT_HOME`).
+
 ### The catalog trigger map reads each package's newest loadable release (2026-10-14)
 
 - `registry_index::providers_of` took the union of every published version's triggers, so
