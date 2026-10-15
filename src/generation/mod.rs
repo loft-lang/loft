@@ -827,6 +827,11 @@ pub struct Output<'a> {
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
     pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `@FR-R-RecPtr`'s text clause — the text span (`__ts_N`) derived beside the held base a
+    /// `__pa_N` address was taken from, keyed by that address's name: a text field read of
+    /// the view slices off it ([`Self::rec_ptr_text_read`]).  An address from anywhere else
+    /// has no entry and its text reads resolve the store.
+    pub rec_ptr_spans: HashMap<String, String>,
     /// `@FR-R-RecPtr`'s mint clause — the open mint WINDOWS, innermost last: `(block serial,
     /// the index of the element's finish, the element variable)`.  A window's address frame
     /// is dropped once the statement at that index has been emitted
@@ -1081,6 +1086,9 @@ pub struct Output<'a> {
     /// and base resolves the store per element again (`@FR-R-Base`'s text clause off); the
     /// bisect step for a wrong or stale text read out of `v[i]` on native.
     pub text_base_disabled: bool,
+    /// `LOFT_NO_TEXT_FIELD=1` — `@FR-R-RecPtr`'s text clause off: a text FIELD of a held
+    /// iteration's record view resolves the store at each read, as before the clause.
+    pub text_field_disabled: bool,
     /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
     /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
     /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
@@ -2429,6 +2437,7 @@ impl<'a> Output<'a> {
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
+            rec_ptr_spans: HashMap::new(),
             ptr_windows: Vec::new(),
             mint_window_disabled: std::env::var("LOFT_NO_MINT_WINDOW").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
@@ -2520,6 +2529,7 @@ impl<'a> Output<'a> {
             split_table_aliases: BTreeMap::new(),
             split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
             text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
+            text_field_disabled: std::env::var("LOFT_NO_TEXT_FIELD").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
             slice_borrow_count: 0,
@@ -3139,6 +3149,7 @@ impl Output<'_> {
         self.vec_headers.clear();
         self.vec_bases.clear();
         self.rec_ptrs.clear();
+        self.rec_ptr_spans.clear();
         self.vec_bounds.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
@@ -5524,6 +5535,29 @@ impl Output<'_> {
         ))
     }
 
+    /// `@FR-R-RecPtr`'s text clause — the expression reading TEXT field `fld` of record view
+    /// `v` through its held address and the text span beside the base it came from, or
+    /// `None` when the view holds no address or its address has no span.
+    pub fn rec_ptr_text_read(&mut self, v: u16, fld: i64) -> Option<String> {
+        let ptr = self.active_rec_ptr(v)?.to_owned();
+        let span = self.rec_ptr_spans.get(&ptr)?.clone();
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(v)).ok()?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        Some(format!(
+            "unsafe {{ vector::rec_text::<{}>({ptr}, {span}, &({operand}), ({fld}_i64) as u32, &stores.allocations) }}",
+            self.hoist_verify
+        ))
+    }
+
+    /// The text span a held iteration's address may slice its view's texts off: the
+    /// `__ts_N` bound beside a FRAME's base `__vb_N` — a twin's input base carries none —
+    /// unless this clause or `(R-Base)`'s text clause is switched off.
+    fn held_text_span(&self, base: &str) -> Option<String> {
+        (!self.text_base_disabled && !self.text_field_disabled && base.starts_with("__vb_"))
+            .then(|| base.replacen("__vb_", "__ts_", 1))
+    }
+
     /// `@FR-R-RecPtr` — after statement `at` of a block was emitted: if it bound a plain
     /// record VIEW whose address the rest of the block may share ([`hoist::record_view_ptr`]),
     /// emit `let __pa_N = vector::rec_ptr(&var_r, …);` as the next statement and push a frame
@@ -5595,6 +5629,20 @@ impl Output<'_> {
                 }
             }
             (v, _) => v,
+        };
+        // `@FR-R-RecPtr`'s text clause — a view whose only served use is a TEXT field read
+        // still takes an address when the binding is a held iteration with a text span beside
+        // its base: every other condition of the verdict held (`NO_FUSABLE_USE` is its last).
+        let verdict = match verdict {
+            Err(hoist::NO_FUSABLE_USE)
+                if hoist::reads_text_field(&stmts[at + 1..], *r, self.data)
+                    && self
+                        .held_iteration_base(&stmts[at])
+                        .is_some_and(|(_, base, ..)| self.held_text_span(&base).is_some()) =>
+            {
+                Ok(*r)
+            }
+            v => v,
         };
         let r = match verdict {
             Ok(r) => r,
@@ -5774,6 +5822,11 @@ impl Output<'_> {
                 "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ vector::held_elem_ptr({base}, var_{index} as usize * {size}{plus}, {verify}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base",
                 verify = self.hoist_verify
             )?;
+            // A record element's texts are records of its vector's store: the span beside
+            // the base serves the view's text fields (`rec_ptr_text_read`).
+            if let Some(span) = self.held_text_span(&base) {
+                self.rec_ptr_spans.insert(name.clone(), span);
+            }
             self.indent(w)?;
             writeln!(w, "let {lock}: bool = {header}.locked;")?;
         } else if let Some((win, size)) = stmt.and_then(|s| self.windowed_mint_of(s)) {

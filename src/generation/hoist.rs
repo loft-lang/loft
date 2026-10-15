@@ -3015,9 +3015,30 @@ fn view_extent_verdict(
         return Err("the remainder rebinds the view");
     }
     if !touched {
-        return Err("no fusable field read or write of the view");
+        return Err(NO_FUSABLE_USE);
     }
     Ok(())
+}
+
+/// [`record_view_ptr`]'s LAST decline — every other condition held, and no statement of the
+/// remainder reads or writes a field the address serves.  The emitter's text clause admits
+/// such a view when its address comes from a held base with a text span beside it and the
+/// remainder reads a TEXT field of it (`Output::bind_record_ptr`).
+pub const NO_FUSABLE_USE: &str = "no fusable field read or write of the view";
+
+/// Does `rest` read a text field of view `r` directly — `OpGetText(r, fld)` with a literal
+/// field offset, the spelling `vector::rec_text` serves?
+#[must_use]
+pub fn reads_text_field(rest: &[Value], r: u16, data: &Data) -> bool {
+    rest.iter().any(|op| {
+        op.any_node(&mut |n| {
+            matches!(n, Value::Call(g, a)
+                if (*g as usize) < data.definitions.len()
+                    && data.def(*g).name() == "OpGetText"
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == r)
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(_))))
+        })
+    })
 }
 
 /// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached

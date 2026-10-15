@@ -1742,6 +1742,51 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
     text_elem_cold(db, from, stores)
 }
 
+/// `@FR-R-RecPtr`'s text clause — the TEXT field at byte `fld` of the record view whose
+/// address `ptr` a held iteration derived from its element base: the field's record number is
+/// one `u32` load through the address, and the text is sliced off the span `(ptr, size)`
+/// derived beside that base ([`text_span_of`]) — a record element's texts are records in the
+/// SAME store as its vector.  A null address (past the end, the null element) answers the
+/// null text, as the store read of the null record does.
+///
+/// # Safety
+/// `ptr` is null or the address of a live record of the store the span was derived from, by
+/// the binding's growth-free proof (`hoist::record_view_ptr`), and `fld` a text field the
+/// record's type declares.
+///
+/// # Panics
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the address, the span or the text no longer
+/// matches a fresh read through the store — a store grew or moved under the block.
+#[inline]
+pub unsafe fn rec_text<const VERIFY: bool>(
+    ptr: *const u8,
+    (span, size): (*const u8, u32),
+    db: &DbRef,
+    fld: u32,
+    stores: &[Store],
+) -> &'static str {
+    if ptr.is_null() {
+        return crate::state::STRING_NULL;
+    }
+    // SAFETY: the caller's proof — `ptr` addresses a live record and `fld` is a field of it.
+    let rec = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
+    // SAFETY: the span is the record's store's, unchanged since it was derived.
+    let t = unsafe { text_at(span, size, rec) };
+    if VERIFY {
+        assert!(
+            std::ptr::eq(ptr, rec_ptr(db, stores)),
+            "record view address is stale — a store grew or moved under the block"
+        );
+        let store = keys::store(db, stores);
+        assert_eq!(
+            t,
+            store.get_str(store.get_u32_raw(db.rec, db.pos + fld)),
+            "record view text read disagrees with the store's"
+        );
+    }
+    t
+}
+
 /// The negative-index half of [`text_elem_at`], behind a call although it only reads: folded
 /// in — the resolution through [`elem_index`] inline, in any arrangement — the text walk on
 /// the stdlib `join` row lost 10–14 %, and a text reader gains nothing from the fold's merge,

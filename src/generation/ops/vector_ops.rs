@@ -454,6 +454,16 @@ impl OpEmitter for LazySplitNextEmitter {
             ctx.emit(index)?;
             return write!(ctx.w, ") as i64, &stores.allocations) }}");
         }
+        // `@FR-R-RecPtr`'s text clause — a text field of a record view whose address a held
+        // iteration took: the field's record number through the address, the text sliced
+        // off the span beside the base.
+        if let [view, fld] = args
+            && let Value::Var(v) = view.unspan()
+            && let Value::Int(fld) = fld.unspan()
+            && let Some(expr) = ctx.output.rec_ptr_text_read(*v, i64::from(*fld))
+        {
+            return write!(ctx.w, "{expr}");
+        }
         if let Some(elem) = args.first()
             && let Some((t, raising)) = ctx.output.split_table_read(elem)
             && let Value::Call(_, inner) = elem.unspan()
