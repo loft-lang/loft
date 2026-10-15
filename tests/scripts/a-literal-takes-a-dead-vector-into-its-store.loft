@@ -10,6 +10,10 @@
 // c6 (a later field of the same literal reads the source), d1 (the source read after the
 // literal), d2 (the source grown after it), d3 (the literal inside a loop), d4 (the source a
 // parameter: the caller's vector must stay whole), d5 (the literal aliased).
+//
+// @falsified-by: tests/falsified/a-literal-takes-a-dead-vector-into-its-store.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch admits a source named after the
+//   move, so c6's later field reads the moved-out vector as empty (`c6 3` for 303).
 
 enum Tok { A { n: integer }, B { w: text } }
 struct Cur { const src: vector<Tok>, pos: integer }

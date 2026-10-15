@@ -1,0 +1,13 @@
+diff --git b/src/literal_host.rs a/src/literal_host.rs
+index 7758d2839..3525b161b 100644
+--- b/src/literal_host.rs
++++ a/src/literal_host.rs
+@@ -309,7 +309,7 @@ fn check(
+             } else {
+                 mentions(s, p.owner)
+             };
+-        if named != owner_frees {
++        if named != owner_frees && false {
+             return Err("the vector or its store's owner is named after the move");
+         }
+     }
