@@ -5545,7 +5545,7 @@ impl Output<'_> {
         self.output_code_inner(&mut operand, &Value::Var(v)).ok()?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
         Some(format!(
-            "unsafe {{ vector::rec_text::<{}>({ptr}, {span}, &({operand}), (0_i64 * {fld}) as u32, &stores.allocations) }}",
+            "unsafe {{ vector::rec_text::<{}>({ptr}, {span}, &({operand}), ({fld}_i64) as u32, &stores.allocations) }}",
             self.hoist_verify
         ))
     }
