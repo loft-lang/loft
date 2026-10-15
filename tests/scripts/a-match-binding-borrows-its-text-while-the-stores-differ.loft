@@ -1,0 +1,100 @@
+// `@FR-R-TextBorrow`'s tested clause — a text a `match` arm binds out of a PARAMETER's record
+// (`VText { s }`) borrows the record's bytes instead of copying them into a `String`, when
+// every other writer in its scope names a store the frame minted or the hidden return buffer
+// (directly, or through a callee that writes nothing but the buffer it is handed): the bind
+// tests at run time that the parameter's store is not the buffer's, and copies when it is.
+// An arm that also writes the parameter's own store keeps the copy.  Native only (an emitter
+// rewrite); every cell asserts the VALUES a hand computation gives, and
+// `tests/tested_text_borrow.rs` runs them under `LOFT_POISON=1` (every growth moves the store
+// and scribbles the old bytes) with `LOFT_NO_TESTED_BORROW=1` on and off.
+//
+// Borrowed: t1 (a recursive encoder: a list header, then each element encoded into the same
+// buffer, a text as its header and its bytes), t2 (the encoder's results appended by a caller,
+// the append twin's road), t4 (a text of several hundred bytes).  Copied: t3 (the arm also
+// appends a long copy of the text to a log in the parameter's own record — a growth of the
+// store the text lives in).
+//
+// @falsified-by: tests/falsified/a-match-binding-borrows-its-text-while-the-stores-differ.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
+//   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch drops the writer
+//   test, so t3's arm borrows its text across the log's growth and reads scribbled bytes.
+
+enum Val {
+  VInt { n: integer },
+  VText { s: text },
+  VList { items: vector<Val> },
+}
+
+struct Rec { v: Val, log: vector<text> }
+
+fn hdr(major: integer, arg: integer) -> vector<u8> {
+  h: vector<u8> = [];
+  if arg < 24 { h += [((major * 32 + arg) & 255) as u8]; }
+  else { h += [((major * 32 + 25) & 255) as u8]; h += [((arg / 256) & 255) as u8]; h += [(arg & 255) as u8]; }
+  h
+}
+
+fn enc(v: Val) -> vector<u8> {
+  match v {
+    VInt { n } => hdr(0, n),
+    VText { s } => {
+      k = size(s);
+      buf = hdr(3, k);
+      for i in 0..k { buf += [(s.byte_at(i) & 255) as u8]; }
+      buf
+    },
+    VList { items } => {
+      buf = hdr(4, len(items));
+      for i in 0..len(items) { buf += enc(items[i]); }
+      buf
+    },
+  }
+}
+
+fn tagged(r: Rec) -> vector<u8> {
+  match r.v {
+    VText { s } => {
+      r.log += ["{s}, logged with padding long enough to need a record of its own"];
+      buf: vector<u8> = [];
+      for i in 0..size(s) { buf += [(s.byte_at(i) & 255) as u8]; }
+      buf
+    },
+    _ => [],
+  }
+}
+
+fn show(b: vector<u8>) -> text {
+  t = "";
+  for x in b { t += "{x as integer},"; }
+  t
+}
+
+fn total(b: vector<u8>) -> integer {
+  t = 0;
+  for x in b { t += x as integer; }
+  t
+}
+
+fn main() {
+  // t1 — [ "ab", 5, "é" ]: 0x83 (list of 3); 0x62 'a' 'b' (text of 2); 5; 0x62 0xC3 0xA9
+  // ("é" is two bytes).
+  t1 = show(enc(VList { items: [VText { s: "ab" }, VInt { n: 5 }, VText { s: "é" }] }));
+  assert(t1 == "131,98,97,98,5,98,195,169,", "t1 {t1}");
+  // t2 — three texts encoded and appended by the caller: 0x61 'x', 0x62 'y' 'z', 0x60 (empty).
+  out: vector<u8> = [];
+  for w in ["x", "yz", ""] { out += enc(VText { s: w }); }
+  assert(show(out) == "97,120,98,121,122,96,", "t2 {show(out)}");
+  // t3 — "hi": its two bytes, and the log holds one entry beginning with it.
+  r = Rec { v: VText { s: "hi" }, log: [] };
+  for _ in 0..20 { r.log += ["filler entry long enough to occupy a record of its own"]; }
+  t3 = show(tagged(r));
+  assert(t3 == "104,105," && len(r.log) == 21 && r.log[20].starts_with("hi, logged"),
+    "t3 {t3} {len(r.log)}");
+  // t4 — 300 bytes 'a'..'z' repeating: the header 0x79 0x01 0x2C (major 3, 300 as two bytes),
+  // then 300 bytes summing to 11 × 2847 + (97 + … + 110) = 31317 + 1449 = 32766.
+  long = "";
+  for i in 0..300 { long += "{"abcdefghijklmnopqrstuvwxyz"[i % 26..i % 26 + 1]}"; }
+  e4 = enc(VText { s: long });
+  assert(len(e4) == 303 && e4[0] == 121 as u8 && e4[1] == 1 as u8 && e4[2] == 44 as u8
+    && total(e4) == 121 + 1 + 44 + 32766, "t4 {len(e4)} {total(e4)}");
+  println("ok");
+}

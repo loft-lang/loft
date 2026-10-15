@@ -4856,6 +4856,8 @@ pub fn borrowed_store_texts(
         for v in temps.iter().chain(locals.iter()) {
             let what = if slices.contains(v) {
                 "a slice of a parameter's text"
+            } else if out.tested.contains_key(v) {
+                "a parameter's text while its store is not the return buffer's"
             } else if fmt_bound.contains(v) {
                 "a format's work text"
             } else {
