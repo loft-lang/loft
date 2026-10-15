@@ -63,7 +63,7 @@ fn at_boundary(ops: &Ops, op: u32, k: i32, count_left: bool) -> bool {
         return op == ops.eq || op == ops.ne || op == ops.lt || op == ops.le;
     }
     // `1 <= len` (len >= 1) and `len < 1`: the boundary between 0 and 1.
-    k == 1 && ((op == ops.le && !count_left) || (op == ops.lt && count_left))
+    k == 1 && ((op == ops.le && !count_left) || (op == ops.lt && count_left) || op == ops.eq)
 }
 
 /// Fold every admitted comparison of the program; a no-op under the switch.
