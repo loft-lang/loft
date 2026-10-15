@@ -7766,8 +7766,6 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
             let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers, owned);
-            // `(R-Header)`'s text clause — the text set's target and value still walk below.
-            let text_set = known && tiers.text_set && is_text_set(data.def(*d).name());
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -7783,7 +7781,8 @@ fn blocks_header_hoist(
                 || fresh_delivery
                 || record_copy
                 || fresh_copy
-                || text_set
+                // `(R-Header)`'s text clause: the target and value still walk below.
+                || (known && tiers.text_set && is_text_set(data.def(*d).name()))
             {
                 false
             } else if call_writes_store(*d, data, cache, active, owned) {
