@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A buffer's own view is not delivered into it, a count a run of statements repeats is made once (2026-10-16)
+
+- **`(R-SelfReplace)`** — `OpReplaceVector(B, x)` after `x = OpGetField(B, 0, …)` is dropped
+  when nothing after the binding assigns, re-points or frees `x` or `B`
+  (`self_replace::rewrite_program`, both backends, `LOFT_NO_SELF_REPLACE`).  Guard
+  `a-vector-delivered-into-its-own-buffer-is-not-copied.loft`, pin `tests/self_replace.rs`.
+- **`(R-SameRead)`'s sequence clause** — a pure store read with a scalar result that later
+  statements repeat, with only pure assignments and a minted record's field writes between, is
+  bound once (`same_read::bind_sequences`, both backends, `LOFT_NO_SEQUENCE_READ`).  Guard
+  `a-count-a-run-of-statements-repeats-is-made-once.loft`, pin `tests/same_read.rs`.
+  Together: `flow_layout_full` −6.6 % (out of the 5× cut), zttext `materialise` −23.9 %.
+
 ### `arguments/parse` 7.3× → 3.8× by seven rewrites, and a match binding that borrows under a store test (2026-10-15)
 
 - **`(R-SameRead)`'s match clause** — a slice `match` binds the subject's length and each

@@ -5133,11 +5133,14 @@ line's end, the next offset (`roff + len(r.str)` each time), with the box's push
 The backends cannot merge the three: the count walks the text's bytes, and the push writes the
 store the text lives in.  The minted record is the only one written, so the count is the same
 each time.  Measured on `flow_layout_full` with `(R-SelfReplace)`: below.
-`LOFT_NO_SEQUENCE_READ=1` switches the clause off alone.  Guard
-`tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft` — a push between
-(bound), the read text rewritten between (`r.str = …`, a write into a record not minted:
-kept), the read vector grown between (`len(rs)` with `rs += […]`, a collection the minted
-record joins: kept), a read local assigned between (only the count is shared).
+`LOFT_NO_SEQUENCE_READ=1` switches the clause off alone; `LOFT_TRACE_SAME_READ=1` names each
+binding.  Guard `tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft` — a push
+between (bound), the read text replaced between (`r.str = w.str`, a write into a record not
+minted: kept; the plant that sees through it reads the old count), the read vector grown
+between (kept), a read local assigned between (only the count is shared); pin
+`tests/same_read.rs`.  The type condition is defensive: the one read a minted record's
+append can change is a collection's length, and that is a call (`t_6vector_len`) the clause
+does not admit.
 
 ### A vector delivered into the buffer it already is
 
@@ -5157,7 +5160,8 @@ wherever a local leaves.  The replace answers the identity case only after askin
 errors and reading both slots: in `slice_runs`, 17 M of the 126 M instructions per call.
 Built with `(R-SameRead)`'s sequence clause: `flow_layout_full` 9.70 → 9.06 ms (−6.6 %,
 985 → 923 M instructions), zttext's `materialise` −23.9 %; the price was −6.9 %.  Census:
-19 admissions (zttext 17, cbor 1, pluginabi 1).  `LOFT_NO_SELF_REPLACE=1`.  Guard
+19 admissions (zttext 17, cbor 1, pluginabi 1).  `LOFT_NO_SELF_REPLACE=1`,
+`LOFT_TRACE_SELF_REPLACE=1`; pin `tests/self_replace.rs`.  Guard
 `tests/scripts/a-vector-delivered-into-its-own-buffer-is-not-copied.loft` — a builder that
 returns its buffer's view early and at the tail (dropped); one that rebinds its result to
 another vector and one that returns one of two locals (kept: each replace names a buffer the

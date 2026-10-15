@@ -687,6 +687,7 @@ cbor	bd4932067	R-RecPtr	8
 cbor	bd4932067	R-RefillBuffer	2
 cbor	bd4932067	R-RetAdopt	3
 cbor	bd4932067	R-Reuse	8
+cbor	bd4932067	R-SelfReplace	1
 cbor	bd4932067	R-SingleUse	7
 cbor	bd4932067	R-TextBorrow	13
 cbor	bd4932067	R-TextBorrow/tested	2
@@ -1765,6 +1766,7 @@ pluginabi	33aa4cc2c	R-RefillBuffer	2
 pluginabi	33aa4cc2c	R-RetAdopt	4
 pluginabi	33aa4cc2c	R-ReturnField	1
 pluginabi	33aa4cc2c	R-Reuse	11
+pluginabi	33aa4cc2c	R-SelfReplace	1
 pluginabi	33aa4cc2c	R-SingleUse	2
 pluginabi	33aa4cc2c	R-TextBorrow	26
 pluginabi	33aa4cc2c	R-TextBorrow/tested	2
@@ -2146,8 +2148,9 @@ zttext	bd4932067	R-RefillBuffer	14
 zttext	bd4932067	R-RefillText	1
 zttext	bd4932067	R-RetAdopt	3
 zttext	bd4932067	R-Reuse	6
-zttext	bd4932067	R-SameRead	1
+zttext	bd4932067	R-SameRead	2
 zttext	bd4932067	R-Scalar	3
+zttext	bd4932067	R-SelfReplace	17
 zttext	bd4932067	R-SingleUse	14
 zttext	bd4932067	R-TextBorrow	23
 zttext	bd4932067	R-TextBorrow/tested	1

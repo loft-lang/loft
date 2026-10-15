@@ -212,6 +212,10 @@ identity test — 17 M.  P1, the self-replace dropped (`runs` is the buffer's ow
 unchanged text three times: 10.13 ms (−1.3 %).  Both: 9.55 ms (−6.9 %, ≈ 4.92× — under the
 line).  P1 is general (any result built in its buffer and returned); P2 is a pure count of a
 text no statement between writes, which `(R-SameRead)` binds only within one statement.
+BUILT, both backends, as `(R-SelfReplace)` (`LOFT_NO_SELF_REPLACE`) and `(R-SameRead)`'s
+sequence clause (`LOFT_NO_SEQUENCE_READ`): 9.70 → 9.06 ms (−6.6 %, ≈ 4.93×; 985 → 923 M
+instructions), zttext `materialise` −23.9 %, `insert_text` level in instructions (its +8 % in
+time is layout); the row has left the cut.
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
@@ -247,7 +251,8 @@ before it; the slowest row goes first; a step with no price is priced before it 
    `encode` and left this row level.  Re-profiled: generated 43 % (`slice_runs` 22 %), claim
    and release 26 %, vector runtime 18 %; the 14 % that was text formatting is gone
    (`Str::to_string`, § 3 S13).  The run's text borrowed from its call's buffer, never copied
-   to a local, prices at −3.4 % and is dropped.  Next: price X3.
+   to a local, prices at −3.4 % and is dropped.  X3's call-text borrow and `place_line`'s two
+   levers are built since (≈ 4.93×): the row has left the cut.
 4. **`check_request` (5.07×)** — `(R-DecodeView)` instance 1 is BUILT: 2.55 → 1.67 ms
    (−34 %, 80 % of the −46 % hand price).  The row is on the line; what is left is flat —
    the store `decode` mints and frees per call (~10 %), the entries vector's build, and the

@@ -398,7 +398,11 @@ the leaf inliner):** each removes work the IR shows is redundant, and each has i
 its trace.  **`LOFT_NO_FORWARD_WALK=1`** keeps `for x in v` an iterator where the body cannot
 resize `v` (`@FR-R-ForwardWalk`); **`LOFT_NO_SAME_READ=1`** keeps both of two equal discharged
 reads in one statement (`@FR-R-SameRead`), and **`LOFT_NO_MATCH_READ=1`** alone its match
-clause, so each arm test of a slice `match` reads the subject again; **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
+clause, so each arm test of a slice `match` reads the subject again, and
+**`LOFT_NO_SEQUENCE_READ=1`** alone its sequence clause, so a store read the next statements
+repeat across a fresh record's fill is read again each time; **`LOFT_NO_SELF_REPLACE=1`**
+keeps the delivery of a buffer's own view into that buffer at every exit
+(`@FR-R-SelfReplace`, trace `LOFT_TRACE_SELF_REPLACE=1`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
 record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
 a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
 **`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local
