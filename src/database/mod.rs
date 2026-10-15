@@ -70,53 +70,12 @@ use std::time::Instant;
 /// Type alias for a native function callable from loft bytecode.
 pub type Call = fn(&mut Stores, &mut DbRef);
 
-/// Context injected into `Stores` by `State::execute()` so that native
-/// functions such as `n_parallel_for` / `n_parallel_for_light` can access
-/// the interpreter's bytecode, text segment, library, and compiled data
-/// for spawning workers.
-///
-/// All raw pointers are valid for the duration of the `execute()` call
-/// that set them.
-///
-/// A worker inherits its parent's context (`clone_for_light_worker_with_scratch`)
-/// so that a `par` inside a `par` worker can dispatch in turn — the pointers stay
-/// valid for a worker exactly as they do for the thread that set them, because
-/// workers are joined before `execute()` returns.
-#[derive(Clone)]
-pub struct ParallelCtx {
-    pub bytecode: *const Arc<Vec<u8>>,
-    pub library: *const Arc<Vec<Call>>,
-    pub data: crate::data_ref::DataRef,
-    /// Cached library index of `n_stack_trace`; `u16::MAX` = not found.
-    /// Copied into worker `State::stack_trace_lib_nr` so workers can snapshot
-    /// the call stack when `stack_trace()` is called (fix #92).
-    pub stack_trace_lib_nr: u16,
-    /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
-    pub frame_headroom: Arc<Vec<u32>>,
-    /// The running program's constant table (`State::const_refs`), handed to every worker
-    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
-    pub const_refs: Arc<Vec<DbRef>>,
-}
-
-impl ParallelCtx {
-    /// The definition table of the program this context was installed for.  Every
-    /// installer passes the run's own `Data`, so a context always carries one.
-    ///
-    /// # Panics
-    /// When the context was built without a definition table, which no installer does.
-    #[must_use]
-    pub fn data(&self) -> &crate::data::Data {
-        self.data
-            .get()
-            .expect("a parallel context carries its program's definitions")
-    }
-}
-
-// Safety: the pointed-to data lives for the duration of `State::execute()`,
-// which is on the main thread and outlives all worker threads it spawns
-// (workers are joined before execute() returns).
-unsafe impl Send for ParallelCtx {}
-unsafe impl Sync for ParallelCtx {}
+/// The interpreter's context, held by a store it runs on (`Stores::parallel_ctx`).  Opaque
+/// to the store; unwind-safe like the context it holds, so a `State` still crosses a
+/// `catch_unwind`.
+pub type InterpreterCtx = std::sync::Arc<
+    dyn std::any::Any + Send + Sync + std::panic::RefUnwindSafe + std::panic::UnwindSafe,
+>;
 
 /// TR1.4: snapshot of one local variable's runtime value, captured by
 /// `State::static_call` for inclusion in a `StackFrame.variables` vector.
@@ -547,9 +506,10 @@ pub struct Stores {
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
     pub last_json_errors: Vec<String>,
-    /// Set by `State::execute()` to allow native functions to access the
-    /// interpreter's bytecode, library, and compiled data during execution.
-    pub parallel_ctx: Option<Box<ParallelCtx>>,
+    /// The interpreter's context while it executes (`parallel::ParallelCtx`: its bytecode,
+    /// native table and program), set by `State::execute()` and read back by its `par`
+    /// natives.  Opaque here: the store a compiled program links never reads it.
+    pub parallel_ctx: Option<InterpreterCtx>,
     /// Plan-06 PRIORITY.md spine step 8a — stack of per-call result
     /// buffers populated by `n_parallel_queue` and consumed by
     /// `n_parallel_buf_get` / drained by `n_parallel_buf_drop`.  Each

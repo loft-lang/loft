@@ -206,7 +206,7 @@ fn bootstrap_core(
         .get("n_stack_trace")
         .copied()
         .unwrap_or(u16::MAX);
-    state.database.parallel_ctx = Some(Box::new(crate::database::ParallelCtx {
+    state.database.parallel_ctx = Some(std::sync::Arc::new(crate::parallel::ParallelCtx {
         bytecode: &raw const state.bytecode,
         library: &raw const state.library,
         data: data_ptr,

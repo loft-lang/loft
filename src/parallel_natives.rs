@@ -177,9 +177,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
     let v_input = stores.get::<DbRef>(stack);
 
     let (fn_pos, program) = {
-        let ctx = stores
-            .parallel_ctx
-            .as_ref()
+        let ctx = crate::parallel::ParallelCtx::of(stores)
             .expect("parallel_discard called outside State::execute()");
         let data = ctx.data();
         assert!(
@@ -215,10 +213,8 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
     // (`input_kind_for_first_arg` / `tuple_first_arg_types`), so a worker taking a
     // primitive, a text or a tuple row gets it the way its parameter slot expects.
     let (return_size, primitive_input_size, tuple_input_types, n_hidden_text, n_hidden_dests) = {
-        let ctx = stores
-            .parallel_ctx
-            .as_ref()
-            .expect("parallel_discard: missing context");
+        let ctx =
+            crate::parallel::ParallelCtx::of(stores).expect("parallel_discard: missing context");
         let data = ctx.data();
         let def = data.def(v_func as u32);
         let derived = u32::from(crate::variables::size(
@@ -358,9 +354,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         tuple_input_types,
         worker_return_size,
     ) = {
-        let ctx = stores
-            .parallel_ctx
-            .as_ref()
+        let ctx = crate::parallel::ParallelCtx::of(stores)
             .unwrap_or_else(|| panic!("{fn_label} called outside State::execute()"));
         let data = ctx.data();
         assert!(
@@ -600,9 +594,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
     let v_input = stores.get::<DbRef>(stack);
 
     let (fn_pos, program, element_size) = {
-        let ctx = stores
-            .parallel_ctx
-            .as_ref()
+        let ctx = crate::parallel::ParallelCtx::of(stores)
             .expect("parallel_fold called outside State::execute()");
         let data = ctx.data();
         assert!(

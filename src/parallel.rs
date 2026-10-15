@@ -1275,9 +1275,7 @@ pub(crate) fn read_tuple_at_wide(
     // `@FR-L-Tuple` — the `__tuple<…>` record's own finished positions where the program's
     // types are at hand (a stored tuple packs largest alignment first, and an inline struct
     // member has a width the hand-computed view cannot know); that view otherwise.
-    let in_vec_offsets: Vec<usize> = stores
-        .parallel_ctx
-        .as_ref()
+    let in_vec_offsets: Vec<usize> = ParallelCtx::of(stores)
         .and_then(|ctx| crate::data::stored_tuple_offsets(ctx.data(), stores, elem_types))
         .map_or_else(
             || crate::data::element_storage_offsets(elem_types),
@@ -1560,6 +1558,62 @@ pub fn run_parallel_block(
         }
     }
 }
+
+/// Context injected into `Stores` by `State::execute()` so that native
+/// functions such as `n_parallel_for` / `n_parallel_for_light` can access
+/// the interpreter's bytecode, text segment, library, and compiled data
+/// for spawning workers.  The store holds it as an opaque handle, since the store a
+/// compiled program links knows nothing of the interpreter; [`Self::of`] reads it back.
+///
+/// All raw pointers are valid for the duration of the `execute()` call
+/// that set them.
+///
+/// A worker inherits its parent's context (`clone_for_light_worker_with_scratch`)
+/// so that a `par` inside a `par` worker can dispatch in turn — the pointers stay
+/// valid for a worker exactly as they do for the thread that set them, because
+/// workers are joined before `execute()` returns.
+#[derive(Clone)]
+pub struct ParallelCtx {
+    pub bytecode: *const Arc<Vec<u8>>,
+    pub library: *const Arc<Vec<Call>>,
+    pub data: crate::data_ref::DataRef,
+    /// Cached library index of `n_stack_trace`; `u16::MAX` = not found.
+    /// Copied into worker `State::stack_trace_lib_nr` so workers can snapshot
+    /// the call stack when `stack_trace()` is called (fix #92).
+    pub stack_trace_lib_nr: u16,
+    /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
+    pub frame_headroom: Arc<Vec<u32>>,
+    /// The running program's constant table (`State::const_refs`), handed to every worker
+    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+    pub const_refs: Arc<Vec<DbRef>>,
+}
+
+impl ParallelCtx {
+    /// The context `stores` carries, when an interpreter installed one.
+    #[must_use]
+    pub fn of(stores: &Stores) -> Option<&ParallelCtx> {
+        let ctx: &dyn std::any::Any = stores.parallel_ctx.as_deref()?;
+        ctx.downcast_ref()
+    }
+
+    /// The definition table of the program this context was installed for.  Every
+    /// installer passes the run's own `Data`, so a context always carries one.
+    ///
+    /// # Panics
+    /// When the context was built without a definition table, which no installer does.
+    #[must_use]
+    pub fn data(&self) -> &crate::data::Data {
+        self.data
+            .get()
+            .expect("a parallel context carries its program's definitions")
+    }
+}
+
+// Safety: the pointed-to data lives for the duration of `State::execute()`,
+// which is on the main thread and outlives all worker threads it spawns
+// (workers are joined before execute() returns).
+unsafe impl Send for ParallelCtx {}
+unsafe impl Sync for ParallelCtx {}
 
 #[cfg(test)]
 mod stitch_tests {

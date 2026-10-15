@@ -1936,7 +1936,7 @@ pub(super) fn execute_log_impl(
         .get("n_stack_trace")
         .copied()
         .unwrap_or(u16::MAX);
-    state.database.parallel_ctx = Some(Box::new(super::ParallelCtx {
+    state.database.parallel_ctx = Some(std::sync::Arc::new(crate::parallel::ParallelCtx {
         data: data_ptr,
         bytecode: &raw const state.bytecode,
         library: &raw const state.library,
