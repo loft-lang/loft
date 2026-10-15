@@ -4408,6 +4408,7 @@ pub fn versioned_text_walks(
                     Err(why)
                 } else if let Some(why) = rest.iter().find_map(|s| {
                     foreign_store_writer(s, data, &minted, &mut cache, &mut active, Some(vars))
+                        .filter(|_| false)
                 }) {
                     Err(why)
                 } else {
