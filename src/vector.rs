@@ -726,7 +726,7 @@ pub fn rec_and_len(db: &DbRef, stores: &[Store]) -> (u32, u32) {
     if v_rec == 0 {
         (0, 0)
     } else {
-        (v_rec, store.get_u32_raw(v_rec, 4).saturating_sub(1))
+        (v_rec, store.get_u32_raw(v_rec, 4))
     }
 }
 
