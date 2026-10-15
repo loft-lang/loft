@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A warm start no longer reads the stdlib sources (2026-10-15)
+
+- Every run read and hashed `default/*.loft` twice — for the program bundle's stdlib key
+  (`startup_cache::stdlib_key_hex`) and for the compiled stdlib's dispatch check
+  (`compiled_stdlib::mark`): 240 kB through SHA-256 and a second hash, 4.5 ms of a 21 ms
+  warm `hello` (@PLN179 finding 001).  `cache::stdlib_fingerprint` keeps both answers in a
+  stamp beside the cache (each file's size and nanosecond mtime, the directory as given, the
+  build inputs the key folds in; one stamp per configuration, named by its header's hash),
+  so a warm run spends eight `stat`s on the question: `stdlib_key` 2.9 → 0.1 ms, the
+  compiled-stdlib mark 1.6 → 0.2 ms.  Any difference reads the sources and rewrites the
+  stamp; a stamp that does not parse or cannot be written costs the fast path only.
+  `LOFT_TIMING=1` prints the warm start's parts (`warm_load stdlib_key= manifest= bundle=`).
+  Unit cell `stdlib_fingerprint_follows_the_sources_through_its_stamp`.
+
 ### A registry dependency fires its type and builder triggers (2026-10-15)
 
 - `Parser::trigger_map` derived a declared dependency's triggers from a sibling, a `path =`

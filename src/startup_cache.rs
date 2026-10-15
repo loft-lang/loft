@@ -99,11 +99,7 @@ pub fn save_stdlib_cache(_p: &Parser, _default_dir: &str) {}
 /// renamed `default/` file changes it.  `None` when `default/` cannot be read.
 #[cfg(feature = "mmap")]
 fn stdlib_key_hex(default_dir: &str) -> Option<String> {
-    let srcs = crate::cache::collect_stdlib_sources(default_dir);
-    if srcs.is_empty() {
-        return None;
-    }
-    Some(hex32(&crate::cache::stdlib_cache_key(default_dir, &srcs)))
+    crate::cache::stdlib_fingerprint(default_dir).map(|(key, _)| hex32(&key))
 }
 
 #[cfg(feature = "mmap")]
@@ -422,10 +418,16 @@ pub fn warm_load_program(
     store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
-    let Some(state) = stdlib_key_hex(default_dir).and_then(|k| manifest_state(&manifest, &k))
-    else {
+    // `LOFT_TIMING`: the two halves of a warm start that are not the parse — hashing the
+    // stdlib sources for the key, and materialising the bundle (@PLN179 finding 001).
+    let t_key = std::time::Instant::now();
+    let key = stdlib_key_hex(default_dir);
+    let key_ms = t_key.elapsed().as_secs_f64() * 1000.0;
+    let t_manifest = std::time::Instant::now();
+    let Some(state) = key.and_then(|k| manifest_state(&manifest, &k)) else {
         return warm_miss("no manifest, or its build, stdlib or a source changed");
     };
+    let manifest_ms = t_manifest.elapsed().as_secs_f64() * 1000.0;
     // loft#1684 — the marks in the bundle were decided under the cold run's context; a
     // different one would mark differently.  And every auto-native artifact the marks
     // dispatch to must still be on disk (a sweep or `make rebuild-native-cdylibs` may have
@@ -467,6 +469,7 @@ pub fn warm_load_program(
     // bundle, reconstruct only the def table (bodies stay in the store), and
     // hand the store back so codegen reads bodies straight from it — skipping
     // read_data's body rebuild.  Otherwise full read_data (the M2/M5 default).
+    let t_load = std::time::Instant::now();
     let loaded = if std::env::var_os("LOFT_CODEGEN_STORE").is_some() {
         match crate::ir_read::open_program_store(&bundle_s) {
             Ok((stores, root, data, schema)) => {
@@ -486,6 +489,12 @@ pub fn warm_load_program(
             Err(_) => false,
         }
     };
+    if crate::keys::env_set("LOFT_TIMING") {
+        eprintln!(
+            "LOFT_TIMING warm_load stdlib_key={key_ms:.2}ms manifest={manifest_ms:.2}ms bundle={:.2}ms",
+            t_load.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     if !loaded {
         return warm_miss("the bundle did not load");
     }

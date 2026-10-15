@@ -743,7 +743,12 @@ and guarded by a COUNT, never by a time (@PLN166).
 
 - **By phase.**  `LOFT_TIMING=1` prints `parse_default`, `parse_user`, `scopes`, `lints` and
   `front_end`; the four phases sum to `front_end` (pinned by
-  `tests/compile_scaling.rs::loft_timing_phases_sum_to_the_front_end`).
+  `tests/compile_scaling.rs::loft_timing_phases_sum_to_the_front_end`).  On a warm start a
+  `warm_load` line splits `parse_default` into the stdlib fingerprint (`stdlib_key`, a stamp
+  of the sources' sizes and mtimes — `cache::stdlib_fingerprint` — never a read of them while
+  nothing moved), the drift manifest (`manifest`) and the bundle's materialisation (`bundle`:
+  the mmap'd store copied into the definition table, the one cost a warm start still pays
+  per definition), and `compiled stdlib: … (N us)` is the dispatch mark.
 - **Where a slower test's time went.**  With `LOFT_TIMING_LEDGER=<dir>` every loft process
   appends rows to `<dir>/timing-<pid>.tsv`: its phases (`parse_default`, `parse_user`,
   `scopes`, `lints`, `byte_code`, `native_emit`, `run`), the program's own native compile

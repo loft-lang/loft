@@ -204,9 +204,11 @@ binary) and so needs strand 4's `run` before any tool library — most of what t
 list had read as "needs nothing" — and **T8**, a shell fragment another script `source`s,
 which is not a program and is ported when its last consumer is.
 
-Still open in this strand: the start-up row above re-measured with `LOFT_PROFILE`, and the
-cross-check against `git ls-files` made a test once strand 4's `git` query exists (today it
-is a by-hand comparison, exact on 2026-09-29).
+Still open in this strand: the cross-check against `git ls-files` made a test once strand
+4's `git` query exists (today it is a by-hand comparison, exact on 2026-09-29).  The
+start-up row was re-measured on 2026-10-15 with `LOFT_TIMING=1`'s `warm_load` line and
+`strace` (`LOFT_PROFILE` samples operations and cannot see a start): finding 001 carries
+where a warm start's milliseconds go and what closed two of them.
 
 **A registry library on a box the registry cannot reach** (REASONS row 6): `git clone
 https://github.com/loft-lang/loft-libs-core` and copy the package under `~/.loft/lib/<name>`
