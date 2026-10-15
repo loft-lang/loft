@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 //! `@FR-R-ZeroCount` — a text's CHARACTER count compared against the zero boundary is its
 //! BYTE count compared against it.
 //!
