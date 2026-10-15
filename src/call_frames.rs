@@ -338,3 +338,20 @@ pub fn current_lib_idx() -> u16 {
 pub fn set_current_lib_idx(idx: u16) {
     CURRENT_LIB_IDX.with(|c| c.set(idx));
 }
+
+/// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance step.
+///
+/// When `aligned`, round `size` up to 8 (the max alignment on the
+/// stack) so successive pushes stay 8-aligned and every typed write
+/// lands on its required boundary; the LIFO pop reverses the same
+/// rounded step (the design's § 3 "uniform-8 step" choice).  When not
+/// `aligned`, returns `size` unchanged — V1's tight, real-size step.
+///
+/// This is the single seam the S4 work toggles: route every
+/// `stack_pos += size` / `-= size` and `stack.position += size` site
+/// through it so codegen and runtime advance in lockstep (S1).
+#[must_use]
+#[inline]
+pub fn aligned_stack_step(size: u32) -> u32 {
+    size.next_multiple_of(8)
+}

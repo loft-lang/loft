@@ -8,6 +8,8 @@ mod allocation;
 pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
+mod field_groups;
+pub use field_groups::{LinkedFieldGroup, LinkedFieldKind};
 mod format;
 mod io;
 pub mod journal;
@@ -3137,7 +3139,7 @@ impl Stores {
         // @PLAN53 cluster 2 / S4: pop the value's STEPPED span (8-rounded in
         // aligned mode) so a native arg occupying a stepped slot is reached
         // correctly; identity (real size_of) when off → flag-OFF unchanged.
-        let step = crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        let step = crate::call_frames::aligned_stack_step(size_of::<T>() as u32);
         debug_assert!(
             stack.pos >= step,
             "Stack underflow in get<{}>: stack.pos={} but need {} bytes",
@@ -3186,7 +3188,7 @@ impl Stores {
         // @PLAN53 cluster 2 / S4: push the value's STEPPED span so a native
         // result lands at the aligned slot the caller's codegen expects;
         // identity when off.
-        stack.pos += crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        stack.pos += crate::call_frames::aligned_stack_step(size_of::<T>() as u32);
     }
 
     /// Look up a type by index, panicking with a diagnostic if the index is out of range.

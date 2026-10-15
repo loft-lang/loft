@@ -7,6 +7,7 @@ use super::{
 };
 use crate::data::Deps;
 pub(crate) use crate::data::{is_collection, is_keyed};
+use crate::type_schema::StoreTypeOf;
 
 /// The neutral record type of a captured fn-ref's closure half (loft#1869).
 pub(crate) const FN_RECORD: &str = "__fn_record";

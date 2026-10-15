@@ -14,6 +14,32 @@ use std::collections::HashMap;
 #[cfg(feature = "native-extensions")]
 use std::sync::Mutex;
 
+/// @PLN24 arc D/G — one C library a package declared, as every consumer of the
+/// declaration needs to see it.
+///
+/// A named struct rather than a tuple because four sites read it and each reads
+/// a different field for a different purpose — the interpreter's load, the
+/// `--native` link line, the `--native` emission, and the availability query.
+/// A positional `bool` in a tuple is read wrong at one of them eventually, and
+/// this plan's counted risk is that such a mistake is SILENT.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CLibrary {
+    /// The soname as the dynamic linker knows it (`libpq.so.5`), or a path
+    /// relative to `pkg_dir` for a library the package ships itself.
+    pub name: String,
+    /// The declaring package's directory. It travels with the name because a
+    /// library may ship its own `.so` beside its `.loft`, so the name alone
+    /// cannot be resolved.
+    pub pkg_dir: String,
+    /// `[c] optional-libs` rather than `[c] libs`: the package works without
+    /// it, so it is NOT linked and NOT opened until a symbol needs it.
+    ///
+    /// The author's claim about their own library, never inferred from whether
+    /// a `dlopen` happened to succeed — that would make one package required on
+    /// one machine and optional on the next.
+    pub optional: bool,
+}
+
 /// Wrapper for `*const ()` that is Send — function pointers from cdylibs are
 /// valid for the process lifetime (the Library handle is leaked).
 #[cfg(feature = "native-extensions")]
@@ -369,7 +395,7 @@ pub fn try_dlsym_pub(name: &str) -> Option<(*const (), bool)> {
 /// `DT_NEEDED` entry to `--as-needed`. A flag consulted here would be a fourth
 /// place to get the same fact wrong.
 #[cfg(feature = "native-extensions")]
-static DECLARED_LIBS: std::sync::Mutex<Vec<(crate::data::CLibrary, Option<bool>)>> =
+static DECLARED_LIBS: std::sync::Mutex<Vec<(CLibrary, Option<bool>)>> =
     std::sync::Mutex::new(Vec::new());
 
 /// Soname → the `#c` symbols declared by the package that declared it. Read by
@@ -384,7 +410,7 @@ static LIB_SYMBOLS: std::sync::Mutex<Vec<(String, Vec<String>)>> =
 /// demand. Called by [`register`] with the whole list, so a re-registration
 /// (the REPL, the test runner) replaces it rather than appending.
 #[cfg(feature = "native-extensions")]
-pub fn set_declared_libraries(libs: Vec<crate::data::CLibrary>) {
+pub fn set_declared_libraries(libs: Vec<CLibrary>) {
     *DECLARED_LIBS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -439,7 +465,7 @@ fn open_pending_optional_named(only: Option<&[String]>) -> bool {
     // optional library's initialisers run arbitrary C, and holding the lock
     // across that would serialise every parallel arm resolving a symbol (the
     // shape P245 fixed in `native_auto_dispatch`).
-    let pending: Vec<crate::data::CLibrary> = {
+    let pending: Vec<CLibrary> = {
         let mut guard = DECLARED_LIBS
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -542,7 +568,7 @@ pub fn register_native(libs: &[(&str, &str)], syms: &[(&str, &[&str])]) {
     INIT.call_once(|| {
         set_declared_libraries(
             libs.iter()
-                .map(|(name, pkg_dir)| crate::data::CLibrary {
+                .map(|(name, pkg_dir)| CLibrary {
                     name: (*name).to_string(),
                     pkg_dir: (*pkg_dir).to_string(),
                     // The flag decides eager loading and the link line, both of

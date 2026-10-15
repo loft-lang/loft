@@ -27,6 +27,7 @@ use crate::data::{Data, Type};
 use crate::parser;
 use crate::scopes;
 use crate::state::{HostRetKind, HostReturn, State, WorkerArg};
+use crate::type_schema::StoreTypeOf;
 
 /// A typed value passed to, or returned from, a loft function.
 #[derive(Debug, Clone, PartialEq)]

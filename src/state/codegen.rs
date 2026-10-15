@@ -20,6 +20,7 @@ use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode, IrNodeList};
 use crate::stack::Stack;
 pub(crate) use crate::text_calls::{is_c_text_call, is_cdylib_text_call, is_text_dest_native};
+use crate::type_schema::StoreTypeOf;
 #[cfg(debug_assertions)]
 use crate::variables::Function;
 use crate::variables::size;

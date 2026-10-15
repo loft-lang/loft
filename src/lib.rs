@@ -413,6 +413,7 @@ pub mod store;
 pub mod store_budget;
 pub mod text_calls;
 pub mod trie_db;
+pub mod type_schema;
 mod typedef;
 pub mod ws_handshake;
 

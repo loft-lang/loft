@@ -5,6 +5,7 @@ use super::{
     Context, DefType, I32, Level, LexItem, OutputState, Parser, Parts, Type, Value,
     diagnostic_format, v_block, v_if, v_loop, v_set, var_size,
 };
+use crate::type_schema::StoreTypeOf;
 use crate::variables::Function;
 
 /// True when `v` (unspanned) is a CAPTURING fn-ref — `Value::FnRef` whose

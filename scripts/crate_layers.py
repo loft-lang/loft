@@ -67,8 +67,8 @@ LAYERS: list[tuple[str, list[str]]] = [
         "runtime_error", "rust_spelling", "sandbox", "schema_sidecar", "self_update", "siphash",
         "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops", "stdlib_sources",
         "store", "store_budget", "store_census", "take_local", "text_calls", "text_run",
-        "timeout", "tls", "trace", "trie_db", "triggers", "tuple_links", "variables", "vec_copy",
-        "vector", "verify_self", "wasm", "wasm_assets", "ws_handshake",
+        "timeout", "tls", "trace", "trie_db", "triggers", "tuple_links", "type_schema",
+        "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets", "ws_handshake",
     ]),
     ("front", [
         "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
@@ -118,7 +118,7 @@ RUNTIME: list[str] = [
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 36
+RUNTIME_BUDGET: int = 3
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 

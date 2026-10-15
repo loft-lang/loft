@@ -4,7 +4,6 @@
 //! Type definitions and type metadata for the database.
 
 use crate::calc;
-use crate::data::IntegerSpec;
 use crate::database::{Field, Parts, Stores, TYPEVAR_ROW_PREFIX};
 use crate::keys::Content;
 use std::collections::HashSet;
@@ -130,7 +129,7 @@ fn key_descriptor_for_content(content: u16, types: &[Type]) -> (i8, i32) {
 /// The kind is the caller's own identity, not a re-derivation from `(width, nullable)` —
 /// `Stores::short` is called with `nullable == false` for a slot that still uses the `+1`
 /// sentinel encoding, so the width and the flag together do not name the kind.
-fn narrow_part_name(kind: crate::data::NarrowIntKind, min: i32, nullable: bool) -> String {
+fn narrow_part_name(kind: crate::narrow::NarrowIntKind, min: i32, nullable: bool) -> String {
     kind.part_name(min, nullable)
         .expect("every narrow kind has a Part name; only the wide `Int` has none")
 }
@@ -931,18 +930,18 @@ impl Stores {
                 // where a native `&integer` link could not point.
                 let member_sa: Vec<(u16, u8)> =
                     g.field_indices.iter().map(|&i| sizes[i as usize]).collect();
-                let storage_alignment = crate::data::LinkedFieldGroup::group_alignment(
+                let storage_alignment = crate::database::LinkedFieldGroup::group_alignment(
                     &member_sa.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
                 );
                 // A stored tuple packs as a record (`@FR-L-Tuple`); an index group keeps its
                 // written order.
                 let (offsets, storage_size) =
-                    if matches!(g.kind, crate::data::LinkedFieldKind::Tuple) {
-                        crate::data::LinkedFieldGroup::record_member_offsets(&member_sa)
+                    if matches!(g.kind, crate::database::LinkedFieldKind::Tuple) {
+                        crate::database::LinkedFieldGroup::record_member_offsets(&member_sa)
                     } else {
                         (
-                            crate::data::LinkedFieldGroup::group_member_offsets(&member_sa),
-                            crate::data::LinkedFieldGroup::group_size(&member_sa),
+                            crate::database::LinkedFieldGroup::group_member_offsets(&member_sa),
+                            crate::database::LinkedFieldGroup::group_size(&member_sa),
                         )
                     };
                 (
@@ -1856,40 +1855,6 @@ impl Stores {
     /// `__nullable<S>` element keeps S's keys inside the `Some` variant's inline payload, so
     /// indexing the enum's own field list finds none of them.  Same rule as [`Self::hash`] and
     /// [`Self::create_key`] — one question, one answer, whichever kind asks it.
-    /// The registered database type of a keyed collection, or `u16::MAX` when this program
-    /// never registered it.  ONE home for the names [`Parser::get_type`] registers under
-    /// (`hash<T[k]>`, `spatial<T[k]>`, `trie<T[k]>`, `sorted<…>` or its `ordered<…>` spelling,
-    /// `index<…>`), so the parser's lookup and the native `par` emitter, which sizes a
-    /// worker's keyed result by it, cannot disagree.
-    ///
-    /// [`Parser::get_type`]: crate::parser::Parser
-    #[must_use]
-    pub fn keyed_type(&self, data: &crate::data::Data, tp: &crate::data::Type) -> u16 {
-        use crate::data::Type;
-        let tp = tp.base();
-        match tp {
-            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
-                let kind = if matches!(tp, Type::Hash(..)) {
-                    "hash"
-                } else {
-                    "spatial"
-                };
-                let mut name = format!("{kind}<{}[", data.def(*d).name());
-                self.field_name(data.def(*d).known_type(), key, &mut name);
-                self.name(&name)
-            }
-            Type::Trie(d, key, _) => self.name(&format!("trie<{}[{key}]>", data.def(*d).name())),
-            Type::Sorted(d, key, _) => {
-                let r = self.name(&keyed_name("sorted", data.def(*d).name(), key));
-                if r != u16::MAX {
-                    return r;
-                }
-                self.name(&keyed_name("ordered", data.def(*d).name(), key))
-            }
-            Type::Index(d, key, _) => self.name(&keyed_name("index", data.def(*d).name(), key)),
-            _ => u16::MAX,
-        }
-    }
 
     pub fn field_name(&self, content: u16, key: &[String], name: &mut String) -> Vec<u16> {
         let owner = self.key_owner(content);
@@ -1994,8 +1959,8 @@ impl Stores {
     pub fn add_tuple_group(&mut self, tp: u16, members: &[u16]) {
         self.types[tp as usize]
             .field_groups
-            .push(crate::data::LinkedFieldGroup {
-                kind: crate::data::LinkedFieldKind::Tuple,
+            .push(crate::database::LinkedFieldGroup {
+                kind: crate::database::LinkedFieldKind::Tuple,
                 instance: 0,
                 field_indices: members.to_vec(),
                 alignment: 0,
@@ -2058,7 +2023,7 @@ impl Stores {
     }
 
     pub fn byte(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = narrow_part_name(crate::data::NarrowIntKind::Byte, min, nullable);
+        let name = narrow_part_name(crate::narrow::NarrowIntKind::Byte, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2243,7 +2208,7 @@ impl Stores {
     }
 
     pub fn short(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = narrow_part_name(crate::data::NarrowIntKind::Short, min, nullable);
+        let name = narrow_part_name(crate::narrow::NarrowIntKind::Short, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2262,7 +2227,7 @@ impl Stores {
     /// fields with `u16` / `i16` continue to use `Parts::Short` (the
     /// legacy `+1` encoding with raw=0 null sentinel).
     pub fn short_raw(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = narrow_part_name(crate::data::NarrowIntKind::ShortRaw, min, nullable);
+        let name = narrow_part_name(crate::narrow::NarrowIntKind::ShortRaw, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2279,7 +2244,7 @@ impl Stores {
     /// as the null sentinel.  Stack values stay 8-byte i64 — narrowing
     /// happens at the field boundary via OpSetInt4/OpGetInt4.
     pub fn int(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = narrow_part_name(crate::data::NarrowIntKind::Int4, min, nullable);
+        let name = narrow_part_name(crate::narrow::NarrowIntKind::Int4, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2296,10 +2261,10 @@ impl Stores {
     /// sentinel, which is why `u32` is declared `limit(0, 4294967294)`.
     ///
     /// The 4-byte twin of [`Stores::short_raw`].  A slot picks between this and
-    /// [`Stores::int`] through [`crate::data::NarrowIntKind::part`], never by re-asking
+    /// [`Stores::int`] through [`crate::narrow::NarrowIntKind::part`], never by re-asking
     /// the range at the mint site.
     pub fn int_raw(&mut self, min: i32, nullable: bool) -> u16 {
-        let name = narrow_part_name(crate::data::NarrowIntKind::Int4Raw, min, nullable);
+        let name = narrow_part_name(crate::narrow::NarrowIntKind::Int4Raw, min, nullable);
         if let Some(nr) = self.names.get(&name) {
             *nr
         } else {
@@ -2458,47 +2423,6 @@ impl Stores {
         // question and the assert beside them exists to say so.
         if linked && value_tp != u16::MAX && (value_tp as usize) < self.types.len() {
             self.types[value_tp as usize].parents.insert(enum_tp);
-        }
-    }
-
-    pub fn db_type(&mut self, tp: &crate::data::Type, data: &crate::data::Data) -> u16 {
-        match tp {
-            crate::data::Type::Integer(IntegerSpec {
-                min: minimum,
-                not_null,
-                ..
-            }) => {
-                let nullable = !not_null;
-                let s = tp.size(nullable);
-                if s == 1 {
-                    self.byte(*minimum, nullable)
-                } else if s == 2 {
-                    self.short(*minimum, nullable)
-                } else {
-                    self.name("integer")
-                }
-            }
-            crate::data::Type::Enum(_, false, _) => self.name("byte"),
-            // #250: a nested-vector element type must resolve recursively — the
-            // `_` fallback below (`def(type_def_nr(tp)).known_type`) mis-resolves
-            // `vector<T>` to an unrelated default-library id (e.g. FieldValue),
-            // so a 3+-deep `vector<vector<vector<X>>>` copy got a bogus type-id
-            // and `copy_claims` dispatched as the wrong type → OOB panic.
-            //
-            // The element id comes from `Data::vector_element_type` — the one
-            // derivation of that fact, shared with the parser's `vector_of` and
-            // `typedef.rs::fill_database`.  Recursing through `db_type` instead
-            // re-entered the Integer arm below, which knows nothing of the
-            // element-side narrow forms (no `4 → int`, no `ShortRaw`) and so
-            // widened every narrow element to 8-byte `integer` (loft#624 nested).
-            crate::data::Type::Vector(elem, _) => {
-                let e = match data.vector_element_type(elem, self) {
-                    Some(e) => e,
-                    None => self.db_type(elem, data),
-                };
-                self.vector(e)
-            }
-            _ => data.def(data.type_def_nr(tp)).known_type,
         }
     }
 
@@ -3541,7 +3465,7 @@ pub struct Type {
     /// user structs.
     /// Tuple element groups live on the parser-side
     /// `Definition::field_groups` instead.
-    pub field_groups: Vec<crate::data::LinkedFieldGroup>,
+    pub field_groups: Vec<crate::database::LinkedFieldGroup>,
     pub(super) facts: TypeFacts,
     pub(super) prefill: PrefillImage,
     pub(super) heap_slots: HeapSlots,
@@ -3584,7 +3508,7 @@ impl Type {
         linked: bool,
         size: u16,
         align: u8,
-        field_groups: Vec<crate::data::LinkedFieldGroup>,
+        field_groups: Vec<crate::database::LinkedFieldGroup>,
     ) -> Type {
         let nullable_wrapper = name.starts_with("__nullable<");
         Type {
@@ -3718,23 +3642,6 @@ impl Type {
             _ => false,
         }
     }
-}
-
-/// `<kind><T[k1,-k2]>` — the spelling an ordered keyed collection is registered under: each
-/// key field by name, a descending one prefixed `-`.
-pub(crate) fn keyed_name(kind: &str, content: &str, key: &[(String, bool)]) -> String {
-    let mut name = format!("{kind}<{content}[");
-    for (k_nr, (k, asc)) in key.iter().enumerate() {
-        if k_nr > 0 {
-            name += ",";
-        }
-        if !asc {
-            name += "-";
-        }
-        name += k;
-    }
-    name += "]>";
-    name
 }
 
 #[cfg(test)]
@@ -4239,7 +4146,7 @@ mod layout_tests {
 
     #[test]
     fn group_alignment_helper_returns_max_member_alignment() {
-        use crate::data::LinkedFieldGroup;
+        use crate::database::LinkedFieldGroup;
         // Index triple: int4 (align 4), int4 (align 4), bool (align 1)
         assert_eq!(LinkedFieldGroup::group_alignment(&[4, 4, 1]), 4);
         // Tuple (byte, integer): byte (align 1), integer (align 8)
@@ -4254,7 +4161,7 @@ mod layout_tests {
 
     #[test]
     fn group_size_helper_packs_members_at_natural_alignment() {
-        use crate::data::LinkedFieldGroup;
+        use crate::database::LinkedFieldGroup;
         // Index triple [(4,4), (4,4), (1,1)]: 4 + 4 + 1 = 9, no padding
         assert_eq!(LinkedFieldGroup::group_size(&[(4, 4), (4, 4), (1, 1)]), 9);
         // Tuple (byte, integer): byte at 0, padding 1..7, integer at 8 → total 16

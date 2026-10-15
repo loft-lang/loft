@@ -24,8 +24,8 @@
 //! relocation), strings via a local JSON escaper, decode via
 //! `crate::json::parse`.  No serde.
 
-use crate::data::{LinkedFieldGroup, LinkedFieldKind};
 use crate::database::{Field, Parts, Stores, Type};
+use crate::database::{LinkedFieldGroup, LinkedFieldKind};
 use crate::json::Parsed;
 use crate::keys::{Content, Key, Str};
 use std::collections::BTreeSet;

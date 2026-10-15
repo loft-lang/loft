@@ -13,6 +13,7 @@ use crate::database::{Parts, Stores};
 use crate::diagnostics::{DiagEntry, Diagnostics, Level, diagnostic_format};
 use crate::lexer::{LexItem, LexResult, Lexer, Link, Mode, Position};
 use crate::platform::{other_sep, sep, sep_str};
+use crate::type_schema::StoreTypeOf;
 use crate::variables::{Function, size as var_size};
 use crate::{manifest, scopes, typedef};
 use std::collections::{BTreeSet, HashMap, HashSet};
