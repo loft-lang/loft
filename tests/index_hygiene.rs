@@ -111,7 +111,52 @@ fn check_index_matches_git() {
         indexed.len()
     );
 
-    let strays: Vec<&&str> = indexed.iter().filter(|p| !carried.contains(**p)).collect();
+    // The language suite's checkout beside this one (loft-lang/loft-suite, @PLN193) is a
+    // second enumeration: its rows carry the directory as a prefix and are checked against
+    // THAT repository's `git ls-files`.  A box without the checkout (CI) cannot judge those
+    // rows, so they are set aside and said so; they are never read as strays of this tree.
+    let suite_dir = std::env::var("LOFT_SUITE_DIR").unwrap_or_else(|_| "../loft-suite".to_string());
+    let suite_prefix = format!("{suite_dir}/");
+    let suite_carried: Option<std::collections::HashSet<String>> = if fa::is_dir(&suite_dir) {
+        let out = loft::platform::process::harness_command("git")
+            .args([
+                "-C",
+                &suite_dir,
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ])
+            .output()
+            .expect("failed to spawn git ls-files for the suite");
+        Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|l| format!("{suite_prefix}{l}"))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let suite_rows = indexed
+        .iter()
+        .filter(|p| p.starts_with(&suite_prefix))
+        .count();
+    if suite_carried.is_none() && suite_rows > 0 {
+        eprintln!(
+            "{suite_rows} indexed path(s) under {suite_prefix} not checked: no suite checkout here"
+        );
+    }
+    let strays: Vec<&&str> = indexed
+        .iter()
+        .filter(|p| {
+            if p.starts_with(&suite_prefix) {
+                suite_carried.as_ref().is_some_and(|c| !c.contains(**p))
+            } else {
+                !carried.contains(**p)
+            }
+        })
+        .collect();
     assert!(
         strays.is_empty(),
         "the index names {} file(s) git does not carry — the enumeration has \

@@ -243,7 +243,13 @@ What that buys, and none of it is available from a rule NAME alone:
 - **the re-assertion count is a query** — a rule's sites ARE its citations, so it stays right
   as code moves, instead of being re-derived per investigation;
 - **merge-or-not is arbitrated** — two sites citing ONE rule are candidates to merge; two
-  citing different rules stay apart however alike they look today.
+  citing different rules stay apart however alike they look today;
+- **the lookup crosses repositories** — the language suite (loft-lang/loft-suite, @PLN193)
+  keeps its cells under `rules/<chapter>/<rule>/` and each cites its rule, so a checkout
+  beside this one (`../loft-suite`, or `LOFT_SUITE_DIR`) is read by `make index` (its rows
+  carry the directory as a prefix: `./scripts/idx tag:@FR-B-Copy` lists the cells there
+  beside the sites here) and by `rule_tags.py coverage` (its `rules/` is a guard directory
+  by default).  Without the checkout both still answer, from this tree alone.
 
 **Two constraints the measurement forced** (numbers in [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md)):
 

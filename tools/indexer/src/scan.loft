@@ -73,6 +73,18 @@ fn indexable_files() -> vector<text> {
     for p in git::tracked_files() {
         if is_indexable_ext(p) { out += [p]; }
     }
+    // The language suite (loft-lang/loft-suite, @PLN193) holds the rule-linked corpus
+    // OUTSIDE this repository.  A checkout beside this one is enumerated the same way,
+    // its paths prefixed with the directory (`../loft-suite/rules/...`), so a rule's
+    // cells there answer `idx tag:@FR-<rule>` beside the code sites here.
+    // `LOFT_SUITE_DIR` names another checkout; an absent one is simply not indexed.
+    suite = env_variable("LOFT_SUITE_DIR");
+    if len(suite) == 0 { suite = "../loft-suite"; }
+    if file(suite).format == Format.Directory {
+        for p in git::tracked_files_in(suite) {
+            if is_indexable_ext(p) { out += ["{suite}/{p}"]; }
+        }
+    }
     out
 }
 

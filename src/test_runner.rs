@@ -342,6 +342,19 @@ pub(crate) fn run_tests(
     // whole machine.
     loft::store_budget::apply_env_limit(loft::store_budget::DEFAULT_TEST_LIMIT);
 
+    // `LOFT_LEAK_CHECK=1` — a function that returns CLEANLY but leaves a store behind FAILS
+    // (`@FR-H-FreeAll`: every store is freed exactly once by exit).  The corpus runner in
+    // `tests/wrap.rs` has gated the language corpus on this since @P317, and the suite that
+    // runs the corpus through this runner instead (@PLN193) must not be weaker than the
+    // harness it replaces.  Armed, not default: every library testbed runs `loft test`, and
+    // a gate that turns a published library's CI red overnight is a breaking change
+    // (COMPATIBILITY.md), so the default stays as it was and the suite arms it.  A
+    // function that faulted is not asked — the halt skips scope-exit cleanup, so its residue
+    // is an abort artefact (the same exemption `src/main.rs` applies at a program's exit).
+    // Under `--native` the child is asked the same question through
+    // `LOFT_NATIVE_LEAK_CHECK`, whose report the generated `main` prints on stderr.
+    let leak_check = std::env::var_os("LOFT_LEAK_CHECK").is_some();
+
     struct FileResult {
         tests: Vec<(String, bool, Option<String>)>, // (fn_name, passed, fail_msg)
         warnings: Vec<String>,
@@ -1962,12 +1975,24 @@ pub(crate) fn run_tests(
                                 // also read for the first `error:` line, which names why
                                 // the test failed.
                                 run_cmd = run_cmd.stdout(std::process::Stdio::inherit());
+                                if leak_check {
+                                    run_cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
+                                }
                                 let out = run_cmd
                                     .run(b"")
                                     .map_err(|e| format!("native run failed: {e}"))?;
                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                 eprint!("{stderr}");
                                 if out.status.success() {
+                                    // The generated `main` reports a residue as a WARNING
+                                    // with exit 0 (`NATIVE_LEAK_CHECK_TAIL`); under the gate
+                                    // that line is the verdict, as `tests/native.rs` reads it.
+                                    if let Some(line) = stderr
+                                        .lines()
+                                        .find(|l| l.contains("stores not freed at program exit"))
+                                    {
+                                        return Err(line.trim().to_string());
+                                    }
                                     return Ok(());
                                 }
                                 Err(native_failure(out.status, &stderr))
@@ -2044,7 +2069,15 @@ pub(crate) fn run_tests(
                         }))
                         .ok()
                     };
-                for (_, fn_name) in &test_fns {
+                for (d_nr, fn_name) in &test_fns {
+                    // The leak question is asked only of a function that returns NOTHING:
+                    // a value-returning one hands its result to its caller, and this runner
+                    // is no caller — it discards the value, so a residue there is the
+                    // runner's, not the program's.  The corpus entry-point rule
+                    // (`Definition::is_corpus_entry_point`) runs void functions only for the
+                    // same reason; `--tests` keeps arity (loft#1010), so it is narrowed here.
+                    let returns_void =
+                        matches!(clean_data.def(*d_nr).returned, crate::data::Type::Void);
                     // Per-function @IGNORE: skip without running.
                     if ann.ignore_fn.contains(fn_name.as_str()) {
                         file_result.tests.push((
@@ -2173,7 +2206,15 @@ pub(crate) fn run_tests(
                             .as_ref()
                             .map(|e| e.message.clone())
                             .unwrap_or_else(|| "runtime error".to_string());
-                        (fault, fault_msg)
+                        // The leak question, asked only of a function that returned
+                        // cleanly (see `leak_check` above).  Collected inside the closure
+                        // because the state is dropped with it.
+                        let leaks = if leak_check && !fault && returns_void {
+                            state.collect_store_leaks()
+                        } else {
+                            Vec::new()
+                        };
+                        (fault, fault_msg, leaks)
                     }));
 
                     // Evaluate pass/fail, respecting @EXPECT_FAIL annotations.
@@ -2184,7 +2225,15 @@ pub(crate) fn run_tests(
                         || (!ann.expect_fail_file.is_empty()
                             && !ann.expect_fail_fn.contains_key(fn_name.as_str()));
                     let (passed, fail_msg) = match result {
-                        Ok((fault, fault_msg)) => {
+                        Ok((_, _, leaks)) if !leaks.is_empty() => (
+                            false,
+                            Some(format!(
+                                "{} store(s) not freed at exit: {}",
+                                leaks.len(),
+                                leaks.join(", ")
+                            )),
+                        ),
+                        Ok((fault, fault_msg, _)) => {
                             if fault {
                                 // @P367: a typed runtime fault fired (no Rust panic).
                                 if should_fail && matches_expect_fail(&ann, fn_name, &fault_msg) {

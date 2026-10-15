@@ -10,6 +10,35 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `loft --tests` gates leaks under `LOFT_LEAK_CHECK=1` (@PLN193 P2, 2026-10-15)
+
+The language suite (loft-lang/loft-suite) runs every cell through `loft --tests`, the runner
+loft ships, instead of the in-crate corpus harness.  That harness (`tests/wrap.rs::run_test`)
+has failed a script that leaves a store at exit since @P317; `--tests` never asked, so the
+suite would have been weaker than the harness it replaces.  Now `LOFT_LEAK_CHECK=1` makes a
+function that returns NOTHING and returns cleanly but leaves a store behind FAIL, named by
+type; a value-returning function is not asked (its result is its caller's, and the runner is
+no caller — the corpus entry-point rule runs void functions only for the same reason), nor is
+one that faulted (the halt skips scope-exit cleanup — the exemption `src/main.rs` applies
+at a program's exit).  Under `--tests --native` the compiled program is asked through
+`LOFT_NATIVE_LEAK_CHECK` and its report line is the verdict, as `tests/native.rs` reads it.
+Armed, not default: every library testbed runs `loft test`, and a gate that turns a published
+library's CI red overnight is a breaking change.  Seed measurement: the 711 rule-linked corpus
+programs run through `loft --tests` on the interpreter pass 711/711 in 115 s wall (6 at a
+time, beside a release build); with `--deny-warnings` 141 of them fail on an unclaimed
+`never-read` / `dead-assignment` warning, so the suite keeps the harness's "an unclaimed
+warning is printed, not failed" and raises that bar chapter by chapter.
+LOFT_TEST.md § Flags.
+
+**The index and the coverage read the suite's checkout beside this one** (owner's ask,
+2026-10-15): `make index` enumerates `../loft-suite` (or `LOFT_SUITE_DIR`) through the new
+`git::tracked_files_in(dir)` and prefixes its rows with the directory, so `./scripts/idx
+tag:@FR-B-Copy` lists the rule's cells there beside the code sites here (55 of its 110 rows
+at the move); `tests/index_hygiene.rs` checks those rows against that repository's
+`git ls-files` and sets them aside where no checkout exists.  `scripts/rule_tags.py` reads the
+suite's `rules/` as a guard directory by default, so `coverage` keeps reporting the 412
+guarded rules once the programs leave this tree (335 come from the suite alone).
+
 ### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
 
 - `tests/common/lanes.rs`: `lanes(cap)` is the pool a test may run — `UNDER_NEXTEST` (8)

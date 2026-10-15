@@ -7970,6 +7970,12 @@ impl State {
             if s_nr == 0 && self.database.stack_store_at_zero {
                 continue; // stack store — always alive
             }
+            // A forked runtime's stack store (`fork_program`, a `par` worker) sits at a later
+            // index with no type: it is the frame, not a value, and never a leak.  Read as
+            // one under `LOFT_LEAK_CHECK` it failed 635 of 711 corpus cells as `kt=65535 ?×1`.
+            if s.stack_buffer {
+                continue;
+            }
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
                 continue;
             }

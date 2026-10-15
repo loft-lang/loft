@@ -83,9 +83,15 @@ def library_tags():
             for fl in r.get("files", []) for c in fl.get("cites", [])]
 
 
+# The language suite's checkout beside this repo (loft-lang/loft-suite, @PLN193): the index
+# enumerates it with the directory as a prefix, and every program there is a guard.
+SUITE_PREFIX = os.environ.get("LOFT_SUITE_DIR", "../loft-suite").rstrip("/") + "/"
+
+
 def kind_of(path):
-    """A citation under tests/ is a guard, one in a .md file a doc, anything else code."""
-    if path.startswith("tests/"):
+    """A citation under tests/ or in the suite is a guard, one in a .md file a doc, anything
+    else code."""
+    if path.startswith("tests/") or path.startswith(SUITE_PREFIX):
         return "guards"
     if path.endswith(".md"):
         return "docs"

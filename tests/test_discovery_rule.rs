@@ -245,3 +245,57 @@ fn test_c() { panic(\"c fails alone\"); }
         assert!(report.contains("(1 failed, 2 passed)"), "{report}");
     }
 }
+
+/// @PLN193 P2 — `LOFT_LEAK_CHECK=1` asks every function that returned cleanly whether it
+/// left a store behind, on both backends, and does not ask one that faulted (the halt skips
+/// scope-exit cleanup, so its residue is the halt's — the exemption `src/main.rs` applies at
+/// a program's exit).  What this guard can show on HEAD is the PASS half and the exemption:
+/// no program in the corpus leaks any more (`tests/wrap.rs` has gated that since @P317), and
+/// every free-related bisect switch still frees, so a leaking subject cannot be written
+/// here.  The FAIL half rests on the two readers it reuses, each guarded on its own: the
+/// interpreter asks `State::collect_store_leaks`, whose guard is `tests/leak.rs`, and the
+/// native child's `stores not freed at program exit` line is the one `tests/native.rs` has
+/// failed the corpus on.  The day a cell of the language suite leaks, its report is this
+/// gate's first falsification — record it here.
+#[test]
+fn the_leak_gate_asks_a_clean_return_and_not_a_fault() {
+    let src = "\
+struct Node { value: integer, next: reference<Node>? }
+fn test_a_walk_frees_what_it_built() {
+  c = Node { value: 4, next: null };
+  b = Node { value: 2, next: c };
+  a = Node { value: 1, next: b };
+  cur: Node? = a;
+  total = 0;
+  while cur != null { total = total + cur.value; cur = cur.next; }
+  assert(total == 7, \"walked 1+2+4\");
+}
+// @EXPECT_FAIL: held on purpose
+fn test_a_fault_is_not_asked() {
+  held = [1, 2, 3];
+  assert(len(held) == 0, \"held on purpose\");
+}
+";
+    // The interpreter runs both; `--native` skips the `@EXPECT_FAIL` one (it cannot catch
+    // a fault), so the native report reads `1 passed` with the fault SKIPPED — the clean
+    // walk is what the armed gate must pass on both.
+    for (case, extra, passed) in [
+        ("leak_interp", &[][..], "2 passed"),
+        ("leak_native", &["--native"][..], "1 passed"),
+    ] {
+        let armed = run_tests_env(case, src, extra, &[("LOFT_LEAK_CHECK", "1")]);
+        assert!(
+            armed.contains("test result: ok.")
+                && armed.contains(passed)
+                && !armed.contains("not freed"),
+            "{case}: a clean return passes the armed gate and a declared fault is not asked:\n{armed}"
+        );
+    }
+    // Unarmed, the runner says nothing about stores at all — the default a library's
+    // `loft test` keeps until it opts in.
+    let plain = run_tests("leak_unarmed", src, &[]);
+    assert!(
+        plain.contains("2 passed") && !plain.contains("not freed"),
+        "{plain}"
+    );
+}

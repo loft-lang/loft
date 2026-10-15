@@ -163,6 +163,7 @@ the recursive walk.
 | `--tests file::{a,b}` | Run specific test functions in a file |
 | `--native` | Compile to native Rust instead of interpreting (with `--tests`) |
 | `--no-warnings` | Suppress warning diagnostics in test output |
+| `LOFT_LEAK_CHECK=1` (env) | A function that returns cleanly but leaves a store behind FAILS, named by type (`1 store(s) not freed at exit: kt=68 Node×3`); under `--native` the compiled program is asked the same (`LOFT_NATIVE_LEAK_CHECK`).  Asked only of a function that returns NOTHING (a value-returning one hands its result to its caller, and the runner is no caller) and that did not fault (a halt's residue is the halt's, as at a program's exit).  Armed, not default: a library's CI that opts in gates its own leaks; the language suite (loft-lang/loft-suite) always arms it, so it is no weaker than the corpus runner it replaced (@PLN193) |
 
 ⚠ **Put the mode flag BEFORE `--tests`.**  `--tests` takes the NEXT token as its optional
 `[dir|file]`, and it does not check whether that token is a flag — so `loft --tests --interpret

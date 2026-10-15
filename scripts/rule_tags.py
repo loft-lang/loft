@@ -96,8 +96,16 @@ CITE_EXTS = os.environ.get("CITE_EXTS", ".rs,.loft").split(",")
 MIN_ANNOTATED = int(os.environ.get("RULE_MIN_ANNOTATED", "70"))
 MIN_GUARDED = int(os.environ.get("RULE_MIN_GUARDED", "40"))
 TESTS = os.path.join(ROOT, "tests")
+# The language suite (loft-lang/loft-suite, @PLN193) holds the rule-linked corpus OUTSIDE
+# this repo, under rules/<chapter>/<rule>/.  A sibling checkout is read as a guard directory
+# by default, so `coverage` keeps answering "which rules does a test verify" across the two
+# repos — measured at the move: 412 guarded rules with both, 335 from the suite alone.
+# `LOFT_SUITE_DIR` names another checkout; GUARD_DIRS replaces the whole list.
+SUITE_DIR = os.environ.get("LOFT_SUITE_DIR", os.path.join(ROOT, "..", "loft-suite"))
+SUITE_RULES = os.path.join(SUITE_DIR, "rules")
 GUARD_DIRS = (os.environ["GUARD_DIRS"].split(":")
-              if os.environ.get("GUARD_DIRS") else [TESTS])
+              if os.environ.get("GUARD_DIRS")
+              else [TESTS] + ([SUITE_RULES] if os.path.isdir(SUITE_RULES) else []))
 GUARD_EXTS = os.environ.get("GUARD_EXTS", ".rs,.loft").split(",")
 
 # A rule is DEFINED by a rules-block line `  (Name)  prose` or a deviation header `### Name —`.
