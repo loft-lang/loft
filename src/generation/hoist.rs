@@ -4770,22 +4770,32 @@ pub fn borrowed_store_texts(
             if let Some(m) = minted_rb.as_ref()
                 && locals.contains(&v)
             {
-                let tested =
-                    match foreign_store_writer(scope, data, m, &mut cache, &mut active, Some(vars))
-                    {
-                        Some(w2) => Err(w2),
-                        None => param_roots_of(body, v, data, vars)
-                            .ok_or("a binding not rooted in a parameter"),
-                    };
+                let narrow = tested_scope(body, v, data);
+                let tested = match foreign_store_writer(
+                    narrow,
+                    data,
+                    m,
+                    &mut cache,
+                    &mut active,
+                    Some(vars),
+                ) {
+                    Some(w2) => Err(w2),
+                    None => param_roots_of(body, v, data, vars)
+                        .ok_or("a binding not rooted in a parameter"),
+                };
                 match tested {
                     Ok(roots) => {
                         out.tested.insert(v, roots);
                         continue;
                     }
                     Err(w2) if trace => eprintln!(
-                        "[text-borrow] {}: `{}` not tested either — {w2}",
+                        "[text-borrow] {}: `{}` not tested either — {w2} (over {})",
                         def.name(),
-                        vars.name(v)
+                        vars.name(v),
+                        match narrow {
+                            Value::Block(b) => b.name,
+                            _ => "the body",
+                        }
                     ),
                     Err(_) => {}
                 }
@@ -5066,6 +5076,72 @@ fn minted_expr(e: &Value, data: &Data, minted: &HashSet<u16>) -> bool {
         }
         _ => false,
     }
+}
+
+/// The tested clause's scope of text local `v`: the innermost block holding every mention of
+/// `v` but its LITERAL binds, whose result is no text — the body when none is.  A literal
+/// bind holds static bytes no write can move, so the borrow lives from a store-read bind to
+/// the uses after it; and a block whose value is not a text cannot hand the borrow out (a
+/// text leaving otherwise is an escape `text_escapes` refuses).
+fn tested_scope<'a>(body: &'a Value, v: u16, data: &Data) -> &'a Value {
+    // A literal bind, the null text's bind and the text's release (`OpFreeText`, no code for
+    // a borrow) are not mentions the borrow lives across.
+    fn count(node: &Value, v: u16, data: &Data) -> usize {
+        let mut c = 0usize;
+        let mut skip = 0usize;
+        node.any_node(&mut |n| {
+            match n {
+                Value::Set(x, to)
+                    if *x == v
+                        && (matches!(to.unspan(), Value::Text(_) | Value::Null)
+                            || call_named(to, data, "OpConvTextFromNull").is_some()) =>
+                {
+                    skip += 1;
+                }
+                Value::Call(_, args)
+                    if call_named(n, data, "OpFreeText").is_some()
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
+                {
+                    skip += 1;
+                }
+                Value::Var(x) | Value::Set(x, _) if *x == v => c += 1,
+                _ => {}
+            }
+            false
+        });
+        // A skipped release's operand is a `Var` the walk counted on its own.
+        c.saturating_sub(skip)
+    }
+    fn size(node: &Value) -> usize {
+        let mut s = 0usize;
+        node.any_node(&mut |_| {
+            s += 1;
+            false
+        });
+        s
+    }
+    fn walk<'a>(
+        node: &'a Value,
+        v: u16,
+        data: &Data,
+        total: usize,
+        best: &mut Option<(&'a Value, usize)>,
+    ) {
+        if let Value::Block(b) = node
+            && !matches!(b.result.base(), Type::Text(_))
+            && count(node, v, data) == total
+        {
+            let s = size(node);
+            if best.is_none_or(|(_, bs)| s < bs) {
+                *best = Some((node, s));
+            }
+        }
+        node.for_each_child(&mut |c| walk(c, v, data, total, best));
+    }
+    let total = count(body, v, data);
+    let mut best: Option<(&Value, usize)> = None;
+    walk(body, v, data, total, &mut best);
+    best.map_or(body, |(b, _)| b)
 }
 
 /// The innermost statement block (a `void` block) holding every mention of `v` — the body
