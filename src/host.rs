@@ -160,7 +160,9 @@ impl std::error::Error for LoftError {}
 
 /// A loaded, compiled loft program ready to be called from Rust.
 pub struct Program {
-    data: Data,
+    /// Shared, not owned: every call hands the table to `State::execute_host`, which
+    /// keeps it as an `Arc` — a plain `Data` would be copied whole on each call.
+    data: std::sync::Arc<Data>,
     state: State,
 }
 
@@ -193,7 +195,10 @@ impl Program {
         let mut data = p.data;
         let mut state = State::new(p.database);
         compile::byte_code(&mut state, &mut data);
-        Ok(Program { data, state })
+        Ok(Program {
+            data: std::sync::Arc::new(data),
+            state,
+        })
     }
 
     /// Load every `.loft` file of the library package rooted at `pkg_dir`
@@ -234,7 +239,10 @@ impl Program {
         let mut data = p.data;
         let mut state = State::new(p.database);
         compile::byte_code(&mut state, &mut data);
-        Ok(Program { data, state })
+        Ok(Program {
+            data: std::sync::Arc::new(data),
+            state,
+        })
     }
 
     /// How many stores this program holds — the base a caller translates a
@@ -605,4 +613,32 @@ fn default_stdlib_dir() -> String {
         return dir;
     }
     "default".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// loft#2011 — a call shares the program's definition table with the state that runs
+    /// it.  A copy per call made every call into a placed library clone the whole stdlib.
+    #[test]
+    fn a_call_shares_the_definition_table() {
+        let mut p = Program::from_source("pub fn add(a: integer, b: integer) -> integer { a + b }")
+            .expect("program compiles");
+        for (a, b, sum) in [(2, 3, 5), (40, 2, 42)] {
+            assert_eq!(
+                p.call("add", &[Value::Int(a), Value::Int(b)]).unwrap(),
+                Value::Int(sum)
+            );
+            let shared = p
+                .state
+                .data_ptr
+                .shared()
+                .expect("a call installs the table");
+            assert!(
+                std::sync::Arc::ptr_eq(&p.data, shared),
+                "the call ran against a copy of the definition table"
+            );
+        }
+    }
 }
