@@ -13,9 +13,16 @@
 // callee before the append).  Copied: v3 (the walk also appends a padded copy of each word to
 // a log in the parameter's own record — a growth of the store the words live in).
 //
-// @falsified-by: tests/falsified/a-walk-borrows-its-word-in-the-versioned-copy.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
-//   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch drops the writer
-//   test, so v3's walk borrows its word across the log's growth and reads scribbled bytes.
+// @falsified-at: none — two plants measured INERT on every channel, plain and under
+//   LOFT_POISON=1: the copy's run-time test answered `true` always (no road this suite knows
+//   hands a return buffer that lives in a parameter's store: `r.out = lex(r.words)` takes a
+//   buffer of its own, so the plain copy is never the one that runs), and the writer test
+//   dropped (v3's walk is then admitted, but its loop is never versioned: the header gate
+//   declines a push through a parameter's field first, and every other writer of the
+//   parameter's store meets an older gate — a text set beside a push, a non-exclusive push).
+//   The cells pin both copies' values; the writer test and the run-time test stand as the
+//   rule's text, which `tests/versioned_text_walk.rs` pins by trace (v3 refused, the switch
+//   removing every versioned borrow).
 
 struct Tok { kind: integer, word: text }
 struct Rec { words: vector<text>, log: vector<text>, n: integer }
