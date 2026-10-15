@@ -5107,6 +5107,62 @@ alone) and
 `tests/same_read.rs`
 (which statements bind; the cells with the rewrite off).
 
+### A store read a run of statements repeats is one read
+
+```
+  (R-SameRead) + THE SEQUENCE CLAUSE: a pure computation with a scalar result that reads a
+                 store (a read operator, or a text's count, `t_4text_len` / `t_4text_size`,
+                 over one), evaluated outside a short circuit by one statement — a local's
+                 assignment or a field write — and again by later statements of the same
+                 block, is bound once before the first.  Between them stand only (a)
+                 assignments of pure values to locals the computation does not read, and
+                 (b) field writes into a record the block minted earlier
+                 (`e = OpNewRecord(…)`, `e` not assigned since) and its `OpFinishRecord`.
+                 Every local the computation reads holds a scalar or a text, or names a
+                 record of a type other than every minted one whose fields are all scalars
+                 and texts — so no collection it reads can be one a minted record joins, and
+                 no record it reads is a minted one.  An assignment to a local the
+                 computation reads may be the last statement that uses it: its value is
+                 computed before the assignment.  The largest shared computation is bound;
+                 a variable and a literal is not.
+```
+
+**In words.** Applied by: `same_read::bind_sequences`, in the IR phase (both backends).
+`place_line` counts the characters of one unchanged run text three times — the box's end, the
+line's end, the next offset (`roff + len(r.str)` each time), with the box's push between.
+The backends cannot merge the three: the count walks the text's bytes, and the push writes the
+store the text lives in.  The minted record is the only one written, so the count is the same
+each time.  Measured on `flow_layout_full` with `(R-SelfReplace)`: below.
+`LOFT_NO_SEQUENCE_READ=1` switches the clause off alone.  Guard
+`tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft` — a push between
+(bound), the read text rewritten between (`r.str = …`, a write into a record not minted:
+kept), the read vector grown between (`len(rs)` with `rs += […]`, a collection the minted
+record joins: kept), a read local assigned between (only the count is shared).
+
+### A vector delivered into the buffer it already is
+
+```
+  (R-SelfReplace) `OpReplaceVector(B, x)` after `x = OpGetField(B, 0, …)` in the body's
+                 own statement list is dropped when no statement after that binding assigns
+                 `x` or `B`, hands either to an operator's slot parameter
+                 (`OpDatabase(pos, …)` writes the slot) or frees either.  The two are then
+                 the same reference at every such replace, and `Stores::vector_replace` of a
+                 vector by itself changes nothing.
+```
+
+**In words.** Applied by: `self_replace::rewrite_program`, in the IR phase (both backends).
+A function that builds its result in its buffer names the vector as a view of it, and the
+parser delivers that local at every exit (`return runs`), because it emits the delivery
+wherever a local leaves.  The replace answers the identity case only after asking about parse
+errors and reading both slots: in `slice_runs`, 17 M of the 126 M instructions per call.
+Built with `(R-SameRead)`'s sequence clause: `flow_layout_full` 9.70 → 9.06 ms (−6.6 %,
+985 → 923 M instructions), zttext's `materialise` −23.9 %; the price was −6.9 %.  Census:
+19 admissions (zttext 17, cbor 1, pluginabi 1).  `LOFT_NO_SELF_REPLACE=1`.  Guard
+`tests/scripts/a-vector-delivered-into-its-own-buffer-is-not-copied.loft` — a builder that
+returns its buffer's view early and at the tail (dropped); one that rebinds its result to
+another vector and one that returns one of two locals (kept: each replace names a buffer the
+view is not, and a later statement rebinds or frees the view's store).
+
 ### `(R-InlineLeaf)` takes a tuple result
 
 ```

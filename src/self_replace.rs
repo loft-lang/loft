@@ -10,8 +10,8 @@
 //! `Stores::vector_replace` answers the identity case without a change — but only after it
 //! has asked about parse errors and read both slots.  This pass drops the replace when the
 //! IR proves the two are the same reference: the view is bound once, in the body's own
-//! statement list (so exactly once per call), and after that binding neither the view nor
-//! `B` is assigned, re-pointed by an operator that writes a variable's slot, or freed.
+//! statement list (so exactly once per call, and before every replace it can reach), and
+//! after that binding neither the view nor `B` is assigned, re-pointed by an operator that writes a variable's slot, or freed.
 //! One IR rewrite on the closed program, so both backends get it; `LOFT_NO_SELF_REPLACE=1`
 //! is the switch.
 use crate::data::{Data, DefType, Value};
@@ -45,21 +45,6 @@ fn disturbed(data: &Data, code: &[Value], v: u16) -> bool {
     })
 }
 
-/// How many times is `v` assigned in `code`?
-fn sets(code: &[Value], v: u16) -> usize {
-    let mut n = 0;
-    for s in code {
-        s.walk(&mut |m| {
-            if let Value::Set(x, _) | Value::TuplePut(x, _, _) | Value::Iter(x, _, _, _) = m
-                && *x == v
-            {
-                n += 1;
-            }
-        });
-    }
-    n
-}
-
 /// Drop the self-replaces of one body's statement list; answers how many.
 fn drop_in(data: &Data, ops: &mut [Value], replace: u32, field: u32) -> usize {
     let mut views: Vec<(usize, u16, u16)> = Vec::new();
@@ -77,7 +62,7 @@ fn drop_in(data: &Data, ops: &mut [Value], replace: u32, field: u32) -> usize {
     let mut dropped = 0;
     for (k, x, b) in views {
         let after = &ops[k + 1..];
-        if x == b || sets(ops, x) != 1 || disturbed(data, after, x) || disturbed(data, after, b) {
+        if x == b || disturbed(data, after, x) || disturbed(data, after, b) {
             continue;
         }
         for s in &mut ops[k + 1..] {
