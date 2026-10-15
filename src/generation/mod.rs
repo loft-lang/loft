@@ -5908,6 +5908,8 @@ impl Output<'_> {
             record_push: !self.record_push_disabled,
             heap_push: !self.heap_record_push_disabled,
             rebound_movers: !self.rebound_mover_disabled,
+            // Never here: only `hoist::hoistable`'s header verdict admits a text set.
+            text_set: false,
         }
     }
 
@@ -6541,12 +6543,19 @@ impl Output<'_> {
 
     /// A text VALUE that borrows no store memory, so a store write may read its bytes where
     /// they are instead of copying them first (`OpSetText`'s claim can move the store a
-    /// borrowed text points into): a literal, an owned text local, or a block that answers
-    /// one — the synthesised text a decoder builds into its work string.
+    /// borrowed text points into): a literal, the null text (`OpConvTextFromNull`, the static
+    /// `STRING_NULL` bytes — `x.f = null` copied them into a `String` per write), an owned text
+    /// local, or a block that answers one — the synthesised text a decoder builds into its
+    /// work string.  Anything else answers no and is copied: a copy is never wrong.
     #[must_use]
     pub fn text_value_unborrowed(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Text(_) => true,
+            Value::Call(d, args) => {
+                args.is_empty()
+                    && (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name() == "OpConvTextFromNull"
+            }
             Value::Var(w) => self.text_owned(*w),
             Value::Block(b) => b
                 .operators

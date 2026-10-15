@@ -313,7 +313,7 @@ pub fn hoistable_vectors(
         in_place: allow_in_place,
         ..HoistTiers::default()
     };
-    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None) {
+    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None, true) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -389,6 +389,12 @@ pub struct HoistTiers {
     /// `(R-Mint)`'s rebound clause — a mover the body REBINDS to a fresh buffer or element
     /// slot takes no holder instead of declining the loop (`LOFT_NO_REBOUND_MOVER` off).
     pub rebound_movers: bool,
+    /// `(R-Header)`'s text clause — a text set (`OpSetText`, `OpSetTextReplace`) admitted.
+    /// Set ONLY by [`hoistable`] for the loop's header verdict, never by the emitter's
+    /// [`Output`](super::Output) tiers: a text set claims and frees text records, which moves
+    /// no vector's record or length but may grow its store, so a reader of the gate that
+    /// holds an ADDRESS (a record view's pointer, a push header) must keep declining it.
+    pub text_set: bool,
 }
 
 /// For the decline trace: descend `op`'s statement lists to the innermost statement that
@@ -476,6 +482,9 @@ fn innermost_blocking<'a>(
 /// in a loop whose store writes are all in place, so the two cannot disagree about which
 /// loops qualify.
 /// Enforces `@FR-R-InPlace` as the ONE gate `@FR-R-Header` and `@FR-R-Scalar` stand behind.
+// The seven parameters are `blocks_header_hoist`'s context and whether this verdict is the
+// final one (a verdict asked again under the text clause traces only its second answer).
+#[allow(clippy::too_many_arguments)]
 fn body_blocks_hoist(
     body: &Block,
     data: &Data,
@@ -484,9 +493,10 @@ fn body_blocks_hoist(
     cache: &mut HashMap<u32, bool>,
     tiers: HoistTiers,
     owned: Option<&HoistOwned>,
+    traced: bool,
 ) -> bool {
     let mut fresh: HashSet<u16> = HashSet::new();
-    let trace = std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
+    let trace = traced && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
     body.operators.iter().any(|op| {
         let blocks = blocks_header_hoist(
             op,
@@ -1240,9 +1250,39 @@ pub fn hoistable(
     owned: Option<&HoistOwned>,
     facts: Option<&StoreFacts>,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
+    // `(R-Header)`'s text clause: a loop the gate declines is asked again with its text sets
+    // admitted, so a loop that hoisted without the clause hoists exactly as it did.
+    let clause = crate::keys::text_set_header_enabled();
+    let text_grown = if !body_blocks_hoist(
+        body,
+        data,
+        Some(stores),
+        def_nr,
+        cache,
+        tiers,
+        owned,
+        !clause,
+    ) {
+        None
+    } else if clause
+        && !body_blocks_hoist(
+            body,
+            data,
+            Some(stores),
+            def_nr,
+            cache,
+            HoistTiers {
+                text_set: true,
+                ..tiers
+            },
+            owned,
+            true,
+        )
+    {
+        Some(text_set_roots(body, data))
+    } else {
         return apart_hoist(body, data, def_nr, facts);
-    }
+    };
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
@@ -1430,6 +1470,25 @@ pub fn hoistable(
         }
         out.movers = movers;
     }
+    // A loop admitted through its text sets grows the stores they claim in.  It may not also
+    // push, mint or reserve: a push header carries what the store's buffer looked like, and
+    // the clause is stated for a loop that grows through text alone.  Its bases are kept only
+    // for vectors proven apart from every store a text set writes — none when a target's
+    // root is unknown.
+    if let Some(roots) = &text_grown {
+        if !out.movers.is_empty() || !pushes.is_empty() || !mints.is_empty() {
+            if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+                eprintln!(
+                    "hoist: {} loop {} declined: it writes a text and also pushes, mints or reserves",
+                    data.def(def_nr).name(),
+                    body.scope
+                );
+            }
+            return apart_hoist(body, data, def_nr, facts);
+        }
+        crate::rewrite_census::fired("R-Header/text", 1);
+        out.movers = roots.clone().unwrap_or_default();
+    }
     if !pushes.is_empty() || !mints.is_empty() {
         let rebound_movers: Vec<u16> = pushes
             .iter()
@@ -1494,7 +1553,8 @@ pub fn hoistable(
     // templates (an element that is no struct — a vector of vectors — or a tier switched
     // off) appends through the runtime and grows its store all the same, and a base bound
     // for a sibling field of the same record would address the buffer that growth freed.
-    out.growth_free = out.pushes.is_empty() && mints.is_empty() && !dropped_mover;
+    out.growth_free =
+        out.pushes.is_empty() && mints.is_empty() && !dropped_mover && text_grown.is_none();
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
@@ -7505,6 +7565,53 @@ fn fresh_text_set(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
         && matches!(args[0].unspan(), Value::Var(e) if fresh.contains(e))
 }
 
+/// The text-set operators `(R-Header)`'s text clause admits: each writes one text slot of
+/// the record it is given, claiming the new text's record and freeing the old one in that
+/// record's store.  Neither changes a vector's record or length, so a held header survives.
+fn is_text_set(name: &str) -> bool {
+    matches!(name, "OpSetText" | "OpSetTextReplace")
+}
+
+/// The ROOT variable of every text set in `body` — the store each one grows — or `None` when
+/// one's target has a root this cannot name.  A target is a variable or a projection of
+/// one (an element, a field), whose store is its root's (`StoreFacts::distinct` reads the
+/// root's dep chain).
+fn text_set_roots(body: &Block, data: &Data) -> Option<Vec<u16>> {
+    fn root(v: &Value, data: &Data) -> Option<u16> {
+        match v.unspan() {
+            Value::Var(r) => Some(*r),
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpGetVector" | "OpGetVectorNullable" | "OpGetField"
+                    ) =>
+            {
+                root(args.first()?, data)
+            }
+            _ => None,
+        }
+    }
+    let mut roots: Vec<u16> = Vec::new();
+    let mut known = true;
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && is_text_set(data.def(*d).name())
+            {
+                match args.first().and_then(|t| root(t, data)) {
+                    Some(r) if !roots.contains(&r) => roots.push(r),
+                    Some(_) => {}
+                    None => known = false,
+                }
+            }
+            false
+        });
+    }
+    known.then_some(roots)
+}
+
 /// `LOFT_NO_FRESH_TEXT_SET=1` — a text written into a just-minted element blocks the loop's
 /// header hold again.
 fn fresh_text_set_enabled() -> bool {
@@ -7659,6 +7766,8 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
             let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers, owned);
+            // `(R-Header)`'s text clause — the text set's target and value still walk below.
+            let text_set = known && tiers.text_set && is_text_set(data.def(*d).name());
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -7674,6 +7783,7 @@ fn blocks_header_hoist(
                 || fresh_delivery
                 || record_copy
                 || fresh_copy
+                || text_set
             {
                 false
             } else if call_writes_store(*d, data, cache, active, owned) {
