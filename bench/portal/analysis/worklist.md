@@ -127,6 +127,29 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.52 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
 | 5.09 | `forms_upto` | X12 | no figure |
 
+**Re-profiled at `1ed832afe`** (the portal run of that commit; callgrind, each routine counted
+alone with `--toggle-collect`).  Eleven rows over 5×, with the share of the row each lever
+addresses and the cut it needs to reach 5×:
+
+| × | row | where the time goes | lever | cut to 5× |
+|--:|---|---|---|--:|
+| 6.86 | `reload_and_record` | the key-ordered walk of four hashes ~33 % (sort 14 %, `step_ordered` 8 %, `entries`, `OpStep`); the compound-key probe ~32 % (`hash::find` 15 %, `key_compare` 7 %, `int_key_part`, `Stores::find`) — the twin walks its `HashMap` unordered | the walk's decision (§ 6) | −27 % |
+| 6.53 | `mapfile_to_painted` | keyed INSERTS: `keys::hash` 13 %, `hash::find` 6 %, `arena::alloc` 4 %, `probe_for_insert`, `rehash_into`; the ordered walk ~6 % | none priced that reaches the line | −23 % |
+| 6.27 | `invert` | copies ~48 % (`memcpy` 24 %, `copy_claims`, `copy_block`, `OpCopyRecord`) | X10 | −20 % |
+| 6.15 | `truncate_to` | each history push copies and releases a record of plain vectors (`copy_plain_vectors`, `copy_block`, `release_plain_vectors` ~15 %); the allocator ~15 % | the allocator, then the move of the dead entry | −19 % |
+| 5.94 | `panel_build` | the allocator ~35 %: ~160 k claims and ~115 k frees per run at ~250 instructions each, where the twin's `malloc`/`free` are ~3 % | the allocator | −16 % |
+| 5.63 | cbor `encode` | `key_lt` 20 % — the canonical key order compares keys byte by byte through checked reads, where the twin compares two slices | a slice compare | −11 % |
+| 5.61 | `flow_layout_full` | generated code: `slice_runs` 26 %, `place_line` 10 %, `next_line` 6 %, `seg` 5 % | X3 (unpriced) | −11 % |
+| 5.17 | `insert_text` | copies ~70 % (`memcpy` 27 %, `copy_block` 20 %, `OpCopyRecord` 18 %): `return Doc { buf: nb, pieces: np }` deep-copies two dead locals into the caller's store | X10 | −3 % |
+| 5.17 | cbor `encode_bytes` | the byte runs appended (`encode__ap` 22 %, `head__ap` 9 %, `append_bytes` 8 %, `vector_replace` 7 %) | X9 | −3 % |
+| 5.09 | `forms_upto` | generated 54 % (`forms_upto__rg` 36 %, `form_closes` 18 %); the allocator ~9 % | the allocator | −2 % |
+| 5.06 | `check_request` | `read_value__dv__d` 17 %, `store_mut` 7 %, the allocator ~8 % | the allocator | −1 % |
+
+The allocator is the one lever five rows share: `Store::claim` and `delete` at ~250 instructions
+each (the free tree's descent, a split and the remainder's insert, the claim set) on stores
+that have freed blocks; `arguments/parse`'s claims (wilderness, few) priced at −0.7 % and say
+nothing of these.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
