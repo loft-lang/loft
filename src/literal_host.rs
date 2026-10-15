@@ -42,8 +42,10 @@ struct Ops {
     free_if_distinct: u32,
     place: u32,
     move_vec: u32,
-    /// The ops that would take `cur` as an OWNER — consume, place in, or release it.
-    consuming: Vec<u32>,
+    /// The ops that would take `cur` as an OWNER — consume, place in, or release it; an op
+    /// this build lacks is `u32::MAX`, which no call names.  An array: the lookup runs once
+    /// per function, and the front end's allocation count is pinned.
+    consuming: [u32; 8],
 }
 
 impl Ops {
@@ -62,9 +64,7 @@ impl Ops {
             "OpPlaceRecord",
             "OpEvacuate",
         ]
-        .iter()
-        .filter_map(|n| nr(n))
-        .collect();
+        .map(|n| nr(n).unwrap_or(u32::MAX));
         Some(Self {
             database: nr("OpDatabase")?,
             get_field: nr("OpGetField")?,
