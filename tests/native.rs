@@ -802,19 +802,23 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
 /// the cache has room for.  Compiling EVERY program first put the whole corpus (~1 800
 /// binaries, ~22 GB) on the temp filesystem at once; a 16 GB tmpfs filled about 1 100 in and
 /// the rest were skipped as `compile failed` (loft#1859).
-fn run_native_jobs(
-    jobs: Vec<NativeJob>,
-    rlib_info: Option<(PathBuf, PathBuf)>,
-) -> std::io::Result<()> {
+/// How many of `jobs` native compiles [`run_native_jobs`] runs at once.
+fn native_lanes(jobs: usize) -> usize {
     // Layer 3: scale worker count to temp-fs headroom.  On a roomy disk this is
     // just min(cpus, jobs); on a tight RAM-backed tmpfs it clamps down so N
     // concurrent compiles can't exhaust memory and hang the machine.
     let cpu_max = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
+    loft::platform::native_worker_count(cpu_max, jobs, &native_scratch(), PER_WORKER_TMP)
+}
+
+fn run_native_jobs(
+    jobs: Vec<NativeJob>,
+    rlib_info: Option<(PathBuf, PathBuf)>,
+) -> std::io::Result<()> {
     let scratch = native_scratch();
-    let concurrency =
-        loft::platform::native_worker_count(cpu_max, jobs.len(), &scratch, PER_WORKER_TMP);
+    let concurrency = native_lanes(jobs.len());
     let rlib_ref = &rlib_info;
     sweep_older_build(rlib_ref);
     let skips_before = LOW_SPACE_SKIPS.load(std::sync::atomic::Ordering::Relaxed);
@@ -1282,8 +1286,9 @@ fn native_scripts_run(files: Vec<PathBuf>, suite: common::timing::Suite) -> std:
     }
     let batch = format!("rustc + run, {} programs", jobs.len());
     let unit = suite.begin(&batch);
+    let lanes = native_lanes(jobs.len());
     let ran = run_native_jobs(jobs, rlib_info);
-    suite.end(&batch, unit);
+    suite.end_parallel(&batch, unit, lanes);
     if !not_generated.is_empty() {
         println!("  not generated: {}", not_generated.join(", "));
         return Err(std::io::Error::other(format!(
@@ -1297,7 +1302,7 @@ fn native_scripts_run(files: Vec<PathBuf>, suite: common::timing::Suite) -> std:
 }
 
 /// How many tests the native script corpus is split across — see [`native_scripts_chunk`].
-const NATIVE_SCRIPT_CHUNKS: usize = 32;
+const NATIVE_SCRIPT_CHUNKS: usize = 64;
 
 macro_rules! native_script_chunks {
     ($($name:ident = $k:expr),* $(,)?) => {
@@ -1343,6 +1348,38 @@ native_script_chunks!(
     native_scripts_29 = 29,
     native_scripts_30 = 30,
     native_scripts_31 = 31,
+    native_scripts_32 = 32,
+    native_scripts_33 = 33,
+    native_scripts_34 = 34,
+    native_scripts_35 = 35,
+    native_scripts_36 = 36,
+    native_scripts_37 = 37,
+    native_scripts_38 = 38,
+    native_scripts_39 = 39,
+    native_scripts_40 = 40,
+    native_scripts_41 = 41,
+    native_scripts_42 = 42,
+    native_scripts_43 = 43,
+    native_scripts_44 = 44,
+    native_scripts_45 = 45,
+    native_scripts_46 = 46,
+    native_scripts_47 = 47,
+    native_scripts_48 = 48,
+    native_scripts_49 = 49,
+    native_scripts_50 = 50,
+    native_scripts_51 = 51,
+    native_scripts_52 = 52,
+    native_scripts_53 = 53,
+    native_scripts_54 = 54,
+    native_scripts_55 = 55,
+    native_scripts_56 = 56,
+    native_scripts_57 = 57,
+    native_scripts_58 = 58,
+    native_scripts_59 = 59,
+    native_scripts_60 = 60,
+    native_scripts_61 = 61,
+    native_scripts_62 = 62,
+    native_scripts_63 = 63,
 );
 
 /// Every chunk index has its test: a chunk count raised without a matching test would drop that
@@ -1382,6 +1419,38 @@ fn native_script_chunks_cover_the_corpus() {
         "native_scripts_29",
         "native_scripts_30",
         "native_scripts_31",
+        "native_scripts_32",
+        "native_scripts_33",
+        "native_scripts_34",
+        "native_scripts_35",
+        "native_scripts_36",
+        "native_scripts_37",
+        "native_scripts_38",
+        "native_scripts_39",
+        "native_scripts_40",
+        "native_scripts_41",
+        "native_scripts_42",
+        "native_scripts_43",
+        "native_scripts_44",
+        "native_scripts_45",
+        "native_scripts_46",
+        "native_scripts_47",
+        "native_scripts_48",
+        "native_scripts_49",
+        "native_scripts_50",
+        "native_scripts_51",
+        "native_scripts_52",
+        "native_scripts_53",
+        "native_scripts_54",
+        "native_scripts_55",
+        "native_scripts_56",
+        "native_scripts_57",
+        "native_scripts_58",
+        "native_scripts_59",
+        "native_scripts_60",
+        "native_scripts_61",
+        "native_scripts_62",
+        "native_scripts_63",
     ];
     assert_eq!(
         names.len(),

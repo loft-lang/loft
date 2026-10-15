@@ -161,6 +161,9 @@ pub struct Suite {
     budget: Duration,
     start: Unit,
     rows: std::sync::Arc<std::sync::Mutex<Vec<(String, Duration, Duration)>>>,
+    /// The CPU each row is CHARGED against the budget: its own, or a parallel batch's
+    /// divided by the jobs it ran at once ([`Suite::end_parallel`]).
+    charged: std::sync::Arc<std::sync::Mutex<Duration>>,
     current: std::sync::Arc<std::sync::Mutex<Option<(String, Instant)>>>,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -196,6 +199,7 @@ impl Suite {
             budget,
             start: Unit::start(),
             rows: std::sync::Arc::default(),
+            charged: std::sync::Arc::default(),
             current: std::sync::Arc::default(),
             done: std::sync::Arc::default(),
         };
@@ -247,10 +251,29 @@ impl Suite {
 
     /// `label` is done: print its line, keep its row, and record it for `LOFT_TEST_TIMING`.
     pub fn end(&self, label: &str, unit: Unit) {
+        self.end_parallel(label, unit, 1);
+    }
+
+    /// [`Suite::end`] for a batch that ran up to `lanes` jobs at once (the native runner's
+    /// parallel `rustc`): its CPU is printed whole and charged to the budget divided by
+    /// `lanes`, the time it holds the chunk on an unloaded machine.
+    pub fn end_parallel(&self, label: &str, unit: Unit, lanes: usize) {
         let wall = unit.wall.elapsed();
         let cpu = cpu(Who::Own).saturating_sub(unit.own) + cpu(Who::Kids).saturating_sub(unit.kids);
+        let lanes = u32::try_from(lanes.max(1)).unwrap_or(u32::MAX);
+        if let Ok(mut c) = self.charged.lock() {
+            *c += cpu / lanes;
+        }
+        let shared = if lanes > 1 {
+            format!(
+                " ({lanes} at once: {:.1}s charged)",
+                (cpu / lanes).as_secs_f64()
+            )
+        } else {
+            String::new()
+        };
         println!(
-            "  {:6.1}s cpu {:6.1}s wall  {label}",
+            "  {:6.1}s cpu {:6.1}s wall  {label}{shared}",
             cpu.as_secs_f64(),
             wall.as_secs_f64()
         );
@@ -277,18 +300,23 @@ impl Suite {
         let cpu = cpu(Who::Own).saturating_sub(self.start.own)
             + cpu(Who::Kids).saturating_sub(self.start.kids);
         let rows = self.rows.lock().map(|r| r.clone()).unwrap_or_default();
+        // Charged: each row's CPU, a parallel batch's divided by its lanes; what no row holds
+        // (the runner's own setup) is charged whole.
+        let in_rows: Duration = rows.iter().map(|r| r.2).sum();
+        let charged = self.charged.lock().map_or(cpu, |c| *c) + cpu.saturating_sub(in_rows);
         let report = format!(
-            "{}: {} programs, {:.1}s cpu, {:.1}s wall, budget {}s.  Slowest:\n{}",
+            "{}: {} programs, {:.1}s cpu, {:.1}s charged, {:.1}s wall, budget {}s.  Slowest:\n{}",
             self.name,
             rows.len(),
             cpu.as_secs_f64(),
+            charged.as_secs_f64(),
             wall.as_secs_f64(),
             self.budget.as_secs(),
             slowest(&rows, 8)
         );
         println!("{report}");
         // A platform without `getrusage` reads zero CPU, so it is judged on nothing here.
-        if cpu > self.budget {
+        if charged > self.budget {
             return Err(std::io::Error::other(format!(
                 "over budget — a program that needs this much is wrong, not the budget.\n{report}"
             )));
