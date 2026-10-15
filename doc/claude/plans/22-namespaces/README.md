@@ -232,9 +232,9 @@ stay at step 1.
 ### Phase 1 — BUILT (2026-06-14)
 
 Built in the chokepoint-first order above.  The boundary matrix (`/tmp/claude/pln22`,
-graduated to [`tests/scripts/369-pln22-shared-enum-variants.loft`](../../../../tests/scripts/369-pln22-shared-enum-variants.loft)
+graduated to `loft-suite/attic/scripts/369-pln22-shared-enum-variants.loft`
 for the working cases + a `@EXPECT_ERROR` case in
-[`102-expected-errors.loft`](../../../../tests/scripts/102-expected-errors.loft))
+`loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft`)
 is green on **both** backends.
 
 **The rule (owner decision, 2026-06-14):** a bare variant resolves as a VALUE only
@@ -282,7 +282,7 @@ context (regression: the `Cfg` case in 369).
 ### Phase 2 — prelude shadowing (M)
 
 **BUILT (2026-06-14).**  Matrix + regression
-([`tests/scripts/370-pln22-prelude-shadowing.loft`](../../../../tests/scripts/370-pln22-prelude-shadowing.loft);
+(`loft-suite/attic/scripts/370-pln22-prelude-shadowing.loft`;
 the built-in-keyword reject in `102-expected-errors.loft`) green on both backends;
 full suite green bar the 3 known-environmental.  As-built notes: **(a)** the
 `fill_database` loop guarded struct/enum DB registration on the *bare name*, so a

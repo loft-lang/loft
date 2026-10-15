@@ -965,7 +965,8 @@ impl Parser {
                 // distinguish `fn(args)` (lambda) from `fn name(args)`.
                 let lexer_link = self.lexer.link();
                 self.lexer.token("fn");
-                let is_named_fn = !matches!(self.lexer.peek().has, crate::lexer::LexItem::Token(ref t) if t == "(");
+                let is_named_fn =
+                    !matches!(self.lexer.peek().has, crate::lexer::LexItem::Token(t) if t == "(");
                 self.lexer.revert(lexer_link);
                 if is_named_fn { Some("fn") } else { None }
             } else {
@@ -1119,7 +1120,7 @@ impl Parser {
                 self.parse_store_else(&mut n);
                 t = Type::Void;
             }
-            self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if tok == "null")
+            self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "null")
                 && matches!(n.unspan(), Value::Null);
             self.stmt_if_pending = saved_stmt_if;
             // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
@@ -4359,7 +4360,7 @@ impl Parser {
         //     reasoning).  Probes 03, 04, 07, 11, 25, 26, 28 remain
         //     leaky; their substitution requires extending into IR
         //     wrappers which is parser-invasive (an earlier attempt
-        //     broke tests/scripts/87-store-leaks.loft because
+        //     broke loft-suite/attic/scripts/87-store-leaks.loft because
         //     conditional Sets to cv interact with paired_witness in
         //     ways that a blanket "substitute every Set(cv, Call)"
         //     doesn't handle correctly).
@@ -7393,7 +7394,7 @@ impl Parser {
         // `match_arm_types_unify` strips the wrapper rather than requiring the two to agree.
         // So it is not a conversion question, and asking `convert` for it re-points the
         // sibling arm's value — the extractor pattern's wildcard stopped answering its own
-        // literal (`tests/scripts/35-nested-match.loft`).  A `&τ` on EITHER side is passed
+        // literal (`loft-suite/attic/scripts/35-nested-match.loft`).  A `&τ` on EITHER side is passed
         // through: an arm whose borrow also needs a width change keeps the gap the wrapper
         // already had, and narrowing it further needs the borrow to convert, not this site.
         if matches!(t, Type::RefVar(_)) || matches!(expected, Type::RefVar(_)) {
@@ -8384,16 +8385,16 @@ impl Parser {
         loop {
             match &self.lexer.peek().has.clone() {
                 LexItem::None => break,
-                LexItem::Token(t) if depth == 0 && t == "," => {
+                LexItem::Token(t) if depth == 0 && *t == "," => {
                     self.lexer.cont();
                     break;
                 }
-                LexItem::Token(t) if depth == 0 && t == "}" => break,
-                LexItem::Token(t) if t == "{" || t == "(" || t == "[" => {
+                LexItem::Token(t) if depth == 0 && *t == "}" => break,
+                LexItem::Token(t) if *t == "{" || *t == "(" || *t == "[" => {
                     depth += 1;
                     self.lexer.cont();
                 }
-                LexItem::Token(t) if t == "}" || t == ")" || t == "]" => {
+                LexItem::Token(t) if *t == "}" || *t == ")" || *t == "]" => {
                     depth -= 1;
                     self.lexer.cont();
                 }
@@ -9071,11 +9072,11 @@ impl Parser {
                 let mut depth = 0i32;
                 loop {
                     match &self.lexer.peek().has.clone() {
-                        LexItem::Token(t) if t == "{" => {
+                        LexItem::Token(t) if *t == "{" => {
                             depth += 1;
                             self.lexer.cont();
                         }
-                        LexItem::Token(t) if t == "}" => {
+                        LexItem::Token(t) if *t == "}" => {
                             depth -= 1;
                             self.lexer.cont();
                             if depth == 0 {
@@ -9286,18 +9287,18 @@ impl Parser {
                 loop {
                     match &self.lexer.peek().has.clone() {
                         LexItem::None => break,
-                        LexItem::Token(t) if t == "{" || t == "[" || t == "(" => {
+                        LexItem::Token(t) if *t == "{" || *t == "[" || *t == "(" => {
                             depth += 1;
                             self.lexer.cont();
                         }
-                        LexItem::Token(t) if t == "}" || t == "]" || t == ")" => {
+                        LexItem::Token(t) if *t == "}" || *t == "]" || *t == ")" => {
                             if depth == 0 {
                                 break;
                             }
                             depth -= 1;
                             self.lexer.cont();
                         }
-                        LexItem::Token(t) if t == "," && depth == 0 => break,
+                        LexItem::Token(t) if *t == "," && depth == 0 => break,
                         _ => self.lexer.cont(),
                     }
                 }
@@ -16662,7 +16663,10 @@ impl Parser {
         }
         let kt = self.data.def(td).known_type();
         let copy_d = self.data.def_nr("OpCopyRecord");
-        let orig = std::mem::replace(tail, Value::Null);
+        let mut orig = std::mem::replace(tail, Value::Null);
+        // A source that may be nothing but cannot be RE-READ, because a user call is in it
+        // (loft#2006), is read once into a local first, and the copy tests that local.
+        let bind = self.bind_return_source(td, &mut orig);
         // A NULLABLE local as the source (`cur: Node?` after a walk) may hold nothing, and
         // `OpCopyRecord` of a null source leaves the destination an allocated EMPTY record —
         // presence standing in for absence.  Copy only where the source is present; the
@@ -16670,11 +16674,18 @@ impl Parser {
         // A stored `reference<T>?` read (`h.link`, loft#1977) is the same: absent when the
         // field holds null, so a `-> S?` copies it only where present.  The read is pure, so
         // the test re-reads it.
+        // A local typed DENSE can hold nothing too (`@FR-N-Store`: a `null` handed to a dense
+        // parameter is held by it, and a bind of that parameter copies the null), so the
+        // copy tests every local it is of, whatever the local and the function are typed
+        // (`@FR-N-Road`).
         let absent_guard = match orig.unspan() {
-            Value::Var(v) if matches!(self.vars.tp(*v), Type::Optional(_)) => Some(Value::Var(*v)),
-            Value::Call(d, _)
-                if *d == self.data.def_nr("OpGetDbRef")
-                    && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+            Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
+            // A FIELD of a record that may be absent is absent with it (loft#2006).  The read
+            // is pure, so the test re-reads it.
+            // So is an element or a keyed entry that is not there, and anything read off one.
+            // The re-read is safe only where no user call is in it.
+            Value::Call(_, _)
+                if !self.ir_has_user_call(&orig) && self.copy_source_may_be_absent(&orig) =>
             {
                 Some(orig.clone())
             }
@@ -16690,13 +16701,21 @@ impl Parser {
             Type::Reference(td, Deps::frame1(w)),
             "materialized_view_return",
         );
-        *tail = match absent_guard {
+        let tested = match absent_guard {
             Some(v) => crate::data::v_if(
                 self.cl("OpRefIsNull", &[v]),
                 self.cl("OpNullRefSentinel", &[]),
                 copy,
             ),
             None => copy,
+        };
+        *tail = match bind {
+            Some(set) => crate::data::v_block(
+                vec![set, tested],
+                Type::Reference(td, Deps::frame1(w)),
+                "return_source",
+            ),
+            None => tested,
         };
         // @PLN130 — parser-emitted materialisation: `return f.field` must publish an OWNED
         // record, not a view into a frame-local. See `ParserMaterialise`.
@@ -16807,6 +16826,122 @@ impl Parser {
         }
     }
 
+    /// May record local `v` hold nothing when a return copies it?  A local typed `τ?` may.
+    /// One typed dense may too (`@FR-N-Store`), where a null can have reached it: a record
+    /// PARAMETER holds the `null` it was handed; an OWNED local (no dep) is a copy of some
+    /// value or the result of a call, either of which may be nothing; and a local that views
+    /// another RECORD is what that record is.  A local that views a COLLECTION is a bound
+    /// element, which is there; a literal's own buffer is asked by nobody
+    /// ([`Self::branch_has_nullable_leaf`] and the copy stop at an `Object` block).  A local
+    /// typed by a template's TYPE VARIABLE is asked only where it is written `T?`: its
+    /// instance may be a tuple, whose test is not the record's.
+    fn record_local_may_be_absent(&self, v: u16) -> bool {
+        fn asks(p: &Parser, v: u16, seen: &mut Vec<u16>) -> bool {
+            let tp = p.vars.tp(v);
+            if matches!(tp, Type::Optional(_)) {
+                return true;
+            }
+            let record = matches!(tp.base(), Type::Reference(d, _)
+                if !p.data.is_type_var_placeholder(*d) && tp.heap_def_nr().is_some());
+            if !record || seen.contains(&v) {
+                return false;
+            }
+            seen.push(v);
+            if p.vars.is_argument(v) {
+                return true;
+            }
+            let deps = tp.depend();
+            deps.is_empty() || deps.iter().any(|d| asks(p, *d, seen))
+        }
+        asks(self, v, &mut Vec::new())
+    }
+
+    /// May the SOURCE of a whole-record copy be absent: a record local that may hold nothing
+    /// ([`Self::record_local_may_be_absent`]), or a FIELD PATH rooted at one — an inline
+    /// field of a record that is not there is not there (`o.inner` of a null `o`).  So is
+    /// what a read answers (`OpGet…`: an element out of range, a keyed entry that is not
+    /// there, a stored reference that holds none) and what a user CALL answers, and
+    /// anything read off either (loft#2006).  Whether the copy may RE-READ the source to
+    /// test it is a second question, [`Self::bind_return_source`]'s.
+    fn copy_source_may_be_absent(&self, src: &Value) -> bool {
+        match src.unspan() {
+            Value::Var(v) => self.record_local_may_be_absent(*v),
+            Value::Call(d, args) if *d == self.data.def_nr("OpGetField") && args.len() == 3 => {
+                self.copy_source_may_be_absent(&args[0])
+            }
+            Value::Call(d, _) => {
+                let def = self.data.def(*d);
+                let name = def.name();
+                name.starts_with("OpGet")
+                    || (!name.starts_with("Op") && def.returned().heap_def_nr().is_some())
+            }
+            _ => false,
+        }
+    }
+
+    /// loft#2006 — read a return copy's SOURCE once, where a user call in it forbids the
+    /// re-read its test would be: a read path whose ROOT is a user call binds that call to an
+    /// owned local first (`_ret_root_N = f(x)`, the spelling `d = f(x); return d.inner`),
+    /// and a read path with a user call elsewhere (an index: `w[next(c)].a`) is read once
+    /// into a `τ?` handle that views what it reads (`_ret_src_N`).  `src` is rewritten to
+    /// read the local, and the bind is answered for the caller to put first.  Pass 2 only,
+    /// and never in a generic template, whose instance may hold a tuple: nothing is bound
+    /// there, and such a source stays a bare copy.
+    fn bind_return_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
+        let read = |p: &Parser, v: &Value| {
+            matches!(v.unspan(), Value::Call(d, args)
+                if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet"))
+        };
+        if self.first_pass
+            || matches!(self.data.def(self.context).def_type(), DefType::Generic)
+            || self.data.is_type_var_placeholder(td)
+            || !read(self, src)
+            || !self.ir_has_user_call(src)
+        {
+            return None;
+        }
+        // The root of the read path: the first operand of each read, down to what it reads.
+        fn root_of<'a>(p: &Parser, v: &'a Value) -> &'a Value {
+            match v.unspan() {
+                Value::Call(d, args)
+                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
+                {
+                    root_of(p, &args[0])
+                }
+                other => other,
+            }
+        }
+        fn replace_root(p: &Parser, v: &mut Value, with: Value) -> Value {
+            match v.unspan_mut() {
+                Value::Call(d, args)
+                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
+                {
+                    replace_root(p, &mut args[0], with)
+                }
+                other => std::mem::replace(other, with),
+            }
+        }
+        match root_of(self, src) {
+            Value::Call(d, _) if !self.data.def(*d).name().starts_with("Op") => {
+                let tp = self.data.def(*d).returned().without_deps();
+                tp.heap_def_nr()?;
+                let v = self.create_unique("_ret_root", &tp);
+                self.vars.defined(v);
+                let call = replace_root(self, src, Value::Var(v));
+                Some(crate::data::v_set(v, call))
+            }
+            Value::Var(r) => {
+                let r = *r;
+                let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame1(r))));
+                let v = self.create_unique("_ret_src", &tp);
+                self.vars.defined(v);
+                let path = std::mem::replace(src, Value::Var(v));
+                Some(crate::data::v_set(v, path))
+            }
+            _ => None,
+        }
+    }
+
     /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that
     /// may hold nothing at run time though it is no `null` literal?  A bare local is not asked
     /// (its own copy guards it); the arms of an `if` / `match` are, through their block and
@@ -16814,7 +16949,12 @@ impl Parser {
     fn branch_has_nullable_leaf(&self, v: &Value) -> bool {
         fn leaf(p: &Parser, v: &Value) -> bool {
             match v.unspan() {
-                Value::Var(x) => matches!(p.vars.tp(*x), Type::Optional(_)),
+                // A record local is such a leaf whatever its type: a dense one can hold the
+                // `null` its parameter was handed (`@FR-N-Store`).
+                // …and so is a field path rooted at one.
+                Value::Var(_) | Value::Call(_, _) => p.copy_source_may_be_absent(v),
+                // A literal's block ends in the buffer it just built, which is there.
+                Value::Block(bl) if bl.name == "Object" => false,
                 Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(p, x)),
                 Value::Insert(ops) => ops.last().is_some_and(|x| leaf(p, x)),
                 Value::If(_, t, f) => leaf(p, t) || leaf(p, f),
@@ -16826,6 +16966,7 @@ impl Parser {
         // test it (a guard around the whole block would read it before the assignment).
         match v.unspan() {
             Value::If(_, t, f) => leaf(self, t) || leaf(self, f),
+            Value::Block(bl) if bl.name == "Object" => false,
             Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(self, x)),
             Value::Insert(ops) => ops.last().is_some_and(|x| leaf(self, x)),
             _ => false,
@@ -16949,8 +17090,8 @@ impl Parser {
         match tail.unspan() {
             Value::Call(op, _) => {
                 let def = self.data.def(*op);
-                crate::state::codegen::is_text_dest_native(def.name())
-                    || crate::state::codegen::is_cdylib_text_call(def)
+                crate::text_calls::is_text_dest_native(def.name())
+                    || crate::text_calls::is_cdylib_text_call(def)
             }
             Value::Return(inner) => self.native_text_call_tail(inner),
             _ => false,
@@ -22581,7 +22722,7 @@ impl Parser {
         // compiler temps (the `_`/`#` name exclusion); both live in `is_user_var`.
         // If a future change sets `is_defined` out of this source order, the
         // monotonicity `debug_assert!` in `note_mutation`/`note_param` and the
-        // `tests/scripts/171-parallel-armlocal-ok.loft` arm-local-compiles guard
+        // `loft-suite/attic/scripts/171-parallel-armlocal-ok.loft` arm-local-compiles guard
         // are the alarms.
         let enclosing: Vec<bool> = (0..self.vars.count())
             .map(|v| self.vars.is_defined(v))

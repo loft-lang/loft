@@ -19,6 +19,16 @@
 #![allow(non_snake_case)]
 
 use crate::btree;
+pub use crate::runtime_abi::{
+    Abi, CODEGEN_RUNTIME_FNS, RuntimeFn, abi_of, fold_op, is_codegen_runtime_fn,
+};
+// The shadow call stack and the lazy-driver flag live in `call_frames`, in the core layer;
+// these are the paths emitted Rust calls them by.
+use crate::call_frames::with_call_frames;
+pub use crate::call_frames::{
+    CallGuard, cr_call_pop, cr_call_push, cr_call_push_lean, cr_call_site, in_lazy_driver,
+    native_call_chain,
+};
 use crate::database::{ShowDb, Stores};
 use crate::keys::{Content, DbRef, Key};
 use crate::ops;
@@ -27,196 +37,6 @@ use crate::ops;
 // Plan 09 phase 01 — Cell/Stores ABI consolidation
 // ============================================================
 
-/// ABI of a runtime helper function defined in this module.
-///
-/// `Cell`: takes `cell: &UnsafeCell<Stores>` and derives a `&mut Stores`
-/// at entry (the post-P199.A ABI used by all runtime fns that need
-/// store access).
-///
-/// `None`: takes no implicit Stores parameter at all.  For pure helpers
-/// whose body never touches `Stores` (e.g. clock reads, constant
-/// returns, thread-local RNG access).  The codegen emits `fn_name(args)`
-/// with no leading `cell` argument.  Strictly better than `Cell` for
-/// these fns: zero unused parameter, zero borrow churn.
-///
-/// Phase 01 retired the `LegacyStores` variant in step 1.7 — every
-/// runtime fn now uses either `Cell` or `None`.  Earlier drafts of this
-/// module had a `LegacyStores` variant for pre-P199.A `&mut Stores`
-/// helpers; phase 01 migrated all 11 entries to `Cell` (8) or `None` (3).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Abi {
-    Cell,
-    None,
-}
-
-/// Single source of truth for runtime-helper ABI tags.  Replaces the
-/// twin hardcoded `LEGACY_STORES_FNS` constants that lived in
-/// `src/generation/calls.rs` and `src/generation/dispatch.rs`, plus the
-/// `CODEGEN_RUNTIME_FNS: &[&str]` list in `src/generation/mod.rs` that
-/// drove "skip stub generation" for runtime fns.
-///
-/// Each entry must have a corresponding `pub fn <name>(...)` defined
-/// elsewhere in this file with the matching ABI signature.  Adding a
-/// new runtime fn to this registry is sufficient — `output_call_user_fn`
-/// and the arg-hoist path consult `abi_of(name)` and pick `cell` vs
-/// `stores` automatically.
-pub struct RuntimeFn {
-    pub name: &'static str,
-    pub abi: Abi,
-}
-
-#[rustfmt::skip]
-pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
-    RuntimeFn { name: "n_now",                      abi: Abi::None },
-    RuntimeFn { name: "n_ticks",                    abi: Abi::Cell },
-    RuntimeFn { name: "n_get_store_lock",           abi: Abi::Cell },
-    RuntimeFn { name: "n_set_store_lock",           abi: Abi::Cell },
-    RuntimeFn { name: "n_protect_store_frees",      abi: Abi::Cell },
-    RuntimeFn { name: "n_unprotect_store_frees",    abi: Abi::Cell },
-    // @PLAN12 phase 3.5a (2026-05-24) — n_rand / n_rand_seed /
-    // n_rand_indices all drained to lib/random/native/.  The full
-    // drain became possible after the `loft::native_call` helpers
-    // shipped (LoftStore forwarding for store-allocating cdylib
-    // returns).  Native codegen routes these through
-    // `native_symbol_crates` from random's [native.functions] manifest;
-    // the interpreter routes via dlopen.  Single RNG state in the
-    // cdylib; no compiler-crate fallback.
-    RuntimeFn { name: "n_parallel_for_native",        abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_for_text_native",   abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_for_ref_native",    abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_block_native",      abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_discard_native",    abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_queue_native",      abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_queue_text_native", abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_queue_ref_native",  abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_queue_fn_native",   abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_fold_native",       abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_get_native",    abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_get_text_native", abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_get_ref_native",  abi: Abi::Cell },
-    // ARC.md A3.6 — typed Single/Float readers.
-    RuntimeFn { name: "n_parallel_buf_get_single_native", abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_get_float_native",  abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_drop_native",     abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_drop_text_native", abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_drop_ref_native",  abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_get_fn_native",  abi: Abi::Cell },
-    RuntimeFn { name: "n_parallel_buf_drop_fn_native", abi: Abi::Cell },
-    RuntimeFn { name: "n_path_sep",                   abi: Abi::None },
-    RuntimeFn { name: "n_stack_trace",                abi: Abi::Cell },
-    RuntimeFn { name: "n_reflect_type",               abi: Abi::Cell },
-    RuntimeFn { name: "n_type_named",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_reflect_field",              abi: Abi::Cell },
-    RuntimeFn { name: "n_reflect_field_path",         abi: Abi::Cell },
-    RuntimeFn { name: "n_hash_sorted",                abi: Abi::Cell },
-    RuntimeFn { name: "n_vector_sum_int",             abi: Abi::Cell },
-    RuntimeFn { name: "n_hash_unsorted",              abi: Abi::Cell },
-    RuntimeFn { name: "n_radix_sorted",               abi: Abi::Cell },
-    RuntimeFn { name: "n_spatial_range",              abi: Abi::Cell },
-    RuntimeFn { name: "n_trie_prefix",                abi: Abi::Cell },
-    // P268 — JSON ecosystem (P54 sprint).  Native runtime wrappers
-    // around `crate::native::json_parse_into_stores` + the JsonValue
-    // method natives so `--native` programs can read/parse JSON
-    // instead of hitting `todo!()` stubs.  Methods are registered
-    // under their `t_<LEN><Type>_<method>` codegen names.
-    RuntimeFn { name: "n_json_parse",                 abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_field",           abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_item",            abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_len",             abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_as_text",         abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_as_long",         abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_kind",            abi: Abi::Cell },
-    // Remaining JSON natives (P54 / P268 follow-up — wired
-    // 2026-05-13 to close the unimplemented set so any loft
-    // program can call json_* under --native, not just the
-    // viewer's tag-page subset).
-    RuntimeFn { name: "t_9JsonValue_as_number",       abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_as_bool",         abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_keys",            abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_fields",          abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_has_field",       abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_to_json",         abi: Abi::Cell },
-    RuntimeFn { name: "t_9JsonValue_to_json_pretty",  abi: Abi::Cell },
-    RuntimeFn { name: "n_json_null",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_json_bool",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_json_number",                abi: Abi::Cell },
-    RuntimeFn { name: "n_json_string",                abi: Abi::Cell },
-    RuntimeFn { name: "n_json_array",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_json_object",                abi: Abi::Cell },
-    RuntimeFn { name: "n_struct_from_jsonvalue",      abi: Abi::Cell },
-    RuntimeFn { name: "n_struct_to_json",             abi: Abi::Cell },
-    RuntimeFn { name: "n_struct_to_json_pretty",      abi: Abi::Cell },
-    // @PLN18 08-S1 — the engine-host kernel natives, typed twins in
-    // `engine_host::typed` (re-exported below): a compiled kernel program
-    // calls the SAME in-binary kernel the interpreter uses — one
-    // implementation, two calling conventions.
-    RuntimeFn { name: "n_git_query",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_process_run",                abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_listen",              abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_pump",                abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_next_event",          abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_event_cid",           abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_event_kind",          abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_event_payload",       abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_event_status",        abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_event_status", abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_http_fetch",          abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_tick_due",            abi: Abi::Cell },
-    RuntimeFn { name: "n_send",                       abi: Abi::Cell },
-    RuntimeFn { name: "n_broadcast",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_idle",                abi: Abi::Cell },
-    RuntimeFn { name: "n_clients",                    abi: Abi::Cell },
-    // @PLN119 arc F — the same four under the names the loft surface uses now
-    // that its public functions are WRAPPERS (a function that already carries a
-    // native symbol cannot be placed).  The old names stay: this table is keyed
-    // by loft def name, and a library elsewhere may still spell them the old way.
-    RuntimeFn { name: "n_kernel_send",                abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_broadcast",           abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_clients",             abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_post",                abi: Abi::Cell },
-    RuntimeFn { name: "n_udp_bound",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_sync_class",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_sync_class_keyed",           abi: Abi::Cell },
-    RuntimeFn { name: "n_keyframe",                   abi: Abi::Cell },
-    RuntimeFn { name: "n_sync_next",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_sync_cid",                   abi: Abi::Cell },
-    RuntimeFn { name: "n_sync_seq",                   abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_sync_payload",        abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_frame",        abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_default_host",        abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_connect",             abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_local",               abi: Abi::Cell },
-    RuntimeFn { name: "n_post",                       abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_alive",               abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_stop",                abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_frame",               abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_pump",         abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_alive",        abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_stop",         abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_next_event",   abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_event_kind",   abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_event_cid",    abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_event_payload", abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_tick_due",     abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_idle",         abi: Abi::Cell },
-    RuntimeFn { name: "n_client_send",                abi: Abi::Cell },
-    RuntimeFn { name: "n_client_sync_next",           abi: Abi::Cell },
-    RuntimeFn { name: "n_client_sync_seq",            abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_client_sync_payload", abi: Abi::Cell },
-    RuntimeFn { name: "n_client_udp_bound",           abi: Abi::Cell },
-    // @PLN18 08-S2 — live dispatch: flip a fn to the interpreter at runtime.
-    RuntimeFn { name: "n_live_flip",                  abi: Abi::Cell },
-    // @PLN18 08-S4 — background rebuild of the served program.
-    RuntimeFn { name: "n_rebuild_start",              abi: Abi::Cell },
-    RuntimeFn { name: "n_rebuild_status",             abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_rebuild_artifact",    abi: Abi::Cell },
-    // @PLN18 08-S5 — the native build swap.
-    RuntimeFn { name: "n_swap_world",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_swap_start",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_kernel_swap_step",           abi: Abi::Cell },
-    RuntimeFn { name: "n_swap_retired",               abi: Abi::Cell },
-];
-
 // @PLN18 08-S1 — the typed kernel twins, glob-importable by generated crates.
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::engine_host::typed::*;
@@ -224,11 +44,11 @@ pub use crate::engine_host::typed::*;
 pub use crate::git_query::typed::*;
 // @PLN179 strand 4b — `lib/process`'s run, so a COMPILED script runs programs too.
 pub use crate::process_run::typed::*;
-// @PLN18 08-S2 — the live-flip surface (typed twin in live_dispatch).
-pub use crate::live_dispatch::n_live_flip;
+// @PLN18 08-S2 — the live-flip surface (it forwards to the live tier once that boots).
+pub use crate::live_control::n_live_flip;
 // @PLN18 08-S4 — the background-rebuild surface.
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::live_dispatch::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
+pub use crate::live_rebuild::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
 
 /// A tuple's `text` member in a `&str` slot (an argument, an `if` arm, a pre-bound block),
 /// whatever its source spelled: a `String` local or work text (`&String`), a literal or a
@@ -260,25 +80,6 @@ impl<'a> TupleText<'a> for crate::keys::Str {
 #[inline]
 pub fn tuple_text<'a, T: TupleText<'a>>(v: T) -> &'a str {
     v.tuple_text()
-}
-
-/// Look up the ABI of a runtime helper.  Returns `Abi::Cell` for
-/// unknown names — user-defined functions and Op stubs default to the
-/// post-P199.A cell ABI.
-#[must_use]
-pub fn abi_of(name: &str) -> Abi {
-    CODEGEN_RUNTIME_FNS
-        .iter()
-        .find(|f| f.name == name)
-        .map_or(Abi::Cell, |f| f.abi)
-}
-
-/// True if `name` is a runtime helper defined in this module.  Used by
-/// `output_function` to skip stub generation (the real implementation
-/// is imported via `use loft::codegen_runtime::*`).
-#[must_use]
-pub fn is_codegen_runtime_fn(name: &str) -> bool {
-    CODEGEN_RUNTIME_FNS.iter().any(|f| f.name == name)
 }
 
 /// Convert a DbRef to a loft_ffi::LoftRef for passing to native C-ABI functions.
@@ -334,7 +135,7 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
     }
 }
 use crate::vector;
-use std::cell::{Cell, RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell};
 #[cfg(not(host_fs))]
 use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
@@ -350,6 +151,339 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Bytecode equivalent: `OpDatabase` in `src/state/io.rs:319`.
 pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -> DbRef {
     op_database_inner(cell, db, db_tp, true)
+}
+
+/// `@FR-R-Apart` — element `i` of a field held as a Rust array, read as the store path
+/// reads `v[i]` (`OpGetVector`, `@FR-H-Index`): a negative index counts from the end, and an
+/// index still out of range — or null — raises the recoverable error the store path raises
+/// (`Stores::index_or_raise_runtime`, the one definition) and answers null, NaN.
+#[inline]
+#[must_use]
+pub fn ap_get_f64<const N: usize>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    a: &[f64; N],
+    i: i64,
+) -> f64 {
+    if i >= 0 && (i as u64) < N as u64 {
+        return a[i as usize];
+    }
+    ap_index_slow(cell, i, N).map_or(f64::NAN, |f| a[f])
+}
+
+/// The nullable read `v[i]?` (`OpGetVectorNullable`): the same index, and null without a
+/// report for one out of range.
+#[inline]
+#[must_use]
+pub fn ap_get_f64_or_null<const N: usize>(a: &[f64; N], i: i64) -> f64 {
+    match crate::vector::elem_index(i, N as u32) {
+        Some(f) => a[f as usize],
+        None => f64::NAN,
+    }
+}
+
+/// `@FR-R-Apart` — a write of element `i` of a field held as a Rust array: the address the
+/// store path takes for it (`OpGetVector`) raises for an index out of range and writes
+/// nothing there (`@FR-H-WriteOOB`).
+#[inline]
+pub fn ap_set_f64<const N: usize>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    a: &mut [f64; N],
+    i: i64,
+    v: f64,
+) {
+    if i >= 0 && (i as u64) < N as u64 {
+        a[i as usize] = v;
+    } else if let Some(f) = ap_index_slow(cell, i, N) {
+        a[f] = v;
+    }
+}
+
+/// Every index the fast test does not take: the negative form, and the report.
+#[cold]
+#[inline(never)]
+fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Option<usize> {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    stores
+        .index_or_raise_runtime(i, n as u32)
+        .map(|f| f as usize)
+}
+
+/// `@FR-R-Apart` instance 3 — a `vector<float>` local held apart from the store: its first `C`
+/// elements in an inline array, the rest in a heap spill, so a short vector costs no
+/// allocation and a long one keeps every element.  Each operation answers what the store path
+/// answers for the vector it stands for: an empty vector at its init, a negative index from
+/// the end, an index out of range reported (`Stores::index_or_raise_runtime`) or, for `v[i]?`,
+/// null without a report.
+pub struct ApVec<const C: usize> {
+    d: [f64; C],
+    n: usize,
+    spill: Vec<f64>,
+}
+
+impl<const C: usize> Default for ApVec<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const C: usize> ApVec<C> {
+    #[must_use]
+    pub const fn new() -> Self {
+        ApVec {
+            d: [0.0; C],
+            n: 0,
+            spill: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.n = 0;
+        self.spill.clear();
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    #[inline]
+    pub fn push(&mut self, v: f64) {
+        if self.n < C {
+            self.d[self.n] = v;
+        } else {
+            self.spill.push(v);
+        }
+        self.n += 1;
+    }
+
+    #[inline]
+    fn at(&self, f: usize) -> f64 {
+        if f < C { self.d[f] } else { self.spill[f - C] }
+    }
+
+    #[inline]
+    fn at_mut(&mut self, f: usize) -> &mut f64 {
+        if f < C {
+            &mut self.d[f]
+        } else {
+            &mut self.spill[f - C]
+        }
+    }
+
+    /// `v[i]`: an index out of range reports, then answers null (NaN).
+    #[inline]
+    #[must_use]
+    pub fn get(&self, cell: &std::cell::UnsafeCell<Stores>, i: i64) -> f64 {
+        if i >= 0 && (i as u64) < self.n as u64 {
+            return self.at(i as usize);
+        }
+        ap_index_slow(cell, i, self.n).map_or(f64::NAN, |f| self.at(f))
+    }
+
+    /// `v[i]?`: the same index, and null without a report out of range.
+    #[inline]
+    #[must_use]
+    pub fn get_or_null(&self, i: i64) -> f64 {
+        match crate::vector::elem_index(i, self.n as u32) {
+            Some(f) => self.at(f as usize),
+            None => f64::NAN,
+        }
+    }
+
+    /// `v[i] = x`: an index out of range reports and writes nothing (`@FR-H-WriteOOB`).
+    #[inline]
+    pub fn set(&mut self, cell: &std::cell::UnsafeCell<Stores>, i: i64, v: f64) {
+        if i >= 0 && (i as u64) < self.n as u64 {
+            *self.at_mut(i as usize) = v;
+        } else if let Some(f) = ap_index_slow(cell, i, self.n) {
+            *self.at_mut(f) = v;
+        }
+    }
+}
+
+/// `@FR-R-DecodeView` — the mark of a span word: the sign bit.  A span word is
+/// `DV_MARK | (lo + 1) << 32 | n`, the frame's bytes `[lo, lo + n)` — never `i64::MIN`, the
+/// null an integer slot holds; the word `0` is the owned form.
+const DV_MARK: i64 = i64::MIN;
+
+/// The span word of `[lo, lo + n)`, or `0` when it does not fit one.
+fn dv_word(lo: i64, n: i64) -> i64 {
+    if lo < 0 || lo >= i64::from(i32::MAX) || !(0..=i64::from(u32::MAX)).contains(&n) {
+        return 0;
+    }
+    DV_MARK | ((lo + 1) << 32) | n
+}
+
+/// `@FR-R-DecodeView` — the region's root sets the frame its spans read for the length of
+/// its call, and the previous frame comes back when the call ends, however it ends.
+pub struct DvFrame<'a> {
+    cell: &'a std::cell::UnsafeCell<Stores>,
+    old: DbRef,
+}
+
+impl<'a> DvFrame<'a> {
+    #[must_use]
+    pub fn enter(cell: &'a std::cell::UnsafeCell<Stores>, frame: DbRef) -> Self {
+        let stores = unsafe { &mut *cell.get() };
+        let old = std::mem::replace(&mut stores.dv_frame, frame);
+        DvFrame { cell, old }
+    }
+}
+
+impl Drop for DvFrame<'_> {
+    fn drop(&mut self) {
+        unsafe { (*self.cell.get()).dv_frame = self.old };
+    }
+}
+
+/// The bytes of the byte vector `b`, read the way `vector_slice` reads its source.
+#[inline]
+fn dv_bytes<'a>(stores: &'a Stores, b: &DbRef) -> &'a [u8] {
+    if b.is_null() || b.rec == 0 || b.pos == 0 {
+        return &[];
+    }
+    let store = crate::keys::store(b, &stores.allocations);
+    let rec = store.collection_rec(b.rec, b.pos);
+    if rec == 0 {
+        return &[];
+    }
+    let n = vector::length_vector(b, &stores.allocations) as usize;
+    let all = store.bytes_of(rec);
+    &all[..n.min(all.len())]
+}
+
+/// The span word of `b[lo..hi]` under `vector_slice`'s clamps, or `0` when the bounds do not
+/// fit a word — the owned slice is then built, as it always was.
+#[must_use]
+#[inline]
+pub fn dv_span(stores: &Stores, b: DbRef, lo: i64, hi: i64) -> i64 {
+    if b.is_null() || b.rec == 0 || b.pos == 0 {
+        return 0;
+    }
+    let len = i64::from(vector::length_vector(&b, &stores.allocations));
+    let lo = lo.clamp(0, len);
+    let hi = hi.clamp(lo, len);
+    dv_word(lo, hi - lo)
+}
+
+/// A decoded text written as a span of the frame `b`, under `text_from_byte_range`'s bounds,
+/// when its bytes are UTF-8 — the condition that makes the span the text the owned form
+/// holds.  Answers whether it was written; the caller builds the owned text otherwise.
+#[inline]
+pub fn dv_span_text(
+    stores: &mut Stores,
+    rec: DbRef,
+    off: u32,
+    spare: u32,
+    b: DbRef,
+    lo: i64,
+    hi: i64,
+) -> bool {
+    if rec.rec == 0 {
+        return false;
+    }
+    let bytes = dv_bytes(stores, &b);
+    let length = bytes.len() as i64;
+    if length == 0 {
+        return false;
+    }
+    let bound = |x: i64| {
+        if x < 0 {
+            (x + length).max(0)
+        } else {
+            x.min(length)
+        }
+    };
+    let (lo, hi) = (bound(lo), bound(hi));
+    let word = dv_word(lo, hi - lo);
+    if hi <= lo || word == 0 {
+        return false;
+    }
+    if std::str::from_utf8(&bytes[lo as usize..hi as usize]).is_err() {
+        return false;
+    }
+    dv_put_span(stores, rec, off, spare, word);
+    true
+}
+
+/// Write the span word `word` into the record `rec`: its field at `off` holds nothing of its
+/// own, so the record's release frees nothing for it.
+#[inline]
+pub fn dv_put_span(stores: &mut Stores, rec: DbRef, off: u32, spare: u32, word: i64) {
+    if rec.rec == 0 {
+        return;
+    }
+    let store = stores.store_mut(&rec);
+    store.set_u32_raw(rec.rec, rec.pos + off, 0);
+    store.set_int(rec.rec, rec.pos + spare, word);
+}
+
+/// The owned form of a span field: its span word cleared, so no read takes a stale one.
+#[inline]
+pub fn dv_clear(stores: &mut Stores, rec: DbRef, spare: u32) {
+    if rec.rec != 0 {
+        stores.store_mut(&rec).set_int(rec.rec, rec.pos + spare, 0);
+    }
+}
+
+/// A text field of a decoded record: the frame's bytes when it holds a span, else its own.
+#[must_use]
+#[inline]
+pub fn dv_text(stores: &Stores, rec: DbRef, off: u32, spare: u32) -> &str {
+    if rec.rec == 0 {
+        return crate::store::STRING_NULL;
+    }
+    let store = stores.store(&rec);
+    let word = store.get_int(rec.rec, rec.pos + spare);
+    if word < 0 {
+        let lo = (((word >> 32) & 0x7fff_ffff) - 1) as usize;
+        let n = (word & 0xffff_ffff) as usize;
+        let bytes = dv_bytes(stores, &stores.dv_frame);
+        if let Some(run) = bytes.get(lo..lo + n) {
+            // Checked when the span was written, and the frame is not written while one
+            // lives (`@FR-R-DecodeView` (1)).
+            return unsafe { std::str::from_utf8_unchecked(run) };
+        }
+        return "";
+    }
+    store.get_str(store.get_u32_raw(rec.rec, rec.pos + off))
+}
+
+/// `@FR-R-Apart` — the BOUNDARY: an apart record written into the return buffer `buf` with
+/// the steps its own constructor emits — the buffer kept when it holds a record, else minted
+/// (`OpDatabaseRefill`), then each `vector<float>` field emptied in place and its elements
+/// appended.  Answers the buffer, which is what the unrewritten function returns.
+pub fn ap_store_f64(
+    cell: &std::cell::UnsafeCell<Stores>,
+    mut buf: DbRef,
+    rec_tp: i32,
+    fields: &[(u32, &[f64])],
+) -> DbRef {
+    if buf.store_nr == u16::MAX || buf.rec == 0 {
+        buf = OpDatabaseRefill(cell, buf, rec_tp);
+    }
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    for (off, elems) in fields {
+        let fld = DbRef {
+            store_nr: buf.store_nr,
+            rec: buf.rec,
+            pos: buf.pos + off,
+        };
+        vector::clear_vector(&fld, &mut stores.allocations);
+        vector::pre_alloc_vector(&fld, elems.len() as u32, 8, &mut stores.allocations);
+        for v in *elems {
+            stores.append_f64(&fld, *v);
+        }
+    }
+    buf
 }
 
 /// `@FR-R-RefillBuffer` — the mint of a refilling callee's return buffer: a null buffer
@@ -623,17 +757,17 @@ pub fn host_print(s: &str) {
     }
 }
 
-/// Write `s` to standard error, ignoring a write that cannot land.
-///
-/// The counterpart of [`host_print`], and it does NOT exit: stderr being closed says nothing
-/// about the program's own output, so `prog 2>/dev/full` or a reader that stopped reading the
-/// diagnostics stream must not end the run.  What it must never do is panic — a panic whose
-/// message cannot be printed is what turns a broken pipe into a SIGABRT and a crash report
-/// (loft#1289).
-pub fn host_eprint(s: &str) {
-    use std::io::Write;
-    let _ = std::io::stderr().write_all(s.as_bytes());
+/// The `print` builtin: into the capture sink when a debug session captures this thread's
+/// output (`platform::print_or_capture`), else [`host_print`].  The stdlib's `print`
+/// template calls this, so neither the interpreter nor a generated program names the
+/// debug server that opens the sink.
+pub fn print_or_host(s: &str) {
+    if !crate::platform::print_or_capture(s) {
+        host_print(s);
+    }
 }
+
+pub use crate::platform::host_eprint;
 
 /// conditionally free `placeholder` — only when its `store_nr`
 /// differs from `witness`'s.  Emitted for `__ref_N` work-refs whose
@@ -723,31 +857,6 @@ static LAZY_FETCH: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::ne
 /// compiled. Generated `init()` installs the refusal so both backends answer the
 /// sentence `Data` wrote.
 static LAZY_FETCH_REFUSAL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-thread_local! {
-    /// @PLN133 S8 — is this thread inside a lazy DRIVER right now?
-    ///
-    /// It changes what a fault MEANS. An ordinary loft call that overflows the
-    /// stack is a program bug and halting is right; the same overflow inside a
-    /// FETCH is not, because @PLN129's contract is @C80 — a failed fetch reports
-    /// through `store_lazy_error` and the lookup answers null. So a buggy driver
-    /// must not turn a lookup into a program halt, which is what moving the
-    /// source from Rust to loft would otherwise have cost.
-    ///
-    /// Thread-local rather than global: a `par` worker running its own fetch is
-    /// its own answer.
-    static IN_LAZY_DRIVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Is a fault on this thread a driver's, and therefore containable?
-///
-/// Read by `cr_stack_overflow`, which exits the process for an ordinary overflow
-/// and unwinds for this one, and by the panic hook, which stays silent for a
-/// fault that is about to be reported through arc C's channel instead.
-#[must_use]
-pub fn in_lazy_driver() -> bool {
-    IN_LAZY_DRIVER.with(std::cell::Cell::get)
-}
 
 /// Install one lazy driver, under the element type it serves. Emitted by
 /// generated `init()`, once per driver.
@@ -963,12 +1072,12 @@ fn get_record_lookup(
             // unwind runs its own drop glue, but a loft store is freed by an
             // explicit call the unwind skips exactly as the interpreter's fault
             // skips its scope-exit op — measured identical on both backends.
-            IN_LAZY_DRIVER.with(|f| f.set(true));
+            crate::call_frames::set_in_lazy_driver(true);
             let outer_watch = stores.lazy_watch_begin();
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 driver(cell, data, &source, key_int, &key_text)
             }));
-            IN_LAZY_DRIVER.with(|f| f.set(false));
+            crate::call_frames::set_in_lazy_driver(false);
             // `stores` was borrowed from `cell` and the driver borrowed it too,
             // so it is re-taken here rather than reused.
             let stores: &mut Stores = unsafe { &mut *cell.get() };
@@ -1028,18 +1137,6 @@ impl<'a> Iterator for LazySplit<'a> {
             Some(text)
         }
     }
-}
-
-/// `@FR-R-FoldCompare` — which text predicate [`fold_compare`] answers.
-pub mod fold_op {
-    /// `F(t) == other`.
-    pub const EQ: u8 = 0;
-    /// `F(t) != other`.
-    pub const NE: u8 = 1;
-    /// `F(t).starts_with(other)`, or with `fold_right` `other.starts_with(F(t))`.
-    pub const STARTS: u8 = 2;
-    /// `F(t).ends_with(other)`, or with `fold_right` `other.ends_with(F(t))`.
-    pub const ENDS: u8 = 3;
 }
 
 /// `@FR-R-FoldCompare` — the predicate `op` over the case fold `F(t)` (`to_uppercase` when
@@ -1105,7 +1202,7 @@ pub fn fold_compare(op: u8, fold_right: bool, upper: bool, t: &str, other: &str)
 #[inline]
 #[must_use]
 pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
-    let rest = if text.is_empty() || text == crate::state::STRING_NULL {
+    let rest = if text.is_empty() || text == crate::store::STRING_NULL {
         None
     } else {
         Some(text)
@@ -1122,12 +1219,12 @@ pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
 #[must_use]
 pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
     if from == i64::MIN {
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     let len = table.len() as i64;
     let at = if from < 0 { from + len } else { from };
     if at < 0 || at >= len {
-        crate::state::STRING_NULL
+        crate::store::STRING_NULL
     } else {
         table[at as usize]
     }
@@ -1145,7 +1242,7 @@ pub fn split_table_get_or_raise<'a>(stores: &mut Stores, table: &[&'a str], from
         stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::NegativeIndex {
             idx: from,
         });
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     if at >= len {
         stores.raise_recoverable_runtime(
@@ -1154,7 +1251,7 @@ pub fn split_table_get_or_raise<'a>(stores: &mut Stores, table: &[&'a str], from
                 len: table.len() as u32,
             },
         );
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     table[at as usize]
 }
@@ -1216,23 +1313,7 @@ pub fn OpSizeofRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef) -> i64 {
 /// Bytecode equivalent: `State::db_from_text` in `src/state/io.rs:780`.
 #[must_use]
 pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
-    // @P372: size the target record to the struct, not a fixed 8 words — see
-    // the mirror in `State::db_from_text` (`src/state/io.rs`) for the full
-    // rationale.  A fixed `database(8)` (64 bytes) left only 56 bytes for the
-    // struct (written at `pos: 8`), so a struct > 56 bytes overflowed its tail
-    // field into the adjacent block header, and a later `claim` spun forever in
-    // `claim_scan`.  Keep a floor of 8 words.
-    let words = std::cmp::max(8, 1 + u32::from(stores.size(db_tp)).div_ceil(8));
-    let db = stores.database(words);
-    let into = DbRef {
-        store_nr: db.store_nr,
-        rec: db.rec,
-        pos: 8,
-    };
-    stores.set_final_default_value(db_tp, &into);
-    let err = stores.parse(val, db_tp, &into);
-    stores.set_parse_errors(&into, db_tp, err);
-    into
+    stores.record_from_text(val, db_tp)
 }
 
 /// Return the JSON parse / schema-walk errors from the last `json_parse()`
@@ -2787,7 +2868,11 @@ pub fn OpReadFile<T: FileVal>(
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
     {
-        if is_text {
+        // The read starts at THIS record's `#next`, wherever another record that names the
+        // handle left it (`LoftFile::place`, loft#2005).
+        if f.place(next_pos as u64).is_err() {
+            0
+        } else if is_text {
             f.read(buf).unwrap_or(0)
         } else if f.read_exact(buf).is_ok() {
             n
@@ -2853,7 +2938,11 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
         .files
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
-        .and_then(loft_file_take::<W>);
+        .and_then(|f| {
+            f.place(next_pos as u64)
+                .ok()
+                .and_then(|()| loft_file_take::<W>(f))
+        });
     let nread = if let Some(b) = bytes {
         *val = decode_int::<W, SIGNED>(&b, little_endian);
         W
@@ -2863,6 +2952,194 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     let st = stores.store_mut(&file);
     st.set_long(file.rec, file.pos + 8, next_pos);
     st.set_long(file.rec, file.pos + 16, next_pos + nread as i64);
+}
+
+/// `@FR-R-FileHold` — one `File`'s cursor held across a loop that reads it and lets nothing
+/// else see its record.  [`OpReadFileInt`] reads the record's format, handle and `#next` and
+/// writes `#index` and `#next` back for every value; held, a value is its bytes off the
+/// buffered handle and two locals moved, and the record gets both fields when the guard
+/// drops — at every way out of the loop, a `break`, a `return` and an unwinding panic alike.
+///
+/// Nothing is held (`handle` is `i32::MIN`) while the record names no open handle or no
+/// position — a file not read yet, an absent one, a directory: each read then goes through
+/// [`OpReadFileInt`], which opens the handle, and the guard looks again.  `CHECK` is the
+/// falsifier (`LOFT_HOIST_VERIFY=1`): every read and the drop assert that the record still
+/// says what it said when the hold began, so a loop that moved the cursor behind the guard
+/// stops there and not at a wrong value later.
+#[cfg(not(host_fs))]
+pub struct FileCursor<'c, const CHECK: bool> {
+    cell: &'c std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    handle: i32,
+    little_endian: bool,
+    /// Where the last read started: the record's `#index`.
+    last: i64,
+    /// Where the next read lands: the record's `#next`.
+    next: i64,
+    /// What the record said when the hold began, for `CHECK`.
+    seen: (i64, i64),
+}
+
+#[cfg(not(host_fs))]
+impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
+    #[must_use]
+    #[inline]
+    pub fn hold(cell: &'c std::cell::UnsafeCell<Stores>, file: DbRef) -> Self {
+        let mut held = FileCursor {
+            cell,
+            file,
+            handle: i32::MIN,
+            little_endian: false,
+            last: 0,
+            next: 0,
+            seen: (0, 0),
+        };
+        held.take();
+        held
+    }
+
+    /// Read the record into the guard, when it names an open handle and a position.
+    #[inline]
+    fn take(&mut self) {
+        self.handle = i32::MIN;
+        if self.file.rec == 0 {
+            return;
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store(&self.file);
+        let format = st.get_byte(self.file.rec, self.file.pos + 32, 0);
+        let open_ref = st.get_i32_raw(self.file.rec, self.file.pos + 28);
+        let next = st.get_long(self.file.rec, self.file.pos + 16);
+        if open_ref == i32::MIN
+            || next == i64::MIN
+            || (format != 1 && format != 2 && format != 3 && format != 5)
+        {
+            return;
+        }
+        let last = st.get_long(self.file.rec, self.file.pos + 8);
+        // A copy of the record may have moved the shared handle: the hold reads from THIS
+        // record's `#next`, and nothing in the loop moves the handle after this.
+        let placed = stores
+            .files
+            .get_mut(open_ref as usize)
+            .and_then(|x| x.as_mut())
+            .is_some_and(|f| f.place(next as u64).is_ok());
+        if !placed {
+            return;
+        }
+        self.little_endian = format == 2;
+        self.last = last;
+        self.next = next;
+        self.seen = (last, next);
+        self.handle = open_ref;
+    }
+
+    /// The record must still say what the hold read from it.
+    #[cold]
+    #[inline(never)]
+    fn check(&self) {
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store(&self.file);
+        let now = (
+            st.get_long(self.file.rec, self.file.pos + 8),
+            st.get_long(self.file.rec, self.file.pos + 16),
+        );
+        let handle = st.get_i32_raw(self.file.rec, self.file.pos + 28);
+        assert!(
+            now == self.seen && handle == self.handle,
+            "LOFT_HOIST_VERIFY: a held file cursor moved behind its hold (#index, #next were {:?}, now {:?}; handle was {}, now {handle})",
+            self.seen,
+            now,
+            self.handle,
+        );
+    }
+
+    /// [`OpReadFileInt`] with its own parameters, so the generator only renames the callee;
+    /// the guard's own cell and file are the ones read.
+    #[inline]
+    pub fn read<const W: usize, const SIGNED: bool>(
+        &mut self,
+        _cell: &std::cell::UnsafeCell<Stores>,
+        _file: DbRef,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        if self.handle == i32::MIN {
+            self.through::<W, SIGNED>(val, bytes, db_tp);
+            return;
+        }
+        if CHECK {
+            self.check();
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        self.last = self.next;
+        if let Some(b) = stores
+            .files
+            .get_mut(self.handle as usize)
+            .and_then(|x| x.as_mut())
+            .and_then(loft_file_take::<W>)
+        {
+            *val = decode_int::<W, SIGNED>(&b, self.little_endian);
+            self.next += W as i64;
+        }
+    }
+
+    /// A read with nothing held: through the record, which is then looked at again.
+    #[cold]
+    #[inline(never)]
+    fn through<const W: usize, const SIGNED: bool>(
+        &mut self,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        OpReadFileInt::<W, SIGNED>(self.cell, self.file, val, bytes, db_tp);
+        self.take();
+    }
+}
+
+#[cfg(not(host_fs))]
+impl<const CHECK: bool> Drop for FileCursor<'_, CHECK> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.handle == i32::MIN {
+            return;
+        }
+        if CHECK {
+            self.check();
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store_mut(&self.file);
+        st.set_long(self.file.rec, self.file.pos + 8, self.last);
+        st.set_long(self.file.rec, self.file.pos + 16, self.next);
+    }
+}
+
+/// The host-bridge build holds nothing: every read goes through [`OpReadFileInt`].
+#[cfg(host_fs)]
+pub struct FileCursor<'c, const CHECK: bool> {
+    cell: &'c std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+}
+
+#[cfg(host_fs)]
+impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
+    #[must_use]
+    pub fn hold(cell: &'c std::cell::UnsafeCell<Stores>, file: DbRef) -> Self {
+        FileCursor { cell, file }
+    }
+
+    pub fn read<const W: usize, const SIGNED: bool>(
+        &mut self,
+        _cell: &std::cell::UnsafeCell<Stores>,
+        _file: DbRef,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        OpReadFileInt::<W, SIGNED>(self.cell, self.file, val, bytes, db_tp);
+    }
 }
 
 /// The host-bridge build reads through [`OpReadFile`]; the specialisation is the native file's.
@@ -3538,7 +3815,7 @@ pub fn t_9JsonValue_as_text(cell: &std::cell::UnsafeCell<Stores>, v: DbRef) -> S
         let s_rec = stores.store(&v).get_u32_raw(v.rec, value_pos);
         stores.store(&v).get_str(s_rec).to_string()
     } else {
-        crate::state::STRING_NULL.to_string()
+        crate::store::STRING_NULL.to_string()
     }
 }
 
@@ -4348,7 +4625,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    let batches = crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let mut local: Vec<i64> = Vec::with_capacity(end - start);
         for row_idx in start..end {
             let elm =
@@ -4362,7 +4639,7 @@ where
         }
         (start, local)
     });
-    crate::parallel::merge_batches(batches, n, 0i64)
+    crate::par_pool::merge_batches(batches, n, 0i64)
 }
 
 /// Text-returning variant of `n_parallel_for_native`.  The worker closure returns
@@ -4413,7 +4690,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    let batches = crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let row_count = end - start;
         // `@FR-H-Claim` — the s_pos array record needs 4 bytes for the record-size header (fld 0..4) plus
         // 4 bytes per row; writes start at fld 4 — writing from fld 0 overwrote the record's
@@ -4512,7 +4789,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let mut batch: Vec<(usize, DbRef)> = Vec::with_capacity(end - start);
         for row_idx in start..end {
             let elm =
@@ -4566,7 +4843,7 @@ pub fn n_parallel_block_native(
     }
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let _: Vec<()> =
-        crate::parallel::parallel_workers(stores, arms.len(), arms.len(), |start, end, mut ws| {
+        crate::par_pool::parallel_workers(stores, arms.len(), arms.len(), |start, end, mut ws| {
             for arm in &arms[start..end] {
                 // P199 — see `run_native_workers_primitive` for the `&UnsafeCell<Stores>`
                 // cast; generated arm closures take the same ABI a worker closure does.
@@ -4610,7 +4887,7 @@ pub fn n_parallel_discard_native<F>(
     let input_t = input;
     let n_threads = (threads.max(1) as usize).min(n);
     let _: Vec<()> =
-        crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+        crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
             for row_idx in start..end {
                 let elm =
                     vector::get_vector(&input_t, elem_size as u32, row_idx as i64, &ws.allocations);
@@ -4723,7 +5000,7 @@ where
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
     let mut batches =
-        crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+        crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
             let mut acc = init;
             // V1: vector<integer> rows are i64s at row position; stride is
             // 8 bytes.  Read unaligned to match `read_primitive_at` in
@@ -5126,7 +5403,7 @@ where
     }
     let input_t = *input;
     let n_threads = n_threads.max(1) as usize;
-    let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
+    let batches = crate::par_pool::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let mut local: Vec<(u32, DbRef)> = Vec::with_capacity(end - start);
         for row_idx in start..end {
             let elm =
@@ -5138,7 +5415,7 @@ where
         (start, local)
     });
     let null_fn = (u32::MAX, DbRef::NULL);
-    crate::parallel::merge_batches(batches, n, null_fn)
+    crate::par_pool::merge_batches(batches, n, null_fn)
 }
 
 /// fn-ref-return Queue runtime entry — runs workers, buffers one `(u32, DbRef)`
@@ -5194,9 +5471,7 @@ pub fn n_parallel_buf_drop_fn_native(cell: &std::cell::UnsafeCell<Stores>) {
 
 // ── N8b.1: Native coroutine runtime ─────────────────────────────────────────
 
-/// Sentinel `store_nr` for `DbRef`s that point to native coroutine generators.
-/// Must not clash with any real `Stores` allocation (stores use 0..`Stores::max`).
-pub const NATIVE_COROUTINE_STORE: u16 = 0xFFFD;
+pub use crate::database::NATIVE_COROUTINE_STORE;
 
 /// Return value from `LoftCoroutine::next_i64` when the generator is exhausted.
 ///
@@ -5237,7 +5512,7 @@ pub trait LoftCoroutine {
     /// Advance a text-yielding generator one step.  Returns the yielded
     /// `String`, or `STRING_NULL` (`"\0"`) when the generator is exhausted.
     fn next_text(&mut self, _stores: &mut Stores) -> String {
-        crate::state::STRING_NULL.to_string()
+        crate::store::STRING_NULL.to_string()
     }
 
     /// Advance a Reference-yielding generator one step.  Returns the yielded
@@ -5607,10 +5882,10 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
     advance_native(
         gen_ref,
         stores,
-        crate::state::STRING_NULL.to_string(),
+        crate::store::STRING_NULL.to_string(),
         |coro, stores| {
             let val = coro.next_text(stores);
-            let done = val == crate::state::STRING_NULL && coro.done();
+            let done = val == crate::store::STRING_NULL && coro.done();
             (val, done)
         },
     )
@@ -5966,7 +6241,7 @@ pub fn install_browser_panic_hook() {
             // spot in generated code or in loft's own runtime, which does not say what
             // the program was doing; the shadow call stack is the half a reader acts on.
             out.push_str(&browser_panic_frames());
-            crate::live_dispatch::wasm_host_log(&out);
+            crate::platform::wasm_host_log(&out);
         }));
     }
 }
@@ -5989,82 +6264,6 @@ fn browser_panic_frames() -> String {
     })
 }
 
-// Thread-local shadow call stack used by native-compiled loft code.
-// Each entry is (function_name, source_file, line_number).
-// Generated code calls `cr_call_push` / `cr_call_pop` around every function body.
-//
-// The live prefix is `CALL_FRAMES[..CALL_DEPTH]`: a pop only decrements the
-// depth, leaving its entry as garbage the next push at that depth overwrites.
-// Split this way (loft#1426 M1, @PLN157 P1) the per-call cost is a bounds test,
-// three word stores and two `Cell` updates — the `RefCell<Vec>` form's borrow
-// flag, length update and re-borrowing pop measured ~7 ns of the ~18 ns a
-// native call costs.  Every reader slices `[..depth]`; none can fail the way a
-// `try_borrow` could, because a read never observes a half-made entry — the
-// depth is bumped only after the entry is fully written, and the readers
-// (frame renderers, `stack_trace()`) run between pushes, not inside one.
-thread_local! {
-    static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
-    /// `(name, file, declaration line, call site)` per frame: the call site is the line
-    /// this frame is calling from, written by [`cr_call_site`] before each call.
-    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32, u32)>> =
-        const { UnsafeCell::new(Vec::new()) };
-}
-
-/// Read the live frames — `CALL_FRAMES[..CALL_DEPTH]` — without copying.
-///
-/// The `min` clamp is load-bearing for the LEAN tier (@PLN157): a `--lean`
-/// binary advances the depth through [`cr_call_push_lean`] without writing
-/// frames, so the array can be shorter than the depth — its readers then see
-/// whatever named frames exist (none, usually) instead of panicking inside
-/// the diagnostic they serve.
-///
-/// SAFETY (of the internal `&*ptr`): the only `&mut` into `CALL_FRAMES` lives
-/// inside `cr_call_push`'s statement on this same thread and is gone by the
-/// time any reader runs; entries below `depth` are fully initialised because
-/// the depth is published after the write.
-fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)]) -> R) -> R {
-    let depth = CALL_DEPTH.get();
-    CALL_FRAMES.with(|frames| {
-        let v = unsafe { &*frames.get() };
-        f(&v[..depth.min(v.len())])
-    })
-}
-
-/// Where the running native frame was declared, for a RECOVERABLE fault's log line — the same
-/// position the halting path names on `--native` (`State::running_frame_declaration` is the
-/// interpreter's twin), because the generated code keeps no per-statement line.  `None` on the
-/// lean tier, which pushes no frames, and outside any loft frame.
-pub(crate) fn running_frame_position() -> Option<crate::lexer::Position> {
-    with_call_frames(|frames| {
-        frames
-            .last()
-            .map(|(_, file, line, _)| crate::lexer::Position {
-                file: crate::lexer::intern_file(file),
-                line: *line,
-                pos: 1,
-            })
-    })
-}
-
-/// The loft frames this native thread is inside, innermost first.
-///
-/// The `--native` counterpart of the interpreter's `State::current_call_chain`, in the
-/// same shape (bare function names) so that one renderer serves both backends —
-/// `RuntimeError::report_and_exit` attaches these to a fault raised by `assert` or
-/// `panic`, neither of which can see a `State` to read frames from.
-#[must_use]
-pub fn native_call_chain() -> Vec<String> {
-    with_call_frames(|b| {
-        b.iter()
-            .rev()
-            .map(|(nm, _, _, _)| (*nm).to_string())
-            .collect()
-    })
-}
-
-/// Push a frame onto the shadow call stack.  Called at the start of every
-/// generated function body.  The `&'static str` arguments are string literals
-/// embedded in the generated Rust code.
 #[inline]
 /// The program's own `.loft` path for a compiled program: the one its driver passes in
 /// `LOFT_NATIVE_MAIN_FILE` when it launches the binary, else `baked`.  A test/semantics build
@@ -6082,137 +6281,12 @@ pub fn main_file_or(baked: &'static str) -> &'static str {
     .unwrap_or(baked)
 }
 
-pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
-    // @PLN28 — native call-depth guard.  Generated Rust recurses one native
-    // frame per loft call, so unbounded recursion overflows the OS stack with
-    // an opaque `fatal runtime error: stack overflow, aborting`.  The
-    // interpreter caps recursion at `State::MAX_CALL_DEPTH` and renders a typed
-    // `StackOverflow`; mirror that here so both backends agree and native emits
-    // a clean, source-located error instead of an abort.  (The generated `main`
-    // runs on a large-stack thread — see `NATIVE_MAIN_STACK` — so this depth
-    // limit is what actually fires, well before the OS stack is exhausted.)
-    //
-    // loft#1058 — the check comes BEFORE the push, as `State::fn_call`'s does: a
-    // refused call never runs, so its frame is not part of the stack the diagnostic
-    // reports.  Pushing first and tripping after put the refused callee on top of the
-    // chain and made it one frame longer than the interpreter's — the two backends
-    // named different functions for one fault.  The position is read off the frame
-    // BELOW for the same reason: it is the function that is running.
-    let depth = CALL_DEPTH.get();
-    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
-        let (running_file, running_line) =
-            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln, _)| (*f, *ln)));
-        cr_stack_overflow(running_file, running_line);
-    }
-    CALL_FRAMES.with(|frames| {
-        // SAFETY: the exclusive borrow lasts only this statement, on this
-        // thread, and nothing else can run inside it.
-        let v = unsafe { &mut *frames.get() };
-        if depth < v.len() {
-            v[depth] = (name, file, line, 0);
-        } else {
-            v.push((name, file, line, 0));
-        }
-    });
-    CALL_DEPTH.set(depth + 1);
-    // @PLAN49 T1 — refresh the shared breadcrumb at every native fn
-    // entry so a watchdog-fired hard-kill identifies the most recent
-    // loft fn we entered.  Single combined call.  When the timeout
-    // is not armed, the body is just one relaxed atomic load + branch
-    // (no allocation, no mutex) — ~1-2 ns per fn entry.
-    crate::timeout::checkpoint_fn("run-native", name, file, line);
-}
-
-/// Record the line the running frame is calling FROM (loft#1753).  Emitted before each
-/// statement that calls into a frame, in a function that pushed a named frame, so that
-/// [`n_stack_trace`] reports each frame's `line` as the call site that entered it — the
-/// interpreter's `CallFrame.line`.  One store into this thread's frame array; the lean tier
-/// never emits it.
-#[inline]
-pub fn cr_call_site(line: u32) {
-    let depth = CALL_DEPTH.get();
-    if depth == 0 {
-        return;
-    }
-    CALL_FRAMES.with(|frames| {
-        // SAFETY: as in `cr_call_push` — an exclusive borrow for this statement only.
-        let v = unsafe { &mut *frames.get() };
-        if let Some(frame) = v.get_mut(depth - 1) {
-            frame.3 = line;
-        }
-    });
-}
-
 /// Native stack size for the generated `main` thread.  The OS main-thread
 /// stack (~8 MiB) overflows at a few thousand recursive loft calls — below the
 /// `MAX_CALL_DEPTH` (10 000) guard.  A generous, virtual (lazily-committed)
 /// stack holds 10 000 frames even for stack-heavy functions (~50 KiB/frame
 /// budget), so the depth guard fires cleanly before the OS stack is exhausted.
 pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
-
-/// Report the call-stack overflow and stop the program, through the renderer every
-/// other halting fault uses.  `#[cold]` / `inline(never)` keeps it off the hot
-/// call-entry path.
-///
-/// `file` / `line` are the string literals `cr_call_push` was emitted with — the
-/// declaration of the function whose entry exceeded the cap, which is the position the
-/// interpreter reports for the same fault (loft#1058).  Before this the two backends
-/// spelled one event two ways: no `-->` block or caret here, its own frame format, and
-/// the depth count only on this side.  The count now lives in
-/// `RuntimeErrorKind::describe()`, so BOTH backends carry it, and the frames come from
-/// the same `render_call_chain` the interpreter's go through.
-///
-/// The lazy-driver bypass @PLN133 S8 asks for is `report_and_exit`'s, shared with
-/// `panic` and `assert`: a fault inside a driver unwinds into `store_lazy_error` rather
-/// than halting the program.
-#[cold]
-#[inline(never)]
-fn cr_stack_overflow(file: &str, line: u32) -> ! {
-    crate::runtime_error::RuntimeError::stack_overflow(file, line).report_and_exit()
-}
-
-/// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap
-/// without the frame record.  A `--lean` binary trades the shadow stack's
-/// diagnostics — `stack_trace()` answers no frames, a native `assert`/`panic`
-/// carries no loft frame block, the watchdog breadcrumb is not refreshed —
-/// for a per-call cost of one bounds test and two `Cell` updates (measured
-/// ~1.2 ns against ~6.7 ns for the named prelude).  What it KEEPS is the
-/// depth cap itself, at the same `MAX_CALL_DEPTH` both backends share; the
-/// overflow report names this call's own entry site rather than the frame
-/// below (there is no frame below to read — the one spelling difference from
-/// the named tier).  [`CallGuard`] balances it unchanged: the pop is a bare
-/// decrement either way.
-#[inline]
-pub fn cr_call_push_lean(file: &'static str, line: u32) {
-    let depth = CALL_DEPTH.get();
-    if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
-        cr_stack_overflow(file, line);
-    }
-    CALL_DEPTH.set(depth + 1);
-}
-
-/// Pop a frame from the shadow call stack.  Called at the end of every
-/// generated function body (including early returns via a drop guard).
-/// One `Cell` decrement — the entry itself stays behind as garbage the next
-/// push at this depth overwrites.
-#[inline]
-pub fn cr_call_pop() {
-    let depth = CALL_DEPTH.get();
-    if depth > 0 {
-        CALL_DEPTH.set(depth - 1);
-    }
-}
-
-/// RAII guard that pops the shadow call stack on drop, ensuring the stack
-/// stays balanced even when the function returns early.
-pub struct CallGuard;
-
-impl Drop for CallGuard {
-    #[inline]
-    fn drop(&mut self) {
-        cr_call_pop();
-    }
-}
 
 // The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
 // innermost frame last.  The `--native` half of the interpreter's `State::fnref_bufs`
@@ -6435,6 +6509,69 @@ impl Drop for RefillKeepGuard {
     }
 }
 
+/// The work buffers a frame LENDS to the functions it calls through a function value
+/// (`@FR-R-WorkBuffer`'s function-value clause).
+///
+/// A direct call hands a work-buffer parameter the frame's pooled buffer; a call through a
+/// function value cannot name one in the IR, because which function runs is not known
+/// there.  So the frame keeps one store per `(wrapper type, k)` — the k-th work buffer of
+/// that type in one candidate — minted the first time a dispatch arm asks for it and
+/// released when the frame ends.  Calls from a frame never overlap and a callee clears or
+/// refills its buffer on entry, so one slot serves every candidate and every call, as the
+/// pool does for direct calls.  A function that lends nothing never mints: an empty list
+/// allocates nothing.
+pub struct FnRefWork {
+    cell: *const std::cell::UnsafeCell<Stores>,
+    bufs: Vec<(i32, u32, DbRef)>,
+}
+
+impl FnRefWork {
+    #[must_use]
+    #[inline]
+    pub fn new(cell: &std::cell::UnsafeCell<Stores>) -> Self {
+        Self {
+            cell: std::ptr::from_ref(cell),
+            bufs: Vec::new(),
+        }
+    }
+
+    /// The frame's buffer for the `k`-th work buffer of wrapper type `tp`, minted on its
+    /// first use.
+    #[inline]
+    pub fn lend(&mut self, tp: i32, k: u32) -> DbRef {
+        for (t, n, buf) in &self.bufs {
+            if *t == tp && *n == k {
+                return *buf;
+            }
+        }
+        self.mint(tp, k)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn mint(&mut self, tp: i32, k: u32) -> DbRef {
+        // SAFETY: the pointer is the `cell` argument of the frame this value is a local of.
+        let cell = unsafe { &*self.cell };
+        let buf = OpDatabase(cell, DbRef::NULL, tp);
+        self.bufs.push((tp, k, buf));
+        buf
+    }
+}
+
+impl Drop for FnRefWork {
+    #[inline]
+    fn drop(&mut self) {
+        if self.bufs.is_empty() {
+            return;
+        }
+        // SAFETY: as in `mint` — the frame outlives its own local.
+        let cell = unsafe { &*self.cell };
+        for (_, _, buf) in self.bufs.drain(..) {
+            OpFreeRef(cell, buf, "__fnref_work");
+        }
+    }
+}
+
 /// Releases the fn-ref return buffers a frame delivered into, when that frame ends.
 ///
 /// The `--native` counterpart of `State::release_fnref_bufs`, and it answers the same
@@ -6620,7 +6757,7 @@ unsafe extern "C" fn _ffi_resize(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u
 pub fn c_library_available(name: &str, libs: &[(&str, &str)], syms: &[(&str, &[&str])]) -> bool {
     #[cfg(feature = "native-extensions")]
     {
-        crate::c_call::library_available_native(name, libs, syms)
+        crate::c_libs::library_available_native(name, libs, syms)
     }
     #[cfg(not(feature = "native-extensions"))]
     {
@@ -6662,7 +6799,7 @@ unsafe extern "C" fn _ffi_foreign(
 ) -> loft_ffi::LoftRef {
     CODEGEN_STORES.with(|c| {
         let stores = unsafe { &mut *c.get() };
-        crate::extensions::adopt_foreign_block(
+        crate::c_libs::adopt_foreign_block(
             stores,
             ctx._opaque as usize,
             ptr,

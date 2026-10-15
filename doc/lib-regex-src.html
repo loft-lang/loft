@@ -23,17 +23,22 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>regex source</h1>
 <article>
-<p><a href="lib-regex.html">← regex</a> · <a href="lib-regex-api.html">API reference</a> · version 0.4.3</p>
-<p class="lib-legend">4 file(s), 356 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-regex.html">← regex</a> · <a href="lib-regex-api.html">API reference</a> · version 0.5.0</p>
+<p class="lib-legend">5 file(s), 747 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>search</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L77">77</a></td><td><a href="#tests-worked-examples-loft-L44">RGX-002</a></td><td><a href="#src-regex-loft-L114">114</a> <a href="#src-regex-loft-L116">116</a> <a href="#tests-auto-trigger-loft-L9">9</a> <a href="#tests-regex-loft-L14">14</a> <a href="#tests-regex-loft-L15">15</a> <a href="#tests-regex-loft-L16">16</a> … (17 total)</td></tr>
-<tr><td><code>matches</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L86">86</a></td><td><a href="#tests-worked-examples-loft-L73">RGX-003</a></td><td><a href="#tests-auto-trigger-loft-L7">7</a> <a href="#tests-auto-trigger-loft-L8">8</a> <a href="#tests-regex-loft-L8">8</a> <a href="#tests-regex-loft-L9">9</a> <a href="#tests-regex-loft-L11">11</a> <a href="#tests-regex-loft-L19">19</a> … (18 total)</td></tr>
-<tr><td><code>split_on</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L97">97</a></td><td><a href="#tests-worked-examples-loft-L97">RGX-004</a></td><td><a href="#src-regex-loft-L122">122</a> <a href="#src-regex-loft-L124">124</a> <a href="#tests-auto-trigger-loft-L11">11</a> <a href="#tests-auto-trigger-loft-L14">14</a> <a href="#tests-regex-loft-L38">38</a> <a href="#tests-regex-loft-L42">42</a> … (14 total)</td></tr>
-<tr><td><code>regex_find</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L113">113</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>regex_split</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L121">121</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>Group</code> <span class="search-kind">struct</span></td><td><a href="#src-regex-loft-L97">97</a></td><td>—</td><td><a href="#src-regex-loft-L110">110</a> <a href="#src-regex-loft-L152">152</a> <a href="#src-regex-loft-L158">158</a> <a href="#src-regex-loft-L160">160</a></td></tr>
+<tr><td><code>Match</code> <span class="search-kind">struct</span></td><td><a href="#src-regex-loft-L106">106</a></td><td>—</td><td><a href="#src-regex-loft-L118">118</a> <a href="#src-regex-loft-L128">128</a> <a href="#src-regex-loft-L149">149</a> <a href="#src-regex-loft-L166">166</a> <a href="#src-regex-loft-L199">199</a> <a href="#src-regex-loft-L208">208</a> … (7 total)</td></tr>
+<tr><td><code>group</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L118">118</a></td><td>—</td><td><a href="#tests-captures-loft-L30">30</a> <a href="#tests-captures-loft-L32">32</a> <a href="#tests-captures-loft-L33">33</a> <a href="#tests-captures-loft-L34">34</a> <a href="#tests-captures-loft-L35">35</a> <a href="#tests-captures-loft-L36">36</a> … (20 total)</td></tr>
+<tr><td><code>named</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L128">128</a></td><td>—</td><td><a href="#tests-captures-loft-L143">143</a> <a href="#tests-captures-loft-L145">145</a> <a href="#tests-captures-loft-L147">147</a> <a href="#tests-captures-loft-L151">151</a> <a href="#tests-captures-loft-L154">154</a> <a href="#tests-captures-loft-L165">165</a></td></tr>
+<tr><td><code>search</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L179">179</a></td><td><a href="#tests-worked-examples-loft-L44">RGX-002</a></td><td><a href="#tests-auto-trigger-loft-L9">9</a> <a href="#tests-regex-loft-L14">14</a> <a href="#tests-regex-loft-L15">15</a> <a href="#tests-regex-loft-L16">16</a> <a href="#tests-regex-loft-L24">24</a> <a href="#tests-regex-loft-L59">59</a> … (15 total)</td></tr>
+<tr><td><code>matches</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L189">189</a></td><td><a href="#src-regex-loft-L81">RGX-003</a></td><td><a href="#tests-auto-trigger-loft-L7">7</a> <a href="#tests-auto-trigger-loft-L8">8</a> <a href="#tests-captures-loft-L29">29</a> <a href="#tests-captures-loft-L64">64</a> <a href="#tests-captures-loft-L78">78</a> <a href="#tests-captures-loft-L94">94</a> … (31 total)</td></tr>
+<tr><td><code>capture</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L199">199</a></td><td><a href="#tests-worked-examples-loft-L149">RGX-006</a></td><td><a href="#tests-captures-loft-L29">29</a> <a href="#tests-captures-loft-L39">39</a> <a href="#tests-captures-loft-L40">40</a> <a href="#tests-captures-loft-L43">43</a> <a href="#tests-captures-loft-L48">48</a> <a href="#tests-captures-loft-L53">53</a> … (27 total)</td></tr>
+<tr><td><code>capture_all</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L208">208</a></td><td><a href="#tests-captures-loft-L97">RGX-007</a></td><td><a href="#tests-captures-loft-L77">77</a> <a href="#tests-captures-loft-L82">82</a> <a href="#tests-captures-loft-L85">85</a> <a href="#tests-captures-loft-L89">89</a> <a href="#tests-captures-loft-L93">93</a> <a href="#tests-captures-loft-L101">101</a> … (7 total)</td></tr>
+<tr><td><code>replace_on</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L230">230</a></td><td><a href="#tests-worked-examples-loft-L180">RGX-008</a></td><td><a href="#tests-captures-loft-L160">160</a> <a href="#tests-captures-loft-L161">161</a> <a href="#tests-captures-loft-L162">162</a> <a href="#tests-captures-loft-L163">163</a> <a href="#tests-captures-loft-L164">164</a> <a href="#tests-captures-loft-L165">165</a> … (14 total)</td></tr>
+<tr><td><code>split_on</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L265">265</a></td><td><a href="#tests-worked-examples-loft-L97">RGX-004</a></td><td><a href="#tests-auto-trigger-loft-L11">11</a> <a href="#tests-auto-trigger-loft-L14">14</a> <a href="#tests-captures-loft-L186">186</a> <a href="#tests-regex-loft-L38">38</a> <a href="#tests-regex-loft-L42">42</a> <a href="#tests-regex-loft-L43">43</a> … (13 total)</td></tr>
 </table>
 <h2 id="src-regex-loft">src/regex.loft</h2>
 <pre class="src"><code><span id="src-regex-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -50,116 +55,260 @@
 <span id="src-regex-loft-L12"><span class="cm">//</span></span>
 <span id="src-regex-loft-L13"><span class="cm">// The public API is subject-first text methods, named with the conventional</span></span>
 <span id="src-regex-loft-L14"><span class="cm">// regex verbs so they read naturally on a `text`:</span></span>
-<span id="src-regex-loft-L15"><span class="cm">//   * line.search("[0-9]+")     -&gt; byte offset of the first match, or null</span></span>
-<span id="src-regex-loft-L16"><span class="cm">//   * line.matches("[0-9]+")    -&gt; true if the pattern matches anywhere</span></span>
-<span id="src-regex-loft-L17"><span class="cm">//   * for f in line.split_on("[,;]") { … }   -&gt; lazy split on the pattern</span></span>
-<span id="src-regex-loft-L18"><span class="cm">// The verbs dodge the stdlib literal-text methods deliberately: bare `find`</span></span>
-<span id="src-regex-loft-L19"><span class="cm">// and `split` on `text` are already the stdlib's *literal* substring-find and</span></span>
-<span id="src-regex-loft-L20"><span class="cm">// character-split (C95 blocks reusing either name, even as an overload), so</span></span>
-<span id="src-regex-loft-L21"><span class="cm">// regex uses `search` (cf. JS `String.search`, Python `re.search`) and</span></span>
-<span id="src-regex-loft-L22"><span class="cm">// `split_on`.  `matches` is collision-free and keeps its bare name.</span></span>
-<span id="src-regex-loft-L23"><span class="cm">//</span></span>
-<span id="src-regex-loft-L24"><span class="cm">// Phase 0: matches, search, split_on.  match_groups / replace are the next</span></span>
-<span id="src-regex-loft-L25"><span class="cm">// increment (capture-group spans + 3-arg-text returns).</span></span>
-<span id="src-regex-loft-L26"></span>
-<span id="src-regex-loft-L27"><span class="cm">// --- Internal natives (bridge to the Rust `regex` crate) ---</span></span>
-<span id="src-regex-loft-L28"></span>
-<span id="src-regex-loft-L29"><span class="cm">// True if `pattern` matches anywhere in `input`.</span></span>
-<span id="src-regex-loft-L30"><span class="kw">fn</span> <span class="fn-call">is_match</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-regex-loft-L31">#native</span>
-<span id="src-regex-loft-L32"></span>
-<span id="src-regex-loft-L33"><span class="cm">// Byte offset of the START of the first match, or null.  Named distinctly</span></span>
-<span id="src-regex-loft-L34"><span class="cm">// from stdlib `text.find` so unqualified calls inside this module resolve</span></span>
-<span id="src-regex-loft-L35"><span class="cm">// here, not to the (reverse-argument) text method.</span></span>
-<span id="src-regex-loft-L36"><span class="kw">fn</span> <span class="fn-call">match_start</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-regex-loft-L37">#native</span>
-<span id="src-regex-loft-L38"></span>
-<span id="src-regex-loft-L39"><span class="cm">// Byte offset of the END of the first match, or null.</span></span>
-<span id="src-regex-loft-L40"><span class="kw">fn</span> <span class="fn-call">match_end</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-regex-loft-L41">#native</span>
-<span id="src-regex-loft-L42"></span>
-<span id="src-regex-loft-L43"><span class="cm">// (internal) The split loop.  Distinct name so unqualified calls inside this</span></span>
-<span id="src-regex-loft-L44"><span class="cm">// module resolve here, not to stdlib `text.split` (character separator).</span></span>
-<span id="src-regex-loft-L45"><span class="cm">// Yields each piece lazily; regex byte offsets line up with loft's</span></span>
-<span id="src-regex-loft-L46"><span class="cm">// byte-indexed text slicing — so the running bound is `size()` (bytes), not</span></span>
-<span id="src-regex-loft-L47"><span class="cm">// `len()` (characters).</span></span>
-<span id="src-regex-loft-L48"><span class="kw">fn</span> <span class="fn-call">split_iter</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
-<span id="src-regex-loft-L49">  pos = <span class="nm">0</span>;</span>
-<span id="src-regex-loft-L50">  n = input.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
-<span id="src-regex-loft-L51">  while <span class="kw">true</span> {</span>
-<span id="src-regex-loft-L52">    rest = input[pos..n];</span>
-<span id="src-regex-loft-L53">    s = <span class="fn-call">match_start</span>(pattern, rest);</span>
-<span id="src-regex-loft-L54">    <span class="kw">if</span> s &lt; <span class="nm">0</span> {</span>
-<span id="src-regex-loft-L55">      yield rest;</span>
-<span id="src-regex-loft-L56">      <span class="kw">break</span>;</span>
-<span id="src-regex-loft-L57">    }</span>
-<span id="src-regex-loft-L58">    yield input[pos..pos + s];</span>
-<span id="src-regex-loft-L59">    e = <span class="fn-call">match_end</span>(pattern, rest);</span>
-<span id="src-regex-loft-L60">    <span class="kw">if</span> e &lt;= s {</span>
-<span id="src-regex-loft-L61">      e = s + <span class="nm">1</span>;</span>
-<span id="src-regex-loft-L62">    }</span>
-<span id="src-regex-loft-L63">    pos = pos + e;</span>
-<span id="src-regex-loft-L64">  }</span>
-<span id="src-regex-loft-L65">}</span>
-<span id="src-regex-loft-L66"></span>
-<span id="src-regex-loft-L67"><span class="cm">// --- Public API: subject-first text methods (call as line.verb(pattern)) ---</span></span>
-<span id="src-regex-loft-L68"></span>
-<span id="src-regex-loft-L69"><span class="cm">// Byte offset of the first match of `pattern` in the text, or null when there</span></span>
-<span id="src-regex-loft-L70"><span class="cm">// is no match (or the pattern is invalid).  The conventional regex-search verb</span></span>
-<span id="src-regex-loft-L71"><span class="cm">// — named `search`, not `find`, because bare `find` on text is the stdlib's</span></span>
-<span id="src-regex-loft-L72"><span class="cm">// literal substring search.  Call as  line.search("[0-9]+").</span></span>
-<span id="src-regex-loft-L73"><span class="cm">// Example: @RGX-001 — why this is `search` and not `find`, and what a bare</span></span>
-<span id="src-regex-loft-L74"><span class="cm">// `find(pattern, input)` answers instead.</span></span>
-<span id="src-regex-loft-L75"><span class="cm">// Example: @RGX-002 — the answer is a BYTE offset (slice with it, compare it to</span></span>
-<span id="src-regex-loft-L76"><span class="cm">// `size()` not `len()`), and a miss is null despite the `integer` return type.</span></span>
-<span id="src-regex-loft-L77"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">search</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-regex-loft-L78">  <span class="fn-call">match_start</span>(pattern, self)</span>
-<span id="src-regex-loft-L79">}</span>
+<span id="src-regex-loft-L15"><span class="cm">//   * line.search("[0-9]+")          -&gt; byte offset of the first match, or null</span></span>
+<span id="src-regex-loft-L16"><span class="cm">//   * line.matches("[0-9]+")         -&gt; true if the pattern matches anywhere</span></span>
+<span id="src-regex-loft-L17"><span class="cm">//   * line.capture("(\\w+)=(.+)")    -&gt; the first match with its groups, or null</span></span>
+<span id="src-regex-loft-L18"><span class="cm">//   * line.capture_all("[0-9]+")     -&gt; every non-overlapping match</span></span>
+<span id="src-regex-loft-L19"><span class="cm">//   * line.replace_on("[0-9]+", "#") -&gt; the text with the matches replaced</span></span>
+<span id="src-regex-loft-L20"><span class="cm">//   * for f in line.split_on("[,;]") { … }   -&gt; lazy split on the pattern</span></span>
+<span id="src-regex-loft-L21"><span class="cm">// The verbs dodge the stdlib literal-text methods deliberately: bare `find`,</span></span>
+<span id="src-regex-loft-L22"><span class="cm">// `split` and `replace` on `text` are the stdlib's literal substring-find,</span></span>
+<span id="src-regex-loft-L23"><span class="cm">// character-split and literal replace (C95 blocks reusing a name, even as an</span></span>
+<span id="src-regex-loft-L24"><span class="cm">// overload), so regex uses `search` (cf. JS `String.search`, Python</span></span>
+<span id="src-regex-loft-L25"><span class="cm">// `re.search`), `split_on` and `replace_on`.  `matches`, `capture` and</span></span>
+<span id="src-regex-loft-L26"><span class="cm">// `capture_all` are collision-free and keep their bare names.</span></span>
+<span id="src-regex-loft-L27"><span class="cm">//</span></span>
+<span id="src-regex-loft-L28"><span class="cm">// Every offset is a BYTE offset on a code-point boundary (@PLN192): the engine</span></span>
+<span id="src-regex-loft-L29"><span class="cm">// matches by character, so a span never cuts a character where a hand-written</span></span>
+<span id="src-regex-loft-L30"><span class="cm">// `s[a..b]` can.  Slice with it; compare it against `size()`, never `len()`.</span></span>
+<span id="src-regex-loft-L31"><span class="cm">//</span></span>
+<span id="src-regex-loft-L32"><span class="cm">// A `Match` holds no copy of the subject.  Its texts are built as slices of</span></span>
+<span id="src-regex-loft-L33"><span class="cm">// the subject and read as values, the shape under which the compiler keeps</span></span>
+<span id="src-regex-loft-L34"><span class="cm">// them views of the subject on `--native` (`(R-DecodeView)`, @C141); the</span></span>
+<span id="src-regex-loft-L35"><span class="cm">// interpreter copies and is the oracle.  So `m.group(1)` is Python's spelling</span></span>
+<span id="src-regex-loft-L36"><span class="cm">// without Python's copy.</span></span>
+<span id="src-regex-loft-L37"></span>
+<span id="src-regex-loft-L38"><span class="cm">// --- Internal natives (bridge to the Rust `regex` crate) ---</span></span>
+<span id="src-regex-loft-L39"></span>
+<span id="src-regex-loft-L40"><span class="cm">// True if `pattern` matches anywhere in `input`.</span></span>
+<span id="src-regex-loft-L41"><span class="kw">fn</span> <span class="fn-call">is_match</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-regex-loft-L42">#native</span>
+<span id="src-regex-loft-L43"></span>
+<span id="src-regex-loft-L44"><span class="cm">// Byte offset of the START of the first match, or null.  Named distinctly</span></span>
+<span id="src-regex-loft-L45"><span class="cm">// from stdlib `text.find` so unqualified calls inside this module resolve</span></span>
+<span id="src-regex-loft-L46"><span class="cm">// here, not to the (reverse-argument) text method.</span></span>
+<span id="src-regex-loft-L47"><span class="kw">fn</span> <span class="fn-call">match_start</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-regex-loft-L48">#native</span>
+<span id="src-regex-loft-L49"></span>
+<span id="src-regex-loft-L50"><span class="cm">// The START of the first match at or after byte `from`, with the whole input</span></span>
+<span id="src-regex-loft-L51"><span class="cm">// as context — `^` and `\b` see the bytes before `from` — or null.</span></span>
+<span id="src-regex-loft-L52"><span class="kw">fn</span> <span class="fn-call">match_start_at</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>, from: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-regex-loft-L53">#native</span>
+<span id="src-regex-loft-L54"></span>
+<span id="src-regex-loft-L55"><span class="cm">// The END of that same match, or null.</span></span>
+<span id="src-regex-loft-L56"><span class="kw">fn</span> <span class="fn-call">match_end_at</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>, from: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-regex-loft-L57">#native</span>
+<span id="src-regex-loft-L58"></span>
+<span id="src-regex-loft-L59"><span class="cm">// The spans of the first match at or after `from`: `[s0, e0, s1, e1, …]`, the</span></span>
+<span id="src-regex-loft-L60"><span class="cm">// whole match first, then every group in pattern order, a group that did not</span></span>
+<span id="src-regex-loft-L61"><span class="cm">// take part as `-1, -1`; empty when nothing matched or the pattern is invalid.</span></span>
+<span id="src-regex-loft-L62"><span class="cm">// The ONE span-answering native: every `Match` is built from its answer.</span></span>
+<span id="src-regex-loft-L63"><span class="kw">fn</span> <span class="fn-call">spans</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>, from: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;;</span>
+<span id="src-regex-loft-L64">#native</span>
+<span id="src-regex-loft-L65"></span>
+<span id="src-regex-loft-L66"><span class="cm">// The group names of `pattern`, each preceded by `\n`: one unnamed group is</span></span>
+<span id="src-regex-loft-L67"><span class="cm">// `"\n"`, no group at all is `""`.</span></span>
+<span id="src-regex-loft-L68"><span class="kw">fn</span> <span class="fn-call">group_names</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-regex-loft-L69">#native</span>
+<span id="src-regex-loft-L70"></span>
+<span id="src-regex-loft-L71"><span class="cm">// `input` with the first `limit` matches replaced by `template` (all when</span></span>
+<span id="src-regex-loft-L72"><span class="cm">// `limit` is 0); unchanged when the pattern is invalid.</span></span>
+<span id="src-regex-loft-L73"><span class="kw">fn</span> <span class="fn-call">replace_native</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>, template: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="kw">limit</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-regex-loft-L74">#native</span>
+<span id="src-regex-loft-L75"></span>
+<span id="src-regex-loft-L76"><span class="cm">// The parser's message for a pattern that does not compile, handed out ONCE</span></span>
+<span id="src-regex-loft-L77"><span class="cm">// per pattern per process; "" for a valid or an already reported one.</span></span>
+<span id="src-regex-loft-L78"><span class="kw">fn</span> <span class="fn-call">pattern_error</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-regex-loft-L79">#native</span>
 <span id="src-regex-loft-L80"></span>
-<span id="src-regex-loft-L81"><span class="cm">// True if `pattern` matches anywhere in the text.  `self` registers this as</span></span>
-<span id="src-regex-loft-L82"><span class="cm">// BOTH a method (`line.matches(p)`) and a free function (`matches(line, p)`).</span></span>
-<span id="src-regex-loft-L83"><span class="cm">// Collision-free on `text` (the stdlib has `contains`, not `matches`).</span></span>
-<span id="src-regex-loft-L84"><span class="cm">// Example: @RGX-003 — a pattern that never compiled answers false, exactly like</span></span>
-<span id="src-regex-loft-L85"><span class="cm">// text that simply did not match.</span></span>
-<span id="src-regex-loft-L86"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">matches</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-regex-loft-L87">  <span class="fn-call">is_match</span>(pattern, self)</span>
-<span id="src-regex-loft-L88">}</span>
-<span id="src-regex-loft-L89"></span>
-<span id="src-regex-loft-L90"><span class="cm">// Split the text on matches of `pattern`, yielding each piece lazily through</span></span>
-<span id="src-regex-loft-L91"><span class="cm">// an `iterator&lt;text&gt;` (reuses loft's coroutine channel — nothing is</span></span>
-<span id="src-regex-loft-L92"><span class="cm">// materialised).  Named `split_on`, not `split`, because bare `split` on text</span></span>
-<span id="src-regex-loft-L93"><span class="cm">// is the stdlib character-separator split.  Call as</span></span>
-<span id="src-regex-loft-L94"><span class="cm">//   for piece in line.split_on("[,;]") { }.</span></span>
-<span id="src-regex-loft-L95"><span class="cm">// Example: @RGX-004 — it yields the gaps between matches, so a separator at</span></span>
-<span id="src-regex-loft-L96"><span class="cm">// either end leaves an empty piece and unmatched text comes back as ONE piece.</span></span>
-<span id="src-regex-loft-L97"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">split_on</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
-<span id="src-regex-loft-L98">  yield from <span class="fn-call">split_iter</span>(pattern, self);</span>
-<span id="src-regex-loft-L99">}</span>
-<span id="src-regex-loft-L100"></span>
-<span id="src-regex-loft-L101"><span class="cm">// --- Superseded spellings (kept working; steered to the clean verbs) ---</span></span>
-<span id="src-regex-loft-L102"><span class="cm">// An earlier release shipped `regex_`-prefixed methods (`line.regex_find` /</span></span>
-<span id="src-regex-loft-L103"><span class="cm">// `line.regex_split`).  They still work unchanged; the recommended-idiom channel</span></span>
-<span id="src-regex-loft-L104"><span class="cm">// (@PLN102 arc C) steers new calls to `search` / `split_on`.  The pattern-first</span></span>
-<span id="src-regex-loft-L105"><span class="cm">// free functions `find` / `split` of that release are gone: the stdlib's `text`</span></span>
-<span id="src-regex-loft-L106"><span class="cm">// methods of the same names take every bare call, and a superseded function</span></span>
-<span id="src-regex-loft-L107"><span class="cm">// that a matching method shadows is removed, not kept (COMPATIBILITY.md).</span></span>
-<span id="src-regex-loft-L108"></span>
-<span id="src-regex-loft-L109"><span class="cm">// `find` as a METHOD on the text, for a caller that prefers `s.regex_find(p)`.</span></span>
-<span id="src-regex-loft-L110"><span class="cm">// Superseded by this library's `search`, the same operation under the</span></span>
-<span id="src-regex-loft-L111"><span class="cm">// conventional regex verb — the prefix existed only because a bare `find`</span></span>
-<span id="src-regex-loft-L112"><span class="cm">// resolves to the stdlib's literal-substring method first.</span></span>
-<span id="src-regex-loft-L113"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">regex_find</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-regex-loft-L114">  self.<span class="fn-call">search</span>(pattern)</span>
-<span id="src-regex-loft-L115">}</span>
-<span id="src-regex-loft-L116">#superseded <span class="st">"search"</span></span>
-<span id="src-regex-loft-L117"></span>
-<span id="src-regex-loft-L118"><span class="cm">// `split` as a method, and superseded by `split_on` for the same reason.  The</span></span>
-<span id="src-regex-loft-L119"><span class="cm">// distinction that matters: this splits on a PATTERN, while the stdlib's bare</span></span>
-<span id="src-regex-loft-L120"><span class="cm">// `split` splits on a character.</span></span>
-<span id="src-regex-loft-L121"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">regex_split</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
-<span id="src-regex-loft-L122">  yield from self.<span class="fn-call">split_on</span>(pattern);</span>
-<span id="src-regex-loft-L123">}</span>
-<span id="src-regex-loft-L124">#superseded <span class="st">"split_on"</span></span>
+<span id="src-regex-loft-L81"><span class="cm">// A pattern that does not compile answers a miss (@RGX-003) AND, the first</span></span>
+<span id="src-regex-loft-L82"><span class="cm">// time it is used, one warning naming the pattern and the parser's message —</span></span>
+<span id="src-regex-loft-L83"><span class="cm">// the channel the stdlib gives an unguarded `÷ 0` (@C80): the value stays a</span></span>
+<span id="src-regex-loft-L84"><span class="cm">// value, the fault is said once.</span></span>
+<span id="src-regex-loft-L85"><span class="kw">fn</span> <span class="fn-call">report</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-regex-loft-L86">  e = <span class="fn-call">pattern_error</span>(pattern);</span>
+<span id="src-regex-loft-L87">  <span class="kw">if</span> e != <span class="st">""</span> {</span>
+<span id="src-regex-loft-L88">    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_warn</a></span>(<span class="st">"regex: the pattern `{pattern}` does not compile: {e}"</span>, <span class="st">"regex"</span>, <span class="nm">0</span>);</span>
+<span id="src-regex-loft-L89">  }</span>
+<span id="src-regex-loft-L90">}</span>
+<span id="src-regex-loft-L91"></span>
+<span id="src-regex-loft-L92"><span class="cm">// --- The match ---</span></span>
+<span id="src-regex-loft-L93"></span>
+<span id="src-regex-loft-L94"><span class="cm">// One capture group of a match.  `text` is null when the group did not take</span></span>
+<span id="src-regex-loft-L95"><span class="cm">// part (an alternation branch not taken, an optional group that matched</span></span>
+<span id="src-regex-loft-L96"><span class="cm">// nothing); `start` and `end` are then -1.</span></span>
+<span id="src-regex-loft-L97"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Group</span> {</span>
+<span id="src-regex-loft-L98">  <span class="kw">pub</span> <span class="ty"><a href="stdlib-types.html">text</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>?,</span>
+<span id="src-regex-loft-L99">  <span class="kw">pub</span> start: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-regex-loft-L100">  <span class="kw">pub</span> end: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-regex-loft-L101">}</span>
+<span id="src-regex-loft-L102"></span>
+<span id="src-regex-loft-L103"><span class="cm">// A match of a pattern in a subject: the matched text, its byte span, and its</span></span>
+<span id="src-regex-loft-L104"><span class="cm">// groups in pattern order (group 1 first — `text` IS group 0).  `names` holds</span></span>
+<span id="src-regex-loft-L105"><span class="cm">// one entry per group, "" for an unnamed one, so `named` is a lookup.</span></span>
+<span id="src-regex-loft-L106"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Match</span> {</span>
+<span id="src-regex-loft-L107">  <span class="kw">pub</span> <span class="ty"><a href="stdlib-types.html">text</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-regex-loft-L108">  <span class="kw">pub</span> start: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-regex-loft-L109">  <span class="kw">pub</span> end: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-regex-loft-L110">  <span class="kw">pub</span> groups: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Group</span>&gt;,</span>
+<span id="src-regex-loft-L111">  <span class="kw">pub</span> names: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
+<span id="src-regex-loft-L112">}</span>
+<span id="src-regex-loft-L113"></span>
+<span id="src-regex-loft-L114"><span class="cm">// Group `i` of the match (1-based, `group(0)` is the whole match), or null</span></span>
+<span id="src-regex-loft-L115"><span class="cm">// when it did not take part, there is no such group, or there was no match:</span></span>
+<span id="src-regex-loft-L116"><span class="cm">// the receiver is nullable so `line.capture(p).group(1)` reads in one go, a</span></span>
+<span id="src-regex-loft-L117"><span class="cm">// miss answering null all the way down.</span></span>
+<span id="src-regex-loft-L118"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">group</span>(self: <span class="en">Match</span>?, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>? {</span>
+<span id="src-regex-loft-L119">  <span class="kw">if</span> self == <span class="kw">null</span> || i &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-regex-loft-L120">  <span class="kw">if</span> i == <span class="nm">0</span> { <span class="kw">return</span> self.<span class="ty"><a href="stdlib-types.html">text</a></span>; }</span>
+<span id="src-regex-loft-L121">  g = self.groups[i - <span class="nm">1</span>];</span>
+<span id="src-regex-loft-L122">  <span class="kw">if</span> g == <span class="kw">null</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-regex-loft-L123">  g.<span class="ty"><a href="stdlib-types.html">text</a></span></span>
+<span id="src-regex-loft-L124">}</span>
+<span id="src-regex-loft-L125"></span>
+<span id="src-regex-loft-L126"><span class="cm">// The group called `name`, or null when the pattern has no such name, the</span></span>
+<span id="src-regex-loft-L127"><span class="cm">// group did not take part, or there was no match.</span></span>
+<span id="src-regex-loft-L128"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">named</span>(self: <span class="en">Match</span>?, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>? {</span>
+<span id="src-regex-loft-L129">  <span class="kw">if</span> self == <span class="kw">null</span> || name == <span class="st">""</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-regex-loft-L130">  <span class="kw">for</span> n <span class="kw">in</span> self.names {</span>
+<span id="src-regex-loft-L131">    <span class="kw">if</span> n == name {</span>
+<span id="src-regex-loft-L132">      g = self.groups[n#<span class="ty">index</span>];</span>
+<span id="src-regex-loft-L133">      <span class="kw">if</span> g == <span class="kw">null</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-regex-loft-L134">      <span class="kw">return</span> g.<span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-regex-loft-L135">    }</span>
+<span id="src-regex-loft-L136">  }</span>
+<span id="src-regex-loft-L137">  <span class="kw">null</span></span>
+<span id="src-regex-loft-L138">}</span>
+<span id="src-regex-loft-L139"></span>
+<span id="src-regex-loft-L140"><span class="cm">// The names of a pattern's groups as a vector, "" for an unnamed group.</span></span>
+<span id="src-regex-loft-L141"><span class="kw">fn</span> <span class="fn-call">names_of</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L142">  nm = <span class="fn-call">group_names</span>(pattern);</span>
+<span id="src-regex-loft-L143">  <span class="kw">if</span> nm == <span class="st">""</span> { <span class="kw">return</span> []; }</span>
+<span id="src-regex-loft-L144">  nm[<span class="nm">1..</span>].<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>)</span>
+<span id="src-regex-loft-L145">}</span>
+<span id="src-regex-loft-L146"></span>
+<span id="src-regex-loft-L147"><span class="cm">// The first match of `pattern` in `self` at or after byte `from`, built from</span></span>
+<span id="src-regex-loft-L148"><span class="cm">// the ONE span native: every text in it is a slice of `self`.</span></span>
+<span id="src-regex-loft-L149"><span class="kw">fn</span> <span class="fn-call">capture_from</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, from: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Match</span>? {</span>
+<span id="src-regex-loft-L150">  sp = <span class="fn-call">spans</span>(pattern, self, from);</span>
+<span id="src-regex-loft-L151">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(sp) &lt; <span class="nm">2</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-regex-loft-L152">  gs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Group</span>&gt; = [];</span>
+<span id="src-regex-loft-L153">  i = <span class="nm">2</span>;</span>
+<span id="src-regex-loft-L154">  while i + <span class="nm">1</span> &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(sp) {</span>
+<span id="src-regex-loft-L155">    s = sp[i]?;</span>
+<span id="src-regex-loft-L156">    e = sp[i + <span class="nm">1</span>]?;</span>
+<span id="src-regex-loft-L157">    <span class="kw">if</span> s &lt; <span class="nm">0</span> {</span>
+<span id="src-regex-loft-L158">      gs += [<span class="en">Group</span> { <span class="ty"><a href="stdlib-types.html">text</a></span>: <span class="kw">null</span>, start: -<span class="nm">1</span>, end: -<span class="nm">1</span> }];</span>
+<span id="src-regex-loft-L159">    } <span class="kw">else</span> {</span>
+<span id="src-regex-loft-L160">      gs += [<span class="en">Group</span> { <span class="ty"><a href="stdlib-types.html">text</a></span>: self[s..e], start: s, end: e }];</span>
+<span id="src-regex-loft-L161">    }</span>
+<span id="src-regex-loft-L162">    i += <span class="nm">2</span>;</span>
+<span id="src-regex-loft-L163">  }</span>
+<span id="src-regex-loft-L164">  s0 = sp[<span class="nm">0</span>]?;</span>
+<span id="src-regex-loft-L165">  e0 = sp[<span class="nm">1</span>]?;</span>
+<span id="src-regex-loft-L166">  <span class="en">Match</span> { <span class="ty"><a href="stdlib-types.html">text</a></span>: self[s0..e0], start: s0, end: e0, groups: gs, names: <span class="fn-call">names_of</span>(pattern) }</span>
+<span id="src-regex-loft-L167">}</span>
+<span id="src-regex-loft-L168"></span>
+<span id="src-regex-loft-L169"><span class="cm">// --- Public API: subject-first text methods (call as line.verb(pattern)) ---</span></span>
+<span id="src-regex-loft-L170"></span>
+<span id="src-regex-loft-L171"><span class="cm">// Byte offset of the first match of `pattern` in the text, or null when there</span></span>
+<span id="src-regex-loft-L172"><span class="cm">// is no match (or the pattern is invalid).  The conventional regex-search verb</span></span>
+<span id="src-regex-loft-L173"><span class="cm">// — named `search`, not `find`, because bare `find` on text is the stdlib's</span></span>
+<span id="src-regex-loft-L174"><span class="cm">// literal substring search.  Call as  line.search("[0-9]+").</span></span>
+<span id="src-regex-loft-L175"><span class="cm">// Example: @RGX-001 — why this is `search` and not `find`, and what a bare</span></span>
+<span id="src-regex-loft-L176"><span class="cm">// `find(pattern, input)` answers instead.</span></span>
+<span id="src-regex-loft-L177"><span class="cm">// Example: @RGX-002 — the answer is a BYTE offset (slice with it, compare it to</span></span>
+<span id="src-regex-loft-L178"><span class="cm">// `size()` not `len()`), and a miss is null.</span></span>
+<span id="src-regex-loft-L179"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">search</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-regex-loft-L180">  <span class="fn-call">report</span>(pattern);</span>
+<span id="src-regex-loft-L181">  <span class="fn-call">match_start</span>(pattern, self)</span>
+<span id="src-regex-loft-L182">}</span>
+<span id="src-regex-loft-L183"></span>
+<span id="src-regex-loft-L184"><span class="cm">// True if `pattern` matches anywhere in the text.  `self` registers this as</span></span>
+<span id="src-regex-loft-L185"><span class="cm">// BOTH a method (`line.matches(p)`) and a free function (`matches(line, p)`).</span></span>
+<span id="src-regex-loft-L186"><span class="cm">// Collision-free on `text` (the stdlib has `contains`, not `matches`).</span></span>
+<span id="src-regex-loft-L187"><span class="cm">// Example: @RGX-003 — a pattern that never compiled answers false, exactly like</span></span>
+<span id="src-regex-loft-L188"><span class="cm">// text that simply did not match — and says so once.</span></span>
+<span id="src-regex-loft-L189"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">matches</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-regex-loft-L190">  <span class="fn-call">report</span>(pattern);</span>
+<span id="src-regex-loft-L191">  <span class="fn-call">is_match</span>(pattern, self)</span>
+<span id="src-regex-loft-L192">}</span>
+<span id="src-regex-loft-L193"></span>
+<span id="src-regex-loft-L194"><span class="cm">// The first match of `pattern` in the text with its capture groups, or null</span></span>
+<span id="src-regex-loft-L195"><span class="cm">// when there is none (or the pattern is invalid).  Call as</span></span>
+<span id="src-regex-loft-L196"><span class="cm">//   m = line.capture("^(\\w+)=(.+)$");  if m != null { key = m.group(1)?; }</span></span>
+<span id="src-regex-loft-L197"><span class="cm">// Example: @RGX-005 — a group that did not take part is null, not "".</span></span>
+<span id="src-regex-loft-L198"><span class="cm">// Example: @RGX-006 — every offset is a byte on a code-point boundary.</span></span>
+<span id="src-regex-loft-L199"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">capture</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Match</span>? {</span>
+<span id="src-regex-loft-L200">  <span class="fn-call">report</span>(pattern);</span>
+<span id="src-regex-loft-L201">  self.<span class="fn-call">capture_from</span>(pattern, <span class="nm">0</span>)</span>
+<span id="src-regex-loft-L202">}</span>
+<span id="src-regex-loft-L203"></span>
+<span id="src-regex-loft-L204"><span class="cm">// Every non-overlapping match of `pattern` in the text, in order, each with</span></span>
+<span id="src-regex-loft-L205"><span class="cm">// its groups; empty when there is none.  An empty match advances one</span></span>
+<span id="src-regex-loft-L206"><span class="cm">// character, so `a*` on `"baa"` answers three matches: `""`, `"aa"`, `""`.</span></span>
+<span id="src-regex-loft-L207"><span class="cm">// Example: @RGX-007 — the walk idiom that replaces `re.sub` with a callback.</span></span>
+<span id="src-regex-loft-L208"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">capture_all</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Match</span>&gt; {</span>
+<span id="src-regex-loft-L209">  <span class="fn-call">report</span>(pattern);</span>
+<span id="src-regex-loft-L210">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Match</span>&gt; = [];</span>
+<span id="src-regex-loft-L211">  pos = <span class="nm">0</span>;</span>
+<span id="src-regex-loft-L212">  n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self);</span>
+<span id="src-regex-loft-L213">  while pos &lt;= n {</span>
+<span id="src-regex-loft-L214">    m = self.<span class="fn-call">capture_from</span>(pattern, pos);</span>
+<span id="src-regex-loft-L215">    <span class="kw">if</span> m == <span class="kw">null</span> { <span class="kw">break</span>; }</span>
+<span id="src-regex-loft-L216">    s = m.start?;</span>
+<span id="src-regex-loft-L217">    e = m.end?;</span>
+<span id="src-regex-loft-L218">    pos = <span class="kw">if</span> e &gt; s { e } <span class="kw">else</span> { e + <span class="nm">1</span> };</span>
+<span id="src-regex-loft-L219">    out += [m];</span>
+<span id="src-regex-loft-L220">  }</span>
+<span id="src-regex-loft-L221">  out</span>
+<span id="src-regex-loft-L222">}</span>
+<span id="src-regex-loft-L223"></span>
+<span id="src-regex-loft-L224"><span class="cm">// The text with its matches of `pattern` replaced by `template`, in which</span></span>
+<span id="src-regex-loft-L225"><span class="cm">// `$1` / `${name}` stand for a group, `$0` for the whole match and `$$` for a</span></span>
+<span id="src-regex-loft-L226"><span class="cm">// dollar.  `limit` bounds how many matches are replaced, from the left; 0</span></span>
+<span id="src-regex-loft-L227"><span class="cm">// (the default) replaces every one.  Named `replace_on` beside `split_on`:</span></span>
+<span id="src-regex-loft-L228"><span class="cm">// bare `replace` on text is the stdlib's literal replace.</span></span>
+<span id="src-regex-loft-L229"><span class="cm">// Example: @RGX-008 — a template is not a format string: `{` is literal there.</span></span>
+<span id="src-regex-loft-L230"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">replace_on</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, template: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="kw">limit</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-regex-loft-L231">  <span class="fn-call">report</span>(pattern);</span>
+<span id="src-regex-loft-L232">  <span class="fn-call">replace_native</span>(pattern, self, template, <span class="kw">limit</span>)</span>
+<span id="src-regex-loft-L233">}</span>
+<span id="src-regex-loft-L234"></span>
+<span id="src-regex-loft-L235"><span class="cm">// (internal) The split loop.  Distinct name so unqualified calls inside this</span></span>
+<span id="src-regex-loft-L236"><span class="cm">// module resolve here, not to stdlib `text.split` (character separator).</span></span>
+<span id="src-regex-loft-L237"><span class="cm">// Yields each piece lazily.  The subject is searched FROM a position, never</span></span>
+<span id="src-regex-loft-L238"><span class="cm">// re-sliced: a slice would restart `^` and `\b` at every piece boundary, so</span></span>
+<span id="src-regex-loft-L239"><span class="cm">// `"abab".split_on("^ab")` answered three pieces where one match is correct.</span></span>
+<span id="src-regex-loft-L240"><span class="kw">fn</span> <span class="fn-call">split_iter</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L241">  pos = <span class="nm">0</span>;</span>
+<span id="src-regex-loft-L242">  n = input.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
+<span id="src-regex-loft-L243">  while <span class="kw">true</span> {</span>
+<span id="src-regex-loft-L244">    s = <span class="fn-call">match_start_at</span>(pattern, input, pos);</span>
+<span id="src-regex-loft-L245">    <span class="kw">if</span> s &lt; <span class="nm">0</span> {</span>
+<span id="src-regex-loft-L246">      yield input[pos..n];</span>
+<span id="src-regex-loft-L247">      <span class="kw">break</span>;</span>
+<span id="src-regex-loft-L248">    }</span>
+<span id="src-regex-loft-L249">    e = <span class="fn-call">match_end_at</span>(pattern, input, pos);</span>
+<span id="src-regex-loft-L250">    <span class="kw">if</span> e &lt;= s {</span>
+<span id="src-regex-loft-L251">      e = s + <span class="nm">1</span>;</span>
+<span id="src-regex-loft-L252">    }</span>
+<span id="src-regex-loft-L253">    yield input[pos..s];</span>
+<span id="src-regex-loft-L254">    pos = e;</span>
+<span id="src-regex-loft-L255">  }</span>
+<span id="src-regex-loft-L256">}</span>
+<span id="src-regex-loft-L257"></span>
+<span id="src-regex-loft-L258"><span class="cm">// Split the text on matches of `pattern`, yielding each piece lazily through</span></span>
+<span id="src-regex-loft-L259"><span class="cm">// an `iterator&lt;text&gt;` (reuses loft's coroutine channel — nothing is</span></span>
+<span id="src-regex-loft-L260"><span class="cm">// materialised).  Named `split_on`, not `split`, because bare `split` on text</span></span>
+<span id="src-regex-loft-L261"><span class="cm">// is the stdlib character-separator split.  Call as</span></span>
+<span id="src-regex-loft-L262"><span class="cm">//   for piece in line.split_on("[,;]") { }.</span></span>
+<span id="src-regex-loft-L263"><span class="cm">// Example: @RGX-004 — it yields the gaps between matches, so a separator at</span></span>
+<span id="src-regex-loft-L264"><span class="cm">// either end leaves an empty piece and unmatched text comes back as ONE piece.</span></span>
+<span id="src-regex-loft-L265"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">split_on</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L266">  <span class="fn-call">report</span>(pattern);</span>
+<span id="src-regex-loft-L267">  yield from <span class="fn-call">split_iter</span>(pattern, self);</span>
+<span id="src-regex-loft-L268">}</span>
 </code></pre>
 <h2 id="tests-auto-trigger-loft">tests/auto_trigger.loft</h2>
 <pre class="src"><code><span id="tests-auto-trigger-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -177,6 +326,196 @@
 <span id="tests-auto-trigger-loft-L13">  }</span>
 <span id="tests-auto-trigger-loft-L14">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">"a.b.c."</span>, <span class="st">"split_on auto-loads (got {out})"</span>);</span>
 <span id="tests-auto-trigger-loft-L15">}</span>
+</code></pre>
+<h2 id="tests-captures-loft">tests/captures.loft</h2>
+<pre class="src"><code><span id="tests-captures-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-captures-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-captures-loft-L3"><span class="cm">// @PLN192 — `capture`, `capture_all`, `group`, `named`, `replace_on`, and `split_on`</span></span>
+<span id="tests-captures-loft-L4"><span class="cm">// searched from a position.  Every cell hand-computes its value; the interpreter and</span></span>
+<span id="tests-captures-loft-L5"><span class="cm">// `--native` must agree on all of them.  The axes: the subject (ASCII, multibyte before</span></span>
+<span id="tests-captures-loft-L6"><span class="cm">// and inside the match, empty, a match at byte 0 and at the end, an empty match), the</span></span>
+<span id="tests-captures-loft-L7"><span class="cm">// pattern (no group, one, an optional group that did not take part, nested, alternation,</span></span>
+<span id="tests-captures-loft-L8"><span class="cm">// a named group, `(?i)`, `\p{L}`, `^` and `\b` against a second match, a broken one),</span></span>
+<span id="tests-captures-loft-L9"><span class="cm">// the count (0, 1, many), and `replace_on`'s limit (0, 1, more than the matches).</span></span>
+<span id="tests-captures-loft-L10"><span class="cm">//</span></span>
+<span id="tests-captures-loft-L11"><span class="cm">// A cell that asserts a HIT discharges the `Match?` with `?? panic(…)`, so every later</span></span>
+<span id="tests-captures-loft-L12"><span class="cm">// read is on a non-null `Match`; `group` and `named` take the nullable receiver, so the</span></span>
+<span id="tests-captures-loft-L13"><span class="cm">// chained spelling `line.capture(p).group(1)` is exercised as well.</span></span>
+<span id="tests-captures-loft-L14"><span class="kw">use</span> regex::*;</span>
+<span id="tests-captures-loft-L15"></span>
+<span id="tests-captures-loft-L16"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-captures-loft-L17">  <span class="fn-call">test_capture_groups</span>();</span>
+<span id="tests-captures-loft-L18">  <span class="fn-call">test_capture_misses</span>();</span>
+<span id="tests-captures-loft-L19">  <span class="fn-call">test_capture_all</span>();</span>
+<span id="tests-captures-loft-L20">  <span class="fn-call">test_code_points</span>();</span>
+<span id="tests-captures-loft-L21">  <span class="fn-call">test_named_groups</span>();</span>
+<span id="tests-captures-loft-L22">  <span class="fn-call">test_replace_on</span>();</span>
+<span id="tests-captures-loft-L23">  <span class="fn-call">test_split_on_keeps_the_context</span>();</span>
+<span id="tests-captures-loft-L24">}</span>
+<span id="tests-captures-loft-L25"></span>
+<span id="tests-captures-loft-L26"><span class="cm">// --- capture: the first match with its groups ---</span></span>
+<span id="tests-captures-loft-L27"></span>
+<span id="tests-captures-loft-L28"><span class="kw">fn</span> <span class="fn-call">test_capture_groups</span>() {</span>
+<span id="tests-captures-loft-L29">  m = <span class="st">"key=value"</span>.<span class="fn-call">capture</span>(<span class="st">"^(\\w+)=(.+)$"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"the line matches"</span>);</span>
+<span id="tests-captures-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"key=value"</span> <span class="kw">and</span> m.start == <span class="nm">0</span> <span class="kw">and</span> m.end == <span class="nm">9</span>, <span class="st">"the whole match is group 0: {m.text} {m.start}..{m.end}"</span>);</span>
+<span id="tests-captures-loft-L31">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(m.groups) == <span class="nm">2</span>, <span class="st">"two groups, got {len(m.groups)}"</span>);</span>
+<span id="tests-captures-loft-L32">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="fn-call">group</span>(<span class="nm">0</span>) == <span class="st">"key=value"</span>, <span class="st">"group(0) is the whole match"</span>);</span>
+<span id="tests-captures-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="st">"key"</span> <span class="kw">and</span> m.<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"value"</span>, <span class="st">"the two groups: {m.group(1)} {m.group(2)}"</span>);</span>
+<span id="tests-captures-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.groups[<span class="nm">0</span>].start == <span class="nm">0</span> <span class="kw">and</span> m.groups[<span class="nm">0</span>].end == <span class="nm">3</span>, <span class="st">"group 1 spans 0..3"</span>);</span>
+<span id="tests-captures-loft-L35">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.groups[<span class="nm">1</span>].start == <span class="nm">4</span> <span class="kw">and</span> m.groups[<span class="nm">1</span>].end == <span class="nm">9</span>, <span class="st">"group 2 spans 4..9"</span>);</span>
+<span id="tests-captures-loft-L36">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="fn-call">group</span>(<span class="nm">3</span>) == <span class="kw">null</span> <span class="kw">and</span> m.<span class="fn-call">group</span>(-<span class="nm">1</span>) == <span class="kw">null</span>, <span class="st">"no such group is null"</span>);</span>
+<span id="tests-captures-loft-L37"></span>
+<span id="tests-captures-loft-L38">  <span class="cm">// the chained spelling: a miss answers null all the way down</span></span>
+<span id="tests-captures-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"key=value"</span>.<span class="fn-call">capture</span>(<span class="st">"^(\\w+)=(.+)$"</span>).<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="st">"key"</span>, <span class="st">"chained: the group of a hit"</span>);</span>
+<span id="tests-captures-loft-L40">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"nothing"</span>.<span class="fn-call">capture</span>(<span class="st">"^(\\w+)=(.+)$"</span>).<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span>, <span class="st">"chained: the group of a miss is null"</span>);</span>
+<span id="tests-captures-loft-L41"></span>
+<span id="tests-captures-loft-L42">  <span class="cm">// no group at all: a Match with an empty groups vector</span></span>
+<span id="tests-captures-loft-L43">  n = <span class="st">"order 1234"</span>.<span class="fn-call">capture</span>(<span class="st">"[0-9]+"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"digits present"</span>);</span>
+<span id="tests-captures-loft-L44">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"1234"</span> <span class="kw">and</span> n.start == <span class="nm">6</span> <span class="kw">and</span> n.end == <span class="nm">10</span>, <span class="st">"no-group pattern: {n.text}"</span>);</span>
+<span id="tests-captures-loft-L45">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(n.groups) == <span class="nm">0</span> <span class="kw">and</span> n.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span>, <span class="st">"and no groups"</span>);</span>
+<span id="tests-captures-loft-L46"></span>
+<span id="tests-captures-loft-L47">  <span class="cm">// nested groups, in pattern order</span></span>
+<span id="tests-captures-loft-L48">  o = <span class="st">"2026-10-14"</span>.<span class="fn-call">capture</span>(<span class="st">"((\\d+)-(\\d+))-(\\d+)"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"a date"</span>);</span>
+<span id="tests-captures-loft-L49">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(o.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="st">"2026-10"</span> <span class="kw">and</span> o.<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"2026"</span> <span class="kw">and</span> o.<span class="fn-call">group</span>(<span class="nm">3</span>) == <span class="st">"10"</span> <span class="kw">and</span> o.<span class="fn-call">group</span>(<span class="nm">4</span>) == <span class="st">"14"</span>,</span>
+<span id="tests-captures-loft-L50">         <span class="st">"nested groups in pattern order: {o.group(1)} {o.group(2)} {o.group(3)} {o.group(4)}"</span>);</span>
+<span id="tests-captures-loft-L51"></span>
+<span id="tests-captures-loft-L52">  <span class="cm">// alternation: the branch not taken is a group that did not take part</span></span>
+<span id="tests-captures-loft-L53">  p = <span class="st">"cat"</span>.<span class="fn-call">capture</span>(<span class="st">"(dog)|(cat)"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"cat"</span>);</span>
+<span id="tests-captures-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span> <span class="kw">and</span> p.<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"cat"</span>, <span class="st">"the untaken branch is null"</span>);</span>
+<span id="tests-captures-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.groups[<span class="nm">0</span>].start == -<span class="nm">1</span> <span class="kw">and</span> p.groups[<span class="nm">0</span>].end == -<span class="nm">1</span>, <span class="st">"and its span is -1, -1"</span>);</span>
+<span id="tests-captures-loft-L56"></span>
+<span id="tests-captures-loft-L57">  <span class="cm">// an optional group that matched nothing is null, not ""</span></span>
+<span id="tests-captures-loft-L58">  q = <span class="st">"ab"</span>.<span class="fn-call">capture</span>(<span class="st">"a(x)?b"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"ab"</span>);</span>
+<span id="tests-captures-loft-L59">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"ab"</span> <span class="kw">and</span> q.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span>, <span class="st">"an optional group that did not take part is null"</span>);</span>
+<span id="tests-captures-loft-L60"></span>
+<span id="tests-captures-loft-L61">  <span class="cm">// a match at the end, and an empty match</span></span>
+<span id="tests-captures-loft-L62">  r = <span class="st">"hello!"</span>.<span class="fn-call">capture</span>(<span class="st">"!$"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"the bang"</span>);</span>
+<span id="tests-captures-loft-L63">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.start == <span class="nm">5</span> <span class="kw">and</span> r.end == <span class="nm">6</span>, <span class="st">"a match at the end: {r.start}..{r.end}"</span>);</span>
+<span id="tests-captures-loft-L64">  s = <span class="st">"b"</span>.<span class="fn-call">capture</span>(<span class="st">"a*"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"a* matches empty"</span>);</span>
+<span id="tests-captures-loft-L65">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">""</span> <span class="kw">and</span> s.start == <span class="nm">0</span> <span class="kw">and</span> s.end == <span class="nm">0</span>, <span class="st">"an empty match at 0"</span>);</span>
+<span id="tests-captures-loft-L66">}</span>
+<span id="tests-captures-loft-L67"></span>
+<span id="tests-captures-loft-L68"><span class="kw">fn</span> <span class="fn-call">test_capture_misses</span>() {</span>
+<span id="tests-captures-loft-L69">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc"</span>.<span class="fn-call">capture</span>(<span class="st">"[0-9]+"</span>) == <span class="kw">null</span>, <span class="st">"no digits: null"</span>);</span>
+<span id="tests-captures-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">""</span>.<span class="fn-call">capture</span>(<span class="st">"x"</span>) == <span class="kw">null</span>, <span class="st">"an empty subject: null"</span>);</span>
+<span id="tests-captures-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc"</span>.<span class="fn-call">capture</span>(<span class="st">"["</span>) == <span class="kw">null</span>, <span class="st">"a broken pattern: null (and one warning, @RGX-003)"</span>);</span>
+<span id="tests-captures-loft-L72">}</span>
+<span id="tests-captures-loft-L73"></span>
+<span id="tests-captures-loft-L74"><span class="cm">// --- capture_all: every non-overlapping match ---</span></span>
+<span id="tests-captures-loft-L75"></span>
+<span id="tests-captures-loft-L76"><span class="kw">fn</span> <span class="fn-call">test_capture_all</span>() {</span>
+<span id="tests-captures-loft-L77">  all = <span class="st">"a1 b22 c333"</span>.<span class="fn-call">capture_all</span>(<span class="st">"([a-z])([0-9]+)"</span>);</span>
+<span id="tests-captures-loft-L78">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(all) == <span class="nm">3</span>, <span class="st">"three matches, got {len(all)}"</span>);</span>
+<span id="tests-captures-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(all[<span class="nm">0</span>].<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"a1"</span> <span class="kw">and</span> all[<span class="nm">1</span>].<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"b22"</span> <span class="kw">and</span> all[<span class="nm">2</span>].<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"c333"</span>, <span class="st">"in order"</span>);</span>
+<span id="tests-captures-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(all[<span class="nm">2</span>].<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"333"</span> <span class="kw">and</span> all[<span class="nm">2</span>].start == <span class="nm">7</span> <span class="kw">and</span> all[<span class="nm">2</span>].end == <span class="nm">11</span>, <span class="st">"the last one's group and span"</span>);</span>
+<span id="tests-captures-loft-L81"></span>
+<span id="tests-captures-loft-L82">  none = <span class="st">"abc"</span>.<span class="fn-call">capture_all</span>(<span class="st">"[0-9]"</span>);</span>
+<span id="tests-captures-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(none) == <span class="nm">0</span>, <span class="st">"no match: an empty vector"</span>);</span>
+<span id="tests-captures-loft-L84"></span>
+<span id="tests-captures-loft-L85">  one = <span class="st">"x9"</span>.<span class="fn-call">capture_all</span>(<span class="st">"[0-9]"</span>);</span>
+<span id="tests-captures-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(one) == <span class="nm">1</span> <span class="kw">and</span> one[<span class="nm">0</span>].start == <span class="nm">1</span>, <span class="st">"one match"</span>);</span>
+<span id="tests-captures-loft-L87"></span>
+<span id="tests-captures-loft-L88">  <span class="cm">// non-overlapping: `aa` on `aaa` is one match</span></span>
+<span id="tests-captures-loft-L89">  aa = <span class="st">"aaa"</span>.<span class="fn-call">capture_all</span>(<span class="st">"aa"</span>);</span>
+<span id="tests-captures-loft-L90">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(aa) == <span class="nm">1</span> <span class="kw">and</span> aa[<span class="nm">0</span>].end == <span class="nm">2</span>, <span class="st">"non-overlapping"</span>);</span>
+<span id="tests-captures-loft-L91"></span>
+<span id="tests-captures-loft-L92">  <span class="cm">// an empty match advances one character</span></span>
+<span id="tests-captures-loft-L93">  star = <span class="st">"baa"</span>.<span class="fn-call">capture_all</span>(<span class="st">"a*"</span>);</span>
+<span id="tests-captures-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(star) == <span class="nm">3</span>, <span class="st">"a* on baa: three matches, got {len(star)}"</span>);</span>
+<span id="tests-captures-loft-L95">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(star[<span class="nm">0</span>].<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">""</span> <span class="kw">and</span> star[<span class="nm">1</span>].<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"aa"</span> <span class="kw">and</span> star[<span class="nm">2</span>].<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">""</span>, <span class="st">"empty, aa, empty"</span>);</span>
+<span id="tests-captures-loft-L96"></span>
+<span id="tests-captures-loft-L97">  <span class="cm">// the walk idiom (@RGX-007): a callback replace, nothing copied twice</span></span>
+<span id="tests-captures-loft-L98">  s = <span class="st">"one two three"</span>;</span>
+<span id="tests-captures-loft-L99">  out = <span class="st">""</span>;</span>
+<span id="tests-captures-loft-L100">  last = <span class="nm">0</span>;</span>
+<span id="tests-captures-loft-L101">  <span class="kw">for</span> m <span class="kw">in</span> s.<span class="fn-call">capture_all</span>(<span class="st">"\\b[a-z]+\\b"</span>) {</span>
+<span id="tests-captures-loft-L102">    out += s[last..m.start] + m.<span class="ty"><a href="stdlib-types.html">text</a></span>.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_uppercase</a></span>();</span>
+<span id="tests-captures-loft-L103">    last = m.end;</span>
+<span id="tests-captures-loft-L104">  }</span>
+<span id="tests-captures-loft-L105">  out += s[last..];</span>
+<span id="tests-captures-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">"ONE TWO THREE"</span>, <span class="st">"the walk idiom upper-cased every word: {out}"</span>);</span>
+<span id="tests-captures-loft-L107">}</span>
+<span id="tests-captures-loft-L108"></span>
+<span id="tests-captures-loft-L109"><span class="cm">// --- code points: offsets are bytes on code-point boundaries ---</span></span>
+<span id="tests-captures-loft-L110"></span>
+<span id="tests-captures-loft-L111"><span class="kw">fn</span> <span class="fn-call">test_code_points</span>() {</span>
+<span id="tests-captures-loft-L112">  t = <span class="st">"héllo wörld"</span>;</span>
+<span id="tests-captures-loft-L113">  m = t.<span class="fn-call">capture</span>(<span class="st">"w.r"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"wör"</span>);</span>
+<span id="tests-captures-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.start == <span class="nm">7</span> <span class="kw">and</span> m.end == <span class="nm">11</span>, <span class="st">"the byte span of wör is 7..11, got {m.start}..{m.end}"</span>);</span>
+<span id="tests-captures-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"wör"</span>, <span class="st">"and the text is the three characters"</span>);</span>
+<span id="tests-captures-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t[m.start..m.end] == m.<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="st">"slicing the subject with the span gives the same text"</span>);</span>
+<span id="tests-captures-loft-L117">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span>) == <span class="nm">4</span> <span class="kw">and</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span>) == <span class="nm">3</span>, <span class="st">"four bytes, three characters"</span>);</span>
+<span id="tests-captures-loft-L118"></span>
+<span id="tests-captures-loft-L119">  e = <span class="st">"😀x"</span>.<span class="fn-call">capture</span>(<span class="st">"."</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"a dot"</span>);</span>
+<span id="tests-captures-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(e.start == <span class="nm">0</span> <span class="kw">and</span> e.end == <span class="nm">4</span> <span class="kw">and</span> e.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"😀"</span>, <span class="st">"a dot is one code point of four bytes"</span>);</span>
+<span id="tests-captures-loft-L121"></span>
+<span id="tests-captures-loft-L122">  w = <span class="st">"café au lait"</span>.<span class="fn-call">capture</span>(<span class="st">"\\w+"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"a word"</span>);</span>
+<span id="tests-captures-loft-L123">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(w.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"café"</span>, <span class="st">"\\w is Unicode: é is a word character"</span>);</span>
+<span id="tests-captures-loft-L124">  l = <span class="st">"123 ünï"</span>.<span class="fn-call">capture</span>(<span class="st">"\\p{{L}}+"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"letters"</span>);</span>
+<span id="tests-captures-loft-L125">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(l.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"ünï"</span>, <span class="st">"\\p{{L}} takes the letters"</span>);</span>
+<span id="tests-captures-loft-L126">  i = <span class="st">"HeLLo"</span>.<span class="fn-call">capture</span>(<span class="st">"(?i)hello"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"case-folded"</span>);</span>
+<span id="tests-captures-loft-L127">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(i.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"HeLLo"</span>, <span class="st">"(?i) folds case"</span>);</span>
+<span id="tests-captures-loft-L128"></span>
+<span id="tests-captures-loft-L129">  <span class="cm">// no normalisation: a precomposed é and e + U+0301 are different texts</span></span>
+<span id="tests-captures-loft-L130">  composed = <span class="st">"é"</span>;</span>
+<span id="tests-captures-loft-L131">  decomposed = <span class="st">"e\u{0301}"</span>;</span>
+<span id="tests-captures-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(composed) == <span class="nm">1</span> <span class="kw">and</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(decomposed) == <span class="nm">2</span>, <span class="st">"one and two code points"</span>);</span>
+<span id="tests-captures-loft-L133">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(composed.<span class="fn-call">matches</span>(<span class="st">"^.$"</span>) <span class="kw">and</span> !decomposed.<span class="fn-call">matches</span>(<span class="st">"^.$"</span>), <span class="st">"the engine does not normalise"</span>);</span>
+<span id="tests-captures-loft-L134"></span>
+<span id="tests-captures-loft-L135">  <span class="cm">// a pattern that could match inside a code point does not compile</span></span>
+<span id="tests-captures-loft-L136">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc"</span>.<span class="fn-call">capture</span>(<span class="st">"(?-u:\\xFF)"</span>) == <span class="kw">null</span>, <span class="st">"a byte pattern over text is refused"</span>);</span>
+<span id="tests-captures-loft-L137">}</span>
+<span id="tests-captures-loft-L138"></span>
+<span id="tests-captures-loft-L139"><span class="cm">// --- named groups ---</span></span>
+<span id="tests-captures-loft-L140"></span>
+<span id="tests-captures-loft-L141"><span class="kw">fn</span> <span class="fn-call">test_named_groups</span>() {</span>
+<span id="tests-captures-loft-L142">  h = <span class="st">"HTTP/1.1 200"</span>.<span class="fn-call">capture</span>(<span class="st">"HTTP/(?&lt;maj&gt;\\d)\\.(?&lt;min&gt;\\d)"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"the header matches"</span>);</span>
+<span id="tests-captures-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(h.<span class="fn-call">named</span>(<span class="st">"maj"</span>) == <span class="st">"1"</span> <span class="kw">and</span> h.<span class="fn-call">named</span>(<span class="st">"min"</span>) == <span class="st">"1"</span>, <span class="st">"named groups: {h.named(\"</span>maj\<span class="st">")}.{h.named(\"</span><span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>\<span class="st">")}"</span>);</span>
+<span id="tests-captures-loft-L144">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(h.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="st">"1"</span> <span class="kw">and</span> h.<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"1"</span>, <span class="st">"and by position"</span>);</span>
+<span id="tests-captures-loft-L145">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(h.<span class="fn-call">named</span>(<span class="st">"patch"</span>) == <span class="kw">null</span>, <span class="st">"an unknown name is null"</span>);</span>
+<span id="tests-captures-loft-L146">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(h.names) == <span class="nm">2</span> <span class="kw">and</span> h.names[<span class="nm">0</span>] == <span class="st">"maj"</span> <span class="kw">and</span> h.names[<span class="nm">1</span>] == <span class="st">"min"</span>, <span class="st">"names in pattern order"</span>);</span>
+<span id="tests-captures-loft-L147">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"nope"</span>.<span class="fn-call">capture</span>(<span class="st">"HTTP/(?&lt;maj&gt;\\d)"</span>).<span class="fn-call">named</span>(<span class="st">"maj"</span>) == <span class="kw">null</span>, <span class="st">"chained: a miss is null"</span>);</span>
+<span id="tests-captures-loft-L148"></span>
+<span id="tests-captures-loft-L149">  mixed = <span class="st">"a-b"</span>.<span class="fn-call">capture</span>(<span class="st">"(?&lt;first&gt;[a-z])-([a-z])"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"a-b"</span>);</span>
+<span id="tests-captures-loft-L150">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mixed.names[<span class="nm">0</span>] == <span class="st">"first"</span> <span class="kw">and</span> mixed.names[<span class="nm">1</span>] == <span class="st">""</span>, <span class="st">"an unnamed group has the empty name"</span>);</span>
+<span id="tests-captures-loft-L151">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mixed.<span class="fn-call">named</span>(<span class="st">""</span>) == <span class="kw">null</span>, <span class="st">"and the empty name finds nothing"</span>);</span>
+<span id="tests-captures-loft-L152"></span>
+<span id="tests-captures-loft-L153">  plain = <span class="st">"ab"</span>.<span class="fn-call">capture</span>(<span class="st">"(a)(b)"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"ab"</span>);</span>
+<span id="tests-captures-loft-L154">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(plain.names) == <span class="nm">2</span> <span class="kw">and</span> plain.<span class="fn-call">named</span>(<span class="st">"a"</span>) == <span class="kw">null</span>, <span class="st">"no names: two empty entries"</span>);</span>
+<span id="tests-captures-loft-L155">}</span>
+<span id="tests-captures-loft-L156"></span>
+<span id="tests-captures-loft-L157"><span class="cm">// --- replace_on ---</span></span>
+<span id="tests-captures-loft-L158"></span>
+<span id="tests-captures-loft-L159"><span class="kw">fn</span> <span class="fn-call">test_replace_on</span>() {</span>
+<span id="tests-captures-loft-L160">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a1b22c333"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]+"</span>, <span class="st">"#"</span>) == <span class="st">"a#b#c#"</span>, <span class="st">"every match replaced"</span>);</span>
+<span id="tests-captures-loft-L161">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a1b22c333"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]+"</span>, <span class="st">"#"</span>, <span class="nm">1</span>) == <span class="st">"a#b22c333"</span>, <span class="st">"limit 1: the first only"</span>);</span>
+<span id="tests-captures-loft-L162">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a1b22c333"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]+"</span>, <span class="st">"#"</span>, <span class="nm">2</span>) == <span class="st">"a#b#c333"</span>, <span class="st">"limit 2"</span>);</span>
+<span id="tests-captures-loft-L163">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a1b22c333"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]+"</span>, <span class="st">"#"</span>, <span class="nm">9</span>) == <span class="st">"a#b#c#"</span>, <span class="st">"a limit past the matches is every match"</span>);</span>
+<span id="tests-captures-loft-L164">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"key=value"</span>.<span class="fn-call">replace_on</span>(<span class="st">"(\\w+)=(\\w+)"</span>, <span class="st">"$2=$1"</span>) == <span class="st">"value=key"</span>, <span class="st">"positional groups in the template"</span>);</span>
+<span id="tests-captures-loft-L165">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"2026-10-14"</span>.<span class="fn-call">replace_on</span>(<span class="st">"(?&lt;y&gt;\\d+)-(?&lt;m&gt;\\d+)-(?&lt;d&gt;\\d+)"</span>, <span class="st">"${{d}}/${{m}}/${{y}}"</span>) == <span class="st">"14/10/2026"</span>, <span class="st">"named groups in the template"</span>);</span>
+<span id="tests-captures-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"cost 5"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]+"</span>, <span class="st">"$$$0"</span>) == <span class="st">"cost $5"</span>, <span class="st">"$$ is a dollar, $0 the whole match"</span>);</span>
+<span id="tests-captures-loft-L167">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]"</span>, <span class="st">"#"</span>) == <span class="st">"abc"</span>, <span class="st">"no match: unchanged"</span>);</span>
+<span id="tests-captures-loft-L168">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc"</span>.<span class="fn-call">replace_on</span>(<span class="st">"["</span>, <span class="st">"#"</span>) == <span class="st">"abc"</span>, <span class="st">"a broken pattern: unchanged"</span>);</span>
+<span id="tests-captures-loft-L169">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"héllo"</span>.<span class="fn-call">replace_on</span>(<span class="st">"é"</span>, <span class="st">"e"</span>) == <span class="st">"hello"</span>, <span class="st">"a multibyte match replaced"</span>);</span>
+<span id="tests-captures-loft-L170">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a b"</span>.<span class="fn-call">replace_on</span>(<span class="st">" "</span>, <span class="st">"{{"</span>) == <span class="st">"a{{b"</span>, <span class="st">"a template is not a format string (@RGX-008)"</span>);</span>
+<span id="tests-captures-loft-L171">}</span>
+<span id="tests-captures-loft-L172"></span>
+<span id="tests-captures-loft-L173"><span class="cm">// --- split_on searched from a position: ^ and \b keep the whole subject as context ---</span></span>
+<span id="tests-captures-loft-L174"></span>
+<span id="tests-captures-loft-L175"><span class="kw">fn</span> <span class="fn-call">test_split_on_keeps_the_context</span>() {</span>
+<span id="tests-captures-loft-L176">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pieces</span>(<span class="st">"abab"</span>, <span class="st">"^ab"</span>) == <span class="st">"[][ab]"</span>, <span class="st">"^ matches once: {pieces(\"</span>abab\<span class="st">", \"</span>^ab\<span class="st">")}"</span>);</span>
+<span id="tests-captures-loft-L177">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pieces</span>(<span class="st">"abab"</span>, <span class="st">"\\bab"</span>) == <span class="st">"[][ab]"</span>, <span class="st">"\\b is not a boundary inside abab: {pieces(\"</span>abab\<span class="st">", \"</span>\\\\bab\<span class="st">")}"</span>);</span>
+<span id="tests-captures-loft-L178">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pieces</span>(<span class="st">"a,b;;c"</span>, <span class="st">"[,;]"</span>) == <span class="st">"[a][b][][c]"</span>, <span class="st">"the gaps, the empty one included"</span>);</span>
+<span id="tests-captures-loft-L179">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pieces</span>(<span class="st">"abc"</span>, <span class="st">"[0-9]"</span>) == <span class="st">"[abc]"</span>, <span class="st">"no match: one piece"</span>);</span>
+<span id="tests-captures-loft-L180">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pieces</span>(<span class="st">""</span>, <span class="st">","</span>) == <span class="st">"[]"</span>, <span class="st">"empty input: one empty piece"</span>);</span>
+<span id="tests-captures-loft-L181">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pieces</span>(<span class="st">"héllo wörld"</span>, <span class="st">" "</span>) == <span class="st">"[héllo][wörld]"</span>, <span class="st">"multibyte pieces"</span>);</span>
+<span id="tests-captures-loft-L182">}</span>
+<span id="tests-captures-loft-L183"></span>
+<span id="tests-captures-loft-L184"><span class="kw">fn</span> <span class="fn-call">pieces</span>(input: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-captures-loft-L185">  out = <span class="st">""</span>;</span>
+<span id="tests-captures-loft-L186">  <span class="kw">for</span> p <span class="kw">in</span> input.<span class="fn-call">split_on</span>(pattern) { out = <span class="st">"{out}[{p}]"</span>; }</span>
+<span id="tests-captures-loft-L187">  out</span>
+<span id="tests-captures-loft-L188">}</span>
 </code></pre>
 <h2 id="tests-regex-loft">tests/regex.loft</h2>
 <pre class="src"><code><span id="tests-regex-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -312,33 +651,33 @@
 <span id="tests-worked-examples-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"and as a method"</span>);</span>
 <span id="tests-worked-examples-loft-L42">}</span>
 <span id="tests-worked-examples-loft-L43"></span>
-<span id="tests-worked-examples-loft-L44"><span class="cm">// @RGX-002 — `search` answers a BYTE offset, and it answers null on a miss even</span></span>
-<span id="tests-worked-examples-loft-L45"><span class="cm">// though its type says `integer`.  Both halves bite.  The offset is right for</span></span>
-<span id="tests-worked-examples-loft-L46"><span class="cm">// slicing, because loft's text slicing is byte-indexed too — but `len()` counts</span></span>
-<span id="tests-worked-examples-loft-L47"><span class="cm">// CHARACTERS, so comparing an offset against `len()` is a units error that only</span></span>
-<span id="tests-worked-examples-loft-L48"><span class="cm">// shows up on non-ASCII input, silently and late.  `size()` is the byte count and</span></span>
-<span id="tests-worked-examples-loft-L49"><span class="cm">// the one to compare against.  And because the declared return is non-null</span></span>
-<span id="tests-worked-examples-loft-L50"><span class="cm">// `integer`, nothing makes a caller guard the miss: an unchecked offset flows on</span></span>
-<span id="tests-worked-examples-loft-L51"><span class="cm">// as loft's null integer, and a negative index counts from the END of the text</span></span>
-<span id="tests-worked-examples-loft-L52"><span class="cm">// rather than reading as absent.</span></span>
-<span id="tests-worked-examples-loft-L53"><span class="kw">fn</span> <span class="fn-call">test_the_offset_is_bytes_and_the_miss_is_null</span>() {</span>
-<span id="tests-worked-examples-loft-L54">  t = <span class="st">"héllo wörld"</span>;</span>
-<span id="tests-worked-examples-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(t) == <span class="nm">11</span>, <span class="st">"eleven characters"</span>);</span>
-<span id="tests-worked-examples-loft-L56">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(t) == <span class="nm">13</span>, <span class="st">"thirteen bytes — two of them are two-byte characters"</span>);</span>
-<span id="tests-worked-examples-loft-L57"></span>
-<span id="tests-worked-examples-loft-L58">  at = t.<span class="fn-call">search</span>(<span class="st">"wörld"</span>);</span>
-<span id="tests-worked-examples-loft-L59">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at == <span class="nm">7</span>, <span class="st">"the answer is the BYTE offset, not the character index 6"</span>);</span>
-<span id="tests-worked-examples-loft-L60">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(t), <span class="st">"which happens to be true here..."</span>);</span>
-<span id="tests-worked-examples-loft-L61">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="fn-call"><a href="stdlib-text.html">size</a></span>(t), <span class="st">"...but size() is the bound that is true in general"</span>);</span>
-<span id="tests-worked-examples-loft-L62"></span>
-<span id="tests-worked-examples-loft-L63">  <span class="cm">// The offset is exactly what byte-indexed slicing wants.</span></span>
-<span id="tests-worked-examples-loft-L64">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t[<span class="nm">0..</span>at] == <span class="st">"héllo "</span>, <span class="st">"slicing with it lands on a character boundary"</span>);</span>
-<span id="tests-worked-examples-loft-L65"></span>
-<span id="tests-worked-examples-loft-L66">  <span class="cm">// A miss is null, from a function declared to return `integer`.</span></span>
+<span id="tests-worked-examples-loft-L44"><span class="cm">// @RGX-002 — `search` answers a BYTE offset, and a miss is null.  The offset is</span></span>
+<span id="tests-worked-examples-loft-L45"><span class="cm">// right for slicing, because loft's text slicing is byte-indexed too — but `len()`</span></span>
+<span id="tests-worked-examples-loft-L46"><span class="cm">// counts CHARACTERS, so comparing an offset against `len()` is a units error that</span></span>
+<span id="tests-worked-examples-loft-L47"><span class="cm">// only shows up on non-ASCII input, silently and late.  `size()` is the byte count</span></span>
+<span id="tests-worked-examples-loft-L48"><span class="cm">// and the one to compare against.  The miss is typed: the return is `integer?`, so</span></span>
+<span id="tests-worked-examples-loft-L49"><span class="cm">// an answer cannot index or slice until it is discharged (`?? -1`, `?`, a null</span></span>
+<span id="tests-worked-examples-loft-L50"><span class="cm">// test) — the compiler is what keeps a null offset from counting from the END of</span></span>
+<span id="tests-worked-examples-loft-L51"><span class="cm">// the text as a negative index would.</span></span>
+<span id="tests-worked-examples-loft-L52"><span class="kw">fn</span> <span class="fn-call">test_the_offset_is_bytes_and_the_miss_is_null</span>() {</span>
+<span id="tests-worked-examples-loft-L53">  t = <span class="st">"héllo wörld"</span>;</span>
+<span id="tests-worked-examples-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(t) == <span class="nm">11</span>, <span class="st">"eleven characters"</span>);</span>
+<span id="tests-worked-examples-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(t) == <span class="nm">13</span>, <span class="st">"thirteen bytes — two of them are two-byte characters"</span>);</span>
+<span id="tests-worked-examples-loft-L56"></span>
+<span id="tests-worked-examples-loft-L57">  at = t.<span class="fn-call">search</span>(<span class="st">"wörld"</span>) ?? -<span class="nm">1</span>;</span>
+<span id="tests-worked-examples-loft-L58">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at == <span class="nm">7</span>, <span class="st">"the answer is the BYTE offset, not the character index 6"</span>);</span>
+<span id="tests-worked-examples-loft-L59">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(t), <span class="st">"which happens to be true here..."</span>);</span>
+<span id="tests-worked-examples-loft-L60">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="fn-call"><a href="stdlib-text.html">size</a></span>(t), <span class="st">"...but size() is the bound that is true in general"</span>);</span>
+<span id="tests-worked-examples-loft-L61"></span>
+<span id="tests-worked-examples-loft-L62">  <span class="cm">// The offset is exactly what byte-indexed slicing wants.</span></span>
+<span id="tests-worked-examples-loft-L63">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t[<span class="nm">0..</span>at] == <span class="st">"héllo "</span>, <span class="st">"slicing with it lands on a character boundary"</span>);</span>
+<span id="tests-worked-examples-loft-L64"></span>
+<span id="tests-worked-examples-loft-L65">  <span class="cm">// A miss is null, and the type says so: `integer?`, which the compiler makes a</span></span>
+<span id="tests-worked-examples-loft-L66">  <span class="cm">// caller discharge before it can index with the answer.</span></span>
 <span id="tests-worked-examples-loft-L67">  miss = t.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>);</span>
 <span id="tests-worked-examples-loft-L68">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(miss == <span class="kw">null</span>, <span class="st">"no digits — the answer is null"</span>);</span>
 <span id="tests-worked-examples-loft-L69">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!miss, <span class="st">"so `if !offset` is a valid guard"</span>);</span>
-<span id="tests-worked-examples-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(miss &lt; <span class="nm">0</span>, <span class="st">"and so is a `&lt; 0` test — loft's null integer is i64::MIN"</span>);</span>
+<span id="tests-worked-examples-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((miss ?? -<span class="nm">1</span>) &lt; <span class="nm">0</span>, <span class="st">"and so is a `&lt; 0` test after a discharge"</span>);</span>
 <span id="tests-worked-examples-loft-L71">}</span>
 <span id="tests-worked-examples-loft-L72"></span>
 <span id="tests-worked-examples-loft-L73"><span class="cm">// @RGX-003 — a broken pattern is not an error, it is a miss.  An invalid regex</span></span>
@@ -398,6 +737,65 @@
 <span id="tests-worked-examples-loft-L127">  <span class="kw">for</span> _ <span class="kw">in</span> input.<span class="fn-call">split_on</span>(<span class="st">","</span>) { n += <span class="nm">1</span>; }</span>
 <span id="tests-worked-examples-loft-L128">  n</span>
 <span id="tests-worked-examples-loft-L129">}</span>
+<span id="tests-worked-examples-loft-L130"></span>
+<span id="tests-worked-examples-loft-L131"><span class="cm">// @RGX-005 — a group that did not take part is null, not "".  An optional group</span></span>
+<span id="tests-worked-examples-loft-L132"><span class="cm">// that matched nothing, or the branch of an alternation that was not taken, has</span></span>
+<span id="tests-worked-examples-loft-L133"><span class="cm">// no text and no span: `group(i)` answers null and the `Group`'s `start` / `end`</span></span>
+<span id="tests-worked-examples-loft-L134"><span class="cm">// are -1.  A group that matched the EMPTY text is the other case — `""` with a</span></span>
+<span id="tests-worked-examples-loft-L135"><span class="cm">// real span — and the two are told apart only because the first is null.</span></span>
+<span id="tests-worked-examples-loft-L136"><span class="kw">fn</span> <span class="fn-call">test_a_group_that_did_not_take_part_is_null</span>() {</span>
+<span id="tests-worked-examples-loft-L137">  m = <span class="st">"ab"</span>.<span class="fn-call">capture</span>(<span class="st">"a(x)?b"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"ab matches"</span>);</span>
+<span id="tests-worked-examples-loft-L138">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span>, <span class="st">"the optional group matched nothing: null"</span>);</span>
+<span id="tests-worked-examples-loft-L139">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.groups[<span class="nm">0</span>].start == -<span class="nm">1</span> <span class="kw">and</span> m.groups[<span class="nm">0</span>].end == -<span class="nm">1</span>, <span class="st">"and has no span"</span>);</span>
+<span id="tests-worked-examples-loft-L140"></span>
+<span id="tests-worked-examples-loft-L141">  e = <span class="st">"ab"</span>.<span class="fn-call">capture</span>(<span class="st">"a(x*)b"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"ab matches"</span>);</span>
+<span id="tests-worked-examples-loft-L142">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(e.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="st">""</span>, <span class="st">"a group that matched the empty text is \"</span>\<span class="st">"…"</span>);</span>
+<span id="tests-worked-examples-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(e.groups[<span class="nm">0</span>].start == <span class="nm">1</span> <span class="kw">and</span> e.groups[<span class="nm">0</span>].end == <span class="nm">1</span>, <span class="st">"…with a real, empty span"</span>);</span>
+<span id="tests-worked-examples-loft-L144"></span>
+<span id="tests-worked-examples-loft-L145">  alt = <span class="st">"cat"</span>.<span class="fn-call">capture</span>(<span class="st">"(dog)|(cat)"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"cat matches"</span>);</span>
+<span id="tests-worked-examples-loft-L146">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(alt.<span class="fn-call">group</span>(<span class="nm">1</span>) == <span class="kw">null</span> <span class="kw">and</span> alt.<span class="fn-call">group</span>(<span class="nm">2</span>) == <span class="st">"cat"</span>, <span class="st">"the untaken branch is null"</span>);</span>
+<span id="tests-worked-examples-loft-L147">}</span>
+<span id="tests-worked-examples-loft-L148"></span>
+<span id="tests-worked-examples-loft-L149"><span class="cm">// @RGX-006 — every offset is a BYTE on a code-point boundary.  The engine matches</span></span>
+<span id="tests-worked-examples-loft-L150"><span class="cm">// by character, so `start` and `end` never fall inside a multi-byte character, and</span></span>
+<span id="tests-worked-examples-loft-L151"><span class="cm">// slicing the subject with them gives exactly `text`.  `len` of the match counts</span></span>
+<span id="tests-worked-examples-loft-L152"><span class="cm">// its characters, `size` its bytes — the same split `@RGX-002` describes for</span></span>
+<span id="tests-worked-examples-loft-L153"><span class="cm">// `search`, now with both ends of the span in hand.</span></span>
+<span id="tests-worked-examples-loft-L154"><span class="kw">fn</span> <span class="fn-call">test_offsets_are_bytes_on_code_point_boundaries</span>() {</span>
+<span id="tests-worked-examples-loft-L155">  t = <span class="st">"héllo wörld"</span>;</span>
+<span id="tests-worked-examples-loft-L156">  m = t.<span class="fn-call">capture</span>(<span class="st">"w.r"</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"wör matches"</span>);</span>
+<span id="tests-worked-examples-loft-L157">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.start == <span class="nm">7</span> <span class="kw">and</span> m.end == <span class="nm">11</span>, <span class="st">"bytes 7..11, not characters 6..9"</span>);</span>
+<span id="tests-worked-examples-loft-L158">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t[m.start..m.end] == m.<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="st">"the span slices the subject to the match"</span>);</span>
+<span id="tests-worked-examples-loft-L159">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span>) == <span class="nm">3</span> <span class="kw">and</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(m.<span class="ty"><a href="stdlib-types.html">text</a></span>) == <span class="nm">4</span>, <span class="st">"three characters, four bytes"</span>);</span>
+<span id="tests-worked-examples-loft-L160">  d = <span class="st">"😀x"</span>.<span class="fn-call">capture</span>(<span class="st">"."</span>) ?? <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"a dot matches"</span>);</span>
+<span id="tests-worked-examples-loft-L161">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d.end == <span class="nm">4</span> <span class="kw">and</span> d.<span class="ty"><a href="stdlib-types.html">text</a></span> == <span class="st">"😀"</span>, <span class="st">"one code point, four bytes"</span>);</span>
+<span id="tests-worked-examples-loft-L162">}</span>
+<span id="tests-worked-examples-loft-L163"></span>
+<span id="tests-worked-examples-loft-L164"><span class="cm">// @RGX-007 — a callback replace is a WALK.  There is no `replace_on` with a</span></span>
+<span id="tests-worked-examples-loft-L165"><span class="cm">// function (a closure cannot cross a placed library), and none is needed: walk</span></span>
+<span id="tests-worked-examples-loft-L166"><span class="cm">// `capture_all`, copy the gaps from the subject's own spans, and build the result.</span></span>
+<span id="tests-worked-examples-loft-L167"><span class="cm">// Four lines, and nothing is copied twice — the gaps are slices, the match is a view.</span></span>
+<span id="tests-worked-examples-loft-L168"><span class="kw">fn</span> <span class="fn-call">test_the_walk_idiom_replaces_a_callback</span>() {</span>
+<span id="tests-worked-examples-loft-L169">  s = <span class="st">"one two three"</span>;</span>
+<span id="tests-worked-examples-loft-L170">  out = <span class="st">""</span>;</span>
+<span id="tests-worked-examples-loft-L171">  last = <span class="nm">0</span>;</span>
+<span id="tests-worked-examples-loft-L172">  <span class="kw">for</span> m <span class="kw">in</span> s.<span class="fn-call">capture_all</span>(<span class="st">"\\b[a-z]+\\b"</span>) {</span>
+<span id="tests-worked-examples-loft-L173">    out += s[last..m.start] + m.<span class="ty"><a href="stdlib-types.html">text</a></span>.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_uppercase</a></span>();</span>
+<span id="tests-worked-examples-loft-L174">    last = m.end;</span>
+<span id="tests-worked-examples-loft-L175">  }</span>
+<span id="tests-worked-examples-loft-L176">  out += s[last..];</span>
+<span id="tests-worked-examples-loft-L177">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">"ONE TWO THREE"</span>, <span class="st">"every word upper-cased: {out}"</span>);</span>
+<span id="tests-worked-examples-loft-L178">}</span>
+<span id="tests-worked-examples-loft-L179"></span>
+<span id="tests-worked-examples-loft-L180"><span class="cm">// @RGX-008 — a replacement template is NOT a format string.  `$1` and `${name}`</span></span>
+<span id="tests-worked-examples-loft-L181"><span class="cm">// stand for a group, `$0` for the whole match and `$$` for a dollar; a `{` in it is</span></span>
+<span id="tests-worked-examples-loft-L182"><span class="cm">// a literal brace (in loft source it is written `{{`, because the SOURCE literal is</span></span>
+<span id="tests-worked-examples-loft-L183"><span class="cm">// a format string, and the template the engine sees holds one brace).</span></span>
+<span id="tests-worked-examples-loft-L184"><span class="kw">fn</span> <span class="fn-call">test_a_template_is_not_a_format_string</span>() {</span>
+<span id="tests-worked-examples-loft-L185">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"key=value"</span>.<span class="fn-call">replace_on</span>(<span class="st">"(\\w+)=(\\w+)"</span>, <span class="st">"$2=$1"</span>) == <span class="st">"value=key"</span>, <span class="st">"groups by number"</span>);</span>
+<span id="tests-worked-examples-loft-L186">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"a b"</span>.<span class="fn-call">replace_on</span>(<span class="st">" "</span>, <span class="st">"{{"</span>) == <span class="st">"a{{b"</span>, <span class="st">"a brace is a brace"</span>);</span>
+<span id="tests-worked-examples-loft-L187">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"cost 5"</span>.<span class="fn-call">replace_on</span>(<span class="st">"[0-9]+"</span>, <span class="st">"$$$0"</span>) == <span class="st">"cost $5"</span>, <span class="st">"$$ is a dollar"</span>);</span>
+<span id="tests-worked-examples-loft-L188">}</span>
 </code></pre>
 
   </article>

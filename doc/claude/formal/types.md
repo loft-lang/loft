@@ -293,7 +293,7 @@ the type:
 > and `to_json()` emitted the loft literal `'q'` — not JSON — so a struct with a character
 > field could not round-trip through loft's own parser. On the wire a character is now a
 > one-character JSON **string**; a number is still read as its codepoint. Guarded by
-> `tests/scripts/character-across-the-json-surface.loft` on both backends, and the reason
+> `loft-suite/attic/scripts/character-across-the-json-surface.loft` on both backends, and the reason
 > the interpolation channel still differs (concatenation skips a bare `'\0'`) is the
 > collision this row names. QUALITY.md § `character` on the JSON surface.
 | `Float` / `Single` | in-band sentinel = a reserved `NaN` |
@@ -497,18 +497,24 @@ old auto-`τ?` reading. Design record:
             itself: `@FR-F-Ret` for a return, the store-lifetime rules for a free.  Reading the ordinary
             spelling as correct because it is the ordinary one is how loft#1468 closed on a
             premise that was false (calls-history.md D-call-17/18).
-            ⚠ ONE exception, and only this one: the `??` operator's own lowering.  A nullable
-            twin must handle absence somewhere and there is no way to read a `τ?` without it, so
-            `__ncc_` ops are the OPERATOR's road and not the TYPE's.
+            ⚠ ONE exception: READING a `τ?` owes a test for its absence, and there is no way
+            to read one without it.  The `??` operator is that read: its `__ncc_` ops are the
+            OPERATOR's road and not the TYPE's.  A `null` ARM is the other thing only a `τ?`
+            can write, and a delivery leaves it `null`.  A COPY is not excepted: a whole-record
+            copy tests its source whatever the source is typed — a bind, a rebind, the copy a
+            `return` makes of a local (`Parser::materialize_return_into`) — because a slot typed
+            dense can hold the null `(N-Store)` let into it, and a copy of nothing is nothing.
+            Nothing else is excepted: which buffer, which owner, which free and which temporary
+            are the same for both spellings.
             Home: none single — a lowering is chosen per site, so the rule is enforced at each
             delivery selector and each ownership mechanism, and the way it is BROKEN is a shape
             test naming `Type::Reference` (or any bare former) where `Optional(Reference)` also
             arrives.  The instrument is `make nullable-road` (@PLN160): hand-written
             dense/nullable PAIRS, normalised for the `?` and diffed per MACHINERY CHANNEL,
             discounting `ncc(??)`.
-            Measured 2026-09-09 over six pairs: FIVE diverge, and every one is an accident of
-            its site — none required by @C90.  Two of the five were defects in the DENSE
-            spelling that the nullable road was masking (loft#1482, loft#1483).
+            `tests/nullable_ret_buffer.rs::every_dense_and_nullable_pair_takes_one_road`
+            gates it: a pair that differs outside those two places fails, unless its nullable
+            half names the absence it handles (`@ABSENCE`) or the issue that tracks it (`@OPEN`).
 
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys
@@ -696,19 +702,12 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **D-types-32** (open; the tracking issue is loft#1934) — violates `(N-Road)`: τ and τ? take the same lowering.  The <!-- doc-lint: ok -->
-  record return is unified: a `-> S?` takes the caller's buffer as `-> S` does
-  (`Type::ret_promo_base` peels `Optional` of a record or record enum as it peeled
-  `Optional(Vector)`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller binds
-  either spelling through one arm (`use_analysis::first_bind_shape`).  Still open:
-  `captured-local-rebind` and `local-rebound-by-mint` (`scripts/nullable_road.py`).  `--native`
-  value records take the nullable flat record too (`(R-ValueRecord)`'s nullable clause, @C144):
-  the `mint`, `method` and `param` pairs take the tuple in both spellings, and a
-  `??` with a record default is the one value-record shape still on the record road.  The `??` <!-- doc-lint: ok -->
-  lowering is the rule's one exception, and pairs such as `ret-view-of-param` now differ in it
-  alone.  The values agree and both halves are leak-clean under `LOFT_STRICT_STORES=1`.
+`D-types-36` opened 2026-10-14 and CLOSED 2026-10-15 (loft#2006): the copy a `return` makes
+tests its source at every root — a local, a field path, a call (bound first), an element or
+keyed read (re-read), a read whose index calls (read once).  The record is in
+[types-history.md](types-history.md).
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
@@ -733,7 +732,7 @@ aborted the compiler.  Closed by marking a promoted `text?` local on its `Functi
 (`mark_nullable_text_buffer`, carried across passes), read where the null store is checked and
 converted.  An author's `&text` and a buffer promoted from a non-null `text` keep the refusal.
 Pass 2 now follows pass 1 for an author's local, loft#1099's rule.  Guard
-`tests/scripts/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
+`loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
 
 `D-Comp-Decl` opened and closed 2026-09-25 (found by a perf probe and fixed in the session;
 no issue, this box could not authenticate to GitHub): a comprehension REPLACED its declared
@@ -763,9 +762,9 @@ types occupy the same bytes?"*, answered *yes* for any two tuples, so a `(intege
 integer(-6, 6))` body into a `vector<(integer, integer)>` read as one layout — it now asks
 each member.  Not changed: an INFERRED comprehension of a narrowed body still types `vector<integer(-6, 6)>`,
 as an inferred scalar does under `(N-Arith)`, and the slots that refuse it keep refusing it.
-Guards `tests/scripts/a-comprehension-takes-its-declared-element-type.loft` (both backends,
+Guards `loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft` (both backends,
 every value hand-computed, the grid past its initial allocation) and
-`tests/scripts/a-struct-literal-refuses-a-vector-of-another-element-width.loft`.  Three
+`loft-suite/attic/scripts/a-struct-literal-refuses-a-vector-of-another-element-width.loft`.  Three
 findings beside it wait to be filed in
 [plans/157-native-4x-drawing/to-file-comprehension-follow-ups.md](../plans/157-native-4x-drawing/to-file-comprehension-follow-ups.md):
 a typed local `v: vector<P?> = [for … { P { … } }]` refused since the 2026.8.0 release (the

@@ -243,7 +243,7 @@ soundness question at once, so the proposal must name each rewrite it invalidate
 2026-10-04 — [record](DESIGN_DECISIONS-history.md#c135--loft-has-no-unsafe-construct-representation-is-observable-only-at-a-native-boundary-or-a-file-backed-store).
 **Holds at:** `@C135` — the `#rust` refusal in `src/parser/definitions.rs` (with @C87),
 `(R-Escape)` in [formal/rewrites.md](formal/rewrites.md); guard
-`tests/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
+`loft-suite/attic/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
 boundary by the store format's guards (`tests/store_durable_format.rs`).
 
 ## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
@@ -322,7 +322,7 @@ everywhere; or a target that faults on an unaligned load runs the interpreter.  
 **Holds at:** `@C138` — `calc::calculate_positions` (the size rounding), `Stores::validate_all_layouts`
 (the compile-time check), `data::element_storage_offsets` (the restated tuple view);
 the rule `(L-Align)` in [formal/layout.md](formal/layout.md); guards `tests/layout_alignment.rs`,
-`tests/scripts/a-record-is-padded-to-its-alignment.loft` and the unit test
+`loft-suite/rules/layout/L-Tuple/a-record-is-padded-to-its-alignment.loft` and the unit test
 `validate_all_layouts_reports_a_misaligned_field`.
 **Catalogue:** `formal/layout.md` `(L-Struct)` `(L-Tuple)` `(L-Ref)` `(L-Sound)` · LOFT_DATA.md
 § Sizeof

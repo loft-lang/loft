@@ -1,7 +1,7 @@
-diff --git a/src/scopes/par_writes.rs b/src/scopes/par_writes.rs
-index 63ab6829a..1cfe8ebd1 100644
---- a/src/scopes/par_writes.rs
-+++ b/src/scopes/par_writes.rs
+diff --git b/src/scopes/par_writes.rs a/src/scopes/par_writes.rs
+index 403df3203..7866c5a03 100644
+--- b/src/scopes/par_writes.rs
++++ a/src/scopes/par_writes.rs
 @@ -188,9 +188,8 @@ fn first_arg_is_local_var(args: &[Value], current_fn: u32, data: &Data) -> bool
          return false;
      }
@@ -17,7 +17,7 @@ index 63ab6829a..1cfe8ebd1 100644
          return None;
      }
      let def = &data.definitions[current_fn as usize];
--    // `@FR-C-Impure`, C93 — the captured state is what the root VIEWS, not only a root that
+-    // `@FR-C-Impure`, @C93 — the captured state is what the root VIEWS, not only a root that
 -    // is itself a parameter: `x = e.inner; x.k = …`, `x = &e.items`, `for l in e.list { l.k
 -    // = … }` write the parent's record through a local, and compiled to a runtime halt on the
 -    // read-only store (loft#1918).  A whole-value copy (`x = e`) has no dep and stays local.

@@ -57,6 +57,24 @@ impl Parser {
                 self.work_buffer_promoted.insert(d);
             }
         }
+        // The call graph is read by the result clause and by the transitive rounds; a
+        // program with neither a candidate nor a promotion never builds it.
+        let mut calls = None;
+        if crate::keys::result_buffer_enabled()
+            && (0..n_defs).any(|d| !super::result_buffer::result_refs(self.data.def(d)).is_empty())
+        {
+            let graph = static_calls(&self.data);
+            let again = super::result_buffer::runs_again(&self.data, &graph);
+            for d in 0..n_defs {
+                if self.work_buffer_def_decline(d, &addr_taken).is_some() {
+                    continue;
+                }
+                if self.promote_result_refs_in(d, &graph, again[d as usize]) > 0 {
+                    self.work_buffer_promoted.insert(d);
+                }
+            }
+            calls = Some(graph);
+        }
         if self.work_buffer_promoted.is_empty() {
             return;
         }
@@ -69,7 +87,7 @@ impl Parser {
         // ref for it — so that is declined; the round cap bounds anything the cycle test
         // misses, and stopping after any patch leaves every buffer minted by its caller.
         const MAX_ROUNDS: usize = 16;
-        let calls = static_calls(&self.data);
+        let calls = calls.unwrap_or_else(|| static_calls(&self.data));
         for _ in 0..MAX_ROUNDS {
             let mut next = HashSet::new();
             for d in 0..n_defs {
@@ -103,7 +121,7 @@ impl Parser {
     /// and the innermost callee takes its null road.  Declined where the callee can reach
     /// back to this definition: a recursion needs a buffer per activation, which a ref minted
     /// here already is, and promoting it would only make the next round mint another.
-    fn promote_work_refs_in(&mut self, d: u32, calls: &[Vec<u32>]) -> usize {
+    fn promote_work_refs_in(&mut self, d: u32, calls: &CallGraph) -> usize {
         let refs: Vec<u16> = {
             let vars = &self.data.definitions[d as usize].variables;
             (0..vars.count())
@@ -172,7 +190,7 @@ impl Parser {
         &self,
         code: &Value,
         r: u16,
-        calls: &[Vec<u32>],
+        calls: &CallGraph,
     ) -> Result<Type, &'static str> {
         let d = self.context;
         let tp = self.vars.tp(r);
@@ -226,7 +244,11 @@ impl Parser {
     }
 
     /// Why definition `d` takes no work buffer at all, or `None` when its locals may.
-    fn work_buffer_def_decline(&self, d: u32, addr_taken: &HashSet<u32>) -> Option<&'static str> {
+    pub(super) fn work_buffer_def_decline(
+        &self,
+        d: u32,
+        addr_taken: &HashSet<u32>,
+    ) -> Option<&'static str> {
         let def = self.data.def(d);
         if def.def_type() != DefType::Function {
             return Some("not a function");
@@ -532,7 +554,10 @@ impl Parser {
 
 /// Every definition some `FnRef` names — promoting one changes the signature every function
 /// value of it was typed against (the targeted `__tret` promotion defers them for the same
-/// reason) — and every `par(…)` WORKER: the parallel builtins take the worker as a bare
+/// reason).  That node is how a capturing closure and a function value an iterator yields
+/// are spelled; a function passed BY NAME is a bare definition number, is not found here and
+/// IS promoted — its call through the function value is handed a buffer by the call site
+/// (`@FR-R-WorkBuffer`'s function-value clause).  And every `par(…)` WORKER: the parallel builtins take the worker as a bare
 /// definition number (their last operand), and the scalar-returning worker route builds the
 /// frame from the element alone.
 fn address_taken_defs(data: &Data) -> HashSet<u32> {
@@ -561,34 +586,59 @@ fn address_taken_defs(data: &Data) -> HashSet<u32> {
     out
 }
 
-/// Per definition, the definitions its body calls directly.  A call through a function value
-/// needs no edge here: its target is address-taken, which declines every promotion in it, so
-/// such a frame mints its own buffers and a chain of handed-down buffers stops there.
-fn static_calls(data: &Data) -> Vec<Vec<u32>> {
-    (0..data.definitions.len() as u32)
-        .map(|d| {
-            let mut out = Vec::new();
-            data.def(d).code.walk(&mut |v| {
-                if let Value::Call(c, _) = v
-                    && !out.contains(c)
-                {
-                    out.push(*c);
-                }
-            });
-            out
-        })
-        .collect()
+/// Per definition, the definitions its body calls directly: one flat list of callees and
+/// where each definition's run of it starts, so building it costs two buffers however many
+/// definitions there are.  A call through a function value needs no edge here: its target
+/// is handed no buffer at all (a function value's call site supplies the null sentinel),
+/// so such a frame mints its own and a chain of handed-down buffers stops there.
+pub(super) struct CallGraph {
+    starts: Vec<u32>,
+    callees: Vec<u32>,
+}
+
+impl CallGraph {
+    /// The definitions `d` calls directly, each once.
+    pub(super) fn of(&self, d: u32) -> &[u32] {
+        let d = d as usize;
+        match (self.starts.get(d), self.starts.get(d + 1)) {
+            (Some(&from), Some(&to)) => &self.callees[from as usize..to as usize],
+            _ => &[],
+        }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+}
+
+pub(super) fn static_calls(data: &Data) -> CallGraph {
+    let n = data.definitions.len();
+    let mut starts = Vec::with_capacity(n + 1);
+    let mut callees: Vec<u32> = Vec::with_capacity(4 * n);
+    for d in 0..n as u32 {
+        let from = callees.len();
+        starts.push(from as u32);
+        data.def(d).code.walk(&mut |v| {
+            if let Value::Call(c, _) = v
+                && !callees[from..].contains(c)
+            {
+                callees.push(*c);
+            }
+        });
+    }
+    starts.push(callees.len() as u32);
+    CallGraph { starts, callees }
 }
 
 /// Can `from` reach `to` through direct calls (`from == to` included)?
-fn reaches(calls: &[Vec<u32>], from: u32, to: u32) -> bool {
+pub(super) fn reaches(calls: &CallGraph, from: u32, to: u32) -> bool {
     let mut seen = HashSet::from([from]);
     let mut stack = vec![from];
     while let Some(d) = stack.pop() {
         if d == to {
             return true;
         }
-        for &c in calls.get(d as usize).map_or(&[][..], Vec::as_slice) {
+        for &c in calls.of(d) {
             if seen.insert(c) {
                 stack.push(c);
             }
@@ -616,7 +666,7 @@ impl Ops {
     }
 }
 
-fn is_var(v: &Value, x: u16) -> bool {
+pub(super) fn is_var(v: &Value, x: u16) -> bool {
     matches!(v.unspan(), Value::Var(y) if *y == x)
 }
 
@@ -689,7 +739,7 @@ fn replace_trio(
 }
 
 /// Per variable, how many `Set`s target it.
-fn set_counts(node: &Value) -> HashMap<u16, usize> {
+pub(super) fn set_counts(node: &Value) -> HashMap<u16, usize> {
     let mut out = HashMap::new();
     node.walk(&mut |x| {
         if let Value::Set(v, _) = x {
@@ -700,7 +750,7 @@ fn set_counts(node: &Value) -> HashMap<u16, usize> {
 }
 
 /// How many `Var(x)` nodes `node` holds.
-fn var_mentions(node: &Value, x: u16) -> usize {
+pub(super) fn var_mentions(node: &Value, x: u16) -> usize {
     let mut n = 0;
     node.walk(&mut |y| {
         if is_var(y, x) {
@@ -911,8 +961,8 @@ impl Walk<'_> {
     /// is the one home of that reading — provided the wrapper's FIRST parameter is the op's
     /// first operand and no other operand names it.
     fn one_op_wrapper(&self, d: u32) -> Option<u32> {
-        use crate::generation::hoist::WrapperOperand;
-        let (op, operands) = crate::generation::hoist::one_op_wrapper(self.data, d)?;
+        use crate::ir_shape::WrapperOperand;
+        let (op, operands) = crate::ir_shape::one_op_wrapper(self.data, d)?;
         let first = matches!(operands.first(), Some(WrapperOperand::Param(0)));
         let rest_free = !operands
             .iter()

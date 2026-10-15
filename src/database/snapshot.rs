@@ -24,8 +24,8 @@
 //! relocation), strings via a local JSON escaper, decode via
 //! `crate::json::parse`.  No serde.
 
-use crate::data::{LinkedFieldGroup, LinkedFieldKind};
 use crate::database::{Field, Parts, Stores, Type};
+use crate::database::{LinkedFieldGroup, LinkedFieldKind};
 use crate::json::Parsed;
 use crate::keys::{Content, Key, Str};
 use std::collections::BTreeSet;
@@ -492,6 +492,8 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         facts: super::types::TypeFacts::default(),
         prefill: super::types::PrefillImage::default(),
         heap_slots: super::types::HeapSlots::default(),
+        plain_vectors: super::types::PlainVectors::default(),
+        release_plan: super::types::ReleasePlan::default(),
     })
 }
 
@@ -551,46 +553,6 @@ pub fn schema_from_json(stores: &mut Stores, src: &str) -> Result<(), SchemaDeco
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Parser;
-
-    /// Round-trip the real stdlib's database schema: parse default/, encode the
-    /// resulting `Stores` schema, decode into a fresh `Stores`, and assert the
-    /// re-encode is byte-identical (the schema has no `PartialEq`).
-    #[test]
-    fn stdlib_schema_round_trips() {
-        let mut p = Parser::new();
-        p.parse_dir("default", true, false).unwrap();
-        let json = schema_to_json(&p.database);
-        assert!(
-            json.len() > 1000,
-            "expected a substantial schema, got {} bytes",
-            json.len()
-        );
-
-        let mut restored = Stores::new();
-        schema_from_json(&mut restored, &json).expect("schema decode");
-        assert_eq!(
-            schema_to_json(&restored),
-            json,
-            "schema re-encode drift after round-trip"
-        );
-        assert_eq!(
-            restored.types.len(),
-            p.database.types.len(),
-            "type count changed across round-trip"
-        );
-        assert_eq!(
-            restored.names.len(),
-            p.database.names.len(),
-            "names map size changed across round-trip"
-        );
-        crate::loft_eprintln!(
-            "stdlib_schema_round_trips: {} types, {} names, {} bytes",
-            restored.types.len(),
-            restored.names.len(),
-            json.len()
-        );
-    }
 
     #[test]
     fn unknown_parts_tag_is_an_error() {

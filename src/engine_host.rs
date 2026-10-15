@@ -481,7 +481,7 @@ fn ws_upgrade(mut stream: TcpStream, udp_cookie: &str) -> Option<TcpStream> {
     if !is_upgrade {
         return None;
     }
-    let accept = crate::serve::ws_accept_key(&key);
+    let accept = crate::ws_handshake::ws_accept_key(&key);
     let udp_header = if udp_cookie.is_empty() {
         String::new()
     } else {
@@ -1824,7 +1824,8 @@ pub fn n_kernel_default_host_dest(stores: &mut Stores, stack: &mut DbRef) {
 // `D!:` frames from a LOOPBACK peer (gated on LOFT_DEBUG_CONTROL=1) drive
 // the debugger loop: breakpoints, frame eval, resume, reload-now, rebuild,
 // swap.  THIS module is transport only — semantics (the parked State, the
-// pause loop, the mailbox) live in live_dispatch.  Replies are plain text
+// pause loop) live in live_dispatch, reached through `live_control` (the
+// mailbox and the handlers the live tier installs).  Replies are plain text
 // frames to the requesting client; `D:hit` notifications go to the client
 // that set the breakpoint.
 
@@ -1946,31 +1947,31 @@ static QUIT_AFTER_REPLY: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
     let reply: Option<String> = match cmd.split_once(' ').map_or((cmd, ""), |(a, b)| (a, b)) {
         ("bp", name) if !name.is_empty() => {
-            let ok = crate::live_dispatch::debug_set_bp(name, cid);
+            let ok = crate::live_control::debug_set_bp(name, cid);
             Some(format!("D:{} bp {name}", if ok { "ok" } else { "err" }))
         }
         ("flip", rest) => {
             let (name, on) = rest.split_once(' ').unwrap_or((rest, "1"));
-            let ok = crate::live_dispatch::set_flip(name, on != "0");
+            let ok = crate::live_control::set_flip(name, on != "0");
             Some(format!("D:flip {ok}"))
         }
         ("eval", name) if !name.is_empty() => {
-            crate::live_dispatch::debug_mailbox_push(crate::live_dispatch::DebugCmd::Eval(
+            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Eval(
                 name.to_string(),
                 cid,
             ));
             None // answered by the pause loop
         }
         ("resume", _) => {
-            crate::live_dispatch::debug_mailbox_push(crate::live_dispatch::DebugCmd::Resume(cid));
+            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Resume(cid));
             None
         }
         ("reload", _) => {
-            crate::live_dispatch::debug_mailbox_push(crate::live_dispatch::DebugCmd::Reload(cid));
+            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Reload(cid));
             None
         }
         ("rebuild", _) => {
-            let ok = crate::live_dispatch::n_rebuild_start_ctl();
+            let ok = crate::live_rebuild::n_rebuild_start_ctl();
             Some(format!(
                 "D:rebuild {}",
                 if ok { "started" } else { "refused" }
@@ -1978,11 +1979,11 @@ fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
         }
         ("rebuild?", _) => Some(format!(
             "D:rebuild {}",
-            crate::live_dispatch::rebuild_status_ctl()
+            crate::live_rebuild::rebuild_status_ctl()
         )),
         ("swap", artifact) => {
             let target = if artifact == "auto" || artifact.is_empty() {
-                crate::live_dispatch::rebuild_artifact_ctl()
+                crate::live_rebuild::rebuild_artifact_ctl()
             } else {
                 artifact.to_string()
             };
@@ -2303,8 +2304,8 @@ pub fn n_swap_retired(stores: &mut Stores, stack: &mut DbRef) {
 pub mod browser {
     use super::*;
     use crate::wasm::{
-        host_origin_host, host_time_ticks, host_ws_connect, host_ws_last_message, host_ws_ready,
-        host_ws_recv, host_ws_send,
+        host_origin_host, host_time_ticks, host_ws_closed, host_ws_connect, host_ws_last_message,
+        host_ws_ready, host_ws_recv, host_ws_send,
     };
 
     struct BrowserClient {
@@ -2313,6 +2314,8 @@ pub mod browser {
         /// The async half of "connect blocks until upgraded": kind-0 fires
         /// and the outbox flushes only once the socket reports open.
         opened: bool,
+        /// `host:port` as `run_client` names the server it could not reach.
+        peer: String,
         outbox: Vec<String>,
         events: VecDeque<Event>,
         last: Event,
@@ -2422,6 +2425,7 @@ pub mod browser {
                 ws: -1,
                 alive: true,
                 opened: true,
+                peer: String::new(),
                 outbox: Vec::new(),
                 events: VecDeque::new(),
                 last: Event {
@@ -2454,6 +2458,7 @@ pub mod browser {
                     ws,
                     alive: true,
                     opened: false,
+                    peer: format!("{host}:{port}"),
                     outbox: Vec::new(),
                     events: VecDeque::new(),
                     last: Event {
@@ -2475,7 +2480,7 @@ pub mod browser {
 
     /// `kernel_client_pump() -> integer` — drain browser-queued frames into
     /// the SAME machinery the native connector uses; fire kind-0 + flush the
-    /// outbox once the socket opens.
+    /// outbox once the socket opens, and kind-2 once it has closed.
     pub fn n_kernel_client_pump(stores: &mut Stores, stack: &mut DbRef) {
         let n = with_client(|c| {
             let mut added = 0i64;
@@ -2511,6 +2516,30 @@ pub mod browser {
                     cid: 0,
                     kind: 1,
                     payload,
+                    status: 0,
+                });
+                added += 1;
+            }
+            // The socket closed without ever opening: no server answered.  A native
+            // connect answers false there, and `run_client` says so and returns with no
+            // event and no tick.  A script must not be able to tell the two kernels
+            // apart, so this says the same line (`run_client` in
+            // `lib/engine_host/src/engine_host.loft`) and ends the loop with nothing
+            // queued.
+            if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
+                c.alive = false;
+                crate::wasm::output_push(&format!("engine_host: cannot connect to {}\n", c.peer));
+            }
+            // The server connection closed: what it sent before closing is queued
+            // above, the kind-2 event follows it, and `run_client` returns after this
+            // turn has delivered both — the native connector's `FrameRead::Closed`.
+            // A local kernel has no socket (`ws` is -1) and nothing to lose.
+            if c.alive && c.opened && c.ws >= 0 && !host_ws_ready(c.ws) {
+                c.alive = false;
+                c.events.push_back(Event {
+                    cid: 0,
+                    kind: 2,
+                    payload: String::new(),
                     status: 0,
                 });
                 added += 1;
@@ -2570,8 +2599,15 @@ pub mod browser {
     }
 
     /// Drift-free tick on the bridge clock (µs via `time_ticks`).
+    ///
+    /// Never before the connection is up: a native connect has answered before
+    /// `run_client`'s loop takes its first turn, so a script's `on_tick` does not run
+    /// ahead of its kind-0 event, and not at all when no server answered.
     pub fn n_kernel_client_tick_due(stores: &mut Stores, stack: &mut DbRef) {
         let due = with_client(|c| {
+            if !c.opened {
+                return false;
+            }
             let now = host_time_ticks();
             if now - c.last_tick_us >= c.tick_interval_us {
                 if c.last_tick_us == 0 {

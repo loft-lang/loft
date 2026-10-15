@@ -194,7 +194,9 @@ def only_rows(commit, path, registry):
     return bool(changed) and all(re.fullmatch(r"\| \*\*\d+\*\* \|", l.strip()) for l in changed)
 
 
-def classify(commit, registry, index_env, scheduled):
+def classify(commit, registry, index_env, scheduled, pending):
+    """One commit's row.  `pending` maps each file a commit already scheduled from this source
+    changes to that commit; the caller adds this row's files once its class is final."""
     subject = git("log", "-1", "--format=%s", commit).strip()
     files = [f for f in git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
                             commit).splitlines() if f]
@@ -204,6 +206,7 @@ def classify(commit, registry, index_env, scheduled):
         row["class"] = "MERGE"
         return row
     code = [f for f in files if not is_derived(f, registry)]
+    row["code"] = code
     if not code:
         row["class"] = "DERIVED"
         return row
@@ -214,7 +217,16 @@ def classify(commit, registry, index_env, scheduled):
     present = [f for f in code
                if reverse_applies(commit, [f], index_env) or only_rows(commit, f, registry)]
     if len(present) == len(code):
-        row["class"] = "HERE"
+        # HERE is measured on THIS tree.  A file an earlier pending commit of the source
+        # rewrites first is another tree by the time this one is reached: a revert of that
+        # commit reads as here (this tree never had what it removes) and, skipped, leaves
+        # the reverted change in.  Picked instead, a change that really is here comes out
+        # empty and `apply` drops it.
+        after = next((pending[f] for f in code if f in pending), None)
+        if after:
+            row["class"], row["follows"] = "NEW", after
+        else:
+            row["class"] = "HERE"
     elif present:
         row["class"] = "PARTIAL"
         row["missing"] = [f for f in code if f not in present]
@@ -252,12 +264,14 @@ def cmd_survey(args):
             commits = git("rev-list", "--reverse", f"{head}..{sha}").split()
             rows = []
             wip = None
+            pending = {}
             for c in commits:
                 if wip:
                     rows.append({"sha": c, "subject": git("log", "-1", "--format=%s", c).strip(),
                                  "class": "AFTER-WIP", "files": 0})
                     continue
-                r = classify(c, registry, env, scheduled)
+                r = classify(c, registry, env, scheduled, pending)
+                code = r.pop("code", [])
                 # A checkpoint its author has not verified ends what this join takes from the
                 # source: the commits after it may build on it.
                 if r["class"] in ("NEW", "PARTIAL") and not args.take_wip and re.match(
@@ -269,6 +283,7 @@ def cmd_survey(args):
                     r["class"] = "SQUASHED"
                 if r["class"] in ("NEW", "PARTIAL"):
                     scheduled[r["subject"]] = name
+                    pending.update({f: c for f in code})
                 rows.append(r)
             mark_reverted(rows)
             plan["sources"].append({"name": name, "sha": sha, "on_base": on_base,
@@ -304,6 +319,8 @@ def print_plan(plan, verbose=False):
                 extra = f"  [a self-reverting pair with {other[:9]} — neither is taken]"
             elif r["class"] == "SUBJECT":
                 extra = "  [this branch has a commit of that subject — check it is the same change]"
+            elif r.get("follows"):
+                extra = f"  [here on this tree, but {r['follows'][:9]} rewrites its file first]"
             print(f"  {marks[r['class']]:4} {r['class']:7} {r['sha'][:9]} {r['subject'][:92]}"
                   f"{extra}{done}")
     todo = sum(1 for s in plan["sources"] for r in s["commits"]

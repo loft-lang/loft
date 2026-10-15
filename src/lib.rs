@@ -259,14 +259,14 @@ macro_rules! loft_eprintln {
     ($($arg:tt)*) => {{
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
         {
-            $crate::live_dispatch::wasm_host_log(&format!("{}\n", format_args!($($arg)*)));
+            $crate::platform::wasm_host_log(&format!("{}\n", format_args!($($arg)*)));
         }
         // Through `host_eprint` rather than `eprintln!`: a diagnostic whose write cannot
         // land must not panic, because a panic whose own message cannot be printed is what
         // turns `prog 2>&1 | head` into a SIGABRT and a crash report (loft#1289).
         #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))))]
         {
-            $crate::codegen_runtime::host_eprint(&format!("{}\n", format_args!($($arg)*)));
+            $crate::platform::host_eprint(&format!("{}\n", format_args!($($arg)*)));
         }
     }};
 }
@@ -342,7 +342,9 @@ pub mod byte_copy;
 pub mod compact;
 pub mod const_fn;
 pub mod copy_view;
+pub mod ctor_literal;
 pub mod discharge_into;
+pub mod exit_record;
 pub mod exit_vector;
 pub mod file_access;
 pub mod forward_result;
@@ -350,6 +352,7 @@ pub mod forward_walk;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod literal_append;
+pub mod loop_kernel_rewrite;
 pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;
@@ -371,6 +374,7 @@ pub mod scopes;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;
+pub mod take_local;
 pub mod text_run;
 pub mod tuple_links;
 pub mod use_analysis;
@@ -382,8 +386,17 @@ pub mod vector;
 pub mod trace;
 
 pub mod btree;
+pub mod c_libs;
+pub mod call_frames;
 pub mod codegen_runtime;
+pub mod const_literal;
+pub mod fnref;
 pub mod generation;
+pub mod ir_shape;
+pub mod loop_shape;
+pub mod native_build;
+pub mod op_layout;
+pub mod op_sets;
 pub mod ops;
 #[cfg(test)]
 mod page_metrics;
@@ -393,17 +406,24 @@ mod png_store;
 pub mod profiler;
 mod radix_db;
 mod radix_tree;
+pub mod runtime_abi;
+pub mod rust_spelling;
 mod spatial;
 pub mod store;
 pub mod store_budget;
+pub mod text_calls;
 pub mod trie_db;
+pub mod type_schema;
 mod typedef;
+pub mod ws_handshake;
 
 pub mod const_eval;
 pub mod coroutine_layout;
 pub mod create;
 pub mod fill;
+pub mod par_pool;
 pub mod parallel;
+pub mod parallel_natives;
 pub mod platform;
 pub mod state;
 
@@ -411,7 +431,10 @@ pub mod compile;
 pub mod engine_host;
 pub mod extensions;
 pub mod git_query;
+pub mod live_control;
 pub mod live_dispatch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod live_rebuild;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod live_reload;
 pub mod process_run;
@@ -442,6 +465,7 @@ pub mod fuzz_oracle;
 pub mod install;
 pub mod integrity;
 pub mod introspect;
+pub mod layout_schema;
 pub mod libscan;
 pub mod lockfile;
 pub mod log_config;
@@ -486,6 +510,8 @@ pub mod stdlib_sources;
 #[cfg(host_fs)]
 pub mod wasm;
 pub mod wasm_assets;
+#[cfg(host_fs)]
+pub mod wasm_entry;
 pub mod wasm_gl;
 // @PLN117 — the browser thread pool.  Browser-only by nature (it exists because
 // wasm has no `thread::spawn`), so it is not compiled for the host: type-checking

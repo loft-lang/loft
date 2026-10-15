@@ -41,6 +41,13 @@
 
 #![cfg(feature = "native-extensions")]
 
+pub use crate::c_signature::library_symbol_table;
+// The declared C-library tables and symbol resolution live in `c_libs` (core); these are
+// the paths generated `--native` binaries and the interpreter name.
+pub use crate::c_libs::{
+    library_available, library_available_native, missing_symbol_message, register_native, resolve,
+    resolve_native, set_declared_libraries, set_library_symbols,
+};
 use crate::c_signature::{CSignature, CType};
 
 /// ONE rung of the ladder: transmute `f` to the arity the index list names and
@@ -218,363 +225,6 @@ pub fn narrow_return(raw: u64, ret: &CType) -> i64 {
     }
 }
 
-/// Every C library this program declared, each with the outcome of opening it:
-/// `None` until it has been tried, then whether it opened.
-///
-/// Keeping the outcome (rather than draining the list) is what makes a MISSING
-/// library cost one `dlopen` for the whole run instead of one per call — a
-/// symbol that is genuinely absent is looked up on every iteration of whatever
-/// loop calls it.
-///
-/// REQUIRED entries are in here too, and the miss path opens them like any
-/// other. One rule for both backends is the point: the interpreter has already
-/// opened them ([`register`]), where re-opening is a no-op that `load_one`
-/// dedups by canonical path; a `--native` binary has opened nothing, and a
-/// required library whose symbols are all resolved lazily may have lost its
-/// `DT_NEEDED` entry to `--as-needed`. A flag consulted here would be a fourth
-/// place to get the same fact wrong.
-static DECLARED_LIBS: std::sync::Mutex<Vec<(crate::data::CLibrary, Option<bool>)>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// Soname → the `#c` symbols declared by the package that declared it. Read by
-/// [`library_available`], which is symbol-granular because a library that is
-/// PRESENT but of the wrong vintage exports a subset — a file-granular answer
-/// would say yes where the call still faults.
-static LIB_SYMBOLS: std::sync::Mutex<Vec<(String, Vec<String>)>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// Record the C libraries the program declared, for `resolve` to open on
-/// demand. Called by [`register`] with the whole list, so a re-registration
-/// (the REPL, the test runner) replaces it rather than appending.
-pub fn set_declared_libraries(libs: Vec<crate::data::CLibrary>) {
-    *DECLARED_LIBS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-        libs.into_iter().map(|l| (l, None)).collect();
-}
-
-/// Which declared libraries are EXPECTED to export `symbol`, when the source says so.
-///
-/// `library_symbol_table` attributes symbols per PACKAGE, and gives a multi-library
-/// package an empty list rather than guessing — so this answers EMPTY exactly when the
-/// source cannot attribute the symbol, and the caller must widen.
-///
-/// A package contributes one entry per artefact it owns — its `cc`-built shim AND its
-/// declared soname — with the same symbol list on each, so more than one name can claim
-/// a symbol. All of them are returned and the caller matches any; picking the first
-/// selected the shim path, which no declared library is named after, and the narrowing
-/// then never fired.
-fn sonames_for_symbol(symbol: &str) -> Vec<String> {
-    let guard = LIB_SYMBOLS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    guard
-        .iter()
-        .filter(|(_, syms)| syms.iter().any(|s| s == symbol))
-        .map(|(lib, _)| lib.clone())
-        .collect()
-}
-
-/// Record which `#c` symbols each declared library is expected to provide.
-pub fn set_library_symbols(table: Vec<(String, Vec<String>)>) {
-    *LIB_SYMBOLS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = table;
-}
-
-/// Build the soname → declared-symbols table from a parsed program.
-///
-/// One home, called by both backends — the interpreter from [`register`] and
-/// the `--native` generator, which bakes the result into the binary. Derived
-/// from the same `Data` either way, so the two cannot answer differently.
-///
-/// **A symbol is attributable to a library only when that library is the only
-/// one its package declares.** A `#c` annotation never names its library
-/// (`Data::c_owner_pkg` is the finest attribution the source supports), so for a
-/// package declaring several libraries there is no fact saying which one exports
-/// a given symbol — and guessing produces the worst possible answer: a package
-/// binding sqlite AND duckdb would report sqlite unavailable because a duckdb
-/// symbol is missing, which is precisely the case optional libraries exist for.
-///
-/// So a multi-library package gets an empty symbol list, and its libraries are
-/// available when they LOAD. Skew detection is the thing given up, and the way
-/// to keep it is the arrangement libraries should have anyway: one package per
-/// optional library, which is how the `sqldb` fixture is built.
-#[must_use]
-pub fn library_symbol_table(data: &crate::data::Data) -> Vec<(String, Vec<String>)> {
-    let target = crate::c_signature::CTarget::host();
-    let mut by_pkg: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
-    for d_nr in 0..data.definitions() {
-        let def = data.def(d_nr);
-        if def.c_sig.is_empty() || *def.code() != crate::data::Value::Null {
-            continue;
-        }
-        let Some(Ok(sig)) = crate::c_signature::of(data, d_nr, target) else {
-            continue;
-        };
-        if let Some(pkg) = data.c_owner_pkg(def.position().file.as_str()) {
-            by_pkg.entry(pkg).or_default().push(sig.symbol);
-        }
-    }
-    data.c_libraries
-        .iter()
-        .map(|lib| {
-            // Only OTHER OPTIONAL libraries make attribution ambiguous. A
-            // required entry cannot be the reason a symbol is missing — the
-            // package does not load at all without it — and one of them is
-            // almost always the package's own `[c] shim`, which loft just
-            // built and which is therefore present by construction. Counting
-            // those would switch skew detection off for nearly every real
-            // package, since nearly every `#c` package ships a shim.
-            let alone = data
-                .c_libraries
-                .iter()
-                .filter(|c| c.pkg_dir == lib.pkg_dir && c.optional)
-                .count()
-                <= 1;
-            let mut syms = if alone {
-                by_pkg
-                    .get(lib.pkg_dir.as_str())
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            syms.sort_unstable();
-            syms.dedup();
-            (lib.name.clone(), syms)
-        })
-        .collect()
-}
-
-/// Open any declared library not yet tried. Returns whether this call opened
-/// one — i.e. whether the set of resolvable symbols just grew, which is the
-/// only reason for the caller to look again.
-///
-/// `only` narrows it to one library by name. A symbol MISS has no name to give —
-/// a `#c` annotation never says which library it comes from, so the miss path
-/// widens the search across all of them (arc B: one resolver, one meaning per
-/// symbol). An availability QUESTION does have one, and answering it by opening
-/// every optional library made `c_library_available("libsqlite3.so.0")` dlopen
-/// libduckdb as a side effect — 70 MB mapped by a program that never mentions
-/// duckdb, which is the cost arc G exists to avoid.
-fn open_pending_optional_named(only: Option<&[String]>) -> bool {
-    // The entries are cloned out and the guard dropped before any `dlopen`: an
-    // optional library's initialisers run arbitrary C, and holding the lock
-    // across that would serialise every parallel arm resolving a symbol (the
-    // shape P245 fixed in `native_auto_dispatch`).
-    let pending: Vec<crate::data::CLibrary> = {
-        let mut guard = DECLARED_LIBS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard
-            .iter_mut()
-            .filter(|(lib, tried)| tried.is_none() && only.is_none_or(|ns| ns.contains(&lib.name)))
-            .map(|(lib, _)| lib.clone())
-            .collect()
-    };
-    if pending.is_empty() {
-        return false;
-    }
-    let mut opened_any = false;
-    for lib in pending {
-        let ok = crate::extensions::load_c_library(&lib.name, &lib.pkg_dir);
-        opened_any |= ok;
-        let mut guard = DECLARED_LIBS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (entry, tried) in guard.iter_mut() {
-            if entry.name == lib.name && entry.pkg_dir == lib.pkg_dir {
-                *tried = Some(ok);
-            }
-        }
-    }
-    opened_any
-}
-
-/// Resolve a C symbol for the running process.
-///
-/// Searches the cdylibs loft has already loaded, then the process itself —
-/// which is what makes a libc binding work with nothing declared and nothing
-/// installed. A declared REQUIRED library is already open by the time this runs
-/// ([`register`]); an OPTIONAL one is opened here, on the miss, which is the
-/// whole of arc G's interpreter half.
-///
-/// One resolver, so a symbol cannot mean two different things depending on
-/// which caller asked for it — arc B's rule, and the lazy path keeps it by
-/// widening the search rather than adding a second search.
-#[must_use]
-pub fn resolve(symbol: &str) -> Option<*const ()> {
-    if let Some(p) = resolve_in_loaded(symbol) {
-        return Some(p);
-    }
-    // Miss: an optional library that has not been opened yet may export it.
-    //
-    // Try the library the SOURCE attributes this symbol to first. Widening to every
-    // declared library still happens below when that does not answer — the arc B rule
-    // is unchanged, a symbol still means one thing — but it is no longer the first
-    // move, because it dlopens libraries the program never mentions. With four
-    // one-library packages declared, resolving `sqlite3_open` mapped libduckdb's 70 MB
-    // as a side effect, which is the cost `[c] optional-libs` exists to avoid.
-    let attributed = sonames_for_symbol(symbol);
-    if !attributed.is_empty()
-        && open_pending_optional_named(Some(&attributed))
-        && let Some(p) = resolve_in_loaded(symbol)
-    {
-        return Some(p);
-    }
-    if open_pending_optional_named(None) {
-        return resolve_in_loaded(symbol);
-    }
-    None
-}
-
-/// @PLN24 arc G — [`resolve`], for a `--native` binary.
-///
-/// A compiled program never runs [`register`], so nothing has told it which
-/// libraries may be opened on demand; the generated crate carries the list as a
-/// static and hands it here on the first lazy call. After that this IS
-/// [`resolve`] — the two backends share the resolver, which is the only way
-/// they can agree about what a symbol means.
-///
-/// The list carries EVERY declared library, not just the optional ones: a
-/// required library is normally a `DT_NEEDED` entry and already in the process,
-/// but with its symbols resolved lazily there may be no undefined reference
-/// left for the linker to keep it alive (`--as-needed`), and re-opening it by
-/// name costs nothing when it is already there.
-#[must_use]
-pub fn resolve_native(
-    symbol: &str,
-    libs: &[(&str, &str)],
-    syms: &[(&str, &[&str])],
-) -> Option<*const ()> {
-    register_native(libs, syms);
-    resolve(symbol)
-}
-
-/// Hand a `--native` binary's baked-in C-library tables to the runtime.
-///
-/// Idempotent, and called from two places for one reason each: the generated
-/// `main` calls it so [`library_available`] can answer in a program that never
-/// makes a lazy call at all, and [`resolve_native`] calls it so a `#c` call
-/// reaching the runtime BEFORE `main`'s prelude still resolves.
-pub fn register_native(libs: &[(&str, &str)], syms: &[(&str, &[&str])]) {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        set_declared_libraries(
-            libs.iter()
-                .map(|(name, pkg_dir)| crate::data::CLibrary {
-                    name: (*name).to_string(),
-                    pkg_dir: (*pkg_dir).to_string(),
-                    // The flag decides eager loading and the link line, both of
-                    // which are already settled by the time a binary exists.
-                    // Nothing downstream of here reads it.
-                    optional: true,
-                })
-                .collect(),
-        );
-        set_library_symbols(
-            syms.iter()
-                .map(|(lib, s)| {
-                    (
-                        (*lib).to_string(),
-                        s.iter().map(|x| (*x).to_string()).collect(),
-                    )
-                })
-                .collect(),
-        );
-    });
-}
-
-/// @PLN24 arc G — is this C library usable RIGHT NOW?
-///
-/// True when the library opens **and** every `#c` symbol declared against it
-/// resolves. Both halves are load-bearing: a library of the wrong vintage opens
-/// and exports a subset, so a file-granular answer would say yes where the call
-/// still faults — the version-skew hole that makes a naive query worse than no
-/// query at all.
-///
-/// A library the program never declared answers false rather than probing the
-/// dynamic linker for it. Asking about one is a program bug, and false is the
-/// answer that keeps a caller on its fallback path instead of into a fault
-/// (@C80: no runtime errors, ever).
-/// [`library_available`], for generated Rust — the main binary AND every
-/// auto-built package cdylib.
-///
-/// A cdylib links its own copy of loft, so the tables [`register`] filled in
-/// the interpreter's process are NOT the tables a function compiled into a
-/// package can see: measured, `duckdb_available()` answered false from inside
-/// the package while the identical call from the program answered true. The
-/// generated source carries the tables, so passing them is what makes one
-/// question have one answer wherever it is asked from.
-#[must_use]
-pub fn library_available_native(
-    name: &str,
-    libs: &[(&str, &str)],
-    syms: &[(&str, &[&str])],
-) -> bool {
-    register_native(libs, syms);
-    library_available(name)
-}
-
-#[must_use]
-pub fn library_available(name: &str) -> bool {
-    open_pending_optional_named(Some(std::slice::from_ref(&name.to_string())));
-    let opened = {
-        let guard = DECLARED_LIBS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard
-            .iter()
-            .filter(|(lib, _)| lib.name == name)
-            .map(|(_, tried)| tried.unwrap_or(false))
-            .fold(None, |acc: Option<bool>, ok| {
-                Some(acc.unwrap_or(false) || ok)
-            })
-    };
-    if opened != Some(true) {
-        return false;
-    }
-    let symbols = {
-        let guard = LIB_SYMBOLS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard
-            .iter()
-            .find(|(lib, _)| lib == name)
-            .map(|(_, s)| s.clone())
-            .unwrap_or_default()
-    };
-    symbols.iter().all(|s| resolve(s).is_some())
-}
-
-/// What a `#c` call says when its symbol cannot be resolved.
-///
-/// One text for both backends: the interpreter panics with it from `dispatch`,
-/// and the `--native` emission writes a call to this same function into the
-/// generated crate. A message that differed between them would be a divergence
-/// in the one place a user is already having a bad day.
-#[must_use]
-pub fn missing_symbol_message(symbol: &str) -> String {
-    format!(
-        "`#c` symbol '{symbol}' not found — it is not in this process and no loaded \
-         library exports it. If it comes from an `[c] optional-libs` library, that \
-         library is not installed: ask `c_library_available(\"<soname>\")` before \
-         calling. Otherwise declare the library it comes from, or check the spelling"
-    )
-}
-
-/// The search itself, over what is already open. Split out so the miss path can
-/// re-run exactly the same search after widening it, rather than a similar one.
-fn resolve_in_loaded(symbol: &str) -> Option<*const ()> {
-    if let Some((p, _)) = crate::extensions::try_dlsym_pub(symbol) {
-        return Some(p);
-    }
-    // Then what the process already has open — the process handle on Unix, the
-    // already-loaded CRT and base modules on Windows (`platform::symbol_in_process`).
-    crate::platform::symbol_in_process(symbol)
-}
-
 /// Everything the interpreter needs to make one `#c` call, resolved once at
 /// wiring time rather than per call.
 #[derive(Clone)]
@@ -619,7 +269,7 @@ pub fn register(state: &mut crate::state::State, data: &crate::data::Data) {
     // looked up, so a program that never calls into it runs on a machine where
     // it is not installed.
     for lib in data.c_libraries.iter().filter(|c| !c.optional) {
-        crate::extensions::load_c_library(&lib.name, &lib.pkg_dir);
+        crate::c_libs::load_c_library(&lib.name, &lib.pkg_dir);
     }
     // The miss path and the availability query both work off the WHOLE list:
     // re-opening an already-open required library is a no-op, and the query has
@@ -674,7 +324,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     use crate::c_signature::CArg;
     use crate::keys::{DbRef, Str};
 
-    let idx = crate::extensions::current_lib_idx();
+    let idx = crate::call_frames::current_lib_idx();
     let binding = {
         let guard = C_BINDINGS
             .lock()
@@ -823,7 +473,7 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 #[must_use]
 fn c_text(raw: u64) -> String {
     if raw == 0 {
-        return crate::state::STRING_NULL.to_string();
+        return crate::store::STRING_NULL.to_string();
     }
     let p = raw as *const std::ffi::c_char;
     // SAFETY: the declaration says this symbol returns `char *`, and that

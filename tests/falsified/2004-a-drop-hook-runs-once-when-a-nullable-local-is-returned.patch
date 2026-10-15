@@ -1,0 +1,14 @@
+diff --git a/src/scopes/returns.rs b/src/scopes/returns.rs
+index b12515912..15d2719a4 100644
+--- a/src/scopes/returns.rs
++++ b/src/scopes/returns.rs
+@@ -295,7 +295,8 @@ fn is_presence_tested_copy(absent: &Value, copy: &Value) -> bool {
+         Value::Call(_, args) => args.is_empty(),
+         _ => false,
+     };
+-    null_leaf
++    false
++        && null_leaf
+         && matches!(copy.unspan(), Value::Block(bl)
+             if bl.name == "materialized_view_return" || bl.name == ARMED_VIEW_RETURN)
+ }

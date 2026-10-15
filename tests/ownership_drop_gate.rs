@@ -46,9 +46,12 @@
 //! and a cell the rules permit that releases wrongly must name its open `heap.md` deviation in
 //! `LEASE_DEVIATIONS`.
 //!
-//!   run:    cargo test --release --test ownership_drop_gate      (both backends)
-//!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
+//!   run:    cargo test --test ownership_drop_gate      (both backends; the dev profile is
+//!           enough — a release build only answers how fast)
+//!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --test ownership_drop_gate
 //!           (writes `ownership_drop_gate.baseline` and `ownership_drop_gate.native.baseline`)
+
+mod common;
 
 use loft::file_access as fa;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -258,6 +261,15 @@ fn p_o5() { t = (mk(16), 1); p_o5_m(t); println("R{t.0.id}"); }"#,
         cell(
             "p_j4",
             r#"fn p_j4() { a: H? = null; v: vector<H> = []; v += [if a != null { a } else { mk(37) }]; println("R{v[0].id}"); }"#,
+        ),
+        // A join of two locals RETURNED, each arm taken once: the result holds one, and the
+        // exit releases the other.  With `mk` returning in registers the two locals are value
+        // tuples, and a store-identity test between them and the result answered "distinct"
+        // on every path — the returned record was released at exit as well.
+        cell(
+            "p_j5",
+            r#"fn p_j5_m(k: integer) -> H { a = mk(146 + 2 * k); b = mk(147 + 2 * k); return if k > 0 { a } else { b }; }
+fn p_j5() { x = p_j5_m(0); println("R{x.id}"); y = p_j5_m(1); println("R{y.id}"); }"#,
         ),
         // A reassigned local whose value is handed off by a LATER statement, or off a
         // parameter: a hand-off belongs to the assignment it follows, so it must not suppress
@@ -1114,10 +1126,11 @@ fn for_each_cell<T: Send>(
         .collect()
 }
 
+/// At most `cap` workers, and never more than the share nextest was told about
+/// (`common::lanes`): every test here that calls it carries `threads-required` in
+/// `.config/nextest.toml`.
 fn workers(cap: usize) -> usize {
-    std::thread::available_parallelism()
-        .map_or(2, std::num::NonZero::get)
-        .min(cap)
+    common::lanes::lanes(cap)
 }
 
 // ── the baseline ────────────────────────────────────────────────────────────────────────────
@@ -1127,7 +1140,7 @@ fn render(verdicts: &[Verdict], backend: &str) -> String {
         "# ownership_drop_gate — the {backend} cells that are NOT clean, measured on the tree that\n\
          # committed this file, with the lease refusals off: `cell KIND,KIND`.  Every line is a cell the\n\
          # lease rules REFUSE at compile time; a cell they permit is never listed.\n\
-         # Regenerate only after reading the diff: {BLESS}=1 cargo test --release --test ownership_drop_gate\n"
+         # Regenerate only after reading the diff: {BLESS}=1 cargo test --test ownership_drop_gate\n"
     );
     let mut lines: Vec<String> = verdicts
         .iter()
@@ -1216,7 +1229,7 @@ fn report_baseline_diff(
         "\n(H-Drop) gate ({backend}) differs from {path}:\n{report}\n\
          A NEW line is a cell that now releases wrongly, or differently — a regression unless \
          the change was meant to move it.  A GONE line is a fix; retire it in the same commit.\n\
-         After reading every line: {BLESS}=1 cargo test --release --test ownership_drop_gate\n"
+         After reading every line: {BLESS}=1 cargo test --test ownership_drop_gate\n"
     );
 }
 
@@ -1257,7 +1270,7 @@ fn native_gate_chunk(chunk: usize) {
 }
 
 /// How many tests the native leg is split across — see [`native_gate_chunk`].
-const NATIVE_GATE_CHUNKS: usize = 8;
+const NATIVE_GATE_CHUNKS: usize = 16;
 
 #[test]
 fn every_cell_releases_each_resource_once_on_native_0() {
@@ -1297,6 +1310,46 @@ fn every_cell_releases_each_resource_once_on_native_6() {
 #[test]
 fn every_cell_releases_each_resource_once_on_native_7() {
     native_gate_chunk(7);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_8() {
+    native_gate_chunk(8);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_9() {
+    native_gate_chunk(9);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_10() {
+    native_gate_chunk(10);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_11() {
+    native_gate_chunk(11);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_12() {
+    native_gate_chunk(12);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_13() {
+    native_gate_chunk(13);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_14() {
+    native_gate_chunk(14);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_15() {
+    native_gate_chunk(15);
 }
 
 /// [`check_baseline`] for one chunk: only the lines naming `names` are this chunk's to compare —
@@ -1606,6 +1659,7 @@ const PILOT_ONCE: &[&str] = &[
     "p_o2", // `u = t` of a tuple the function built
     "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
     "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s5", // a local in a join
+    "p_j5", // two locals in a join, returned
     // `d = v` of a droppable COLLECTION the function owns: a MOVE (`D-heap-23` closed it).
     "p_v1",
 ];

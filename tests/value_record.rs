@@ -27,7 +27,10 @@ const EXPECTED: &[(&str, bool)] = &[
     ("n_mk_smp_read", true), // c6b: passed on to a read-only parameter — a TUPLE PARAMETER
     // (`(R-ValueLocal)`), so the nested call is a value local and the maker is admitted
     ("n_mk_eight", true), // c10: eight fields, the bound since @PLN158
-    ("n_cell_at", true),  // c11: a discharged view returned through the buffer is a leaf
+    // c11: a discharged view returned through the buffer is a leaf — DECLINED since 932209dc4:
+    // the `?` default is a build whose exit release is guarded by a store-identity test
+    // against the result, and that answer turns on the path (loft#2014 is the way back)
+    ("n_cell_at", false),
     ("n_mk_cond", false), // c7: the arms build INTO one shared buffer local and the tail
     // RETURNS that local — an owned tail, which the value form would have to mint (declines)
     ("n_mk_inner", true), // c8: read field-wise inside an admitted caller's own build
@@ -41,30 +44,35 @@ const EXPECTED: &[(&str, bool)] = &[
 const TAIL_CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ah-value-tail-cells.loft";
 const TAIL_EXPECTED: &[(&str, bool)] = &[
-    ("n_pt", true),         // t1: delivered into a push slot — the tuple is materialised
-    ("n_half", true),       // t2: a forwarding tail
-    ("n_mk_kept", true),    // t3: its record is appended — a copy FROM a value local materialises
-    ("n_fwd_kept", true),   // t3: forwards an admitted callee
-    ("n_pt5", true),        // t5: forwarded by `half5`, itself admitted now (E-1)
-    ("n_half5", true),      // t5: the join local is its buffer — a forward (E-1)
-    ("n_sel", true),        // t6: a selecting tail (a view of a `const` parameter)
-    ("n_ctrl", true),       // t7: a selecting tail with an early return
+    ("n_pt", true),       // t1: delivered into a push slot — the tuple is materialised
+    ("n_half", true),     // t2: a forwarding tail
+    ("n_mk_kept", true),  // t3: its record is appended — a copy FROM a value local materialises
+    ("n_fwd_kept", true), // t3: forwards an admitted callee
+    ("n_pt5", true),      // t5: forwarded by `half5`, itself admitted now (E-1)
+    ("n_half5", true),    // t5: the join local is its buffer — a forward (E-1)
+    // t6: a selecting tail (a view of a `const` parameter) — DECLINED since 932209dc4, as
+    // c11: its `?` default is a build the result may hold (loft#2014)
+    ("n_sel", false),
+    // DECLINED since 932209dc4 (loft#2014) — t7: a selecting tail with an early return
+    ("n_ctrl", false),
     ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
     ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
-    ("n_pt10", false),      // t10: a discharge arm joined with a variable
-    ("n_maybe", false),     // t10: its `??` takes a RECORD default, a site that consumes the
-    // record (a nullable result is a tuple everywhere else, C144)
-    ("n_ping", true), // t11: a branch of two admitted calls, mutually recursive
-    ("n_pong", true), // t11: the forwarding half of the pair
-    ("n_pt12", true), // t12: delivered into a field / element through a `__lift_`
+    ("n_pt10", true),       // t10: a discharge's default, widened beside the nullable tuple
+    ("n_maybe", true),      // t10: a `-> Pt` call joined with `null` (`@FR-N-Road`)
+    ("n_ping", true),       // t11: a branch of two admitted calls, mutually recursive
+    ("n_pong", true),       // t11: the forwarding half of the pair
+    ("n_pt12", true),       // t12: delivered into a field / element through a `__lift_`
     // temp — a value local since `(R-ValueLocal)` made call-bound lifts eligible
     // (2026-09-25); the copy FROM it materialises the tuple into the destination
-    ("n_pt13", false), // t13: its result is passed as an argument (`disc(given)`)
-    ("n_disc", false), // t13: a JOIN tail — a view on one arm, a mint on the other
+    // DECLINED since 932209dc4 (loft#2014) — t13: its result is handed to `disc`'s nullable tuple parameter
+    ("n_pt13", false),
+    // DECLINED since 932209dc4 (loft#2014) — t13: a nullable tuple parameter discharged with a build — no view is
+    ("n_disc", false),
+    // read and no store minted, so the join the record form made is two tuples (loft#1993)
     ("i_2Pt_n_gpick", true), // t14: a generic instance's statement-join selecting tail
     ("i_4Coin_n_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
-    ("n_sel15", true), // t15: a lifted selecting tail over by-value parameters
-    ("n_sel15c", true), // t15: the same over `const` parameters
+    ("n_sel15", true),       // t15: a lifted selecting tail over by-value parameters
+    ("n_sel15c", true),      // t15: the same over `const` parameters
 ];
 
 /// The § V-an chains (`bytecode-comparisons/V-an-chain-cells.loft`): the parser's
@@ -188,9 +196,12 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
         .nth(1)
         .and_then(|s| s.split("\nfn ").next())
         .expect("n_half_chord emitted");
+    // DECLINED since 932209dc4 (loft#2014): the selecting callee keeps its record, so the
+    // call site keeps the borrow bracket its tuple would have made redundant.  The
+    // restoration flips this back to `!hc.contains(…)`.
     assert!(
-        !hc.contains("n_protect_store_frees"),
-        "a selecting callee's tuple needs no borrow bracket"
+        hc.contains("n_protect_store_frees"),
+        "a selecting callee on the record road keeps its borrow bracket (loft#2014)"
     );
     // The join buffers of a branch that binds a TUPLE are dead: minted by nothing, freed by
     // nothing (t4); a branch that keeps a record arm still mints its buffer (t5).
@@ -349,19 +360,28 @@ const NULLABLE_CELLS: &str = "tests/scripts/a-nullable-record-returns-its-fields
 const NULLABLE_EXPECTED: &[(&str, Option<&str>)] = &[
     ("n_n1", Some("(i64, bool)")), // always present, read and discharged
     ("n_n2", Some("(i64, bool)")), // an early `return null`
-    ("n_n3", Some("(i64, bool)")), // a tail joining `null` with a build
-    ("n_n4", Some("(i64, i64, bool)")), // a present record with a null field
+    // a tail joining `null` with a build — DECLINED since 932209dc4: the build's exit release
+    // is guarded by a store-identity test against the result (loft#2014)
+    ("n_n3", None),
+    // DECLINED since 932209dc4 (loft#2014) — a present record with a null field
+    ("n_n4", None),
     ("n_n5", Some("(i64, f64, i64, bool)")), // a nested inline record
-    ("n_n6", Some("(f64, bool, bool)")), // float and boolean fields
-    ("t_1S_bump", Some("(i64, bool)")), // a method
+    // DECLINED since 932209dc4 (loft#2014) — float and boolean fields
+    ("n_n6", None),
+    // DECLINED since 932209dc4 (loft#2014) — a method
+    ("t_1S_bump", None),
     ("n_n8", Some("(i64, bool)")), // recursion through its own result
-    ("n_n9f", Some("(i64, bool)")), // a forwarding tail
-    ("n_n9r", Some("(i64, bool)")), // a forwarding `return`
-    ("n_n12", Some("(i64, bool)")), // bound into a local declared `null`
+    // DECLINED since 932209dc4 (loft#2014) — a forwarding tail
+    ("n_n9f", None),
+    // DECLINED since 932209dc4 (loft#2014) — a forwarding `return`
+    ("n_n9r", None),
+    // DECLINED since 932209dc4 (loft#2014) — bound into a local declared `null`
+    ("n_n12", None),
     ("n_whole", Some("(i64, bool)")), // a dense tuple parameter, WIDENED
-    ("n_fwdr", Some("(i64, bool)")), // a dense call forwarded beside `return null`
-    ("n_n10", None),               // passed on whole and pushed: the record road
-    ("n_n11", None),               // a `??` with a record default
+    ("n_fwdr", Some("(i64, bool)")),  // a dense call forwarded beside `return null`
+    // DECLINED since 932209dc4 (loft#2014) — passed on whole and pushed: written where present
+    ("n_n10", None),
+    ("n_n11", None), // a `??` with a record default
 ];
 
 /// The return type `rust` declares for `name`, when it is a tuple.
@@ -401,4 +421,222 @@ fn a_nullable_record_returns_its_tuple_and_presence_word_where_predicted() {
     }
     let _ = fa::remove_file(&out);
     let _ = fa::remove_file(&off);
+}
+
+/// `(N-Road)` over `(R-ValueRecord)` (loft#1990): a `-> S?` whose result JOINS a dense leaf
+/// with a nullable one — a view beside a build, a `-> S` call beside `null`, a local bound on
+/// two paths — returns `(fields…, bool)`, as its all-`S` twin returns the tuple.  The two
+/// makers that must decline keep their buffer.
+const JOIN_CELLS: &str =
+    "tests/scripts/1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft";
+const JOIN_EXPECTED: &[(&str, Option<&str>)] = &[
+    ("n_j1", Some("(i64, bool)")), // an element view beside a build (the issue)
+    ("n_j2", Some("(i64, bool)")), // a nullable view handed back
+    // a nullable view beside a build — DECLINED since 932209dc4 (the join's store-identity
+    // guard turns on the path; loft#2014)
+    ("n_j3", None),
+    ("n_j4", Some("(i64, bool)")), // a nullable view beside `null`
+    // DECLINED since 932209dc4 (loft#2014) — a `-> S` call beside a build
+    ("n_j5", None),
+    // DECLINED since 932209dc4 (loft#2014) — a `-> S` call beside `null`
+    ("n_j6", None),
+    // DECLINED since 932209dc4 (loft#2014) — a `-> S` call beside a `-> S?` call
+    ("n_j7", None),
+    // DECLINED since 932209dc4 (loft#2014) — a dense local beside a build
+    ("n_j8", None),
+    // DECLINED since 932209dc4 (loft#2014) — nested: a parameter, a call, `null`
+    ("n_j9", None),
+    // DECLINED since 932209dc4 (loft#2014) — three arms
+    ("n_j10", None),
+    // DECLINED since 932209dc4 (loft#2014) — a local bound on two paths
+    ("n_j11", None),
+    ("n_j12", Some("(i64, bool)")), // a copy of a nullable parameter
+    ("n_j13", Some("(i64, bool)")), // `null` beside a join of a view and a build
+    // DECLINED since 932209dc4 (loft#2014) — four fields
+    ("n_j14", None),
+    // DECLINED since 932209dc4 (loft#2014) — a nullable view beside a `-> S` call
+    ("n_j15", None),
+    ("n_j20", Some("(i64, bool)")), // a view local of a vector element
+    ("n_j21", Some("(i64, i64, bool)")), // a view local of a keyed lookup
+    ("n_d1", None),                 // an owned local at an arm: the record road
+    ("n_d2", None),                 // a record that owns heap
+];
+
+#[test]
+fn a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple() {
+    let out = std::env::temp_dir().join("loft_value_record_join.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOIN_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in JOIN_EXPECTED {
+        assert_eq!(
+            tuple_type(&rust, name).as_deref(),
+            *want,
+            "{name}: the tuple it returns"
+        );
+    }
+    // A local of a function that returns no record, bound from a `-> S` call on one path
+    // and a `-> S?` call on another, holds the nullable tuple; the dense bind is widened.
+    // DECLINED since 932209dc4 (loft#2014): the makers it joins keep their buffers, so `h`
+    // holds a record and no bind is widened.  The restoration flips these back to
+    // `var_h: (i64, bool)` and `let __wd = n_g(cell`.
+    for name in ["n_j16", "n_j17"] {
+        let body = rust
+            .split(&format!("\nfn {name}("))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        let body = body.split("\nfn ").next().unwrap_or(body);
+        assert!(
+            body.contains("var_h: DbRef"),
+            "{name}: its local `h` holds a record on the declined road (loft#2014)"
+        );
+        assert!(
+            !body.contains("let __wd = n_g(cell"),
+            "{name}: no bind is widened on the declined road (loft#2014)"
+        );
+    }
+    let off = std::env::temp_dir().join("loft_value_record_join_off.rs");
+    let rust = emit(&src, &off, &[("LOFT_NO_NULLABLE_VALUE_RECORD", "1")]);
+    for (name, _) in JOIN_EXPECTED {
+        assert_eq!(
+            tuple_type(&rust, name),
+            None,
+            "{name}: LOFT_NO_NULLABLE_VALUE_RECORD=1 must restore its return buffer"
+        );
+    }
+    let _ = fa::remove_file(&out);
+    let _ = fa::remove_file(&off);
+}
+
+/// The signature `rust` declares for `name`: the parameters after `cell`, then the return
+/// type, as one line.
+fn signature(rust: &str, name: &str) -> String {
+    let line = rust
+        .lines()
+        .find(|l| l.starts_with(&format!("fn {name}(")))
+        .unwrap_or_else(|| panic!("{name} was not emitted"));
+    let sig = line.split(" {").next().unwrap_or(line);
+    sig.replace("cell: &std::cell::UnsafeCell<Stores>, ", "")
+        .replace("mut var_", "")
+        .replacen(&format!("fn {name}"), "", 1)
+}
+
+/// `(N-Road)` over `(R-ValueLocal)` (loft#1993): a `p: S?` of a small no-heap record crosses
+/// a call as `(fields…, bool)`, the presence word last, as `p: S` crosses as the tuple — and
+/// a parameter the tuple cannot serve keeps its reference, as a dense one does.
+const PARAM_CELLS: &str =
+    "tests/scripts/1993-a-nullable-record-parameter-crosses-as-its-fields.loft";
+const PARAM_EXPECTED: &[(&str, &str)] = &[
+    ("n_q1", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_q2", "(p: (i64, bool)) -> i64"),
+    ("n_q3", "(p: (i64, bool)) -> i64"),
+    ("n_q4i", "(q: (i64, bool)) -> i64"),
+    ("n_q4", "(p: (i64, bool), k: i64) -> i64"),
+    ("n_q5", "(p: (i64, bool)) -> i64"),
+    ("n_q6", "(p: (i64, bool)) -> (i64, bool)"),
+    (
+        "n_q7",
+        "(p: (i64, f64, bool, i64, bool), __work_1: &mut String) -> Str",
+    ),
+    ("n_q8", "(p: (i64, bool), q: (i64, bool)) -> i64"),
+    (
+        "n_q9",
+        "(p: (i64, f64, i64, bool), __work_1: &mut String) -> Str",
+    ),
+    ("t_1S_add", "(self: (i64,), o: (i64, bool)) -> i64"),
+    // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
+    ("n_q11", "(a: DbRef, __retbuf: DbRef) -> DbRef"),
+    (
+        "n_q12",
+        "(p: (i64, bool), q: (i64, bool), c: u8) -> (i64, bool)",
+    ),
+    ("n_q13", "(p: (i64, i64, bool)) -> i64"),
+    // The body writes a record of the parameter's type.
+    ("n_d1", "(p: DbRef, w: DbRef) -> i64"),
+    // The record owns heap.
+    ("n_d2", "(p: DbRef, ___acc_1: &mut String) -> Str"),
+    // Arms of a fn-ref dispatch.
+    ("n_d3a", "(p: DbRef, f: f64) -> f64"),
+    ("n_d3b", "(p: DbRef, f: f64) -> f64"),
+];
+
+#[test]
+fn a_nullable_record_parameter_crosses_as_its_fields_and_presence_word() {
+    let out = std::env::temp_dir().join("loft_value_record_param.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(PARAM_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in PARAM_EXPECTED {
+        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+    }
+    // A record argument is read with whether it is there, and `null` is the absent tuple.
+    assert!(
+        rust.contains(".rec != 0) })") && rust.contains("n_q2(cell, (i64::MIN, false))"),
+        "a call site hands a nullable parameter its presence"
+    );
+    // The switch keeps every nullable parameter a reference.
+    let off = std::env::temp_dir().join("loft_value_record_param_off.rs");
+    let rust = emit(&src, &off, &[("LOFT_NO_NULLABLE_VALUE_RECORD", "1")]);
+    for (name, want) in PARAM_EXPECTED {
+        assert!(
+            !signature(&rust, name).contains("bool)"),
+            "{name}: LOFT_NO_NULLABLE_VALUE_RECORD=1 must keep `{want}` off the presence word"
+        );
+    }
+    let _ = fa::remove_file(&out);
+    let _ = fa::remove_file(&off);
+}
+
+/// `(N-Store)` over the register road (loft#1994): a dense slot whose value can reach a `S?`
+/// carries its presence — the parameter handed back, the `-> S` that returns its parameter
+/// or a view — and a dense parameter that is only read stays the dense tuple.
+const STORE_CELLS: &str =
+    "tests/scripts/1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft";
+const STORE_EXPECTED: &[(&str, &str)] = &[
+    ("n_w1", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_id2", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_w2", "(k: i64) -> (i64, bool)"),
+    ("n_id3", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_w3", "(c: u8) -> (i64, bool)"),
+    // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
+    ("n_w4", "(p: DbRef, c: u8, __retbuf: DbRef) -> DbRef"),
+    // DECLINED since 932209dc4 (loft#2014)
+    ("n_w5", "(p: DbRef, n: i64, __retbuf: DbRef) -> DbRef"),
+    ("n_w6", "(p: (i64, bool), c: u8) -> (i64, bool)"),
+    ("n_id7", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_twice", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_w7", "(c: u8) -> (i64, bool)"),
+    ("n_head", "(v: DbRef) -> (i64, bool)"),
+    ("n_w8", "(v: DbRef, c: u8) -> (i64, bool)"),
+    ("n_w9", "(p: (i64, bool)) -> i64"),
+    ("n_w10i", "(q: (i64, bool)) -> u8"),
+    ("n_w10", "(p: (i64, bool)) -> u8"),
+    // Handed a `null` literal, so it carries its presence.
+    ("n_w11", "(p: (i64, bool)) -> i64"),
+    // Control: read only and never handed `null`, so the dense tuple.
+    ("n_w13", "(p: (i64,)) -> i64"),
+    ("n_id12", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_add2", "(p: (i64, bool), q: (i64, bool)) -> i64"),
+    ("n_w12", "(c: u8) -> (i64, bool)"),
+    // Control: a build is surely present, so its maker keeps the dense tuple.
+    ("n_g", "(n: i64) -> (i64,)"),
+];
+
+#[test]
+fn a_dense_slot_that_can_reach_a_nullable_carries_its_presence() {
+    let out = std::env::temp_dir().join("loft_value_record_store.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(STORE_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in STORE_EXPECTED {
+        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+    }
+    // The one dense tuple that is widened with the constant word is a surely present one —
+    // the lifted result of a build's maker — and a `null` argument is the absent tuple.
+    assert!(
+        rust.contains("n_id2(cell, { let __wd = var___lift_1; (__wd.0, true) })"),
+        "a build's maker is widened where it is handed on"
+    );
+    assert!(
+        rust.contains("n_id2(cell, (i64::MIN, false))"),
+        "a `null` argument is the absent tuple"
+    );
+    let _ = fa::remove_file(&out);
 }

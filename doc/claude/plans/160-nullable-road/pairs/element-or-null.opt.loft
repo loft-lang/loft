@@ -1,0 +1,6 @@
+// An element binding over a PARAMETER whose other arm has nothing to hand back.  Nullable
+// half: that arm is `null`.
+// @ABSENCE: a `null` arm is left as it is, so the copy into the buffer is made per arm
+struct S { a: integer }
+fn head(p: vector<S>) -> S? { match p { [a, ..] => a, _ => null } }
+fn main() { q: vector<S> = [S { a: 7 }]; i = 0; t = 0; while i < 3 { h = head(q); t = t + (h.a ?? 0); i = i + 1; } println("{t}"); }

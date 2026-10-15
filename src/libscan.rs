@@ -411,6 +411,150 @@ pub fn scan_type_declarations(content: &str) -> Vec<String> {
     names
 }
 
+/// The bare calls a file makes and the functions it declares — `name(` with no `.` or `::`
+/// before it, and `fn name(` / `operator name(` — for the builder half of the auto-`use`
+/// trigger surface (`triggers.rs` § Builder triggers).  Strings and comments are skipped as
+/// [`scan_method_calls`] skips them, an interpolation hole is code; a keyword before `(`
+/// (`assert(`, `panic(`) is no call.  Over-collects every call the file makes (the stdlib's
+/// too); the caller keeps only the names a builder map carries, minus the declared ones.
+/// Both lists are deduplicated, in first-seen order, and borrow `content`: a name is
+/// allocated only once the caller has kept it, so a corpus of three hundred functions
+/// costs the front end no three hundred strings (the allocation pins).
+#[must_use]
+pub fn scan_bare_calls_and_fn_declarations(content: &str) -> (Vec<&str>, Vec<&str>) {
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    let mut scan = BareScan::default();
+    let mut at = 0usize;
+    let mut in_string = false;
+    let mut brace_depth = 0usize;
+    while at < len {
+        let byte = bytes[at];
+        if in_string {
+            match byte {
+                b'\\' => at += 2,
+                b'{' => {
+                    brace_depth += 1;
+                    scan.prev = Prev::Other;
+                    at += 1;
+                }
+                b'}' => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                    at += 1;
+                }
+                b'"' if brace_depth == 0 => {
+                    in_string = false;
+                    at += 1;
+                }
+                _ if brace_depth == 0 => at += 1,
+                // Inside a hole: the same reading as code.
+                _ => scan.code_byte(content, &mut at),
+            }
+            continue;
+        }
+        if byte == b'/' && at + 1 < len && bytes[at + 1] == b'/' {
+            while at < len && bytes[at] != b'\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            brace_depth = 0;
+            scan.prev = Prev::Other;
+            at += 1;
+            continue;
+        }
+        // A character literal (`'('`, `'\\''`) is no call.
+        if byte == b'\'' {
+            let close = if at + 1 < len && bytes[at + 1] == b'\\' {
+                at + 3
+            } else {
+                at + 2
+            };
+            if close < len && bytes[close] == b'\'' {
+                at = close + 1;
+                scan.prev = Prev::Other;
+                continue;
+            }
+        }
+        scan.code_byte(content, &mut at);
+    }
+    (scan.calls, scan.decls)
+}
+
+/// The token before the identifier under the cursor: a `.`, a `::`, a `fn` / `operator`
+/// keyword, or anything else.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Prev {
+    Dot,
+    Path,
+    FnKeyword,
+    #[default]
+    Other,
+}
+
+/// The state of [`scan_bare_calls_and_fn_declarations`] over the code it reads.
+#[derive(Default)]
+struct BareScan<'a> {
+    calls: Vec<&'a str>,
+    decls: Vec<&'a str>,
+    prev: Prev,
+}
+
+impl<'a> BareScan<'a> {
+    /// One step over code at `*at`: an identifier is classified by what precedes it and
+    /// whether `(` follows; `.` and `::` set `prev` for the next one.  Always moves.
+    fn code_byte(&mut self, content: &'a str, at: &mut usize) {
+        let bytes = content.as_bytes();
+        let len = bytes.len();
+        let byte = bytes[*at];
+        if is_ident_start(byte) {
+            let start = *at;
+            let mut end = *at;
+            while end < len && is_ident_char(bytes[end]) {
+                end += 1;
+            }
+            let word = &content[start..end];
+            let mut next = end;
+            while next < len && (bytes[next] == b' ' || bytes[next] == b'\t') {
+                next += 1;
+            }
+            let called = next < len && bytes[next] == b'(';
+            match self.prev {
+                Prev::FnKeyword if called => push_once(word, &mut self.decls),
+                Prev::Other if called && !crate::lexer::is_keyword(word) => {
+                    push_once(word, &mut self.calls);
+                }
+                _ => {}
+            }
+            self.prev = if matches!(word, "fn" | "operator") {
+                Prev::FnKeyword
+            } else {
+                Prev::Other
+            };
+            *at = end;
+        } else if byte == b':' && *at + 1 < len && bytes[*at + 1] == b':' {
+            self.prev = Prev::Path;
+            *at += 2;
+        } else if byte == b'.' {
+            self.prev = Prev::Dot;
+            *at += 1;
+        } else {
+            if !byte.is_ascii_whitespace() {
+                self.prev = Prev::Other;
+            }
+            *at += 1;
+        }
+    }
+}
+
+fn push_once<'a>(name: &'a str, list: &mut Vec<&'a str>) {
+    if !list.contains(&name) {
+        list.push(name);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,5 +684,15 @@ mod tests {
             scan_qualified_lib_refs(src),
             vec!["regex".to_string(), "time".to_string()]
         );
+    }
+
+    #[test]
+    fn finds_bare_calls_and_fn_declarations() {
+        let src = "// set(commented)\nfn main() {\n  s = set([\"a\"]);\n  t = x.set(1);\n  u = script::set([]);\n\
+                   assert(s.has(\"a\"));\n  println(\"{count(s)} set(\");\n  c = '(';\n  v = keep (2);\n}\n\
+                   pub fn count(s: Bag) -> integer { 1 }\noperator to_text(self: Bag) -> text { \"\" }\n";
+        let (calls, decls) = scan_bare_calls_and_fn_declarations(src);
+        assert_eq!(calls, vec!["set", "println", "count", "keep"], "{calls:?}");
+        assert_eq!(decls, vec!["main", "count", "to_text"], "{decls:?}");
     }
 }

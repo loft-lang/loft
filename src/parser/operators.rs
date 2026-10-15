@@ -5,6 +5,7 @@ use super::{
     AmpHead, Data, IntegerSpec, Level, OPERATORS, Parser, Position, Type, VOID_LEFT_OPERATORS,
     Value, diagnostic_format, rename, to_default, v_block, v_if, v_set,
 };
+pub(crate) use crate::variables::VecKey;
 
 // Operator parsing and type dispatch.
 
@@ -542,7 +543,7 @@ impl Parser {
     /// site that asked the better one: its `&&` could no longer be reached for a
     /// borrowing callee, so the bracket never licensed the free and the minting arm
     /// of a borrowing signature leaked one store per call
-    /// (`tests/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`).
+    /// (`loft-suite/attic/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`).
     /// `formal/ownership.md` had already written that outcome down — *"answering the
     /// callee-side half alone would also close the use-after-free, but
     /// conservatively"*.  The two questions are kept apart here so neither can veto
@@ -1782,11 +1783,10 @@ impl Parser {
         let crate::lexer::LexItem::Token(t) = &self.lexer.peek().has else {
             return None;
         };
-        OPERATORS.iter().enumerate().find_map(|(level, ops)| {
-            ops.iter()
-                .find(|op| **op == t.as_str())
-                .map(|op| (level, *op))
-        })
+        OPERATORS
+            .iter()
+            .enumerate()
+            .find_map(|(level, ops)| ops.iter().find(|op| *op == t).map(|op| (level, *op)))
     }
 
     /// The binary operators of one expression (`formal/grammar.md` `(G-Prec)` / `(G-Assoc)`),
@@ -6504,23 +6504,6 @@ enum FaultKind {
     Rem,
     VectorIndex,
     TextIndex,
-}
-
-/// Identity of a "vector" a bounds guard can prove safe.  Either a bare
-/// local/parameter (`Var`) or a struct field read
-/// `OpGetField(Var(base), off, tp)`.  Skip-pattern 5 matches the guard's
-/// vec against the indexing's vec by this key, so
-/// `if i < len(self.v) { self.v[i] }` is proven exactly like the
-/// bare-local `if i < len(loc) { loc[i] }` form.  (A struct vector-field
-/// read COPIES post-@PLN85 #415, so the old `loc = self.v` alias trick is
-/// gone and value-correct code indexes the field directly.)
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum VecKey {
-    Var(u16),
-    Field(u16, i32, i32),
-    /// A field of an OPEN instance (@PLN165 D5), read through a deferred
-    /// `Parser::TV_FIELD`: `(base variable, open instance, field)`.
-    OpenField(u16, i32, i32),
 }
 
 /// `VecKey` of an expression used as a vector — the indexing's first arg

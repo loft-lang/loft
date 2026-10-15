@@ -63,7 +63,14 @@ Borrowed from Debian's `Release.gpg` / `InRelease`.
      `loft install` rejects).
    - Maintainer commits `index.json` + `index.json.sig` **together**
      (so HEAD's index always matches its signature) and pushes.
-4. Clients fetch both files.  Verify the signature over the bytes
+4. Clients fetch both files **from one commit**: the client asks the
+   registry repository which commit `main` is at (its ref advertisement,
+   which is never cached) and reads `index.json` and `index.json.sig`
+   under that commit id.  The branch address is cached per file, so two
+   reads through it can be a new index beside the previous signature
+   (`registry_index::pin_to_commit`).  A mirror, a `file://` URL, or a
+   registry whose advertisement cannot be reached is read through the
+   address as given.  Verify the signature over the bytes
    of `index.json`.  Refuse to use an unsigned/invalid-sig index
    unless `--allow-unsigned` is passed.
 

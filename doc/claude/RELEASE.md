@@ -166,9 +166,14 @@ on text while the string `"OpEqText"` appears nowhere in `src/`. Three verdicts,
 only the third is a deletion candidate:
 
 - **live** — something emits it.
-- **unexercised** — a site in `src/` emits it, no program in the tree does. A *test
-  gap*, and usually the more actionable finding: live emitter, zero coverage.
+- **unexercised** — `src/` names it, no program in the tree emits it. Either a *test
+  gap* (a live emitter with zero coverage, usually the more actionable finding) or a
+  reader left behind by an emitter that is gone: find the site that BUILDS the call
+  before believing either.
 - **orphan** — never emitted and nothing in `src/` names it.
+
+The census reads every function a file compiles outside the stdlib — its lambdas,
+methods and drop cascades too — and refuses a run that read no lambda body.
 
 An orphan is a candidate, not a verdict — confirm one before acting on it (the census
 reads this tree, not a consumer's). What it is *not* for is freeing slots: the table

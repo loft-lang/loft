@@ -27,15 +27,35 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | `loft_native_bin_<pid>`, `loft_native_<pid>.rs` | a `--native` run's compile | the run itself when it ends normally; a run killed from OUTSIDE (a `timeout` wrapper, a harness kill, Ctrl-C) cannot, so **every native compile first sweeps the artefacts of dead processes** (`platform::reclaim_dead_native_scratch`, silent) |
 | `loft_native_cache_<checkout>/loft_native_<stem>{.rs,_bin,_bin.key}` | the native test harness (`tests/native.rs`): this checkout's per-program binary cache, in a directory named for the checkout so nothing else ever writes there | **the harness itself, at the start of a run against a loft build the directory has not seen** (`platform::sweep_own_native_cache`: the rlib's path and content hash are the stamp in `.build`; a new stamp drops every entry older than two minutes — a concurrent shard's are younger — so the tmpfs never holds two builds' binaries).  Only its own directory, so never another checkout's or another process's work.  `sweep_scratch.sh` runs its dead-pid rule inside it and removes the whole directory when nothing in it moved for a day |
 | `loft_test_native_<stem>_<key>_bin` (built in `loft_test_native_<pid>/`, published by rename) | `--tests --native`, a per-PROGRAM binary cache keyed by the native cache key — never a shared path a sibling process writes (loft#1626) | the low-space reclaim (aged entries) and `sweep_scratch.sh --days` |
-| `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows | `sweep_scratch.sh` (entries older than a day, in a temp dir); `scripts/disk_janitor.sh` (under a checkout's `tests/`, older than two days) |
+| `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows | `sweep_scratch.sh` (entries older than a day, in a temp dir); `scripts/disk_janitor.sh` (under a checkout's `tests/`, older than two days; anywhere else in a checkout, the ignored-data rule below) |
 | `loft_html_*`, `loft_p*`, `loft_rebuild_*`, `loft-*` | the html, probe, rebuild and serve suites | `sweep_scratch.sh` (older than a day) |
 | `~/.cache/loft-falsify/<ref>{,-target}` (`LOFT_FALSIFY_CACHE`) | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` after a successful build; `sweep_scratch.sh` a control unused for `--falsify-days` (7), a failed build's included |
 | `~/.cache/tmp/claude-<uid>/<project>/<session>`, or `/tmp/claude-<uid>/…` where `TMPDIR` is unset | the agent harness's per-session scratch | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs); within those two days, the agent that wrote it — see below |
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (tens of GB per checkout) | `scripts/disk_janitor.sh`, beside every build (`cargo sweep --time 3`, `--time 1` under 50 GB free), on every checkout, under cargo's own build lock; `make sweep-target` by hand |
 | `target/*/incremental` | cargo: the incremental compilation cache (9 GB measured) | `scripts/disk_janitor.sh` (sessions older than a day, under the build lock); `scripts/disk_headroom.sh`, whole, when the disk is short — it costs a rebuild's time, nothing else |
-| `<package>/native-auto/libloft_auto_<pkg>_<fp>.so` | the native package loader (`native_lib::cached_or_build_shared_cdylib`): one cdylib per loft build and consumer type layout — about 110 MB each for the fixture packages under `tests/fixtures/` | `native_lib::prune_artifacts`, after a build in the same directory: the newest 8 stay (`KEEP_ARTIFACTS`).  Bounded, but at that size 8 per fixture is about 0.9 GB each and about 10 GB over the fixtures, and nothing takes the tail of a fixture no test rebuilds |
+| `<package>/native-auto/libloft_auto_<pkg>_<fp>.so` | the native package loader (`native_lib::cached_or_build_shared_cdylib`): one cdylib per loft build and consumer type layout — about 110 MB each for the fixture packages under `tests/fixtures/` | `native_lib::prune_artifacts`, after a build in the same directory: the newest 8 stay (`KEEP_ARTIFACTS`).  Bounded, but at that size 8 per fixture is about 0.9 GB each and about 10 GB over the fixtures, and the tail of a fixture no test rebuilds goes with the ignored-data rule below, whole, once nothing in the directory was written for three days |
 | `~/.cache/loft/stdlib-<key>.store` | the startup cache (`cache::stdlib_cache_path`): one image, about 7 MB, per distinct stdlib source set | `save_stdlib_cache` keeps the 16 most recently used images (`KEEP_STDLIB_IMAGES`); `cache_gc` and `sweep_scratch.sh` do not look in `~/.cache/loft` |
+| everything else git IGNORES in a checkout: `.loft/` beside a probe in a plan folder, a library or a tool, a fixture crate's `target/`, a scratch `target-*/`, the stores and traces a test leaves, an agent's worktree under `.claude/worktrees/` | probes, tests and agents — each run adds, none removes (the tracked plan documents are megabytes, the caches beside them tens of GB) | `scripts/sweep_ignored.sh`, which `scripts/disk_janitor.sh` runs per checkout with no build, test or run working in it: an ignored path nothing wrote for three days, unless `scripts/janitor_keep.txt` names it |
 | `/var/tmp/loft-test-scratch-<checkout>.<cksum>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
+
+**What the ignored-data sweep takes, and what it never does.**  git decides what is ignored
+(`git status --ignored=matching`), so the sweep reads the `.gitignore` files a person reads.
+A file goes when it is older than the threshold; a directory goes whole when nothing in it is
+newer; a `.loft/` still in use loses its old files one by one; a worktree of the checkout
+goes through `git worktree remove`, and only when it is clean, a branch, a tag or a remote
+holds its commits, and no live process has it locked.  It never touches a tracked file, an
+untracked file git does not ignore (new work looks exactly like that), a directory holding
+tracked files or another repository, or a path the keep-list names.
+
+| to | do |
+|---|---|
+| see what the next run would remove, and what it leaves and why | `scripts/sweep_ignored.sh --dry-run .` (the whole janitor: `scripts/disk_janitor.sh --dry-run`) |
+| keep an ignored artefact | a line in `scripts/janitor_keep.txt` with the reason — only for data nothing regenerates, a rebuild that needs the network, or state a tool reads later |
+| see what was removed | `~/.cache/loft-janitor/removed.log`, one dated line per path |
+| let another project of the workspace take part | a `.janitor-keep` at its root, same format; a project without one is never swept |
+
+The rules are cells of `scripts/sweep_ignored.sh --self-test`, which
+`tests/sweep_ignored.rs` runs.
 
 **A session scratch on a RAM-backed `/tmp` is memory, not disk.**  A control worktree's
 `target/` or a probe directory's `.loft/` cache left there counts against the memory a gate's
@@ -175,6 +195,18 @@ SITES only, so resolving an arbitrary allocation pc through it returns the neare
 *below* — routinely in an unrelated function.  A diagnostic that sends the reader to the wrong
 file costs more than one that stays quiet, so the report prints the pc and stops there;
 `LOFT_STORES=timeline` resolves the same pc against the denser per-run table.
+
+## Store-count ceiling (`LOFT_STORE_LIMIT`, `// @STORE_LIMIT:`)
+
+The store table holds 65535 stores at once (`store_nr` is a `u16`; 65535 is the null
+sentinel), and past that a run stops with "store table exhausted".  A guard that proves a
+store LEAK uses exactly that: a build holding one store per evaluation crosses the ceiling
+inside its loop.  At 65535 such a loop costs tens of seconds per cell, so a test may LOWER the
+ceiling — `LOFT_STORE_LIMIT=<n>` for a `loft` run (the native binary reads it too), and
+`// @STORE_LIMIT: <n>` in the first 20 lines of a corpus script for both runners — and scale
+its loops with it.  The leak guards use 1310 (65535 / 50) with every loop count / 50, which
+keeps each loop's margin over the ceiling.  It can only lower the ceiling; `Stores::store_limit`
+is checked where a store number is handed out.
 
 ## Hang guard (`LOFT_MAX_OPS`)
 

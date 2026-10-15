@@ -128,11 +128,11 @@ value-shaped decision, and value clauses would make coverage undecidable.
 | rule | site | guard |
 |---|---|---|
 | Disp-Key | `Parser` key building (`f_` / `t_…#…` keys) | `tests/scripts/a-library-exports-an-overload-set.loft` |
-| Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `converts_implicitly`, `rank_no_worse`, `select_overload`) | `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, `1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`, `1925b-two-converting-members-are-ambiguous-in-either-order.loft`, the refusals in `tests/parse_errors.rs` |
-| Disp-Hint | `Data::receiver_shared_in_set` (the method and free hints), `Parser::unhinted_set_names` (the refusal) | `tests/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`, `1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft` |
+| Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `converts_implicitly`, `rank_no_worse`, `select_overload`) | `loft-suite/attic/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, `1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`, `1925b-two-converting-members-are-ambiguous-in-either-order.loft`, the refusals in `tests/parse_errors.rs` |
+| Disp-Hint | `Data::receiver_shared_in_set` (the method and free hints), `Parser::unhinted_set_names` (the refusal) | `loft-suite/attic/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`, `1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft` |
 | Disp-Exhaustive | `Parser::refuse_uncovered_variants`, the call refusal | `tests/parse_errors.rs` |
 | Disp-Closed | selection at parse time | `tests/introspect_dispatch.rs` |
-| Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `tests/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `tests/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |
+| Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `loft-suite/attic/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `loft-suite/attic/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |
 | Disp-Match-Equiv | the oracle twin | `tests/oracle/34-dispatch-set.loft` / `34-dispatch-set-as-match.loft`, `tests/oracle/35-dispatch-self-set.loft` (`@ORACLE_TWIN`) |
 | Disp-World | `live_reload::add_fn_block` | `tests/live_world.rs` |
 

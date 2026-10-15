@@ -50,6 +50,8 @@ this is where it is written down.
 | R-ForwardWalk | `forward_walk::match_walk` (the forward walk's lowered shape, a scalar read over the element accepted), `check_body`, `rewrite_in` | the `&` clause dropped: `both(w, w)` reads 2 rounds for 5 — a silent wrong answer; the read-only clause dropped: the pin sees `handed_on` rewritten (2026-10-02) | the first matcher accepted only a bare element reference and so missed every scalar walk, the commonest kind; and it declined a walk appending to a local because the scope pass had promoted that local to a result-buffer parameter — the alias question is about `&` parameters only.  The index-assignment clause is defensive: no loft source assigns `p#index` (`#remove` names the vector, which the read-only clause declines), so no plant can fail on it alone |
 | R-SameRead | `same_read::discharge`, `same` (positions ignored), `pure` (every call a pure operator), `bind_statement` | the default ignored: `two_defaults` reads 11 for 12; any call taken as pure: `written_between` reads 198 for 103 — both silent (2026-10-02) | bound nothing at first: the two `v[i]?` of one statement carry different source positions, so exact equality failed; and it only looked at assignments, while the commonest site is a function's result expression |
 | R-InlineLeaf (tuple clause) | `leaf_inline::admit`'s result clause, `pure` and `remap` over a tuple literal | — : the plant admitting any tuple passed, because a tuple holding heap is a record type (`__tuple<…>`) the scalar-result check already declines (2026-10-02) | the cell written to falsify the all-scalars condition could not: the language never types such a tuple `Type::Tuple`; the condition stays as a defence and is recorded as one |
+| R-CtorLiteral | `ctor_literal::admit` (the literal group, scalar fields over scalar parameters), `expand` / `literal_pushes` (a vector literal's pushes retargeted at the field), `buffer_only_pooled` + `retire_buffer` (the pooled buffer's prep and frees) | the literal's first push dropped: c1 red on both backends (2026-10-08) | — |
+| R-LoopRecord (refill clause) | `hoist::loop_record_zeros` (every mint heads a complete group; every vector-field zero is a group's) and the `(R-RefillBuffer)` empty in `emit.rs` | the empties not emitted: every VALUE holds and the live-record count grows two records a pass (r6, c9) — the literal's zero strands the kept vector in its store (2026-10-08) | the value cells alone: a stranded vector answers nothing wrong, so the guard carries a live-record cell |
 | R-InRange | `in_range::match_range`, `record_discharge` (the bare element read of `v` at `i`), `forward_walk::check_body` | another vector's read accepted: `another_vector` reads null for 15; the body check dropped: the cleared vector reads null for 10 — both silent (2026-10-02); a scalar discharge accepted: passes, the shape excludes it first | priced first over scalars too (`index_read` −20 %) — not exact: a scalar `v[i]?` also discharges a null VALUE, so the rule shrank to record elements before it was built |
 | R-SingleUse (statement clause) | `single_use::rewrite_program`: a `_comp_N` temporary assigned once, read once, pure, read after pure operands only | any element taken as pure: the element with a side effect moved, the pin red (2026-10-02) | fired nowhere at first, twice over: a comprehension's statements sit in a `Loop` node, which the walk did not visit, and the element value under its block is `Span`-wrapped |
 | R-DischargeInto | `discharge_into::discharge_into` (the shape and the two target clauses), the single-use count in `rewrite_in` | the null test inverted reads `[]` for `[yy]`; the default dropped reads `[null]` — both silent (2026-10-02); the target-in-read, target-in-default and single-use clauses: planted away, all green — DEFENSIVE, the parser routes an assignment naming its target through a work buffer | `tests/text_borrow.rs` pinned the discharge TEMP as a `&str`; with the temp gone the pin asks the temps of the `LOFT_NO_DISCHARGE_INTO=1` emission and the locals of both |
@@ -486,3 +488,147 @@ check then learned.  An earlier draft pinned the text clause on `(R-RefillBuffer
 buffer; the release removed is the pool's `OpClear` (`@FR-H-ClearRelease`).  Found on the
 way: a text field reassigned on a live record leaks the text it replaces, on both backends
 (loft#1873) — the same slot invariant, at every `OpSetText` site.
+
+## 2026-10-08 — a constructor's call is its literal
+
+`(R-CtorLiteral)` and `(R-LoopRecord)`'s refill clause, from `rustc-vs-twin.md`'s first
+mechanism (a copy where Rust moves).  hex_recover `forms_upto` built each candidate's two
+vectors in pooled buffers and `form_new` copied them into its `Form`.  Priced by hand
+(`bench/portal/hand_price.sh`, cycles per op on an E-core, the n=12 minus n=2 difference):
+inlining `form_new` alone −2 %, building the vectors in the fields −31 %.  A runtime fast path
+in `Stores::vector_add` (no-heap elements, room in a distinct destination: one block copy) was
+priced first, since a runtime fix reaches every program: it bought −4 % here, so the copy
+routine was not where the prize was.  Built, the two rules give `forms_upto` −24.5 % cycles on
+`--native-release` (4.95M → 3.74M per op, hash 26284275 unchanged) and −54 % on the
+interpreter (13.0 → 5.9 ms per op).  The literal form needed the refill clause first: written
+directly in a loop, `Fm { lens: [..] }` minted a store a pass and ran 27 % SLOWER than the call,
+which reused a pooled return buffer; with the clause it runs −47 %.
+The rewrite census caught the rule's first condition set too wide: it also took scalar-only
+constructors, and hex_form's `plan_new(0, 0, 20, 16, 0, false)` — a library `pub fn` the IR
+value-record pass may not reshape, which the native `(R-ValueLocal)` then carried as a register
+tuple — became a store-minted literal (`R-ValueLocal` −1 in six libraries).  The rule now needs
+a vector-literal argument; c12 pins the scalar case on the trace.
+
+Widening the condition to "the record holds a vector" (dryopea's `undo_entry_empty()`, a
+constructor with no arguments) measured the next trap: inside a loop whose local is NOT a loop
+record, the literal mints a store every pass where the call reused a pooled one — +33 % cycles on
+a probe whose local is copied out (`last = ef`), +18 % on `truncate_to` before the refill clause
+admitted `OpNewRecord`/`OpFinishRecord` on the record's own vector fields.  The rule therefore
+reads the loop records of the rewritten body and restores the call where the local is not one
+(c13).  With the gate, `truncate_to` and `reload_and_record` move −0.6 % cycles (neutral: the
+call form already refilled a kept store), `forms_upto` keeps its gain.  `truncate_to`'s cost is
+the copy of each entry into the timeline and the store allocator's per-claim cost (claim 13 %,
+copy walk 13 %, frees 8 %), not the entry's own construction.
+
+## 2026-10-08 — `(R-Mint)`'s text clause
+
+A loop appending records with text fields while reading another vector declined its holds on
+the element's text write.  Admitted as a claim in the mint's own store: zttext `invert` −13.5 %,
+`materialise` −7.7 %, arguments `parse` −1.7 % cycles.  The first build took an element
+`(R-RefillText)` builds into a KEPT slot as fresh too: every value held and two refill guards'
+live-record counts grew (`a-buffer-of-text-records-is-refilled-where-it-is`,
+`a-kept-buffers-elements-are-refilled-in-their-slots`) — the kept slot's old text was never
+released.  Kept elements are now named to the hoist (`HoistOwned::kept_elems`) and decline.  Five
+emission pins had recorded the old decline as a prediction (`discharge_set` c3, `record_push`
+m7, `complete_write` c4, `copy_in_place` c4, `enum_record` e3); each cell answered the same with
+the clause on and off under `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1` and `LOFT_POISON_CLAIM=1`
+before its prediction moved.
+
+## 2026-10-13 — `(R-WorkBuffer)`'s result clause
+
+The unit the worklist carried as S1c, proposed here as "the pooled clause, for
+`(R-RefillText)`'s collection clause": a return buffer whose elements the callee keeps is only
+kept across calls the caller's buffer survives, and zttext's `token_width` — called per token
+— minted it per activation.  Re-priced on the emission of `40baa214d` with one static buffer in
+`token_width`: `flow_layout_full` 14.36 → 11.60 ms (−19 %; the −8 % priced before predates
+`(R-FnRefValue)`).  Built as a clause of `(R-WorkBuffer)` and not of `(R-RefillText)`: what the
+caller holds is a buffer whatever the callee does with it, and the rule's transitive clause and
+pool already carry one up the call tree.  Built: 14.35 → 11.26 ms on a performance core (−21.5 %),
+25.3 → 20.4 ms on an efficiency core, hash `eb888d85` unchanged; `place_line`'s three run buffers
+went with it.  Every other row of the lane is level and its functions are emitted byte for byte
+as before.
+
+Three things the build measured.  The null road's backing is minted from the ELEMENT type
+(`vector_db` takes it): minted from the vector type it registered a second wrapper type per
+buffer, and `(R-RefillBuffer)`'s live test then never matched.  A view bound inside the value
+that yields it (`r = runs[i]?` binds its temporary inside the block whose value it is) is found
+one round after the bind that needs it, so a round that found a view is run again whatever it
+answered.  And without the runs-again condition a reader called once from `main` parked its
+result's store there for the whole run — sound, paid for by nothing, and not where the source
+ends the value; clause (d) is that measurement.
+
+Two rules met the clause in the census (`make rewrite-census`), and both were settled where
+they stand.  `(R-RetAdopt)` read "the first local bound to a `__vdb` backing" as the result
+local's own bind; a work buffer's null road binds a PARAMETER to a backing ahead of it, so a
+function with one lost its adoption (markdown `extract_headings` under this clause — and
+12_drawing's `lock_ribbons` before it, whose four work buffers had kept it from adopting since
+the rule shipped).  The gate skips a parameter's bind (`hoist::ret_adopt`; pin
+`tests/retbuf_adopt.rs` `n_tagged`).  And a constant `split` whose vector the native build
+never makes was handed a caller's buffer nothing fills, minted once per caller where the
+function had minted none: the clause declines it (`hoist::split_call`).
+
+## 2026-10-13 — `(R-WorkBuffer)`'s function-value clause (loft#2001)
+
+Asked what could go wrong if the rule said what the code did — a function passed by name is
+promoted, although the decline list read "a function whose address is taken" — the routes were
+probed: by name, a local, a record field, a vector element; a leaf, a forwarder, a value-record
+answer, a work buffer beside a return buffer.  Three things came out.  The address test sees a
+`FnRef` node only, and a function passed by name is a bare definition number.  The backends
+differed in what the call hands: the interpreter one store per hidden parameter per call,
+`--native` the null sentinel — so a forwarder with a loop, reached by value, minted a store per
+leaf call (4 million leaf calls: 0.38 s by value against 0.11 s direct, 0.35 s with the whole
+rule off).  And where the function value's signature answers a vector, the dispatch handed
+every hidden vector parameter the return buffer's store, a work buffer included: `tagged`'s
+scratch `ids` and its result were one vector record — `3:5/1005|0/0|1010/2|` for
+`2:5/10|1005/1|` with no diagnostic, a panic on a scratch value read as a record number in a
+variant.  The first probe of that shape answered right by accident: its scratch element equalled
+the record field it overwrote.  Built: the frame lends (`FnRefWork`); the by-value forwarder runs
+0.11 s.
+
+## 2026-10-13 — `(R-Header)`'s apart clause
+
+The worklist's X2, priced first by hand on cbor `encode_map`'s emit loop (−20 %: −16 % from
+`ranks`, `koff`, `klen`, −6.5 % from `keybuf`).  The plan was a write set for a callee that
+grows its vector return buffer, taken by fixpoint over a recursion, and a store-identity test
+for `keybuf`.  Reading `(R-Header)`'s function clause — "growth of OTHER stores is no concern of
+a header" — gave the smaller statement: a store nothing in the loop is handed cannot be
+reached by what the loop calls, so no callee needs a verdict.  Built: 10.52 → 8.42 ms, the
+hand price exactly, all four vectors.
+
+The first build kept a header for a vector a CLOSURE pushed to (`c6 303` where the file says
+622; the verifier named the two lengths): the chain end of a local vector is its `__vdb`
+witness, which `StoreFacts::fresh` takes as its own before asking whether anything is
+captured, and the capture is recorded on the local.  The clause now drops a store when ANY
+name in its alias set is captured or a `&` link.  A text value read from an element is no
+handle on the store and is not counted as a mention (`size(names[i] ?? "")` binds one).
+
+Measured wrong on the way: two binaries run side by side on one core through
+`paste <(a) <(b)` read a row +15 % slower whose code was byte for byte the same; run one
+after the other the row is level.
+
+## 2026-10-14 — `(R-FileHold)` and `(R-InlineLeaf)`'s reader clause
+
+The worklist's X8, priced on the crawler lane's `read_i16_vec` (`while i < n { out +=
+[read_one_i16(bf)]; … }`, 150 000 values a load): 1.47 → 0.84 ms by hand, with bare locals
+and with a guard value whose drop writes the record — the same figure, so the guard was built
+and no exit is enumerated.  Built: 1.47 → 0.84 ms, the hand price, hash unchanged.
+
+Priced beside it and not built: the cursor kept in the HANDLE, the record's two fields left
+alone while a handle is open — 1.47 → 1.01 ms, for every scalar read on both backends and
+with no gate.  It moves where `f#next` and `f#index` are read from (two parser forms, the
+stdlib's `position` and `seek`, twenty-odd runtime sites across the two backends and the
+host bridge), which is a change of the cursor's model; the hold changes none of it.
+
+Found on the way, in a cell first written with `g = f` (loft#2005): a copy of a `File` record made
+after its first read shares the handle and keeps its own `#next`, and the two backends then
+read different bytes through the copy — the interpreter seeks to the copy's own position
+(`-47`), native reads at the handle's (`-44`) and reports the copy's.  `heap.md` states one
+handle and one position.  Independent of the hold, which declines a loop naming two `File`
+variables; the cell names one record through two parameters instead.
+
+loft#2005 closed the other way the same day, which retired the handle-cursor price: on native
+a copy made BEFORE the first read already had a cursor of its own (each record opens its own
+handle), so "one position per handle" would have made `g = f` mean two things by when it ran.
+Each record keeps its position; native's read now places the handle at `#next` first
+(`LoftFile::place`, a compare when it is there), as writes, seeks and the interpreter did.
+

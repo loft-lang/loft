@@ -243,7 +243,7 @@ the companion [formatting-history.md](formatting-history.md).
   renders `null`.
 - **Null fields (`F-Render-Fields`)** — `Point { x: 3, y: null, label: null }` renders
   `{x:3,y:null,label:null}` and, under `:j`, `{"x":3,"y":null,"label":null}` on both backends,
-  nested and inside a vector alike (`tests/scripts/a-record-renders-its-null-fields.loft`).
+  nested and inside a vector alike (`loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft`).
 - **Format spec (`F-Spec`)** — `"{1:03}"` is `001`, `"{42:#x}"` is `0x2a`, `"{334.1:.2}"` is
   `334.10`, `"{\"abc\":>7}"` is `    abc`, `"{0.5:+.3}"` is `+0.500`.  **A differential
   oracle cannot see a flag both backends drop** — `+` was honoured on an integer and
@@ -253,9 +253,9 @@ the companion [formatting-history.md](formatting-history.md).
   spells out the expected string, not the agreement of two implementations.
 - **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null` on both backends, and
   the program continues; so are `"{v[9]}"` on `v = [1, 2]` and `"{5.0 % 0.0}"` — no hole kind
-  shows a fault's cause (`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`); a
+  shows a fault's cause (`loft-suite/rules/formatting/F-FaultSafe/a-fault-inside-any-hole-renders-plain-null.loft`); a
   null `T?` whose type has an `operator to_text` renders `null` without calling it
-  (`tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`).
+  (`loft-suite/rules/formatting/F-FaultSafe/a-null-hole-never-calls-the-users-to-text.loft`).
 - **Target (`F-Target`)** — with `lit` + `hole_text` + `hole_int` on `Query`,
   `q: Query = "SELECT * FROM t WHERE name = {name} AND id = {n}"` leaves `len(q.parts) == 2` and
   `q.values == ["ada", "7"]` — identical on both backends; the same template assigned to `text`

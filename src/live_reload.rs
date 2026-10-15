@@ -62,7 +62,7 @@ pub struct ReloadHost {
     /// The shadow session: same program, same pipeline, parity-checked
     /// def space.  Its `Data` is where reload parses land; the RUNNING
     /// state's bytecode is where their code is generated.
-    session: crate::repl::ReplSession,
+    parser: crate::parser::Parser,
     files: Vec<WatchedFile>,
     last_check: Instant,
     version: u32,
@@ -82,52 +82,46 @@ pub fn active() -> bool {
 /// the ordinary program pipeline and parity-checks its def space against
 /// the running program's; on any mismatch reload is disabled with a
 /// warning — never an error (the program itself is unaffected).
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crate::data::Data) {
     let Ok(content) = crate::file_access::read_to_string(path) else {
         eprintln!("live-reload: cannot read {path}; reload disabled");
         return;
     };
-    let mut session = match crate::repl::ReplSession::new_with_libs(stdlib_dir, lib_dirs) {
-        Ok(s) => s,
+    let mut parser = match crate::parser::Parser::open_program(stdlib_dir, lib_dirs) {
+        Ok(p) => p,
         Err(e) => {
             eprintln!("live-reload: shadow session failed ({e}); reload disabled");
             return;
         }
     };
-    match session.load_program(path) {
-        Ok(Ok(())) => {}
-        Ok(Err(diags)) => {
-            // The parse gate is errors-only (warnings never disqualify —
-            // parity with the main session, #347), and the refusal must be
-            // diagnosable: a bare count hid WHICH shadow-only errors fired
-            // and sent the consumer chasing their warnings.
-            let errors: Vec<_> = diags
-                .iter()
-                .filter(|e| e.level >= crate::diagnostics::Level::Error)
-                .collect();
-            eprintln!(
-                "live-reload: shadow parse failed with {} error(s) ({} diagnostics total); reload disabled",
-                errors.len(),
-                diags.len()
-            );
-            for e in errors.iter().take(3) {
-                eprintln!("live-reload:   {}", e.to_string_compact());
-            }
-            if errors.len() > 3 {
-                eprintln!("live-reload:   … {} more", errors.len() - 3);
-            }
-            return;
+    let pre_diag = parser.diagnostics.entries().len();
+    parser.parse_str(&content, path, false);
+    let diags = parser.diagnostics.entries()[pre_diag..].to_vec();
+    // The parse gate is errors-only (warnings never disqualify — parity with the main
+    // session, #347), and the refusal must be diagnosable: a bare count hid WHICH
+    // shadow-only errors fired and sent the consumer chasing their warnings.
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|e| e.level >= crate::diagnostics::Level::Error)
+        .collect();
+    if !errors.is_empty() {
+        eprintln!(
+            "live-reload: shadow parse failed with {} error(s) ({} diagnostics total); reload disabled",
+            errors.len(),
+            diags.len()
+        );
+        for e in errors.iter().take(3) {
+            eprintln!("live-reload:   {}", e.to_string_compact());
         }
-        Err(e) => {
-            eprintln!("live-reload: shadow load failed ({e}); reload disabled");
-            return;
+        if errors.len() > 3 {
+            eprintln!("live-reload:   … {} more", errors.len() - 3);
         }
+        return;
     }
     // Parity: the patch writes MAIN-space def numbers into the running
     // state; the shadow's bytecode embeds SHADOW-space numbers.  They must
     // be the same space — same count, same names, same order.
-    let shadow = &session.parser.data;
+    let shadow = &parser.data;
     if shadow.definitions() != running.definitions() {
         eprintln!(
             "live-reload: def-space mismatch (shadow {} vs running {}); reload disabled",
@@ -187,7 +181,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     let module_count = files.len() - 1;
     HOST.with(|h| {
         *h.borrow_mut() = Some(ReloadHost {
-            session,
+            parser,
             files,
             last_check: Instant::now(),
             version: 0,
@@ -307,7 +301,7 @@ fn reload_fn(
 ) -> bool {
     host.version += 1;
     let v = host.version;
-    let data = &host.session.parser.data;
+    let data = &host.parser.data;
     // Source-aware lookup first (#351): two libraries may define the same fn
     // name; the edited FILE pins which one this is.  Entry-file fns parse
     // under source 0, where the global lookup is the same thing.
@@ -351,11 +345,11 @@ fn reload_fn(
     // A set member is found by signature only after the parse; the set's source is the
     // member's (`Disp-Key` joins within one source).
     let orig_source = if orig == u32::MAX {
-        host.session.parser.data.def(set).source
+        host.parser.data.def(set).source
     } else {
-        host.session.parser.data.def(orig).source
+        host.parser.data.def(orig).source
     };
-    let parser = &mut host.session.parser;
+    let parser = &mut host.parser;
     let pre_defs = parser.data.definitions();
     let pre_diag = parser.diagnostics.entries().len();
     parser.parse_snippet(&rewritten, "<live-reload>", orig_source);
@@ -475,7 +469,7 @@ fn add_fn_block(
     src: &str,
     source: u16,
 ) -> bool {
-    let data = &host.session.parser.data;
+    let data = &host.parser.data;
     let set = overload_set(data, source, name);
     if set == u32::MAX {
         if data.source_nr(source, &format!("n_{name}")) != u32::MAX {
@@ -491,7 +485,7 @@ fn add_fn_block(
     let set_source = data.def(set).source;
     host.version += 1;
     let world = host.version;
-    let parser = &mut host.session.parser;
+    let parser = &mut host.parser;
     let pre_defs = parser.data.definitions();
     let pre_diag = parser.diagnostics.entries().len();
     parser.parse_snippet(src, "<live-reload>", set_source);

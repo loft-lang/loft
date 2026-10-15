@@ -771,3 +771,62 @@ plant were owed: a wrong operand position breaks nearly every loop, which the gu
 its first run.  The fast stack path the same day did reach every interpreted run and every
 instrument's checked path, so its one full suite was owed.  CI_BUDGET.md § Sizing the checks
 for a performance change is the rule that came out of it.
+
+## The build-cost ladder, measured (2026-10-14)
+
+The numbers behind CI_BUDGET.md § What a build and each check costs here.  `src/` was
+486 185 lines in one crate; the box has 24 cores and 60 GB.
+
+| build | measured | condition |
+|---|---|---|
+| `cargo build --release --bin loft`, one-file edit | 20m16s, 20m58s, 20m42s, 27m28s, 35m05s, 35m16s, 39m36s (../loft2, 2026-10-13/14); 29m32s, 26m02s, 27m18s (this checkout, 2026-10-12/14) | load 4–7 during the 20-min runs (the serial front end), 30–75 during the 35-min ones |
+| `cargo build --bin loft` (dev), one-file touch | 24m24s real, 125m user (2026-10-14 08:05) | a sibling checkout compiling its dependency tree from scratch beside it, load 18–30 |
+| `cargo build --bin loft` (dev), earlier sessions | 3m23s, 3m38s, 4m56s, 6m08s; 15m27s once | this checkout, 2026-10-13, load not recorded |
+| `cargo check --bin loft`, one-file touch | 58.9 s real (2026-10-14 08:44); the warming check before it 1m05s | load 2–4, nothing else running |
+| DEBUG.md's previous table | 2.4 s dev / 26.8 s release / 60 s cold | written 2026-05-02, before the crate grew; about 100× off by 2026-10 |
+
+**The day that measured it.**  One ../loft2 session (2026-10-13 11:33 to 2026-10-14 07:55,
+Opus 5.5) was asked to fix two issues and spent twenty hours on them and three follow-ups:
+14 release builds of 20–40 min each, seven hand-written whole-corpus comparisons (an
+interpreter diff plus a native emission census plus a native run of every moved file — up to
+three hours each), `make falsify` and `make rewrite-census` beside the builds, 174 sleep
+loops, and never once `find_problems.sh --changed` or `ci-run.sh start`.  Two pushes, one
+red: the `ownership_drop_gate` regression a local run would have caught.  The session's own
+diagnosis, after first blaming sibling load: the load of 75 it quoted was its own drop gate;
+three of the builds followed hypotheses the emitted Rust would have refuted in minutes; the
+receipts and the census were run while edits were pending, so each build also waited for
+them.  The ladder and its rules are what that day taught; the session's own write-up is
+CODEGEN_METHOD.md § The order of a lowering change.
+
+## @PLN191 P0 — where a release rebuild's time goes, and what incremental buys (2026-10-14)
+
+One-file rebuilds of the `loft` library crate on the 24-core box, sampled every 5 s by the
+loft rustc's CPU (cores in use) — the measurement @PLN191's phase 0 asks for.
+
+| build | wall | phases (cores in use) | load beside it |
+|---|---|---|---|
+| release, `touch` of one file, no incremental | 26m04s (lib 23m34s + bin 2m26s) | front end 0–8.5 min at 1; codegen 9–19 min at 9–15 (two bursts); tail 19–23.6 min at 1 | 4–14 |
+| release, incremental, cold | 40m24s | — | 77 (a sibling's drop gate) |
+| release, incremental, sync after a 14-file commit | 18m15s | — | 3–20 |
+| release, incremental, sync after a 21-file commit | 20m52s | — | 4–25 |
+| release, incremental, `touch` (content unchanged) | 1m36s | everything reused | 3–5 |
+| **release, incremental, a real one-line body edit** | **10m00s** | front end ~1.5 min at 1; codegen ~3 min at 22; tail ~5 min at 1 | 2–23 |
+
+What it says:
+
+- The front end is the part incremental removes (8.5 → ~1.5 min); codegen shrinks too
+  (~10 → ~3 min).  A `touch` alone measures nothing: rustc hashes contents, so an unchanged
+  file reuses everything.
+- The single-core TAIL (~4.5–5 min) is in every build, incremental or not, and is now the
+  largest part of an incremental rebuild.
+- The crate is built as `cdylib` + `rlib`, so cargo cannot pipeline it: the `loft` binary
+  starts only after the whole library finishes.
+- Incremental release does not reach the plan's 5-minute bar (10 min), so the split goes on;
+  it does halve the loop.
+- The tail is NAMED by sampling rustc's threads by name on the next release build (26m40s, a
+  14-file edit): minutes 15–18 run sixteen `lto cgu.NN` threads in parallel, then
+  `lto cgu.00` runs ALONE from minute 19 to 23 — the ThinLTO optimisation of one codegen unit
+  that is several times the size of the others.  The binary repeats the shape for ~1.5 min.
+  A crate split leaves that unit where it is; shortening it is a change of its own, measured
+  against the interpreter's speed (the likely content is the dispatch loop with its inlined
+  operators).

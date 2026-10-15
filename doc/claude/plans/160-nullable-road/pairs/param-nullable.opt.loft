@@ -1,0 +1,4 @@
+// A record PARAMETER read by the callee.  Nullable half: the parameter is `S?`.
+struct S { a: integer, b: text }
+fn f(s: S?) -> integer { (s.a ?? 40) + 1 }
+fn main() { s: S? = S { a: 7, b: "x" }; println("{f(s)}"); }

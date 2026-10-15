@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The fixture behind tests/builder_trigger.rs: one declared builder (`bag`), one free
+// function that is NOT declared (`tally`), and two methods on the built value.
+
+pub struct Bag {
+  pub key: text
+}
+
+pub fn bag(words: vector<text>) -> sorted<Bag[key]> {
+  out: sorted<Bag[key]> = [];
+  for w in words {
+    out += [Bag { key: w }];
+  }
+  out
+}
+
+pub fn tally(words: vector<text>) -> integer {
+  words.len()
+}
+
+pub fn has(self: sorted<Bag[key]>, w: text) -> boolean {
+  self[w] != null
+}
+
+pub fn size(self: sorted<Bag[key]>) -> integer {
+  self.len()
+}

@@ -6,7 +6,6 @@ use super::State;
 use super::size_ptr;
 use crate::keys::{DbRef, Str};
 use crate::ops;
-use std::cmp::Ordering;
 
 // @PLN104 — `LOFT_TEXT_TIMELINE`: the stack-frame-`String` analogue of `LOFT_STORES=timeline`.
 // A loft text value is a Rust `String` living in the stack-frame store as raw bytes, so its
@@ -467,25 +466,6 @@ impl State {
             return;
         }
         self.string_mut(pos - n).push(c);
-    }
-
-    #[inline]
-    pub fn text_compare(&mut self) {
-        let v2 = self.get_stack::<char>();
-        let v1 = self.get_stack::<Str>();
-        let mut ch = v1.str().chars();
-        self.put_stack(if let Some(f_ch) = ch.next() {
-            let res = f_ch.cmp(&v2);
-            if res == Ordering::Less {
-                -1
-            } else {
-                i32::from(
-                    res == Ordering::Greater || (res == Ordering::Equal && ch.next().is_some()),
-                )
-            }
-        } else {
-            -1
-        });
     }
 
     #[must_use]

@@ -296,7 +296,7 @@ no-ops.  Copy a parameter into a local first if an arm needs its value.
 An arm's result is discarded.  When you need the answers back, use `for x in xs par(y =
 f(x), n) { … }`, which delivers each worker's value to the loop body.
 
-Both backends run the arms concurrently (guard `tests/scripts/1054-parallel-block-arms-run.loft`).
+Both backends run the arms concurrently (guard `loft-suite/attic/scripts/1054-parallel-block-arms-run.loft`).
 
 ### Match expressions
 
@@ -561,7 +561,7 @@ A slice arm takes an `if` guard like any other arm.
 
 An element written **after** a `..` takes the same forms as one before it — a name, `_`, a
 literal or a variant pattern (`[Kw { word }, .., End { e }]` binds `e` from the last element;
-guard `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
+guard `loft-suite/rules/matching/P-Rest/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
 **One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`, § Match
 expressions) does not accept slice patterns (guard for its nullable partial names:
 `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).

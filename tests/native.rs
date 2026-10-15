@@ -284,6 +284,8 @@ struct NativeJob {
     /// Path: `{binary}.key`.  Content: hex-encoded 64-bit FNV-1a hash of the
     /// `.rs` source bytes concatenated with the rlib identity bytes.
     key_file: PathBuf,
+    /// The program's `// @STORE_LIMIT:` — handed to the binary as `LOFT_STORE_LIMIT`.
+    store_limit: Option<u16>,
 }
 
 /// FNV-1a 64-bit hash — deterministic, no external deps.
@@ -354,7 +356,10 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // wrap.rs's loft_suite (e.g. tests/lib/importlib.loft for
     // 88-imports.loft).  Only `--lib <dir>` is recognised; other
     // CLI-side flags are ignored at this layer.
+    let mut store_limit = None;
     if let Ok(src) = fa::read_to_string(entry) {
+        p.data.limits = loft::limits::Limits::from_annotations(&src);
+        store_limit = loft::limits::Limits::store_limit_annotation(&src);
         for line in src.lines().take(20) {
             if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
                 let mut tokens = args.split_whitespace();
@@ -554,6 +559,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
         tmp_rs,
         binary,
         key_file,
+        store_limit,
     })
 }
 
@@ -760,6 +766,9 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     let leak_check = std::env::var_os("LOFT_NATIVE_LEAK_CHECK").is_some();
     let mut cmd = loft::platform::process::harness_command(&job.binary);
     cmd.current_dir(&cwd);
+    if let Some(n) = job.store_limit {
+        cmd.env("LOFT_STORE_LIMIT", n.to_string());
+    }
     let (run_status, leaked) = if leak_check {
         let out = cmd.output()?;
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -793,19 +802,23 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
 /// the cache has room for.  Compiling EVERY program first put the whole corpus (~1 800
 /// binaries, ~22 GB) on the temp filesystem at once; a 16 GB tmpfs filled about 1 100 in and
 /// the rest were skipped as `compile failed` (loft#1859).
+/// How many of `jobs` native compiles [`run_native_jobs`] runs at once.
+fn native_lanes(jobs: usize) -> usize {
+    // Layer 3: scale worker count to temp-fs headroom.  On a roomy disk this is
+    // just min(share, jobs); on a tight RAM-backed tmpfs it clamps down so N
+    // concurrent compiles can't exhaust memory and hang the machine.  The share is
+    // what nextest was told (`common::lanes`), never the bare core count: 24 lanes
+    // per chunk beside a 24-slot pool was the storm that hung the box (@PLN193 P0).
+    let cpu_max = common::lanes::lanes(usize::MAX);
+    loft::platform::native_worker_count(cpu_max, jobs, &native_scratch(), PER_WORKER_TMP)
+}
+
 fn run_native_jobs(
     jobs: Vec<NativeJob>,
     rlib_info: Option<(PathBuf, PathBuf)>,
 ) -> std::io::Result<()> {
-    // Layer 3: scale worker count to temp-fs headroom.  On a roomy disk this is
-    // just min(cpus, jobs); on a tight RAM-backed tmpfs it clamps down so N
-    // concurrent compiles can't exhaust memory and hang the machine.
-    let cpu_max = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
     let scratch = native_scratch();
-    let concurrency =
-        loft::platform::native_worker_count(cpu_max, jobs.len(), &scratch, PER_WORKER_TMP);
+    let concurrency = native_lanes(jobs.len());
     let rlib_ref = &rlib_info;
     sweep_older_build(rlib_ref);
     let skips_before = LOW_SPACE_SKIPS.load(std::sync::atomic::Ordering::Relaxed);
@@ -1178,6 +1191,40 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         .filter(|(i, _)| i % NATIVE_SCRIPT_CHUNKS == chunk)
         .map(|(_, p)| p)
         .collect();
+    native_scripts_run(
+        files,
+        common::timing::Suite::start(
+            &format!("native_scripts_{chunk:02}"),
+            common::timing::CHUNK_BUDGET,
+        ),
+    )
+}
+
+/// The limit guards at the real limits (`tests/limits_full/`) on `--native`.  The per-commit
+/// corpus proves the same relations under LOWERED limits (`// @LIMIT:`, `// @FRAME_LIMIT:`),
+/// in milliseconds; compiling a program 300 levels deep costs time that grows with the square
+/// of the depth.  Nightly, beside `wrap::limits_at_full_size`.
+#[test]
+#[ignore = "the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored"]
+fn native_limits_at_full_size() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/limits_full")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
+        .collect();
+    files.sort();
+    native_scripts_run(
+        files,
+        common::timing::Suite::unbounded("native_limits_at_full_size"),
+    )
+}
+
+/// Compile and run `files` on `--native`, with the corpus's skip rules, reported through
+/// `suite`: one line per program generated, one for the batch that compiles and runs them.
+fn native_scripts_run(files: Vec<PathBuf>, suite: common::timing::Suite) -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     let mut not_generated: Vec<String> = Vec::new();
@@ -1221,6 +1268,8 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         // Linux, where a test thread has 2 MiB — so a program the CLI compiles is not refused
         // here for the depth of its expressions (a 100-term nested sum needs more than 2 MiB
         // on aarch64).  A panic joins as `Err`, the same verdict `catch_unwind` gave.
+        let name = fa::file_name(&entry).unwrap_or_default();
+        let unit = suite.begin(&format!("{name} (generate)"));
         let prepared = std::thread::scope(|sc| {
             std::thread::Builder::new()
                 .stack_size(8 << 20)
@@ -1228,13 +1277,18 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
                 .expect("spawn the compile thread")
                 .join()
         });
+        suite.end(&format!("{name} (generate)"), unit);
         match prepared {
             Ok(Ok(job)) => jobs.push(job),
             Ok(Err(e)) => not_generated.push(format!("{entry:?} (prepare error: {e})")),
             Err(_) => not_generated.push(format!("{entry:?} (codegen panic)")),
         }
     }
+    let batch = format!("rustc + run, {} programs", jobs.len());
+    let unit = suite.begin(&batch);
+    let lanes = native_lanes(jobs.len());
     let ran = run_native_jobs(jobs, rlib_info);
+    suite.end_parallel(&batch, unit, lanes);
     if !not_generated.is_empty() {
         println!("  not generated: {}", not_generated.join(", "));
         return Err(std::io::Error::other(format!(
@@ -1243,11 +1297,12 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
             not_generated.join(", ")
         )));
     }
-    ran
+    ran?;
+    suite.finish()
 }
 
 /// How many tests the native script corpus is split across — see [`native_scripts_chunk`].
-const NATIVE_SCRIPT_CHUNKS: usize = 32;
+const NATIVE_SCRIPT_CHUNKS: usize = 64;
 
 macro_rules! native_script_chunks {
     ($($name:ident = $k:expr),* $(,)?) => {
@@ -1293,6 +1348,38 @@ native_script_chunks!(
     native_scripts_29 = 29,
     native_scripts_30 = 30,
     native_scripts_31 = 31,
+    native_scripts_32 = 32,
+    native_scripts_33 = 33,
+    native_scripts_34 = 34,
+    native_scripts_35 = 35,
+    native_scripts_36 = 36,
+    native_scripts_37 = 37,
+    native_scripts_38 = 38,
+    native_scripts_39 = 39,
+    native_scripts_40 = 40,
+    native_scripts_41 = 41,
+    native_scripts_42 = 42,
+    native_scripts_43 = 43,
+    native_scripts_44 = 44,
+    native_scripts_45 = 45,
+    native_scripts_46 = 46,
+    native_scripts_47 = 47,
+    native_scripts_48 = 48,
+    native_scripts_49 = 49,
+    native_scripts_50 = 50,
+    native_scripts_51 = 51,
+    native_scripts_52 = 52,
+    native_scripts_53 = 53,
+    native_scripts_54 = 54,
+    native_scripts_55 = 55,
+    native_scripts_56 = 56,
+    native_scripts_57 = 57,
+    native_scripts_58 = 58,
+    native_scripts_59 = 59,
+    native_scripts_60 = 60,
+    native_scripts_61 = 61,
+    native_scripts_62 = 62,
+    native_scripts_63 = 63,
 );
 
 /// Every chunk index has its test: a chunk count raised without a matching test would drop that
@@ -1332,6 +1419,38 @@ fn native_script_chunks_cover_the_corpus() {
         "native_scripts_29",
         "native_scripts_30",
         "native_scripts_31",
+        "native_scripts_32",
+        "native_scripts_33",
+        "native_scripts_34",
+        "native_scripts_35",
+        "native_scripts_36",
+        "native_scripts_37",
+        "native_scripts_38",
+        "native_scripts_39",
+        "native_scripts_40",
+        "native_scripts_41",
+        "native_scripts_42",
+        "native_scripts_43",
+        "native_scripts_44",
+        "native_scripts_45",
+        "native_scripts_46",
+        "native_scripts_47",
+        "native_scripts_48",
+        "native_scripts_49",
+        "native_scripts_50",
+        "native_scripts_51",
+        "native_scripts_52",
+        "native_scripts_53",
+        "native_scripts_54",
+        "native_scripts_55",
+        "native_scripts_56",
+        "native_scripts_57",
+        "native_scripts_58",
+        "native_scripts_59",
+        "native_scripts_60",
+        "native_scripts_61",
+        "native_scripts_62",
+        "native_scripts_63",
     ];
     assert_eq!(
         names.len(),
@@ -1341,6 +1460,54 @@ fn native_script_chunks_cover_the_corpus() {
     let src = fa::read_to_string(file!()).expect("read tests/native.rs");
     for n in names {
         assert!(src.contains(&format!("{n} = ")), "{n} is generated");
+    }
+}
+
+/// Every test that spawns a worker pool declares its lanes to nextest, and the two numbers
+/// are ONE number (@PLN193 P0).  `common::lanes::UNDER_NEXTEST` sizes the pool; the
+/// `threads-required` override in `.config/nextest.toml` is what nextest counts against the
+/// run's thread budget — a pool-spawning test missing from that override runs its workers
+/// beside a full pool again, which is the multiplication that hung the box at 184 threads.
+#[test]
+fn pool_tests_declare_their_lanes_to_nextest() {
+    let toml = fa::read_to_string(".config/nextest.toml").expect("read .config/nextest.toml");
+    let want = format!("threads-required = {}", common::lanes::UNDER_NEXTEST);
+    // The override block that carries `threads-required`: from its `[[profile.…` header to
+    // the next header.
+    let blocks: Vec<&str> = toml.split("[[profile.").collect();
+    let block = blocks
+        .iter()
+        .find(|b| b.lines().any(|l| l.trim() == want))
+        .unwrap_or_else(|| panic!("no override in .config/nextest.toml carries `{want}`"));
+    assert!(
+        block.starts_with("default.overrides]]"),
+        "the `{want}` override must be a profile.default override, so every profile inherits it"
+    );
+    let filter = block
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("filter = "))
+        .expect("the threads-required override has a filter");
+    // Every pool-spawning test, by the pattern its filter must contain.
+    for needle in [
+        "native_scripts_[0-9]+",
+        "native_dir",
+        "native_reference",
+        "native_learn_loft_samples",
+        "native_comparisons",
+        "native_features",
+        "native_limits_at_full_size",
+        "every_cell_releases_each_resource_once_on_native_[0-9]+",
+        "every_cell_releases_each_resource_once_on_the_interpreter",
+        "the_census_names_the_copy_each_cell_makes",
+        "a_refused_cell_is_a_compile_error_and_a_once_cell_is_not",
+        "every_emitted_copy_of_a_droppable_has_a_lease_verdict",
+        "the_zero_on_claim_census_only_shrinks",
+        "features_examples_interpret",
+    ] {
+        assert!(
+            filter.contains(needle),
+            "`{needle}` spawns a worker pool but is not in the threads-required filter:\n{filter}"
+        );
     }
 }
 

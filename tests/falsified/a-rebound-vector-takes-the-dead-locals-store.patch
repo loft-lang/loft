@@ -1,0 +1,13 @@
+diff --git a/src/take_local.rs b/src/take_local.rs
+index 926bdc4ab..c13ac0106 100644
+--- a/src/take_local.rs
++++ b/src/take_local.rs
+@@ -297,7 +297,7 @@ fn admit(s: &[Value], i: usize, whole: &Value, data: &Data, d_nr: u32, ops: &Ops
+             nulls += 1;
+         }
+     });
+-    if names(whole, y) != inside + nulls {
++    if false && names(whole, y) != inside + nulls {
+         trace("declined — the source is named outside its block run");
+         return None;
+     }

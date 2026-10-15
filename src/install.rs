@@ -479,7 +479,8 @@ fn load_index_inner(
                 } else {
                     fetched.signature.clone()
                 };
-                verify_or_explain(&fetched.content, &sig_bytes, opts)?;
+                verify_or_explain(&fetched.content, &sig_bytes, opts)
+                    .map_err(|verdict| fetched_pair_verdict(verdict, &fetched, &sig_bytes, &url))?;
                 // Verified: now it is safe to keep.  Both files land atomically,
                 // because a plain write truncates first and another process
                 // reading this cache mid-refresh would get a half index or the
@@ -529,6 +530,44 @@ fn load_index_inner(
         index,
         stale_fallback,
     })
+}
+
+/// The verdict on a pair that was just FETCHED, said with what is known about where the
+/// two files came from — which decides what the reader should do next.
+///
+/// Read from one commit, a pair that does not verify is wrongly signed at that commit,
+/// and the commit is the thing to report.  Read as two downloads through a branch
+/// address, it may only be a new index beside the previous signature: the host caches
+/// each file apart, so for a few minutes after a registry update the two can be from
+/// different moments (loft#1991), and the cure is to run the command again.  Every other
+/// verdict, and a signature that came from the cache, keeps its own words.
+fn fetched_pair_verdict(
+    verdict: String,
+    fetched: &registry_index::FetchedIndex,
+    sig: &[u8],
+    url: &str,
+) -> String {
+    if !matches!(
+        registry_signing::verify_index(&fetched.content, sig),
+        VerifyResult::Invalid
+    ) {
+        return verdict;
+    }
+    if fetched.signature.is_empty() {
+        return verdict;
+    }
+    match &fetched.commit {
+        Some(commit) => format!(
+            "{verdict}; the index and its signature were both read from registry commit {commit}"
+        ),
+        None => format!(
+            "registry index signature INVALID — the index and the signature read from {url} \
+             do not belong together.  They are two separate downloads, and for a few minutes \
+             after the registry is updated one can be newer than the other: run the command \
+             again shortly.  If it keeps failing, the registry is wrongly signed; this is a \
+             hard failure even with --allow-unsigned"
+        ),
+    }
 }
 
 fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Result<(), String> {
@@ -1361,6 +1400,92 @@ mod tests {
         // Negative control for the yank clause below: nothing here is yanked, so the
         // message must NOT claim a yank is why resolution failed.
         assert!(!err.contains("yanked"), "msg: {err}");
+    }
+
+    // ── A fetched pair that does not verify says where it came from (loft#1991) ──
+
+    const PLAIN_VERDICT: &str = "registry index signature INVALID — refusing to install";
+
+    fn fetched(signature: &[u8], commit: Option<&str>) -> registry_index::FetchedIndex {
+        registry_index::FetchedIndex {
+            content: b"{\"packages\":{}}".to_vec(),
+            signature: signature.to_vec(),
+            commit: commit.map(str::to_string),
+        }
+    }
+
+    /// 64 bytes no trusted key signed: well-formed, and wrong.
+    const WRONG_SIGNATURE: [u8; 64] = [7; 64];
+
+    #[test]
+    fn two_reads_through_a_branch_address_are_told_to_try_again() {
+        let pair = fetched(&WRONG_SIGNATURE, None);
+        assert_eq!(
+            registry_signing::verify_index(&pair.content, &pair.signature),
+            VerifyResult::Invalid,
+            "the fixture must be a pair that does not verify"
+        );
+        let msg = fetched_pair_verdict(
+            PLAIN_VERDICT.to_string(),
+            &pair,
+            &pair.signature,
+            "https://host/main/index.json",
+        );
+        assert!(msg.starts_with("registry index signature INVALID"), "{msg}");
+        assert!(msg.contains("https://host/main/index.json"), "{msg}");
+        assert!(msg.contains("run the command again shortly"), "{msg}");
+        assert!(
+            msg.contains("hard failure even with --allow-unsigned"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_pair_read_from_one_commit_names_the_commit_and_offers_no_retry() {
+        let pair = fetched(
+            &WRONG_SIGNATURE,
+            Some("244a89024ed9dc929c7905aa0d422d5bfb0d29b6"),
+        );
+        let msg = fetched_pair_verdict(PLAIN_VERDICT.to_string(), &pair, &pair.signature, "u");
+        assert!(msg.starts_with(PLAIN_VERDICT), "{msg}");
+        assert!(
+            msg.contains("registry commit 244a89024ed9dc929c7905aa0d422d5bfb0d29b6"),
+            "{msg}"
+        );
+        assert!(!msg.contains("again"), "{msg}");
+    }
+
+    #[test]
+    fn a_verdict_the_split_read_cannot_explain_keeps_its_own_words() {
+        // The signature came from the cache, not from this fetch: nothing was read twice,
+        // and nothing but the index was read from the commit.
+        for commit in [None, Some("244a89024ed9dc929c7905aa0d422d5bfb0d29b6")] {
+            let from_cache = fetched(&[], commit);
+            assert_eq!(
+                fetched_pair_verdict(
+                    PLAIN_VERDICT.to_string(),
+                    &from_cache,
+                    &WRONG_SIGNATURE,
+                    "u"
+                ),
+                PLAIN_VERDICT
+            );
+        }
+        // Not an INVALID verdict at all: a signature of the wrong length is malformed.
+        let malformed = fetched(&[1, 2, 3], None);
+        assert_eq!(
+            registry_signing::verify_index(&malformed.content, &malformed.signature),
+            VerifyResult::MalformedSignature
+        );
+        assert_eq!(
+            fetched_pair_verdict(
+                "its own words".to_string(),
+                &malformed,
+                &malformed.signature,
+                "u"
+            ),
+            "its own words"
+        );
     }
 
     /// A yanked version stays LISTED, so the failure message has to say which entries

@@ -188,7 +188,7 @@ oracle — which is the argument for this section existing.
   The stackful frame's realised surface is `yield from`, which shipped.
 - ✓ **G-Delegate** — the sub-generator is built once, its values pass through,
   and the statements before the `yield from` run once per ACTIVATION.  *Guard:
-  `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`; arguments and exhaustion
+  `loft-suite/rules/coroutines/G-Next/a-delegations-prefix-runs-once-per-activation.loft`; arguments and exhaustion
   in `tests/scripts/1277-…`.*
 - ✓ **G-For** — `for x in gen()` visits the produced sequence (both backends). *Guard: oracle `12`.*
 
@@ -235,7 +235,7 @@ not yet graduated to that oracle. Design + phase↔rule map:
   slice (D-F1 whole-consume); `..rest` binds the sub-slice by value AND length, leak-clean, and
   fixed elements MAY follow it (`t`), so `[a, ..mid, z]` leaves `mid` empty on a 2-element subject
   and does not match a 1-element one. *Pin: P2, plus
-  `tests/scripts/a-named-rest-leaves-room-for-the-elements-after-it.loft` (D-match-3).*
+  `loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft` (D-match-3).*
 - ☐ **P-Multi** — a multi-pattern arm binds from the first matching shape; both backends. *Pin: P3.*
 - ☐ **P-Alt / P-Atomic** — ordered choice takes the first match; a partial-then-failed alternative
   leaves the cursor reset (the next element still matches); different-name captures ⟹ `τ?`. *Pin: P4.*
@@ -325,7 +325,7 @@ the claim to pin is that this optimization is observation-preserving.
   `for p in b.items { b.items[0].x = 99; s += p.x } ⇒ 6` (snapshot), NOT `104` (alias): if the
   elision wrongly kept the alias it would read `104` (H-View's reference-struct behaviour). Also
   pinned: straight-line snapshot, co-alias `w = b; w.f.x = …`, and escape-returns-a-copy. Both
-  backends. *Guard: `tests/scripts/519-value-struct-zero-cost.loft`.*
+  backends. *Guard: `loft-suite/attic/scripts/519-value-struct-zero-cost.loft`.*
 - ✓ **VS-Zero (the cost side of VS-Elide)** — eliding a read-only view-bind allocates NO
   per-element / per-field store: a `vector<value struct>` and a value-struct record field are O(1)
   `stores_allocated`, FLAT in N, at parity with a reference struct (a per-element copy would be

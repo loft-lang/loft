@@ -2488,6 +2488,22 @@ fn fill_rs_up_to_date() {
     );
 }
 
+// Assert that src/op_layout.rs — the slot names and class sizes fill.rs re-exports — matches
+// what generate_layout_to would produce.  If this fails, run the same regen_fill_rs.
+#[test]
+fn op_layout_rs_up_to_date() {
+    let mut p = Parser::new();
+    p.parse_dir("default", true, false).unwrap();
+    scopes::check(&mut p.data, &mut p.database);
+    let generated = loft::create::generate_layout_to(&p.data, "tests/generated/op_layout_check.rs")
+        .expect("generate_layout_to failed");
+    let current = fa::read_to_string("src/op_layout.rs").expect("cannot read src/op_layout.rs");
+    assert_eq!(
+        current, generated,
+        "src/op_layout.rs is out of date — run: cargo test regen_fill_rs -- --ignored --nocapture"
+    );
+}
+
 // @I67 — opcode implementations (this generates the @generated src/fill.rs from the default `#rust` bodies)
 // Regenerate src/fill.rs from the default library definitions.
 // Run with: cargo test regen_fill_rs -- --ignored --nocapture
@@ -2500,7 +2516,9 @@ fn regen_fill_rs() {
     p.parse_dir_unchecked("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
     loft::create::generate_code_to(&p.data, "src/fill.rs").expect("generate_code_to failed");
-    println!("src/fill.rs regenerated");
+    loft::create::generate_layout_to(&p.data, "src/op_layout.rs")
+        .expect("generate_layout_to failed");
+    println!("src/fill.rs and src/op_layout.rs regenerated");
 }
 
 // Assert that every #rust-annotated function from default/*.loft is registered
@@ -2872,7 +2890,7 @@ fn test() {
 // The capturing-closure-in-struct-field surface that was previously
 // rejected at parse time is now backed by `Parts::ChildRec(closure_kt)`
 // — a 4B u32 rec-id that points at a closure record co-located in
-// host's Store.  `OpClaimChildRec` writes; `OpRefFromChildRec` reads;
+// host's Store.  `OpChildRec` builds it in place; `OpRefFromChildRec` reads;
 // the cascade in `copy_claims` / `remove_claims` handles deep-copy and
 // free automatically when the host moves cross-store or is freed.
 

@@ -6,7 +6,7 @@
 // @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::btree;
-use crate::database::types::HeapSlot;
+use crate::database::types::{HeapSlot, RelSlot};
 use crate::database::{Parts, Stores, WorkerStores};
 use crate::hash;
 use crate::keys::DbRef;
@@ -191,6 +191,31 @@ pub(super) struct OwnedWalk {
 struct FieldAt {
     position: u16,
     content: u16,
+}
+
+/// How many plain vectors a record's plan holds ([`Stores::plain_vectors_of`]); a record
+/// with more takes the walk.
+const PLAIN_MAX: usize = 8;
+
+/// `LOFT_NO_PLAIN_VECTOR_RECORDS=1` — a record that owns plain vectors and nothing else is
+/// copied and released through the walk of its type again, as every other record is.
+fn plain_vector_records_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_PLAIN_VECTOR_RECORDS").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_NO_RELEASE_PLAN=1` — a record whose heap is texts and vectors of text-owning
+/// elements is released by the type walk instead of its plan (`Stores::release_by_plan`).
+fn release_plan_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_RELEASE_PLAN").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_NO_HEAP_FREE_VECTOR_COPY=1` — a deep copy of a vector whose elements own no heap
+/// walks its elements again after the bulk copy (`copy_claims_seq_vector`).
+fn heap_free_vector_copy_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_HEAP_FREE_VECTOR_COPY").is_ok_and(|v| v != "0"))
 }
 
 impl Stores {
@@ -831,21 +856,23 @@ impl Stores {
         // every store ever made, freed or not — the mode retires each freed
         // number so a stale reference can never reach a new store, and a run
         // that frees and re-mints more than 65535 cannot be checked that way.
-        if slot == u16::MAX {
+        if slot >= self.store_limit {
             let live = self.allocations.iter().filter(|s| !s.free).count();
             let reuse_off = self.disable_slot_reuse || crate::keys::no_slot_reuse();
+            let limit = self.store_limit;
             assert!(
                 !reuse_off,
                 "store table exhausted by the checking mode, not by a leak: this run made \
-                     65535 stores and {live} are live.  LOFT_STRICT_STORES (and \
+                     {limit} stores and {live} are live.  LOFT_STRICT_STORES (and \
                      LOFT_NO_SLOT_REUSE) never reuse a freed store number, so that a stale \
                      reference cannot reach a newer store, and store_nr is u16.  This program \
                      frees and re-mints more stores than the mode can track: check it with a \
                  smaller loop count, or run it without the switch."
             );
             panic!(
-                "store table exhausted: 65535 stores live at once (store_nr is u16; 65535 \
-                 is the null sentinel).  This usually indicates a store leak — run with \
+                "store table exhausted: {limit} stores live at once (store_nr is u16; 65535 \
+                 is the null sentinel, and a test may lower the ceiling).  This usually \
+                 indicates a store leak — run with \
                  LOFT_STORES=timeline, which lists the live stores by type and says whether \
                  they are a LEAK or a large but clean working set."
             );
@@ -3045,12 +3072,14 @@ impl Stores {
             frame_yield: false,
             poison_free: self.poison_free,
             disable_slot_reuse: self.disable_slot_reuse,
+            store_limit: self.store_limit,
             uaf_freed_this_op: Vec::new(),
             worker_slot_dispenser: None,
             worker_allocated_indices: Vec::new(),
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: Vec::new(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: self.start_time,
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -3405,6 +3434,47 @@ impl Stores {
     /// `tp` is the CONTAINER type (`Vector` / `Sorted`), not the content type — the
     /// same convention as `array_body` / `hash_body` / `index_body`, so the keystone
     /// walk keys on the container's `Parts` and the content type is read back out.
+    /// The deep copy of a record whose owners are plain vectors, by its plan alone: each
+    /// vector's block is claimed in the destination and copied as one piece — what
+    /// [`Self::copy_claims_seq_vector`] does for such a field, without the descent that
+    /// finds it.  `false`, with nothing done, for a type without a plan and for a copy
+    /// `LOFT_WATCH_STORE` is watching.
+    #[inline(never)]
+    fn copy_plain_vectors(&mut self, rec: &DbRef, to: &DbRef, tp: u16) -> bool {
+        let Some((plan, count)) = self.plain_vectors_of(tp) else {
+            return false;
+        };
+        if crate::keys::watch_store() == Some(to.store_nr) || !heap_free_vector_copy_enabled() {
+            return false;
+        }
+        for &(off, size) in &plan[..count] {
+            let source = self.store(rec);
+            let cur = source.get_u32_raw(rec.rec, rec.pos + off);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                self.store_mut(to).set_u32_raw(to.rec, to.pos + off, cur);
+                continue;
+            }
+            let length = source.get_u32_raw(cur, 4);
+            let into = self.store_mut(to);
+            let block = into.claim(1 + (size * length).div_ceil(8));
+            into.set_u32_raw(to.rec, to.pos + off, block);
+            self.copy_block(
+                &DbRef {
+                    store_nr: rec.store_nr,
+                    rec: cur,
+                    pos: 4,
+                },
+                &DbRef {
+                    store_nr: to.store_nr,
+                    rec: block,
+                    pos: 4,
+                },
+                length * size + 4,
+            );
+        }
+        true
+    }
+
     pub(super) fn copy_claims_seq_vector(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         let content_tp = match &self.types[tp as usize].parts {
             Parts::Vector(v) | Parts::Sorted(v, _) => *v,
@@ -3454,6 +3524,15 @@ impl Stores {
         // pass deep-copies the nested claims).  The bulk copy laid the destination out
         // byte-identically, so each element sits at the SAME offset in `into`; reuse
         // `child.pos` for the destination instead of recomputing `8 + size*i`.
+        // Elements that own no heap carry nothing past the bulk copy: each element's own
+        // `copy_claims` would return at once, after the walk listed it.  The walk stays armed
+        // for a store `LOFT_WATCH_STORE` names, as in `Stores::vector_add`.
+        if !self.type_owns_heap(content_tp)
+            && crate::keys::watch_store() != Some(to.store_nr)
+            && heap_free_vector_copy_enabled()
+        {
+            return;
+        }
         let children = self.for_each_owned_child(rec, tp).children;
         debug_assert!(
             children.is_empty() || u32::try_from(children.len()).unwrap_or(u32::MAX) == length,
@@ -3759,7 +3838,9 @@ impl Stores {
         // `collect_index_nodes(rec)` call and hands each node back as
         // `owning_elem`, so this is position-for-position the walk it replaces.
         // The DESTINATION build (claim → back-pointer → `copy_block` → recurse →
-        // `btree::add`) stays per-kind: unifying it is how @P318/@P309 come back.
+        // `btree::add`) stays per-kind: each kind lays its destination out for itself — a
+        // hash by its own bucket count, an ordered list by its element count — and a build
+        // shared between them copies the source's layout instead.
         let nodes: Vec<u32> = self
             .for_each_owned_child(rec, tp)
             .children
@@ -3847,9 +3928,12 @@ impl Stores {
     }
 
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
-        if !self.copy_absent_collection(rec, to, tp) {
-            self.copy_claims_kind(rec, to, tp);
+        if self.copy_absent_collection(rec, to, tp)
+            || (self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp))
+        {
+            return;
         }
+        self.copy_claims_kind(rec, to, tp);
     }
 
     /// The per-kind half of [`Self::copy_claims`], for a value that is present.
@@ -3999,7 +4083,7 @@ impl Stores {
             // A stored 12-byte `DbRef` — the closure half of a `fn(…)` struct field — is
             // deliberately NOT re-pointed: the copy keeps the source's pointer and ALIASES
             // its closure record, which is why a bound fn-ref field read is marked
-            // `skip_free` (`tests/scripts/85-poison-return-tail-uaf.loft` t5).
+            // `skip_free` (`loft-suite/attic/scripts/85-poison-return-tail-uaf.loft` t5).
             //
             // ⚠ That is sound only because the copy can never outlive the source, and
             // what guarantees it lives in ANOTHER file: #318 refuses a capturing-closure
@@ -4367,6 +4451,12 @@ impl Stores {
                 // scalar, and not a record of scalars either, whose walk would build
                 // a child per field to free nothing.
                 if !borrowed && !self.type_owns_heap(tp) {
+                    return;
+                }
+                if !borrowed && self.owns_plain_vectors(tp) && self.release_plain_vectors(rec, tp) {
+                    return;
+                }
+                if !borrowed && self.release_by_plan(rec, tp) {
                     return;
                 }
                 // A record whose heap slots are all empty RIGHT NOW frees nothing either —
@@ -5207,6 +5297,309 @@ impl Stores {
     }
 
     /// A type's heap slots, derived on the first ask and cached on its row.
+    /// The plan of a record that owns plain vectors and nothing else: `(offset, element
+    /// bytes)` of each ([`super::types::PlainVectors`]), by value, and how many.  `None`
+    /// for every other type — asked through one bit of the type's facts, so a type without
+    /// a plan pays a load and a test.
+    fn plain_vectors_of(&self, tp: u16) -> Option<([(u32, u32); PLAIN_MAX], usize)> {
+        if !self.owns_plain_vectors(tp) {
+            return None;
+        }
+        let plan = self
+            .types
+            .get(tp as usize)?
+            .plain_vectors
+            .get()?
+            .as_deref()?;
+        let mut held = [(0, 0); PLAIN_MAX];
+        held[..plan.len()].copy_from_slice(plan);
+        Some((held, plan.len()))
+    }
+
+    /// Does a record of `tp` own plain vectors and nothing else?  One bit of the type's
+    /// facts once it is known, which is all a type without a plan is asked — the copy and
+    /// the release of every other record stay what they were.
+    #[inline]
+    fn owns_plain_vectors(&self, tp: u16) -> bool {
+        match self
+            .types
+            .get(tp as usize)
+            .map(|row| row.facts.plain_vectors())
+        {
+            Some(Some(known)) => known,
+            Some(None) => self.learn_plain_vectors(tp),
+            None => false,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn learn_plain_vectors(&self, tp: u16) -> bool {
+        let row = &self.types[tp as usize];
+        row.plain_vectors.set(self.derive_plain_vectors(tp));
+        let plain = matches!(row.plain_vectors.get(), Some(Some(_)));
+        row.facts.set_plain_vectors(plain);
+        plain
+    }
+
+    fn derive_plain_vectors(&self, tp: u16) -> Option<Box<[(u32, u32)]>> {
+        if !plain_vector_records_enabled() {
+            return None;
+        }
+        let Parts::Struct(fields) = &self.types.get(tp as usize)?.parts else {
+            return None;
+        };
+        let mut out = Vec::new();
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if !f.other_indexes.is_empty() {
+                return None;
+            }
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Vector(elem)
+                    if !self.type_owns_heap(*elem)
+                        && !self.is_linked(*elem)
+                        && self.size(*elem) > 0 =>
+                {
+                    out.push((u32::from(f.position), u32::from(self.size(*elem))));
+                }
+                _ => return None,
+            }
+        }
+        // A record that owns nothing is the flat copy's; one with more vectors than the
+        // plan holds takes the walk.
+        (1..=PLAIN_MAX)
+            .contains(&out.len())
+            .then(|| out.into_boxed_slice())
+    }
+
+    /// The release of a record whose owners are plain vectors, by its plan alone: each
+    /// vector's block is freed and its field cleared — what the walk does for such a
+    /// record, without asking each field's type what it is.  `false`, with nothing done,
+    /// for a type without a plan and when a field holds anything but an empty handle or a
+    /// block inside the store with a length that fits: the walk then reads that record and
+    /// says what is wrong with it.
+    #[inline(never)]
+    fn release_plain_vectors(&mut self, rec: &DbRef, tp: u16) -> bool {
+        let Some((plan, count)) = self.plain_vectors_of(tp) else {
+            return false;
+        };
+        let store = self.store_mut(rec);
+        let capacity = store.capacity_words();
+        let capacity_bytes = u64::from(capacity) * 8;
+        for &(off, size) in &plan[..count] {
+            let pos = rec.pos + off;
+            if u64::from(pos) + 4 > capacity_bytes {
+                return false;
+            }
+            let cur = store.get_u32_raw(rec.rec, pos);
+            if cur != 0
+                && (cur >= capacity
+                    || u64::from(store.get_u32_raw(cur, 4)) * u64::from(size) + 8 > capacity_bytes)
+            {
+                return false;
+            }
+        }
+        for &(off, _) in &plan[..count] {
+            let pos = rec.pos + off;
+            let cur = store.get_u32_raw(rec.rec, pos);
+            if cur != 0 {
+                store.delete(cur);
+                store.set_u32_raw(rec.rec, pos, 0);
+            }
+        }
+        true
+    }
+
+    /// The release plan of `tp` ([`RelSlot`]), derived on the first ask and cached on its row.
+    fn release_plan_of(&self, tp: u16) -> Option<([RelSlot; PLAIN_MAX], usize)> {
+        let row = self.types.get(tp as usize)?;
+        if row.release_plan.get().is_none() {
+            row.release_plan.set(self.derive_release_plan(tp));
+        }
+        let plan = row.release_plan.get()?.as_deref()?;
+        let mut held = [RelSlot::Text(0); PLAIN_MAX];
+        held[..plan.len()].copy_from_slice(plan);
+        Some((held, plan.len()))
+    }
+
+    fn derive_release_plan(&self, tp: u16) -> Option<Box<[RelSlot]>> {
+        if !release_plan_enabled()
+            || !matches!(
+                self.types.get(tp as usize)?.parts,
+                Parts::Struct(_) | Parts::EnumValue(..)
+            )
+            || self.type_holds_file(tp)
+        {
+            return None;
+        }
+        let mut out = Vec::new();
+        self.collect_release_slots(tp, 0, &mut out, &mut Vec::new())?;
+        (1..=PLAIN_MAX)
+            .contains(&out.len())
+            .then(|| out.into_boxed_slice())
+    }
+
+    /// The plan's slots of a `tp` record placed `base` bytes into its parent, in field order
+    /// — the order `remove_struct_claims` releases them in.  `None` for any field the plan
+    /// cannot express: an enum, a view or a linked group, a collection other than a vector,
+    /// a vector whose elements own anything but texts.
+    fn collect_release_slots(
+        &self,
+        tp: u16,
+        base: u32,
+        out: &mut Vec<RelSlot>,
+        seen: &mut Vec<u16>,
+    ) -> Option<()> {
+        if seen.contains(&tp) {
+            return None;
+        }
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(tp as usize)?.parts
+        else {
+            return None;
+        };
+        seen.push(tp);
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if !f.other_indexes.is_empty() {
+                return None;
+            }
+            let off = base + u32::from(f.position);
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Base if f.content == 5 => out.push(RelSlot::Text(off)),
+                Parts::Struct(_) => self.collect_release_slots(f.content, off, out, seen)?,
+                Parts::Vector(elem) => {
+                    let elem = *elem;
+                    let size = u32::from(self.size(elem));
+                    if self.is_linked(elem) || size == 0 {
+                        return None;
+                    }
+                    let mut texts = [0u16; 4];
+                    let n = if elem == 5 {
+                        1
+                    } else if !self.type_owns_heap(elem) {
+                        0
+                    } else {
+                        let slots = self.text_slots(elem)?;
+                        if slots.len() > texts.len() {
+                            return None;
+                        }
+                        for (t, o) in texts.iter_mut().zip(&slots) {
+                            *t = u16::try_from(*o).ok()?;
+                        }
+                        slots.len()
+                    };
+                    out.push(RelSlot::Vector {
+                        off,
+                        size,
+                        texts,
+                        n: n as u8,
+                    });
+                }
+                _ => return None,
+            }
+        }
+        seen.pop();
+        Some(())
+    }
+
+    /// `@FR-H-ClearRelease` — `remove_claims_mode` for a record with a release plan: each text deleted, each
+    /// vector's element texts and then its block, the fields cleared — what the type walk
+    /// does for such a record, in its order, without asking each field's type what it is.
+    /// `false`, with nothing done, for a type without a plan and when any pointer it would
+    /// follow lies past the store or a vector's length does not fit: the walk then reads
+    /// that record and refuses what is wrong with it.
+    #[inline(never)]
+    fn release_by_plan(&mut self, rec: &DbRef, tp: u16) -> bool {
+        let Some((plan, count)) = self.release_plan_of(tp) else {
+            return false;
+        };
+        let plan = &plan[..count];
+        let store = self.store_mut(rec);
+        let capacity = store.capacity_words();
+        let capacity_bytes = u64::from(capacity) * 8;
+        let outside = |p: u32| p != 0 && p != DbRef::ABSENT_REC && p >= capacity;
+        for slot in plan {
+            let (RelSlot::Text(off) | RelSlot::Vector { off, .. }) = *slot;
+            let pos = rec.pos + off;
+            if u64::from(pos) + 4 > capacity_bytes {
+                return false;
+            }
+            let cur = store.get_u32_raw(rec.rec, pos);
+            match *slot {
+                RelSlot::Text(_) => {
+                    if cur != 0 && cur >= capacity {
+                        return false;
+                    }
+                }
+                RelSlot::Vector { size, texts, n, .. } => {
+                    if outside(cur) {
+                        return false;
+                    }
+                    if cur == 0 || cur == DbRef::ABSENT_REC {
+                        continue;
+                    }
+                    let length = store.get_u32_raw(cur, 4);
+                    if u64::from(length) * u64::from(size) + 8 > capacity_bytes {
+                        return false;
+                    }
+                    for i in 0..length {
+                        for &t in &texts[..n as usize] {
+                            let p = store.get_u32_raw(cur, 8 + size * i + u32::from(t));
+                            if p != 0 && p >= capacity {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for slot in plan {
+            match *slot {
+                RelSlot::Text(off) => {
+                    let pos = rec.pos + off;
+                    let cur = store.get_u32_raw(rec.rec, pos);
+                    if cur != 0 {
+                        store.delete(cur);
+                        store.set_u32_raw(rec.rec, pos, 0);
+                    }
+                }
+                RelSlot::Vector {
+                    off,
+                    size,
+                    texts,
+                    n,
+                } => {
+                    let pos = rec.pos + off;
+                    let cur = store.get_u32_raw(rec.rec, pos);
+                    if cur != 0 && cur != DbRef::ABSENT_REC {
+                        let length = store.get_u32_raw(cur, 4);
+                        for i in 0..length {
+                            for &t in &texts[..n as usize] {
+                                let at = 8 + size * i + u32::from(t);
+                                let p = store.get_u32_raw(cur, at);
+                                if p != 0 {
+                                    store.delete(p);
+                                    store.set_u32_raw(cur, at, 0);
+                                }
+                            }
+                        }
+                        store.delete(cur);
+                    }
+                    if cur != 0 {
+                        store.set_u32_raw(rec.rec, pos, 0);
+                    }
+                }
+            }
+        }
+        true
+    }
+
     fn heap_slots_of(&self, tp: u16) -> Option<&[HeapSlot]> {
         let row = self.types.get(tp as usize)?;
         if row.heap_slots.get().is_none() {

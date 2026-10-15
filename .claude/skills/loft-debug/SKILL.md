@@ -65,6 +65,33 @@ irreversible moves not to make.
 - **Full suite, detached**: `./scripts/find_problems.sh --bg` → `--peek` mid-run /
   `--wait` to block; structured summary on finish in `/tmp/loft_problems.txt`.
 
+## The build loop — which binary, and what each build costs
+
+`src/` is ONE crate of ~486k lines: any one-file edit recompiles all of it, and the release
+profile is not incremental.  So the loop is decided by which build answers the question
+([CI_BUDGET.md § What a build and each check costs here](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)
+has the ladder; re-measure a number before it decides anything):
+
+- **Iterate on the dev binary** — `cargo build --bin loft` (minutes), then
+  `target/debug/loft --interpret | --native | introspect | --native-emit …`; it runs
+  `--native` against the `deps/` rlib the same build wrote.  `make iter TEST=…` for one test.
+- **`cargo check --bin loft` for a compile-only question** — never a build.
+- **A release build (`cargo build --release --bin loft`, 20–40 min) once per fix, at the
+  end**: it refreshes `target/release/libloft.rlib`, which only the `cargo test --release`
+  native suites link; `make check-rlib` says whether it is due.  Never one per hypothesis.
+- **Name the cause from an artefact before any build** — the IR (`loft introspect`) or the
+  emitted Rust (`--native-emit`) of the failing function, pointing at the node or line that
+  is wrong.  A fix built on a hypothesis the artefact never showed is a build that may change
+  nothing.
+- **One heavy job at a time**: a build, a gate (`ci-run.sh start`), `make falsify` (two dev
+  builds), the drop gate (every core for an hour), a native corpus census, a `cargo test` of
+  many binaries.  Beside one another they slow every one of them and the one waited on most
+  of all; a load of 75 on this box was one session's own drop gate, blamed on siblings.
+  While a build runs, read the next unit's code; wait on its pid or output file, never a
+  sleep loop (CLAUDE.md § Never wait on a process by NAME).
+- **Receipts last**: `make falsify` builds the working tree, so it runs after the fix is
+  committed and while no edit is pending — not in the middle of a fix.
+
 ## The agent debug surface — `loft debug <file> --rpc` (drive a live session, don't println)
 
 The @PLN16 debugger speaks NDJSON over stdio (the contract:

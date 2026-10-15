@@ -192,7 +192,7 @@ impl RuntimeErrorKind {
             }
             RuntimeErrorKind::StackOverflow => format!(
                 "call stack overflow — exceeded {} stack frames",
-                crate::state::State::MAX_CALL_DEPTH
+                crate::limits::MAX_CALL_DEPTH
             ),
             RuntimeErrorKind::UserPanic { message } => format!("panic: {message}"),
             RuntimeErrorKind::AssertionFailed { message } => {
@@ -299,7 +299,7 @@ impl RuntimeError {
         // this is the third site, and the one `assert` reached when loft#1056 moved it
         // onto this path — `panic` had been exiting the process from inside a driver
         // since it started using `report_and_exit`.
-        if crate::codegen_runtime::in_lazy_driver() {
+        if crate::call_frames::in_lazy_driver() {
             std::panic::panic_any(format!("{}: {}", self.kind.label(), self.message));
         }
         // loft#1056 — a halting fault is the PROGRAM's halt, so it is reported ONCE
@@ -319,7 +319,7 @@ impl RuntimeError {
         // console as a bare `RuntimeError: unreachable`, so the one thing a fault has to
         // do — say what went wrong — was exactly what it could not do there.  A no-op on
         // every other target.
-        crate::live_dispatch::wasm_host_log(&rendered);
+        crate::platform::wasm_host_log(&rendered);
         std::process::exit(1);
     }
 
@@ -335,7 +335,7 @@ impl RuntimeError {
         if !self.call_chain.is_empty() {
             return std::borrow::Cow::Borrowed(self);
         }
-        let chain = crate::codegen_runtime::native_call_chain();
+        let chain = crate::call_frames::native_call_chain();
         if chain.is_empty() {
             return std::borrow::Cow::Borrowed(self);
         }
@@ -447,7 +447,7 @@ impl RuntimeError {
     }
 
     /// Construct a `StackOverflow` error against the DECLARATION of the function whose
-    /// entry exceeded [`crate::state::State::MAX_CALL_DEPTH`].
+    /// entry exceeded [`crate::limits::MAX_CALL_DEPTH`].
     ///
     /// Both backends detect the overflow at that entry and both know the callee's
     /// declaration, so this is the position they can agree on — the interpreter reads it

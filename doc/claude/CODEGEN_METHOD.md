@@ -268,6 +268,47 @@ paths even as the matrix cells change. The @PLN85 D-own-1 `block_result` collaps
 the worked example — the corpus stayed byte-identical step by step, and the two
 leaks it surfaced (#448 c5 and its mirror) were closed under the matrix.
 
+### When the change is MEANT to move emission — the corpus census
+
+A rule added to a walk that runs over every function fires in every KIND of function, and a
+matrix whose cells all stand in one kind of body leaves the others unmeasured.  Before
+pushing a change that admits a new shape, emit the whole corpus with the old binary and the
+new one (`loft --native-emit <out.rs> <file>` over `tests/scripts` and `tests/docs`, run from a
+scratch copy of `tests/`), list the files whose emission differs, and run exactly those on
+both backends — a `fn main` file through `--interpret` and `--native`, a `fn test_*` file
+through `loft --tests <file>` and `loft --tests --native <file>`.  The list is the change's
+real reach, it costs minutes, and it finds the shapes no cell crossed: a build joined with a
+nullable value inside a function that returns a dense record, for one, which no corpus file
+contained and the full gate therefore passed.  Then add a cell for every shape it finds.
+
+### The order of a lowering change, and what each build is for
+
+A release build of the whole crate is the expensive step, so each build must answer a
+question that nothing cheaper can.  In order:
+
+1. **Name the cause from an artifact, not a guess.**  Before any build: reproduce by hand,
+   read the IR (`loft introspect`) and the emitted Rust (`--native-emit`) of the failing
+   function, and point at the node or line that is wrong.  A fix built on a hypothesis that
+   the artifact never showed is a build that may change nothing.
+2. **Compile questions go to `cargo check`**, not to a build, and correctness questions to
+   the dev profile: it links its own `libloft.rlib` and runs the loft library with the same
+   debug assertions off, so it answers every gate below.  A release build answers a SPEED
+   question, or builds a binary that ships.
+3. **One heavy job at a time.**  A build, a corpus census, a `cargo test` of many binaries, a
+   falsify run (two more full builds in their own target directories) and the drop gate
+   (dozens of native compiles) each fill the machine; run beside one another they slow
+   every one of them and the build being waited on most of all.
+4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites
+   it touches, `cargo test --test ownership_drop_gate` on both backends for
+   anything that changes what a value is held in or when it is released, the poison and
+   stack sweeps (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`), the corpus census above, and both
+   clippy legs.  A gate first run on GitHub after the push costs a gate run, a fix build and
+   a red tip a sibling may already have joined.
+5. **Receipts last.**  `scripts/falsify.sh` reads the working tree for its own build, so it
+   runs after the fix is committed and while no source edit is pending.
+6. **One issue per push.**  A defect found while verifying is filed with its repro at once;
+   it is the next push, not part of this one.
+
 ## Diff against the proven sibling — when your new path misbehaves
 
 > This is the codegen instance of a **general** design method — *when the answer
@@ -336,7 +377,7 @@ every operand is an arm and the parser's own per-arm bind is the copy.  Where a 
 rewrite is unavoidable, keep the parser's `Set` and rewrite only the VALUE inside it, so the
 copy machinery around that statement still applies.
 
-**The instrument.** `cargo test --release --test ownership_drop_gate` — its copy census names
+**The instrument.** `cargo test --test ownership_drop_gate` — its copy census names
 the copy each cell owes and is what caught the second case.  A value cell cannot see a release
 at all, and `every_cell_releases_each_resource_once` cannot see WHICH record was released
 (loft#1617 lives in exactly that blind spot).

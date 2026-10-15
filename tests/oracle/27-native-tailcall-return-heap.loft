@@ -7,7 +7,7 @@
 // `return Str::new(<String>)` under --native → rustc E0308, while the interpreter
 // ran fine — an accept/reject divergence the oracle's driver_agreement catches.
 // Fixed by unspanning both call-shape probes (#494, commit b999ce4b); the minimal
-// pick/jtext shape is pinned by tests/scripts/451-text-tailcall-nwb-callee.loft.
+// pick/jtext shape is pinned by loft-suite/attic/scripts/451-text-tailcall-nwb-callee.loft.
 // This cell locks in the ADJACENT variants 451 does NOT cover — struct and vector
 // params, a text? caller, a constructed arg in tail, a struct-returning tail, an
 // optional-text discharge in tail, a match-arm tail, and a 2-level tail chain —
@@ -28,7 +28,7 @@
 // `return ().to_string()`), `integer` → E0716 (borrow of a dropped temporary).
 // Root cause: `if_tail_yields_text` did not see through the `scalar_match` block,
 // so `do_if_acc` never promoted the arms into the `__acc` return buffer.  Fixed in
-// `src/parser/control.rs`; pinned by tests/scripts/536-text-match-tail-buffer-callee.loft.
+// `src/parser/control.rs`; pinned by loft-suite/attic/scripts/536-text-match-tail-buffer-callee.loft.
 
 struct Doc { body: text, tag: text }
 struct Res { name: text, n: integer }

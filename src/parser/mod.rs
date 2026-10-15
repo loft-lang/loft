@@ -13,6 +13,7 @@ use crate::database::{Parts, Stores};
 use crate::diagnostics::{DiagEntry, Diagnostics, Level, diagnostic_format};
 use crate::lexer::{LexItem, LexResult, Lexer, Link, Mode, Position};
 use crate::platform::{other_sep, sep, sep_str};
+use crate::type_schema::StoreTypeOf;
 use crate::variables::{Function, size as var_size};
 use crate::{manifest, scopes, typedef};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -751,7 +752,7 @@ pub struct Parser {
     /// routes the library's public functions to it.  A library's functions are
     /// identified by `def.position().file.starts_with(pkg_dir)`, the same
     /// ownership guard the native path uses.
-    pub pending_placed_libs: Vec<(String, String, crate::lib_placement::Placement)>,
+    pub pending_placed_libs: Vec<(String, String, crate::manifest::Placement)>,
     /// PKG.3: package dependencies discovered during manifest reading.
     /// Each entry is (name, dir, queued-from file) — sibling packages are
     /// searched in `dir`, and the dep is only pulled in while the lexer is back
@@ -760,7 +761,8 @@ pub struct Parser {
     /// Auto-`use` per-file scan cache: a file's `(lib:: refs, .method() calls)`
     /// are deterministic, so it is read + scanned at most once (keyed by path)
     /// and reused across the second pass and any `todo_files` re-parse.
-    auto_use_scan_cache: std::collections::HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>,
+    auto_use_scan_cache:
+        std::collections::HashMap<String, (Vec<String>, Vec<String>, Vec<String>, Vec<String>)>,
     /// Per-directory cache for the dep-shadowing guard in `lib_path`: the
     /// nearest ancestor manifest's package root + its declared dependency
     /// names.  `None` = no manifest above that directory.
@@ -840,6 +842,12 @@ pub struct Parser {
     /// author declared.  What lets `c: Command = "…"` load `process` with nothing in the
     /// script naming it (@PLN179 strand 4).
     auto_use_type_map: std::collections::HashMap<String, String>,
+    /// The builder half: `function name -> providing package`, from the `[triggers]
+    /// builders` each trigger-enabled package declares and its source confirms
+    /// (`triggers.rs` § Builder triggers).  Built with `auto_use_trigger_map`.  What lets a
+    /// bare `set(words)` load `script` and import that one name — a program's own `fn set`
+    /// and the stdlib's names are never overridden, and `script::set(…)` always resolves.
+    auto_use_builder_map: std::collections::HashMap<String, String>,
     /// The manifest errors already reported by [`report_manifest_errors`]: each file's parse
     /// reads the manifests again, and an error is the author's to fix once.
     reported_manifest_errors: Vec<crate::manifest::ManifestError>,
@@ -853,6 +861,10 @@ pub struct Parser {
     // the registry feature off the field is initialised but never consulted.
     #[cfg_attr(not(feature = "registry"), allow(dead_code))]
     auto_use_catalog_map: Option<std::collections::HashMap<String, String>>,
+    /// The builder half of the catalog fallback: `function name -> providing package` from
+    /// the sidecar's `builders`, for a bare call on a package the user has not declared.
+    #[cfg_attr(not(feature = "registry"), allow(dead_code))]
+    auto_use_catalog_builders: Option<std::collections::HashMap<String, String>>,
     /// Is this the first pass on parsing:
     /// - Do not assume that all struct / enum types are already parsed.
     /// - Define variables, try to determine their type (can become clear from later code).
@@ -1752,6 +1764,7 @@ pub(super) mod fields;
 pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
+mod result_buffer;
 pub(super) mod store_else;
 pub(super) mod store_text;
 pub(super) mod vectors;
@@ -1988,6 +2001,8 @@ impl Parser {
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_type_map: std::collections::HashMap::new(),
+            auto_use_builder_map: std::collections::HashMap::new(),
+            auto_use_catalog_builders: None,
             reported_manifest_errors: Vec::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
@@ -2680,6 +2695,9 @@ impl Parser {
     /// # Panics
     /// With filesystem problems.
     pub fn parse(&mut self, filename: &str, default: bool) -> bool {
+        if !default {
+            self.data.limits = self.data.limits.min(crate::limits::Limits::from_env());
+        }
         // under the `wasm` feature, check VIRT_FS before trying the real filesystem.
         #[cfg(feature = "wasm")]
         if let Some(content) = crate::wasm::virt_fs_get(filename) {
@@ -4164,6 +4182,20 @@ impl Parser {
         Ok(())
     }
 
+    /// A parser ready for a whole program to be loaded into it: the standard library from
+    /// `stdlib_dir` parsed, `lib_dirs` as the `use` search path, and the world OPEN — it is
+    /// parsed against again after compiling, so no whole-program signature rewrite.  The one
+    /// way the REPL session and the live-reload shadow start a program parse.
+    /// # Errors
+    /// As [`Self::parse_stdlib`].
+    pub fn open_program(stdlib_dir: &str, lib_dirs: &[String]) -> std::io::Result<Parser> {
+        let mut parser = Parser::new();
+        parser.data.open_world = true;
+        parser.lib_dirs = lib_dirs.to_vec();
+        parser.parse_stdlib(stdlib_dir)?;
+        Ok(parser)
+    }
+
     /// Load the standard library from `dir`, or — when there is no such directory — from
     /// the sources this binary embeds (loft#1801).  A binary copied onto the PATH or
     /// installed by `cargo install` has no `default/` beside it, but it carries the stdlib
@@ -4294,6 +4326,7 @@ impl Parser {
     /// Only parse a specific string, only useful for parser tests.
     #[allow(dead_code)]
     pub fn parse_str(&mut self, text: &str, filename: &str, logging: bool) {
+        self.data.limits = self.data.limits.min(crate::limits::Limits::from_env());
         // Start each standalone parse on a fresh lexer.  `restart` resets the
         // cursor but not the diagnostics or format-mode flags, and
         // `Diagnostics::level` is monotonic — so reusing the lexer would leak a
@@ -19337,7 +19370,7 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls, type_refs) =
+            let (refs, calls, type_refs, bare_calls) =
                 if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file.as_str()) {
                     c.clone()
                 } else {
@@ -19351,6 +19384,24 @@ impl Parser {
                     // A type the file DECLARES is its own, never a trigger: a script with
                     // its own `struct Path` must not load a package that also has one.
                     let declared = crate::libscan::scan_type_declarations(&src);
+                    // Likewise a function the file DECLARES: its own `fn set` wins over a
+                    // library's builder of that name, which `pkg::set(…)` still reaches.  Nor
+                    // is a name the stdlib (or a loaded file) already defines: the scan hands
+                    // back slices, and only a survivor is allocated — one key buffer serves
+                    // every lookup (the allocation pins count each `format!`).
+                    let (bare, fns) = crate::libscan::scan_bare_calls_and_fn_declarations(&src);
+                    let mut key = String::with_capacity(64);
+                    let bare_calls: Vec<String> = bare
+                        .into_iter()
+                        .filter(|f| !fns.contains(f))
+                        .filter(|f| {
+                            key.clear();
+                            key.push_str("n_");
+                            key.push_str(f);
+                            self.data.def_nr(&key) == u32::MAX
+                        })
+                        .map(str::to_string)
+                        .collect();
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
                         crate::libscan::scan_method_calls(&src),
@@ -19358,6 +19409,7 @@ impl Parser {
                             .into_iter()
                             .filter(|t| !declared.contains(t))
                             .collect(),
+                        bare_calls,
                     );
                     self.auto_use_scan_cache
                         .insert(auto_use_scan_file.to_string(), pair.clone());
@@ -19427,6 +19479,49 @@ impl Parser {
                                 for_source: cur,
                                 lib_source,
                                 spec: ImportSpec::Names(vec![(t.clone(), t)]),
+                                public: false,
+                            });
+                        }
+                    } else if !to_load.contains(&pkg) {
+                        to_load.push(pkg);
+                    }
+                }
+            }
+            // Tier-1, the builder half: a bare `set(words)` names a function a trigger-enabled
+            // package DECLARES as a builder (`[triggers] builders`).  A name the stdlib or an
+            // already-loaded file defines is never a trigger (the stdlib's `set` would win and a
+            // library cannot take it); the declared packages' map first, then the catalog.  As
+            // for a type, a loaded package binds only its qualifier, so the one name that fired
+            // is imported, as `use pkg::(set);` would — never the library's whole surface.
+            if !bare_calls.is_empty() {
+                let _ = self.trigger_map(auto_use_scan_file.as_str());
+                let mut catalog: Option<std::collections::HashMap<String, String>> = None;
+                for f in bare_calls {
+                    if self.data.def_nr(&format!("n_{f}")) != u32::MAX {
+                        continue;
+                    }
+                    let pkg = if let Some(p) = self.auto_use_builder_map.get(&f) {
+                        Some(p.clone())
+                    } else {
+                        if catalog.is_none() {
+                            catalog = Some(self.catalog_builder_map());
+                        }
+                        catalog.as_ref().and_then(|c| c.get(&f).cloned())
+                    };
+                    let Some(pkg) = pkg else { continue };
+                    if self.data.use_exists(&pkg) {
+                        let lib_source = self.data.get_source(&pkg);
+                        let cur = self.data.source;
+                        if !self.data.import_name(lib_source, cur, &f, &f, false)
+                            && !self.pending_imports.iter().any(|pi| {
+                                pi.for_source == cur
+                                    && matches!(&pi.spec, ImportSpec::Names(n) if n.iter().any(|(a, _)| *a == f))
+                            })
+                        {
+                            self.pending_imports.push(PendingImport {
+                                for_source: cur,
+                                lib_source,
+                                spec: ImportSpec::Names(vec![(f.clone(), f)]),
                                 public: false,
                             });
                         }
@@ -19524,9 +19619,8 @@ impl Parser {
                 );
             } else {
                 let token = match &res.has {
-                    crate::lexer::LexItem::Token(s) | crate::lexer::LexItem::Identifier(s) => {
-                        format!("'{s}'")
-                    }
+                    crate::lexer::LexItem::Token(s) => format!("'{s}'"),
+                    crate::lexer::LexItem::Identifier(s) => format!("'{s}'"),
                     crate::lexer::LexItem::CString(s) => format!("\"{s}\""),
                     other => format!("{other:?}"),
                 };
@@ -19682,36 +19776,46 @@ impl Parser {
         }
         let mut map = std::collections::HashMap::new();
         let mut types = std::collections::HashMap::new();
+        let mut builders = std::collections::HashMap::new();
         let mut dir = std::path::Path::new(from_file)
             .parent()
             .map(std::path::Path::to_path_buf);
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
             if crate::file_access::exists(&toml) {
-                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types);
+                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types, &mut builders);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
                     for (dep, value) in &man.dependencies {
                         // PURE lookups only: a sibling package, a `path =` dependency, the
-                        // project's `lib/<dep>` — by path, never through `lib_path`, whose
-                        // side effects queue every dependency of the manifest found above
-                        // the file as a dependency of that file (a root manifest with
-                        // registry packages loaded `graphics` into a one-line script and
-                        // crashed the compiler in `imaging`).  A registry dependency's
-                        // triggers come from the catalogue instead.
+                        // project's `lib/<dep>`, or a registry dependency's EXTRACTED copy
+                        // under the cache (the lock's pin, else the newest cached copy its
+                        // range admits) — by path, never through `lib_path`, whose side
+                        // effects queue every dependency of the manifest found above the
+                        // file as a dependency of that file (a root manifest with registry
+                        // packages loaded `graphics` into a one-line script and crashed the
+                        // compiler in `imaging`).  The catalogue is the fallback for a
+                        // package nothing declares, and it carries no TYPE triggers: a
+                        // registry dependency read only through it left `names:
+                        // sorted<Word[key]>` undefined while the `path =` form of the same
+                        // package fired (@PLN179 finding 018's registry half).
                         let entry = self
                             .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
                             .map(|r| r.entry)
                             .or_else(|| Self::dep_entry_by_path(&d, dep, value));
-                        if let Some(entry) = entry
-                            && let Some(root) = std::path::Path::new(&entry)
+                        let root = match entry {
+                            Some(entry) => std::path::Path::new(&entry)
                                 .parent()
                                 .and_then(|p| p.parent())
-                        {
+                                .map(std::path::Path::to_path_buf),
+                            None => Self::registry_dep_root(&d, dep, value),
+                        };
+                        if let Some(root) = root {
                             Self::add_pkg_triggers(
                                 &root.join("loft.toml"),
-                                root,
+                                &root,
                                 &mut map,
                                 &mut types,
+                                &mut builders,
                             );
                         }
                     }
@@ -19722,6 +19826,7 @@ impl Parser {
         }
         self.auto_use_trigger_map = Some(map.clone());
         self.auto_use_type_map = types;
+        self.auto_use_builder_map = builders;
         map
     }
 
@@ -19743,6 +19848,46 @@ impl Parser {
         crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
     }
 
+    /// The extracted copy of a REGISTRY dependency `dep` declared as `value` by the manifest
+    /// in `d`: the version `d/loft.lock` pins when that copy is in the cache, else the newest
+    /// cached copy this loft can load that satisfies the declared range.  A pure read of the
+    /// lock and the cache directory — no index, no network, nothing queued; `None` for a
+    /// `path =` dependency (those resolve by path) and when nothing is extracted yet (the
+    /// install that follows loads the package the ordinary way, and its triggers fire from
+    /// the next parse).
+    #[cfg(feature = "registry")]
+    fn registry_dep_root(
+        d: &std::path::Path,
+        dep: &str,
+        value: &str,
+    ) -> Option<std::path::PathBuf> {
+        if crate::manifest::extract_path_dep(value).is_some() {
+            return None;
+        }
+        if let Ok(Some(lock)) = crate::lockfile::read_lockfile(&d.join("loft.lock"))
+            && let Some(pin) = lock.packages.iter().find(|p| p.name == dep)
+        {
+            let root = crate::registry_index::cache_dir().join(format!("{dep}-{}", pin.version));
+            if crate::file_access::exists(root.join("loft.toml")) {
+                return Some(root);
+            }
+        }
+        let constraints: Vec<String> = crate::manifest::extract_version_req(value)
+            .map(|v| vec![v.to_string()])
+            .unwrap_or_default();
+        crate::registry_index::newest_cached_loadable_satisfying(dep, &constraints)
+            .map(|(_, dir)| dir)
+    }
+
+    #[cfg(not(feature = "registry"))]
+    fn registry_dep_root(
+        _d: &std::path::Path,
+        _dep: &str,
+        _value: &str,
+    ) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// Report the manifests read since the last call that the lexer could not read
     /// ([`crate::manifest::take_manifest_errors`]), each once per parse, at the manifest's own
     /// line.  Kept, such a string is a value with `?` where the author's characters were — a
@@ -19762,13 +19907,15 @@ impl Parser {
         }
     }
 
-    /// Add a package's derived text-method triggers (`method -> package`) to
-    /// `map`, when the package opts in via `[triggers] enabled`.
+    /// Add a package's derived triggers to the three maps — its text methods
+    /// (`method -> package`), its public types and its declared builders — when the
+    /// package opts in via `[triggers] enabled`.
     fn add_pkg_triggers(
         toml: &std::path::Path,
         pkg_root: &std::path::Path,
         map: &mut std::collections::HashMap<String, String>,
         types: &mut std::collections::HashMap<String, String>,
+        builders: &mut std::collections::HashMap<String, String>,
     ) {
         let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
             return;
@@ -19779,12 +19926,15 @@ impl Parser {
         let Some(name) = man.name else { return };
         let entry = man.entry.unwrap_or_else(|| format!("src/{name}.loft"));
         let src = crate::file_access::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
-        let derived = crate::triggers::derive_triggers(&src);
+        let derived = crate::triggers::derive_triggers(&src, &man.trigger_builders);
         for mt in derived.methods {
             map.entry(mt.name).or_insert_with(|| name.clone());
         }
         for t in derived.types {
             types.entry(t).or_insert_with(|| name.clone());
+        }
+        for b in derived.builders {
+            builders.entry(b).or_insert_with(|| name.clone());
         }
     }
 
@@ -19820,6 +19970,28 @@ impl Parser {
     #[cfg(not(feature = "registry"))]
     #[allow(clippy::unused_self)]
     fn catalog_trigger_map(&mut self) -> std::collections::HashMap<String, String> {
+        std::collections::HashMap::new()
+    }
+
+    /// The builder half of the catalog fallback (`function -> package`), from the same
+    /// sidecar as [`Self::catalog_trigger_map`]: what lets a bare `set(words)` reach a
+    /// package the user has not declared.
+    #[cfg(feature = "registry")]
+    fn catalog_builder_map(&mut self) -> std::collections::HashMap<String, String> {
+        if let Some(m) = &self.auto_use_catalog_builders {
+            return m.clone();
+        }
+        let map: std::collections::HashMap<String, String> =
+            crate::registry_index::catalog_builder_map()
+                .into_iter()
+                .collect();
+        self.auto_use_catalog_builders = Some(map.clone());
+        map
+    }
+
+    #[cfg(not(feature = "registry"))]
+    #[allow(clippy::unused_self)]
+    fn catalog_builder_map(&mut self) -> std::collections::HashMap<String, String> {
         std::collections::HashMap::new()
     }
 
@@ -19888,6 +20060,7 @@ impl Parser {
         };
 
         let mut f = Self::probe_project_lib(id);
+        self.probe_own_package(id, cur_dir, &mut f);
         if blocked(&f) {
             f = format!("{id}.loft");
         }
@@ -20844,6 +21017,46 @@ impl Parser {
         } else {
             format!("{id}.loft")
         }
+    }
+
+    /// loft#2010 — the package this file is in answers for its own NAME, first: `use <id>`
+    /// where `<id>` is its `[package] name` binds its own entry.
+    ///
+    /// A package is identified by its manifest's NAME, never by the directory it sits in.
+    /// Before this probe the only route from a package's `tests/` to its own entry was the
+    /// sibling probe, `<parent>/<id>/src/<id>.loft`, which finds the package itself only
+    /// when its directory happens to be named `<id>`.  In a checkout called anything else
+    /// the name fell through to whatever else answered to it — the installed registry
+    /// copy, or a neighbouring directory called `<id>` — and the suite ran against that
+    /// instead, green when the API had not changed.  Which CLI spelling ran the tests
+    /// decided it too, since only some of them put the source directory on `--lib`.
+    ///
+    /// Only the package's own NAME, deliberately not every module of its `src/`: binding
+    /// a package's other modules local-first is the precedence change loft#949 measured
+    /// and declined (it rebinds the `graphics` ⟷ `mesh3d` overlap — see
+    /// [`Self::module_name_clash`]).  No other package ships a module under this
+    /// package's own name, so this branch moves nothing that overlap depends on.
+    fn probe_own_package(&mut self, id: &str, cur_dir: &str, f: &mut String) {
+        let Some((root, _)) = self.package_declared_deps(cur_dir) else {
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let manifest_path = root.join("loft.toml");
+        let Some(m) = manifest::read_manifest(&manifest_path.to_string_lossy()) else {
+            return;
+        };
+        if m.name.as_deref() != Some(id) {
+            return;
+        }
+        let Some(candidate) = m
+            .entry_or_default()
+            .map(|e| root.join(e))
+            .filter(|c| crate::file_access::is_file(c))
+        else {
+            return;
+        };
+        *f = candidate.to_string_lossy().into_owned();
+        self.register_native_manifest(&manifest_path, &root);
     }
 
     /// `<dir>/lib/<id>.loft` — a `lib/` directory relative to `dir`
@@ -21816,7 +22029,7 @@ impl Parser {
         // package that uses `lib/server`) lose their native bindings in
         // interpreter mode.
         if let Some(ref stem) = m.native
-            && let Some(path) = crate::extensions::host_native_lib(&pkg_dir, stem)
+            && let Some(path) = crate::native_build::host_native_lib(&pkg_dir, stem)
             && !self.pending_native_libs.contains(&path)
         {
             self.pending_native_libs.push(path);
@@ -22099,7 +22312,7 @@ impl Parser {
         let Some(ref spelled) = m.placement else {
             return;
         };
-        match crate::lib_placement::Placement::parse(spelled) {
+        match crate::manifest::Placement::parse(spelled) {
             Ok(p) if p.is_out_of_process() => {
                 let name = m
                     .name
@@ -22166,7 +22379,7 @@ impl Parser {
         // Pre-built location first, then auto-build from source (one home:
         // `extensions::resolve_native_lib`, shared with the warm-cache load).
         if let Some(ref stem) = m.native
-            && let Some(path) = crate::extensions::host_native_lib(pkg_dir, stem)
+            && let Some(path) = crate::native_build::host_native_lib(pkg_dir, stem)
             && !self.pending_native_libs.contains(&path)
         {
             self.pending_native_libs.push(path);

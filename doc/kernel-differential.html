@@ -3,7 +3,8 @@
      source runs here (the browser kernel) and natively (run_client); both
      must print the identical transcript.  The page throws on mismatch
      (the chromium harness fails on exceptions) and logs DIFFERENTIAL-OK
-     on success.  ?port=N selects the kernel server. -->
+     on success.  ?port=N selects the kernel server; ?refused says nothing
+     listens there, and the transcript is the one a refused connect gives. -->
 <html><head><meta charset="utf-8"><title>kernel differential</title></head>
 <body><script type="module">
 import init, { compile_and_start, resume_frame } from './pkg/loft.js';
@@ -12,9 +13,12 @@ import { createHost } from './loft-rt.js';
 const { host } = createHost();
 globalThis.loftHost = host;
 
-const port = new URLSearchParams(location.search).get('port') || '18095';
-// THE script — byte-identical to the native run's (the test asserts that
-// by generating both from one template; only the port substitutes).
+const params = new URLSearchParams(location.search);
+const port = params.get('port') || '18095';
+const refused = params.has('refused');
+// THE script — byte-identical to the native run's
+// (`differential_client_src` in tests/engine_host_connector.rs): only the port
+// substitutes, and the tick body in the refused case.
 const SRC = `
 use engine_host;
 struct C { saw_sync: boolean not null }
@@ -39,11 +43,15 @@ fn main() {
         println("t:disconnected");
       }
     },
-    fn() { });
+    fn() { ${refused ? 'println("t:tick");' : ''} });
   println("t:exited");
 }
 `;
-const EXPECT = ["t:connected", "t:event 7:hi", "t:sync-ok", "t:disconnected", "t:exited"];
+// A refused connect: the kernel names the server it could not reach and `run_client`
+// returns with no event and no tick — the script's own `t:tick` would show one.
+const EXPECT = refused
+  ? [`engine_host: cannot connect to ${location.hostname}:${port}`, "t:exited"]
+  : ["t:connected", "t:event 7:hi", "t:sync-ok", "t:disconnected", "t:exited"];
 
 await init();
 // compile_and_start + resume_frame = the frame-yield pairing (a yielding
@@ -58,9 +66,11 @@ while (result.running) {
   await new Promise(r => setTimeout(r, 5));
   result = JSON.parse(resume_frame());
   if (result.error) throw new Error('DIFFERENTIAL-CRASH ' + result.error);
-  if (!result.running) output += result.output || '';
+  // Every frame carries what the program printed DURING it, and reading clears it: the
+  // transcript is the sum, not the last frame's share.
+  output += result.output || '';
 }
-const lines = output.split('\n').filter(l => l.startsWith('t:'));
+const lines = output.split('\n').filter(l => l.startsWith('t:') || l.startsWith('engine_host:'));
 if (JSON.stringify(lines) !== JSON.stringify(EXPECT)) {
   throw new Error(`DIFFERENTIAL-MISMATCH got=${JSON.stringify(lines)} want=${JSON.stringify(EXPECT)}`);
 }

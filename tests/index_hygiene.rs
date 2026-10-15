@@ -111,7 +111,52 @@ fn check_index_matches_git() {
         indexed.len()
     );
 
-    let strays: Vec<&&str> = indexed.iter().filter(|p| !carried.contains(**p)).collect();
+    // The language suite's checkout beside this one (loft-lang/loft-suite, @PLN193) is a
+    // second enumeration: its rows carry the directory as a prefix and are checked against
+    // THAT repository's `git ls-files`.  A box without the checkout (CI) cannot judge those
+    // rows, so they are set aside and said so; they are never read as strays of this tree.
+    let suite_dir = std::env::var("LOFT_SUITE_DIR").unwrap_or_else(|_| "../loft-suite".to_string());
+    let suite_prefix = format!("{suite_dir}/");
+    let suite_carried: Option<std::collections::HashSet<String>> = if fa::is_dir(&suite_dir) {
+        let out = loft::platform::process::harness_command("git")
+            .args([
+                "-C",
+                &suite_dir,
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ])
+            .output()
+            .expect("failed to spawn git ls-files for the suite");
+        Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|l| format!("{suite_prefix}{l}"))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let suite_rows = indexed
+        .iter()
+        .filter(|p| p.starts_with(&suite_prefix))
+        .count();
+    if suite_carried.is_none() && suite_rows > 0 {
+        eprintln!(
+            "{suite_rows} indexed path(s) under {suite_prefix} not checked: no suite checkout here"
+        );
+    }
+    let strays: Vec<&&str> = indexed
+        .iter()
+        .filter(|p| {
+            if p.starts_with(&suite_prefix) {
+                suite_carried.as_ref().is_some_and(|c| !c.contains(**p))
+            } else {
+                !carried.contains(**p)
+            }
+        })
+        .collect();
     assert!(
         strays.is_empty(),
         "the index names {} file(s) git does not carry — the enumeration has \
@@ -211,6 +256,12 @@ fn check_new_decisions_are_guarded(index: &str) {
         "library guard(s) cite {dangling:?}, which name no entry in \
          doc/claude/DESIGN_DECISIONS_*.md (index/library_guards.json; `./scripts/idx tag:<tag>`)"
     );
+    // A guard is a test under `tests/` here, or a program of the language suite beside this
+    // tree (@PLN193), a rule cell or an attic program alike: the index carries the suite's
+    // rows under its directory prefix, and a decision whose only guard moved there with the
+    // corpus is still kept.
+    let suite_dir = std::env::var("LOFT_SUITE_DIR").unwrap_or_else(|_| "../loft-suite".to_string());
+    let suite_guard = format!("\"file\":\"{suite_dir}/");
     let unguarded: Vec<&&str> = ids
         .iter()
         .filter(|id| {
@@ -218,7 +269,9 @@ fn check_new_decisions_are_guarded(index: &str) {
             let here = index
                 .lines()
                 .find(|l| l.trim_start().starts_with(&key))
-                .is_some_and(|bucket| bucket.contains("\"file\":\"tests/"));
+                .is_some_and(|bucket| {
+                    bucket.contains("\"file\":\"tests/") || bucket.contains(&suite_guard)
+                });
             let in_a_library = library.iter().any(|tag| *tag == format!("@C{id}"));
             !here && !in_a_library
         })

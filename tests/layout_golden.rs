@@ -169,7 +169,7 @@ fn layout_golden() {
     // full-width `τ` → `τ?` flip (byte-identical `dump`, so invisible to the hash) is
     // ALSO a red diff here + a contract-goldens gate trip. `Nullable` in the corpus
     // makes the pin non-trivial.
-    let schema = loft::schema_sidecar::nullability_schema(&p.data, &roots);
+    let schema = loft::layout_schema::nullability_schema(&p.data, &roots);
     let golden = format!("{dump}=== F9 nullability ===\n{schema}\n");
     let path = golden_path();
 
@@ -437,7 +437,7 @@ fn program_roots_are_the_user_types() {
     p.database = db;
     p.parse_str(CORPUS, "layout_corpus", false);
 
-    let roots: std::collections::BTreeSet<u16> = loft::schema_sidecar::program_roots(&p.data)
+    let roots: std::collections::BTreeSet<u16> = loft::layout_schema::program_roots(&p.data)
         .into_iter()
         .collect();
     let expected: std::collections::BTreeSet<u16> = corpus_roots(&p.data).into_iter().collect();

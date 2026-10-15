@@ -146,3 +146,188 @@ impl Unit {
         }
     }
 }
+
+/// What one corpus chunk did, script by script, against the budget a chunk is allowed.
+///
+/// A chunk is ONE nextest test holding hundreds of programs, so "TIMEOUT" says nothing about
+/// which of them took the time.  This prints a line per program as it finishes (wall and
+/// CPU), and a WATCHDOG prints — the moment the chunk's wall clock passes the budget — the
+/// program still running and the slowest ones so far, which reaches the report even when
+/// nextest kills the test at its limit.  [`Suite::finish`] fails the chunk when its CPU
+/// passed the budget: CPU is the chunk's own work, so the verdict does not depend on what
+/// else the machine runs; `wall ≫ cpu` in the report is contention, `wall ≈ cpu` is work.
+pub struct Suite {
+    name: String,
+    budget: Duration,
+    start: Unit,
+    rows: std::sync::Arc<std::sync::Mutex<Vec<(String, Duration, Duration)>>>,
+    /// The CPU each row is CHARGED against the budget: its own, or a parallel batch's
+    /// divided by the jobs it ran at once ([`Suite::end_parallel`]).
+    charged: std::sync::Arc<std::sync::Mutex<Duration>>,
+    current: std::sync::Arc<std::sync::Mutex<Option<(String, Instant)>>>,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// The budget of one corpus chunk: nextest stops a test at 300 s, and a chunk keeps 80 s of
+/// that to spare.
+pub const CHUNK_BUDGET: Duration = Duration::from_secs(220);
+
+/// The slowest rows, longest first, as report lines.
+fn slowest(rows: &[(String, Duration, Duration)], n: usize) -> String {
+    let mut sorted: Vec<&(String, Duration, Duration)> = rows.iter().collect();
+    sorted.sort_by_key(|r| std::cmp::Reverse(r.2));
+    sorted
+        .iter()
+        .take(n)
+        .map(|(l, w, c)| {
+            format!(
+                "    {:7.1}s cpu {:7.1}s wall  {l}",
+                c.as_secs_f64(),
+                w.as_secs_f64()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl Suite {
+    /// Begin a chunk named `name`, with `budget` and its watchdog.
+    #[must_use]
+    pub fn start(name: &str, budget: Duration) -> Self {
+        let suite = Suite {
+            name: name.to_string(),
+            budget,
+            start: Unit::start(),
+            rows: std::sync::Arc::default(),
+            charged: std::sync::Arc::default(),
+            current: std::sync::Arc::default(),
+            done: std::sync::Arc::default(),
+        };
+        let (rows, current, done) = (
+            suite.rows.clone(),
+            suite.current.clone(),
+            suite.done.clone(),
+        );
+        let label = suite.name.clone();
+        let began = suite.start.wall;
+        std::thread::spawn(move || {
+            while began.elapsed() < budget {
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            if done.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            let running = current.lock().map_or_else(
+                |_| "?".to_string(),
+                |c| match &*c {
+                    Some((l, t)) => format!("{l} (running {:.1}s)", t.elapsed().as_secs_f64()),
+                    None => "nothing".to_string(),
+                },
+            );
+            let rows = rows.lock().map(|r| r.clone()).unwrap_or_default();
+            let cpu: Duration = rows.iter().map(|r| r.2).sum();
+            eprintln!(
+                "{label}: past its {}s budget on the wall clock — {} programs done ({:.1}s cpu \
+                 between them), now running {running}.  Slowest so far:\n{}",
+                budget.as_secs(),
+                rows.len(),
+                cpu.as_secs_f64(),
+                slowest(&rows, 8)
+            );
+        });
+        suite
+    }
+
+    /// `label` begins; the watchdog names it while it runs.
+    pub fn begin(&self, label: &str) -> Unit {
+        if let Ok(mut c) = self.current.lock() {
+            *c = Some((label.to_string(), Instant::now()));
+        }
+        Unit::start()
+    }
+
+    /// `label` is done: print its line, keep its row, and record it for `LOFT_TEST_TIMING`.
+    pub fn end(&self, label: &str, unit: Unit) {
+        self.end_parallel(label, unit, 1);
+    }
+
+    /// [`Suite::end`] for a batch that ran up to `lanes` jobs at once (the native runner's
+    /// parallel `rustc`): its CPU is printed whole and charged to the budget divided by
+    /// `lanes`, the time it holds the chunk on an unloaded machine.
+    pub fn end_parallel(&self, label: &str, unit: Unit, lanes: usize) {
+        let wall = unit.wall.elapsed();
+        let cpu = cpu(Who::Own).saturating_sub(unit.own) + cpu(Who::Kids).saturating_sub(unit.kids);
+        let lanes = u32::try_from(lanes.max(1)).unwrap_or(u32::MAX);
+        if let Ok(mut c) = self.charged.lock() {
+            *c += cpu / lanes;
+        }
+        let shared = if lanes > 1 {
+            format!(
+                " ({lanes} at once: {:.1}s charged)",
+                (cpu / lanes).as_secs_f64()
+            )
+        } else {
+            String::new()
+        };
+        println!(
+            "  {:6.1}s cpu {:6.1}s wall  {label}{shared}",
+            cpu.as_secs_f64(),
+            wall.as_secs_f64()
+        );
+        if let Ok(mut r) = self.rows.lock() {
+            r.push((label.to_string(), wall, cpu));
+        }
+        if let Ok(mut c) = self.current.lock() {
+            *c = None;
+        }
+        unit.finish(label);
+    }
+
+    /// No budget: a run that is not a chunk (the nightly whole corpus) still reports.
+    #[must_use]
+    pub fn unbounded(name: &str) -> Self {
+        Suite::start(name, Duration::from_secs(u64::from(u32::MAX)))
+    }
+
+    /// Close the chunk: print its totals and slowest programs, and answer an error when its
+    /// CPU passed the budget.
+    pub fn finish(self) -> std::io::Result<()> {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let wall = self.start.wall.elapsed();
+        let cpu = cpu(Who::Own).saturating_sub(self.start.own)
+            + cpu(Who::Kids).saturating_sub(self.start.kids);
+        let rows = self.rows.lock().map(|r| r.clone()).unwrap_or_default();
+        // Charged: each row's CPU, a parallel batch's divided by its lanes; what no row holds
+        // (the runner's own setup) is charged whole.
+        let in_rows: Duration = rows.iter().map(|r| r.2).sum();
+        let charged = self.charged.lock().map_or(cpu, |c| *c) + cpu.saturating_sub(in_rows);
+        let report = format!(
+            "{}: {} programs, {:.1}s cpu, {:.1}s charged, {:.1}s wall, budget {}s.  Slowest:\n{}",
+            self.name,
+            rows.len(),
+            cpu.as_secs_f64(),
+            charged.as_secs_f64(),
+            wall.as_secs_f64(),
+            self.budget.as_secs(),
+            slowest(&rows, 8)
+        );
+        println!("{report}");
+        // A platform without `getrusage` reads zero CPU, so it is judged on nothing here.
+        if charged > self.budget {
+            return Err(std::io::Error::other(format!(
+                "over budget — a program that needs this much is wrong, not the budget.\n{report}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Suite {
+    /// A chunk that returns early on a failing program stops its watchdog too.
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}

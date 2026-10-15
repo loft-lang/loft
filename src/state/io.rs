@@ -2130,24 +2130,6 @@ impl State {
         );
     }
 
-    pub fn validate(&mut self) {
-        let tp = self.code::<u16>();
-        let data = self.get_stack::<DbRef>();
-        self.database.validate(&data, tp);
-    }
-
-    pub fn hash_find(&mut self) {
-        let data = self.get_stack::<DbRef>();
-        let (db_tp, key) = self.read_key(true);
-        let res = hash::find(
-            &data,
-            &self.database.allocations,
-            &self.database.types[db_tp as usize].keys,
-            &key,
-        );
-        self.put_stack(res);
-    }
-
     /// Remove one record from a keyed collection.
     ///
     /// `tp`'s [`CLEAR_KEYED_VIEW`] bit says UNLINK ONLY — the same convention
@@ -2248,30 +2230,7 @@ impl State {
     }
 
     pub fn db_from_text(&mut self, val: &str, db_tp: u16) -> DbRef {
-        // @P372: size the target record to the struct, not a fixed 8 words.
-        // The struct is written at `pos: 8` (after the 8-byte record header),
-        // so it needs `8 + size` bytes = `1 + size.div_ceil(8)` words.  The old
-        // fixed `database(8)` (64 bytes) left only 56 bytes for the struct, so
-        // any struct larger than 56 bytes (e.g. 8 `integer` fields = 64 bytes)
-        // overflowed: the tail field's write — notably a vector field's handle
-        // at byte 64 — landed on the ADJACENT block's header, zeroing it.  A
-        // later `claim` then walked the free list into that zero-sized block and
-        // `claim_scan` spun forever (`pos += abs(claim)` never advances; the
-        // `debug_assert_ne!` guard is compiled out in release).  A vector field
-        // made it deterministic because appending its elements triggers exactly
-        // such a `claim`.  Keep a floor of 8 words to preserve the prior slack
-        // for small structs.
-        let words = std::cmp::max(8, 1 + u32::from(self.database.size(db_tp)).div_ceil(8));
-        let db = self.database.database(words);
-        let into = DbRef {
-            store_nr: db.store_nr,
-            rec: db.rec,
-            pos: 8,
-        };
-        self.database.set_final_default_value(db_tp, &into);
-        let err = self.database.parse(val, db_tp, &into);
-        self.database.set_parse_errors(&into, db_tp, err);
-        into
+        self.database.record_from_text(val, db_tp)
     }
 
     pub fn insert_vector(&mut self) {

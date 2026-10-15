@@ -2,4 +2,4 @@
 // Nullable: the RETURN carries `?`, exactly as in the struct pair.
 struct S { a: integer }
 fn view(p: vector<vector<S>>) -> vector<S>? { p[0] }
-fn main() { q: vector<vector<S>> = [[S { a: 7 }]]; v = view(q); println("{len(v ?? [])}"); }
+fn main() { q: vector<vector<S>> = [[S { a: 7 }]]; v = view(q); println("{v[0].a ?? -1}"); }

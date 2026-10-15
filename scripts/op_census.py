@@ -12,12 +12,14 @@ Three populations, and the verdict is which of them an operator appears in:
 
   declared     `fn Op<Name>` in `default/*.loft` — the inventory, in `fill::OPERATORS`
                order (each declaration's position IS its `op_code`)
-  stdlib       operators the stdlib's own compiled bodies emit (one `--all-fns` run)
-  corpus       operators emitted by the USER functions of every `.loft` file
+  stdlib       operators the stdlib's own compiled bodies emit (one carrier program)
+  corpus       operators emitted by every function a `.loft` file compiles OUTSIDE the
+               stdlib: its functions, and its lambdas, methods and drop cascades
 
   live         emitted somewhere — the count says how often
-  unexercised  never emitted, but a site in `src/` names it: reachable code with NO
-               corpus coverage.  A test gap, not a stale operator
+  unexercised  never emitted, but `src/` names it — an emitter with NO corpus coverage
+               (a test gap), or only a reader left behind (trace it before believing
+               either)
   orphan       never emitted and nothing in `src/` names it — the stale candidate
 
 The three tiers matter because only the third is a deletion candidate, and the second
@@ -48,6 +50,12 @@ run VERIFIES itself rather than trusting the pattern — see `_guard`.  An under
 here is a proposal to delete a live operator, which is the one failure that must be
 loud.
 
+The same holds for WHICH FUNCTIONS are read.  A plain `introspect --show-bytecode` lists a
+file's `n_` functions and leaves out its lambdas, methods and drop cascades, so an operator
+emitted only inside a lambda (`OpFreeRefOrHandUp` is one) read as unexercised.  Every run
+therefore asks for `--all-fns` and sorts the functions itself, by the file each
+`byte-code for <file>:` header names; `_guard` refuses a run that read no lambda body.
+
     scripts/op_census.py                 # the report
     scripts/op_census.py --verbose       # every operator with its emission count
     scripts/op_census.py --json          # machine-readable
@@ -73,6 +81,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # Derived from `State::dump_code`'s writer — see the module docstring.  Every optional
 # field is optional HERE too, or the census under-reports in silence.
 INSTR = re.compile(r"^\s*\d+(?:\[\d+\])?: (?:\[\d+\] )?([A-Za-z][A-Za-z0-9]*)\(")
+
+# The header `State::dump_code` writes before each function's instructions, and the files
+# whose functions are the stdlib population rather than a program's own.
+HEADER = "byte-code for "
+STDLIB_FILE = re.compile(r"[/\\]default[/\\][0-9]{2}_[a-z_]+\.loft:")
 
 # `fn OpName(` at the start of a line in the default library.  The declaration ORDER is
 # the opcode numbering (`src/create.rs::generate_code_into`), so this is the inventory
@@ -127,24 +140,31 @@ def corpus_files() -> list[Path]:
     return sorted(files)
 
 
-def emitted_in(binary: Path, target: Path | str, all_fns: bool) -> dict[str, int]:
-    """Operators the compiled bytecode of `target` emits, with counts."""
-    cmd = [str(binary), "introspect", "--show-bytecode"]
-    if all_fns:
-        cmd.append("--all-fns")
-    cmd.append(str(target))
+def emitted_in(binary: Path, target: Path | str, stdlib: bool) -> tuple[dict[str, int], int]:
+    """Operators the compiled bytecode of `target` emits, with counts, for ONE population:
+    the stdlib's own functions (`stdlib`), or every other function the program compiled.
+    Also answers how many lambda bodies were read, for `_guard`."""
+    cmd = [str(binary), "introspect", "--show-bytecode", "--all-fns", str(target)]
     try:
         run = subprocess.run(
             cmd, capture_output=True, text=True, errors="replace", timeout=120
         )
     except subprocess.TimeoutExpired:
-        return {}
+        return {}, 0
     counts: dict[str, int] = {}
+    lambdas = 0
+    counting = False
     for line in run.stdout.splitlines():
+        if line.startswith(HEADER):
+            counting = bool(STDLIB_FILE.search(line)) == stdlib
+            lambdas += counting and ":n___lambda_" in line
+            continue
+        if not counting:
+            continue
         m = INSTR.match(line)
         if m:
             counts[m.group(1)] = counts.get(m.group(1), 0) + 1
-    return counts
+    return counts, lambdas
 
 
 def names_in_src(ops: list[str]) -> dict[str, list[str]]:
@@ -173,7 +193,9 @@ def names_in_src(ops: list[str]) -> dict[str, list[str]]:
     return found
 
 
-def _guard(declared: list[str], emitted: dict[str, int], contributed: int, total: int):
+def _guard(
+    declared: list[str], emitted: dict[str, int], contributed: int, total: int, lambdas: int
+):
     """Prove the run could have failed.  Exits non-zero when the census is not trustworthy.
 
     A census that silently reads nothing, or reads a format it does not understand,
@@ -182,7 +204,9 @@ def _guard(declared: list[str], emitted: dict[str, int], contributed: int, total
       * an emitted name that is not a declared operator means the disassembly format or
         the inventory moved — the pattern above is then measuring something else;
       * no contributing file, or a tree where even `ConstInt` never appears, means the
-        binary or the pattern is wrong rather than the operators being unused.
+        binary or the pattern is wrong rather than the operators being unused;
+      * no lambda body read means the dump is leaving functions out again, and every
+        operator emitted only there would be listed as unused.
     """
     bare = {d[2:] for d in declared}
     unknown = sorted(set(emitted) - bare)
@@ -196,6 +220,12 @@ def _guard(declared: list[str], emitted: dict[str, int], contributed: int, total
         )
     if contributed == 0:
         sys.exit(f"op_census: none of the {total} corpus files produced bytecode")
+    if lambdas == 0:
+        sys.exit(
+            "op_census: no lambda body was read across the whole corpus.\n"
+            "  The tree has lambdas, so the dump is leaving functions out — an operator "
+            "emitted only inside one would be reported as unused."
+        )
     if "ConstInt" not in emitted:
         sys.exit(
             "op_census: `ConstInt` was never emitted across the whole corpus.\n"
@@ -216,7 +246,7 @@ def main() -> int:
         sys.exit("op_census: no operators declared in default/*.loft")
 
     files = corpus_files()
-    # The stdlib's own bodies, once: `--all-fns` dumps every definition, so running it
+    # The stdlib's own bodies, once: every run dumps every definition, so counting them
     # per file would measure the stdlib 3000 times and swamp the per-program answer.
     # The carrier program is written here rather than picked from the corpus: any file
     # taken from the tree may be an error fixture that does not parse, and the stdlib
@@ -224,7 +254,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         carrier = Path(tmp) / "carrier.loft"
         carrier.write_text("fn main() {\n  print(\"x\");\n}\n", encoding="utf-8")
-        stdlib = emitted_in(binary, carrier, True)
+        stdlib, _ = emitted_in(binary, carrier, True)
     if not stdlib:
         sys.exit(
             "op_census: the stdlib probe emitted nothing — a one-line program did not "
@@ -234,8 +264,10 @@ def main() -> int:
 
     corpus: dict[str, int] = {}
     contributed = 0
+    lambdas = 0
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        for counts in pool.map(lambda f: emitted_in(binary, f, False), files):
+        for counts, n in pool.map(lambda f: emitted_in(binary, f, False), files):
+            lambdas += n
             if counts:
                 contributed += 1
             for k, v in counts.items():
@@ -244,7 +276,7 @@ def main() -> int:
     emitted = dict(corpus)
     for k, v in stdlib.items():
         emitted[k] = emitted.get(k, 0) + v
-    _guard(declared, emitted, contributed, len(files))
+    _guard(declared, emitted, contributed, len(files), lambdas)
 
     src_names = names_in_src([d for d in declared if d[2:] not in emitted])
     live, unexercised, orphan = [], [], []
@@ -284,7 +316,7 @@ def main() -> int:
     print(f"  corpus: {contributed} of {len(files)} .loft files produced bytecode\n")
 
     if unexercised:
-        print(f"UNEXERCISED — a site emits it, no program in the tree does ({len(unexercised)}):")
+        print(f"UNEXERCISED — src/ names it, no program in the tree emits it ({len(unexercised)}):")
         for d, where in unexercised:
             print(f"  {d:26s} {', '.join(where[:3])}")
         print()

@@ -170,10 +170,15 @@ fn locate_fresh_brick_buster(root: &Path) -> Option<PathBuf> {
 /// The harness Node script fetches via http:// so file:// CORS rules
 /// don't bite the WebGL2 / WASM imports.
 fn spawn_doc_server(root: &Path, port: u16) -> Option<Child> {
+    spawn_dir_server(&root.join("doc"), port)
+}
+
+/// Serve `dir` over http on `port`, returning once the server accepts connections.
+fn spawn_dir_server(dir: &Path, port: u16) -> Option<Child> {
     let py = which("python3").or_else(|| which("python"))?;
     let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
-        .arg(root.join("doc"))
+        .arg(dir)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -375,6 +380,75 @@ fn html_canvas_is_allocated_at_the_display_resolution() {
         out.status.success(),
         "the canvas is not allocated at the display resolution (loft#1018).\n\
          URL: {url}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+/// The harness runs a gate's page ONCE: the load it observes is the only one.
+///
+/// A page loaded a second time loses the first instance's state — a consumed push, an
+/// open socket, anything the gate's driver had already answered — and its assertions are
+/// then about an instance the driver never spoke to.  The page counts its own loads in
+/// `sessionStorage`, which a tab keeps across a navigation, so the count is what the
+/// harness did to the tab and not what the page believes about itself.
+#[test]
+fn the_harness_loads_the_page_once() {
+    let Some(_chrome) = any_of(&["google-chrome", "chromium", "chromium-browser", "chrome"]) else {
+        eprintln!("SKIP: no chrome binary in PATH");
+        return;
+    };
+    let Some(_node) = which("node") else {
+        eprintln!("SKIP: node not installed");
+        return;
+    };
+    let harness = repo_root().join("tools/html_render_check.mjs");
+    let dir = std::env::temp_dir().join("loft_html_harness_loads_once");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create the page directory");
+    fa::write(
+        dir.join("loads.html"),
+        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>loads</title></head><body>\n\
+         <script>\n\
+         const loads = Number(sessionStorage.getItem('loads') || '0') + 1;\n\
+         sessionStorage.setItem('loads', String(loads));\n\
+         globalThis.loftLoads = loads;\n\
+         </script></body></html>\n",
+    )
+    .expect("write the page");
+    let Some(port) = pick_free_port() else {
+        eprintln!("SKIP: could not pick a free TCP port");
+        return;
+    };
+    let Some(mut server) = spawn_dir_server(&dir, port) else {
+        eprintln!("SKIP: failed to start python http.server");
+        return;
+    };
+    let _server_guard = ServerGuard(&mut server);
+
+    let out = loft::platform::process::harness_command("node")
+        .arg(&harness)
+        .arg(format!("http://127.0.0.1:{port}/loads.html"))
+        .args(["--wait-ms", "5000"])
+        .args(["--ready", "typeof globalThis.loftLoads === 'number'"])
+        .args(["--port", &port.wrapping_add(1).to_string()])
+        .args(["--assert", "globalThis.loftLoads === 1"])
+        .arg("--no-gpu")
+        .output()
+        .expect("invoke node harness");
+    if out.status.code() == Some(2) {
+        eprintln!("SKIP: {}", String::from_utf8_lossy(&out.stderr));
+        return;
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "{}\nstdout:\n{}\nstderr:\n{stderr}",
+        if stderr.contains("ready.timeout") {
+            "the page never ran inside its budget, so nothing was observed about how often \
+             it loads"
+        } else {
+            "the harness loaded the page more than once"
+        },
+        String::from_utf8_lossy(&out.stdout),
     );
 }
 

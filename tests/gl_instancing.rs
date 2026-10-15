@@ -121,7 +121,20 @@ fn instancing_bridge_draws_every_instance() {
     let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
-        .args(["--wait-ms", "3000"])
+        // The probe writes its verdict into `#out`, and the wait polls for it: no
+        // `--wait-ms`, so the ceiling is the harness's own and the gate spends only
+        // what the page needs.
+        .args([
+            "--ready",
+            "document.getElementById('out').textContent !== ''",
+        ])
+        // ⚠ WITHOUT THIS the gate is vacuous.  A failure is a `console.error`, so a
+        // page that has not REACHED its checks when the wait ends — a WebGL context
+        // still starting on a loaded machine — passes by saying nothing.
+        .args([
+            "--assert",
+            "document.getElementById('out').textContent.startsWith('instancing ok')",
+        ])
         .args(["--port", &port.wrapping_add(1).to_string()])
         .output()
         .expect("invoke node harness");

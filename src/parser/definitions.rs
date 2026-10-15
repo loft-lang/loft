@@ -1384,7 +1384,7 @@ impl Parser {
             && self.const_elem_unsupported(elem).is_none()
         {
             Self::sole_vector_literal(self.data.def(d_nr).code(), &self.data).filter(|lit| {
-                blocked = crate::compile::const_vector_blocker(lit, &self.data);
+                blocked = crate::const_literal::const_vector_blocker(lit, &self.data);
                 blocked.is_none()
             })
         } else {
@@ -1928,7 +1928,7 @@ impl Parser {
                     .const_elem_unsupported(elem)
                     .map(|what| format!("has {what}, which a constant cannot hold"))
                     .or_else(|| {
-                        crate::compile::const_vector_blocker(&val, &self.data)
+                        crate::const_literal::const_vector_blocker(&val, &self.data)
                             .map(|what| format!("is built from {what}"))
                     });
                 if let Some(what) = unsupported {
@@ -2577,12 +2577,9 @@ impl Parser {
         // and `debug_assert` are reserved so the language can give them more meaning later, and
         // an error that spelled out the current one would read as a promise not to.
         if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has.clone()
-            && crate::lexer::is_keyword(&word)
+            && crate::lexer::is_keyword(word)
         {
-            if matches!(
-                word.as_str(),
-                "assert" | "panic" | "sizeof" | "debug_assert"
-            ) {
+            if matches!(word, "assert" | "panic" | "sizeof" | "debug_assert") {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -3571,7 +3568,7 @@ impl Parser {
                 let ctx = self.context as usize;
                 let body = self.data.definitions[ctx].code();
                 let fn_name = self.data.definitions[ctx].name();
-                self.vars.debug_dead_store_dump(fn_name, body, &self.data);
+                crate::use_analysis::debug_dead_store_dump(&self.vars, fn_name, body, &self.data);
             }
             // The lints read the body where it lives: `self.vars`, `self.lexer` and
             // `self.data` are disjoint fields, and the `&mut self` lints below borrow it
@@ -3991,7 +3988,7 @@ impl Parser {
                 let name = self.vars.name(v);
                 !self.vars.is_argument(v) && !name.starts_with('_') && !name.contains('#')
             })
-            .nth(crate::limits::LIMIT as usize)
+            .nth(self.data.limits.count as usize)
         else {
             return;
         };
@@ -4009,7 +4006,7 @@ impl Parser {
             &format!(
                 "`{fn_name}` binds more than {} variables — `{name}` is one more; move part of \
                  the work into a function of its own",
-                crate::limits::LIMIT
+                self.data.limits.count
             ),
         );
     }
@@ -4311,13 +4308,13 @@ impl Parser {
             self.pending_param_facts
                 .push(std::mem::take(&mut self.type_fact));
             // `crate::limits`: a function takes at most 300 parameters.
-            if arguments.len() == crate::limits::LIMIT as usize && self.first_pass {
+            if arguments.len() == self.data.limits.count as usize && self.first_pass {
                 self.lexer.pos_diagnostic(
                     Level::Error,
                     &name_pos,
                     &format!(
                         "`{fn_name}` takes more than {} parameters — pass a struct instead",
-                        crate::limits::LIMIT
+                        self.data.limits.count
                     ),
                 );
             }
@@ -4948,12 +4945,12 @@ impl Parser {
             // codegen needs the host field offset.  Mirrors the
             // `sub_type` tuple arm below.  Idempotent.
             // `crate::limits`: a tuple holds at most 300 elements.
-            if types.len() > crate::limits::LIMIT as usize && !self.first_pass {
+            if types.len() > self.data.limits.count as usize && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "a tuple holds at most {} elements, this type has {} — use a struct",
-                    crate::limits::LIMIT,
+                    self.data.limits.count,
                     types.len()
                 );
             }
@@ -6028,14 +6025,14 @@ impl Parser {
             self.init_field_deps.clear();
             field_at.push((a_name.clone(), field_pos));
             // `crate::limits`: a struct holds at most 300 fields.
-            if field_at.len() == crate::limits::LIMIT as usize + 1 && self.first_pass {
+            if field_at.len() == self.data.limits.count as usize + 1 && self.first_pass {
                 self.lexer.pos_diagnostic(
                     Level::Error,
                     &field_pos,
                     &format!(
                         "a struct holds at most {} fields — `{a_name}` is one more; group some \
                          of them into a struct of their own",
-                        crate::limits::LIMIT
+                        self.data.limits.count
                     ),
                 );
             }
@@ -6829,7 +6826,7 @@ impl Parser {
                         // C132, Q13 (@PLN182) — a member is spelled as the definition that
                         // meets it: `op ⊕` is refused, naming the `operator` member to write.
                         if !self.first_pass && !self.default {
-                            let cure = match tok.as_str() {
+                            let cure = match tok {
                                 "<" | "<=" | ">" | ">=" => {
                                     "`operator compare(self: Self, other: Self) -> Ordering`"
                                 }
@@ -6854,7 +6851,7 @@ impl Parser {
                                  is spelled {cure}"
                             );
                         }
-                        format!("Op{}", rename(&tok))
+                        format!("Op{}", rename(tok))
                     }
                 } else {
                     if !self.first_pass {

@@ -144,6 +144,18 @@ heavy-serial = { max-threads = 1 }
 heavy-wide = { max-threads = 6 }
 html-wasm-wide = { max-threads = 4 }
 
+# A test that spawns a worker pool of its own declares those workers HERE, so nextest counts
+# them against the run's thread budget — and the pool is sized to the same number
+# (`tests/common/lanes.rs`, `UNDER_NEXTEST`; `native::pool_tests_declare_their_lanes_to_nextest`
+# keeps the two in step).  Without it the run multiplies: 24 test slots, each native corpus
+# chunk 24 `rustc`, six of them at once in `heavy-wide`, the drop gate's chunk 24 spawned
+# `loft`s — 184 contending threads hung the box on 2026-10-15 (@PLN193 P0).  A profile.default
+# override, so every profile inherits it; the `test-group` overrides below still decide which
+# group a test runs in — threads-required counts against both the run and the group.
+[[profile.default.overrides]]
+filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir) | test(=native_reference) | test(=native_learn_loft_samples) | test(=native_comparisons) | test(=native_features) | test(=native_limits_at_full_size))) | (binary(ownership_drop_gate) & (test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/) | test(=every_cell_releases_each_resource_once_on_the_interpreter) | test(=the_census_names_the_copy_each_cell_makes) | test(=a_refused_cell_is_a_compile_error_and_a_once_cell_is_not) | test(=every_emitted_copy_of_a_droppable_has_a_lease_verdict))) | (binary(poison_claim) & test(=the_zero_on_claim_census_only_shrinks)) | (binary(features) & test(=features_examples_interpret))'
+threads-required = 8
+
 [[profile.default.overrides]]
 filter = 'binary(html_wasm)'
 test-group = 'html-wasm-serial'
@@ -168,20 +180,27 @@ test-group = 'heavy-serial'
 filter = 'binary(html_wasm)'
 test-group = 'html-wasm-wide'
 
+# The corpus chunks (`native_scripts_NN`) are NOT in the group: their storm is bounded by the
+# `threads-required` they declare (the profile.default override above), which nextest counts
+# against the GROUP as well as the run — in a six-slot group an eight-thread test runs alone,
+# which would serialise the whole corpus at eight lanes.  `@global` keeps them out of the
+# default profile's `heavy-serial` too, which this profile would otherwise inherit.
+[[profile.ci.overrides]]
+filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
+test-group = '@global'
+
 [[profile.ci.overrides]]
 filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native)'
 test-group = 'heavy-wide'
 
 # No per-test raise for the corpus runners: `loft_suite` and `native_scripts` are CHUNKED
-# (`loft_suite_00..07`, `native_scripts_00..31`), each a fixed slice of `tests/scripts`, because a
+# (`loft_suite_00..15`, `native_scripts_00..63`), each a fixed slice of `tests/scripts`, because a
 # test that grows with the corpus meets any ceiling eventually.  `scripts/test_duration_gate.py`
 # holds every test to HALF its limit; the owner rules out raising limits (2026-09-24).
-
-# The drop gate's native leg compiles one binary per cell, so it is a storm-maker too and runs in
-# `heavy-wide` with the others.  It is CHUNKED (`…_on_native_0..3`) and needs no raised ceiling.
-[[profile.ci.overrides]]
-filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
-test-group = 'heavy-wide'
+#
+# The drop gate's native leg compiles one binary per cell, so it is a storm-maker too; it is
+# CHUNKED (`…_on_native_0..15`), needs no raised ceiling, and declares its lanes like the corpus
+# chunks (the `@global` override above).
 
 # The serial critical path starts FIRST.  nextest otherwise runs binaries in listing order, and on
 # the Windows `ci` host (4 cores) the long tests queued behind ~5000 short ones: measured on run
@@ -235,7 +254,7 @@ test-group = 'heavy-serial'
 # It is `ci` with no per-test raise.  It used to give `loft_suite` 1800 s: under
 # `-Zsanitizer=address` that one test ran every corpus program and was the whole leg's clock —
 # 577.5 s of 600 s at 1356 scripts, killed at 1371 (loft#1527).  The corpus is chunked now
-# (`loft_suite_00..07`), so each chunk is an eighth of that and the ceiling is the hang guard
+# (`loft_suite_00..15`), so each chunk is a sixteenth of that and the ceiling is the hang guard
 # again, not a budget the corpus grows into.
 [profile.sanitizer]
 # No run-wide cap: profiles inherit `[profile.default]`, not each other, so without this line
@@ -320,6 +339,11 @@ slow-timeout   = { period = "300s", terminate-after = 1 }
 [[profile.fast.overrides]]
 filter = 'binary(html_wasm)'
 test-group = 'html-wasm-wide'
+
+# As in `ci`: the chunks that declare their lanes stay out of the group.
+[[profile.fast.overrides]]
+filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/))'
+test-group = '@global'
 
 [[profile.fast.overrides]]
 filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'

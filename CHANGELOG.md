@@ -113,6 +113,14 @@ write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is r
 
 ### New
 
+**A library can offer a few functions by their bare name.**  A library that auto-loads
+(`[triggers]` in its manifest) could already be reached by one of its methods or types with
+no `use`; it can now list *builders* — `builders = ["set"]` — and a bare `set(words)` in your
+program loads it and brings in that one name.  Your own `fn set` always wins, and
+`script::set(…)` reaches the library's whatever you defined.  Nothing else from the library
+enters your namespace, and a listed name the library does not declare as a free `pub fn` is
+ignored (`loft publish` says so).
+
 **A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
 1 and a message.  Under `loft test` it fails the test that called it, naming the code.
@@ -174,6 +182,23 @@ git do.
 
 ### Bug fixes
 
+**A program in a browser page learns that its server is gone.**  `engine_host::run_client`
+returns once the server connection closes, after the disconnect event (`kind` 2) has reached
+`on_event`.  It did so in a desktop program and never in a browser page: a page whose server
+had stopped kept running, received no event and printed nothing.  The same holds for a server
+that was never there: the page now prints `engine_host: cannot connect to <host>:<port>` and
+`run_client` returns, as on the desktop, where it used to wait for ever.  In a browser page
+`on_tick` no longer runs before the connection is up.
+
+**Installing a package no longer fails for a few minutes after the registry is updated.**
+`loft install`, `loft update`, `loft search` and a program's first `use` of a registry
+package could stop with *registry index signature INVALID* right after any library was
+published, and work again a few minutes later.  The package list and its signature were two
+downloads, and the host could serve a new list beside the previous signature.  Both are now
+read from one fixed state of the registry.  With a mirror (`LOFT_REGISTRY_URL`) that offers no
+such state, the message says the two files may be from different moments and to run the
+command again.
+
 **Operands are evaluated left to right, also around a call that answers a vector or a
 record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and
 `c.n + made(c).v` read `c.n` after `made` had changed it, on both backends.  Each operand now
@@ -190,9 +215,58 @@ accepted, and `vector<text>.parse` printed its texts with their quotes.
 `fn load(t: text) -> Shape { Shape.parse(t) }` compiled, and its result could not be bound,
 stored in a vector or a field, or passed on: "cannot change type from Shape to Shape".
 
+**Live reload reaches a function that returns or takes a nullable value.**  Under
+`loft --native` with live reload, a function such as `fn find(v: vector<S>, i: integer) -> S?`
+or `fn score(s: S?) -> integer` stayed on its compiled body: an edit to it was never picked
+up, and it could not be handed to the debugger.  It is now treated as its non-nullable twin
+is.  A small record returned by value (`fn make(n: integer) -> P`) crashed the program when
+such a function was handed to the interpreter; that is fixed with it.
+
+**A local that was given `null` after a struct literal releases its record.**  This is
+visible only as memory: `p = S { … }; if done { p = null; }` kept the record until the
+function ended on one build path and now releases it on every path.
+
 **A null test narrows a nullable struct-enum.**  Inside `if s != null { area(s) }`, and on the
 else side of `if s == null`, a `Shape?` is a `Shape`: the call was reported as storing a
 nullable into a non-null parameter, where the same code over a struct was not.
+
+**A function that returns a record from an `if` with a `match` inside compiles with
+`--native`.**  `fn pick(p: vector<S>, c: integer) -> S { if c == 0 { S { a: 1 } } else { match p
+{ [a, ..] => a, _ => S { a: 5 } } } }` ran on the interpreter and stopped the native build
+with a Rust type error.
+
+**A `null` handed to a non-nullable record parameter is still `null` when it comes back,
+under `--native`.**  `fn keep(p: Point) -> Point? { p }` called as `keep(null)` — which the
+compiler warns about — answered a `Point` that was not `null`, with every field null, in a
+compiled program, and `null` in an interpreted one.  The same happened when the parameter was
+one arm of an `if` or a `match`, and when it went through a second function first.  Both now
+answer `null`.
+
+**A copy of a `null` is `null`.**  A `null` handed to a non-nullable record parameter (which
+the compiler warns about) and then copied — `q = p`, or returned through a local — became a
+record whose fields were all zero, in both interpreted and compiled programs.  The copy is now
+`null`, as the parameter is.  A vector element or an inline field cannot be `null`: storing
+such a value into one still writes nothing.
+
+**A returned field of a record that is `null` is `null`.**  `o = f(x); return o.inner` answered
+a record of zeros when `o` was `null` and the returned record held only numbers, or when `o`
+was declared `O?`.  It answers `null`, as reading `o.inner.a` already did.
+
+**A drop hook runs once when a function returns a nullable local.**  With `fn OpDrop` defined
+for `H`, a function declared `-> H?` that returned a local declared `H?` ran the hook twice
+for one record: once inside the function, before the caller had read the result, and once
+when the caller let go of it.  The same function written with `H` ran it once; both do now.
+
+**A parameter of type `S?` is passed as fast as one of type `S`.**  This is visible only as
+speed, under `--native`: a small record without text or collections crosses a call as its
+fields, and a `p: S?` now does so too, with one extra flag that says whether it is there.
+
+**A function returning `S?` is as fast as one returning `S`, in more shapes.**  This is
+visible only as speed, under `--native`.  A function that returns a small record without
+text or collections hands its fields back directly.  A `-> S?` did that only when every way
+out built the record or answered `null`; one that also handed back an element of a vector, a
+parameter, or the result of a `-> S` function went through a buffer, with a copy and a release
+per call.  It now takes the direct route its `-> S` twin takes.
 
 ---
 

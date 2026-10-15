@@ -986,9 +986,6 @@ fn OpLeText(v1: text, v2: text) -> boolean;
 fn OpFormatText(pos: const u16, val: text, width: integer, dir: const i8, token: const u8);
 fn OpFormatStackText(pos: const u16, val: text, width: integer, dir: const i8, token: const u8);
 fn OpAppendCharacter(pos: const u16, v1: character);
-fn OpTextCompare(v1: text, v2: character) -> i32;
-fn OpCastCharacterFromInt(v1: i32) -> character;
-#rust"if let Some(c) = char::from_u32(@v1 as u32) {{ c }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); char::from(0) }}"
 fn OpConvIntFromCharacter(v1: character) -> i32;
 #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
 // `compare` for text and character sits here, after the operators `<` reads for them.
@@ -1529,15 +1526,6 @@ fn OpReplaceVector(r: vector, other: vector, tp: const u16);
 #cold
 #rust"s.database.vector_replace(&@r, &@other, @tp);"
 #impure(parent_write)
-// P213: claim a fresh record in `field`'s Store, deep-copy `src`'s
-// payload + nested heap data into it, write the new rec-id u32 into
-// `field`.  Used by capturing-closure-in-struct-field writes to
-// co-locate the parent-Store closure record in host's Store.
-// `Parts::ChildRec(content_tp)` cascade frees the new record when the
-// host is freed via `OpFreeRef` / `remove_claims`.
-fn OpClaimChildRec(field: reference, src: reference, tp: const u16);
-#rust"s.database.claim_child_rec(&@field, &@src, @tp);"
-#impure(parent_write)
 // P213: read the rec-id u32 stored at `field` and construct a `DbRef`
 // pointing at the child record (rec, pos=8) co-located in the same
 // Store as the host.  Returns the null sentinel when rec==0
@@ -1556,14 +1544,10 @@ fn OpChildRec(field: reference, tp: const u16) -> reference[field];
 #impure(parent_write)
 // Get a record from a structure. This operator also reads a dynamic key from stack (not shown here)
 fn OpGetRecord(data: reference, db_tp: const u16, no_keys: const u8) -> reference[data];
-fn OpValidate(data: reference, db_tp: const u16);
-#cold
 // These types should eventually become unnecessary because of the unified internal database API
 type hash size(4);
 fn OpHashAdd(data: reference, rec: reference, tp: const u16);
 #impure(parent_write)
-fn OpHashFind(data: reference, tp: const u16) -> reference[data];
-#pure
 fn OpHashRemove(data: reference, rec: reference, tp: const u16);
 #cold
 #impure(parent_write)
@@ -1673,9 +1657,6 @@ fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
 fn OpNeBool(v1: boolean, v2: boolean) -> boolean;
 #rust"@v1 != @v2"
 // --- Output and Diagnostics ---
-fn OpPanic(message: text);
-#cold
-#rust"panic!(\"{{}}\", @message);"
 /// Panics with message if test is false. Use to verify invariants during development.
 /// In production mode (--production), logs an error instead of aborting.
 /// The file and line are injected by the compiler; do not pass them manually.
@@ -1711,7 +1692,7 @@ pub fn log_fatal(message: text, file: text, line: integer);
 #impure(host_io)
 fn OpPrint(v1: text);
 #cold
-#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\nif !crate::rpc::print_or_capture(@v1) {{ crate::codegen_runtime::host_print(@v1); }}\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
+#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\ncrate::codegen_runtime::print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
 /// Writes v to standard output without a newline.
 /// Use for progress output and building up a line incrementally.
 pub fn print(v1: text) {

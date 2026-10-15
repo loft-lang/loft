@@ -63,6 +63,7 @@ use crate::database::Stores;
 use crate::host::Value;
 use crate::keys::DbRef;
 use crate::state::State;
+use crate::type_schema::StoreTypeOf;
 use crate::use_analysis::HeapDelivery;
 use std::collections::HashMap;
 use std::sync::Mutex;

@@ -60,15 +60,13 @@ BUILDS = re.compile(r"Value::Call|\bcall\s*\(|\bcl\s*\(|\badd_op\s*\(")
 # short name printed, so several spellings of one fact collapse to one column.
 FACTS = {
     # ⚠ Every NEW home has to be added here in the same commit, or the fold makes its own
-    # caller invisible to this audit: `owns_displaced_store` dropped out of table A entirely
-    # the moment it started calling `proxy_says_owned_or_arg`, because no fact matched it any
-    # more.  Third time today an instrument went quiet on a fold — the rule is in
-    # IMPLEMENTATIONS.md and it applies to this script as much as to `o_proxy_check.py`.
-    r"\bproxy_says_owned_or_arg\b": "proxy+veto",  # the pair, widened by a single-arg borrow
+    # caller invisible to this audit: a function that calls a home no fact here names drops
+    # out of table A entirely.  The rule is in IMPLEMENTATIONS.md and it applies to this
+    # script as much as to `o_proxy_check.py`.
     r"\bis_marked_vector_borrow\b": "proxy+veto",  # the pair's complement
     r"\bproxy_says_owned\b": "proxy+veto",         # @FR-O-Proxy + @FR-O-Override, folded
     r"\bowns_freeable_store\b": "sweep-licence",   # the pair + the parameter carve-out
-    r"\bowns_displaced_store\b": "displaced",      # the pair, widened by borrows_one_argument
+    r"\bowns_displaced_store\b": "displaced",      # the pair, asked at a reassignment
     r"\bdepend\(\)\.is_empty\(\)": "proxy",        # @FR-O-Proxy, written out
     r"\bdep\.is_empty\(\)|\bdeps\.is_empty\(\)": "proxy",
     r"\bis_skip_free\b": "veto",                   # @FR-O-Override
@@ -87,7 +85,7 @@ FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn\s+([a-z_][a-z0-9_
 # Functions that BUILD a free node and decide nothing — their licence is at every caller.
 HELPERS = {"release_witness", "call", "cl"}
 # The named homes for a free-licence notion.  Each spells the facts because it IS the home.
-HOMES = {"proxy_says_owned", "proxy_says_owned_or_arg", "is_marked_vector_borrow"}
+HOMES = {"proxy_says_owned", "is_marked_vector_borrow"}
 # Functions that spell the pair and have a REASON to, read one at a time.  The point of naming
 # them is that the residue becomes actionable: a copy with no entry here is debt, and a NEW one
 # stands out instead of joining a list of seven that everyone has stopped reading.

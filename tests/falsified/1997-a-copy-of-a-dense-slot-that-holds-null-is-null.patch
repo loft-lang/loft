@@ -1,0 +1,39 @@
+diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
+index d4bbfc90a..66b47a1d8 100644
+--- a/src/generation/dispatch.rs
++++ b/src/generation/dispatch.rs
+@@ -1894,7 +1894,7 @@ impl Output<'_> {
+                 let target = copy_target(&format!("var_{name}"), first_bind);
+                 write!(
+                     w,
+-                    "if {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
++                    "if false && {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
+                      else {{ var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32); \
+                      OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32); }}"
+                 )?;
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index 2648e7350..848da66a5 100644
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
+@@ -4081,13 +4081,15 @@ impl State {
+         // Every record bind takes it (`@FR-N-Store`, `@FR-N-Road`): the type of neither side
+         // says the source is there — a source typed non-null can hold `nullref`
+         // (`Variables::record_copy_source`).
+-        self.generate(&Value::Var(src), stack, false);
+-        // The slot the opcode POPS into is taken after, at the post-pop position.  Same
+-        // order as the `Join` emission in `generate_set`.
+-        self.push_copy_witness(stack, src);
+-        stack.add_op("OpBindOrCopy", self);
+-        self.code_add(stack.var_pos(v));
++        stack.add_op("OpDatabase", self);
++        self.code_add(slot_offset);
+         self.code_add(tp_nr);
++        let copy_nr = stack.data.def_nr("OpCopyRecord");
++        let copy_val = Value::Call(
++            copy_nr,
++            vec![Value::Var(src), Value::Var(v), Value::Int(i32::from(tp_nr))],
++        );
++        self.generate(&copy_val, stack, false);
+         // @PLN130 — recorded HERE, past the last-use-move return above, so the manifest
+         // claims a copy only where one is actually written.
+         crate::copy_manifest::record(

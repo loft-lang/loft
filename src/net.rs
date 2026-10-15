@@ -56,7 +56,7 @@ pub(crate) fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
 pub(crate) fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
-    crate::registry_index::http_get_bytes(url)
+    http_get_bytes(url)
 }
 
 // ---------------------------------------------------------------------------
@@ -279,4 +279,137 @@ pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
 ))]
 pub(crate) fn fetch_text(_url: &str) -> Option<String> {
     None
+}
+
+/// Default ceiling on a single HTTP response — the registry index, or a package
+/// tarball.  A ceiling has to exist (an unbounded response is an unbounded
+/// allocation), but it must never be reached by SILENCE: the previous 50 MB cap
+/// TRUNCATED the body and handed the caller a short file, which surfaced as
+/// `JSON parse error: unterminated string` at byte 52,428,800 rather than as
+/// "the index is bigger than this loft will read".  That number is compiled into
+/// every released binary, so an index growing past it would have taken the
+/// registry down for every client already in the wild, with nothing the registry
+/// itself could do about it.  Raised, and — the part that matters — turned into a
+/// refusal, so the day it is reached the message names the ceiling and the way
+/// past it.
+#[cfg(feature = "registry")]
+pub const DEFAULT_MAX_DOWNLOAD: u64 = 512 << 20;
+
+/// The download ceiling in bytes, or `0` for none — `LOFT_MAX_DOWNLOAD`
+/// overriding [`DEFAULT_MAX_DOWNLOAD`], written the way a person writes a size
+/// (`1G`, `512M`).  An unparseable value keeps the default and says so: a typo
+/// in a limit must not silently remove the limit.
+#[cfg(feature = "registry")]
+#[must_use]
+pub fn max_download_bytes() -> u64 {
+    let Ok(v) = std::env::var("LOFT_MAX_DOWNLOAD") else {
+        return DEFAULT_MAX_DOWNLOAD;
+    };
+    if let Some(bytes) = crate::store_budget::parse_limit(&v) {
+        bytes
+    } else {
+        eprintln!(
+            "loft: LOFT_MAX_DOWNLOAD='{v}' is not a size (try 1G, 512M or 0) — \
+             keeping the default {}",
+            crate::store_budget::human(DEFAULT_MAX_DOWNLOAD)
+        );
+        DEFAULT_MAX_DOWNLOAD
+    }
+}
+
+/// Read a whole response body, REFUSING one longer than `limit` bytes (`0` = no
+/// limit) rather than truncating it.  Reads one byte past the ceiling, so a body
+/// exactly at it still passes and the first byte over is what trips the refusal.
+/// The message leaves the URL to the caller, which already names it.
+#[cfg(feature = "registry")]
+pub(crate) fn read_capped(reader: impl std::io::Read, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let ceiling = if limit == 0 {
+        u64::MAX
+    } else {
+        limit.saturating_add(1)
+    };
+    let mut buf = Vec::new();
+    reader
+        .take(ceiling)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("read body: {e}"))?;
+    if limit != 0 && u64::try_from(buf.len()).unwrap_or(u64::MAX) > limit {
+        return Err(format!(
+            "response is larger than the {} download ceiling — refusing it rather \
+             than handing back a truncated file; raise the ceiling with \
+             LOFT_MAX_DOWNLOAD=<size> (e.g. 1G, or 0 for no ceiling)",
+            crate::store_budget::human(limit)
+        ));
+    }
+    Ok(buf)
+}
+
+/// Fetch `url` in full.  A `file://` URL reads the local path directly and is not
+/// subject to the download ceiling — nothing about a local mirror is unbounded in
+/// the way a remote response is.
+#[cfg(feature = "registry")]
+pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
+    http_get_within(url, CONNECT_BOUND, DOWNLOAD_BOUND).map_err(Miss::message)
+}
+
+/// How long a download may take to connect, and to finish.
+#[cfg(feature = "registry")]
+pub(crate) const CONNECT_BOUND: std::time::Duration = std::time::Duration::from_secs(15);
+#[cfg(feature = "registry")]
+pub(crate) const DOWNLOAD_BOUND: std::time::Duration = std::time::Duration::from_mins(1);
+
+/// Why a request answered no bytes.  Only one of the two says anything about the file:
+/// a host that answers "not there" has spoken for it, a request that got no usable
+/// answer has not.
+#[cfg(feature = "registry")]
+#[derive(Debug)]
+pub(crate) enum Miss {
+    /// The host answered that it does not serve this address (403, 404, 410), or a
+    /// `file://` path could not be read.
+    Absent(String),
+    /// No connection, a timeout, any other status, or a body over the download ceiling.
+    Failed(String),
+}
+
+#[cfg(feature = "registry")]
+impl Miss {
+    pub(crate) fn message(self) -> String {
+        match self {
+            Miss::Absent(why) | Miss::Failed(why) => why,
+        }
+    }
+}
+
+/// [`http_get_bytes`] with the caller's own bounds on connecting and on the whole
+/// exchange, telling a file the host does not have from a request that failed.
+#[cfg(feature = "registry")]
+pub(crate) fn http_get_within(
+    url: &str,
+    connect: std::time::Duration,
+    whole: std::time::Duration,
+) -> Result<Vec<u8>, Miss> {
+    // @PLAN12 Phase 6.11 — support `file://` URLs for offline
+    // mirrors + bundle-import-served indexes.  Same contract as the
+    // HTTP path: return the raw bytes at the URL.
+    if let Some(path) = url.strip_prefix("file://") {
+        return crate::file_access::read(path)
+            .map_err(|e| Miss::Absent(format!("file:// read error for {e}")));
+    }
+    let agent = crate::tls::agent_builder()
+        .timeout_connect(connect)
+        .timeout(whole)
+        .build();
+    let response = agent.get(url).call().map_err(|e| {
+        let why = format!("HTTP error: {e}");
+        match e {
+            ureq::Error::Status(403 | 404 | 410, _) => Miss::Absent(why),
+            _ => Miss::Failed(why),
+        }
+    })?;
+    let status = response.status();
+    if !(200..300).contains(&status) {
+        return Err(Miss::Failed(format!("HTTP {status} for {url}")));
+    }
+    read_capped(response.into_reader(), max_download_bytes()).map_err(Miss::Failed)
 }

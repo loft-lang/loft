@@ -184,8 +184,9 @@ impl Output<'_> {
         if site {
             self.ap_site_next = None;
         }
-        if !self.ap_requests.contains(&d) {
-            self.ap_requests.push(d);
+        let key = self.dv_key(d);
+        if !self.ap_requests.contains(&key) {
+            self.ap_requests.push(key);
         }
         crate::rewrite_census::fired("R-AppendTwin", 1);
         true
@@ -199,8 +200,9 @@ impl Output<'_> {
             .dest_site_next
             .is_some_and(|(c, at, _)| c == self.current_call_def && at == vals.as_ptr() as usize);
         if dest && let Some((c, _, vo)) = self.dest_site_next.take() {
-            if !self.dest_requests.contains(&(c, vo)) {
-                self.dest_requests.push((c, vo));
+            let key = (self.dv_key(c), vo);
+            if !self.dest_requests.contains(&key) {
+                self.dest_requests.push(key);
             }
             crate::rewrite_census::fired("R-Destination", 1);
         }
@@ -224,8 +226,9 @@ impl Output<'_> {
         }
         self.vr_site_next = None;
         let callee_nr = self.current_call_def;
-        if !self.vr_requests.contains(&callee_nr) {
-            self.vr_requests.push(callee_nr);
+        let key = self.dv_key(callee_nr);
+        if !self.vr_requests.contains(&key) {
+            self.vr_requests.push(key);
         }
         crate::rewrite_census::fired("R-ViewReturn", 1);
         let flag = self.vr_flag_pending.take().unwrap_or_default();
@@ -261,9 +264,9 @@ impl Output<'_> {
         //   - `Cell`  → emit `name(cell, args...)`     (default)
         //   - `None`  → emit `name(args...)`           (no implicit Stores)
         let abi = if *def_fn.code() == Value::Null {
-            crate::codegen_runtime::abi_of(def_fn.name())
+            crate::runtime_abi::abi_of(def_fn.name())
         } else {
-            crate::codegen_runtime::Abi::Cell
+            crate::runtime_abi::Abi::Cell
         };
         // @PLN157 § V-p — the TWIN form (`@FR-R-Inputs`): every invariant input of the callee
         // is a local the enclosing frames hold for the argument variable.  The definition
@@ -327,7 +330,7 @@ impl Output<'_> {
             if dest { "__d" } else { "" }
         )?;
         let mut first_arg = true;
-        if matches!(abi, crate::codegen_runtime::Abi::Cell) {
+        if matches!(abi, crate::runtime_abi::Abi::Cell) {
             write!(w, "cell")?;
             first_arg = false;
         }
@@ -462,8 +465,9 @@ impl Output<'_> {
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
         crate::rewrite_census::fired("R-RefillText", usize::from(twin));
         if twin {
-            if !self.rt_requests.contains(&self.current_call_def) {
-                self.rt_requests.push(self.current_call_def);
+            let key = self.dv_key(self.current_call_def);
+            if !self.rt_requests.contains(&key) {
+                self.rt_requests.push(key);
             }
             return Ok((false, true));
         }
@@ -518,15 +522,44 @@ impl Output<'_> {
         {
             // A fn-ref dispatch's arm is handed `_farg_N`, which the dispatch already bound to
             // the tuple (`@FR-R-FnRefValue`).
-            if matches!(v.unspan(), Value::RawExpr(_))
-                || super::hoist::tuple_arg_ready(
-                    v,
-                    tp,
-                    &self.value_records.fns,
-                    &self.value_record_locals,
-                )
-            {
+            if matches!(v.unspan(), Value::RawExpr(_)) {
                 return self.output_code_inner(w, v);
+            }
+            // `@FR-N-Road` — a NULLABLE tuple parameter takes the fields and then whether the
+            // argument is there (`@FR-N-Store`: a null handed in is absent in the callee).
+            let presence = self
+                .value_records
+                .types
+                .get(&tp)
+                .and_then(super::hoist::ValueTuple::presence);
+            // A `null` argument — written, or a parameter's default — is the absent tuple:
+            // every field's null, and for a nullable parameter the presence word `false`.
+            if (matches!(v.unspan(), Value::Null) || super::hoist::is_null_sentinel(self.data, v))
+                && let Some(layout) = self.value_records.types.get(&tp)
+            {
+                let absent = layout.absent();
+                return write!(w, "{absent}");
+            }
+            match super::hoist::arg_tuple_form(
+                self.data,
+                self.def_nr,
+                &self.value_records,
+                &self.value_record_locals,
+                v,
+                tp,
+            ) {
+                Some(false) => return self.output_code_inner(w, v),
+                // A surely present dense tuple, widened.
+                Some(true) => {
+                    write!(w, "{{ let __wd = ")?;
+                    self.output_code_inner(w, v)?;
+                    write!(w, "; (")?;
+                    for i in 0..presence.unwrap_or(0) {
+                        write!(w, "__wd.{i}, ")?;
+                    }
+                    return write!(w, "true) }}");
+                }
+                None => {}
             }
             // A record VARIABLE is read field by field as the variable — so a `(R-RecPtr)`
             // view reads through its held address, as the callee's own reads would have.
@@ -536,11 +569,31 @@ impl Output<'_> {
                 || super::hoist::sub_record(self.data, v)
                     .is_some_and(|(root, _, _)| self.value_record_locals.contains_key(&root))
             {
-                return self.output_record_tuple(w, tp, v);
+                let Some(n) = presence else {
+                    return self.output_record_tuple(w, tp, v);
+                };
+                write!(w, "{{ let __wd = ")?;
+                self.output_record_tuple(w, tp, v)?;
+                write!(w, "; (")?;
+                for i in 0..n {
+                    write!(w, "__wd.{i}, ")?;
+                }
+                write!(w, "(")?;
+                self.output_code_inner(w, v)?;
+                return write!(w, ").rec != 0) }}");
             }
             write!(w, "{{ let __tp: DbRef = ")?;
             self.output_code_inner(w, v)?;
             write!(w, "; ")?;
+            if let Some(n) = presence {
+                write!(w, "let __wd = ")?;
+                self.output_record_tuple(w, tp, &Value::RawExpr("__tp".to_string()))?;
+                write!(w, "; (")?;
+                for i in 0..n {
+                    write!(w, "__wd.{i}, ")?;
+                }
+                return write!(w, "__tp.rec != 0) }}");
+            }
             self.output_record_tuple(w, tp, &Value::RawExpr("__tp".to_string()))?;
             return write!(w, " }}");
         }
@@ -879,11 +932,7 @@ impl Output<'_> {
         if def_fn.name() == "OpSetText"
             && !self.text_set_copy_kept
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
-            && match vals.get(vi).map(Value::unspan) {
-                Some(Value::Text(_)) => true,
-                Some(Value::Var(v)) => self.text_owned(*v),
-                _ => false,
-            }
+            && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v))
         {
             res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
         }
@@ -900,11 +949,7 @@ impl Output<'_> {
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
             let borrowed = !self.text_set_copy_kept
-                && match vals.get(vi).map(Value::unspan) {
-                    Some(Value::Text(_)) => true,
-                    Some(Value::Var(v)) => self.text_owned(*v),
-                    _ => false,
-                };
+                && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v));
             res = if matches!(vals.get(vi), Some(Value::Null)) {
                 "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
             } else if borrowed {
@@ -924,11 +969,7 @@ impl Output<'_> {
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
             let borrowed = !self.text_set_copy_kept
-                && match vals.get(vi).map(Value::unspan) {
-                    Some(Value::Text(_)) => true,
-                    Some(Value::Var(v)) => self.text_owned(*v),
-                    _ => false,
-                };
+                && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v));
             res = if matches!(vals.get(vi), Some(Value::Null)) {
                 "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
             } else if borrowed {

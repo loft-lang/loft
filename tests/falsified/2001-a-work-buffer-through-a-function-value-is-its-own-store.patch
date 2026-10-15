@@ -1,0 +1,20 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -1785,7 +1785,6 @@
+                 .enumerate()
+                 .filter(|(_, a)| {
+                     a.hidden
+-                        && !a.work_buffer
+                         && matches!(
+                             a.typedef,
+                             Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+@@ -1815,7 +1814,7 @@
+             // Per wrapper type, how many of this candidate's work buffers came before.
+             let mut lent: Vec<(u16, u32)> = Vec::new();
+             for a in &candidate_def.attributes {
+-                if a.hidden && a.work_buffer {
++                if a.hidden && a.work_buffer && candidate_def.attributes.is_empty() {
+                     // `@FR-R-WorkBuffer`'s function-value clause — a work buffer is NOT the
+                     // return buffer: handed that store, the candidate's scratch vector and
+                     // its result were one vector record (loft#2001).  It takes a store of

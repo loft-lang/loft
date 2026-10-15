@@ -1,19 +1,5 @@
-diff --git a/src/database/mod.rs b/src/database/mod.rs
-index 966e2802e..93c6e016c 100644
---- a/src/database/mod.rs
-+++ b/src/database/mod.rs
-@@ -81,9 +81,6 @@ pub struct ParallelCtx {
-     pub stack_trace_lib_nr: u16,
-     /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
-     pub frame_headroom: Arc<Vec<u32>>,
--    /// The running program's constant table (`State::const_refs`), handed to every worker
--    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
--    pub const_refs: Arc<Vec<DbRef>>,
- }
- 
- impl ParallelCtx {
 diff --git a/src/live_dispatch.rs b/src/live_dispatch.rs
-index 4683c85d9..2cf12a59e 100644
+index 63a9a6376..d009b4e34 100644
 --- a/src/live_dispatch.rs
 +++ b/src/live_dispatch.rs
 @@ -212,7 +212,6 @@ fn bootstrap_core(
@@ -24,39 +10,11 @@ index 4683c85d9..2cf12a59e 100644
      }));
      crate::crash_report::set_source_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
  
-diff --git a/src/native.rs b/src/native.rs
-index fa707097c..124dc0663 100644
---- a/src/native.rs
-+++ b/src/native.rs
-@@ -1867,7 +1867,6 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
-                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
-                 data_ptr: ctx.data.clone(),
-                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
--                const_refs: Arc::clone(&ctx.const_refs),
-                 frame_headroom: Arc::clone(&ctx.frame_headroom),
-                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
-             },
-@@ -2047,7 +2046,6 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
-             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
-             data_ptr: ctx.data.clone(),
-             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
--            const_refs: Arc::clone(&ctx.const_refs),
-             frame_headroom: Arc::clone(&ctx.frame_headroom),
-             line_numbers: Arc::new(std::collections::BTreeMap::new()),
-         };
-@@ -2293,7 +2291,6 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
-                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
-                 data_ptr: ctx.data.clone(),
-                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
--                const_refs: Arc::clone(&ctx.const_refs),
-                 frame_headroom: Arc::clone(&ctx.frame_headroom),
-                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
-             },
 diff --git a/src/parallel.rs b/src/parallel.rs
-index f0f6dba83..ea9d317ab 100644
+index 407aeaf71..2cc1e9008 100644
 --- a/src/parallel.rs
 +++ b/src/parallel.rs
-@@ -63,11 +63,6 @@ pub struct WorkerProgram {
+@@ -76,11 +76,6 @@ pub struct WorkerProgram {
      /// `&Data` held by the spawning frame, which outlives `thread::scope`.
      pub data_ptr: crate::data_ref::DataRef,
      pub fn_positions: Arc<Vec<u32>>,
@@ -68,7 +26,7 @@ index f0f6dba83..ea9d317ab 100644
      /// `@FR-R-FrameHeadroom` — the parent's per-function frame heights: a worker pushes
      /// frames of the same functions, through the same direct-path operators.
      pub frame_headroom: Arc<Vec<u32>>,
-@@ -111,7 +106,6 @@ impl WorkerProgram {
+@@ -124,7 +119,6 @@ impl WorkerProgram {
          state.fn_positions.clone_from(&*self.fn_positions);
          state.frame_headroom = Arc::clone(&self.frame_headroom);
          state.line_numbers = (*self.line_numbers).clone();
@@ -76,11 +34,49 @@ index f0f6dba83..ea9d317ab 100644
          state
      }
  }
+@@ -1583,9 +1577,6 @@ pub struct ParallelCtx {
+     pub stack_trace_lib_nr: u16,
+     /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
+     pub frame_headroom: Arc<Vec<u32>>,
+-    /// The running program's constant table (`State::const_refs`), handed to every worker
+-    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+-    pub const_refs: Arc<Vec<DbRef>>,
+ }
+ 
+ impl ParallelCtx {
+diff --git a/src/parallel_natives.rs b/src/parallel_natives.rs
+index a497e3e1c..5f726a636 100644
+--- a/src/parallel_natives.rs
++++ b/src/parallel_natives.rs
+@@ -196,7 +196,6 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
+                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+                 data_ptr: ctx.data.clone(),
+                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+-                const_refs: Arc::clone(&ctx.const_refs),
+                 frame_headroom: Arc::clone(&ctx.frame_headroom),
+                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
+             },
+@@ -372,7 +371,6 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
+             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+             data_ptr: ctx.data.clone(),
+             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+-            const_refs: Arc::clone(&ctx.const_refs),
+             frame_headroom: Arc::clone(&ctx.frame_headroom),
+             line_numbers: Arc::new(std::collections::BTreeMap::new()),
+         };
+@@ -616,7 +614,6 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
+                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+                 data_ptr: ctx.data.clone(),
+                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+-                const_refs: Arc::clone(&ctx.const_refs),
+                 frame_headroom: Arc::clone(&ctx.frame_headroom),
+                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
+             },
 diff --git a/src/state/debug.rs b/src/state/debug.rs
-index fbb0a9796..6700a9024 100644
+index ef1fc8899..0af4d2801 100644
 --- a/src/state/debug.rs
 +++ b/src/state/debug.rs
-@@ -1939,7 +1939,6 @@ pub(super) fn execute_log_impl(
+@@ -1942,7 +1942,6 @@ pub(super) fn execute_log_impl(
          library: &raw const state.library,
          stack_trace_lib_nr: stk_lib_nr,
          frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
@@ -89,10 +85,10 @@ index fbb0a9796..6700a9024 100644
      // `LOFT_LOG=poison_free`: wire the runtime flag into the Stores so
      // every `free_named` overwrites the freed buffer with 0xDEADBEEF.
 diff --git a/src/state/mod.rs b/src/state/mod.rs
-index 5faafb02e..76ac97fdf 100644
+index f3b9c5cb4..8faff5159 100644
 --- a/src/state/mod.rs
 +++ b/src/state/mod.rs
-@@ -3441,7 +3441,6 @@ impl State {
+@@ -3433,7 +3433,6 @@ impl State {
              stack_trace_lib_nr: self.stack_trace_lib_nr,
              data_ptr: self.data_ptr.clone(),
              fn_positions: Arc::new(self.fn_positions.clone()),
@@ -100,7 +96,7 @@ index 5faafb02e..76ac97fdf 100644
              frame_headroom: Arc::clone(&self.frame_headroom),
              line_numbers: Arc::new(self.line_numbers.clone()),
          };
-@@ -7061,7 +7060,6 @@ impl State {
+@@ -7053,7 +7052,6 @@ impl State {
              data: data_ptr,
              stack_trace_lib_nr: stk_lib_nr,
              frame_headroom: Arc::clone(&self.frame_headroom),
@@ -108,7 +104,7 @@ index 5faafb02e..76ac97fdf 100644
          }));
  
          self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
-@@ -8344,7 +8342,6 @@ impl State {
+@@ -8336,7 +8334,6 @@ impl State {
              stack_trace_lib_nr,
              data_ptr: self.data_ptr.clone(),
              fn_positions: Arc::new(self.fn_positions.clone()),
@@ -116,7 +112,7 @@ index 5faafb02e..76ac97fdf 100644
              frame_headroom: Arc::clone(&self.frame_headroom),
              line_numbers: Arc::new(self.line_numbers.clone()),
          }
-@@ -9191,7 +9188,6 @@ impl State {
+@@ -9183,7 +9180,6 @@ impl State {
              data: data_ptr,
              stack_trace_lib_nr: stk_lib_nr,
              frame_headroom: Arc::clone(&self.frame_headroom),

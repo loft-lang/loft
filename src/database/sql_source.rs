@@ -122,11 +122,11 @@ impl SqliteApi {
     /// on the first fault rather than at startup, so a program that binds no
     /// database still maps nothing (@PLN24 arc G's property, kept).
     fn ensure_loaded() {
-        if crate::c_call::resolve("sqlite3_open_v2").is_some() {
+        if crate::c_libs::resolve("sqlite3_open_v2").is_some() {
             return;
         }
         for name in SQLITE_SONAMES {
-            if crate::extensions::load_c_library(name, "") {
+            if crate::c_libs::load_c_library(name, "") {
                 return;
             }
         }
@@ -136,7 +136,7 @@ impl SqliteApi {
         Self::ensure_loaded();
         macro_rules! sym {
             ($name:literal, $ty:ty) => {{
-                let Some(p) = crate::c_call::resolve($name) else {
+                let Some(p) = crate::c_libs::resolve($name) else {
                     return Err(format!(
                         "sqlite is not installed — `{}` did not resolve (looked for {})",
                         $name,

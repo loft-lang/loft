@@ -903,8 +903,8 @@ fn records_holding(data: &Data, function: &Function, d_nr: u32, v: u16) -> Vec<u
 /// The closure records CLAIMED into a struct the return delivers (loft#1867,
 /// `@FR-L-CapOwn` with `@FR-L-Escape`): built into the caller's return buffer — a literal in
 /// return position, or the local `ref_return` promoted into it — or into a returned local.
-/// The claim is `OpClaimChildRec(<field of the host>, Var(record), _)`, and it MOVES the
-/// record's captures into the struct (`Stores::claim_child_rec`).  So such a record leaves
+/// The claim is `record = OpChildRec(<field of the host>, _)`, which builds the record IN the
+/// struct (`Stores::new_child_rec`), so its captures live there.  So such a record leaves
 /// for the question of who owns what it captured ([`record_leaves_frame`]) and stays for
 /// the question of who frees its own, now emptied, store
 /// ([`record_store_leaves_frame`]).

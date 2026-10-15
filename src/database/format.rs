@@ -15,6 +15,14 @@ use std::fmt::{Debug, Formatter, Write as _};
 /// descends, and the (line, col) pair comes from
 /// [`crate::json::line_col_of`].  Asserted-on directly by
 /// `tests/data_structures.rs::record` (e.g. `"line 1:7 path:blame"`).
+/// Why [`Stores::read_text`] refused a text, each with its `"line N:M path:X"` message.
+enum TextErr {
+    /// The text is not a well-formed document.
+    Malformed(String),
+    /// The document is well-formed and one of its values does not fit its type.
+    Misfit(String),
+}
+
 fn format_walk_err(text: &str, at: usize, path: &[String]) -> String {
     let (line, col) = crate::json::line_col_of(text, at);
     let mut out = format!("line {line}:{col} path:");
@@ -413,18 +421,6 @@ impl Stores {
         res
     }
 
-    /// Parse the content of a string into an existing record.
-    /// Returns `None` on success, or `Some(error_path)` on failure.
-    /// The error path is a human-readable string like `"line 1:15 path:items[2].name"`.
-    ///
-    /// Routes through the unified
-    /// [`crate::json::parse_with(text, Dialect::Lenient)`] +
-    /// schema-driven [`Stores::walk_parsed_into`] walker.  Both
-    /// syntax-level errors (from the parser) and schema / shape
-    /// mismatches (from the walker) feed into the same
-    /// `"line N:M path:X"` shape via [`format_walk_err`], so
-    /// callers see one consistent format regardless of where the
-    /// failure originated.
     /// The name the loft-literal form writes for type `tp` (`Stores::shown`).
     #[must_use]
     pub fn shown_name(&self, tp: u16) -> &str {
@@ -433,6 +429,14 @@ impl Stores {
             .map_or(self.types[tp as usize].name.as_str(), String::as_str)
     }
 
+    /// Read `text` into the existing `tp` record at `result`, writing each value as it is
+    /// read ([`Stores::read_into`]).  `None` on success, or the read's one error as
+    /// `"line N:M path:X"` (e.g. `"line 1:15 path:items[2].name"`) — the same shape for a
+    /// text that is not a well-formed document and for a value that does not fit its
+    /// field ([`format_walk_err`]) — filed under `json_errors()` as well.
+    ///
+    /// `result` keeps what was written before the fault.  `T.parse` owes its program a
+    /// record no malformed document has touched, and runs [`Self::record_from_text`].
     pub fn parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
         self.record_text_parse(text, tp, result)
     }
@@ -478,22 +482,76 @@ impl Stores {
         }
     }
 
-    /// Run the unified parse-then-walk path and translate any
-    /// failure into the user-visible `"line N:M path:X"` shape.
-    ///
-    /// The unified parser ([`crate::json::parse_with`]) handles
-    /// syntax-level errors (returns `ParseError` with byte offset),
-    /// and the schema walker ([`Stores::walk_parsed_into`]) handles
-    /// shape / type mismatches against the loft type definition
-    /// (returns `WalkErr` with byte offset + dotted path).
-    /// Both feed into the same `"line N:M path:X"` format that
-    /// `tests/data_structures.rs::record` asserts.
+    /// [`Self::read_text`] with either refusal as its `"line N:M path:X"` message — the
+    /// format `tests/data_structures.rs::record` asserts.
     fn try_parse_unified(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), String> {
-        let parsed = crate::json::parse_with(text, crate::json::Dialect::Lenient)
-            .map_err(|e| format_walk_err(text, e.byte_offset, &[]))?;
-        let mut path: Vec<String> = Vec::new();
-        self.walk_parsed_into(&parsed, tp, tp, u16::MAX, result, &mut path, 0)
-            .map_err(|e| format_walk_err(text, e.at, &e.path))
+        self.read_text(text, tp, result).map_err(|e| match e {
+            TextErr::Malformed(msg) | TextErr::Misfit(msg) => msg,
+        })
+    }
+
+    /// Read `text` into the `tp` at `result`, writing each value as it is read
+    /// ([`Self::read_into`]).  A document that is not well-formed has been written as
+    /// far as its fault when this answers [`TextErr::Malformed`]; the caller that owes
+    /// its program an untouched record restores it ([`Self::record_from_text`]).
+    fn read_text(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
+        let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
+        let mut failed = None;
+        self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
+            .and_then(|()| rd.finish())
+            .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
+        failed.map_or(Ok(()), |e| {
+            Err(TextErr::Misfit(format_walk_err(text, e.at, &e.path)))
+        })
+    }
+
+    /// The store a `T.parse` fills: one record of `tp` holding the type's final defaults,
+    /// which is what a field the text does not name keeps.
+    fn text_target(&mut self, tp: u16) -> DbRef {
+        // The record is sized to the type, not to a fixed 8 words.  The value is written
+        // at `pos: 8` (after the 8-byte record header), so it needs `8 + size` bytes =
+        // `1 + size.div_ceil(8)` words.  A fixed 8 holds 56 bytes: a larger struct's tail
+        // field lands on the ADJACENT block's header, and a later `claim` walks the free
+        // list into a zero-sized block and never returns.  The floor of 8 words keeps
+        // the slack a small struct has.
+        let words = std::cmp::max(8, 1 + u32::from(self.size(tp)).div_ceil(8));
+        let db = self.database(words);
+        let into = DbRef {
+            store_nr: db.store_nr,
+            rec: db.rec,
+            pos: 8,
+        };
+        self.set_final_default_value(tp, &into);
+        into
+    }
+
+    /// `T.parse(text)` for both backends: a new store holding the `tp` that `text`
+    /// describes, with the read's one error — or none — filed under the record's
+    /// `#errors` and under `json_errors()`.
+    ///
+    /// The record is written while the text is read, so a document that turns out not to
+    /// be well-formed has already written what came before its fault.  A program must
+    /// not see that: such a document answers the type's defaults, as if nothing of it
+    /// had been read, so the half-written store is released and a new one made.  A
+    /// well-formed document with a value that does not fit its field keeps what was
+    /// written before that value, and nothing after it.
+    pub fn record_from_text(&mut self, text: &str, tp: u16) -> DbRef {
+        self.last_json_errors.clear();
+        let mut into = self.text_target(tp);
+        let err = match self.read_text(text, tp, &into) {
+            Ok(()) => None,
+            Err(TextErr::Misfit(msg)) => Some(msg),
+            Err(TextErr::Malformed(msg)) => {
+                self.free(&into);
+                into = self.text_target(tp);
+                Some(msg)
+            }
+        };
+        if let Some(e) = &err {
+            self.last_json_errors.push(e.clone());
+        }
+        self.set_parse_errors(&into, tp, err);
+        into
     }
 
     /**
@@ -703,7 +761,7 @@ impl Stores {
     pub fn os_variable(&mut self, name: &str) -> String {
         std::env::var_os(name)
             .and_then(|s| s.into_string().ok())
-            .unwrap_or_else(|| crate::state::STRING_NULL.to_string())
+            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
     }
 
     /**
@@ -2490,8 +2548,7 @@ impl ShowDb<'_> {
 /// store number with a slot in `rec`, a native one its own reserved number — so a field or an
 /// element holding one renders as its kind rather than as either backend's numbers.
 pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
-    store_nr == crate::state::COROUTINE_STORE
-        || store_nr == crate::codegen_runtime::NATIVE_COROUTINE_STORE
+    store_nr == super::COROUTINE_STORE || store_nr == super::NATIVE_COROUTINE_STORE
 }
 
 #[cfg(test)]

@@ -77,9 +77,14 @@ def main():
     if not (want_ident or want_brace):
         want_ident = want_brace = True
     patterns = [a for a in argv if not a.startswith("--")]
-    if not patterns:
-        patterns = [ROOT + "/tests/scripts/*.loft", ROOT + "/tests/docs/*.loft"]
-    files = sorted({f for p in patterns for f in globmod.glob(p)})
+    if patterns:
+        files = sorted({f for p in patterns for f in globmod.glob(p)})
+    else:
+        # tests/scripts, tests/docs and every program of the language suite beside the tree
+        # (@PLN193): the audit covers the corpus it covered before the move.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from corpus import corpus_files
+        files = corpus_files()
 
     src = {}
 

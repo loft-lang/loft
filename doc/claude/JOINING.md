@@ -29,7 +29,8 @@ place: [DEVELOPMENT.md § Stay close to `main`](DEVELOPMENT.md#stay-close-to-mai
 scripts/join.py survey [SRC …]   # per source, per commit: pick NEW/PARTIAL, skip the rest
 scripts/join.py apply            # cherry-pick source by source, `cargo check` after each
 scripts/join.py rederive         # re-measure every derived artefact on the union (--commit)
-scripts/join.py verify           # the cheap checks a gate stops on: pre-flight, clippy ×2, …
+scripts/join.py verify           # the cheap checks a gate or a PR stops on: pre-flight, clippy ×2,
+                                 #   the hygiene tests, feature coverage, the PR's doc gate
 scripts/join.py guards           # the tests/scripts guards the join brought in, both backends
 scripts/join.py run [SRC …]      # all five, stopping at the first decision; then the gate
 ```
@@ -43,6 +44,11 @@ tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP`
 `fixup!` / `squash!` checkpoint, which ends what the join takes from that source), `UNDONE-PAIR`
 (a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
 whole), else `NEW`, or `PARTIAL` when only some of its files are here.
+
+`HERE` is measured on this tree as it stands, so a commit that reads as here is picked all the
+same when an earlier pending commit of its source changes one of its files.  A partial revert
+is the case: this tree never had what it removes, and skipping it leaves the reverted change
+in.  A commit that really is here comes out empty when picked, and `apply` drops it.
 
 `apply` resolves a conflict itself only in a derived artefact (either side, re-derived later)
 and in an append-only changelog (both sides); a conflict in anything else STOPS with the file

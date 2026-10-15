@@ -124,7 +124,9 @@ export SWITCH LOFT WORK LOFT_ARGS AB_TIMEOUT
 
 mkdir -p "$WORK/on" "$WORK/on2" "$WORK/off" || { echo "cannot create $WORK/{on,on2,off}" >&2; exit 2; }
 cd "$ROOT"
-files=(tests/scripts/${ONLY:-*}.loft)
+# The programs here and every program of the language suite beside the tree (@PLN193), or
+# the one `ONLY` names.
+if [ -n "${ONLY:-}" ]; then files=(tests/scripts/$ONLY.loft); else mapfile -t files < <(scripts/corpus_files.sh --no-docs); fi
 for mode in on off; do
   printf '%s\n' "${files[@]}" | xargs -P "$JOBS" -I{} bash -c "run_one $mode {}"
 done

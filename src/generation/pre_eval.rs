@@ -268,7 +268,7 @@ impl Output<'_> {
         // `let var___ret: String = call(...).to_string()` and Return(Var)
         // as `return Str::new(&var___ret)` — the local String drops at
         // function exit and the returned Str's raw ptr dangles
-        // (`tests/scripts/86-interfaces.loft::if_label`).  For this narrow
+        // (`loft-suite/attic/scripts/86-interfaces.loft::if_label`).  For this narrow
         // pattern, the inner Call already returns a borrow into a program-
         // lifetime Store; collapsing to `return Call(...)` keeps that
         // borrow intact.
@@ -677,6 +677,22 @@ impl Output<'_> {
         // the ref-alias hoist below never fires.  `Span` is transparent for codegen.
         if let Value::Span(s) = v {
             return self.collect_pre_evals_inner(&s.1, result);
+        }
+        // `@FR-R-Apart` — an element read, write or length of an apart value is no store
+        // access: its address is part of the rewritten mention, and only its index and
+        // value are expressions to search.
+        if let Some(operands) = self.apart_operands(v) {
+            for x in operands {
+                self.collect_pre_evals_inner(x, result)?;
+            }
+            return Ok(());
+        }
+        // `@FR-R-DecodeView` — a span write writes its operands where they stand.
+        if let Some(operands) = self.dv_operands(v) {
+            for x in operands {
+                self.collect_pre_evals_inner(x, result)?;
+            }
+            return Ok(());
         }
         if let Value::Set(_, rhs) = v {
             return self.collect_pre_evals_inner(rhs, result);
@@ -1140,7 +1156,7 @@ impl Output<'_> {
     /// Without the capture, `scopes::free_vars`'s else-branch produces
     /// `[Call, free, Return(Null)]` — native codegen then emits the Call
     /// as a discarded statement and returns a null DbRef sentinel,
-    /// losing the tail call's result (`tests/scripts/87-store-leaks.loft`).
+    /// losing the tail call's result (`loft-suite/attic/scripts/87-store-leaks.loft`).
     ///
     /// The capture lets `output_block` emit
     /// `let __native_tail_ret: DbRef = <call>;` at the Call position and

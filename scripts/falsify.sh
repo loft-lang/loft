@@ -188,6 +188,11 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
   else
     MODE_I=(--tests); MODE_N=(--tests --native)
   fi
+  # A guard of a rewrite that a build shipping the live tier never makes (an IR-phase rewrite,
+  # `@FR-R-Apart`) names the release tier, or its native side runs code the defect is not in.
+  if grep -qE '^// @falsify-tier: native-release' "$1"; then
+    MODE_N=(--native-release)
+  fi
 }
 [ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD"
 
@@ -212,6 +217,35 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
 # proceeds unlocked rather than not at all, and the concurrency hazard it leaves open is
 # the one the comment above describes: do not run two sweeps at once there.
 have_flock() { command -v flock >/dev/null 2>&1; }
+# One cargo invocation in <dir>, writing <target-dir>, under that directory's lock.
+locked_cargo() { # <dir> <target-dir> <cargo subcommand> <its arguments…>
+  local dir="$1" tgt="$2" sub="$3"; shift 3
+  mkdir -p "$(dirname "$tgt")"
+  if have_flock; then
+    ( flock 9 || exit 1
+      cd "$dir" && cargo "$sub" --target-dir "$tgt" "$@" >/dev/null 2>&1
+    ) 9>"$tgt.lock"
+  else
+    ( cd "$dir" && cargo "$sub" --target-dir "$tgt" "$@" >/dev/null 2>&1 )
+  fi
+}
+
+# The compiled standard library is GENERATED from the tree it sits in, so a receipt's hunk of
+# it is never applied: it conflicts on every regeneration, and what it carried is derivable.
+# A control whose patch names the file builds its own instead — the empty stub first, because
+# HEAD's generated file need not compile against a reverted runtime, then the control's own
+# generator.  `receipts_ci.py` and `doc_hygiene::every_patch_receipt_still_applies` apply with
+# the same exclusion: the three must agree, or a patch the gate calls applicable is scored on
+# a control that does not build.
+GENERATED_STDLIB=src/compiled_stdlib_gen.rs
+regen_stdlib() { # <dir> <target-dir>
+  local stub="$ROOT/scripts/compiled_stdlib_stub.rs"
+  cp "$stub" "$1/$GENERATED_STDLIB" || return 1
+  locked_cargo "$1" "$2" test --test compiled_stdlib regen_compiled_stdlib -- --ignored \
+    || return 1
+  # The generator ran only if the stub is gone.
+  ! cmp -s "$stub" "$1/$GENERATED_STDLIB"
+}
 
 # `timeout(1)` is coreutils; macOS ships without it (and often without `gtimeout`).  Fall
 # back to loft's own `LOFT_TIMEOUT` watchdog alone — weaker (a hang OUTSIDE the runtime's
@@ -229,14 +263,7 @@ build() { # <dir> <target-dir> -> path to binary
   # `--lib` as well: the native leg links `<target>/debug/libloft.rlib`, which `--bin` alone
   # never refreshes — so a plant in the RUNTIME (src/database, src/store.rs) reached the
   # interpreter leg and not the native one, and a native-only runtime defect scored INERT.
-  mkdir -p "$(dirname "$2")"
-  if have_flock; then
-    ( flock 9 || exit 1
-      cd "$1" && cargo build --lib --bin loft --target-dir "$2" >/dev/null 2>&1
-    ) 9>"$2.lock" || return 1
-  else
-    ( cd "$1" && cargo build --lib --bin loft --target-dir "$2" >/dev/null 2>&1 ) || return 1
-  fi
+  locked_cargo "$1" "$2" build --lib --bin loft || return 1
   echo "$2/debug/loft"
 }
 
@@ -450,7 +477,9 @@ if [ -n "$BULK" ]; then
 fi
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
-if [ ! -x "$TGT/debug/loft" ]; then
+# `$WT.stub` marks a control still holding the stub: the stub build leaves a `debug/loft` too,
+# and a run killed before the regeneration must not be scored on it.
+if [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
   if [ -n "$PATCHFILE" ]; then
     [ -d "$WT" ] || {
       git worktree add --detach "$WT" HEAD >/dev/null 2>&1 || {
@@ -458,19 +487,25 @@ if [ ! -x "$TGT/debug/loft" ]; then
       # A patch receipt is checked before it is trusted.  One records the fix as it was, so it
       # applies to the tree it was cut against and drifts out as that tree moves — refusing here
       # is the receipt telling you it has gone stale, which a dangling sha never gets to do.
-      ( cd "$WT" && git apply "$PATCH_ABS" ) || {
+      ( cd "$WT" && git apply --exclude="$GENERATED_STDLIB" "$PATCH_ABS" ) || {
         echo "the recorded patch no longer applies to HEAD: $PATCHFILE" >&2
         echo "  The receipt still RECORDS the defect, but it can no longer be re-run here." >&2
         echo "  Re-derive it against a tree it applies to, or score the guard by hand." >&2
         git worktree remove --force "$WT" >/dev/null 2>&1; exit 3; }
     }
     echo "building the control from $PATCHFILE (cached at $TGT) …" >&2
+    if grep -q "$GENERATED_STDLIB" "$PATCH_ABS"; then
+      : > "$WT.stub"
+      regen_stdlib "$WT" "$TGT" || {
+        echo "the control's compiled standard library does not regenerate" >&2; exit 1; }
+    fi
   else
     [ -d "$WT" ] || git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
       echo "cannot create a worktree at $SHA" >&2; exit 1; }
     echo "building the control at $SHA (cached at $TGT) …" >&2
   fi
   build "$WT" "$TGT" >/dev/null || { echo "the control does not build" >&2; exit 1; }
+  rm -f "$WT.stub"
 fi
 CONTROL="$TGT/debug/loft"
 # The control build is a full debug `target/` (~2 GB: the native leg links `libloft.rlib` and
@@ -484,7 +519,7 @@ for old in $(ls -td "$CACHE"/*-target 2>/dev/null | tail -n +$((keep + 1))); do
   case "$old" in */head-target|*/shared-target) continue;; esac
   sha=${old##*/}; sha=${sha%-target}
   git -C "$ROOT" worktree remove --force "$CACHE/$sha" >/dev/null 2>&1 || rm -rf "$CACHE/$sha"
-  rm -rf "$old" "$old.lock"
+  rm -rf "$old" "$old.lock" "$CACHE/$sha.stub"
 done
 git -C "$ROOT" worktree prune >/dev/null 2>&1
 # A separate target dir on purpose: the main one may be mid-`make ci`, and cargo's build
@@ -620,7 +655,8 @@ elif [ $falsified_any -eq 1 ]; then
     new="$pdir/.$pbase.patch.new"
     kept=no
     if [ -s "$pdir/$pbase.patch" ]; then kept=yes; fi
-    git -C "$ROOT" diff -R "$SHA" -- src/ default/ > "$new" 2>/dev/null || true
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ ":(exclude)$GENERATED_STDLIB" \
+      > "$new" 2>/dev/null || true
     plines=$(wc -l < "$new" 2>/dev/null || echo 0)
     # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit
     # just before the fix — the documented use — the diff IS the fix and runs to a few dozen
@@ -646,6 +682,11 @@ elif [ $falsified_any -eq 1 ]; then
         echo "      The EXISTING tests/falsified/$pbase.patch is untouched."
       fi
     else
+      # The fix moved the generated standard library: say so in a line `git apply` skips, and
+      # the control regenerates the file instead of carrying a copy that goes stale.
+      if ! git -C "$ROOT" diff --quiet "$SHA" -- "$GENERATED_STDLIB" 2>/dev/null; then
+        { echo "# regenerate: $GENERATED_STDLIB"; cat "$new"; } > "$new.m" && mv "$new.m" "$new"
+      fi
       mv "$new" "$pdir/$pbase.patch"
       echo
       echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."

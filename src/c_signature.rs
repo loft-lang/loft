@@ -1088,6 +1088,71 @@ pub fn of(data: &Data, def_nr: u32, target: CTarget) -> Option<Result<CSignature
     Some(CSignature::parse(&d.c_symbol, &d.c_sig, target))
 }
 
+/// Build the soname → declared-symbols table from a parsed program.
+///
+/// One home, called by both backends — the interpreter from [`register`] and
+/// the `--native` generator, which bakes the result into the binary. Derived
+/// from the same `Data` either way, so the two cannot answer differently.
+///
+/// **A symbol is attributable to a library only when that library is the only
+/// one its package declares.** A `#c` annotation never names its library
+/// (`Data::c_owner_pkg` is the finest attribution the source supports), so for a
+/// package declaring several libraries there is no fact saying which one exports
+/// a given symbol — and guessing produces the worst possible answer: a package
+/// binding sqlite AND duckdb would report sqlite unavailable because a duckdb
+/// symbol is missing, which is precisely the case optional libraries exist for.
+///
+/// So a multi-library package gets an empty symbol list, and its libraries are
+/// available when they LOAD. Skew detection is the thing given up, and the way
+/// to keep it is the arrangement libraries should have anyway: one package per
+/// optional library, which is how the `sqldb` fixture is built.
+#[must_use]
+pub fn library_symbol_table(data: &crate::data::Data) -> Vec<(String, Vec<String>)> {
+    let target = CTarget::host();
+    let mut by_pkg: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if def.c_sig.is_empty() || *def.code() != crate::data::Value::Null {
+            continue;
+        }
+        let Some(Ok(sig)) = of(data, d_nr, target) else {
+            continue;
+        };
+        if let Some(pkg) = data.c_owner_pkg(def.position().file.as_str()) {
+            by_pkg.entry(pkg).or_default().push(sig.symbol);
+        }
+    }
+    data.c_libraries
+        .iter()
+        .map(|lib| {
+            // Only OTHER OPTIONAL libraries make attribution ambiguous. A
+            // required entry cannot be the reason a symbol is missing — the
+            // package does not load at all without it — and one of them is
+            // almost always the package's own `[c] shim`, which loft just
+            // built and which is therefore present by construction. Counting
+            // those would switch skew detection off for nearly every real
+            // package, since nearly every `#c` package ships a shim.
+            let alone = data
+                .c_libraries
+                .iter()
+                .filter(|c| c.pkg_dir == lib.pkg_dir && c.optional)
+                .count()
+                <= 1;
+            let mut syms = if alone {
+                by_pkg
+                    .get(lib.pkg_dir.as_str())
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            syms.sort_unstable();
+            syms.dedup();
+            (lib.name.clone(), syms)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

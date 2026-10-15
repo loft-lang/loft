@@ -3257,8 +3257,8 @@ fn warn_trigger_collisions(pkg_name: &str, triggers: &[String]) {
         {
             eprintln!(
                 "warning: trigger `{trig}` is already claimed by `{owner}` in the registry; the \
-                 submission PR will be REJECTED — a method-on-type trigger must be unique. Rename \
-                 the method in `{pkg_name}` or drop its `[triggers]` opt-in."
+                 submission PR will be REJECTED — a trigger (a method on a type, a builder) must \
+                 be unique. Rename it in `{pkg_name}` or drop it from `[triggers]`."
             );
         }
     }
@@ -3413,10 +3413,22 @@ fn publish_package(pkg_path: &std::path::Path, dry_run: bool) -> i32 {
             .clone()
             .unwrap_or_else(|| format!("src/{}.loft", pkg.name));
         let src = fa::read_to_string(pkg_path.join(&entry)).unwrap_or_default();
-        let triggers: Vec<String> = loft::triggers::derive_triggers(&src)
+        let derived = loft::triggers::derive_triggers(&src, &manifest.trigger_builders);
+        // A declared builder the entry file does not carry as a free `pub fn` is dropped
+        // from the surface, and the author hears why the bare call will not fire.
+        for b in &manifest.trigger_builders {
+            if !derived.builders.contains(b) {
+                eprintln!(
+                    "warning: `[triggers] builders` names `{b}`, which `{entry}` does not declare \
+                     as a free `pub fn`; it is left out of the trigger surface."
+                );
+            }
+        }
+        let triggers: Vec<String> = derived
             .methods
             .iter()
             .map(|m| format!("{}:{}", m.name, m.receiver))
+            .chain(derived.builders.iter().map(|b| format!("{b}:fn")))
             .collect();
         warn_trigger_collisions(&pkg.name, &triggers);
         let quoted: Vec<String> = triggers.iter().map(|t| format!("\"{t}\"")).collect();
@@ -5481,10 +5493,10 @@ fn api_surface_of(
     // Layout axis (@PLN97): the per-type store-layout identity, computed from the COMPILED
     // database — kept OUT of the descriptor so a layout-only edit (a field reorder) does not
     // perturb the API-axis determinism, and compared as its own axis in `--diff`.
-    let roots = loft::schema_sidecar::program_roots(&p.data);
+    let roots = loft::layout_schema::program_roots(&p.data);
     // @PLN102 arc-E F9 — `Data` is live here, so pin full-width nullability too
     // (`integer` vs `integer?` share a byte layout; the schema axis distinguishes them).
-    let identity = loft::schema_sidecar::LayoutIdentity::of_scoped(&p.database, &roots, &p.data);
+    let identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     Ok((surface, identity))
 }
 
@@ -6616,9 +6628,9 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
-    let roots = ss::program_roots(&p.data);
+    let roots = loft::layout_schema::program_roots(&p.data);
     // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
-    let identity = ss::LayoutIdentity::of_scoped(&p.database, &roots, &p.data);
+    let identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     let project = abs
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
@@ -7925,13 +7937,9 @@ fn main() {
             let manifest_path = std::path::Path::new("loft.toml");
             if fa::exists(manifest_path) {
                 let manifest = loft::manifest::read_manifest("loft.toml").unwrap_or_default();
-                let entry = manifest.entry.unwrap_or_else(|| "src".to_string());
-                let src_dir = std::path::Path::new(&entry)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("src"));
                 let abs_src = std::env::current_dir()
                     .unwrap_or_default()
-                    .join(src_dir)
+                    .join(manifest.source_dir())
                     .to_string_lossy()
                     .to_string();
                 lib_dirs.push(abs_src);
@@ -8961,6 +8969,19 @@ fn main() {
         // default.  300s is far longer than any single test's compile+run,
         // short enough to catch a true infinite loop.
         loft::timeout::arm(300, loft::timeout::env_grace_secs());
+        // loft#2010 — the `--tests <dir>` flag gets the package paths the `loft test`
+        // subcommand set up above from the working directory, found from the TARGET, the
+        // way a single-file run finds them from its script.
+        if !test_subcommand
+            && let Some(target) = file_access::try_plain_canonical(std::path::Path::new(test_dir))
+        {
+            let start = if fa::is_dir(&target) {
+                target.as_path()
+            } else {
+                target.parent().unwrap_or(&target)
+            };
+            add_package_paths(start, &mut lib_dirs, &mut native_lib_paths);
+        }
         // Env-var equivalent so external CI doesn't need to thread the flag
         // through `loft test` invocations buried in shell loops.
         let deny_warnings = deny_warnings
@@ -9049,58 +9070,10 @@ fn main() {
     // Auto-detect loft.toml by walking up from the script file's directory.
     // This lets `loft lib/graphics/examples/01.loft` find the graphics package
     // without requiring the user to cd into the package directory first.
-    if !abs_file.is_empty() {
-        let script_dir = std::path::Path::new(&abs_file).parent();
-        if let Some(mut search) = script_dir.map(std::path::Path::to_path_buf) {
-            loop {
-                let candidate = search.join("loft.toml");
-                if fa::exists(&candidate) {
-                    if let Some(manifest) =
-                        manifest::read_manifest(candidate.to_str().unwrap_or("loft.toml"))
-                    {
-                        // Add the package's src/ directory to lib_dirs.
-                        let entry = manifest.entry.unwrap_or_else(|| "src".to_string());
-                        let src_dir = std::path::Path::new(&entry)
-                            .parent()
-                            .unwrap_or(std::path::Path::new("src"));
-                        let abs_src = search.join(src_dir).to_string_lossy().to_string();
-                        if !lib_dirs.contains(&abs_src) {
-                            lib_dirs.push(abs_src);
-                        }
-                        // Add parent directory so sibling packages (deps) are found.
-                        if !manifest.dependencies.is_empty() {
-                            if let Some(parent) =
-                                file_access::try_plain_canonical(search.join(".."))
-                            {
-                                let ps = parent.to_string_lossy().to_string();
-                                if !lib_dirs.contains(&ps) {
-                                    lib_dirs.push(ps);
-                                }
-                            }
-                        }
-                        // Register native lib path for auto-build/loading.
-                        if let Some(ref stem) = manifest.native {
-                            let pkg_dir = search.to_string_lossy().to_string();
-                            if let Some(so_path) = extensions::auto_build_native(&pkg_dir, stem) {
-                                native_lib_paths.push(so_path);
-                            }
-                        }
-                    }
-                    // Auto-add lib/ subdirectory for package imports.
-                    let lib_dir = search.join("lib");
-                    if fa::is_dir(&lib_dir) {
-                        let ls = lib_dir.to_string_lossy().to_string();
-                        if !lib_dirs.contains(&ls) {
-                            lib_dirs.push(ls);
-                        }
-                    }
-                    break;
-                }
-                if !search.pop() {
-                    break;
-                }
-            }
-        }
+    if !abs_file.is_empty()
+        && let Some(script_dir) = std::path::Path::new(&abs_file).parent()
+    {
+        add_package_paths(script_dir, &mut lib_dirs, &mut native_lib_paths);
     }
 
     // Canonicalize library paths so relative --lib dirs resolve correctly
@@ -11794,6 +11767,17 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 }
                 cmd.push_arg("-Zsanitizer=address");
             }
+            // `LOFT_NATIVE_RUSTC_ARGS=<file>` — the arguments of this compile, one a line.
+            // A pricing tool replays them on an edited copy of the emitted file
+            // (`bench/portal/hand_price.sh`): which package libraries are linked, and from
+            // where, is the one fact it cannot derive from the file itself.
+            if let Some(path) = std::env::var_os("LOFT_NATIVE_RUSTC_ARGS") {
+                let replay: Vec<String> = cmd
+                    .get_args()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                let _ = fa::write(std::path::Path::new(&path), replay.join("\n") + "\n");
+            }
             loft::timeout::blocked_on("rustc compiling the program");
             let output = cmd.run(b"");
             loft::timeout::unblocked();
@@ -12370,7 +12354,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     state.report_alloc_sites(&p.data);
     state.report_profile(&p.data);
     // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
-    loft::op_census::write(&p.data);
+    loft::op_census::write(&loft::op_census::Names {
+        operator: &|op| p.data.operator_name(op).map(str::to_owned),
+        function: &|d_nr| p.data.def(d_nr).name().to_string(),
+    });
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {
@@ -12511,6 +12498,68 @@ fn resolve_test_target(arg: &str) -> String {
         out.push_str(sel);
     }
     out
+}
+
+/// The import paths of the package that `start` lies in: walk up to the nearest
+/// `loft.toml` and put the package's source directory on `lib_dirs` (and its parent,
+/// for sibling dependencies, when it declares any), its `lib/` directory, and its
+/// own native library.
+///
+/// ONE function for a single-file run and the `--tests <dir>` flag (loft#2010): the
+/// flag used to set none of these, so a suite run through it found the package's own
+/// modules only by the sibling-directory accident, while `loft test` and a single
+/// file found them — three spellings of one run answering differently.
+fn add_package_paths(
+    start: &std::path::Path,
+    lib_dirs: &mut Vec<String>,
+    native_lib_paths: &mut Vec<String>,
+) {
+    let mut search = start.to_path_buf();
+    loop {
+        let candidate = search.join("loft.toml");
+        if fa::exists(&candidate) {
+            if let Some(manifest) =
+                manifest::read_manifest(candidate.to_str().unwrap_or("loft.toml"))
+            {
+                // Add the package's src/ directory to lib_dirs.
+                let abs_src = search
+                    .join(manifest.source_dir())
+                    .to_string_lossy()
+                    .to_string();
+                if !lib_dirs.contains(&abs_src) {
+                    lib_dirs.push(abs_src);
+                }
+                // Add parent directory so sibling packages (deps) are found.
+                if !manifest.dependencies.is_empty()
+                    && let Some(parent) = file_access::try_plain_canonical(search.join(".."))
+                {
+                    let ps = parent.to_string_lossy().to_string();
+                    if !lib_dirs.contains(&ps) {
+                        lib_dirs.push(ps);
+                    }
+                }
+                // Register native lib path for auto-build/loading.
+                if let Some(ref stem) = manifest.native {
+                    let pkg_dir = search.to_string_lossy().to_string();
+                    if let Some(so_path) = extensions::auto_build_native(&pkg_dir, stem) {
+                        native_lib_paths.push(so_path);
+                    }
+                }
+            }
+            // Auto-add lib/ subdirectory for package imports.
+            let lib_dir = search.join("lib");
+            if fa::is_dir(&lib_dir) {
+                let ls = lib_dir.to_string_lossy().to_string();
+                if !lib_dirs.contains(&ls) {
+                    lib_dirs.push(ls);
+                }
+            }
+            return;
+        }
+        if !search.pop() {
+            return;
+        }
+    }
 }
 
 #[cfg(test)]

@@ -148,7 +148,21 @@ function discoverTests(dir) {
 
 const scriptTests = discoverTests('tests/scripts');
 const docTests    = discoverTests('tests/docs');
-const allTests    = [...scriptTests, ...docTests];
+// Every program of the language suite beside the tree (@PLN193): the rule cells, then the
+// attic.  `LOFT_SUITE_DIR` names the checkout; an absent one contributes nothing and says so.
+const suiteDir = process.env.LOFT_SUITE_DIR || '../loft-suite';
+let suiteTests = [];
+if (existsSync(join(suiteDir, 'rules'))) {
+  for (const chapter of readdirSync(join(suiteDir, 'rules')).sort()) {
+    for (const rule of readdirSync(join(suiteDir, 'rules', chapter)).sort()) {
+      suiteTests.push(...discoverTests(join(suiteDir, 'rules', chapter, rule)));
+    }
+  }
+  suiteTests.push(...discoverTests(join(suiteDir, 'attic', 'scripts')));
+} else {
+  console.error(`no language suite at ${suiteDir} — its programs are NOT in this run (LOFT_SUITE_DIR)`);
+}
+const allTests    = [...scriptTests, ...docTests, ...suiteTests];
 
 let passed = 0;
 let failed = 0;

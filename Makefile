@@ -1081,9 +1081,20 @@ free-licences:  ## @PLN155: how many pieces of code decide *is a free needed her
 #   make nullable-road                    # every pair, one verdict each
 #   make nullable-road ARGS="--diff <n>"  # the surviving diff for one pair
 #   make nullable-road ARGS=--control     # the instrument's three controls; run after editing it
+#   make nullable-road ARGS=--check       # exit 1 on a pair that takes two roads (the gate's form)
 #   make nullable-road ARGS=--verify      # the plan's VERIFY: both halves, both backends, strict stores
 nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twin's?
 	@python3 scripts/nullable_road.py $(ARGS)
+
+# @PLN193 — the language suite (loft-lang/loft-suite) checked out BESIDE this tree, run
+# against this tree's release binary (`LOFT=` names another).  CI runs it at the commit
+# `tests/loft-suite.pin` names; by hand it runs whatever that checkout has.
+#   make suite                                # every rule cell, interpreter
+#   make suite ARGS="@FR-B-Copy --mode both"  # one rule, both backends (the rlib must be current)
+#   make suite ARGS="--chapter ownership"
+.PHONY: suite
+suite:  ## @PLN193: the language suite beside this checkout (../loft-suite or LOFT_SUITE_DIR) against target/release/loft
+	@python3 $${LOFT_SUITE_DIR:-../loft-suite}/loft-suite run --loft $(or $(LOFT),$(CURDIR)/target/release/loft) $(ARGS)
 
 # The per-release checklist: what a HUMAN still has to do, with everything the machine
 # can decide already decided.  RELEASE.md holds the prose and three partial lists; this
@@ -2698,7 +2709,7 @@ test-wasm:
 	if [ -z "$$WASMTIME" ] && [ -x "$$HOME/.wasmtime/bin/wasmtime" ]; then WASMTIME="$$HOME/.wasmtime/bin/wasmtime"; fi; \
 	if [ -n "$$WASMTIME" ]; then echo "Running wasm tests with wasmtime"; else echo "wasmtime not found — compile-only (install via: cargo install wasmtime-cli)"; fi; \
 	failed=0; \
-	for f in tests/docs/*.loft tests/scripts/*.loft; do \
+	for f in $$(scripts/corpus_files.sh); do \
 		printf "  %-45s" "$$f"; \
 		wasm=$$(mktemp /tmp/loft_wasm_XXXXXX.wasm); \
 		out=$$(./target/release/loft --native-wasm "$$wasm" "$$f" 2>&1); \

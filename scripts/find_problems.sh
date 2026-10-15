@@ -779,7 +779,18 @@ fi
 LOG="${1:-$LOG_DEFAULT}"
 OUT="${2:-$OUT_DEFAULT}"
 : > "$LOG"
-scripts/hard_cap.sh "$$" "$(( HARD_CAP_SECS - ($(date +%s) - INVOKED_AT) ))" "$LOG" &
+# The cap ends the running step AND this shell (`--stop-run`): this shell runs more steps after
+# the one it stops, and a step started after the cap fired would run with no cap at all.  The
+# trap reports what finished and exits.
+on_hard_cap() {
+  summarise "$LOG" "$OUT" 2>/dev/null || true
+  echo
+  echo "=== Wall-clock timing summary ==="
+  cat "$TIMINGS_FILE" 2>/dev/null || true
+  exit 124
+}
+trap on_hard_cap TERM
+scripts/hard_cap.sh "$$" "$(( HARD_CAP_SECS - ($(date +%s) - INVOKED_AT) ))" "$LOG" --stop-run &
 find tests/ -name '*.loftc' -delete 2>/dev/null || true
 find /tmp -maxdepth 1 -name '*.loftc' -delete 2>/dev/null || true
 rebuild_native_cdylibs
@@ -788,8 +799,8 @@ RUNNER="$(sweep_test_tmp; test_runner_cmd)"
 echo "test runner: $RUNNER"
 fg_start=$(date +%s)
 # `|| true` so test failures don't short-circuit `set -e` and skip
-# the post-run summary block.  The cap was armed at the start of this invocation and ends the
-# runner (not this shell) at HARD_CAP_SECS, so the summary below still reports what finished.
+# the post-run summary block.  The cap was armed at the start of this invocation; when it fires,
+# `on_hard_cap` reports what finished.
 eval "$RUNNER" 2>&1 | tee -a "$LOG" || true
 printf '  %-44s %6ds\n' "$RUNNER" "$(( $(date +%s) - fg_start ))" >> "$TIMINGS_FILE"
 summarise "$LOG" "$OUT"

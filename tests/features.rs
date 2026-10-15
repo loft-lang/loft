@@ -9,6 +9,8 @@
 //! example stops running, CI goes red.  The native half is
 //! `tests/native.rs::native_features`; the no-drift half is `make features-check`.
 
+mod common;
+
 use loft::file_access as fa;
 use std::path::PathBuf;
 
@@ -60,9 +62,8 @@ fn features_examples_interpret() {
     // The examples are independent processes, so they run several at a time (they total ~7 s
     // one after another here); with no library to build there is no shared lock for them to
     // queue on.  Results and timings are collected per example and reported in corpus order.
-    let workers = std::thread::available_parallelism()
-        .map_or(2, std::num::NonZero::get)
-        .min(8);
+    // The pool is the share nextest was told about (`common::lanes`), never the core count.
+    let workers = common::lanes::lanes(8);
     let next = std::sync::atomic::AtomicUsize::new(0);
     type Outcome = (std::time::Duration, Option<String>);
     let results: std::sync::Mutex<Vec<Option<Outcome>>> =

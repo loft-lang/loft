@@ -264,6 +264,32 @@ So when adding or auditing such a matcher, ask: **is there a second spelling of 
 If the answer is yes, match the node kind, and put both spellings in one predicate rather than
 adding the missing arm at the site that happened to break.
 
+## Before the push — the order of a lowering change, and what each build is for
+
+A release build of the crate is 20–40 min here and a dev build minutes
+([CI_BUDGET.md § the ladder](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)),
+so each build must answer a question nothing cheaper can.  The full order is
+[CODEGEN_METHOD.md § The order of a lowering change](../../../doc/claude/CODEGEN_METHOD.md#the-order-of-a-lowering-change-and-what-each-build-is-for);
+the checklist:
+
+1. **The cause named from an artefact, not a guess** — the IR and the emitted Rust of the
+   failing function, pointing at the wrong node or line, BEFORE any build (step 1 above).
+2. **Compile questions go to `cargo check`**; the loop runs on the dev binary
+   (`cargo build --bin loft`); one release build per fix, for the rlib, at the end.
+3. **One heavy job at a time** — a build, the corpus census, a `cargo test` of many binaries,
+   `make falsify`, the drop gate; never beside each other.
+4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites it
+   touches; `cargo test --release --test ownership_drop_gate` on both backends for anything
+   that changes what a value is held in or when it is released; the poison and stack sweeps
+   (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`); the corpus census when the change is meant to
+   move emission — the emission diff first, the native run bounded by what it names; both
+   clippy legs.  A gate first run on GitHub after the push costs the gate, a fix build and a
+   red tip a sibling may already have joined.
+5. **Receipts last** — `scripts/falsify.sh` builds the working tree, so it runs after the fix
+   is committed and while no edit is pending.
+6. **One issue per push** — a defect found while verifying is filed with its repro at once
+   and is the next push.
+
 ## Stop conditions (revert, don't push through)
 
 - You're editing the compiler but cannot point at the working bytecode you intend to

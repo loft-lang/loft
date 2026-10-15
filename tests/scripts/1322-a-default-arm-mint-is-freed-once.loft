@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @STORE_LIMIT: 1310
+// Every loop count is the real one / 50, under a store ceiling LOWERED to 1310 (65535 / 50,
+// `LOFT_STORE_LIMIT`): a build that holds a store per evaluation still crosses it.
 //
 // A collection minted in a `??` DEFAULT ARM is released once (loft#1322,
 // `formal/ownership.md` @FR-O-Borrow — *"the single owner frees once"*).
@@ -65,8 +68,8 @@ fn test_the_default_arm_at_the_store_ceiling() {
   g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
   none: vector<integer>? = null;
   s = 0;
-  for _ in 0..70000 { s += g(none)[1]; }
-  assert(s == 560000, "the mint arm at the ceiling: got {s}");
+  for _ in 0..1400 { s += g(none)[1]; }
+  assert(s == 11200, "the mint arm at the ceiling: got {s}");
 }
 
 fn test_a_bound_default_arm_outside_a_closure() {

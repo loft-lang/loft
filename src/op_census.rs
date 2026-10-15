@@ -258,12 +258,9 @@ fn is_control(name: &str) -> bool {
     .any(|p| name.starts_with(p))
 }
 
-fn write_ngrams(data: &crate::data::Data) {
+fn write_ngrams(names: &Names) {
     let Some(path) = ngram_target() else { return };
-    let name = |op: u16| {
-        data.operator_name(op)
-            .map_or_else(|| format!("op#{op}"), str::to_owned)
-    };
+    let name = |op: u16| (names.operator)(op).unwrap_or_else(|| format!("op#{op}"));
     let mut rows: Vec<(u64, String)> = CENSUS.with_borrow(|c| {
         c.ngrams
             .iter()
@@ -289,8 +286,17 @@ fn write_ngrams(data: &crate::data::Data) {
     }
 }
 
+/// How the census names what it counted: an operator by its opcode, a function by its
+/// definition number — answered by the program the census ran (`main` passes its `Data`).
+pub struct Names<'a> {
+    /// The operator an opcode stands for, if the program has one there.
+    pub operator: &'a dyn Fn(u16) -> Option<String>,
+    /// The name of definition `d_nr`.
+    pub function: &'a dyn Fn(u32) -> String,
+}
+
 /// Write the census to `LOFT_OP_CENSUS`, one line per (segment, function, operator).
-pub fn write(data: &crate::data::Data) {
+pub fn write(names: &Names) {
     let Some(path) = target() else { return };
     let mut out = String::from(if cfg!(feature = "op-census") {
         "# bytes: counted\n"
@@ -302,9 +308,9 @@ pub fn write(data: &crate::data::Data) {
     CENSUS.with_borrow(|c| {
         for row in &c.rows {
             let function = if row.d_nr == u32::MAX {
-                "?"
+                "?".to_string()
             } else {
-                data.def(row.d_nr).name()
+                (names.function)(row.d_nr)
             };
             for (op, &n) in row.count.iter().enumerate() {
                 if n == 0 {
@@ -312,8 +318,8 @@ pub fn write(data: &crate::data::Data) {
                 }
                 let name = u16::try_from(op)
                     .ok()
-                    .and_then(|o| data.operator_name(o))
-                    .map_or_else(|| format!("op#{op}"), str::to_owned);
+                    .and_then(|o| (names.operator)(o))
+                    .unwrap_or_else(|| format!("op#{op}"));
                 let [copy, relocate, text] = row.bytes[op];
                 let _ = writeln!(
                     out,
@@ -327,5 +333,5 @@ pub fn write(data: &crate::data::Data) {
     if let Err(e) = crate::file_access::write(path, out) {
         crate::loft_eprintln!("loft: cannot write the op census: {e}");
     }
-    write_ngrams(data);
+    write_ngrams(names);
 }

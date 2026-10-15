@@ -33,6 +33,7 @@
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
+pub(crate) use crate::native_gate::is_text_work_buffer;
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashSet};
 
@@ -351,7 +352,7 @@ pub fn probe_and_mark_exports(
     so: &std::path::Path,
 ) -> BridgeProbe {
     let mut probe = BridgeProbe::default();
-    if !crate::extensions::load_cdylib(&so.to_string_lossy()) {
+    if !crate::c_libs::load_cdylib(&so.to_string_lossy()) {
         // `load_cdylib` has already printed the classified dlopen diagnostic.
         probe.not_loaded = true;
         probe.unresolved = export
@@ -368,7 +369,7 @@ pub fn probe_and_mark_exports(
             "loft_shared_{}",
             crate::generation::disambiguated_fn_ident(&dups, data.def(d))
         );
-        if crate::extensions::bridge_symbol_resolves(&sym) {
+        if crate::c_libs::bridge_symbol_resolves(&sym) {
             resolvable.insert(d);
         } else {
             probe.unresolved.push(data.def(d).original_name().clone());
@@ -844,13 +845,14 @@ fn shared_bridge_wrapper(
                 let _ = writeln!(body, "    let {var}: {ty} = {read};");
                 slot += 1;
                 // `(R-ValueLocal)` — a TUPLE PARAMETER: the C boundary hands a record, the
-                // inner fn takes its fields (`hoist::tuple_reads`, the live arm's spelling).
+                // inner fn takes its fields (`hoist::layout_reads`, the live arm's spelling)
+                // and, for a nullable layout, whether the record is there.
                 if let Some(layout) = value_rec
                     .param_type(d_nr, i)
                     .and_then(|tp| value_rec.types.get(&tp))
                 {
-                    let reads = crate::generation::hoist::tuple_reads(
-                        &layout.fields,
+                    let reads = crate::generation::hoist::layout_reads(
+                        layout,
                         &var,
                         "unsafe { &*cell.get() }",
                     );
@@ -1059,14 +1061,6 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
         }
         _ => "compile_error!(\"unsupported shared-store return type\");".to_string(),
     }
-}
-
-/// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
-/// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
-/// for each and passes `&mut`.  Shared with `native_gate` (the gate admits exactly
-/// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
-pub(crate) fn is_text_work_buffer(t: &Type) -> bool {
-    matches!(t, Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
 }
 
 /// Candidate `(rlib-lookup-dir, deps-dir)` pairs for a loft binary at `exe_dir`,
@@ -1339,7 +1333,7 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
     let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
         .and_then(|m| m.native)
         .unwrap_or_else(|| crate_name.replace('-', "_"));
-    let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) else {
+    let Some(so) = crate::native_build::resolve_native_lib(pkg_dir, &stem) else {
         return Vec::new();
     };
     let so_path = std::path::PathBuf::from(&so);

@@ -2547,13 +2547,13 @@ fn enclosing_block(text: &str, line: u32) -> Option<(u32, u32)> {
         let r = lexer.peek().clone();
         match &r.has {
             LexItem::None => break,
-            LexItem::Token(t) if t == "{" => {
+            LexItem::Token(t) if *t == "{" => {
                 if depth == 0 {
                     block_start = r.position.line;
                 }
                 depth += 1;
             }
-            LexItem::Token(t) if t == "}" => {
+            LexItem::Token(t) if *t == "}" => {
                 depth -= 1;
                 if depth == 0 && line >= block_start && line <= r.position.line {
                     best = Some((block_start, r.position.line));

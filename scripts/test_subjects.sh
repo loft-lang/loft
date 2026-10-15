@@ -32,7 +32,7 @@
 # cover (see `subject_paths`).  `--full` always runs them.
 HEAVY_BINARIES=(
   deliver_wasm         # 1011s /  17 tests — cross-target delivery matrix
-  ir_schema_roundtrip  #  360s /   8 tests — IR codec over every tests/scripts file
+  ir_schema_roundtrip  #  360s /   8 tests — IR codec over every tests/scripts file + the language suite
   exit_codes           #  210s /  26 tests — spawns a process per case
   codegen_emitter      #  187s /  21 tests — rustc per case
   multiplayer_v5       #  126s /   5 tests — networked, serialised
@@ -82,18 +82,18 @@ subject_patterns() {
   case "$1" in
     (parser)    echo '~pars ~keyless_sorted ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint ~match ~const_ ~diagnostic ~main_signature ~plan25 ~pln25 ~nullable ~variant_field ~template ~fault_position ~pln14 ~in_place_literal ~format_append ~frontend ~slice_copy ~limits' ;;
     (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~join_witness ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_ ~callee_disturb ~buffer_is_place ~compact =lease_refuse =copy_lease =heap_sound =read_after_move ~byte_copy ~vec_copy ~repeat_run ~text_run ~rebind_own_buffer ~work_buffer =dump_determinism ~copy_view' ;;
-    (codegen)   echo '~codegen ~leaf_inline ~forward_walk ~same_read ~in_range ~discharge_into ~single_use ~range_end_header ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~discharge_set ~literal_walk ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~leaf_chain ~lazy_buffer ~nested_in_place ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~lazy_split ~invariant_arith ~bounded_nest ~repeat_fill ~twin_base ~record_ptr ~loop_record ~group_push ~range_arith ~guarded_chain ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision ~adopt_first_bind ~adopt_buffer_reuse ~lift_adopt ~return_field ~fn_header ~one_of_several_args ~literal_exit_buffer ~place_result ~view_field ~field_mint ~iteration_base ~nested_field ~mint_window ~copy_in_place ~leaving_free ~enum_record ~push_window ~join_read ~bounded_sum ~text_borrow ~char_walk ~split_table ~guard_free ~prealloc_stride ~heap_discharge ~walk_accumulator ~record_window ~scalar_file_read ~compiled_stdlib ~prealloc_elide ~loop_layout ~start_step ~swap_rebind ~refill_buffer ~refill_text ~rebind_buffer ~pure_reuse' ;;
+    (codegen)   echo '~codegen ~leaf_inline ~ctor_literal ~fresh_text_hold ~forward_walk ~same_read ~in_range ~discharge_into ~single_use ~range_end_header ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~discharge_set ~literal_walk ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~leaf_chain ~lazy_buffer ~nested_in_place ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~lazy_split ~invariant_arith ~bounded_nest ~repeat_fill ~twin_base ~record_ptr ~loop_record ~group_push ~range_arith ~guarded_chain ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision ~adopt_first_bind ~adopt_buffer_reuse ~lift_adopt ~return_field ~fn_header ~one_of_several_args ~literal_exit_buffer ~place_result ~view_field ~field_mint ~iteration_base ~nested_field ~mint_window ~copy_in_place ~leaving_free ~enum_record ~push_window ~join_read ~bounded_sum ~text_borrow ~char_walk ~split_table ~guard_free ~prealloc_stride ~heap_discharge ~walk_accumulator ~record_window ~scalar_file_read ~compiled_stdlib ~prealloc_elide ~loop_layout ~start_step ~swap_rebind ~refill_buffer ~refill_text ~rebind_buffer ~pure_reuse ~apart_headers ~file_hold ~apart_value ~decode_view' ;;
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~code_base ~fast_table ~frame_headroom ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_ ~fs_ ~frame_readers' ;;
     (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~dropped_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures ~btree =concurrent_warm_start' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust' ;;
+    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust =builder_trigger' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
     (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world' ;;
     # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
     # the emulated Windows host itself; the rest are the file, directory and process families.
-    (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe' ;;
+    (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe =sweep_ignored' ;;
     (*)        return 1 ;;
   esac
 }
@@ -120,11 +120,11 @@ subject_paths() {
   case "$1" in
     (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/|^src/limits\.rs' ;;
     (scopes)   echo '^src/scopes\.rs|^src/scopes/|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs|^src/const_fn\.rs|^src/compact\.rs|^src/repeat_run\.rs|^src/byte_copy\.rs|^src/vec_copy\.rs|^src/text_run\.rs|^src/pure_reuse\.rs|^src/forward_result\.rs|^src/literal_append\.rs' ;;
-    (codegen)  echo '^src/generation/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
+    (codegen)  echo '^src/generation/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/ctor_literal\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs|^src/timeout\.rs|^src/native\.rs|^src/crash_report\.rs' ;;
     (store)    echo '^src/store\.rs|^src/vector\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/btree\.rs|^src/placement\.rs|^src/siphash\.rs' ;;
     (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
-    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/' ;;
+    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/|^src/triggers\.rs|^src/libscan\.rs' ;;
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;

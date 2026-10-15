@@ -71,7 +71,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     let digest = hasher.finalize();
     let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
     let stem = format!("{}_shim_{key:016x}", stem_of(pkg_dir));
-    let so = out_dir.join(crate::native_lib::platform_cdylib_name(&stem));
+    let so = out_dir.join(crate::platform::cdylib_file_name(&stem));
     if crate::file_access::exists(&so) {
         return Ok(so);
     }

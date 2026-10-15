@@ -73,7 +73,11 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     ([API_SURFACE.md](API_SURFACE.md) S1–S7); public names live under the library's module,
     so the stdlib can grow beside them, and a free function a same-named method would
     silently shadow is refused (DESIGN_DECISIONS.md @C95, @C97, @C101; `warning[shadowed-by-method]`);
-    a parameter or field that is never written is `const` (loft-write skill).
+    a parameter or field that is never written is `const` (loft-write skill).  The one way a
+    library puts a bare name into a consumer's file is a **builder** it lists under
+    `[triggers] builders` — a few free `pub fn`s worth a bare call (`set(words)`), never the
+    whole surface; the consumer's own definition wins and `<pkg>::name` always resolves
+    ([PACKAGES.md § Manifest](PACKAGES.md#manifest-lofttoml)).
 14. **Only a browser-declared library knows JavaScript**; a platform-blind one carries bytes,
     and a blocking-looking primitive yields.  [BROWSER_INTEROP.md](BROWSER_INTEROP.md)
 

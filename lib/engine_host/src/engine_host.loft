@@ -499,7 +499,8 @@ fn kernel_local(tick_interval_us: integer) -> boolean;
 // The connector loop: pump → budgeted event drain → tick when due → idle.
 // Mirrors `run` (the same drain rule, the same drift-free tick), but RETURNS
 // once the server connection closes — the kind-2 disconnect event reaches
-// `on_event` first.
+// `on_event` first.  When no server answers it says so and returns at once:
+// no event, no tick.  Both hold on a native seat and in a browser page.
 // Example: @EHK-004
 pub fn run_client(
   host: text,

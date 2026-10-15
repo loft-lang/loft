@@ -18,7 +18,7 @@ fact**: `infer_type` now answers for `Value::Insert` (its tail-item type) — a
 6-line case in `src/generation/emit.rs`. That single read made the existing
 typed-null handler fire for *every* Insert-arm value-if, so the special-case gap
 closed AND the bug auto-fixed (commit `6b29fe30`, regression
-`tests/scripts/85-store-lifetime-match-return-borrowed.loft`). **That is the shape
+`loft-suite/attic/scripts/85-store-lifetime-match-return-borrowed.loft`). **That is the shape
 of every step below: a missing fact, computed once, at the chokepoint — the bug is
 a side effect of the collapse, not a separate fix.**
 
@@ -136,7 +136,7 @@ edit.  `index_body` already takes the container type, so it is a near drop-in.
 One helper per phase, each independently shippable.  Prove green on **both backends**
 before editing and after each phase; on any red, revert that one site and diagnose before
 continuing (bisect-by-site).  `B=./target/release/loft`,
-`T=tests/scripts/85-store-lifetime-claims-keystone.loft`.
+`T=loft-suite/attic/scripts/85-store-lifetime-claims-keystone.loft`.
 
 - **Phase 0 — baseline (no edits).**  Confirm the tree is green so any later red is
   unambiguously the fold: `$B --interpret --tests $T` → ok · `$B --native --tests $T` → ok
@@ -168,7 +168,7 @@ are green on interp **and** `--native`; the suite shows no new failures.  The th
 divergent re-encodings of the cascade walk are gone, with destination build correctly left
 per-kind.
 
-**Guards.**  `tests/scripts/85-store-lifetime-claims-keystone.loft` covers every axis
+**Guards.**  `loft-suite/attic/scripts/85-store-lifetime-claims-keystone.loft` covers every axis
 (vector, hash, sorted/ordered, index + sibling-sorted = the @P309 axis, multi-heap struct,
 inline enum) under the store-leak gate.  `cargo test --release --test leak` catches a
 dropped or double-freed element record.  `LOFT_COPY_CHECK=1` (or `LOFT_LOG=copy_check`) walks
@@ -237,7 +237,7 @@ the signal explicit). `size_code` (`stack.rs`) is the same family, same disposit
       `20610eaf`, net −56/+72). Behaviour-preserving (the A.0 return-ownership
       boundary matrix is identical before/after on both backends); full suite
       clean both backends; regression
-      `tests/scripts/85-store-lifetime-borrowed-view-query.loft`.
+      `loft-suite/attic/scripts/85-store-lifetime-borrowed-view-query.loft`.
       **`scan_set` runtime witness DELIBERATELY retained** (the over-unification
       guard): `paired_witness`/`OpFreeRefIfDistinct` guards a *statically-
       unresolvable* adopt-vs-orphan case (a callee like `map_from_json` that
@@ -253,7 +253,7 @@ the signal explicit). `size_code` (`stack.rs`) is the same family, same disposit
       LOFT_DATA.md § Vectors/§ Variables (#338) documents vector-ELEMENT reads as
       dep-tracked VIEWS: `a = vv[0]` for `vector<vector<T>>` is a VIEW on base
       (`vv[0] += [9]` ⇒ `len(a) == 4`), CONSISTENTLY with the struct-element view that
-      `tests/scripts/294-vector-element-view-semantics.loft` PINS and that #415
+      `loft-suite/attic/scripts/294-vector-element-view-semantics.loft` PINS and that #415
       DELIBERATELY excluded index reads to preserve (OWNERSHIP_MODEL row 102: "a
       vector INDEX read keeps its existing nested-stride path"). The probe's "observed
       4: aliases" reads the deliberate VIEW as a bug. Worse, copying the nested-field
@@ -342,7 +342,7 @@ the signal explicit). `size_code` (`stack.rs`) is the same family, same disposit
       predicate gated to `context == "return from block"` (the one funnelled return
       path).  a2 is RED→GREEN on BOTH backends through bytecode (signature
       `-> vector["__retbuf"]`, not the old `["v"]` borrow); regression
-      `tests/scripts/85-store-lifetime-implicit-param-return-copy.loft`.  The #415
+      `loft-suite/attic/scripts/85-store-lifetime-implicit-param-return-copy.loft`.  The #415
       inline copy collapsed into the shared helper (net: 2 borrow-tail cases, 1
       copy site).  The earlier "fires in IR, bytecode reverts" symptom was the leaf
       fix landing in `ref_return` (which records a param `ls` as a borrow dep); the
@@ -378,7 +378,7 @@ the signal explicit). `size_code` (`stack.rs`) is the same family, same disposit
       registry fixtures `p310`/`p171`/`imaging`/`v2_*` are unrelated — they pass
       on a fresh worktree build). `scan_set`/`OpFreeRefIfDistinct` +
       `paired_witness` adopt-vs-orphan witness DELIBERATELY retained (A.4 guard).
-      Regression `tests/scripts/85-store-lifetime-return-ownership-adopt.loft`.
+      Regression `loft-suite/attic/scripts/85-store-lifetime-return-ownership-adopt.loft`.
 - [x] **C.0–C.3 — `for_each_owned_child` keystone** (commit `4ff673f8`): `remove_claims`
       collapsed 9 arms/174 lines → 2 arms/41 lines onto one carried heap-cascade walk;
       `copy_claims_hash_body` reads the keystone spine. Over-unification guard:

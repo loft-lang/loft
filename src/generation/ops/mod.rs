@@ -43,6 +43,7 @@ pub mod vector_ops;
 
 use super::Output;
 use crate::data::{Definition, Type, Value};
+pub use crate::text_calls::refvar_text_stack_variant;
 use std::io::{self, Write};
 
 /// Context passed to every emitter.  Carries the writer, the Op
@@ -146,35 +147,6 @@ pub fn has_custom_emitter(name: &str) -> bool {
     registry().contains_key(name)
 }
 
-/// @P283 — Op-name rewrite for `RefVar(Text)` destinations.
-///
-/// `text_return` (`src/parser/control.rs:2919`) promotes the work-text
-/// buffer of any text-returning function from a local `Type::Text(_)`
-/// to a hidden `Type::RefVar(Type::Text(_))` argument (`&mut String`).
-/// Self-reference assignments inside such a function emit
-/// `OpAppendText` / `OpClearText` / `OpFormat{Text,Int,Float,Single,
-/// Database}` / `OpAppendCharacter` IR on that buffer, but those ops
-/// expect a local `String` destination.  The `Stack` variants exist
-/// for the refvar case — this table maps a base op name to its Stack
-/// variant.  Both `src/state/codegen.rs::generate_call` (interp
-/// bytecode dispatch) and `src/generation/dispatch.rs::output_call_inner`
-/// (native emit dispatch) consult it.  Kept here, out-of-band of
-/// `output_call_inner`'s `Op` match-arm budget gate.
-#[must_use]
-pub fn refvar_text_stack_variant(name: &str) -> Option<&'static str> {
-    match name {
-        "OpAppendText" => Some("OpAppendStackText"),
-        "OpClearText" => Some("OpClearStackText"),
-        "OpAppendCharacter" => Some("OpAppendStackCharacter"),
-        "OpFormatText" => Some("OpFormatStackText"),
-        "OpFormatInt" => Some("OpFormatStackInt"),
-        "OpFormatFloat" => Some("OpFormatStackFloat"),
-        "OpFormatSingle" => Some("OpFormatStackSingle"),
-        "OpFormatDatabase" => Some("OpFormatStackDatabase"),
-        _ => None,
-    }
-}
-
 /// Registry of custom emitters, keyed by Op name.
 ///
 /// Phase 00 ships an empty registry — every Op falls through to the
@@ -208,7 +180,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("OpReadFile", Box::new(file_ops::ReadFileEmitter));
     // `@FR-R-FoldCompare` — a text predicate over a case fold, answered without the fold.
     {
-        use crate::codegen_runtime::fold_op;
+        use crate::runtime_abi::fold_op;
         let ops = [fold_op::STARTS, fold_op::ENDS, fold_op::EQ, fold_op::NE];
         for (name, op) in FOLD_COMPARE_OPS.into_iter().zip(ops) {
             r.insert(name, Box::new(text_ops::FoldCompareEmitter { op }));

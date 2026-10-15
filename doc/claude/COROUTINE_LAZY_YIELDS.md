@@ -16,7 +16,7 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 > before the header, so a `break` among them still ends the loop.  A lazy loop's hidden record
 > buffers (`__ref_*`) persist in the struct, and so do a lambda's fn-ref and its `___clos_*`
 > record, which is what lets a loop that builds a closure per iteration stay lazy.
-> Guard: `tests/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`. `tests/scripts/836-lazy-loop-yields.loft`
+> Guard: `loft-suite/attic/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`. `loft-suite/attic/scripts/836-lazy-loop-yields.loft`
 > and `tests/oracle/26-coroutine-laziness.loft` assert the interleaving; VALUES cannot, which is
 > why the value-only oracle reported agreement across a difference this wide.
 > The eager buffer holds VALUES, not handles: a struct or vector yield is copied into a
@@ -26,7 +26,7 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 > {7,17,27} summed to 81. The factory also runs the generator's TAIL (the statements after the
 > last yield, where its scope-exit frees live) once the buffer is filled, so every persistent
 > heap local is freed and a `print` after the loop runs (guard
-> `tests/scripts/1356-a-record-yielded-from-a-loop-body-is-the-value-at-the-yield.loft`).
+> `loft-suite/attic/scripts/1356-a-record-yielded-from-a-loop-body-is-the-value-at-the-yield.loft`).
 > The sections after § Re-descent are the original design, kept as the map for slice 4.
 
 ### Re-descent
@@ -57,8 +57,8 @@ The rotated loop stays for the shape it already covers.  A loop it cannot carry 
 tuple channel, a setup or resume slice with a local that is not a field) is re-descended
 instead.  `LOFT_NO_REDESCENT=1` restores the eager buffer for every re-descended loop (the bisect
 step, NATIVE_SWITCHES.md § Generators).  Guards:
-`tests/scripts/a-generator-resumes-at-the-yield-it-suspended-at.loft` (control-flow shapes) and
-`tests/scripts/a-record-yielded-from-a-loop-is-handed-over-lazily.loft` (every channel).
+`loft-suite/rules/coroutines/G-Next/a-generator-resumes-at-the-yield-it-suspended-at.loft` (control-flow shapes) and
+`loft-suite/rules/coroutines/G-Next/a-record-yielded-from-a-loop-is-handed-over-lazily.loft` (every channel).
 
 ### The problem, precisely
 

@@ -21,6 +21,8 @@ use loft::file_access as fa;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+mod common;
+
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
@@ -306,11 +308,17 @@ const LEAK_SCAN_BASELINE: usize = 0;
 fn oracle_leak_scan_ratchet() {
     let dir = root().join("tests/scripts");
     let mut total = 0usize;
-    for entry in fa::read_dir(&dir).expect("read tests/scripts") {
-        let path = entry.os_spelling();
-        if !fa::has_extension(&path, "loft") {
-            continue;
-        }
+    // The programs here, then every program of the language suite beside the tree
+    // (@PLN193): the scan asks the same question of the corpus it asked before the move.
+    let mut paths: Vec<std::path::PathBuf> = fa::read_dir(&dir)
+        .expect("read tests/scripts")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
+        .collect();
+    paths.sort();
+    paths.extend(common::corpus::suite_programs());
+    for path in paths {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&path)

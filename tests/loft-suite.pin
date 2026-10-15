@@ -1,0 +1,5 @@
+# @PLN193 — the loft-lang/loft-suite commit loft's CI checks out and runs (ci.yml,
+# `language-suite`).  Pinned like a library: a behaviour change is a loft PR plus a suite PR,
+# and the loft PR bumps this line to the suite commit it needs.  The one non-comment line is
+# the full sha; `git -C ../loft-suite rev-parse HEAD` is what the checkout beside this one has.
+922531c35a1f0499aa7ae9a66534b2a7cf847bf9

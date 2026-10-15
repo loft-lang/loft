@@ -1,0 +1,13 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 70976c27a..85cc84c10 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -3446,7 +3446,7 @@ impl Stores {
+             let length = source.get_u32_raw(cur, 4);
+             let into = self.store_mut(to);
+             let block = into.claim(1 + (size * length).div_ceil(8));
+-            into.set_u32_raw(to.rec, to.pos + off, block);
++            into.set_u32_raw(to.rec, to.pos + off, cur);
+             self.copy_block(
+                 &DbRef {
+                     store_nr: rec.store_nr,

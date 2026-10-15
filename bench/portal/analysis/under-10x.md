@@ -125,7 +125,7 @@ hand-computed values on both backends.
 ### D1. Release a buffer that owns nothing without walking its type
 
 Built: `Stores::holds_no_heap_fast` over the type's cached `HeapSlots`, answered at the top
-of `remove_claims`; guard `tests/scripts/a-reused-buffer-is-released-whatever-its-slots-hold.loft`.
+of `remove_claims`; guard `loft-suite/rules/heap/H-ClearRelease/a-reused-buffer-is-released-whatever-its-slots-hold.loft`.
 It reaches two thirds of the price: the rest is the call into `remove_claims` itself, and an
 `#[inline]` on it measured as noise.
 

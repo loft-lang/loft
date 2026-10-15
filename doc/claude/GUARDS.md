@@ -219,6 +219,15 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   so the patch is that commit's source diff reversed.  It stays runnable only while the tree
   still resembles the fix, and `falsify.sh` exits 3 when it no longer applies — detected, where
   a dangling sha reports nothing.  A patch that no longer applies still RECORDS the defect.
+- **A patch never carries the generated standard library.**  `src/compiled_stdlib_gen.rs` is
+  generated from the tree it sits in, so a copy in a patch conflicts on every `default/` change.
+  `falsify.sh` writes no hunk of it — a first line `# regenerate: src/compiled_stdlib_gen.rs`
+  records that the fix moved the file — and all three readers skip a hunk of it that an older
+  patch still holds (`falsify.sh --patch`, `receipts_ci.py`,
+  `doc_hygiene::every_patch_receipt_still_applies`).  A control whose patch names the file
+  builds its own: `scripts/compiled_stdlib_stub.rs` in its place, a build, the control's own
+  generator, a second build.  The stub alone is not a control: it interprets every stdlib body
+  where this tree runs the compiled one, and a leak or `kt=` channel can move on that alone.
 - **Its channels must agree with the ref control's.**  A reverted commit that fixed two things
   reintroduces two, and a receipt moving the WRONG channel looks like proof.  So each patch
   receipt is re-scored, and recorded only when its channel signature matches; otherwise the
@@ -232,6 +241,10 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   runner then reports a wild swing, `the control does not build`.  The cure is a hand
   re-derivation: apply the patch in a scratch worktree, fix the new site the way the patch
   fixes the others, write `git diff` back as the receipt, and re-score it.
+- **A rewrite only the release build makes is falsified there.**  A guard whose rule acts on
+  `--native-release` alone (an IR-phase rewrite, `@FR-R-Apart`) carries
+  `// @falsify-tier: native-release`, and `falsify.sh` then runs its native side on that tier;
+  on plain `--native` the defect is in code the run never reaches, and the receipt reads INERT.
 - **A guard covering TWO defects holds only ONE patch.**  Keep it for the receipt that moves on
   more channels and backends, record the other as its own `@falsified-at:` block with CHANNEL /
   WITNESS / HOLDS, and say in the file which receipt the patch belongs to

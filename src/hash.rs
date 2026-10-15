@@ -330,6 +330,85 @@ pub fn alloc_entry(hash: &DbRef, stride: u32, owner: u32, stores: &mut [Store]) 
     }
 }
 
+/// `@FR-R-KeyedEntry` — the entry an insert of a record keyed `value` writes its fields into:
+/// the one already under that key, or a fresh one filed where the probe for it ended.
+///
+/// ONE walk from the key's home bucket answers both, as [`probe_for_insert`]'s does, but over
+/// the key VALUE: the record is not built yet.  A hit answers the entry itself — the caller
+/// overwrites its fields, which is what replacing it with an identical-keyed record leaves,
+/// with no slot claimed and none released.  A miss claims an arena slot, writes the key into
+/// it, and files it in the empty bucket the walk stopped at, under the arena index the claim
+/// answered (no `arena::index_of` scan to recover it).
+///
+/// `None` when the table cannot be walked this way — no table yet, a table that borrows its
+/// entries, a key kind other than an 8-byte `integer` or `long` — and nothing was changed:
+/// the caller takes the general insert.
+///
+/// # Panics
+/// When the slot the arena just handed out cannot be addressed — the arena's own invariant,
+/// as in [`alloc_entry`].
+pub fn entry_long(
+    hash: &DbRef,
+    stores: &mut [Store],
+    keys: &[Key],
+    value: i64,
+    owner: u32,
+) -> Option<DbRef> {
+    use keys::FastKey;
+    let [key] = keys else { return None };
+    let p = u32::from(key.position);
+    let fast = match key.type_nr.unsigned_abs() {
+        1 => FastKey::Int(p, value),
+        2 => FastKey::Long(p, value),
+        _ => return None,
+    };
+    let store = keys::store(hash, stores);
+    let claim = store.collection_rec(hash.rec, hash.pos);
+    if claim == 0 || store.record_words(claim) <= RESERVED_WORDS {
+        return None;
+    }
+    let entries = Entries::of(store, claim, hash.store_nr);
+    if entries.stride == 0 {
+        return None;
+    }
+    let count = elms(store, claim);
+    let mut at = home_bucket(keys::long_hash(value, read_seed(store, claim)), count);
+    let mut bucket = None;
+    for _ in 0..count {
+        let slot = store.get_u32_raw(claim, BUCKET0 + at * SLOT_BYTES);
+        if slot == 0 {
+            bucket = Some(BUCKET0 + at * SLOT_BYTES);
+            break;
+        }
+        let (rec, pos) = entries.at(store, slot);
+        if fast.matches(store, rec, pos) {
+            return Some(DbRef {
+                store_nr: hash.store_nr,
+                rec,
+                pos,
+            });
+        }
+        at += 1;
+        if at >= count {
+            at = 0;
+        }
+    }
+    // A full walk with no empty bucket cannot happen below the load factor; leave it to the
+    // general insert, which rebuilds the table first.
+    let bucket = bucket?;
+    let store = keys::mut_store(hash, stores);
+    let index = arena::alloc(store, claim, entries.stride, owner);
+    let (rec, pos) = arena::slot(store, claim, index, entries.stride).expect("just allocated");
+    store.set_int(rec, pos + p, value);
+    let rec = DbRef {
+        store_nr: hash.store_nr,
+        rec,
+        pos,
+    };
+    add_at(hash, &rec, bucket, index, stores, keys);
+    Some(rec)
+}
+
 pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     // loft#1213 — read the slot through `collection_rec` so an ABSENT field reads as "no
     // table" and takes the branch below, rather than as a table at the reserved id.

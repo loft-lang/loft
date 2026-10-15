@@ -185,7 +185,8 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 /// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
 /// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
 /// receipt).  Each must still `git apply --check`; a stale one is re-derived at the current
-/// tree and re-scored.  `tests/falsified_patches.baseline` lists the ones already stale when
+/// tree and re-scored.  A hunk of the generated `src/compiled_stdlib_gen.rs` is left out, as
+/// `falsify.sh` and `receipts_ci.py` leave it out: the control regenerates that file.  `tests/falsified_patches.baseline` lists the ones already stale when
 /// this landed, and only shrinks.
 #[test]
 #[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
@@ -206,7 +207,7 @@ fn every_patch_receipt_still_applies() {
         .iter()
         .filter(|p| {
             !loft::platform::process::harness_command("git")
-                .args(["apply", "--check"])
+                .args(["apply", "--check", "--exclude=src/compiled_stdlib_gen.rs"])
                 .arg(p)
                 .current_dir(&root)
                 .output()

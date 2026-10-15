@@ -185,6 +185,12 @@ const PAGE_RAN: &str = "Array.isArray(globalThis.loftFonts) && globalThis.loftFo
 /// `None` is the harness's own SKIP (exit 2: no browser, or one that never answered its
 /// debugging port) — nothing about the page was observed, so the caller skips rather than
 /// asserting, as every other browser gate does.
+///
+/// The browser runs with `--no-gpu`.  A family is measured on the bridge's 2D text canvas
+/// and nothing here reads a pixel, so the gates need no GPU — and with one, the first
+/// GPU-drawn frame of a fresh browser can take seconds on a loaded machine.  The bridge's
+/// WebGL context and the `document.fonts.load` await both wait for that frame, inside the
+/// budget, and the page is then reported as never having reached the bridge.
 fn check_when(
     url: &str,
     ready_expr: &str,
@@ -199,6 +205,7 @@ fn check_when(
         .args(["--ready", ready_expr])
         .args(["--port", &port.to_string()])
         .args(["--assert", assert_expr])
+        .arg("--no-gpu")
         .output()
         .expect("invoke node harness");
     if out.status.code() == Some(2) {
@@ -294,8 +301,15 @@ fn each_declared_font_source_resolves_to_the_requested_family() {
     };
     assert!(
         ok,
-        "a declared font did not resolve to the family the program asked for — \
-         text would draw in a generic fallback with nothing on stderr.\n{text}"
+        "{}\n{text}",
+        if page_never_ran(&text) {
+            "the page never reached the bridge inside its budget, so this run observed NOTHING \
+             about the fonts — that is a page that did not boot, not a family that did not \
+             resolve"
+        } else {
+            "a declared font did not resolve to the family the program asked for — text would \
+             draw in a generic fallback with nothing on stderr"
+        }
     );
 }
 

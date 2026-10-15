@@ -151,8 +151,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     format_text::<false>,
     format_stack_text::<false>,
     append_character::<false>,
-    text_compare::<false>,
-    cast_character_from_int::<false>,
     conv_int_from_character::<false>,
     var_enum::<false>,
     const_enum::<false>,
@@ -235,12 +233,10 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     push_enum::<false>,
     push_character::<false>,
     push_byte::<false>,
-    claim_child_rec::<false>,
     ref_from_child_rec::<false>,
     child_rec::<false>,
     get_record::<false>,
     hash_add::<false>,
-    hash_find::<false>,
     length_hash::<false>,
     eq_bool::<false>,
     ne_bool::<false>,
@@ -329,13 +325,11 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     insert_vector::<false>,
     adopt_vector::<false>,
     replace_vector::<false>,
-    validate::<false>,
     hash_remove::<false>,
     reserve_hash::<false>,
     size_hash::<false>,
     length_index::<false>,
     size_index::<false>,
-    panic::<false>,
     print::<false>,
     remove::<false>,
     clear::<false>,
@@ -505,8 +499,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     format_text::<true>,
     format_stack_text::<true>,
     append_character::<true>,
-    text_compare::<true>,
-    cast_character_from_int::<true>,
     conv_int_from_character::<true>,
     var_enum::<true>,
     const_enum::<true>,
@@ -589,12 +581,10 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     push_enum::<true>,
     push_character::<true>,
     push_byte::<true>,
-    claim_child_rec::<true>,
     ref_from_child_rec::<true>,
     child_rec::<true>,
     get_record::<true>,
     hash_add::<true>,
-    hash_find::<true>,
     length_hash::<true>,
     eq_bool::<true>,
     ne_bool::<true>,
@@ -683,13 +673,11 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     insert_vector::<true>,
     adopt_vector::<true>,
     replace_vector::<true>,
-    validate::<true>,
     hash_remove::<true>,
     reserve_hash::<true>,
     size_hash::<true>,
     length_index::<true>,
     size_index::<true>,
-    panic::<true>,
     print::<true>,
     remove::<true>,
     clear::<true>,
@@ -859,8 +847,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     format_text_r,
     format_stack_text_r,
     append_character_r,
-    text_compare_r,
-    cast_character_from_int_r,
     conv_int_from_character_r,
     var_enum_r,
     const_enum_r,
@@ -943,12 +929,10 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     push_enum_r,
     push_character_r,
     push_byte_r,
-    claim_child_rec_r,
     ref_from_child_rec_r,
     child_rec_r,
     get_record_r,
     hash_add_r,
-    hash_find_r,
     length_hash_r,
     eq_bool_r,
     ne_bool_r,
@@ -1037,13 +1021,11 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     insert_vector_r,
     adopt_vector_r,
     replace_vector_r,
-    validate_r,
     hash_remove_r,
     reserve_hash_r,
     size_hash_r,
     length_index_r,
     size_index_r,
-    panic_r,
     print_r,
     remove_r,
     clear_r,
@@ -1087,367 +1069,8 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     coroutine_retain_r,
 ];
 
-/// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
-/// of the `default/` this binary was generated from.
-pub const OPERATOR_NAMES: &[&str] = &[
-    "OpGotoWord",
-    "OpGotoFalseWord",
-    "OpConstTrue",
-    "OpConstFalse",
-    "OpVarBool",
-    "OpConstInt",
-    "OpVarInt",
-    "OpPutInt",
-    "OpConvFloatFromInt",
-    "OpAddInt",
-    "OpMinInt",
-    "OpMulInt",
-    "OpDivInt",
-    "OpRemInt",
-    "OpLandInt",
-    "OpEqInt",
-    "OpLtInt",
-    "OpLeInt",
-    "OpConstFloat",
-    "OpVarFloat",
-    "OpPutFloat",
-    "OpConvBoolFromFloat",
-    "OpAddFloat",
-    "OpMinFloat",
-    "OpMulFloat",
-    "OpDivFloat",
-    "OpDivFloatNullable",
-    "OpLtFloat",
-    "OpIntVV",
-    "OpIntVC",
-    "OpCmpIntVV",
-    "OpCmpIntVC",
-    "OpIntVVPut",
-    "OpIntVCPut",
-    "OpCmpIntVVJump",
-    "OpCmpIntVCJump",
-    "OpGoto",
-    "OpGotoFalse",
-    "OpCall",
-    "OpReturn",
-    "OpFreeStack",
-    "OpReserveFrame",
-    "OpPutBool",
-    "OpNot",
-    "OpConstShort",
-    "OpConstTiny",
-    "OpVarCharacter",
-    "OpVarNarrow",
-    "OpPutNarrow",
-    "OpPutCharacter",
-    "OpConvIntFromNull",
-    "OpConvBoolFromNull",
-    "OpConvCharacterFromInt",
-    "OpAbsInt",
-    "OpMinSingleInt",
-    "OpBitNotSingleInt",
-    "OpConvSingleFromInt",
-    "OpConvBoolFromInt",
-    "OpAddIntNullable",
-    "OpMinIntNullable",
-    "OpMulIntNullable",
-    "OpDivIntNullable",
-    "OpRemIntNullable",
-    "OpLorInt",
-    "OpEorInt",
-    "OpSLeftInt",
-    "OpSRightInt",
-    "OpNeInt",
-    "OpFormatInt",
-    "OpFormatStackInt",
-    "OpConstSingle",
-    "OpVarSingle",
-    "OpPutSingle",
-    "OpAbsSingle",
-    "OpMinSingleSingle",
-    "OpCastIntFromSingle",
-    "OpConvFloatFromSingle",
-    "OpConvBoolFromSingle",
-    "OpAddSingle",
-    "OpMinSingle",
-    "OpMulSingle",
-    "OpDivSingle",
-    "OpEqSingle",
-    "OpNeSingle",
-    "OpLtSingle",
-    "OpLeSingle",
-    "OpConvFloatFromNull",
-    "OpAbsFloat",
-    "OpMathFuncFloat",
-    "OpMathFunc2Float",
-    "OpPowFloat",
-    "OpMinSingleFloat",
-    "OpCastSingleFromFloat",
-    "OpCastIntFromFloat",
-    "OpRemFloat",
-    "OpEqFloat",
-    "OpNeFloat",
-    "OpLeFloat",
-    "OpFormatFloat",
-    "OpFormatStackFloat",
-    "OpVarText",
-    "OpArgText",
-    "OpConstText",
-    "OpConvTextFromNull",
-    "OpLengthText",
-    "OpLengthCharacter",
-    "OpConvBoolFromText",
-    "OpInitText",
-    "OpAppendText",
-    "OpPutText",
-    "OpGetTextSub",
-    "OpTextCharacter",
-    "OpTextCharacterNullable",
-    "OpConvBoolFromCharacter",
-    "OpClearText",
-    "OpFreeText",
-    "OpEqText",
-    "OpNeText",
-    "OpLtText",
-    "OpLeText",
-    "OpFormatText",
-    "OpFormatStackText",
-    "OpAppendCharacter",
-    "OpTextCompare",
-    "OpCastCharacterFromInt",
-    "OpConvIntFromCharacter",
-    "OpVarEnum",
-    "OpConstEnum",
-    "OpPutEnum",
-    "OpConvBoolFromEnum",
-    "OpConvIntFromEnum",
-    "OpConvBoolFromRef",
-    "OpConvRefFromNull",
-    "OpInitRef",
-    "OpNullRefSentinel",
-    "OpInitRefSentinel",
-    "OpFreeRef",
-    "OpFreeRefIfDistinct",
-    "OpFreeRefOrHandUp",
-    "OpFreeRefUnlessEntry",
-    "OpFreeScratch",
-    "OpVarRef",
-    "OpPutRef",
-    "OpEqRef",
-    "OpNeRef",
-    "OpGetRef",
-    "OpSetRef",
-    "OpSetDbRef",
-    "OpGetDbRef",
-    "OpGetField",
-    "OpGetInt",
-    "OpGetCharacter",
-    "OpGetSingle",
-    "OpGetFloat",
-    "OpGetByte",
-    "OpGetByteNullable",
-    "OpGetEnum",
-    "OpSetEnum",
-    "OpGetBoolean",
-    "OpSetBoolean",
-    "OpGetShort",
-    "OpGetText",
-    "OpSetInt",
-    "OpSetCharacter",
-    "OpSetSingle",
-    "OpSetFloat",
-    "OpSetByte",
-    "OpSetByteNullable",
-    "OpSetShort",
-    "OpGetInt4",
-    "OpSetInt4",
-    "OpGetInt4Raw",
-    "OpSetInt4Raw",
-    "OpGetInt4Full",
-    "OpGetShortRaw",
-    "OpSetShortRaw",
-    "OpGetShortSpare",
-    "OpGetShortFull",
-    "OpSetText",
-    "OpSetTextReplace",
-    "OpVarVector",
-    "OpLengthVector",
-    "OpVectorIsNull",
-    "OpRefIsNull",
-    "OpDistinctStore",
-    "OpStoreLive",
-    "OpRefAlias",
-    "OpClearVector",
-    "OpGetVector",
-    "OpVectorRef",
-    "OpGetVectorNullable",
-    "OpVectorRefNullable",
-    "OpAppendTextBytes",
-    "OpNewRecord",
-    "OpFinishRecord",
-    "OpAppendVector",
-    "OpSliceVector",
-    "OpSliceView",
-    "OpKeepRange",
-    "OpPushInt",
-    "OpPushInt4",
-    "OpPushFloat",
-    "OpPushSingle",
-    "OpPushBoolean",
-    "OpPushEnum",
-    "OpPushCharacter",
-    "OpPushByte",
-    "OpClaimChildRec",
-    "OpRefFromChildRec",
-    "OpChildRec",
-    "OpGetRecord",
-    "OpHashAdd",
-    "OpHashFind",
-    "OpLengthHash",
-    "OpEqBool",
-    "OpNeBool",
-    "OpIterate",
-    "OpStep",
-    "OpAppendCopy",
-    "OpPlaceRecord",
-    "OpMoveRecord",
-    "OpMoveField",
-    "OpMoveVector",
-    "OpFreeRecordIn",
-    "OpCopyRefOrNull",
-    "OpBindOrCopy",
-    "OpIndexGroup",
-    "OpLinkRecord",
-    "OpSetKeyed",
-    "OpStaticCall",
-    "OpCreateStack",
-    "OpInitCreateStack",
-    "OpGetStackText",
-    "OpGetStackRef",
-    "OpSetStackRef",
-    "OpSetStackFnRef",
-    "OpGetStackFnRef",
-    "OpDropFnRef",
-    "OpFnRefClosure",
-    "OpAppendStackText",
-    "OpAppendStackCharacter",
-    "OpClearStackText",
-    "OpCallRef",
-    "OpCoroutineNext",
-    "OpCoroutineYield",
-    "OpVarFnRef",
-    "OpPutFnRef",
-    "OpConstRef",
-    "OpConstStoreText",
-    "OpCallRefStore",
-    "OpBindFnRefResult",
-    "OpTextWalkStep",
-    "OpTextNullJump",
-    "OpTextEndJump",
-    "OpVecGetInt",
-    "OpVecGetIntNullable",
-    "OpVecSetInt",
-    "OpVecEndJump",
-    "OpNullReported",
-    "OpCastTextFromBool",
-    "OpRangeDefault",
-    "OpConvCharacterFromNull",
-    "OpConstLongText",
-    "OpCastIntFromText",
-    "OpCastSingleFromText",
-    "OpCastFloatFromText",
-    "OpConvSingleFromNull",
-    "OpRemSingle",
-    "OpDivSingleNullable",
-    "OpRemSingleNullable",
-    "OpMathFuncSingle",
-    "OpMathFunc2Single",
-    "OpPowSingle",
-    "OpFormatSingle",
-    "OpFormatStackSingle",
-    "OpMathPiFloat",
-    "OpMathEFloat",
-    "OpRemFloatNullable",
-    "OpSizeText",
-    "OpCastTextFromEnum",
-    "OpCastEnumFromText",
-    "OpCastEnumFromInt",
-    "OpConvEnumFromNull",
-    "OpDatabase",
-    "OpFormatDatabase",
-    "OpFormatStackDatabase",
-    "OpStoreTag",
-    "OpFreeRefTag",
-    "OpSizeofRef",
-    "OpEqContent",
-    "OpNeContent",
-    "OpSizeVector",
-    "OpSizeStruct",
-    "OpSizeScalar",
-    "OpLengthSorted",
-    "OpCastVectorFromText",
-    "OpRemoveVector",
-    "OpKeepVectorRange",
-    "OpInsertVector",
-    "OpAdoptVector",
-    "OpReplaceVector",
-    "OpValidate",
-    "OpHashRemove",
-    "OpReserveHash",
-    "OpSizeHash",
-    "OpLengthIndex",
-    "OpSizeIndex",
-    "OpPanic",
-    "OpPrint",
-    "OpRemove",
-    "OpClear",
-    "OpCopyRecord",
-    "OpEvacuate",
-    "OpReplaceKeyed",
-    "OpClearKeyed",
-    "OpFillKeyed",
-    "OpLengthSpatial",
-    "OpSizeSpatial",
-    "OpLengthTrie",
-    "OpSizeTrie",
-    "OpFnRefDetachShared",
-    "OpParallelBegin",
-    "OpParallelArm",
-    "OpParallelJoin",
-    "OpPreAllocVector",
-    "OpReserveVector",
-    "OpGetFile",
-    "OpGetDir",
-    "OpGetFileText",
-    "OpWriteFile",
-    "OpReadFile",
-    "OpSeekFile",
-    "OpSizeFile",
-    "OpDelete",
-    "OpMoveFile",
-    "OpTruncateFile",
-    "OpSyncFile",
-    "OpDeliver",
-    "OpExpose",
-    "OpRelease",
-    "OpMkdir",
-    "OpMkdirAll",
-    "OpRmdir",
-    "OpReverseVector",
-    "OpSortVector",
-    "OpCoroutineCreate",
-    "OpCoroutineReturn",
-    "OpCoroutineExhausted",
-    "OpCoroutineRetain",
-];
-
-/// How many operators are `#hot` (slots `0..OP_HOT`, all one-byte opcodes): the lean
-/// loop runs them inline.  `Data::op_code` numbers a declaration from this and
-/// [`OP_NORMAL`], the order the tables above are laid out in.
-pub const OP_HOT: u16 = 36;
-/// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
-/// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 223;
+// The slot names and class sizes these tables are laid out by: `op_layout`.
+pub use crate::op_layout::{OP_HOT, OP_NORMAL, OPERATOR_NAMES};
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -3682,35 +3305,6 @@ fn append_character_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn text_compare<const F: bool>(s: &mut State) {
-    s.text_compare();
-}
-
-fn text_compare_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    text_compare::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
-fn cast_character_from_int<const F: bool>(s: &mut State) {
-    let v_v1 = s.get_stack_m::<F, i32>();
-    let new_value = if let Some(c) = char::from_u32(v_v1 as u32) {
-        c
-    } else {
-        s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange);
-        char::from(0)
-    };
-    s.put_stack_m::<F, _>(new_value);
-}
-
-fn cast_character_from_int_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    cast_character_from_int::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn conv_int_from_character<const F: bool>(s: &mut State) {
     let v_v1 = char::from_u32(s.get_stack_m::<F, u32>()).unwrap_or('\0');
     let new_value = if v_v1 == char::from(0) {
@@ -5601,21 +5195,6 @@ fn replace_vector_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn claim_child_rec<const F: bool>(s: &mut State) {
-    let operands = s.operands(2);
-    let v_tp = operands.get::<u16>(0);
-    let v_src = s.get_stack_m::<F, DbRef>();
-    let v_field = s.get_stack_m::<F, DbRef>();
-    s.database.claim_child_rec(&v_field, &v_src, v_tp);
-}
-
-fn claim_child_rec_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    claim_child_rec::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn ref_from_child_rec<const F: bool>(s: &mut State) {
     let v_field = s.get_stack_m::<F, DbRef>();
     let new_value = s.database.ref_from_child_rec(&v_field);
@@ -5655,17 +5234,6 @@ fn get_record_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn validate<const F: bool>(s: &mut State) {
-    s.validate();
-}
-
-fn validate_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    validate::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn hash_add<const F: bool>(s: &mut State) {
     s.hash_add();
 }
@@ -5673,17 +5241,6 @@ fn hash_add<const F: bool>(s: &mut State) {
 fn hash_add_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     hash_add::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
-fn hash_find<const F: bool>(s: &mut State) {
-    s.hash_find();
-}
-
-fn hash_find_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    hash_find::<true>(s);
     s.regs_out()
 }
 
@@ -5794,26 +5351,12 @@ fn ne_bool_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn panic<const F: bool>(s: &mut State) {
-    let v_message = s.string();
-    panic!("{}", v_message.str());
-}
-
-fn panic_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    panic::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn print<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
     crate::loft_host_print(v_v1.str().as_ptr(), v_v1.str().len());
     #[cfg(all(not(feature = "wasm"), not(target_arch = "wasm32")))]
-    if !crate::rpc::print_or_capture(v_v1.str()) {
-        crate::codegen_runtime::host_print(v_v1.str());
-    }
+    crate::codegen_runtime::print_or_host(v_v1.str());
     #[cfg(all(not(feature = "wasm"), target_arch = "wasm32", target_os = "wasi"))]
     crate::codegen_runtime::host_print(v_v1.str());
     #[cfg(feature = "wasm")]

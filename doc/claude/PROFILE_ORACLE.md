@@ -145,8 +145,8 @@ receipt: with the row's `expect` set to `\blexer\b`, the runner reports `FAIL �
 
 **A measured negative, recorded here because it reads like a row that should exist:** a
 19 MB file of nothing but comments does NOT make the lexer the top module.  It reaches
-9.6 %, behind the allocator (28 %), `vec/string` (11 % — the lexer materialises the whole
-file as `Vec<char>` first), `hashing` (10 %) and the parser (9 %, all of it
+9.6 %, behind the allocator (28 %), `vec/string` (11 % — the lexer of that run decoded each
+line into a `Vec<char>` first; it reads the line's own text now), `hashing` (10 %) and the parser (9 %, all of it
 `file_has_pending_fn`).  Four whole-file pre-scans run before the lexer, each with its own
 tokenisation and none skipping comments — `script::split_top_level`,
 `Parser::file_has_pending_fn`, `libscan::scan_method_calls` and

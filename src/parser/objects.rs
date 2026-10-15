@@ -3392,12 +3392,13 @@ impl Parser {
             let had_spec = self.lexer.has_token(":");
             if had_spec {
                 if custom_fmt {
-                    if let LexResult {
-                        has: LexItem::Token(t) | LexItem::Identifier(t),
-                        position: _pos,
-                    } = self.lexer.peek().clone()
-                    {
-                        spec_string = t;
+                    let spec = match &self.lexer.peek().has {
+                        LexItem::Token(t) => Some((*t).to_string()),
+                        LexItem::Identifier(t) => Some(t.clone()),
+                        _ => None,
+                    };
+                    if let Some(spec) = spec {
+                        spec_string = spec;
                         self.lexer.cont();
                     }
                 } else {
@@ -3406,10 +3407,10 @@ impl Parser {
                         position: _pos,
                     } = self.lexer.peek().clone()
                     {
-                        let st: &str = &t;
+                        let st: &str = t;
                         if !SKIP_TOKEN.contains(&st) {
                             token.clear();
-                            token += &t;
+                            token += t;
                             state.token = &token;
                             self.lexer.cont();
                         }
@@ -3616,7 +3617,7 @@ impl Parser {
             let mut a = args.clone();
             a[0] = Value::Var(var_nr);
             let op = if stack {
-                let twin = crate::generation::ops::refvar_text_stack_variant(name)
+                let twin = crate::text_calls::refvar_text_stack_variant(name)
                     .expect("every write of the format family has a stack twin");
                 self.data.def_nr(twin)
             } else {
@@ -3868,9 +3869,7 @@ impl Parser {
     /// and has not yet met a variable declared further down.
     fn starts_format_width(&self, item: &LexItem) -> bool {
         match item {
-            LexItem::Token(s) => {
-                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(s).is_none()
-            }
+            LexItem::Token(s) => !SKIP_WIDTH.contains(s) && crate::parser::radix_for(s).is_none(),
             LexItem::Identifier(s) => {
                 !SKIP_WIDTH.contains(&s.as_str())
                     && crate::parser::radix_for(s).is_none()
@@ -4026,7 +4025,7 @@ impl Parser {
         self.lexer.set_mode(Mode::Formatting);
         self.lexer.cont();
         if let LexItem::Token(t) = self.lexer.peek().has.clone()
-            && !SKIP_TOKEN.contains(&t.as_str())
+            && !SKIP_TOKEN.contains(&t)
         {
             self.lexer.cont();
         }
@@ -5939,24 +5938,16 @@ impl Parser {
             && hint_is_the_whole_value
         {
             let var_tp = self.vars.tp(*v_nr).clone();
-            // ⚠ @FR-N-Shape / @FR-N-Road (@PLN160) — this names ONE spelling: `x: S?` is
-            // `Optional(Reference(S))` and does not match, so every nullable local bound from a
-            // struct literal declines the in-place hint and builds into a work-ref instead,
-            // while its dense twin builds in place.  @C90 makes the two the same slot, so the
-            // divergence is an accident of this test and the cure is `var_tp.base()`, which
-            // peels the `?` and not the `&`.
-            //
-            // **Not applied, and the reason is measured.**  The peel was built and run over the
-            // corpus: 45 of 1435 files change emission, 44 of them a `?`-typed local taking its
-            // dense twin's road — and one shipped guard goes from green to RED,
-            // `1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity`.  Its
-            // leaking cell is `built_in_loop`, and the DENSE twin of that cell ALREADY leaks on
-            // both backends, before the peel and after it (loft#1483).  So the nullable
-            // spelling was accidentally leak-free only because the work-ref road it was pushed
-            // onto frees correctly, and converging it inherits the dense road's defect.  The
-            // peel lands once loft#1483 is closed, not before.
+            // `@FR-N-Road` — the destination's type is read through `base()`: `x: S? = S { … }`
+            // builds in `x` as `x: S = S { … }` does, because @C90 makes the two the same slot.
+            // `LOFT_NO_NULLABLE_INPLACE=1` keeps a nullable destination on a work reference.
+            let dest_tp = if crate::keys::nullable_literal_in_place() {
+                var_tp.base()
+            } else {
+                &var_tp
+            };
             let type_matches =
-                var_tp.is_unknown() || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr);
+                var_tp.is_unknown() || matches!(dest_tp, Type::Reference(d, _) if *d == td_nr);
             let type_matches = type_matches || self.variant_fills_element(*v_nr, td_nr);
             // loft#660 — a vector-literal ELEMENT alias is never an in-place
             // allocation target.  Its storage is the slot `OpNewRecord` already

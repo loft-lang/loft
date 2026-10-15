@@ -391,7 +391,7 @@ loft#769 — the rule was discoverable in the code and simply not written down h
 Neither half of the tag split is a new decision — both are what the code has shipped since
 @PLN25 — so this records the boundary rather than moving it. The falsifier below covers `(L-Null)`; `(L-Null-Tag)`
 is covered behaviourally by
-`tests/scripts/1134-a-nullable-tuple-element-is-stored-behind-its-tag.loft`, whose zero-valued
+`loft-suite/attic/scripts/1134-a-nullable-tuple-element-is-stored-behind-its-tag.loft`, whose zero-valued
 first field is the cell that a size-and-offset golden cannot see — the same blind spot the ⚠
 under the falsifier list already records for the sentinel half.
 
@@ -460,7 +460,7 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   `size(1)` and `size(2)` and accepted at `size(4)` and `size(8)`.  A plain `integer size(1)`,
   which declares no range, is refused too; `integer size(4)` is not, because four bytes hold
   exactly that range.  See D-layout-7 for what the silence cost.
-- **`L-Narrow-Enc`** — `tests/scripts/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, on
+- **`L-Narrow-Enc`** — `loft-suite/rules/layout/L-Narrow/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft`, on
   both backends: a `u32` field, element, key and spatial axis at and past `i32::MAX`, plus the
   absence code, each read through the SCHEMA (record render, keyed lookup, ordering) and through
   the field's own op, which must agree.  The golden cannot see this rule — the encoding does not
@@ -470,7 +470,7 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   SIGNED decode, which a cure that simply made four bytes unsigned fails and every unsigned cell
   passes.
 
-- **Both backends** — `tests/scripts/509-layout-parity.loft` constructs the corpus and asserts the
+- **Both backends** — `loft-suite/attic/scripts/509-layout-parity.loft` constructs the corpus and asserts the
   read-path (narrow widths, the nested-vector stride at runtime, tuple packing, enum tag+fields) on
   interpreter, `--native`, and wasm: a value-corrupting ABI divergence fails on the divergent
   backend. (D-op-1's differential falsifier applies here as elsewhere.)
@@ -478,11 +478,11 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   (same size, same offsets); nullability lives in the schema, not the hash.  The golden compares
   a `τ?` with its own dense twin, so it cannot see a `τ?` given the WRONG half's representation —
   `reference<Leaf>?` laid out as a well-formed `__nullable<Leaf>` and every size check passed.
-  `tests/scripts/1316-a-nullable-reference-field-is-still-a-pointer.loft` scores that on
+  `loft-suite/rules/layout/L-Null/1316-a-nullable-reference-field-is-still-a-pointer.loft` scores that on
   behaviour instead, on both backends: the marked field must SHARE (write through the source, read
   it through the field) and the unmarked one must COPY, which is the pair no layout dump
   distinguishes.  The VALUE spelling — a read that names no record answers `nullref` —
-  is `tests/scripts/1374-an-absent-pointer-leaves-its-slot-as-nullref.loft`, both backends
+  is `loft-suite/attic/scripts/1374-an-absent-pointer-leaves-its-slot-as-nullref.loft`, both backends
   under strict stores: an index past the end and before the front, a `hash`, `sorted` and
   `index` miss, each through a local bind, a declared local, a `S?` argument, a `-> S?`
   return and its bind, a copy-bind, an inline test and a field read, with every source
@@ -507,7 +507,7 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   `reference<E>` in a variant.  The controls are the load-bearing half: following an enum edge
   is what could start reporting a cycle for every program that puts an enum in a struct.
 
-- **`L-Null-Text`** — `tests/scripts/1270-an-absent-text-is-one-absence.loft`, on both backends:
+- **`L-Null-Text`** — `loft-suite/rules/formatting/F-Render/1270-an-absent-text-is-one-absence.loft`, on both backends:
   every way of SAYING absent (literal `null`, an omitted field, an assignment, a call, a parse)
   writes ONE document and round-trips to itself, while an allocated `""` stays a present value.
   The `""` cells are the control — a fix reading "no characters" as absence passes every null
@@ -524,7 +524,7 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   passed. The sentinel half is now enforced structurally instead — the encodings live at one
   address (`Stores::write_absent_value` / `Stores::write_narrow_value`, the write-side twins of
   `Stores::is_null`) and both JSON walkers call them, so a second spelling has nowhere to live.
-  Behavioural guard: `tests/scripts/json-walker-absent-field.loft`, both backends.
+  Behavioural guard: `loft-suite/attic/scripts/json-walker-absent-field.loft`, both backends.
 - **`L-Sound`** — `src/schema_sidecar.rs` tests: an unchanged store → `Identical` (raw handoff); a
   changed layout → detected (`SchemaVerdict::Changed`), a garbage sidecar → `Unreadable`, each
   mapping to `CorruptReason::SchemaMismatch`. The layout identity a store records is

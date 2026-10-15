@@ -35,7 +35,7 @@ pub struct LayoutIdentity {
     /// vs `integer?` have a byte-identical `dump`, but a value equal to the null
     /// sentinel means "present" under one and "absent" under the other, so a raw
     /// handoff between them is unsafe). Computed from `Data` (`data_to_json` DOES
-    /// serialize `Optional`, the storage table doesn't) via [`Self::of_scoped`].
+    /// serialize `Optional`, the storage table doesn't) via `layout_schema::of_scoped`.
     /// EMPTY when built without `Data` (the deep persistence sites) — an empty
     /// schema on EITHER side is grandfathered (the pre-F9 hash+dump verdict), so
     /// existing stores are never newly refused.
@@ -48,7 +48,7 @@ const SIDECAR_VERSION: u32 = 1;
 impl LayoutIdentity {
     /// Build the identity from the live type table (the in-memory source of
     /// truth) for `roots` and every type they reference. The `schema` (F9) is
-    /// EMPTY — use [`Self::of_scoped`] where `Data` is available to also pin
+    /// EMPTY — use `layout_schema::of_scoped` where `Data` is available to also pin
     /// full-width nullability. An empty schema is grandfathered in [`classify`].
     #[must_use]
     pub fn of(stores: &Stores, roots: &[u16]) -> LayoutIdentity {
@@ -56,19 +56,6 @@ impl LayoutIdentity {
             layout_hash: stores.layout_algo_hash(roots),
             dump: stores.layout_dump(roots),
             schema: String::new(),
-        }
-    }
-
-    /// @PLN102 arc-E F9 — build the identity WITH the DEF-level nullability schema
-    /// (`Data` available: the CLI `loft layout` / api-surface sites). Two identical
-    /// byte layouts that differ only in a full-width `τ` vs `τ?` field now differ
-    /// in `schema`, so [`classify`] refuses the raw handoff.
-    #[must_use]
-    pub fn of_scoped(stores: &Stores, roots: &[u16], data: &crate::data::Data) -> LayoutIdentity {
-        LayoutIdentity {
-            layout_hash: stores.layout_algo_hash(roots),
-            dump: stores.layout_dump(roots),
-            schema: nullability_schema(data, roots),
         }
     }
 
@@ -461,76 +448,10 @@ pub fn migration_outline(diff: &LayoutDiff) -> String {
     s
 }
 
-/// The user-defined struct / enum types of a program — the roots of its layout
-/// identity. Stdlib types are excluded (the layout closure pulls in whatever
-/// base / collection types they reference). Feed these to [`LayoutIdentity::of`]
-/// to build the identity the baseline (Phase F) or the `.dschema` (Phase D) records.
-/// @PLN102 arc-E F9 — the DEF-level nullability signature of `roots`: for each root
-/// type, the names of its `Optional` (nullable) fields. This is the fact the storage
-/// layout DROPS for full-width types (`integer` vs `integer?` share a byte layout, so
-/// the same `dump`), which makes a raw handoff between them unsafe. Since every
-/// user-declared type is a root ([`program_roots`]), a per-root-type signature covers
-/// the whole surface without a closure walk. Sorted for determinism. ALWAYS non-empty
-/// (a `SCHEMA_MARKER` version header leads it) so that an all-non-null program's schema
-/// is "computed, no nullable fields" — DISTINCT from the empty string, which means
-/// "schema ABSENT" (a pre-F9 sidecar, or an identity built without `Data`) and is
-/// grandfathered in [`classify`]. Narrow nullable fields already differ in the `dump`
-/// (the `null=` token), so this only becomes load-bearing for the full-width case.
-#[must_use]
-pub fn nullability_schema(data: &crate::data::Data, roots: &[u16]) -> String {
-    use crate::data::Type;
-    let rootset: std::collections::HashSet<u16> = roots.iter().copied().collect();
-    let mut entries: Vec<String> = Vec::new();
-    for d_nr in 0..data.definitions() {
-        let def = data.def(d_nr);
-        if def.known_type == u16::MAX || !rootset.contains(&def.known_type) {
-            continue;
-        }
-        let mut nullable: Vec<&str> = def
-            .attributes
-            .iter()
-            .filter(|a| matches!(a.typedef, Type::Optional(_)))
-            .map(|a| a.name.as_str())
-            .collect();
-        if !nullable.is_empty() {
-            nullable.sort_unstable();
-            entries.push(format!("{}:{}", def.name, nullable.join(",")));
-        }
-    }
-    entries.sort_unstable();
-    // The marker leads so a NO-nullable-fields program is "computed empty" (non-empty
-    // string), never confused with an ABSENT schema (the empty string).
-    if entries.is_empty() {
-        SCHEMA_MARKER.to_string()
-    } else {
-        format!("{SCHEMA_MARKER};{}", entries.join(";"))
-    }
-}
-
-/// Leads every computed [`nullability_schema`] so "computed, no nullable fields" (this
-/// marker alone) is distinct from an ABSENT schema (`""`). Semicolon-joined so the
-/// signature is a single sidecar line.
-const SCHEMA_MARKER: &str = "nn/1";
-
-#[must_use]
-pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
-    use crate::data::DefType;
-    (0..data.definitions())
-        .map(|d_nr| data.def(d_nr))
-        .filter(|def| {
-            matches!(def.def_type, DefType::Struct | DefType::Enum)
-                // User-declared types have plain-identifier names. Compiler-
-                // generated ones (`__tuple<…>`, `main_vector<…>`, closures) carry
-                // `__` or a `<…>` instantiation suffix; the layout closure reaches
-                // them via the user types that use them, so they aren't roots.
-                && !def.name.starts_with("__")
-                && !def.name.contains('<')
-                && !crate::compile::is_default_file(def.position.file.as_str())
-                && def.known_type != u16::MAX
-        })
-        .map(|def| def.known_type)
-        .collect()
-}
+/// Leads every computed `layout_schema::nullability_schema` so "computed, no nullable
+/// fields" (this marker alone) is distinct from an ABSENT schema (`""`). Semicolon-joined so
+/// the signature is a single sidecar line.
+pub(crate) const SCHEMA_MARKER: &str = "nn/1";
 
 #[cfg(test)]
 mod tests {

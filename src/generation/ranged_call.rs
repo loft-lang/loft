@@ -357,8 +357,9 @@ impl super::Output<'_> {
                 }
             }
         }
-        if !self.rg_emitted.contains(&(d, twin)) && !self.rg_requests.contains(&(d, twin)) {
-            self.rg_requests.push((d, twin));
+        let key = (self.dv_key(d), twin);
+        if !self.rg_emitted.contains(&key) && !self.rg_requests.contains(&key) {
+            self.rg_requests.push(key);
         }
         crate::rewrite_census::fired("R-RangedCall", 1);
         true

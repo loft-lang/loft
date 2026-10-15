@@ -19,6 +19,8 @@ use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode, IrNodeList};
 use crate::stack::Stack;
+pub(crate) use crate::text_calls::{is_c_text_call, is_cdylib_text_call, is_text_dest_native};
+use crate::type_schema::StoreTypeOf;
 #[cfg(debug_assertions)]
 use crate::variables::Function;
 use crate::variables::size;
@@ -134,87 +136,6 @@ fn tuple_slot_owned(stack: &Stack, var: u16) -> bool {
 
 fn ref_tuple_field_offset(elems: &[Type], idx: usize) -> u16 {
     u16::try_from(crate::data::element_stack_offsets(elems)[idx]).unwrap_or(u16::MAX)
-}
-
-/// Text-returning natives that accept a destination buffer instead of allocating one.
-pub(crate) fn is_text_dest_native(name: &str) -> bool {
-    matches!(
-        name,
-        "t_4text_replace"
-            | "t_4text_to_lowercase"
-            | "t_4text_to_uppercase"
-            // @PLN10 — text producers with `_dest` variants (registered in
-            // `native.rs FUNCTIONS`).  `as_text` is INCLUDED (Phase 2): text-null
-            // is content-based ("\0"), so a dest record carries it — the premise
-            // that "a dest can't represent null" was probe-falsified on both
-            // backends.
-            | "n_source_dir"
-            | "n_directory"
-            | "n_user_directory"
-            | "n_program_directory"
-            // #635 — os_temp_dir / os_cache_dir (the private natives temp_dir /
-            // cache_dir wrap); non-null text, "" only on a filesystem-less target.
-            | "n_os_temp_dir"
-            | "n_os_cache_dir"
-            | "n_kernel_event_payload"
-            | "n_kernel_sync_payload"
-            | "n_kernel_client_event_payload"
-            | "n_kernel_client_sync_payload"
-            | "n_kernel_default_host"
-            | "n_kernel_rebuild_artifact"
-            | "n_json_errors"
-            | "t_9JsonValue_kind"
-            | "t_9JsonValue_to_json"
-            | "t_9JsonValue_to_json_pretty"
-            // @PLN10 Phase 1 — always-non-null `#rust`-template producers.
-            | "n_ymd_days_ago"
-            | "n_store_memory"
-            // @PLN129 arc C — always-non-null: "" IS the healthy answer.
-            | "n_store_lazy_error"
-            // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
-            | "n_struct_to_json"
-            | "n_struct_to_json_pretty"
-            // @PLN10 Phase 1 — par-text buffer reader (interp; native is owned
-            // String already, native par-text loops are blocked by #273).
-            | "n_parallel_buf_get_text"
-            // @PLN10 Phase 2 — as_text (null carried as the "\0" sentinel content).
-            | "t_9JsonValue_as_text"
-            // @PLN10 Phase 2 — env_variable (non-null; os_variable owns its String).
-            | "n_env_variable"
-            // host_input — non-null program-input reader (stdin / --html host).
-            | "n_host_input"
-            // text_from_bytes — owned text decoded from a vector<u8>.
-            | "n_text_from_bytes"
-            | "n_text_from_byte_range"
-    )
-}
-
-/// @PLN10 N2b — a **cdylib FFI** text call: an EXTERNAL `#native "symbol"`
-/// function returning text.  Built-in text natives are `#pure` / `#rust` (empty
-/// `def.native`); only loaded cdylib functions carry a non-empty native symbol,
-/// so this is disjoint from `is_text_dest_native` (no `default/` decl uses
-/// `#native`).  Such calls dispatch through the runtime bridge, which is
-/// dest-passed via `n_set_bridge_dest` + `gen_cdylib_text_dest_call` instead of
-/// `stores.scratch`.
-pub(crate) fn is_cdylib_text_call(def: &crate::data::Definition) -> bool {
-    !def.native().is_empty() && matches!(def.returned(), Type::Text(_))
-}
-
-/// @PLN24 arc D — a **`#c` binding** returning text: a C `char *` brought back
-/// as a loft `text`.
-///
-/// Routed exactly like [`is_cdylib_text_call`] (`n_set_bridge_dest` +
-/// `gen_cdylib_text_dest_call`), and for the same reason: a body-less external
-/// declaration has no `_dest` sibling to call and no promoted work buffer of its
-/// own, so the destination has to be handed over as a separate step. Disjoint
-/// from both neighbours — a `#c` definition carries no `native` symbol (arc A
-/// leaves it empty so the Rust dispatch path cannot claim it) and no `default/`
-/// declaration carries a `c_sig`.
-pub(crate) fn is_c_text_call(def: &crate::data::Definition) -> bool {
-    // `.base()` peels `Optional`: a `text?` return uses the same owned-text ABI,
-    // and for a `char *` it is the spelling that lets the null-flow analysis see
-    // the NULL the crossing carries either way.
-    !def.c_sig.is_empty() && matches!(def.returned().base(), Type::Text(_))
 }
 
 impl State {
@@ -2307,7 +2228,7 @@ impl State {
         // before read and must NOT allocate (allocating leaks them — they carry
         // no `OpFreeRef`).  No owned-vector case needs the vector site changed,
         // so de-conflating there only over-reaches.  See
-        // `tests/scripts/122-keyed-return-local-allocates.loft`.
+        // `loft-suite/attic/scripts/122-keyed-return-local-allocates.loft`.
         //
         // ⚠ loft#1155 — the de-conflation DROPPED that second half here rather than renaming
         // it, and a keyed match binding then allocated a store and orphaned it the moment the
@@ -2715,11 +2636,7 @@ impl State {
             // fact-reading half is `Function::owns_displaced_store`, the ONE spelling both
             // backends read (@FR-O-NoDiverge; its native twin is `generation/dispatch.rs`'s
             // `owned_ref_reassign`).  What this side adds is the interpreter's own: the hidden
-            // buffer ARGUMENT is excluded, because the caller owns that store.  The one-argument
-            // borrow the predicate admits (`d: S? = p`, D-own-16's residual) licenses only the
-            // GUARDED free — `nullable_local` below routes it there — and `free_displaced`
-            // declines a free-protected store, so the caller's argument is never released here;
-            // measured: `LOFT_POISON=1` answers identically to `LOFT_POISON=0`.
+            // buffer ARGUMENT is excluded, because the caller owns that store.
             // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
             // which no free below may release: every one of them is guarded by the entry
             // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).
@@ -3315,31 +3232,13 @@ impl State {
                     let slot_offset = stack.var_pos(v);
                     stack.add_op("OpInitRef", self);
                     self.code_add(slot_offset);
-                    // A `&S?` link is as nullable as an `S?` local: the `?` sits under the `&`.
-                    let (outer, src_nullable) = stack.function.tp(*src).peel_optional();
-                    let src_nullable = src_nullable
-                        || matches!(outer, Type::RefVar(inner) if inner.peel_optional().1);
-                    if src_nullable {
-                        self.generate(&Value::Var(*src), stack, false);
-                        self.push_copy_witness(stack, *src);
-                        stack.add_op("OpBindOrCopy", self);
-                        self.code_add(stack.var_pos(v));
-                        self.code_add(tp_nr);
-                    } else {
-                        stack.add_op("OpDatabase", self);
-                        self.code_add(slot_offset);
-                        self.code_add(tp_nr);
-                        let copy_nr = stack.data.def_nr("OpCopyRecord");
-                        let copy_val = Value::Call(
-                            copy_nr,
-                            vec![
-                                Value::Var(*src),
-                                Value::Var(v),
-                                Value::Int(i32::from(tp_nr)),
-                            ],
-                        );
-                        self.generate(&copy_val, stack, false);
-                    }
+                    // The source is tested whatever it is typed, as the first bind tests it
+                    // (`@FR-N-Store`: a dense slot can hold the null it was handed).
+                    self.generate(&Value::Var(*src), stack, false);
+                    self.push_copy_witness(stack, *src);
+                    stack.add_op("OpBindOrCopy", self);
+                    self.code_add(stack.var_pos(v));
+                    self.code_add(tp_nr);
                     // @PLN130 — reassignment `v = src`, both same-struct References (#306).
                     crate::copy_manifest::record(
                         stack.def_nr,
@@ -4100,28 +3999,16 @@ impl State {
         // sentinel and leaves the destination null.  It allocates on the arm that needs it,
         // so no `OpDatabase` is emitted ahead of it.
         //
-        // Asked of both sides through the one predicate the native record bind asks
-        // (`Variables::bind_admits_absence`): a source typed non-null can still hold
-        // `nullref`, and a nullable destination has to receive it as absence.
-        if stack.function.bind_admits_absence(v, src) {
-            self.generate(&Value::Var(src), stack, false);
-            // The slot the opcode POPS into is taken after, at the post-pop position.  Same
-            // order as the `Join` emission in `generate_set`.
-            self.push_copy_witness(stack, src);
-            stack.add_op("OpBindOrCopy", self);
-            self.code_add(stack.var_pos(v));
-            self.code_add(tp_nr);
-        } else {
-            stack.add_op("OpDatabase", self);
-            self.code_add(slot_offset);
-            self.code_add(tp_nr);
-            let copy_nr = stack.data.def_nr("OpCopyRecord");
-            let copy_val = Value::Call(
-                copy_nr,
-                vec![Value::Var(src), Value::Var(v), Value::Int(i32::from(tp_nr))],
-            );
-            self.generate(&copy_val, stack, false);
-        }
+        // Every record bind takes it (`@FR-N-Store`, `@FR-N-Road`): the type of neither side
+        // says the source is there — a source typed non-null can hold `nullref`
+        // (`Variables::record_copy_source`).
+        self.generate(&Value::Var(src), stack, false);
+        // The slot the opcode POPS into is taken after, at the post-pop position.  Same
+        // order as the `Join` emission in `generate_set`.
+        self.push_copy_witness(stack, src);
+        stack.add_op("OpBindOrCopy", self);
+        self.code_add(stack.var_pos(v));
+        self.code_add(tp_nr);
         // @PLN130 — recorded HERE, past the last-use-move return above, so the manifest
         // claims a copy only where one is actually written.
         crate::copy_manifest::record(

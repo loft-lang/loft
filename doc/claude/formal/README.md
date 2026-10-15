@@ -78,7 +78,7 @@ means the *rule* is wrong and wants extending — that is not a licence to leave
 >
 > [ownership.md](ownership.md) read `OPEN: 0` for six weeks with loft#1029 live, for the same
 > reason from a different angle: its Join corpus
-> (`tests/scripts/1019-join-owned-arm-owner.loft`) moves four axes — which side owns, arm
+> (`loft-suite/attic/scripts/1019-join-owned-arm-owner.loft`) moves four axes — which side owns, arm
 > count, `if` vs `match`, free function vs method — and holds the ARGUMENT SPELLING fixed at a
 > variable in every cell. The runtime witness that closes the Join only covered an argument the
 > call site could NAME, so a literal argument leaked and no cell asked. Moving that one axis
@@ -86,7 +86,7 @@ means the *rule* is wrong and wants extending — that is not a licence to leave
 > vector-typed field, `??`, and an `if` in argument position — none of them in the issue.
 > **A corpus that varies the subject exhaustively still proves nothing about the axis it never
 > varies** — count what is held fixed, not what is swept. (Closed 2026-08-20; the axis is now
-> swept by `tests/scripts/1029-inline-argument-borrow-source.loft`.)
+> swept by `loft-suite/attic/scripts/1029-inline-argument-borrow-source.loft`.)
 >
 > [closures.md](closures.md) read `OPEN: 0` with a crash live, and the held-fixed axis there
 > was not the subject at all but the **moment**. Its `L-Escape` corpus checks three
@@ -98,7 +98,7 @@ means the *rule* is wrong and wants extending — that is not a licence to leave
 > element, keyed value, struct-enum payload, nested struct — came back entirely clean; the
 > find was on the axis nobody had thought of as an axis. (D-clo-3, opened and CLOSED
 > 2026-08-22 — the re-Set half is now swept at every destination by
-> `tests/scripts/fn-ref-assigned-into-a-field.loft`.)
+> `loft-suite/attic/scripts/fn-ref-assigned-into-a-field.loft`.)
 >
 > [iteration.md](iteration.md) read `OPEN: 0` while every vector combinator was broken over
 > a TUPLE element — `map` answering a packed DbRef as `343597383710`, `filter` segfaulting,
@@ -189,7 +189,7 @@ the table below is derived from the chapters and says nothing the chapters do no
 
 | doc | area | status |
 |---|---|---|
-| [types.md](types.md) | type system + conversion relation (incl. integer width) | **1 open** — `D-types-32` (`N-Road`: five τ / τ? pairs still lower differently); the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
+| [types.md](types.md) | type system + conversion relation (incl. integer width) | **0 open**; the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
 | [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **0 open** — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (@C81/@C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
@@ -243,7 +243,13 @@ What that buys, and none of it is available from a rule NAME alone:
 - **the re-assertion count is a query** — a rule's sites ARE its citations, so it stays right
   as code moves, instead of being re-derived per investigation;
 - **merge-or-not is arbitrated** — two sites citing ONE rule are candidates to merge; two
-  citing different rules stay apart however alike they look today.
+  citing different rules stay apart however alike they look today;
+- **the lookup crosses repositories** — the language suite (loft-lang/loft-suite, @PLN193)
+  keeps its cells under `rules/<chapter>/<rule>/` and each cites its rule, so a checkout
+  beside this one (`../loft-suite`, or `LOFT_SUITE_DIR`) is read by `make index` (its rows
+  carry the directory as a prefix: `./scripts/idx tag:@FR-B-Copy` lists the cells there
+  beside the sites here) and by `rule_tags.py coverage` (its `rules/` is a guard directory
+  by default).  Without the checkout both still answer, from this tree alone.
 
 **Two constraints the measurement forced** (numbers in [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md)):
 

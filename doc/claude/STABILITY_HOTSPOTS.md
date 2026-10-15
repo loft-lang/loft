@@ -175,7 +175,7 @@ The block-result dep read in `get_free_vars` is deleted (probed across
 five corpora: never decides alone; a debug sentinel guards the claim);
 `check_ref_leaks` pools the decoded note instead of dropping it (its
 false `___clos_1` leak report is gone).  Regression:
-`tests/scripts/297-closure-factory-explicit-return.loft`.  Full record +
+`loft-suite/attic/scripts/297-closure-factory-explicit-return.loft`.  Full record +
 residuals found en route (armed-lib-debug baseline redness; @PLN55
 growth assert on two lib fns): DEPS_INVENTORY § Status.
 
@@ -507,7 +507,7 @@ backends:
   `fill.rs` regenerated via `make fill` → native via the template).
 - `lib/code.loft` `cur_arg: u8` → `u8 not null` (the `255` "no arg" sentinel is a
   meaningful value, not the null encoding).
-- Regression `tests/scripts/389-narrow-alias-ranges.loft`.
+- Regression `loft-suite/attic/scripts/389-narrow-alias-ranges.loft`.
 
 Final shape: not-null keeps the full native range; nullable is symmetric for signed
 (`-127..=127`, `-32767..=32767`) and top-trimmed for unsigned (`0..=254`,
@@ -523,7 +523,7 @@ compilation failed with "not found in scope".  It predated this work (broke plai
 `def_fn.rust().is_empty()`: only true user-fn / `codegen_runtime` Op-stub calls
 take the call-form hoist; inline `#rust` ops fall through to the normal emit, which
 inlines the template (its own `let db = @v1; …` sequences the mutating arg before
-the read borrow).  Regression `tests/scripts/inline-construct-narrow-read.loft`
+the read borrow).  Regression `loft-suite/attic/scripts/inline-construct-narrow-read.loft`
 (both backends, all four narrow widths × nullable/not-null/null).
 
 **Developer communication — DONE (`ea4a74fe` compile-time, `1b8a3792` runtime).**
@@ -544,7 +544,7 @@ pervasive):
   params/casts are full-width registers, no storage sentinel), and the sentinel
   reservation is now a **store-only** check (`Parser::nullable_sentinel_hint`)
   applied at exactly the two field-store sites.  Regression
-  `tests/scripts/389-narrow-sentinel-rejected.loft` — which @PLN25 F2 then made
+  `loft-suite/rules/types/N-Reserve/389-narrow-sentinel-rejected.loft` — which @PLN25 F2 then made
   moot without anyone noticing: a plain narrow integer is NON-null under DN1, so
   it uses the FULL width and `nullable_sentinel_hint` returns early, and the
   file's `@EXPECT_ERROR` matched nothing from then on (loft#929).  It now pins
@@ -563,7 +563,7 @@ pervasive):
   rate-limited (keyed on field offset → 1000 colliding writes = 5 warnings, then
   suppressed).  Behaviour is UNCHANGED — the value still stores the sentinel; only
   the diagnostic is added.  Regression
-  `tests/scripts/389-narrow-runtime-collision.loft` (both backends).
+  `loft-suite/attic/scripts/389-narrow-runtime-collision.loft` (both backends).
 
 **Narrow-VECTOR consistency — DONE.**  Narrow-vector elements now reach their FULL
 range, consistent with the not-null field path: `vector<u16>` holds `65535` and
@@ -576,7 +576,7 @@ serialization `io.rs`, format ×2, `types.rs`).  The proportionate chokepoint fi
 full-range at once and the two functions can't drift (H6 thesis).  The write twin
 `set_i16_raw` keeps its `i32::MIN → u16::MAX` clamp as an underflow guard — narrow
 vectors store concrete values, never null, exactly like `vector<u8>`/`Byte`.
-Regression `tests/scripts/389-narrow-vector-full-range.loft` (both backends).
+Regression `loft-suite/attic/scripts/389-narrow-vector-full-range.loft` (both backends).
 
 **Open follow-up (separate, pre-existing).**  The 4-/8-byte `i32`/`integer` types
 use a `MIN`-sentinel (a not-null `i32` doesn't reclaim `i32::MIN`).
@@ -685,7 +685,7 @@ opt-out (leaving site 2+ un-promoted) was tried and REVERTED: the
 cdylib emission of un-promoted materialized returns dereferences the
 null-sentinel buffer (`map_export_glb` chain, store 65535) — recorded
 in the ref_return comment.  Regression:
-`tests/scripts/298-multi-return-site-ref-buffer.loft`.  H5's load
+`loft-suite/attic/scripts/298-multi-return-site-ref-buffer.loft`.  H5's load
 mostly dissolved with H1 (the contract is now documented + the assert
 enforces its hardest clause).  Full history:
 [plans/55-return-abi](plans/55-return-abi/README.md).

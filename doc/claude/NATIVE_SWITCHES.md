@@ -114,6 +114,22 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_FRESH_TEXT_SET=1`** (`@FR-R-Mint`'s text clause, default-ON, generation time) makes
+the first text written into a just-minted element, and the address of a text local, block a
+loop's header hold again — with it off, a loop that appends records with text fields while
+reading another vector keeps that vector's header.  First bisect step for a wrong element read
+in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
+
+**`LOFT_NO_APART_HEADERS=1`** (`@FR-R-Header`'s apart clause, default-ON) makes a loop the
+header gate declines hold no header at all again.  By default such a loop still keeps the
+header and element base of each vector it only READS — its length, its elements, their
+fields — whose store this activation minted (or a work buffer the caller lends) and which
+nothing in the loop is handed: a writer that cannot name the store cannot move or grow it.
+A vector handed to a call, captured by a closure, linked by a `&`, appended to, declared
+inside the loop, or read in a generator's loop keeps the per-access form.  The first bisect
+step for a stale element or length read from a vector the loop only reads, beside a call
+that writes or a push to another vector; `LOFT_HOIST_VERIFY=1` re-derives every such header
+at every read, and `LOFT_TRACE_HOIST_DECLINE=1` names the vectors each declined loop keeps.
 
 ## Text walks
 
@@ -153,6 +169,17 @@ the copy.  Its FORMAT clause is under the same switch: a text local bound to a f
 string (`cs = "{c}"`) whose work text is the format's own reads that work text as a `&str`
 instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads the local,
 and a local copied into another variable, keep the copy.
+**`LOFT_NO_SLICE_BORROW=1`** (`@FR-R-SliceBorrow`, default-ON, generation time, `--native`
+only) makes a text local bound to a value slice of a plain text parameter — `t = line[2..5]`,
+or a slice of a local that itself borrows — copy the slice into a `String` again; with it
+off, `t` is bound as the `&str` the slice answers (`let var_t: &str = OpGetTextSub(…)`) and
+read bare, where every mention of `t` is a text VALUE read (the reading of
+`LOFT_NO_TEXT_BORROW` above).  The first bisect step for a wrong or stale text read through
+a slice-bound local on native; `LOFT_TRACE_TEXT_BORROW=1` names each such local as "a slice
+of a parameter's text" or its decline.  An append to `t`, a rebind to a built text, a `&t`
+link, `t` handed to a `&text` parameter, tupled or returned, a slice of a `&text` or rebound
+parameter, a slice of an OWNED local and a generator keep the copy.  `LOFT_NO_TEXT_BORROW=1`
+turns this clause off with the rest.
 **`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
 only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
 local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
@@ -300,7 +327,12 @@ its record across passes (a complete literal re-mints nothing, a partial one re-
 its declared defaults) and is freed once after the loop — and is the first bisect step for a
 stale field, a leak or a double free out of a record literal in a loop on native.  Declined
 where the local is copied, returned, captured, appended, handed to a callee whose return
-borrows it, or owns heap.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
+borrows it, or owns heap other than refillable vectors.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
+**`LOFT_NO_LOOP_RECORD_REFILL=1`** (`@FR-R-LoopRecord`'s refill clause, default-ON, generation
+time, `--native` only) declines again a loop record whose type holds vectors of no-heap
+elements — with it off, such a record keeps its vectors across passes and each literal zero of
+a vector field empties the kept vector in place.  First bisect step for a stale element or a
+store that grows pass by pass out of a record literal with vector fields in a loop.
 
 ## Generators
 
@@ -373,6 +405,39 @@ fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
 `OpReadFileInt::<W, SIGNED>`, width and sign fixed at the site and the bytes taken by value
 from the file's buffer (`binary_read` 2.54 → 1.91 ms).  The first bisect step for a wrong
 value or a wrong `#next` out of such a read; the interpreter's read is the reference.
+
+**`LOFT_NO_FILE_HOLD=1`** (`@FR-R-FileHold`, default-ON, generation time, `--native` only)
+sends every scalar file read through the `File` record again — with it off, a loop that
+reads one file and names nothing else that can hold a `File` moves `#index` and `#next` in a
+guard local (`codegen_runtime::FileCursor`) and writes the record when the loop is left.  The
+first bisect step for a wrong `f#next` or `f#index` after a loop that reads `f`, or a value
+read from the wrong offset inside one.  `LOFT_HOIST_VERIFY=1` is its falsifier: every held
+read and the guard's drop assert that the record still says what it said when the hold began.
+
+**`LOFT_NO_APART=1`** (`@FR-R-Apart`, default-ON, generation time, `--native-release` and every
+build that does not ship the live tier) keeps every record in the store from its construction —
+with it off, a record whose every field is a `vector<float>` of one length travels between the
+functions that build it, read and write its elements and hand it on as a Rust array, through
+their `__apv` twins, and is written into the store where a function returns it to a caller that
+keeps it.  The first bisect step for a wrong element, a wrong length or a missing out-of-range
+report out of such a record on a release build.  Its falsifier is this switch's A/B against the
+guard's hand-computed values; **`LOFT_TRACE_APART=1`** names every type, twin and region the plan
+admits and each component it keeps in the store, with the mention that kept it.
+**`LOFT_NO_APART_VECTOR=1`** turns off instance 3 alone (`LOFT_NO_APART=1` turns off both): a
+`vector<float>` local, or a work buffer, that never leaves its function lives in the store again
+— with it off, it is an inline buffer with a heap spill (`codegen_runtime::ApVec`), on every
+native build.  The first bisect step for a wrong element or length out of such a local.
+
+**`LOFT_NO_DECODE_VIEW=1`** (`@FR-R-DecodeView`, default-ON, generation time, every build that
+does not ship the live tier) keeps every decoded text and byte string owned — with it off, a
+function that hands its read-only byte frame to a decoder answering an enum value has that
+value's text and byte-string fields written as spans of the frame, inside the `__dv` twins of
+every function the value reaches, and read from the frame in place.  The first bisect step for
+a wrong decoded text on a release build.  Its falsifier is this switch's A/B against the guard's
+hand-computed values; **`LOFT_TRACE_DECODE_VIEW=1`** names each root the plan admits and each
+one it declines, with the mention that declined it.
+A reader behind a one-statement helper is held only where the helper is inlined
+(`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
 
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
@@ -529,7 +594,12 @@ default-ON, generation time, `--native` only) — set, it keeps every `-> S?` on
 every `S?` local a `DbRef`, leaving the dense road untouched — the first bisect step for a
 wrong field or a wrong presence test (`if x`, `x == null`) out of a nullable record-returning
 call.  With it on (the default) such a function returns `(fields…, bool)`, the last element
-the presence word.
+the presence word.  A dense tuple that stands where a nullable one is expected — an arm of a
+branch, a bind of a `S?` local, a `return` — is widened where it stands; a view's presence
+word is whether its reference names a record.  A `p: S?` parameter crosses the same way, and
+so does a dense parameter or a `-> S` result whose value can reach a `S?` without being
+surely present (`@FR-N-Store`): the switch puts all of them back on the reference, and
+`LOFT_TRACE_VALUEREC=1` names each one ("carries its presence").
 **`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON, generation
 time, `--native` only) keeps every by-value record PARAMETER a `DbRef` again — with it
 off, a parameter of a plain no-heap record of ≤6 scalars is received as the TUPLE of its
@@ -544,7 +614,7 @@ local or an admitted call as it is and reads the fields off any other record at 
 the first bisect step for a wrong field read through a small-record parameter on native.
 The interpreter is the values oracle; `LOFT_TRACE_VALUEREC=1` names each parameter
 carried and each declined with the reason, and the aliasing cells are
-`tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
+`loft-suite/attic/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
 
 **`LOFT_NO_VIEW_FIELD=1`** (@PLN164 C5 and E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`,
 **default-ON**, generation time, `--native` only) restores the record form —
@@ -680,11 +750,20 @@ delivery copies — with it on, a shape-A result local ADOPTS the hidden return 
 (built where it must end up; the exits deliver nothing; the buffer's backing reused across
 calls) — and is the bisect step for a wrong vector return, a leak at a vector-returning
 call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
+**`LOFT_NO_HASH_RESERVE=1`** (`@FR-R-PushFill`'s hash clause) makes a counted loop that inserts
+into a hash grow the table as it fills again, instead of reserving it for the loop's inserts
+up front — the A/B for a keyed fill's time or memory; a reservation changes no value.
 **`LOFT_NO_KEYED_IN_PLACE=1`** (`@FR-R-InPlaceLiteral`'s keyed clause) makes `h[k] = R { … }`
 build its literal in a store of its own and copy it in again — with it on, the values are
 staged, the record under the key is removed, a fresh one is claimed in the collection's store
 and written, and the subscript's key links it — and is the first bisect step for a wrong value,
 key or count after a keyed literal assignment on native.
+**`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
+hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
+repeated key — with it on, one probe answers the entry the key names and the literal's staged
+values are written into it — and is the first bisect step for a wrong value or count after a
+keyed insert on native; `LOFT_KEYED_VERIFY=1` checks every answered entry against the general
+lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
 is the first bisect step for a freed, leaked or wrong lookup result on native;
@@ -701,6 +780,16 @@ The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-
 them (one holder per path per frame, no mover on a held path, a twin handed only live
 holders) — run it on any emission that looks wrong before running the program.
 PERFORMANCE-history.md § Design: P2, NATIVE.md.
+
+**`LOFT_NO_FNREF_WORK_BUFFER=1`** (`@FR-R-WorkBuffer`'s function-value clause, default-ON)
+makes a call through a function value hand the function it reaches the null sentinel for
+each of its work buffers again, so the function mints a store of its own at every call.  By
+default the calling frame LENDS them (`codegen_runtime::FnRefWork`, the `__fwb` local of a
+frame that calls through a function value): one store per wrapper type and position, minted
+at the first arm that asks, shared by every candidate and every call of that frame, released
+when the frame ends.  The first bisect step for a stale or shared scratch vector in a
+function reached through a function value.  Either way a work buffer is never handed the
+return buffer's store.
 
 ## Null-discharge buffers and filling loops
 

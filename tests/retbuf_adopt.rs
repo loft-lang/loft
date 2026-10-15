@@ -27,6 +27,7 @@ const EXPECTED: &[(&str, usize)] = &[
     ("n_deep", 0),      // u4: witness-promoted — declines
     ("n_mixed", 1),     // u6: the shape-A adopter
     ("n_twolocal2", 0), // u7: shape A with two delivered locals — declines
+    ("n_tagged", 1),    // u8: a work buffer's null road ahead of the result local's bind
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {

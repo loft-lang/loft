@@ -14,6 +14,7 @@ use super::capture_adoption::{
 use super::closure_keep::pass_confined_records;
 use crate::data::{Data, Type, Value, v_if};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
+pub(crate) use crate::variables::CaptureBuilds;
 use crate::variables::Function;
 
 /// The `__ref_N` work-ref an inline record LITERAL built, when the literal's value is that
@@ -485,60 +486,6 @@ fn captures_built_in(
         _ => {}
     });
     found
-}
-
-/// What a body's closure BUILDS say about the locals they capture.
-///
-/// Two facts, one walk, because both are read off the same `OpSetDbRef(___clos_N, …, capture)`
-/// point and a second walk would be a copy of an ordering that has drifted before.
-#[derive(Default, Debug, Clone)]
-pub(crate) struct CaptureBuilds {
-    /// The backing local a capture named AT THE BUILD — the store the record actually holds.
-    /// A capture that owns its store outright (a struct) has no backing root and is absent.
-    pub(crate) backing: HashMap<u16, u16>,
-    /// Locals whose store the record adopted and which were ASSIGNED AGAIN afterwards, so the
-    /// local no longer names the adopted store and the frame still owes its own free.
-    pub(crate) reassigned_after_build: HashSet<u16>,
-    /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
-    /// every pass and only the LAST adoption is the one it still holds.
-    pub(crate) rebuilt_in_loop: HashSet<u16>,
-    /// loft#1610, `@FR-L-CapOwn` — the closure record TYPES confined to one pass of a loop: built
-    /// inside a loop body into a fn-ref local that appears nowhere outside that loop and there
-    /// only as a call's callee, so no value of it survives the pass.  Such a record cannot
-    /// outlive what it captured, so it BORROWS every capture and the frame keeps its release,
-    /// at the local's own scope end ([`pass_confined_records`]).
-    pub(crate) pass_confined: HashSet<u32>,
-    /// Captures whose closure BUILD does not DOMINATE the scope exit — it sits inside an `if`
-    /// arm, a `match` arm or a loop body, so on some runs no record is ever built.
-    ///
-    /// `(L-CapOwn)` hands the release to the record's cascade, and the cascade only happens if
-    /// the build EXECUTES.  The suppression is a static fact about the function and the thing
-    /// it trades away is a per-RUN one, so where the two can disagree the frame's free is kept
-    /// and made conditional on the record existing (loft#1464).
-    pub(crate) built_conditionally: HashSet<u16>,
-    /// Per closure-record local: the `(capture local, generation)` pairs it adopted at ITS
-    /// build, where the generation counts assignments to that local before the build.
-    ///
-    /// This is the STORE identity `(L-CapOwn)`'s "freed once" needs.  Two records may name one
-    /// local and hold two different stores — `s = S{…}; k1 = |…| s.a; s = S{…}; k2 = |…| s.a`
-    /// — so the capture NAME cannot decide which of them owns, and grouping by it made one
-    /// borrow a store the other never held (loft#1440's first cut, measured as a leaked `S`).
-    pub(crate) adopted: HashMap<u16, Vec<(u16, u32)>>,
-    /// Per literal BUFFER: the `(closure record, capture local)` pairs that adopted the store
-    /// THAT buffer minted.
-    ///
-    /// `adopted` above answers "which store" with a generation, which is the right currency
-    /// between two builds; the frame's scope-exit free needs the store itself, because the
-    /// thing it is about to release is a buffer and a buffer names exactly one store for its
-    /// whole life.  A capture local does not: reassign it and the name covers two stores, so
-    /// asking about the NAME answers about whichever the local happens to hold last
-    /// (loft#1446).  `@FR-O-Witness` is the same currency for a mixed-ownership local.
-    pub(crate) buffer_adopted: HashMap<u16, Vec<(u16, u16)>>,
-    /// Per capture: the stores its value could be AT THE BUILD when that value was a JOIN
-    /// ([`join_arm_stores`]).  The local's own deps cannot say it once the local is assigned
-    /// again — a type's dep list is the whole body's, and the reassignment's store is on it —
-    /// so the arms are read off the assignment that reached the build.  loft#1725.
-    pub(crate) join_arms_at_build: HashMap<u16, Vec<u16>>,
 }
 
 /// The capture whose value may be `v`'s store among OTHERS — a join — when its record adopts

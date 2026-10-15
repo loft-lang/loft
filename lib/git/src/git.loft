@@ -209,8 +209,21 @@ pub fn diff_file(base: text, path: text) -> text {
 // and out of date the moment someone edits the real one.
 // Example: @GIT-001
 pub fn tracked_files() -> vector<text> {
+  tracked_files_in("")
+}
+
+// The same question of ANOTHER repository: `dir` is the checkout to ask (`git -C`),
+// and the paths come back relative to it.  The one consumer in-tree is the tracker
+// index, which reads the language suite's checkout beside this one so a rule's
+// cells there are found by the same lookup as the code sites here (@PLN193).  An
+// empty `dir` is this repository.
+pub fn tracked_files_in(dir: text) -> vector<text> {
   out: vector<text> = [];
-  for line in ask(13, "", "", 0).split('\n') {
+  answer = "";
+  code = git_query(13, "", "", 0, dir, answer);
+  if code == -1 { panic("git: {answer}"); }
+  if code != 0 { answer = ""; }
+  for line in answer.split('\n') {
     if len(line) > 0 { out += [line]; }
   }
   out

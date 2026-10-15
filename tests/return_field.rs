@@ -93,9 +93,10 @@ const OFF: &[(&str, &str)] = &[("LOFT_NO_RETURN_FIELD", "1")];
 
 /// The exits are hand-overs: no mint of the buffer, no copy, the field's address returned,
 /// and every buffer free the exit keeps witnessed against the root — the plain root (r1),
-/// the lifted root (r10), the pooled loop root (r12), and the alias (r5, whose owner's free
-/// is witnessed against the alias), and the natural spelling over a forwarding decoder (r14,
-/// whose call buffer's guard stands inside the exit).  The parameter cell (r4) keeps the copy.
+/// the call root the return binds first (r10, loft#2006), the pooled loop root (r12), and
+/// the alias (r5, whose owner's free is witnessed against the alias), and the natural
+/// spelling over a forwarding decoder (r14, whose call buffer's guard stands inside the
+/// exit).  The parameter cell (r4) keeps the copy.
 #[test]
 fn the_exits_hand_the_root_store_over() {
     let on = introspect(&[]);
@@ -107,8 +108,8 @@ fn the_exits_hand_the_root_store_over() {
         ),
         (
             "n_r10",
-            "return OpGetField(__lift_1(2), 16i32,",
-            "OpFreeRefIfDistinct(__ref_1(1), __lift_1(2))",
+            "return OpGetField(__ret_root_1(2), 16i32,",
+            "OpFreeRefIfDistinct(__ref_1(1), __ret_root_1(2))",
         ),
         (
             "n_r12",
@@ -127,8 +128,8 @@ fn the_exits_hand_the_root_store_over() {
         ),
         (
             "n_r14",
-            "return OpGetField(__lift_1(2), 0i32,",
-            "OpFreeRefIfDistinct(__ref_1(1), __lift_1(2))",
+            "return OpGetField(__ret_root_1(2), 0i32,",
+            "OpFreeRefIfDistinct(__ref_1(1), __ret_root_1(2))",
         ),
     ] {
         let ir = section(&on, name);

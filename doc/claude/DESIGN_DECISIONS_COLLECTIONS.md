@@ -76,7 +76,7 @@ the refusal no longer guards storage; it stands on this ground alone.)
 
 **Revisit when.** A consumer needs two same-key indexes with genuinely different behaviour; a
 filtered index would arrive as its own kind.  Decided 2026-08-14 — [record](DESIGN_DECISIONS-history.md#c113--two-index-collections-over-one-element-type-and-key-are-refused-not-made-to-work).
-**Holds at:** `tests/scripts/902-duplicate-index-refused.loft` beside `902-duplicate-index-allowed.loft`.
+**Holds at:** `loft-suite/attic/scripts/902-duplicate-index-refused.loft` beside `902-duplicate-index-allowed.loft`.
 **Catalogue:** @F9 (`index<T[keys]>`) · loft#902 · loft#843 (linked collection groups)
 
 ## C114 — a keyed collection is refused as a vector ELEMENT, not given an element form

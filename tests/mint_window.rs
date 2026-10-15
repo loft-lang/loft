@@ -31,8 +31,10 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_m5b", 0, 0),
     // Two literal groups, four elements.
     ("n_m6", 4, 8),
-    // Keyed inserts: the claimed record takes the address, the finish files it by its key.
-    ("n_m7", 3, 6),
+    // Keyed inserts: the sorted insert's claimed record takes the address and the finish
+    // files it by its key; the hash insert is `(R-KeyedEntry)`'s — one probe answers the
+    // entry under the key and the values are written into it, no record claimed, no window.
+    ("n_m7", 1, 2),
     ("n_m10", 1, 2),
     ("n_m11", 2, 4),
     // m12's and m13's callees answer a TUPLE (two and seven scalars), delivered into the
@@ -188,4 +190,16 @@ fn the_switch_restores_the_store_write() {
             "{name}: no element holds an address with the switch on"
         );
     }
+}
+
+/// `@FR-R-KeyedEntry` takes m7's hash inserts from the mint window; with it switched off the
+/// window still holds their addresses, so the clause it took over keeps its evidence.
+#[test]
+fn the_hash_inserts_are_windows_without_the_keyed_entry() {
+    let got = counts(&emit("nokeyed", &[("LOFT_NO_KEYED_ENTRY", "1")]));
+    assert_eq!(
+        got.get("n_m7").copied().unwrap_or_default(),
+        (3, 6),
+        "n_m7 under LOFT_NO_KEYED_ENTRY: (element addresses, field writes through one)"
+    );
 }

@@ -319,6 +319,15 @@ pub struct Manifest {
     /// source-scanned `#native` symbols).  The resolver side that acts on this
     /// is separate, future work; today this is parsed metadata.
     pub trigger_enabled: bool,
+    /// `[triggers] builders = ["set"]` — the BUILDER triggers: the free `pub fn`s a consumer
+    /// may call bare (`set(words)`) and have this library auto-loaded, the one place a
+    /// library puts a name into a program's own namespace without being named.  Declared,
+    /// never derived — every other trigger is read from the source, but a free function
+    /// reaches the shared namespace, so the author lists the few that are worth it, and the
+    /// derivation checks each against the source (a `pub fn` without a receiver).  A
+    /// program's own definition of the name wins; `<pkg>::<name>` always reaches the
+    /// library's.
+    pub trigger_builders: Vec<String>,
     /// @PLN100 Slice 2 — `[build] default-targets = [...]`: which targets
     /// `loft build` makes when given no target names.  Empty → the driver falls
     /// back to `["native"]` so a zero-config project still builds.
@@ -340,6 +349,35 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// The entry file, relative to the package root: `[library] entry`, else the
+    /// default `src/<name>.loft`; `None` with neither an entry nor a name.
+    #[must_use]
+    pub fn entry_or_default(&self) -> Option<String> {
+        self.entry
+            .clone()
+            .or_else(|| self.name.as_ref().map(|n| format!("src/{n}.loft")))
+    }
+
+    /// The directory the package's own modules live in, relative to its root: the
+    /// entry's directory, or `src` when no `[library] entry` is declared.  An entry at
+    /// the root (`entry = "main.loft"`) answers the root itself, `""`.
+    ///
+    /// The ONE place this is derived (loft#2010): three copies read the absent entry
+    /// as the path `src` and took its parent, `""`, so a package without an explicit
+    /// entry put its ROOT on the import path and its own `src/` modules were not found.
+    #[must_use]
+    pub fn source_dir(&self) -> std::path::PathBuf {
+        self.entry.as_ref().map_or_else(
+            || std::path::PathBuf::from("src"),
+            |e| {
+                std::path::Path::new(e)
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default()
+            },
+        )
+    }
+
     /// @PLN100 Slice 2 — the `[build.target.<name>]` entry for `name`, creating an
     /// empty one on first mention so later `[build.target.<name>.requires]` lines
     /// attach to the same target regardless of section order.
@@ -455,7 +493,7 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
     loop {
         match lex.peek().has.clone() {
             LexItem::None => break,
-            LexItem::Token(t) if t == "[" => section = read_section(&mut lex, &mut m),
+            LexItem::Token("[") => section = read_section(&mut lex, &mut m),
             LexItem::Identifier(_) => {
                 let key = read_key(&mut lex);
                 if !lex.has_token("=") {
@@ -533,7 +571,7 @@ fn read_dotted(lex: &mut Lexer) -> String {
                 name.push_str(&s);
                 lex.cont();
             }
-            LexItem::Token(ref t) if t == "." || t == "-" => {
+            LexItem::Token(t) if t == "." || t == "-" => {
                 name.push_str(t);
                 lex.cont();
             }
@@ -553,7 +591,7 @@ fn read_key(lex: &mut Lexer) -> String {
                 key.push_str(&s);
                 lex.cont();
             }
-            LexItem::Token(ref t) if t == "-" => {
+            LexItem::Token("-") => {
                 key.push('-');
                 lex.cont();
             }
@@ -567,13 +605,13 @@ fn read_key(lex: &mut Lexer) -> String {
 /// value), or a number.  Consumes exactly the value's tokens.
 fn read_value(lex: &mut Lexer) -> MValue {
     match lex.peek().has.clone() {
-        LexItem::Token(ref t) if t == "[" => {
+        LexItem::Token("[") => {
             lex.cont(); // consume `[`
             let mut items = Vec::new();
             loop {
                 match lex.peek().has.clone() {
                     LexItem::None => break,
-                    LexItem::Token(ref t) if t == "]" => {
+                    LexItem::Token("]") => {
                         lex.cont();
                         break;
                     }
@@ -587,7 +625,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
             }
             MValue::List(items)
         }
-        LexItem::Token(ref t) if t == "{" => {
+        LexItem::Token("{") => {
             // An inline table (e.g. a dependency `{ path = "../x" }`).  Reconstruct
             // the raw `{ … }` text — the form `extract_path_dep` parses — rather
             // than interpret it here; this is the only inline-table use.
@@ -596,7 +634,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
             loop {
                 match lex.peek().has.clone() {
                     LexItem::None => break,
-                    LexItem::Token(ref t) if t == "}" => {
+                    LexItem::Token("}") => {
                         lex.cont();
                         break;
                     }
@@ -612,7 +650,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
                         lex.cont();
                     }
                     LexItem::Token(t) => {
-                        raw.push_str(&t);
+                        raw.push_str(t);
                         raw.push(' ');
                         lex.cont();
                     }
@@ -748,6 +786,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("wasm.bridge", "host_js") => m.wasm_bridge_host_js = Some(value.scalar()),
         ("wasm.bridge.routes", _) => m.wasm_bridge_routes.push((key.to_string(), value.scalar())),
         ("triggers", "enabled") => m.trigger_enabled = value.is_true(),
+        ("triggers", "builders") => m.trigger_builders = value.list(),
         _ => {}
     }
 }
@@ -1475,6 +1514,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_trigger_builders() {
+        let p = write_temp(
+            "builders",
+            "[package]\nname = \"script\"\n\n[triggers]\nenabled = true\nbuilders = [\"set\", \"counter\"]\n",
+        );
+        let m = read_manifest(p.to_str().unwrap()).unwrap();
+        assert_eq!(
+            m.trigger_builders,
+            vec!["set".to_string(), "counter".to_string()]
+        );
+    }
+
+    #[test]
     fn trigger_disabled_by_default() {
         let p = write_temp("notrig", "[package]\nname = \"plain\"\n");
         let m = read_manifest(p.to_str().unwrap()).unwrap();
@@ -1946,5 +1998,106 @@ n_demo_fn_b = "demo_fn_b"
         assert!(text.contains("path = \"../cbor\""), "{text}");
         assert!(!text.contains("^0.1.3"), "{text}");
         let _ = crate::file_access::remove_file(&p);
+    }
+}
+
+/// Where a library's functions execute.
+///
+/// Parsed from `[library] placement` in the library's own `loft.toml` — it is
+/// the library author's declaration, not the consumer's, because the library is
+/// what knows whether it is safe and worthwhile to isolate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Placement {
+    /// Ordinary in-process calls. The default, and what every library that
+    /// declares nothing gets.
+    #[default]
+    InProc,
+    /// A worker process of this machine holds the library; calls cross a shared
+    /// memory-mapped file.
+    Process,
+    /// A server somewhere else holds the library; calls cross a socket and the
+    /// call arena travels as bytes on it (@PLN119 arc E).
+    ///
+    /// The library declares that it is MEANT to run this way; WHERE is
+    /// deployment, and comes from the environment
+    /// (`LOFT_REMOTE_<NAME>=host:port`). A library author knows whether their
+    /// library is a service; only the operator knows which one.
+    Remote,
+}
+
+impl Placement {
+    /// Read a `placement = "..."` manifest value.
+    ///
+    /// # Errors
+    /// The spelling, when it is not one this version knows. A typo has to be
+    /// loud: silently treating `"proces"` as in-process would hand back a
+    /// program that runs correctly and isolates nothing, and the difference is
+    /// invisible in the output.
+    pub fn parse(s: &str) -> Result<Placement, String> {
+        match s.trim() {
+            "inproc" => Ok(Placement::InProc),
+            "process" => Ok(Placement::Process),
+            "remote" => Ok(Placement::Remote),
+            other => Err(format!(
+                "unknown placement \"{other}\" — expected \"inproc\", \"process\" or \"remote\""
+            )),
+        }
+    }
+
+    /// The manifest spelling of this placement — the exact inverse of [`Self::parse`].
+    ///
+    /// Written beside `parse` so the two cannot drift: a spelling that does not round-trip
+    /// would make the cache manifest replay a DIFFERENT placement than the one the parse
+    /// read, and the two placements are meant to be indistinguishable in behaviour — so
+    /// nothing in any output would show the difference.
+    #[must_use]
+    pub fn spelling(self) -> &'static str {
+        match self {
+            Placement::InProc => "inproc",
+            Placement::Process => "process",
+            Placement::Remote => "remote",
+        }
+    }
+
+    /// Does this placement put the library outside this process?
+    #[must_use]
+    pub fn is_out_of_process(self) -> bool {
+        matches!(self, Placement::Process | Placement::Remote)
+    }
+
+    /// The environment variable that names WHERE a `remote` library runs.
+    ///
+    /// `LOFT_REMOTE_<NAME>` with the name upper-cased and non-alphanumerics
+    /// folded to `_`, so `hex_world` reads `LOFT_REMOTE_HEX_WORLD`.
+    #[must_use]
+    pub fn address_var(library: &str) -> String {
+        let name: String = library
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("LOFT_REMOTE_{name}")
+    }
+
+    /// Where a `remote` library runs, or why that could not be answered.
+    ///
+    /// # Errors
+    /// No address configured. Refusing is the only honest answer: falling back
+    /// to in-process would run the library HERE, which for a library declared
+    /// remote is a different deployment with different data, not a slower one.
+    pub fn address_for(library: &str) -> Result<String, String> {
+        let var = Self::address_var(library);
+        match std::env::var(&var) {
+            Ok(v) if !v.trim().is_empty() => Ok(v.trim().to_string()),
+            _ => Err(format!(
+                "library '{library}' declares placement = \"remote\" but no address is \
+                 configured — set {var}=host:port to say where it runs"
+            )),
+        }
     }
 }

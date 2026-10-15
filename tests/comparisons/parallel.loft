@@ -14,7 +14,7 @@
 // The claim that separates loft from both: the safety is not a bound to satisfy or a GIL to
 // work around, it is a refusal at compile time.  This file asserts the VALUES; the refusal
 // itself cannot live here (the file must compile) and is pinned in
-// tests/scripts/102-expected-errors.loft.
+// loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft.
 
 // `par` is a CLAUSE on a `for` loop, not a comprehension:
 //     for a in src par(b = func(a), threads) { body }

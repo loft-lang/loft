@@ -1,0 +1,115 @@
+// `@FR-R-LoopRecord`'s REFILL clause — a record literal bound inside a loop whose type holds
+// vectors of no-heap elements keeps its store AND its vectors across passes: the first pass
+// mints, every later pass writes each scalar field over the kept record and empties each
+// vector field in place for the literal's pushes (`@FR-R-RefillBuffer`'s empty).  Admitted
+// only where every mint heads a literal group that writes every field, and every zero of a
+// vector field is one of those groups'.
+//
+// Kept: r1 (the vectors grow and shrink across passes, with pushes after the literal), r4
+// (a callee pushes into the record), r6 and r7 (records appended into the kept vector).  Declined: r2 (an omitted field is written by the
+// prefill, not by a zero in the group) and r5 (the record is handed to a native append).
+// `--native` only; the interpreter takes the per-pass store and is the oracle.  Every value is
+// hand-computed.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-08) — with the kept record's vector empties
+//   not emitted, every value still holds and r6's live-record count grows on --native-release
+//   (the literal's zero strands each kept vector in the store).  Restored, every cell holds on
+//   --interpret, --native and --native-release, under `LOFT_NO_LOOP_RECORD_REFILL=1` and
+//   `LOFT_NO_LOOP_RECORD=1`, and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
+//   and LOFT_NATIVE_LEAK_CHECK=1.  With the appends by field number not admitted, r7's `st`
+//   declines (values hold) and `tests/ctor_literal.rs` fails on the kept count.
+struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
+
+fn fm_sum(f: const Fm) -> integer {
+  s = f.h0 * 1000;
+  for x in f.lens { s += x * 10; }
+  for y in f.turns { s += y; }
+  s
+}
+
+fn fm_len(f: const Fm) -> integer { len(f.lens) * 100 + len(f.turns) }
+
+fn fm_push(f: Fm, x: integer) { f.lens += [x]; }
+
+struct Pd { a: integer, b: integer }
+struct St { ps: vector<Pd>, n: integer }
+
+fn st_sum(t: const St) -> integer {
+  s = t.n * 100;
+  for p in t.ps { s += p.a * 10 + p.b; }
+  s
+}
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+fn main() {
+  // r1 — the kept vectors grow and shrink: pass i pushes (i * 5) % 7 more elements.
+  r1 = 0;
+  for i in 0..12 {
+    ef = Fm { h0: i, lens: [i], turns: [] };
+    for k in 0..(i * 5) % 7 { ef.lens += [k]; }
+    r1 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(r1 == 72090, "r1: {r1}");
+
+  // r2 — an omitted vector field is empty every pass, though odd passes push into it.
+  r2 = 0;
+  for i in 0..9 {
+    ef = Fm { h0: i, lens: [i, i] };
+    if i % 2 == 1 { ef.turns += [i]; }
+    r2 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(r2 == 38540, "r2: {r2}");
+
+  // r4 — a callee pushes into the record's vector on even passes.
+  r4 = 0;
+  for i in 0..8 {
+    ef = Fm { h0: i, lens: [i, 1], turns: [2] };
+    if i % 2 == 0 { fm_push(ef, i * 7); fm_push(ef, i * 7); }
+    r4 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(r4 == 32464, "r4: {r4}");
+
+  // r5 — each pass's record appended to a collection after a push.
+  keep: vector<Fm> = [];
+  for i in 0..6 { ef = Fm { h0: i, lens: [i, i + 1], turns: [] }; ef.lens += [50]; keep += [ef]; }
+  r5 = 0;
+  for k in keep { r5 += fm_sum(k) + fm_len(k); }
+  assert(r5 == 20160, "r5: {r5}");
+  // r6 — the store holds what one pass needs: the live-record count at pass 9 and at pass 39
+  // agree (a kept vector left behind by its literal's zero would add two records a pass).
+  r6 = 0;
+  rec9 = -1;
+  rec39 = -2;
+  for k in 0..40 {
+    ef = Fm { h0: k, lens: [k, k + 1], turns: [3] };
+    r6 += fm_sum(ef);
+    if k == 9 { rec9 = live_records(); }
+    if k == 39 { rec39 = live_records(); }
+  }
+  assert(r6 == 796120, "r6: {r6}");
+  assert(rec9 > 0 && rec9 == rec39, "r6 records: {rec9} then {rec39}");
+  // r7 — a vector of RECORDS appended after the literal (`OpNewRecord` / `OpFinishRecord` on the
+  // kept record's own field); pass i appends i % 4 elements: sum 100i + 10i(i % 4) + (i % 4)(i % 4 - 1) / 2.
+  // Passes 3 and 7 hold the same three elements, so their live-record counts agree.
+  r7 = 0;
+  rec3 = -1;
+  rec7 = -2;
+  for i in 0..12 {
+    st = St { ps: [], n: i };
+    for j in 0..i % 4 { st.ps += [Pd { a: i, b: j }]; }
+    r7 += st_sum(st);
+    if i == 3 { rec3 = live_records(); }
+    if i == 7 { rec7 = live_records(); }
+  }
+  assert(r7 == 7752, "r7: {r7}");
+  assert(rec3 > 0 && rec3 == rec7, "r7 records: {rec3} then {rec7}");
+  println("refill ok");
+}

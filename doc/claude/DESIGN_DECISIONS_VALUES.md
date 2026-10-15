@@ -19,7 +19,7 @@ suffixes would add lexer ambiguity and put the intent on the literal instead of 
 
 **Revisit when.** A real program needs a literal-size distinction `as <T>` cannot express
 reasonably ("Rust does it" is not evidence).  Decided 2026-04-13 — [record](DESIGN_DECISIONS-history.md#c54d--rust-style-numeric-literal-suffixes).
-**Holds at:** `@C54.D` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
+**Holds at:** `@C54.D` — `loft-suite/attic/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F4 (width integers), @F5 (type conversions — `as`).
 
 ## C64 — Tuple struct-ref elements use MOVE semantics (not copy + null)
@@ -31,7 +31,7 @@ struct-typed projection names an interior place), a collection or `text` member 
 **Why.** After `(a, _) = t`, `t` is still read and a write through `a` reaches `t.0`.
 
 **Revisit when.** `(B-View)` changes.  Decided 2026-05-11, superseded 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c64--tuple-struct-ref-elements-use-move-semantics-not-copy--null).
-**Holds at:** `@C64` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`; `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
+**Holds at:** `@C64` — `loft-suite/attic/scripts/a-tuple-member-destructures-as-its-type-binds.loft`; `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
 **Catalogue:** @F11 (tuples).
 
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
@@ -42,7 +42,7 @@ independent value, on both backends.  **Why.** `value struct` (@PLN101) is loft'
 
 **Revisit when.** Never for the fold; it no longer applies.  Decided 2026-05-11, superseded
 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c65--tuple-structure-value-element-type-folded-into-reference-e5--e6).
-**Holds at:** `@C65` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`.
+**Holds at:** `@C65` — `loft-suite/attic/scripts/a-tuple-member-destructures-as-its-type-binds.loft`.
 **Catalogue:** @F11 (tuples).
 
 ## C69 — `!x` on a non-boolean is a null test, not logical-not
@@ -108,7 +108,7 @@ collision sites are guarded.
 
 **Revisit when.** No trigger recorded; frozen with contract 1.  Decided 2026-07-13 — [record](DESIGN_DECISIONS-history.md#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen).
 **Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [@C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [@C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
-**Holds at:** `tests/scripts/pln102-null-residual-golden.loft`.
+**Holds at:** `loft-suite/attic/scripts/pln102-null-residual-golden.loft`.
 
 ## C91 — `==` compares content for every type, cycles included; `&a == &b` asks identity
 
@@ -197,7 +197,7 @@ left a spare code, so two non-nullable declarations behaved oppositely.
 clause is one predicate.  Decided 2026-09-23 — [record](DESIGN_DECISIONS-history.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so).
 **Catalogue:** @F4 (width integers), @F1 (null model). Refines [@C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
 **Holds at:** `@C127` — `./scripts/idx tag:@C127`; `IntegerSpec::non_null_reads_null`;
-`tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft`.
+`loft-suite/attic/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft`.
 
 ## C129 — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
 
@@ -251,5 +251,5 @@ field; every common language's debug print lists null fields, and most JSON libr
 the default.  Decided 2026-10-08 (owner) — [record](DESIGN_DECISIONS-history.md#c143--a-rendered-record-shows-its-null-fields).
 **Holds at:** `@C143` — `./scripts/idx tag:@C143`: the record walker (`src/database/format.rs`,
 both backends render through it), `formal/formatting.md` `(F-Render-Fields)`, guard
-`tests/scripts/a-record-renders-its-null-fields.loft`.
+`loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft`.
 **Catalogue:** @F1 (null model) · `formal/formatting.md` `(F-Render)`.

@@ -171,6 +171,23 @@ past the cache** (`loft install --refresh <lib>@<version>`) rather than `@latest
 verifies, the publish succeeded — `@latest` will catch up as the CDN propagates. Don't conclude
 the publish failed from a stale edge read.
 
+**An OLDER loft can report "registry index signature INVALID" for a few minutes.**
+A loft from before loft#1991 fetches `index.json` and `index.json.sig` as two requests
+through the branch address, and the CDN caches them apart, so right after a push one can be
+new and the other old.  A current loft reads both from one commit and does not see this.
+It is a split READ, not a bad publish: check the pair at the commit —
+
+```
+sha=$(gh api repos/loft-lang/registry/commits/main --jq .sha)
+curl -fsSLO https://raw.githubusercontent.com/loft-lang/registry/$sha/index.json
+curl -fsSLO https://raw.githubusercontent.com/loft-lang/registry/$sha/index.json.sig
+loft-keygen verify --in index.json --sig index.json.sig --pub "$(cat ~/.loft/trust-root/registry-signing-key.pub)"
+```
+
+— and when that passes, the publish is good.  Every signed push opens one such window for
+the users of an older loft, so publish several libraries in ONE run (`--only a,b,c` signs
+once) unless there is a reason to separate them.
+
 ## Verification before you call it shipped
 
 Every item below is something the publish itself will NOT tell you.  It exits 0, matches

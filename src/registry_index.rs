@@ -32,6 +32,13 @@
 
 #![cfg(feature = "registry")]
 
+// The HTTP GET primitive lives in `net`, the runtime's fetch layer; these are the paths
+// the registry names.
+pub(crate) use crate::net::http_get_bytes;
+#[cfg(test)]
+use crate::net::read_capped;
+use crate::net::{CONNECT_BOUND, DOWNLOAD_BOUND, Miss, http_get_within};
+pub use crate::net::{DEFAULT_MAX_DOWNLOAD, max_download_bytes};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -94,7 +101,8 @@ pub struct Version {
     /// Tier-1 lazy-load triggers — text-method names as `"name:receiver"`
     /// (e.g. `"matches:text"`), derived from the package source at publish time
     /// so a CONSUMER's resolver can map `obj.method()` to this package without
-    /// having the source.  Produced by `crate::triggers::derive_triggers`.
+    /// having the source, and the declared builders as `"name:fn"` (`"set:fn"`),
+    /// so a bare `set(…)` can.  Produced by `crate::triggers::derive_triggers`.
     pub triggers: Vec<String>,
     /// Schema slot — pre-built distribution deferred.
     pub binaries: BTreeMap<String, BinaryEntry>,
@@ -1182,11 +1190,17 @@ pub fn cached_versions(pkg: &str) -> Vec<String> {
 /// the method up here, gets the package name, and hands it to the normal
 /// `lib_path` resolution (lockfile → installed → auto-install).
 ///
+/// **Which release speaks for a package:** the one `loft install` would choose for a
+/// consumer that declared nothing — the newest that is not yanked, not a prerelease and
+/// whose `loft` floor this loft meets ([`find_best_version`] on `"*"`).  Its triggers are
+/// the package's; an older release's are not, so a spelling a release dropped (regex 0.5.0
+/// retired `regex_find`) stops loading the package only to fail on an unknown method, and
+/// a package with no loadable release answers nothing.
+///
 /// **Ambiguity policy:** a method provided by exactly one package maps to it; a
 /// method provided by two or more *distinct* packages is OMITTED — auto-loading
 /// would have to guess, so the consumer must disambiguate with an explicit
-/// `use`.  Versions of the SAME package collapse to one provider, so a
-/// multi-version package is never self-ambiguous.  This omit is a safety net:
+/// `use`.  This omit is a safety net:
 /// the registry CI rejects a submission whose full `method:receiver` trigger
 /// collides with another package (`validate.py` gate 4, mirrored locally by the
 /// [`trigger_owners`] publish pre-check), so a true `text.matches` vs
@@ -1195,19 +1209,40 @@ pub fn cached_versions(pkg: &str) -> Vec<String> {
 /// receiver-blind pre-scan cannot tell apart.
 #[must_use]
 pub fn trigger_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
+    providers_of(index, false)
+}
+
+/// The builder half of [`trigger_providers`]: `function name -> package` over the
+/// `"name:fn"` entries, with the same ambiguity policy.  What a bare `set(…)` in a
+/// consumer looks up when no declared dependency carries the name.
+#[must_use]
+pub fn builder_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
+    providers_of(index, true)
+}
+
+/// A trigger entry's receiver is `fn` for a builder; everything else is a method.
+fn is_builder_trigger(trig: &str) -> bool {
+    trig.split_once(':').is_some_and(|(_, r)| r == "fn")
+}
+
+fn providers_of(index: &RegistryIndex, builders: bool) -> BTreeMap<String, String> {
     let mut providers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (pname, pkg) in &index.packages {
-        for ver in pkg.versions.values() {
-            for trig in &ver.triggers {
-                let method = trig.split(':').next().unwrap_or(trig);
-                if method.is_empty() {
-                    continue;
-                }
-                providers
-                    .entry(method.to_string())
-                    .or_default()
-                    .insert(pname.clone());
+        let Some(ver) = find_best_version(pkg, "*", false) else {
+            continue;
+        };
+        for trig in &ver.triggers {
+            if is_builder_trigger(trig) != builders {
+                continue;
             }
+            let method = trig.split(':').next().unwrap_or(trig);
+            if method.is_empty() {
+                continue;
+            }
+            providers
+                .entry(method.to_string())
+                .or_default()
+                .insert(pname.clone());
         }
     }
     providers
@@ -1245,12 +1280,24 @@ fn index_stamp(index: &std::path::Path) -> Option<(u64, u64)> {
     Some((meta.len(), mtime))
 }
 
-/// The sidecar's map, or `None` when it is absent, unreadable, or stamped for a
-/// different index.  Derived data is rebuilt on any doubt, never trusted.
+/// The two maps a sidecar carries: the method triggers and the builders.
+type SidecarMaps = (BTreeMap<String, String>, BTreeMap<String, String>);
+
+/// How the maps are derived from the index, written into the sidecar beside the index
+/// stamp: a loft whose derivation differs rebuilds a sidecar the index stamp alone would
+/// call current.  1 was the union over every published version; 2 is the newest loadable
+/// release only ([`trigger_providers`]).
+const SIDECAR_DERIVATION: i64 = 2;
+
+/// The sidecar's maps, or `None` when it is absent, unreadable, stamped for a
+/// different index, derived another way ([`SIDECAR_DERIVATION`]), or written before it
+/// carried `builders` (a loft that did not know them left the key out, and that sidecar
+/// would answer no bare call until the index moved).  Derived data is rebuilt on any
+/// doubt, never trusted.
 fn read_trigger_sidecar_at(
     sidecar: &std::path::Path,
     index: &std::path::Path,
-) -> Option<BTreeMap<String, String>> {
+) -> Option<SidecarMaps> {
     let (len, mtime) = index_stamp(index)?;
     let text = file_access::read_to_string(sidecar).ok()?;
     let Parsed::Object(root) = parse_json(&text).ok()? else {
@@ -1258,25 +1305,34 @@ fn read_trigger_sidecar_at(
     };
     let mut stamped_len: Option<i64> = None;
     let mut stamped_mtime: Option<i64> = None;
+    let mut derivation: Option<i64> = None;
     let mut map = BTreeMap::new();
+    let mut builders: Option<BTreeMap<String, String>> = None;
+    let read_map = |v: &Parsed| {
+        let mut m = BTreeMap::new();
+        if let Parsed::Object(entries) = v {
+            for (name, _, pkg) in entries {
+                if let Parsed::Str(p) = pkg {
+                    m.insert(name.clone(), p.clone());
+                }
+            }
+        }
+        m
+    };
     for (k, _, v) in &root {
         match k.as_str() {
             "index_len" => stamped_len = v.as_i64(),
             "index_mtime" => stamped_mtime = v.as_i64(),
-            "triggers" => {
-                if let Parsed::Object(entries) = v {
-                    for (method, _, pkg) in entries {
-                        if let Parsed::Str(p) = pkg {
-                            map.insert(method.clone(), p.clone());
-                        }
-                    }
-                }
-            }
+            "derivation" => derivation = v.as_i64(),
+            "triggers" => map = read_map(v),
+            "builders" => builders = Some(read_map(v)),
             _ => {}
         }
     }
-    (stamped_len? == i64::try_from(len).ok()? && stamped_mtime? == i64::try_from(mtime).ok()?)
-        .then_some(map)
+    (stamped_len? == i64::try_from(len).ok()?
+        && stamped_mtime? == i64::try_from(mtime).ok()?
+        && derivation? == SIDECAR_DERIVATION)
+        .then_some((map, builders?))
 }
 
 /// Write the sidecar for a map derived from the index that carried `stamp`.
@@ -1290,22 +1346,21 @@ fn read_trigger_sidecar_at(
 /// read-only cache directory costs the fast path and nothing else.  Written to a
 /// temporary name and renamed, because parallel compiles reach here at once and
 /// a half-written sidecar reads as a parse failure.
-fn write_trigger_sidecar_at(
-    sidecar: &std::path::Path,
-    stamp: (u64, u64),
-    map: &BTreeMap<String, String>,
-) {
+fn write_trigger_sidecar_at(sidecar: &std::path::Path, stamp: (u64, u64), maps: &SidecarMaps) {
     let (Ok(len), Ok(mtime)) = (i64::try_from(stamp.0), i64::try_from(stamp.1)) else {
         return;
     };
-    let entries = map
-        .iter()
-        .map(|(method, pkg)| (method.clone(), 0, Parsed::Str(pkg.clone())))
-        .collect();
+    let entries = |map: &BTreeMap<String, String>| {
+        map.iter()
+            .map(|(name, pkg)| (name.clone(), 0, Parsed::Str(pkg.clone())))
+            .collect()
+    };
     let doc = Parsed::Object(vec![
         ("index_len".to_string(), 0, Parsed::Int(len)),
         ("index_mtime".to_string(), 0, Parsed::Int(mtime)),
-        ("triggers".to_string(), 0, Parsed::Object(entries)),
+        ("derivation".to_string(), 0, Parsed::Int(SIDECAR_DERIVATION)),
+        ("triggers".to_string(), 0, Parsed::Object(entries(&maps.0))),
+        ("builders".to_string(), 0, Parsed::Object(entries(&maps.1))),
     ]);
     if let Some(parent) = sidecar.parent() {
         let _ = file_access::create_dir_all(parent);
@@ -1318,24 +1373,21 @@ fn write_trigger_sidecar_at(
     }
 }
 
-/// [`catalog_trigger_map`] against explicit paths.
-fn catalog_trigger_map_at(
-    sidecar: &std::path::Path,
-    index: &std::path::Path,
-) -> BTreeMap<String, String> {
-    if let Some(map) = read_trigger_sidecar_at(sidecar, index) {
-        return map;
+/// [`catalog_trigger_map`] and [`catalog_builder_map`] against explicit paths.
+fn catalog_maps_at(sidecar: &std::path::Path, index: &std::path::Path) -> SidecarMaps {
+    if let Some(maps) = read_trigger_sidecar_at(sidecar, index) {
+        return maps;
     }
     let (Some(stamp), Ok(content)) = (index_stamp(index), file_access::read_to_string(index))
     else {
-        return BTreeMap::new();
+        return SidecarMaps::default();
     };
     let Ok(parsed) = parse_index(&content) else {
-        return BTreeMap::new();
+        return SidecarMaps::default();
     };
-    let map = trigger_providers(&parsed);
-    write_trigger_sidecar_at(sidecar, stamp, &map);
-    map
+    let maps = (trigger_providers(&parsed), builder_providers(&parsed));
+    write_trigger_sidecar_at(sidecar, stamp, &maps);
+    maps
 }
 
 /// The catalog trigger map (`method -> package`) for the cached index — what the
@@ -1351,7 +1403,15 @@ fn catalog_trigger_map_at(
 #[must_use]
 pub fn catalog_trigger_map() -> BTreeMap<String, String> {
     let (index, _, _) = index_paths();
-    catalog_trigger_map_at(&triggers_sidecar_path(), &index)
+    catalog_maps_at(&triggers_sidecar_path(), &index).0
+}
+
+/// The catalog builder map (`function -> package`) from the same sidecar — what the
+/// parser consults when a bare `set(words)` names no declared dependency.
+#[must_use]
+pub fn catalog_builder_map() -> BTreeMap<String, String> {
+    let (index, _, _) = index_paths();
+    catalog_maps_at(&triggers_sidecar_path(), &index).1
 }
 
 /// Bring the derived trigger sidecar in line with an index that has just been
@@ -1377,7 +1437,11 @@ pub fn refresh_trigger_sidecar(index: &RegistryIndex, source_len: u64) {
     if stamp.0 != source_len {
         return;
     }
-    write_trigger_sidecar_at(&sidecar, stamp, &trigger_providers(index));
+    write_trigger_sidecar_at(
+        &sidecar,
+        stamp,
+        &(trigger_providers(index), builder_providers(index)),
+    );
 }
 
 /// Map every `method:receiver` trigger in the catalog to its owning package.
@@ -1412,6 +1476,11 @@ pub fn trigger_owners(index: &RegistryIndex) -> BTreeMap<String, String> {
 pub struct FetchedIndex {
     pub content: Vec<u8>,
     pub signature: Vec<u8>,
+    /// The commit BOTH files were read from, when the URL names a branch that could be
+    /// resolved to one.  `None` means they were two reads through a moving address, which
+    /// a host may serve from different moments — a pair that fails to verify may then be a
+    /// new index beside the previous signature, or the reverse.
+    pub commit: Option<String>,
 }
 
 /// Fetch `index.json` + `index.json.sig` from the given URL prefix.
@@ -1419,16 +1488,148 @@ pub struct FetchedIndex {
 /// The URL passed in points at the `index.json` itself; the signature
 /// is fetched from the same URL with `.sig` appended.
 ///
+/// The two files are one signed PAIR, so they are read from one commit wherever the
+/// URL allows it ([`pin_to_commit`]).  A branch address is cached per file by the host,
+/// and after each push to the registry it served a new index beside the old signature
+/// for minutes: every refreshing command then stopped on a signature that was valid at
+/// the commit (loft#1991).
+///
+/// A signature the host says it does not have is answered EMPTY, and the caller decides
+/// what an unsigned index is worth.  A signature whose download FAILED is an error: read
+/// as absent it would be checked against the cached signature — the previous index's —
+/// and a new, validly signed index would then be refused as INVALID.
+///
 /// # Errors
 ///
-/// Returns a `String` error on HTTP failure, non-200 status, or
-/// missing signature file (the latter is only an error when
-/// signature verification is required; the caller decides).
+/// Returns a `String` error when the index cannot be fetched, and when the signature
+/// request got no usable answer ([`Miss::Failed`]).
 pub fn fetch_index(url: &str) -> Result<FetchedIndex, String> {
-    let content = http_get_bytes(url).map_err(|e| format!("fetching {url}: {e}"))?;
-    let sig_url = format!("{url}.sig");
-    let signature = http_get_bytes(&sig_url).unwrap_or_default();
-    Ok(FetchedIndex { content, signature })
+    fetch_index_through(url, &mut |u| {
+        if u.ends_with(REF_ADVERTISEMENT) {
+            // Asked only to learn which commit to read.  When the host is unreachable
+            // the fetch below still works through the branch address, so this must not
+            // hold a command for the full download bounds.
+            http_get_within(
+                u,
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(15),
+            )
+        } else {
+            http_get_within(u, CONNECT_BOUND, DOWNLOAD_BOUND)
+        }
+    })
+}
+
+/// [`fetch_index`] over any transport, so the pair's consistency can be tested against a
+/// host that answers each address from a different moment.
+fn fetch_index_through(
+    url: &str,
+    get: &mut dyn FnMut(&str) -> Result<Vec<u8>, Miss>,
+) -> Result<FetchedIndex, String> {
+    let (from, commit) = match pin_to_commit(url, get) {
+        Some((pinned, commit)) => (pinned, Some(commit)),
+        None => (url.to_string(), None),
+    };
+    // The error names the address the caller asked for: the pinned one is this
+    // function's own business, and a file missing at the commit is missing at the branch.
+    let content = get(&from).map_err(|miss| format!("fetching {url}: {}", miss.message()))?;
+    let signature = match get(&format!("{from}.sig")) {
+        Ok(signature) => signature,
+        Err(Miss::Absent(_)) => Vec::new(),
+        Err(Miss::Failed(why)) => return Err(format!("fetching {url}.sig: {why}")),
+    };
+    Ok(FetchedIndex {
+        content,
+        signature,
+        commit,
+    })
+}
+
+/// The host that serves a repository's files by address, and the query that asks the
+/// repository itself which commit each branch is at.
+const RAW_HOST: &str = "https://raw.githubusercontent.com/";
+const REF_ADVERTISEMENT: &str = "/info/refs?service=git-upload-pack";
+
+/// Rewrite a branch address into the address of the same file at the commit the branch
+/// is at NOW, returning it with that commit.
+///
+/// `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>` is the only shape
+/// rewritten: its host caches each file apart, while the same file under a commit id never
+/// changes, so two reads under one commit are one consistent pair.  The commit comes from
+/// the repository's own ref advertisement, which is not cached.
+///
+/// An address that already names a commit is answered as it is, with no request made.
+/// `None` — the caller then reads through the address as given — for any other URL
+/// (`file://`, a mirror), and when the advertisement cannot be fetched or does not list
+/// the branch.  Nothing here is trusted: the signature check that follows is the same
+/// whichever address the bytes came from.
+fn pin_to_commit(
+    url: &str,
+    get: &mut dyn FnMut(&str) -> Result<Vec<u8>, Miss>,
+) -> Option<(String, String)> {
+    let mut parts = url.strip_prefix(RAW_HOST)?.splitn(3, '/');
+    let (owner, repo, tail) = (parts.next()?, parts.next()?, parts.next()?);
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    if let Some(commit) = tail.split('/').next().filter(|first| is_commit_id(first)) {
+        return Some((url.to_string(), commit.to_string()));
+    }
+    let tail = tail.strip_prefix("refs/heads/").unwrap_or(tail);
+    let advertisement = get(&format!(
+        "https://github.com/{owner}/{repo}.git{REF_ADVERTISEMENT}"
+    ))
+    .ok()?;
+    let (commit, path) = branch_commit(&advertisement, tail)?;
+    Some((format!("{RAW_HOST}{owner}/{repo}/{commit}/{path}"), commit))
+}
+
+/// A full commit id: 40 hex digits, or 64 in a SHA-256 repository.
+fn is_commit_id(s: &str) -> bool {
+    matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Split `tail` (`<branch>/<path>`) at the branch a ref advertisement lists, answering
+/// that branch's commit and the path below it.
+///
+/// A branch name may itself hold `/`, so the split is not at the first one: the LONGEST
+/// listed branch that `tail` starts with wins.  The advertisement is git's pkt-line
+/// format — four hex digits of length, then `<commit> <refname>`, the first ref followed
+/// by a NUL and the capability list.  `None` when no listed branch fits, and for any
+/// line that is not what the format says, because a half-read advertisement must not
+/// pick a commit.
+fn branch_commit(advertisement: &[u8], tail: &str) -> Option<(String, String)> {
+    let mut best: Option<(&str, &str)> = None;
+    let mut at = 0;
+    while at < advertisement.len() {
+        let len = advertisement
+            .get(at..at + 4)
+            .and_then(|d| std::str::from_utf8(d).ok())
+            .and_then(|d| usize::from_str_radix(d, 16).ok())?;
+        if len == 0 {
+            at += 4; // a flush packet: the end of a section
+            continue;
+        }
+        let line = advertisement.get(at + 4..at + len)?;
+        at += len;
+        let line = line.split(|b| *b == 0).next()?;
+        let line = std::str::from_utf8(line).ok()?.trim_end_matches('\n');
+        if line.starts_with('#') {
+            continue;
+        }
+        let (commit, name) = line.split_once(' ')?;
+        let Some(branch) = name.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        let fits = tail
+            .strip_prefix(branch)
+            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('/'));
+        if fits && is_commit_id(commit) && best.is_none_or(|(_, b)| branch.len() > b.len()) {
+            best = Some((commit, branch));
+        }
+    }
+    let (commit, branch) = best?;
+    Some((commit.to_string(), tail[branch.len() + 1..].to_string()))
 }
 
 /// Download `url` to the local path `dest`, returning the bytes
@@ -1457,92 +1658,6 @@ pub fn download_tarball(url: &str, dest: &std::path::Path) -> Result<Vec<u8>, St
 /// The transport's error, prefixed with the URL.
 pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     http_get_bytes(url).map_err(|e| format!("downloading {url}: {e}"))
-}
-
-/// Default ceiling on a single HTTP response — the registry index, or a package
-/// tarball.  A ceiling has to exist (an unbounded response is an unbounded
-/// allocation), but it must never be reached by SILENCE: the previous 50 MB cap
-/// TRUNCATED the body and handed the caller a short file, which surfaced as
-/// `JSON parse error: unterminated string` at byte 52,428,800 rather than as
-/// "the index is bigger than this loft will read".  That number is compiled into
-/// every released binary, so an index growing past it would have taken the
-/// registry down for every client already in the wild, with nothing the registry
-/// itself could do about it.  Raised, and — the part that matters — turned into a
-/// refusal, so the day it is reached the message names the ceiling and the way
-/// past it.
-pub const DEFAULT_MAX_DOWNLOAD: u64 = 512 << 20;
-
-/// The download ceiling in bytes, or `0` for none — `LOFT_MAX_DOWNLOAD`
-/// overriding [`DEFAULT_MAX_DOWNLOAD`], written the way a person writes a size
-/// (`1G`, `512M`).  An unparseable value keeps the default and says so: a typo
-/// in a limit must not silently remove the limit.
-#[must_use]
-pub fn max_download_bytes() -> u64 {
-    let Ok(v) = std::env::var("LOFT_MAX_DOWNLOAD") else {
-        return DEFAULT_MAX_DOWNLOAD;
-    };
-    if let Some(bytes) = crate::store_budget::parse_limit(&v) {
-        bytes
-    } else {
-        eprintln!(
-            "loft: LOFT_MAX_DOWNLOAD='{v}' is not a size (try 1G, 512M or 0) — \
-             keeping the default {}",
-            crate::store_budget::human(DEFAULT_MAX_DOWNLOAD)
-        );
-        DEFAULT_MAX_DOWNLOAD
-    }
-}
-
-/// Read a whole response body, REFUSING one longer than `limit` bytes (`0` = no
-/// limit) rather than truncating it.  Reads one byte past the ceiling, so a body
-/// exactly at it still passes and the first byte over is what trips the refusal.
-/// The message leaves the URL to the caller, which already names it.
-fn read_capped(reader: impl std::io::Read, limit: u64) -> Result<Vec<u8>, String> {
-    use std::io::Read as _;
-    let ceiling = if limit == 0 {
-        u64::MAX
-    } else {
-        limit.saturating_add(1)
-    };
-    let mut buf = Vec::new();
-    reader
-        .take(ceiling)
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("read body: {e}"))?;
-    if limit != 0 && u64::try_from(buf.len()).unwrap_or(u64::MAX) > limit {
-        return Err(format!(
-            "response is larger than the {} download ceiling — refusing it rather \
-             than handing back a truncated file; raise the ceiling with \
-             LOFT_MAX_DOWNLOAD=<size> (e.g. 1G, or 0 for no ceiling)",
-            crate::store_budget::human(limit)
-        ));
-    }
-    Ok(buf)
-}
-
-/// Fetch `url` in full.  A `file://` URL reads the local path directly and is not
-/// subject to the download ceiling — nothing about a local mirror is unbounded in
-/// the way a remote response is.
-pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
-    // @PLAN12 Phase 6.11 — support `file://` URLs for offline
-    // mirrors + bundle-import-served indexes.  Same contract as the
-    // HTTP path: return the raw bytes at the URL.
-    if let Some(path) = url.strip_prefix("file://") {
-        return file_access::read(path).map_err(|e| format!("file:// read error for {e}"));
-    }
-    let agent = crate::tls::agent_builder()
-        .timeout_connect(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_mins(1))
-        .build();
-    let response = agent
-        .get(url)
-        .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
-    let status = response.status();
-    if !(200..300).contains(&status) {
-        return Err(format!("HTTP {status} for {url}"));
-    }
-    read_capped(response.into_reader(), max_download_bytes())
 }
 
 // ── Tarball extraction ────────────────────────────────────────────
@@ -2179,6 +2294,72 @@ mod tests {
         assert_eq!(map.get("matches"), None, "ambiguous method must be omitted");
     }
 
+    /// The newest loadable release speaks for a package: a spelling an older release carried
+    /// and the current one dropped is no trigger, nor is one only a yanked, a prerelease or a
+    /// floor-refused release carries.
+    #[test]
+    fn the_catalog_maps_follow_the_newest_loadable_release() {
+        let idx = parse_index(
+            r#"{ "schema_version": 1, "updated": "x", "packages": {
+                "regex": { "categories": [], "yanked": ["0.3.0"], "versions": {
+                    "0.1.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["matches:text", "regex_find:text", "mk:fn"], "published": "x" },
+                    "0.2.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["matches:text", "search:text", "build:fn"], "published": "x" },
+                    "0.3.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["capture:text"], "published": "x" },
+                    "0.4.0-beta": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "prerelease": true, "triggers": ["named:text"], "published": "x" },
+                    "9.0.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=9999.1.0",
+                        "triggers": ["future:text"], "published": "x" } } },
+                "gone": { "categories": [], "yanked": ["0.1.0"], "versions": {
+                    "0.1.0": { "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["slugify:text"], "published": "x" } } } } }"#,
+        )
+        .expect("parse");
+        let methods = trigger_providers(&idx);
+        assert_eq!(methods.get("search").map(String::as_str), Some("regex"));
+        assert_eq!(methods.get("matches").map(String::as_str), Some("regex"));
+        for retired in ["regex_find", "capture", "named", "future", "slugify"] {
+            assert!(
+                !methods.contains_key(retired),
+                "{retired} is not the newest release's"
+            );
+        }
+        let builders = builder_providers(&idx);
+        assert_eq!(builders.get("build").map(String::as_str), Some("regex"));
+        assert!(
+            !builders.contains_key("mk"),
+            "a dropped builder is no trigger"
+        );
+    }
+
+    /// A `"set:fn"` entry is a builder: it answers a bare `set(…)`, never a `.set(` method,
+    /// and the two maps keep apart.
+    #[test]
+    fn a_builder_entry_feeds_the_builder_map_and_not_the_method_map() {
+        let idx = parse_index(
+            r#"{ "schema_version": 1, "updated": "x", "packages": {
+                "script": { "categories": [], "yanked": [], "versions": { "0.2.0": {
+                        "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["set:fn", "has:sorted<Word[key]>"], "published": "x" } } },
+                "other": { "categories": [], "yanked": [], "versions": { "0.1.0": {
+                        "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["set:text"], "published": "x" } } } } }"#,
+        )
+        .expect("parse");
+        let builders = builder_providers(&idx);
+        assert_eq!(builders.get("set").map(String::as_str), Some("script"));
+        assert!(!builders.contains_key("has"), "a method is not a builder");
+        let methods = trigger_providers(&idx);
+        assert_eq!(
+            methods.get("set").map(String::as_str),
+            Some("other"),
+            "the builder does not make `.set(` ambiguous"
+        );
+        assert_eq!(methods.get("has").map(String::as_str), Some("script"));
+    }
+
     #[test]
     fn trigger_owners_maps_each_trigger_to_its_package() {
         // Full `method:receiver` -> package map, used by the publish pre-check.
@@ -2522,6 +2703,338 @@ mod tests {
     fn extract_dir_format() {
         let p = extract_dir("crypto", "0.1.0");
         assert!(p.ends_with("crypto-0.1.0"));
+    }
+
+    // ── The signed pair is read from one commit (loft#1991) ─────────────────
+
+    const COMMIT_A: &str = "244a89024ed9dc929c7905aa0d422d5bfb0d29b6";
+    const COMMIT_B: &str = "a5607a6d12c81137e109f19348a7a0e0fc87a73b";
+    const COMMIT_C: &str = "d8c6f40ad84e9b52f544d8e1f88ab2f28b9e4802";
+
+    /// One pkt-line: four hex digits counting themselves, then the payload.
+    fn pkt(payload: &str) -> Vec<u8> {
+        format!("{:04x}{payload}", payload.len() + 4).into_bytes()
+    }
+
+    /// A ref advertisement in the shape the host sends: the service line, a flush, the
+    /// first ref carrying the capability list after a NUL, the rest, a flush.
+    fn advertisement(refs: &[(&str, &str)]) -> Vec<u8> {
+        let mut out = pkt("# service=git-upload-pack\n");
+        out.extend_from_slice(b"0000");
+        for (i, (commit, name)) in refs.iter().enumerate() {
+            let caps = if i == 0 {
+                "\0multi_ack thin-pack side-band"
+            } else {
+                ""
+            };
+            out.extend(pkt(&format!("{commit} {name}{caps}\n")));
+        }
+        out.extend_from_slice(b"0000");
+        out
+    }
+
+    fn found(commit: &str, path: &str) -> (String, String) {
+        (commit.to_string(), path.to_string())
+    }
+
+    #[test]
+    fn a_branch_address_splits_at_the_branch_the_advertisement_lists() {
+        let ad = advertisement(&[
+            (COMMIT_A, "HEAD"),
+            (COMMIT_A, "refs/heads/main"),
+            (COMMIT_B, "refs/heads/submit-script-0.1.0"),
+            (COMMIT_C, "refs/pull/1/head"),
+        ]);
+        assert_eq!(
+            branch_commit(&ad, "main/index.json"),
+            Some(found(COMMIT_A, "index.json"))
+        );
+        assert_eq!(
+            branch_commit(&ad, "submit-script-0.1.0/submissions/s.json"),
+            Some(found(COMMIT_B, "submissions/s.json"))
+        );
+        // Not a branch: a pull ref, a name nothing lists, and a branch with no file below.
+        assert_eq!(branch_commit(&ad, "pull/1/head/index.json"), None);
+        assert_eq!(branch_commit(&ad, "release/index.json"), None);
+        assert_eq!(branch_commit(&ad, "main"), None);
+        assert_eq!(branch_commit(&ad, "main/"), None);
+    }
+
+    #[test]
+    fn a_branch_named_with_a_slash_wins_over_its_own_prefix() {
+        let ad = advertisement(&[
+            (COMMIT_A, "refs/heads/feature"),
+            (COMMIT_B, "refs/heads/feature/x"),
+            (COMMIT_C, "refs/heads/ma"),
+        ]);
+        assert_eq!(
+            branch_commit(&ad, "feature/x/index.json"),
+            Some(found(COMMIT_B, "index.json"))
+        );
+        assert_eq!(
+            branch_commit(&ad, "feature/y/index.json"),
+            Some(found(COMMIT_A, "y/index.json"))
+        );
+        // `ma` is the start of `main/…` and not a path component of it.
+        assert_eq!(branch_commit(&ad, "main/index.json"), None);
+    }
+
+    #[test]
+    fn a_tag_or_a_malformed_commit_is_never_the_branch() {
+        let sha256 = "a".repeat(64);
+        let ad = advertisement(&[
+            (COMMIT_A, "refs/tags/main"),
+            ("not-a-commit-id", "refs/heads/main"),
+            (&sha256, "refs/heads/wide"),
+        ]);
+        assert_eq!(branch_commit(&ad, "main/index.json"), None);
+        assert_eq!(
+            branch_commit(&ad, "wide/index.json"),
+            Some(found(&sha256, "index.json"))
+        );
+    }
+
+    #[test]
+    fn a_half_read_advertisement_picks_no_commit() {
+        let whole = advertisement(&[(COMMIT_A, "refs/heads/main"), (COMMIT_B, "refs/heads/next")]);
+        assert_eq!(
+            branch_commit(&whole, "main/index.json"),
+            Some(found(COMMIT_A, "index.json"))
+        );
+        // Cut inside the second ref: its length says more bytes than there are.  The
+        // first ref is intact and still must not be believed.
+        let cut = &whole[..whole.len() - 12];
+        assert_eq!(branch_commit(cut, "main/index.json"), None);
+        // A length that is not hex, and one too short to hold its own digits.
+        let mut bad = pkt(&format!("{COMMIT_A} refs/heads/main\n"));
+        bad.extend_from_slice(b"zzzz");
+        assert_eq!(branch_commit(&bad, "main/index.json"), None);
+        let mut short = pkt(&format!("{COMMIT_A} refs/heads/main\n"));
+        short.extend_from_slice(b"0002");
+        assert_eq!(branch_commit(&short, "main/index.json"), None);
+        assert_eq!(branch_commit(b"", "main/index.json"), None);
+    }
+
+    const BRANCH_URL: &str = "https://raw.githubusercontent.com/loft-lang/registry/main/index.json";
+    const ADVERT_URL: &str =
+        "https://github.com/loft-lang/registry.git/info/refs?service=git-upload-pack";
+
+    /// A host that answers each address from its own table and records what was asked.
+    /// An address it does not have is ABSENT; one listed in `down` gets no answer.
+    struct Host {
+        files: Vec<(String, Vec<u8>)>,
+        down: Vec<String>,
+        asked: Vec<String>,
+    }
+
+    impl Host {
+        fn new(files: &[(&str, &[u8])]) -> Host {
+            Host {
+                files: files
+                    .iter()
+                    .map(|(u, b)| ((*u).to_string(), b.to_vec()))
+                    .collect(),
+                down: Vec::new(),
+                asked: Vec::new(),
+            }
+        }
+
+        fn fetch(&mut self, url: &str) -> Result<FetchedIndex, String> {
+            let Host { files, down, asked } = self;
+            fetch_index_through(url, &mut |u| {
+                asked.push(u.to_string());
+                if down.iter().any(|d| d == u) {
+                    return Err(Miss::Failed(format!("timed out reading {u}")));
+                }
+                files
+                    .iter()
+                    .find(|(have, _)| have == u)
+                    .map(|(_, bytes)| bytes.clone())
+                    .ok_or_else(|| Miss::Absent(format!("HTTP 404 for {u}")))
+            })
+        }
+    }
+
+    /// The host mid-update: the branch address serves the OLD index beside the NEW
+    /// signature, while the commit the branch is at holds the new pair.
+    fn host_mid_update(with_advertisement: bool) -> Host {
+        let at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        let ad = advertisement(&[(COMMIT_A, "HEAD"), (COMMIT_A, "refs/heads/main")]);
+        let mut host = Host::new(&[
+            (BRANCH_URL, b"old index"),
+            (&format!("{BRANCH_URL}.sig"), b"new signature"),
+            (&at_commit, b"new index"),
+            (&format!("{at_commit}.sig"), b"new signature"),
+        ]);
+        if with_advertisement {
+            host.files.push((ADVERT_URL.to_string(), ad));
+        }
+        host
+    }
+
+    #[test]
+    fn the_pair_is_read_from_the_commit_the_branch_is_at() {
+        let mut host = host_mid_update(true);
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.signature, b"new signature");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+        // Three requests, and neither of them through the branch address.
+        assert_eq!(host.asked.len(), 3, "asked: {:?}", host.asked);
+        assert_eq!(host.asked[0], ADVERT_URL);
+        assert!(
+            host.asked[1..].iter().all(|u| u.contains(COMMIT_A)),
+            "asked: {:?}",
+            host.asked
+        );
+    }
+
+    /// The control for the test above: with no commit to name, the same host hands out
+    /// the two files from different moments, and the result says it could not pin them.
+    #[test]
+    fn without_the_advertisement_the_pair_is_two_reads_and_says_so() {
+        let mut host = host_mid_update(false);
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"old index");
+        assert_eq!(fetched.signature, b"new signature");
+        assert_eq!(fetched.commit, None);
+    }
+
+    #[test]
+    fn a_branch_the_advertisement_does_not_list_is_read_as_given() {
+        let mut host = host_mid_update(true);
+        host.files.retain(|(u, _)| u != ADVERT_URL);
+        host.files.push((
+            ADVERT_URL.to_string(),
+            advertisement(&[(COMMIT_B, "refs/heads/other")]),
+        ));
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"old index");
+        assert_eq!(fetched.commit, None);
+    }
+
+    #[test]
+    fn the_long_branch_spelling_pins_the_same_commit() {
+        let mut host = host_mid_update(true);
+        let fetched = host
+            .fetch(
+                "https://raw.githubusercontent.com/loft-lang/registry/refs/heads/main/index.json",
+            )
+            .expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+    }
+
+    #[test]
+    fn an_address_that_names_a_commit_asks_for_no_advertisement() {
+        let mut host = host_mid_update(true);
+        let at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        let fetched = host.fetch(&at_commit).expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+        assert_eq!(
+            host.asked,
+            vec![at_commit.clone(), format!("{at_commit}.sig")]
+        );
+    }
+
+    #[test]
+    fn a_mirror_or_a_local_file_is_read_as_given() {
+        for url in [
+            "https://mirror.example.org/registry/main/index.json",
+            "file:///srv/registry/index.json",
+            "https://raw.githubusercontent.com/loft-lang",
+        ] {
+            let mut host = Host::new(&[(url, b"index"), (&format!("{url}.sig"), b"signature")]);
+            let fetched = host.fetch(url).expect("fetch");
+            assert_eq!(fetched.content, b"index", "{url}");
+            assert_eq!(fetched.commit, None, "{url}");
+            assert_eq!(
+                host.asked,
+                vec![url.to_string(), format!("{url}.sig")],
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_missing_at_the_commit_is_an_error_about_the_address_asked_for() {
+        let mut host = host_mid_update(true);
+        let index_at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        host.files.retain(|(u, _)| *u != index_at_commit);
+        let err = host
+            .fetch(BRANCH_URL)
+            .err()
+            .expect("the index is not at the commit");
+        assert!(
+            err.starts_with(&format!("fetching {BRANCH_URL}: ")),
+            "{err}"
+        );
+        // Missing at the commit is missing at the branch: the stale branch copy is not
+        // read in its place.
+        assert!(
+            !host.asked.iter().any(|u| u == BRANCH_URL),
+            "asked: {:?}",
+            host.asked
+        );
+    }
+
+    #[test]
+    fn a_signature_absent_at_the_commit_is_an_empty_one() {
+        let mut host = host_mid_update(true);
+        let signature_at_commit = format!(
+            "https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json.sig"
+        );
+        host.files.retain(|(u, _)| *u != signature_at_commit);
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.signature, b"");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+    }
+
+    /// A signature whose download failed is not an absent one: answered empty, the
+    /// caller would check the new index against the signature it has cached.
+    #[test]
+    fn a_signature_that_could_not_be_fetched_fails_the_fetch() {
+        let at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        for (with_advertisement, signature_url) in [
+            (true, format!("{at_commit}.sig")),
+            (false, format!("{BRANCH_URL}.sig")),
+        ] {
+            let mut host = host_mid_update(with_advertisement);
+            host.down.push(signature_url.clone());
+            let err = host
+                .fetch(BRANCH_URL)
+                .err()
+                .expect("no signature came back");
+            assert_eq!(
+                err,
+                format!("fetching {BRANCH_URL}.sig: timed out reading {signature_url}")
+            );
+        }
+    }
+
+    /// An advertisement that got no answer leaves the address as given, as an absent
+    /// one does: it only ever chooses where to read from.
+    #[test]
+    fn an_advertisement_that_could_not_be_fetched_reads_the_address_as_given() {
+        let mut host = host_mid_update(true);
+        host.down.push(ADVERT_URL.to_string());
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"old index");
+        assert_eq!(fetched.commit, None);
+        assert_eq!(
+            host.asked,
+            vec![
+                ADVERT_URL.to_string(),
+                BRANCH_URL.to_string(),
+                format!("{BRANCH_URL}.sig")
+            ]
+        );
     }
 
     #[test]
@@ -2880,7 +3393,7 @@ mod tests {
         file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
 
         // First ask: no sidecar yet, so the index is parsed and the sidecar written.
-        let first = catalog_trigger_map_at(&sidecar, &index);
+        let first = catalog_maps_at(&sidecar, &index).0;
         assert_eq!(first.get("matches").map(String::as_str), Some("regex"));
         assert!(
             file_access::exists(&sidecar),
@@ -2892,7 +3405,7 @@ mod tests {
         // A reader that re-parsed the index would still say `regex`.
         let text = file_access::read_to_string(&sidecar).unwrap();
         file_access::write(&sidecar, text.replace("\"regex\"", "\"impostor\"")).unwrap();
-        let second = catalog_trigger_map_at(&sidecar, &index);
+        let second = catalog_maps_at(&sidecar, &index).0;
         assert_eq!(
             second.get("matches").map(String::as_str),
             Some("impostor"),
@@ -2908,12 +3421,12 @@ mod tests {
         let index = dir.join("index.json");
         let sidecar = dir.join("triggers.json");
         file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
-        catalog_trigger_map_at(&sidecar, &index);
+        catalog_maps_at(&sidecar, &index);
 
         // The index moves on — a different package, and a different length, so the
         // stamp mismatches even for two writes inside one second.
         file_access::write(&index, index_with_trigger("globbing", "matches", "   ")).unwrap();
-        let rebuilt = catalog_trigger_map_at(&sidecar, &index);
+        let rebuilt = catalog_maps_at(&sidecar, &index).0;
         assert_eq!(
             rebuilt.get("matches").map(String::as_str),
             Some("globbing"),
@@ -2926,12 +3439,44 @@ mod tests {
         let _ = file_access::remove_dir_all(&dir);
     }
 
+    /// A sidecar an older loft derived the other way carries no derivation stamp, so the
+    /// index stamp alone must not pass it off as current.
+    #[test]
+    fn a_sidecar_from_another_derivation_is_rebuilt() {
+        let dir = scratch_dir("sidecar-derivation");
+        let index = dir.join("index.json");
+        let sidecar = dir.join("triggers.json");
+        file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
+        let (len, mtime) = index_stamp(&index).expect("stamp");
+        file_access::write(
+            &sidecar,
+            format!(
+                r#"{{"index_len": {len}, "index_mtime": {mtime}, "triggers": {{"matches": "stale"}}, "builders": {{}}}}"#
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog_maps_at(&sidecar, &index)
+                .0
+                .get("matches")
+                .map(String::as_str),
+            Some("regex"),
+            "a sidecar without the derivation stamp must be rebuilt from the index"
+        );
+        let text = file_access::read_to_string(&sidecar).unwrap();
+        assert!(
+            text.contains("\"derivation\""),
+            "the rebuilt sidecar carries its derivation: {text}"
+        );
+        let _ = file_access::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_absent_index_yields_an_empty_map_and_writes_nothing() {
         let dir = scratch_dir("sidecar-absent");
         let index = dir.join("index.json");
         let sidecar = dir.join("triggers.json");
-        assert!(catalog_trigger_map_at(&sidecar, &index).is_empty());
+        assert!(catalog_maps_at(&sidecar, &index).0.is_empty());
         assert!(
             !file_access::exists(&sidecar),
             "nothing was derived, so there is nothing to cache"

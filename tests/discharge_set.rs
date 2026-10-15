@@ -22,7 +22,9 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // `@FR-R-Alias`'s versioned clause emits (`n`'s address held where `out` is apart)
     ("n_c1", 2, 4),
     ("n_c2", 0, 2), // no push; the two headers, the fallback discharged in the body
-    ("n_c3", 0, 0), // rename grows an element's text: the walk reads through the runtime
+    // rename grows an element's text: the walk reads through the runtime.  The BUILD loop's
+    // two pushes and its text-field mint hold (`@FR-R-Mint`'s text clause).
+    ("n_c3", 3, 0),
     ("n_c4", 0, 1), // the callee misses on every call: the loop keeps its one header
 ];
 

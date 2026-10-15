@@ -610,7 +610,11 @@ def census(path):
 # ---------------------------------------------------------------- report
 
 def corpus():
-    return sorted(glob.glob(os.path.join(ROOT, "tests/scripts/*.loft")))
+    # The programs here, then every program of the language suite beside the tree (@PLN193):
+    # the axes are measured over the corpus they were measured over before the move.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from corpus import corpus_files
+    return corpus_files(docs=False)
 
 
 def rows():

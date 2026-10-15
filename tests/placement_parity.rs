@@ -1237,7 +1237,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
          }\n",
     );
 
-    let child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -1252,17 +1252,28 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
 
     // Wait until the consumer is inside the long call, then kill ITS worker —
     // not the consumer. Killing too early would test a worker that never served.
-    let mut pid = None;
-    for _ in 0..200 {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        if let Some(p) = worker_child_of(child.id()) {
-            pid = Some(p);
+    // The `before` line is the evidence: the worker has loaded and answered
+    // `make_v`, and the next thing the consumer does is the `grind` call.  A
+    // timer from the worker's start cannot stand in for it, because loading the
+    // library takes longer than any fixed window on a loaded machine.
+    let mut lines = std::io::BufRead::lines(std::io::BufReader::new(
+        child.stdout.take().expect("piped stdout"),
+    ));
+    let mut stdout = String::new();
+    for line in lines.by_ref() {
+        let line = line.expect("read the consumer's stdout");
+        stdout.push_str(&line);
+        stdout.push('\n');
+        if line.starts_with("before") {
             break;
         }
     }
-    let pid = pid.expect("the consumer never started a worker");
+    let pid = worker_child_of(child.id());
     // Long enough that `grind` is past its argument walk and deep in the loop.
     std::thread::sleep(std::time::Duration::from_millis(600));
+    let pid = pid.unwrap_or_else(|| {
+        panic!("the consumer never got as far as the call with a worker running: {stdout:?}")
+    });
     assert!(
         loft::platform::process::harness_command("kill")
             .arg("-KILL")
@@ -1273,8 +1284,11 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
         "could not kill the worker (pid {pid})"
     );
 
+    for line in lines {
+        stdout.push_str(&line.expect("read the consumer's stdout"));
+        stdout.push('\n');
+    }
     let out = child.wait_with_output().expect("consumer did not finish");
-    let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stdout.contains("before 2000 1999"),

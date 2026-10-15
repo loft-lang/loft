@@ -109,8 +109,11 @@ The standard library lives in \`default/\` next to \`bin/\` — keep them togeth
 \`loft\` from anywhere.
 
 > \`--interpret\` is the standalone runtime — it needs nothing but this bundle.
-> The faster \`--native\` mode (loft's default) compiles via \`rustc\` and so needs
-> a Rust toolchain installed; use it once you have one.
+> The faster \`--native\` mode (loft's default) compiles via \`rustc\` against loft's
+> runtime library, which a bundle deliberately does not carry: with a toolchain
+> installed a default run still interprets, and an explicit \`--native\` reports a
+> missing \`loft\` crate.  A source install (\`make install\` from a checkout) is what
+> provides it.
 
 - CLI help:    \`bin/$exe --help\`
 - Reference:   \`loft-reference.pdf\`

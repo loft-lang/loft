@@ -1,0 +1,4 @@
+// A struct literal bound to an annotated local, then rebound from a second literal.  Nullable
+// half.
+struct S { a: integer, b: text }
+fn main() { x: S? = S { a: 1, b: "p" }; x = S { a: 2, b: "q" }; println("{x.a ?? -1}{x.b ?? "none"}"); }

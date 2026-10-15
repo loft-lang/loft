@@ -1,8 +1,8 @@
 diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index 80a649744..10e2b2ee2 100644
+index 220120b08..461af2271 100644
 --- b/src/codegen_runtime.rs
 +++ a/src/codegen_runtime.rs
-@@ -1271,19 +1271,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
+@@ -1354,19 +1354,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
      let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
      let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
      let tp = raw_tp & crate::keys::COPY_TP_MASK;
@@ -23,13 +23,13 @@ index 80a649744..10e2b2ee2 100644
      if crate::keys::trace_copy() {
          crate::loft_eprintln!(
 diff --git b/src/state/io.rs a/src/state/io.rs
-index bccdfd87e..9008d7c8e 100644
+index 9d9122b1d..3377ff216 100644
 --- b/src/state/io.rs
 +++ a/src/state/io.rs
-@@ -1709,20 +1709,6 @@ impl State {
-             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
-             return;
+@@ -1728,20 +1728,6 @@ impl State {
          }
+         // The exchange moved the source's parse errors with its records; a copy brings them.
+         self.database.deliver_parse_errors(&data, &to, tp);
 -        // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
 -        // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
 -        // its bytes lie outside the store's own blocks, where the record copy below would

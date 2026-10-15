@@ -415,6 +415,43 @@ run cannot: run cold, on a machine nobody else is using, and leave a verdict tha
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
 `make ci`.
 
+## What a build and each check costs here — the ladder
+
+`src/` is ONE crate (`loft`, ~486k lines).  An edit to any file in it recompiles the whole
+crate, rustc's front end runs a crate serially, and the release profile is not incremental —
+so what a change costs is decided by WHICH build answers the question, not by the size of the
+edit.  Measured on the 24-core box; the dated runs are in the history companion
+§ The build-cost ladder, and a number that decides what to do is re-measured first.
+
+| the question | the cheapest answer | after a one-file edit |
+|---|---|---|
+| does it compile, what does the type checker say | `cargo check --bin loft` | ~1 min on a quiet box (its artefacts are separate from a build's: the first check in a session warms them, ~1 min more) |
+| what does the fixed binary DO — `--interpret`, `--native`, `introspect`, `--native-emit` | `cargo build --bin loft` (dev): `target/debug/loft` runs `--native` against the `deps/` rlib this build wrote | 3–6 min alone; 24 min beside a sibling's dependency build |
+| a release binary | `cargo build --release --bin loft` | 20–40 min — needed ONLY to refresh `target/release/libloft.rlib` for the `cargo test --release` native suites; `make check-rlib` says when |
+| the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build — and, because the curated set holds browser binaries, two more full release builds of the crate for the stale wasm rlibs first; `--subject <name>` without a browser binary skips them |
+| one area | `find_problems.sh --subject <name>` | seconds to a minute |
+| the whole gate | `scripts/ci-run.sh start`, or `gh workflow run ci.yml` | ~20 min; two live gates double it |
+| the receipt of a new guard | `make falsify` | two dev builds in the shared falsify target dir — after the fix is committed, never while an edit is pending |
+| release and lifetime of every shape | `cargo test --release --test ownership_drop_gate` | an hour class: dozens of native compiles on every core — nothing runs beside it |
+| which corpus files a lowering change moves | the census (CODEGEN_METHOD.md § the corpus census) | the emission diff: minutes; running every moved file natively: hours when the rule fires broadly — bound the native run by what the diff names |
+
+**The rules the ladder gives.**
+
+- Iterate on the dev binary.  One release build per fix, at the end, for the rlib — never one
+  per hypothesis: a day in which fourteen release builds answered questions the dev binary or
+  `cargo check` could have answered is the history companion's measurement.
+- Name the cause from an artefact (`loft introspect`, `--native-emit`) BEFORE a build; a fix
+  built on a hypothesis the artefact never showed is a build that may change nothing.
+- One heavy job at a time — a build, a gate, a falsify run, the drop gate, a native census, a
+  `cargo test` of many binaries.  Beside one another they slow every one of them and the one
+  waited on most of all: a load of 75 here was one session's own drop gate, reported as
+  sibling load.  Read the next unit's code while a build runs; wait on a pid or an output
+  file, never a sleep loop.
+- Every gate the change can move runs BEFORE the push; a gate first run on GitHub after it
+  costs the gate, a fix build, and a red tip a sibling may already have joined.
+- Land one issue per push.  A defect found while verifying is filed with its repro at once and
+  is the next push, not part of this one.
+
 ## What a compiler change needs before its commit — and what runs beside the work
 
 **The rule.** A change in this loop (a rewrite clause, an op, a runtime path) is verified by
@@ -550,7 +587,7 @@ does not belong on a PR, however cheap it is.**
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), several advisory doc jobs | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on both backends through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193) | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
 | **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
@@ -567,6 +604,19 @@ does not belong on a PR, however cheap it is.**
 | **library repos** | one `library-ci` per repo, all callers of `library-ci-reusable.yml`, and **`ci / <package>` is a REQUIRED check on every repo's `main`** (41 contexts, one per package; `strict` off, so a PR need not be rebased onto a moved `main`, and `enforce_admins` off, so the owner's direct pushes to `main` still land — the way every library fix reaches it today): the per-package test matrix, plus a repo-level **`unreleased work`** job — a branch ahead of the default branch with no PR, a PR nobody has touched, or a `loft.toml` version the registry has never seen, each red after 14 days without activity (`scripts/unreleased-work.py`, `stale-days` to tune) | `push: main`, `pull_request` |
 | **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
+
+### A test that spawns a pool declares its share
+
+nextest runs `NEXTEST_TEST_THREADS` tests side by side, and a test that sizes an inner pool
+from the core count multiplies that: six native corpus chunks at 24 `rustc` each in
+`heavy-wide`, beside a 24-slot pool and a drop-gate chunk's 24 spawned `loft`s, was **184
+contending threads**, and the box hung (2026-10-15).  So every test that spawns workers
+carries `threads-required` in `.config/nextest.toml` and sizes its pool from
+`common::lanes::lanes(cap)`, which answers the same number under nextest
+(`UNDER_NEXTEST`) and the cores by hand; `native::pool_tests_declare_their_lanes_to_nextest`
+fails when a pool-spawning test is missing from the override.  A new test that spawns
+processes in parallel joins that override's filter, or it reintroduces the multiplication.
+The wider cure — the corpus leaving the crate for a suite of its own — is @PLN193.
 
 ### The test step runs in two passes
 

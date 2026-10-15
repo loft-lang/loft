@@ -16,7 +16,7 @@ index 60af5d88a..5ded51872 100644
  /// calls.  Text fields are escaped (`"` / `\` / control bytes); nested structs and
  /// vectors recurse; a `JsonValue`-typed field renders its subtree as it is.
 diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index 71ff2f8a6..fc451a2c0 100644
+index 220120b08..4f22d862c 100644
 --- b/src/codegen_runtime.rs
 +++ a/src/codegen_runtime.rs
 @@ -1230,11 +1230,24 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
@@ -46,7 +46,7 @@ index 71ff2f8a6..fc451a2c0 100644
  /// Return the JSON parse / schema-walk errors from the last `json_parse()`
  /// or `Struct.parse(JsonValue)` call as a single `|`-separated string.
  /// Mirrors the interpreter's `n_json_errors` (`src/native.rs`) which does
-@@ -1373,8 +1386,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
+@@ -1389,8 +1402,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
      if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
          return;
      }
@@ -56,7 +56,7 @@ index 71ff2f8a6..fc451a2c0 100644
          stores.remove_claims(&to, tp);
      }
 diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
-index 9d0dea307..3ac46702e 100644
+index d2a426ed9..6513373fa 100644
 --- b/src/compiled_stdlib_gen.rs
 +++ a/src/compiled_stdlib_gen.rs
 @@ -534,6 +534,13 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
@@ -77,13 +77,13 @@ index 9d0dea307..3ac46702e 100644
  pub(crate) const PREFIX_TYPES: usize = 99;
  pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
  /// The hash of the `default/*.loft` source these bodies were compiled from.
--pub(crate) const SOURCE_HASH: u64 = 14195242042689325127;
-+pub(crate) const SOURCE_HASH: u64 = 11083201608350673150;
+-pub(crate) const SOURCE_HASH: u64 = 11642644059270743477;
++pub(crate) const SOURCE_HASH: u64 = 17687889875206529232;
 diff --git b/src/database/allocation.rs a/src/database/allocation.rs
-index 96a7713cd..e8051dead 100644
+index 4041572bd..93585a95d 100644
 --- b/src/database/allocation.rs
 +++ a/src/database/allocation.rs
-@@ -3032,6 +3032,7 @@ impl Stores {
+@@ -3016,6 +3016,7 @@ impl Stores {
              free_bits,
              bridge_text_dest: None,
              const_refs: self.const_refs.clone(),
@@ -92,7 +92,7 @@ index 96a7713cd..e8051dead 100644
              // The worker inherits the parent's program context, so a `par`
              // inside a `par` worker can dispatch in turn.  Without it the
 diff --git b/src/database/format.rs a/src/database/format.rs
-index 60a764792..eafbaaa10 100644
+index 5b9a58730..a784d45c9 100644
 --- b/src/database/format.rs
 +++ a/src/database/format.rs
 @@ -440,7 +440,7 @@ impl Stores {
@@ -227,7 +227,7 @@ index 60a764792..eafbaaa10 100644
      #[must_use]
      pub fn text_vector(&mut self, args: &[String]) -> DbRef {
 diff --git b/src/database/mod.rs a/src/database/mod.rs
-index 2214cf646..b375b5123 100644
+index 23be3a304..046c696eb 100644
 --- b/src/database/mod.rs
 +++ a/src/database/mod.rs
 @@ -531,6 +531,9 @@ pub struct Stores {
@@ -257,10 +257,10 @@ index 2214cf646..b375b5123 100644
              parallel_ctx: None,
              par_buffer_stack: Vec::new(),
 diff --git b/src/database/structures.rs a/src/database/structures.rs
-index 0ece44b4c..d00c00040 100644
+index 9c503eef9..39d61618d 100644
 --- b/src/database/structures.rs
 +++ a/src/database/structures.rs
-@@ -1397,7 +1397,6 @@ impl Stores {
+@@ -1408,7 +1408,6 @@ impl Stores {
          // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
          // absence are different values, and only the whole-value replace may turn one into
          // the other — an `a += b` must leave `a` alone.
@@ -268,7 +268,7 @@ index 0ece44b4c..d00c00040 100644
          // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
          // slot, never the value-level null, so its absence is the marker the slot holds.
          let slot_absent = o_db.store_nr != u16::MAX
-@@ -1816,7 +1815,6 @@ impl Stores {
+@@ -1827,7 +1826,6 @@ impl Stores {
      /// meets the read-only refusal instead of the silent drop #410 closed.
      /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
      pub fn vector_adopt(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
@@ -276,7 +276,7 @@ index 0ece44b4c..d00c00040 100644
          let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
          if view
              && !db.is_null()
-@@ -1993,7 +1991,6 @@ impl Stores {
+@@ -2004,7 +2002,6 @@ impl Stores {
                  self.types.get(known as usize).map(|t| t.parts.clone())
              );
          }
@@ -285,10 +285,10 @@ index 0ece44b4c..d00c00040 100644
          if o_length == 0 {
              // The other vector has no data
 diff --git b/src/generation/mod.rs a/src/generation/mod.rs
-index 285dfc7a7..01e0baff6 100644
+index 113bead20..a83a520ed 100644
 --- b/src/generation/mod.rs
 +++ a/src/generation/mod.rs
-@@ -11243,7 +11243,22 @@ extern crate loft;"
+@@ -11385,7 +11385,22 @@ extern crate loft;"
                  // Internal i_ functions have implementations in codegen_runtime.rs;
                  // all others get a todo!() stub.
                  writeln!(w, "{{")?;
@@ -313,7 +313,7 @@ index 285dfc7a7..01e0baff6 100644
                          w,
                          "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
 diff --git b/src/native.rs a/src/native.rs
-index f557b2514..59d2eb4a6 100644
+index 8b8f403b5..284311683 100644
 --- b/src/native.rs
 +++ a/src/native.rs
 @@ -461,7 +461,8 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
@@ -350,7 +350,7 @@ index f557b2514..59d2eb4a6 100644
  }
  
 diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 2695fc688..761b77cbb 100644
+index 76acbe4dd..84e30864b 100644
 --- b/src/parser/mod.rs
 +++ a/src/parser/mod.rs
 @@ -1826,7 +1826,24 @@ impl Parser {
@@ -380,10 +380,10 @@ index 2695fc688..761b77cbb 100644
              todo_files: Vec::new(),
              track_sources: false,
 diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 32baff57a..edddf1325 100644
+index 68a80855b..d70a12b29 100644
 --- b/src/parser/objects.rs
 +++ a/src/parser/objects.rs
-@@ -905,26 +905,11 @@ impl Parser {
+@@ -970,26 +970,11 @@ impl Parser {
              if self.lexer.has_token("#") {
                  self.var_usages(index_var, true);
                  if self.lexer.has_keyword("errors") {
@@ -415,10 +415,10 @@ index 32baff57a..edddf1325 100644
                      }
                      return t;
 diff --git b/src/state/io.rs a/src/state/io.rs
-index 8cc9e80bf..6b096670e 100644
+index 9d9122b1d..847d93d76 100644
 --- b/src/state/io.rs
 +++ a/src/state/io.rs
-@@ -1723,8 +1723,6 @@ impl State {
+@@ -1726,8 +1726,6 @@ impl State {
              self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
              return;
          }
@@ -427,7 +427,7 @@ index 8cc9e80bf..6b096670e 100644
          // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
          // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
          // its bytes lie outside the store's own blocks, where the record copy below would
-@@ -2266,8 +2264,10 @@ impl State {
+@@ -2269,8 +2267,10 @@ impl State {
              pos: 8,
          };
          self.database.set_final_default_value(db_tp, &into);
@@ -441,10 +441,10 @@ index 8cc9e80bf..6b096670e 100644
      }
  
 diff --git b/src/store.rs a/src/store.rs
-index efa92e9aa..3e1e43f8f 100644
+index 5cc4b372d..ce5b70b6e 100644
 --- b/src/store.rs
 +++ a/src/store.rs
-@@ -531,16 +531,6 @@ pub struct Store {
+@@ -530,16 +530,6 @@ pub struct Store {
      /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
      /// is the one place they have to be right.
      pub known_type: u16,
@@ -461,7 +461,7 @@ index efa92e9aa..3e1e43f8f 100644
      /// @PLAN38 phase 01 — when `Some(path)`, this store was opened
      /// via `Store::open_durable` and on clean drop must (1) flush
      /// the mmap, (2) compute the payload CRC, and (3) rewrite the
-@@ -1123,8 +1113,6 @@ impl Store {
+@@ -1122,8 +1112,6 @@ impl Store {
              pinned: false,
              lock_origin: std::borrow::Cow::Borrowed(""),
              known_type: u16::MAX,
@@ -470,7 +470,7 @@ index efa92e9aa..3e1e43f8f 100644
              durable_meta_path: None,
              file_path: None,
              durable_tier: 0,
-@@ -1284,8 +1272,6 @@ impl Store {
+@@ -1283,8 +1271,6 @@ impl Store {
              pinned: false,
              lock_origin: std::borrow::Cow::Borrowed(""),
              known_type: u16::MAX,
@@ -479,7 +479,7 @@ index efa92e9aa..3e1e43f8f 100644
              durable_meta_path: None,
              file_path: Some(std::path::PathBuf::from(path)),
              durable_tier: 0,
-@@ -1387,8 +1373,6 @@ impl Store {
+@@ -1386,8 +1372,6 @@ impl Store {
              pinned: false,
              lock_origin: std::borrow::Cow::Borrowed(""),
              known_type: u16::MAX,
@@ -488,7 +488,7 @@ index efa92e9aa..3e1e43f8f 100644
              durable_meta_path: None,
              file_path: None,
              durable_tier: 0,
-@@ -1498,8 +1482,6 @@ impl Store {
+@@ -1497,8 +1481,6 @@ impl Store {
              pinned: false,
              lock_origin: std::borrow::Cow::Borrowed(""),
              known_type: u16::MAX,
@@ -497,7 +497,7 @@ index efa92e9aa..3e1e43f8f 100644
              durable_meta_path: None,
              file_path: None,
              durable_tier: 0,
-@@ -1535,9 +1517,6 @@ impl Store {
+@@ -1534,9 +1516,6 @@ impl Store {
          self.claims.clear();
          self.referenced.clear();
          self.removed.clear();
@@ -507,7 +507,7 @@ index efa92e9aa..3e1e43f8f 100644
          // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
          self.lazy = lazy_free_enabled();
          self.dead_words = 0;
-@@ -2804,8 +2783,6 @@ impl Store {
+@@ -2803,8 +2782,6 @@ impl Store {
          std::mem::swap(&mut a.dead_words, &mut b.dead_words);
          std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
          std::mem::swap(&mut a.known_type, &mut b.known_type);
@@ -516,7 +516,7 @@ index efa92e9aa..3e1e43f8f 100644
          std::mem::swap(&mut a.init_shadow, &mut b.init_shadow);
          let generation = a.generation.max(b.generation).wrapping_add(1);
          a.generation = generation;
-@@ -2966,8 +2943,6 @@ impl Store {
+@@ -2965,8 +2942,6 @@ impl Store {
              pinned: self.pinned,
              lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
              known_type: self.known_type,
@@ -525,7 +525,7 @@ index efa92e9aa..3e1e43f8f 100644
              durable_meta_path: None,
              file_path: None,
              durable_tier: 0,
-@@ -3030,8 +3005,6 @@ impl Store {
+@@ -3029,8 +3004,6 @@ impl Store {
              pinned: self.pinned,
              lock_origin: std::borrow::Cow::Borrowed(""),
              known_type: self.known_type,
@@ -534,7 +534,7 @@ index efa92e9aa..3e1e43f8f 100644
              durable_meta_path: None,
              file_path: None,
              durable_tier: 0,
-@@ -3087,8 +3060,6 @@ impl Store {
+@@ -3086,8 +3059,6 @@ impl Store {
              pinned: self.pinned,
              lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
              known_type: self.known_type,

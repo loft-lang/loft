@@ -591,7 +591,7 @@ bound to an image, and REFUSES a `sorted` / `index`, answering `false` — that 
 cannot be paged, it is knowable with no I/O, and the alternative is `null` at
 every lookup forever (loft#802).
 
-The gate is `tests/scripts/801-trie-text-keyed.loft` — hand-computed values on
+The gate is `loft-suite/attic/scripts/801-trie-text-keyed.loft` — hand-computed values on
 both backends with a `sorted` control alongside;
 `tests/scripts/802-lazy-refusal-visible.loft` is the refusal's.
 

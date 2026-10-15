@@ -26,6 +26,13 @@
 #   1. `cargo sweep --time 3` — artefacts no build used in 3 days (--time 1 under LOW_GB)
 #   2. incremental sessions older than a day
 #   3. `.loft/cache` entries under tests/ older than 2 days
+#   4. everything else git IGNORES that nothing wrote for 3 days (1 under LOW_GB), unless the
+#      checkout's keep-list names it — scripts/sweep_ignored.sh, scripts/janitor_keep.txt: the
+#      program caches beside every probe, `native-auto/`, fixture and scratch build trees, the
+#      stores and traces tests leave, an agent's finished worktree.  Left for the next round
+#      while a build, a test or a run is working inside the checkout.
+# Any other project under ~/workspace takes part in step 4 by carrying a `.janitor-keep` at
+# its root; one without it is never touched.
 # Steps 1 and 2 run BESIDE builds, so they hold cargo's own build locks while they do
 # (`target/<profile>/.cargo-lock`, the flock every cargo build takes): a build that starts
 # meanwhile waits the seconds a sweep takes, and a checkout whose lock a build already holds is
@@ -33,9 +40,11 @@
 # binary, a `loft --native` run linking the rlib — also leaves it for the next round.
 # Box-wide: scripts/sweep_scratch.sh over every scratch location loft writes (its own standing
 # rules), `loft-tmp-cleanup` for the RAM /tmp when installed, and perf's ~/.debug older than 14
-# days.  Never a file outside those, never a source file, never a checkout's working tree.
+# days.  Never a file outside those; in a working tree never a tracked file, never an
+# untracked file git does not ignore, never what the keep-list names.
 #
-# Silent.  Each run that freed space appends a line to ~/.cache/loft-janitor/log; under CRIT_GB
+# Silent.  Each run that freed space appends a line to ~/.cache/loft-janitor/log, and step 4
+# names every path it removed in ~/.cache/loft-janitor/removed.log; under CRIT_GB
 # (15) after running it says so on the desktop (notify-send) and in that log, naming the
 # largest directories — a full disk announced before a build fails on it.
 set -u
@@ -115,6 +124,18 @@ run() { if [ "$dry" = 1 ]; then echo "would: $*"; else "$@"; fi; }
 sweep_days=3
 [ "$free" -lt "$LOW_GB" ] && sweep_days=1
 kept=()
+# Step 4's sweeper and the keep-list a loft checkout falls back on while its branch has none.
+tools="$WORKSPACE/loft/scripts"
+[ -x "$tools/sweep_ignored.sh" ] || tools="$(dirname "${BASH_SOURCE[0]}")"
+sweep_ignored() { # <checkout> [--keep <file>]
+  [ -x "$tools/sweep_ignored.sh" ] || return 0
+  local co=$1; shift
+  if [ "$dry" = 1 ]; then
+    "$tools/sweep_ignored.sh" --dry-run --days "$sweep_days" "$@" "$co"
+  else
+    "$tools/sweep_ignored.sh" --days "$sweep_days" --log "$STATE/removed.log" "$@" "$co" >/dev/null 2>&1
+  fi
+}
 # Take every build lock of checkout `$1` without waiting, in a subshell that then runs the
 # rest of its arguments; exit 3 when a build holds one.  cargo locks with flock(2), so the
 # util-linux `flock` here excludes a cargo build and is excluded by it.
@@ -139,16 +160,33 @@ sweep_target() {
   done
   return 0
 }
+loft_checkouts=$(checkouts)
 while read -r co; do
+  [ -n "$co" ] || continue
+  working_here=0; busy "$co" && working_here=1
   if [ -d "$co/target" ]; then
-    if busy "$co"; then
+    if [ "$working_here" = 1 ]; then
       kept+=("$(basename "$co")")
     else
       with_build_locks "$co" sweep_target "$co" || kept+=("$(basename "$co")")
     fi
   fi
   [ -d "$co/tests" ] && run find "$co/tests" -xdev -path '*/.loft/cache/*' -mindepth 1 -mtime +2 -delete 2>/dev/null
-done < <(checkouts)
+  if [ "$working_here" = 0 ]; then
+    if [ -f "$co/scripts/janitor_keep.txt" ] || [ -f "$co/.janitor-keep" ]; then
+      sweep_ignored "$co"
+    elif [ -f "$tools/janitor_keep.txt" ]; then
+      sweep_ignored "$co" --keep "$tools/janitor_keep.txt"
+    fi
+  fi
+done <<< "$loft_checkouts"
+# The other projects of the workspace that carry their own keep-list.
+for d in "$WORKSPACE"/*/; do
+  d=${d%/}
+  [ -f "$d/.janitor-keep" ] || continue
+  printf '%s\n' "$loft_checkouts" | grep -qxF -- "$d" && continue
+  busy "$d" || sweep_ignored "$d"
+done
 
 # Box-wide scratch, by the standing rules of the one script that owns them.
 sweeper="$WORKSPACE/loft/scripts/sweep_scratch.sh"

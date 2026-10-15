@@ -11,6 +11,21 @@
 //! See `EXTERNAL_LIBS.md` for the full design.
 
 use crate::platform::process::{Program, Spawn};
+// The opened-library table and symbol lookup live in `c_libs` (core); these are the paths
+// callers name here, and what the wiring below reads.
+use crate::c_libs::adopt_foreign_block;
+pub use crate::c_libs::{CTX_RETURN_STORE, bridge_symbol_resolves, load_cdylib};
+#[cfg(feature = "native-extensions")]
+use crate::c_libs::{FnPtr, NATIVE_REGISTRY, get_bridge, load_one, try_dlsym};
+#[cfg(feature = "native-extensions")]
+pub use crate::c_libs::{load_c_library, try_dlsym_pub};
+// Finding or building a package's native library lives in `native_build` (core),
+// because the parser resolves it on `use`; these are the paths callers name here.
+pub use crate::native_build::{
+    auto_build_native, browser_target, host_native_lib, native_target_root, platform_lib_name,
+    resolve_native_lib, set_browser_target,
+};
+use crate::native_build::{build_deps_hint, native_crate_newer_than};
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
 use std::collections::HashMap;
@@ -19,57 +34,6 @@ use std::collections::HashMap;
 // noise in the one gate whose whole job is to be read.
 #[cfg(feature = "native-extensions")]
 use std::sync::Mutex;
-
-/// Wrapper for `*const ()` that is Send — function pointers from cdylibs are
-/// valid for the process lifetime (the Library handle is leaked).
-#[cfg(feature = "native-extensions")]
-#[derive(Clone, Copy)]
-struct FnPtr(*const ());
-#[cfg(feature = "native-extensions")]
-unsafe impl Send for FnPtr {}
-
-/// Global registry of native function pointers loaded from cdylibs.
-#[cfg(feature = "native-extensions")]
-static NATIVE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex::new(None);
-
-/// Plan-74: registry of generated marshal bridges (`loft_ffi::LoftBridgeFn`),
-/// keyed by loft symbol.  Populated from a cdylib's `loft_register_bridges_v1`.
-/// Every native call dispatches through its bridge (`dispatch_via_bridge`); a
-/// symbol absent here is an un-migrated cdylib (a pre-bridge library version)
-/// and panics at call time — the legacy raw-ptr marshaller it used to fall back
-/// to has been removed now that every native library ships bridges.
-#[cfg(feature = "native-extensions")]
-static BRIDGE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex::new(None);
-
-/// Look up a generated bridge for `sym`, if the owning cdylib registered one.
-#[cfg(feature = "native-extensions")]
-fn get_bridge(sym: &str) -> Option<*const ()> {
-    BRIDGE_REGISTRY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .and_then(|m| m.get(sym))
-        .map(|p| p.0)
-}
-
-/// The C-ABI registration callback type.
-#[cfg(feature = "native-extensions")]
-type RegisterFn =
-    unsafe extern "C" fn(unsafe extern "C" fn(*const u8, usize, *const (), *mut ()), *mut ());
-
-/// The registration callback: called once per symbol by the cdylib.
-#[cfg(feature = "native-extensions")]
-unsafe extern "C" fn collect(
-    name_ptr: *const u8,
-    name_len: usize,
-    fn_ptr: *const (),
-    ctx: *mut (),
-) {
-    let collected = unsafe { &mut *ctx.cast::<Vec<(String, *const ())>>() };
-    let name = std::str::from_utf8(unsafe { std::slice::from_raw_parts(name_ptr, name_len) })
-        .unwrap_or("<invalid>");
-    collected.push((name.to_string(), fn_ptr));
-}
 
 #[cfg(feature = "native-extensions")]
 pub fn load_all(_state: &mut crate::state::State, paths: Vec<String>) {
@@ -80,284 +44,6 @@ pub fn load_all(_state: &mut crate::state::State, paths: Vec<String>) {
 
 #[cfg(not(feature = "native-extensions"))]
 pub fn load_all(_state: &mut crate::state::State, _paths: Vec<String>) {}
-
-/// Load ONE cdylib, ahead of the rest, and report whether it is loaded.
-///
-/// Same call `load_all` makes, exposed so a caller can prove an artifact before
-/// committing to dispatch through it (loft#831): the artifact existing, being
-/// fresh and declaring the right layout are all proxies, and each of them can be
-/// true of a library this process cannot `dlopen` — built against a different
-/// `libloft.rlib`, or replaced by a concurrent build between the check and the
-/// load.  Loading is the only question whose answer is the one that matters.
-///
-/// It is also what makes the answer STAY true: the handle is kept for the
-/// process, so an artifact another process prunes or rebuilds afterwards cannot
-/// change what this one dispatches to.  Idempotent — `load_all` calling it again
-/// for the same path is a no-op.
-#[cfg(feature = "native-extensions")]
-pub fn load_cdylib(path: &str) -> bool {
-    load_one(path)
-}
-
-#[cfg(not(feature = "native-extensions"))]
-pub fn load_cdylib(_path: &str) -> bool {
-    false
-}
-
-/// Whether `sym` resolves in a cdylib this process has loaded — the exact
-/// question `wire_shared_native_fns` asks later, asked early enough to still
-/// have a choice (loft#831).
-#[cfg(feature = "native-extensions")]
-#[must_use]
-pub fn bridge_symbol_resolves(sym: &str) -> bool {
-    try_dlsym(sym).is_some()
-}
-
-#[cfg(not(feature = "native-extensions"))]
-#[must_use]
-pub fn bridge_symbol_resolves(_sym: &str) -> bool {
-    false
-}
-
-/// Loaded libraries kept alive for the process lifetime, each paired with
-/// whether it exported `loft_register_v1` (the registration protocol).  Used by
-/// `try_dlsym` to look up symbols from previously loaded cdylibs *and* report
-/// whether the resolving library opted into registration — so the "unregistered
-/// symbol" guard fires only for a library that chose the protocol, not for a
-/// (legitimately) zero-registration cdylib loaded after one that did.
-#[cfg(feature = "native-extensions")]
-static LOADED_LIBS: Mutex<Vec<(libloading::Library, bool)>> = Mutex::new(Vec::new());
-
-/// @PLN21 Phase 3 — turn a raw `dlopen`/`LoadLibrary` failure into an
-/// actionable message.  The dynamic linker IS the authoritative validator — its
-/// error text names exactly what is wrong — so we classify it rather than guess.
-/// A missing RUNTIME system lib is terminal: building from source links the same
-/// lib and fails identically (decision C3), so the user must install it, not
-/// rebuild.
-#[cfg(feature = "native-extensions")]
-fn dlopen_diagnostic(path: &str, err: &str) -> String {
-    let lower = err.to_ascii_lowercase();
-    // Missing shared-object dependency: linux "cannot open shared object file";
-    // macOS "image not found"; windows "specified module could not be found".
-    if lower.contains("cannot open shared object file")
-        || lower.contains("image not found")
-        || lower.contains("specified module could not be found")
-    {
-        // linux names the missing lib before the first ':'
-        // ("libasound.so.2: cannot open shared object file …").
-        let named = err.split(':').next().unwrap_or("").trim();
-        let lib = if named.is_empty() || named == path {
-            "a system library"
-        } else {
-            named
-        };
-        return format!(
-            "loft: native library '{path}' needs {lib} at runtime, but it is not installed — \
-             this is a SYSTEM library; install it with your OS package manager (building from \
-             source would link the same library and fail identically)."
-        );
-    }
-    if lower.contains("glibc_") && lower.contains("not found") {
-        return format!(
-            "loft: native library '{path}' was built against a newer glibc than this system \
-             provides ({err}) — update the system, or build the library from source for this host."
-        );
-    }
-    if lower.contains("undefined symbol") {
-        return format!(
-            "loft: native library '{path}' has an ABI mismatch ({err}) — built against a \
-             different loft-ffi; it will be rebuilt from source."
-        );
-    }
-    format!("loft: cannot load native extension '{path}': {err}")
-}
-
-/// Open the library `name` names, with the loader's own error text.
-///
-/// `file_access::load_library`: a name with a separator is a file, a bare name asks the
-/// dynamic linker's search path, and the error is the loader's own text (which
-/// `dlopen_diagnostic` reads from its start).
-#[cfg(feature = "native-extensions")]
-unsafe fn open_library(name: &str) -> Result<libloading::Library, String> {
-    // SAFETY: the caller's contract — loading runs the library's initialisers.
-    unsafe { crate::file_access::load_library(name) }
-}
-
-/// Load a single native extension shared library.
-///
-/// If the library exports `loft_register_v1`, calls it to collect all symbols.
-/// Otherwise, the library is kept loaded and individual symbols will be
-/// resolved on demand via `try_dlsym` during `wire_native_fns`.
-#[cfg(feature = "native-extensions")]
-/// Returns whether the library is loaded when this returns — false only when
-/// `dlopen` itself refused it.
-///
-/// Existing on disk is not the same fact as loading: an ELF `.so` left in a
-/// tree by a Linux build is a file macOS cannot map, and a caller that reads
-/// "the path is there" as "the symbols are there" reports success and then
-/// fails at the first `#c` call, naming the symbol rather than the library
-/// (loft#739's neighbour — see `load_c_library`, which used to do exactly this).
-fn load_one(path: &str) -> bool {
-    use std::collections::HashSet;
-
-    static LOAD_LOCK: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-
-    let canonical = crate::file_access::plain_canonical_str(path);
-
-    let mut guard = LOAD_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let loaded = guard.get_or_insert_with(HashSet::new);
-    if loaded.contains(&canonical) {
-        return true;
-    }
-
-    let lib = match unsafe { open_library(path) } {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("{}", dlopen_diagnostic(path, &e));
-            return false;
-        }
-    };
-
-    // Try the registration protocol first.  Records whether this library opted
-    // into it — `try_dlsym` reports the flag so the unregistered-symbol guard
-    // only fires for a library that chose the protocol (issue #119), not for a
-    // zero-registration cdylib that legitimately relies on dlsym.
-    let mut uses_v1 = false;
-    if let Ok(register_sym) = unsafe { lib.get::<RegisterFn>(b"loft_register_v1\0") } {
-        uses_v1 = true;
-        let register_sym = *register_sym;
-        let mut collected: Vec<(String, *const ())> = Vec::new();
-        unsafe {
-            register_sym(collect, std::ptr::addr_of_mut!(collected).cast::<()>());
-        }
-        let mut reg_guard = NATIVE_REGISTRY
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let registry = reg_guard.get_or_insert_with(HashMap::new);
-        for (name, ptr) in collected {
-            registry.insert(name, FnPtr(ptr));
-        }
-    }
-    // Plan-25: collect generated marshal bridges, if the cdylib exports them.
-    // Symbols with a bridge dispatch through `dispatch_via_bridge`; the rest
-    // keep using the legacy raw-ptr arms (a library may export both during the
-    // transition, or only `loft_register_v1`).
-    if let Ok(reg_sym) = unsafe { lib.get::<RegisterFn>(b"loft_register_bridges_v1\0") } {
-        let reg_sym = *reg_sym;
-        let mut collected: Vec<(String, *const ())> = Vec::new();
-        unsafe {
-            reg_sym(collect, std::ptr::addr_of_mut!(collected).cast::<()>());
-        }
-        let mut bridge_guard = BRIDGE_REGISTRY
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let registry = bridge_guard.get_or_insert_with(HashMap::new);
-        for (name, ptr) in collected {
-            registry.insert(name, FnPtr(ptr));
-        }
-    }
-    // Either way, keep the library loaded for potential dlsym lookups.
-    loaded.insert(canonical);
-    LOADED_LIBS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push((lib, uses_v1));
-    true
-}
-
-/// Try to resolve a symbol by name from any loaded cdylib.  Returns the symbol
-/// pointer paired with whether the resolving library opted into
-/// `loft_register_v1`.  Called by `wire_native_fns` as a fallback when the symbol
-/// wasn't provided via the registry. This enables zero-registration cdylibs:
-/// just export `#[unsafe(no_mangle)] pub extern "C" fn n_my_func(...)`.
-#[cfg(feature = "native-extensions")]
-fn try_dlsym(name: &str) -> Option<(*const (), bool)> {
-    let libs = LOADED_LIBS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut sym_name = name.to_string();
-    sym_name.push('\0');
-    for (lib, uses_v1) in libs.iter() {
-        if let Ok(sym) = unsafe { lib.get::<*const ()>(sym_name.as_bytes()) } {
-            return Some((*sym, *uses_v1));
-        }
-    }
-    None
-}
-
-/// @PLN24 arc D — `dlopen` a C library a package declared with `[c] libs`, and
-/// KEEP it loaded so its symbols resolve.
-///
-/// Distinct from the `[native] runtime-libs` probe, which opens a library only
-/// to ask whether it exists and drops the handle. Here the handle is the point:
-/// a `#c` symbol is looked up through it. Loading is idempotent (`load_one`
-/// keys on the canonical path), so a library named by several packages opens
-/// once.
-///
-/// A relative name resolves against the declaring package's directory first, so
-/// a library can ship its own `.so`; otherwise it goes to the dynamic linker by
-/// soname, exactly as `runtime-libs` does. Returns whether it loaded — a
-/// missing library is the caller's to report, with the binding that needed it.
-///
-/// The declared spelling is tried first and unchanged, then the same library
-/// under the HOST's naming ([`host_lib_variants`]). A manifest carries one
-/// string, and every `[c] libs` in this repo and the registry spells it the
-/// Linux way (`libmariadb.so.3`), so without the fallback the whole of @PLN24 is
-/// Linux-only: the fixture's `../../liblc_types.so` is built as
-/// `liblc_types.dylib` by its own Makefile on macOS, so the declaration pointed
-/// at a file that could not exist and every `#c` symbol in it went unresolved.
-#[cfg(feature = "native-extensions")]
-pub fn load_c_library(name: &str, pkg_dir: &str) -> bool {
-    let mut last_err = None;
-    for cand in host_lib_variants(name) {
-        let beside = std::path::Path::new(pkg_dir).join(&cand);
-        // `load_one`, not `exists()`: a file that will not `dlopen` (a Linux
-        // `.so` sitting in the tree on macOS) must fall through to the next
-        // candidate rather than be reported as loaded.
-        if crate::file_access::exists(&beside) && load_one(&beside.to_string_lossy()) {
-            return true;
-        }
-        // Not a path we can see: hand the soname to the dynamic linker, which
-        // knows the search path we do not.
-        match unsafe { open_library(&cand) } {
-            Ok(_) => {
-                load_one(&cand);
-                return true;
-            }
-            Err(e) => last_err = Some((cand, e)),
-        }
-    }
-    // @PLN24 arc G — an OPTIONAL library that does not open is an ordinary
-    // answer (`c_library_available` says false and the program takes its
-    // fallback), so this must not print by default. But "not installed" and
-    // "installed and unloadable" are very different problems with the same
-    // symptom, and only the linker's own text tells them apart.
-    if std::env::var_os("LOFT_C_DEBUG").is_some()
-        && let Some((cand, e)) = last_err
-    {
-        eprintln!("loft: `[c]` library '{name}' did not open (last tried '{cand}'): {e}");
-    }
-    false
-}
-
-/// The declared library name, then the same library spelled for THIS host.
-///
-/// A `[c] libs` entry is one string in a manifest, so it cannot say `.so` on
-/// Linux and `.dylib` on macOS. Rather than invent a per-platform manifest key,
-/// translate at load time: the declared spelling is authoritative and always
-/// tried first, and these are what to try when the host does not use it.
-///
-/// The versioned forms matter as much as the bare one — a real declaration is
-/// `libmariadb.so.3`, whose macOS twin is `libmariadb.3.dylib` (the soversion
-/// moves BEFORE the extension) and whose Windows twin drops both the `lib`
-/// prefix and the version. Returns just the declared name on Linux, where the
-/// spelling already is the host's.
-#[cfg(feature = "native-extensions")]
-fn host_lib_variants(name: &str) -> Vec<String> {
-    crate::platform::host_lib_variants(name)
-}
 
 #[cfg(all(test, feature = "native-extensions"))]
 mod c_lib_naming_tests {
@@ -449,16 +135,6 @@ mod c_lib_naming_tests {
     }
 }
 
-/// @PLN24 arc B — the same lookup, for the `#c` caller: a C binding resolves
-/// against the cdylibs loft has already loaded before it falls back to the
-/// process. One resolver, so a symbol cannot mean two different things
-/// depending on which caller asked for it.
-#[cfg(feature = "native-extensions")]
-#[must_use]
-pub fn try_dlsym_pub(name: &str) -> Option<(*const (), bool)> {
-    try_dlsym(name)
-}
-
 // ── Auto-marshal: wire cdylib functions via type-driven dispatch ────────
 
 /// Argument type tag for auto-marshalling.
@@ -506,58 +182,6 @@ struct LoftStore {
     >,
 }
 
-/// @PLN174 F5 — set in a `LoftStoreCtx` word above the store number when the store was
-/// MINTED for the bridge's vector return and holds nothing yet: the foreign callback
-/// then adopts the bytes into that store instead of minting another (which would leave
-/// the minted one orphaned).  The cdylib reads only the low 16 bits (`LoftStore::store_nr`)
-/// and passes the word back untouched, so the bit is the host's to use.
-pub const CTX_RETURN_STORE: usize = 1 << 16;
-
-/// The foreign-vector callback's body, shared by the interpreter's dispatcher
-/// (`CURRENT_STORES`) and the generated `--native` call (`native_call`, the same cell):
-/// adopt `len` bytes at `ptr` — `(ptr, len, cap, release)` a cdylib's `Vec<u8>` — as a
-/// read-only `vector<u8>`, into the return store when `ctx` says it was minted for this
-/// answer, into a fresh store otherwise.  Answers the bare `FOREIGN_REC` for the
-/// consumer to turn into the store's handle (`bridge_push_ref`), or the null ref when the
-/// block is declined (a length past `u32`), which leaves it the cdylib's to free.
-pub(crate) fn adopt_foreign_block(
-    stores: &mut crate::database::Stores,
-    ctx: usize,
-    ptr: *mut u8,
-    len: usize,
-    cap: usize,
-    elem_size: u32,
-    release: unsafe extern "C" fn(*mut u8, usize, usize),
-) -> loft_ffi::LoftRef {
-    let null = loft_ffi::LoftRef {
-        store_nr: 0,
-        rec: 0,
-        pos: 0,
-    };
-    let Ok(count) = u32::try_from(len / elem_size.max(1) as usize) else {
-        return null;
-    };
-    if elem_size > 1 && !(ptr as usize).is_multiple_of(elem_size as usize) {
-        return null;
-    }
-    let owner = crate::store::ForeignOwner::Extern {
-        ptr,
-        len,
-        cap,
-        release,
-    };
-    let db = if ctx & CTX_RETURN_STORE != 0 {
-        stores.foreign_vector_in(ctx as u16, ptr, count, elem_size, owner)
-    } else {
-        stores.foreign_vector(ptr, count, elem_size, owner)
-    };
-    loft_ffi::LoftRef {
-        store_nr: db.store_nr,
-        rec: crate::store::FOREIGN_REC,
-        pos: 8,
-    }
-}
-
 /// Compact native signature: parameter types + return type.
 #[cfg(feature = "native-extensions")]
 #[derive(Clone, Debug)]
@@ -601,12 +225,6 @@ struct SharedSig {
 #[cfg(feature = "native-extensions")]
 static SHARED_SIGS: Mutex<Option<HashMap<u16, (FnPtr, std::sync::Arc<SharedSig>)>>> =
     Mutex::new(None);
-
-/// loft#715 — library slot → the bridge symbol it dispatches to.  Populated once
-/// at wiring; read only when a fault is raised while a bridge call is on the
-/// stack, so a bridge fault stops reading like a program fault.
-#[cfg(feature = "native-extensions")]
-static SHARED_LABELS: Mutex<Option<HashMap<u16, String>>> = Mutex::new(None);
 
 /// Compute the argument type list and return type from a definition's signature.
 /// Returns `None` if the signature contains types that can't be auto-marshalled
@@ -1346,15 +964,11 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
     // loft#715 — remember which symbol each slot dispatches to, so a fault raised
     // while the bridge is on the stack can NAME it.  Written once at wiring, read
     // only on the panic path.
-    {
-        let mut guard = SHARED_LABELS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let table = guard.get_or_insert_with(HashMap::new);
-        for (sym, lib_idx, ..) in &wired {
-            table.insert(*lib_idx, sym.clone());
-        }
-    }
+    crate::call_frames::label_shared_bridges(
+        wired
+            .iter()
+            .map(|(sym, lib_idx, ..)| (*lib_idx, sym.clone())),
+    );
     for (sym, ..) in &wired {
         state.replace_static_fn(sym, shared_store_dispatch);
     }
@@ -1377,13 +991,13 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     use crate::native_lib::LibArg;
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let lib_idx = CURRENT_LIB_IDX.with(std::cell::Cell::get);
+    let lib_idx = crate::call_frames::current_lib_idx();
     // loft#715 — mark that a bridge call is on the stack.  A fault raised from
     // here is a BRIDGE fault, and it used to read exactly like a program fault:
     // `Cannot add to none-structure '<type>'` names a type, never the library
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
-    IN_SHARED_BRIDGE.with(|c| c.set(lib_idx.wrapping_add(1)));
+    crate::call_frames::enter_shared_bridge(lib_idx);
     let (bridge_ptr, sig) = {
         let guard = SHARED_SIGS
             .lock()
@@ -1556,7 +1170,7 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
             }
         }
     }
-    IN_SHARED_BRIDGE.with(|c| c.set(0));
+    crate::call_frames::leave_shared_bridge();
 }
 
 /// Generic auto-marshal dispatcher. Called via `OpStaticCall` for all
@@ -1570,48 +1184,10 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
 /// the Call function. We need a different mechanism.
 ///
 /// Solution: use a thread-local that `static_call` sets before invoking.
-/// The `--remap-path-prefix` flags for the machine doing the building.
-///
-/// Mirrors `scripts/repro-flags.sh`, which does the same for the release build.
-/// Both exist so a compiled artifact records `/cargo` and `/rustc` instead of
-/// whoever's home directory produced it — the difference between a release
-/// anyone can rebuild and one that only matches on the maintainer's laptop.
-// Not gated on `native-extensions`: its only caller, `auto_build_native`, is
-// not either, so gating it broke `--no-default-features` (E0425). Nothing in
-// the body needs the feature — it reads `rustc --print sysroot` and two env
-// vars.
-fn local_remap_flags() -> String {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    // The toolchain sysroot first: it lives inside the rustup home and carries
-    // the toolchain's own directory NAME, so a build on `stable` and one pinned
-    // to an exact version would otherwise still differ.
-    if let Ok(o) = Spawn::new(Program::os(
-        std::env::var("RUSTC").as_deref().unwrap_or("rustc"),
-    ))
-    .arg("--print")
-    .arg("sysroot")
-    .run(b"")
-        && o.status.success()
-    {
-        let root = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        if !root.is_empty() {
-            let _ = write!(out, "--remap-path-prefix={root}=/rustc ");
-        }
-    }
-    let cargo_home = std::env::var("CARGO_HOME")
-        .ok()
-        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.cargo")));
-    if let Some(c) = cargo_home {
-        let _ = write!(out, "--remap-path-prefix={c}=/cargo");
-    }
-    out
-}
-
 #[cfg(feature = "native-extensions")]
 fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
     // Read the current library index from the thread-local.
-    let lib_idx = CURRENT_LIB_IDX.with(std::cell::Cell::get);
+    let lib_idx = crate::call_frames::current_lib_idx();
 
     // P245: clone the (sym, sig) entry out of NATIVE_SIGS and DROP the
     // mutex guard before invoking the native function.  The native fn
@@ -1864,15 +1440,6 @@ fn bridge_push_ref(
     stores.put(stack, dbref);
 }
 
-// Thread-local: current library index being dispatched.
-// Set by `State::static_call()` before invoking the Call function.
-std::thread_local! {
-    static CURRENT_LIB_IDX: std::cell::Cell<u16> = const { std::cell::Cell::new(0) };
-    /// loft#715 — `lib_idx + 1` while a shared-bridge call is on this thread's
-    /// stack, 0 otherwise.  Read by [`current_shared_bridge`] on the fault path.
-    static IN_SHARED_BRIDGE: std::cell::Cell<u16> = const { std::cell::Cell::new(0) };
-}
-
 // ── Store callback infrastructure for FFI allocation ─────────────────────
 
 // Thread-local raw pointer to the interpreter's Stores during a native call.
@@ -1935,49 +1502,9 @@ unsafe extern "C" fn ffi_reload(ctx: LoftStoreCtx, out_ptr: *mut *mut u8, out_si
     }));
 }
 
-/// Set the current library index for auto-dispatch. Called from `State::static_call()`.
-/// The library index of the static call in flight — the only way a
-/// `Call = fn(&mut Stores, &mut DbRef)` handler learns WHICH binding it is
-/// serving. Read by the `#c` dispatcher (@PLN24 arc B) for the same reason the
-/// native auto-dispatcher reads it.
-#[must_use]
-pub fn current_lib_idx() -> u16 {
-    CURRENT_LIB_IDX.with(std::cell::Cell::get)
-}
+pub use crate::call_frames::{current_lib_idx, set_current_lib_idx};
 
-pub fn set_current_lib_idx(idx: u16) {
-    CURRENT_LIB_IDX.with(|c| c.set(idx));
-}
-
-/// loft#715 — the bridge symbol currently being dispatched on this thread, if any.
-///
-/// A fault raised while a shared-library bridge is on the stack is a BRIDGE
-/// fault, but it surfaced with the same words as a program fault: `Cannot add to
-/// none-structure '<type>'` names the type the index resolved to and nothing
-/// about who supplied the index — and because it is a non-unwinding panic the
-/// process aborts, so the surrounding harness reports only that the program
-/// never started.  Appending this turns "a type is wrong somewhere" into "this
-/// library's bridge passed something this loft cannot use".
-#[must_use]
-pub fn current_shared_bridge() -> Option<String> {
-    #[cfg(feature = "native-extensions")]
-    {
-        let marked = IN_SHARED_BRIDGE.with(std::cell::Cell::get);
-        if marked == 0 {
-            return None;
-        }
-        let lib_idx = marked - 1;
-        let guard = SHARED_LABELS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Some(guard.as_ref().and_then(|t| t.get(&lib_idx)).map_or_else(
-            || format!("shared-library bridge (slot {lib_idx})"),
-            |sym| format!("shared-library bridge `{sym}`"),
-        ))
-    }
-    #[cfg(not(feature = "native-extensions"))]
-    None
-}
+pub use crate::call_frames::current_shared_bridge;
 
 /// C-ABI callback: adopt a cdylib's byte block as a read-only `vector<u8>` (@PLN174 F5,
 /// [`adopt_foreign_block`]).  The null ref if the adoption panics: the block stays the
@@ -2038,221 +1565,6 @@ fn make_loft_store(stores: &crate::database::Stores, store_nr: u16, minted: bool
 }
 
 // ── Auto-build ──────────────────────────────────────────────────────────
-
-/// Auto-build a package's native crate if the shared library OR
-/// rlib is missing.
-///
-/// Both artifacts are produced by the same `cargo build` invocation
-/// (every `lib/*/native/Cargo.toml` declares
-/// `crate-type = ["cdylib", "rlib"]`).  The cdylib is loaded by the
-/// runtime extension loader; the rlib is consumed by `--native`
-/// codegen via `--extern <crate>=<path>` (see
-/// `src/main.rs::add_native_extern_flags`).
-///
-/// Pre-2026-05-12 this function checked ONLY the cdylib before
-/// returning early, which let a parallel test see "cdylib exists"
-/// → skip the build → then fail later when `add_native_extern_flags`
-/// looked for the rlib that hadn't been written yet.  On Windows
-/// (where file-system flush ordering between cdylib and rlib differs
-/// from ext4/APFS, and file-locks held by another concurrent cargo
-/// invocation block reads even when the file is on disk) this race
-/// surfaced as `error[E0463]: can't find crate for <name>` in
-/// `tests/codegen_emitter.rs::p244_text_native_wrapper_compiles_under_native`
-/// and any other test that ran in parallel with a fresh build.
-///
-/// Fix: also require the rlib to exist before returning early.  If
-/// either artifact is missing, run cargo (which is itself
-/// fcntl-locked per target dir, so concurrent invocations serialize
-/// and only one actually rebuilds).
-/// @PLAN12 Phase 6b — compute the target dir for a package's
-/// native cdylib/rlib build.
-///
-/// When `pkg_dir` is under `~/.loft/registry/` (i.e., a
-/// `loft install`-extracted chunk), returns the redirected
-/// `~/.loft/build-cache/<pkg>-<ver>/` path; otherwise returns
-/// `<pkg_dir>/native/target` (the in-tree default).
-///
-/// Used by [`auto_build_native`] (to set `CARGO_TARGET_DIR` and
-/// to read the freshly-built artifact) AND by
-/// `native_utils::add_native_extern_flags` (to find the rlib at
-/// link time).  Single source of truth so the cdylib/rlib are
-/// always at the same root.
-#[must_use]
-pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
-    // Without the registry feature there is no `~/.loft/registry/` to
-    // redirect away from — every install is in-tree, so the package
-    // dir's own `native/target/` is the target root.
-    #[cfg(not(feature = "registry"))]
-    {
-        pkg_dir.join("native").join("target")
-    }
-    #[cfg(feature = "registry")]
-    {
-        let registry_cache = crate::registry_index::cache_dir();
-        let registry_cache_canon = crate::file_access::try_plain_canonical(&registry_cache);
-        let pkg_canon = crate::file_access::try_plain_canonical(std::path::Path::new(pkg_dir));
-        let use_redirected = match (&registry_cache_canon, &pkg_canon) {
-            (Some(rc), Some(pc)) => pc.starts_with(rc),
-            _ => false,
-        };
-        if use_redirected {
-            let stem_dir =
-                crate::file_access::file_name(pkg_dir).unwrap_or_else(|| "native-pkg".to_string());
-            registry_cache
-                .parent()
-                .map_or_else(
-                    || std::path::PathBuf::from("."),
-                    std::path::Path::to_path_buf,
-                )
-                .join("build-cache")
-                .join(stem_dir)
-        } else {
-            pkg_dir.join("native").join("target")
-        }
-    }
-}
-
-/// Resolve a `[library] native = "<stem>"` registration to a loadable cdylib
-/// path: a pre-built `<pkg_dir>/native/<libname>` wins, else build (or reuse a
-/// fingerprint-fresh build of) the package's native crate via
-/// [`auto_build_native`].  The ONE home for this resolution — the parser's two
-/// manifest paths and the warm startup-cache load (#310) all derive from it,
-/// so a cached run re-checks cdylib freshness exactly like a cold parse.
-/// Set for a `loft --html` run: the program is built for the browser, which never loads a
-/// package's HOST native library — the page answers the package's imports itself.  So the
-/// parse registers no host cdylib and the driver builds no default-native one, where both
-/// used to run a full cargo build of code the build never links (`html_gl_imports` spent
-/// minutes of a 327 s run there on a cold runner).  The program cache keys on `--html`
-/// (`startup_cache::native_lib_context`), so a browser run's bundle is never warm-loaded by
-/// a run that needs those libraries.
-static BROWSER_TARGET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Mark this run as a browser build (`loft --html`), before anything resolves a package.
-pub fn set_browser_target() {
-    BROWSER_TARGET.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Is this run a browser build?  Then no host native library is built or registered.
-#[must_use]
-pub fn browser_target() -> bool {
-    BROWSER_TARGET.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The host native library a `use`d package registers — none for a browser build, which
-/// never loads one ([`browser_target`]); otherwise [`resolve_native_lib`].
-#[must_use]
-pub fn host_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
-    if browser_target() {
-        return None;
-    }
-    resolve_native_lib(pkg_dir, stem)
-}
-
-pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
-    // @PLN21 Phase 3 — a missing DECLARED runtime system lib is terminal:
-    // neither a prebuilt nor a source build can load it (both link the same lib,
-    // decision C3).  Check FIRST and emit an actionable hint, rather than loading
-    // a doomed prebuilt or spending ~90s on a build that cannot load.
-    if let Some(lib) = first_missing_runtime_lib(pkg_dir) {
-        eprintln!("{}", runtime_lib_missing_diagnostic(stem, &lib));
-        return None;
-    }
-    let filename = platform_lib_name(stem);
-    // @PLN21 Phase 1 — a precompiled cdylib shipped for THIS host triple wins
-    // over a source build (the "no rustc to use a library" path).  A cdylib
-    // links loft-ffi (the C-ABI), not libloft, so it is valid for any loft on
-    // the same loft-ffi version — gated on the `.loft-build-fp` sidecar matching
-    // `loft_ffi_fingerprint()`, so a binary built against a different loft-ffi
-    // is skipped (never mis-loaded), falling through to a source build.
-    let triple_dir = format!("{pkg_dir}/prebuilt/{}", crate::cache::host_triple());
-    let triple_lib = format!("{triple_dir}/{filename}");
-    if crate::file_access::exists(&triple_lib)
-        && crate::cache::native_artifact_fingerprint_matches(
-            std::path::Path::new(&triple_dir),
-            crate::cache::loft_ffi_fingerprint(),
-        )
-    {
-        crate::platform::timing_record("prebuilt", stem, true, None);
-        return Some(triple_lib);
-    }
-    // Legacy platform-agnostic prebuilt (existence-only; kept for back-compat).
-    let prebuilt = format!("{pkg_dir}/native/{filename}");
-    if crate::file_access::exists(&prebuilt) {
-        return Some(prebuilt);
-    }
-    auto_build_native(pkg_dir, stem)
-}
-
-/// The OS a library NAME targets, inferred from its soname/extension form, or
-/// `None` when it can't be told (extensionless / unrecognised).  Soname matching,
-/// not file-extension parsing: `.so` is matched as a substring because versioned
-/// sonames are `.so.N` (which `Path::extension` would read as "N"), and sonames
-/// are lowercase by platform convention — so case-sensitive substring checks are
-/// correct here.  The single source of truth for runtime-lib platform-scoping.
-#[cfg(feature = "native-extensions")]
-fn lib_name_target_os(lib: &str) -> Option<&'static str> {
-    #[allow(clippy::case_sensitive_file_extension_comparisons)]
-    if lib.contains(".so") {
-        Some("Linux")
-    } else if lib.ends_with(".dylib") {
-        Some("macOS")
-    } else if lib.ends_with(".dll") {
-        Some("Windows")
-    } else {
-        None
-    }
-}
-
-/// The host OS as a display name, for runtime-lib diagnostics + platform-scoping.
-/// Not feature-gated: `runtime_lib_missing_diagnostic` (and thus its call site in
-/// the unconditionally-compiled `resolve_native_lib`) needs it even when
-/// `native-extensions` is off (e.g. the WASM build).
-fn host_os_name() -> &'static str {
-    crate::platform::host_os_name()
-}
-
-/// @PLN21 Phase 3 — the first host-applicable `[native] runtime-libs` entry the
-/// dynamic linker can't find, if any.  `dlopen` IS the authoritative presence
-/// check: a declared lib that loads is present; one that fails is missing, so the
-/// package's cdylib (prebuilt OR freshly built) could not load.
-///
-/// A runtime-lib named for a DIFFERENT OS than the host (e.g. a Linux `libGL.so.1`
-/// declared by a library used on macOS) is **skipped, not probed**: it can never
-/// load here and is not a host requirement — the host build of the cdylib links
-/// its own platform libraries.  Probing it would wrongly hard-fail the whole
-/// library on every foreign platform.  Only host-applicable (or unclassifiable)
-/// names gate resolution.  Empty `runtime-libs` → no check, no cost.
-#[cfg(feature = "native-extensions")]
-fn first_missing_runtime_lib(pkg_dir: &str) -> Option<String> {
-    let host = host_os_name();
-    crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))?
-        .runtime_libs
-        .into_iter()
-        .filter(|lib| lib_name_target_os(lib).is_none_or(|os| os == host))
-        .find(|lib| unsafe { open_library(lib) }.is_err())
-}
-
-#[cfg(not(feature = "native-extensions"))]
-fn first_missing_runtime_lib(_pkg_dir: &str) -> Option<String> {
-    None
-}
-
-/// Diagnostic for a host-applicable `[native] runtime-libs` entry that could not
-/// be `dlopen`'d — the library is genuinely not installed.  Foreign-OS names are
-/// skipped before this point (see [`first_missing_runtime_lib`]), so they never
-/// reach here and never produce misleading "install it" advice.  Not
-/// feature-gated: its call site in `resolve_native_lib` compiles unconditionally
-/// (the `first_missing_runtime_lib` if-branch is dead but still type-checked when
-/// `native-extensions` is off), so the helper must exist in every build.
-fn runtime_lib_missing_diagnostic(stem: &str, lib: &str) -> String {
-    format!(
-        "loft: native library '{stem}' needs the system library '{lib}', which is not installed \
-         on {host} ({triple}) — install it with your OS package manager (building from source \
-         would link the same library and fail identically).",
-        host = host_os_name(),
-        triple = crate::cache::host_triple(),
-    )
-}
 
 /// Build the native cdylib of every INSTALLED registry package, one at a time.
 ///
@@ -2317,368 +1629,6 @@ pub fn prebuild_installed_natives() -> (usize, usize) {
         }
     }
     (attempted, built)
-}
-
-/// The link flags that make a built cdylib RELOCATABLE — empty on every platform but macOS
-/// (`platform::relocatable_dylib_flags`, which says why).
-fn relocatable_dylib_flags(lib_name: &str) -> String {
-    crate::platform::relocatable_dylib_flags(lib_name)
-}
-
-#[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
-    use std::path::PathBuf;
-    // P244-windows fix #2 (2026-05-12): use PathBuf::join, not
-    // `format!("{pkg_dir}/...")`.  When `pkg_dir` arrives as a
-    // canonicalized Windows extended-length path (e.g.
-    // `\\?\D:\a\loft\loft\lib\server`), concatenating with `/native/...`
-    // produces a malformed path: the `\\?\` verbatim prefix bypasses
-    // Rust's path normalization, so the mixed-separator suffix
-    // doesn't resolve and `Path::exists()` returns false even when
-    // the file is on disk.  PathBuf::join handles each component
-    // through proper Path semantics on every platform.
-    let pkg = PathBuf::from(pkg_dir);
-    let cargo_toml = pkg.join("native").join("Cargo.toml");
-    if !crate::file_access::exists(&cargo_toml) {
-        return None;
-    }
-    let lib_name = platform_lib_name(stem);
-    let rlib_name = format!("lib{stem}.rlib");
-
-    // @PLAN12 Phase 6b — target root via the shared helper (redirects
-    // chunk-resident installs to ~/.loft/build-cache/<pkg>-<ver>/;
-    // keeps in-tree target/ for the monorepo's lib/<pkg>/native/).
-    let target_root = native_target_root(&pkg);
-    let in_tree_target = pkg.join("native").join("target");
-    let use_redirected_target = target_root != in_tree_target;
-
-    // Existing-cache check: look in the redirected target first
-    // (where future builds land), then the legacy in-tree target/
-    // (so existing builds from older loft binaries are still
-    // reused).
-    let mut search_roots: Vec<PathBuf> = Vec::new();
-    search_roots.push(target_root.clone());
-    if use_redirected_target {
-        search_roots.push(in_tree_target.clone());
-    }
-    // Reuse a cached cdylib only when it was built against the same loft-ffi ABI, the
-    // same RUSTFLAGS and the same loft version.  This crate is HAND-WRITTEN: it LINKS
-    // loft-ffi (the C-ABI), never libloft.rlib (verified: zero loft undefined symbols),
-    // and depends on no loft codegen — so the loft build is deliberately NOT in the key
-    // (`native_artifact_cache_key`, @PLN159 phase C; the generated `loft_auto_*` cdylib
-    // is the one a codegen change reaches, and it carries the rlib hash in its name).
-    // Profile-independent, so debug/release/test in a job SHARE the cache; it flips on
-    // a real loft-ffi change, a flag change (#274 — `-g` ↔ not, the shared-dep SVH fix)
-    // or a version bump, and the crate's own sources are checked by mtime (loft#965).
-    let fp = crate::cache::native_artifact_cache_key();
-    let find_existing = || {
-        for root in &search_roots {
-            for profile in ["release", "debug"] {
-                let dir = root.join(profile);
-                let lib = dir.join(&lib_name);
-                let rlib = dir.join(&rlib_name);
-                if crate::file_access::exists(&lib)
-                    && crate::file_access::exists(&rlib)
-                    && crate::cache::native_artifact_fingerprint_matches(&dir, fp)
-                    // loft#965 — and the crate's OWN Rust sources are not newer.  The
-                    // fingerprint answers "same loft-ffi ABI, RUSTFLAGS and codegen
-                    // version", which are all questions about the environment; it says
-                    // nothing about the hand-written code being compiled.  So editing a
-                    // `#native` package's `native/src/lib.rs` and running `loft test`
-                    // loaded the PREVIOUS build and passed — a false GREEN, and one only
-                    // a local author sees, because a clean CI checkout has no artifact
-                    // to reuse.
-                    && !native_crate_newer_than(pkg_dir, &lib)
-                {
-                    return Some(lib.to_string_lossy().to_string());
-                }
-            }
-        }
-        None
-    };
-    if let Some(p) = find_existing() {
-        crate::platform::timing_record("cdylib", stem, true, None);
-        return Some(p);
-    }
-
-    // Visibility (building on loft2's loud-fallback commit): distinguish a COLD
-    // miss (nothing cached) from a STALE REJECTION — the cdylib + rlib EXIST but
-    // their stamped fingerprint != THIS build's fp, so they are rebuilt.  Across
-    // CI runs that is the dominant cost: every loft source commit flips
-    // `loft_build_fingerprint` (the libloft.rlib content hash), rejecting cdylibs
-    // that actually only depend on the stable published loft-ffi ABI.  Log the
-    // stamped-vs-current fp (so two runs reveal whether the rlib hash flipped on
-    // an IDENTICAL commit — a second, non-reproducible-build instability — or
-    // only across commits) and record a `cdylibstale` event the CI timing step
-    // sums into wasted-rebuild seconds.  Pure diagnostics — no gate change yet.
-    'scan: for root in &search_roots {
-        for profile in ["release", "debug"] {
-            let dir = root.join(profile);
-            if crate::file_access::exists(dir.join(&lib_name))
-                && crate::file_access::exists(dir.join(&rlib_name))
-            {
-                let stamped = crate::cache::native_artifact_stamped_fp(&dir)
-                    .map_or_else(|| "none".to_string(), |s| s.to_string());
-                eprintln!(
-                    "loft: note — cdylib {stem} rebuilt: cached artifact rejected \
-                     (stamped loft-ffi fp={stamped} != current fp={fp}) — loft-ffi's source \
-                     changed since it was built. (Keyed on loft-ffi, not libloft.rlib, so a \
-                     plain interpreter change no longer triggers this.)"
-                );
-                // Encode stamped|cur into the ledger name so the fp values
-                // survive on a PASSING run (nextest hides the eprintln above);
-                // the CI step strips the suffix for the per-package join.
-                let tagged = format!("{stem}|stamped={stamped}|cur={fp}");
-                crate::platform::timing_record("cdylibstale", &tagged, false, None);
-                break 'scan;
-            }
-        }
-    }
-
-    // @P388: serialise on-demand native builds ACROSS PROCESSES.  Parallel test
-    // binaries (nextest runs one process per test) and parallel end-user `loft`
-    // invocations otherwise each run an unlocked `cargo build` that re-resolves
-    // the dependency tree concurrently, racing cargo's shared registry index +
-    // package cache → transient "required to be available in rlib format" errors
-    // and non-deterministic version picks.  A single cross-process advisory file
-    // lock serialises the builds.  (The CI pre-build already serialises CI; this
-    // covers the latent end-user-parallelism half of @P388.)  The `--locked`
-    // route is unavailable: the repo deliberately gitignores every `Cargo.lock`,
-    // and these crates.io-sourced native deps would drift against the actively-
-    // versioned loft-ffi crates.  Best-effort: if the lock can't be opened/taken
-    // we proceed unserialised — no worse than before.  `File::lock` blocks until
-    // acquired and releases when `_build_lock` drops at function exit (so a crash
-    // mid-build can't strand the lock).
-    let _build_lock = crate::file_access::open_with(
-        std::env::temp_dir().join("loft-native-build.lock"),
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false),
-    )
-    .ok();
-    if let Some(f) = &_build_lock {
-        // Reveal cross-process contention on this ONE global lock (the prime
-        // suspect for the CI 600s multiplayer hang): record `lockwait` BEFORE
-        // blocking (so it lands in the ledger even if this process is killed
-        // while still waiting), then `lockheld` with the wait duration once
-        // acquired.  A `lockwait` with no matching `lockheld` for a package =
-        // a process stuck behind another's long cold build.
-        let lock_t = std::time::Instant::now();
-        crate::platform::timing_record("lockwait", stem, false, None);
-        // loft#1238 — and tell the TIMEOUT what we are waiting for.  The ledger already
-        // distinguished "still waiting" (a `lockwait` with no `lockheld`) from "waited and
-        // built", but only to a reader who has the ledger AND knows that convention; the kill
-        // message said `phase=parse`, which is true and useless.  Now the process that dies here
-        // says so in the line that reports its death.
-        let waiting = format!("the global native-build lock (for {stem})");
-        // loft#1238 — bounded by the run's remaining budget.  Waiting past the deadline cannot
-        // succeed: the process is killed mid-queue, builds nothing, stamps nothing, and the next
-        // attempt repeats it.  Failing here instead is the same outcome said out loud.
-        if let Err(waited) = crate::timeout::lock_within_budget(f, &waiting) {
-            crate::platform::timing_record("lockgaveup", stem, false, Some(waited.as_secs_f64()));
-            if crate::timeout::first_giveup_report(stem) {
-                eprintln!(
-                    "loft: TRANSIENT — gave up waiting for {waiting} after {:.1}s.\n  \
-                     Another process is building a native library and this run's timeout \
-                     would expire before the queue cleared, so it stopped rather than be \
-                     killed mid-wait.\n  Nothing here is broken or stale in the way the \
-                     next message will suggest: `{stem}`'s cdylib simply had not been \
-                     rebuilt yet. Build it once up front (`loft cache warm`), raise the \
-                     timeout, or re-run once the other build has finished.",
-                    waited.as_secs_f64()
-                );
-            }
-            return None;
-        }
-        crate::platform::timing_record(
-            "lockheld",
-            stem,
-            false,
-            Some(lock_t.elapsed().as_secs_f64()),
-        );
-    }
-    // Re-check under the lock: a process we waited on may have just produced the
-    // artifact, in which case we must NOT rebuild.
-    if let Some(p) = find_existing() {
-        return Some(p);
-    }
-
-    // NO rustc-version guard here, deliberately: a package's native crate
-    // depends on loft-ffi (the C-ABI contract) — never the SVH-locked loft
-    // rlib — so ANY rustc builds it correctly (cargo itself rebuilds when
-    // the resolved toolchain flips between invocation cwds).  The guard
-    // belongs only to builds that link the rlib (`build_shared_cdylib`,
-    // the driver's program-native path).
-
-    // An artifact EXISTS here but its fingerprint names another loft build —
-    // cargo cannot be trusted to rebuild it, and the post-build stamp would
-    // launder it as fresh (see `cache::clear_stale_native_target`).  Only
-    // the REDIRECTED root (`~/.loft/build-cache/…`) is cleared: it is
-    // private to this resolution path (every consumer arrives through the
-    // build lock above), whereas an in-tree `native/target` is shared with
-    // direct-path consumers — the tests/lib fixture loaders read the `.so`
-    // path without the lock, so a wipe there races them (suite-caught) —
-    // and in-tree crates remain the documented dev workflow
-    // (`make rebuild-native-cdylibs` / the stub-panic rebuild hint).
-    if use_redirected_target {
-        crate::cache::clear_stale_native_target(&target_root, &lib_name, &rlib_name, fp);
-    }
-
-    // Build.  When redirecting, pass `CARGO_TARGET_DIR` so cargo writes outside
-    // the install dir.  Factored into a closure so a `--locked` failure can
-    // retry without it (below) — the two invocations differ only in that flag.
-    let make_cmd = |locked: bool| {
-        let mut cmd = Spawn::new(Program::search("cargo"))
-            .args(["build", "--release", "--manifest-path"])
-            .arg(&cargo_toml)
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit());
-        if locked {
-            cmd = cmd.arg("--locked");
-        }
-        // #274 — build the package crate with the SAME RUSTFLAGS loft's own
-        // rlibs used (captured at loft build time), so a shared transitive dep
-        // like `libloading` gets a matching SVH.  Otherwise loft's `-g` copy and
-        // the package's plain copy share a `StableCrateId` but differ in SVH and
-        // rustc aborts at the generated program's link step.  Force it
-        // (overriding any ambient value) and clear `CARGO_ENCODED_RUSTFLAGS` so
-        // cargo doesn't see both forms at once.
-        // The baked flags carry no `--remap-path-prefix` (build.rs strips them:
-        // they name the RELEASE machine's paths).  Recompute them for THIS
-        // machine so loft's rlibs and the package crate agree on `/cargo` and
-        // `/rustc`, which is what #274's SVH match actually needs — and which
-        // also keeps the consumer's cdylib free of their own home directory.
-        let flags = format!(
-            "{} {} {}",
-            env!("LOFT_BUILD_RUSTFLAGS"),
-            local_remap_flags(),
-            relocatable_dylib_flags(&lib_name)
-        );
-        cmd = cmd
-            .env("RUSTFLAGS", flags.trim())
-            .env_remove("CARGO_ENCODED_RUSTFLAGS");
-        // No post-link `strip` on macOS — see `relocatable_dylib_flags`.
-        for (key, value) in crate::platform::cdylib_build_env() {
-            cmd = cmd.env(key, value);
-        }
-        if use_redirected_target {
-            if let Some(parent) = target_root.parent() {
-                let _ = crate::file_access::create_dir_all(parent);
-            }
-            cmd = cmd.env("CARGO_TARGET_DIR", &target_root);
-        }
-        cmd
-    };
-    let built_path = target_root.join("release").join(&lib_name);
-    let build_start = std::time::Instant::now();
-    // @PLN21 Phase 6 — prefer `--locked` when the package SHIPS a
-    // `native/Cargo.lock`: cargo then uses the pinned resolution (reproducible —
-    // two machines produce the same cdylib bytes).  But a shipped lock can be
-    // platform-INCOMPLETE: one generated on Linux lacks a crate's `cfg(windows)`
-    // deps (e.g. `windows-targets`), so `cargo build --locked` on Windows must
-    // update the lock and refuses ("cannot update the lock file … because
-    // --locked was passed").  A FALLBACK source build must never hard-fail on
-    // that (Goal F), so on a locked failure we retry WITHOUT --locked, warning
-    // it is non-reproducible — reproducibility is best-effort here; the
-    // submit-time gate is where a complete lock is enforced.
-    let has_lock = crate::file_access::exists(pkg.join("native").join("Cargo.lock"));
-    let mut status = make_cmd(has_lock).status();
-    if has_lock && matches!(&status, Ok(s) if !s.success()) {
-        eprintln!(
-            "loft: '--locked' build of '{stem}' failed — its Cargo.lock can't be \
-             satisfied as-is on this host (often a platform-specific dep missing \
-             from the shipped lock); retrying without --locked (non-reproducible)."
-        );
-        status = make_cmd(false).status();
-    }
-    crate::platform::timing_record(
-        "cdylib",
-        stem,
-        false,
-        Some(build_start.elapsed().as_secs_f64()),
-    );
-    match status {
-        Ok(s) if s.success() => {
-            // @PLN11 Arc N / N0 — stamp the build fingerprint on ANY successful
-            // cargo build: the rlib is produced even for rlib-only packages whose
-            // cdylib `built_path` is absent, so a later loft change still
-            // invalidates it (see `find_existing` / `add_native_extern_flags`).
-            crate::cache::write_native_artifact_fingerprint(&target_root.join("release"), fp);
-            crate::file_access::exists(&built_path)
-                .then(|| built_path.to_string_lossy().to_string())
-        }
-        // @PLN21 Phase 3 — the build RAN but failed (cargo's error is on the
-        // inherited stderr).  The usual cause is a missing build dependency, so
-        // name the package's declared `build-deps` rather than leaving the user
-        // to parse a raw rustc/linker/pkg-config error.
-        Ok(_) => {
-            eprintln!(
-                "loft: building native library '{stem}' from source failed (cargo error above).{}",
-                build_deps_hint(pkg_dir)
-            );
-            None
-        }
-        // cargo itself could not start — typically no Rust toolchain installed.
-        Err(e) => {
-            eprintln!(
-                "loft: cannot build native library '{stem}': {e} — building a library with no \
-                 prebuilt for this host needs a Rust toolchain (rustc + cargo)."
-            );
-            None
-        }
-    }
-}
-
-/// @PLN26 phase 3 — cross-build a `#native` package's crate to a wasm `target`
-/// (`wasm32-wasip2` for `--native-wasm`, `wasm32-unknown-unknown` for `--html`) so the
-/// wasm linker can consume its **rlib**, the way [`auto_build_native`] produces the host
-/// cdylib.  The rlib lands at the IN-TREE `<pkg>/native/target/<target>/release/lib<stem>.rlib`
-/// — exactly the path `native_utils::add_native_extern_flags` reads for a wasm target.
-///
-/// Returns whether that rlib is present afterwards: reused when it is already stamped with
-/// the current loft-ffi ABI key, else freshly cross-built.  Best-effort — a missing
-/// toolchain/target, or a crate that is not wasm-clean, returns `false` (the caller then
-/// emits the "no wasm build" notice rather than dying on a bare `E0463`).
-/// Whether anything in `<pkg_dir>/native/` is newer than `artifact` — the crate's own
-/// hand-written Rust, which no other freshness check looks at (loft#965).
-///
-/// The sibling walk for GENERATED code (`native_lib.rs::source_newer_than`) covers
-/// `*.loft` and `loft.toml` and explicitly SKIPS the `native` directory, and the artifact
-/// fingerprint answers a question about the environment (loft-ffi ABI, RUSTFLAGS, codegen
-/// version) rather than about the sources.  So between them a `#native` package's own
-/// `src/lib.rs` was the one input nothing watched.
-///
-/// `target/` is skipped: it is the build's own output, and it is always newer.
-/// Unreadable metadata answers "newer", so the failure mode is a rebuild, never a reuse
-/// of something stale.
-fn native_crate_newer_than(pkg_dir: &str, artifact: &std::path::Path) -> bool {
-    let Ok(art) = crate::file_access::metadata(artifact).and_then(|m| m.modified()) else {
-        return true;
-    };
-    let mut stack = vec![std::path::PathBuf::from(pkg_dir).join("native")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = crate::file_access::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries {
-            if e.file_name() == Some("target") {
-                continue;
-            }
-            // Not followed, as the directory entry answered it: a link is not walked.
-            let Ok(meta) = crate::file_access::symlink_metadata(&e) else {
-                continue;
-            };
-            if meta.file_type().is_dir() {
-                stack.push(e.os_spelling());
-                continue;
-            }
-            if meta.modified().is_ok_and(|mt| mt > art) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool {
@@ -2758,29 +1708,6 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
             false
         }
     }
-}
-
-/// @PLN21 Phase 3 — a trailing hint naming the package's declared `[native]
-/// build-deps` (the system dev packages its cdylib needs to compile), for a
-/// failed source build.  Empty when none are declared.
-fn build_deps_hint(pkg_dir: &str) -> String {
-    let deps = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .map(|m| m.build_deps)
-        .unwrap_or_default();
-    if deps.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " This package needs these dev packages to build: {}.",
-            deps.join(", ")
-        )
-    }
-}
-
-/// Resolve the platform-correct shared-library filename from a stem.
-#[must_use]
-pub fn platform_lib_name(stem: &str) -> String {
-    crate::platform::cdylib_file_name(stem)
 }
 
 /// Public API for generated native code that needs to call a cdylib
@@ -3021,10 +1948,9 @@ pub mod native_call {
 // actionable guidance.  Pure string-in/string-out, so unit-testable.
 #[cfg(all(test, feature = "native-extensions"))]
 mod dlopen_diag_tests {
-    use super::{
-        build_deps_hint, dlopen_diagnostic, first_missing_runtime_lib,
-        runtime_lib_missing_diagnostic,
-    };
+    use super::build_deps_hint;
+    use crate::c_libs::dlopen_diagnostic;
+    use crate::native_build::{first_missing_runtime_lib, runtime_lib_missing_diagnostic};
 
     fn temp_pkg(name: &str, toml: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("loft_p21_{name}_{}", std::process::id()));

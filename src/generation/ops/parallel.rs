@@ -35,6 +35,7 @@
 
 use super::{EmitCtx, OpEmitter};
 use crate::data::{Type, Value};
+use crate::type_schema::StoreTypeOf;
 use std::io;
 
 /// Closure shape for the worker — determines the conversion applied

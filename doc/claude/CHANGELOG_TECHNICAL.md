@@ -10,6 +10,419 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The three red shards of the joined branch (2026-10-15)
+
+Three classes of red on `tuxedo-pr1988-next`, each older than the corpus move and each from
+a joined sibling commit; the owner asked for them fixed.  (1) The browser bundle's source
+stamp had moved (`src/native.rs` and `src/wasm.rs` shrank by 1.5k lines under a sibling's
+refactor) and three `engine_host_connector` tests refuse to report on a bundle built from
+another tree: `derive.yml` rebuilt it on a runner (aee71d247).  (2) `tests/pure_reuse.rs`'s
+pin lost `n_spanned`: 523ae2572 (the second half of loft#2006) binds the call a record-field
+projection is rooted at to `_ret_root_N` first and wraps the tested copy in a `return_source`
+block, and `pure_reuse::natural_projection` read only the bare spelling — it now reads the
+bound one, the same projection through its local.  (3) `tests/value_record.rs`: the gate named six pins, the tables hold 26 rows that
+emit a `__retbuf` again (8 of the 15 nullable returns, 10 of the 19 joins): 932209dc4 (a store-identity test between a join's result and its arm
+is never a constant) declines every tail that joins a BUILD with a view, a parameter or
+`null`, the `?` default's exit release being guarded by such a test against the result.  That
+rule closed a double release, and the pins were not re-measured with it (green at their own
+commit cd77d264a, red at 523ae2572's parent).  Re-pinned as declined, each row and the three
+follow-on assertions naming loft#2014, which carries the way back: where both operands are value locals the guard is moot,
+to be proven on the drop gate.  Shipped speed is the owner's first priority, so the decline is
+recorded as a loss, never as the design.
+
+### `loft --tests` gates leaks under `LOFT_LEAK_CHECK=1` (@PLN193 P2, 2026-10-15)
+
+The language suite (loft-lang/loft-suite) runs every cell through `loft --tests`, the runner
+loft ships, instead of the in-crate corpus harness.  That harness (`tests/wrap.rs::run_test`)
+has failed a script that leaves a store at exit since @P317; `--tests` never asked, so the
+suite would have been weaker than the harness it replaces.  Now `LOFT_LEAK_CHECK=1` makes a
+function that returns NOTHING and returns cleanly but leaves a store behind FAIL, named by
+type; a value-returning function is not asked (its result is its caller's, and the runner is
+no caller — the corpus entry-point rule runs void functions only for the same reason), nor is
+one that faulted (the halt skips scope-exit cleanup — the exemption `src/main.rs` applies
+at a program's exit).  Under `--tests --native` the compiled program is asked through
+`LOFT_NATIVE_LEAK_CHECK` and its report line is the verdict, as `tests/native.rs` reads it.
+Armed, not default: every library testbed runs `loft test`, and a gate that turns a published
+library's CI red overnight is a breaking change.  Seed measurement: the 711 rule-linked corpus
+programs run through `loft --tests` on the interpreter pass 711/711 in 115 s wall (6 at a
+time, beside a release build); with `--deny-warnings` 141 of them fail on an unclaimed
+`never-read` / `dead-assignment` warning, so the suite keeps the harness's "an unclaimed
+warning is printed, not failed" and raises that bar chapter by chapter.
+LOFT_TEST.md § Flags.
+
+**The index and the coverage read the suite's checkout beside this one** (owner's ask,
+2026-10-15): `make index` enumerates `../loft-suite` (or `LOFT_SUITE_DIR`) through the new
+`git::tracked_files_in(dir)` and prefixes its rows with the directory, so `./scripts/idx
+tag:@FR-B-Copy` lists the rule's cells there beside the code sites here (55 of its 110 rows
+at the move); `tests/index_hygiene.rs` checks those rows against that repository's
+`git ls-files` and sets them aside where no checkout exists.  `scripts/rule_tags.py` reads the
+suite's `rules/` as a guard directory by default, so `coverage` keeps reporting the 412
+guarded rules once the programs leave this tree (335 come from the suite alone).
+
+**The suite is a repository and a CI job** (2026-10-15, later the same day): the GitHub
+repository `loft-lang/loft-suite` holds the seeded tree, and `tests/loft-suite.pin` here
+names the commit loft's CI checks out — pinned like a library, so a behaviour change is a
+loft PR plus a suite PR and the loft PR bumps the pin.  The `language-suite` job in `ci.yml`
+builds the release binary and runtime library from the test job's cache, runs
+`loft-suite check` and then every rule cell on both backends, and keeps the junit; it runs
+on every diff (a docs-only one pays the cached build) and on every push to main.  Its first
+run (dispatched on the branch) was green in 7 min: 3 min cached build, then 1422/1422 lanes
+in 215 s wall at 4 jobs, the native median 1.2 s a cell.  On that reading the owner made it a
+REQUIRED context of `main` the same day (`Language suite (ubuntu-latest)`, beside the three
+`Test` legs, `Clippy` and `Format`) — so the 711 cells can leave `tests/scripts` with no PR
+ever running without the corpus.  `make suite ARGS="@FR-B-Copy
+--mode both"` runs a selection by hand against the checkout beside this one.
+
+**The moved programs left `tests/scripts`** (owner's ask, the same evening): 1914 files
+(701 rule cells, 1213 attic programs), each byte-identical in the suite at the pinned commit
+before its removal here.  The partition was corrected on the way, both times by a reference
+census over the whole tree with whole-name matching — the seed's pinning had read only
+`tests/scripts/<name>` in Rust sources: 53 programs a Rust test names bare
+(`tests/windows_rules.rs`), through `wrap.rs`'s per-file rows or `leak.rs`'s parses, or
+that the Makefile's threading A/B runs, and 31 worked-example files whose `@AAA-###` tags
+the stdlib's `// Example:` lines and the feature catalogue resolve through
+`examples-index.tsv`, and 2 that open another corpus program by its `tests/scripts/` path,
+went back to loft and out of the suite.  The rule that decides is now
+written in TESTING.md: a program stays here when a white-box test, a script, a workflow or
+the documentation's example registry names it; everything else is a cell.  Live docs,
+Rust and loft sources that named a moved file by path now name its suite path
+(`loft-suite/rules/<chapter>/<rule>/<file>`, 343 mentions in 88 files); history docs, plan
+data and the census TSVs keep the old paths as written, except three markdown links the
+link gate flagged, now code spans.  `tests/falsified.baseline` shrank by 626 lines (the
+ratchet's own rule: a line goes when its file does), and the `@falsified-by` patches under
+`tests/falsified/` whose hunks touch a moved guard no longer apply here — 15 of 34,
+reported by `scripts/falsify-review.py`, never gated; they wait for the suite's own
+falsification path (P2b).  `tests/scripts` keeps 431 programs.
+
+**Every sweep that walked "every program" walks the suite's programs too** (owner's ask,
+the same evening: the procedures already in the list must still be tested, and a procedure
+that pointed at a moved guard points at its new home).  One list in three languages —
+`scripts/corpus_files.sh`, `scripts/corpus.py`, `tests/common/corpus.rs` — says what the
+corpus is: `tests/scripts`, `tests/docs`, the suite's `rules/*/*/` cells and its
+`attic/scripts/`, from `LOFT_SUITE_DIR` or `../loft-suite`; an absent checkout contributes
+nothing and SAYS so, so a sweep over 431 programs never reads as the sweep over 2300.  The
+readers: the IR codec round-trip (`tests/ir_schema_roundtrip.rs`, in the `test` pool), the
+ownership oracle's leak scan (`leak-scan`), the whole-corpus interpreter run
+(`wrap::loft_suite_whole_corpus`, nightly), the ASan leak gate, the valgrind sweep, the
+switch A/B, `make test-wasm` and `tests/wasm/suite.mjs`, `matrix_axes.py`,
+`licence_census.py`, `vacuity-sweep.py`, `diag_position_audit.py`, `introspect_diff.sh`,
+`null_census_sweep.sh`, the receipts census (`falsify-review.py`), and `rule_tags.py`'s
+guard-for-issue lookup.  The per-commit corpus RUNNERS (`wrap`'s and `native`'s chunks) do
+not: the suite's own runner and the required check carry those programs.  On a runner the
+suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-suite/`,
+`LOFT_SUITE_DIR` set at workflow level) in every job that walks it: `test`, `leak-scan`,
+`index-hygiene`, `language-suite`, the nightly `asan-leak-gate`, `valgrind` and
+`release-gate-sweeps`, and `switch-ab`.
+
+### A test that spawns a worker pool declares it to nextest (@PLN193 P0, 2026-10-15)
+
+- `tests/common/lanes.rs`: `lanes(cap)` is the pool a test may run — `UNDER_NEXTEST` (8)
+  when nextest runs other tests beside it (`NEXTEST=1`), the box's cores by hand.  The native
+  corpus runner, the drop gate, the poison census and the feature examples size their pools
+  with it; none reads `available_parallelism()` bare any more.
+- `.config/nextest.toml`: one `profile.default` override gives every pool-spawning test
+  `threads-required = 8`, so nextest counts the workers against the run's thread budget
+  (and the group's).  The 24-slot pool therefore holds at most three native chunks at once,
+  24 `rustc`, and never 6 × 24 beside 24 others — the 184 contending threads of 2026-10-15.
+- `native::pool_tests_declare_their_lanes_to_nextest` holds the constant, the override and
+  the list of pool-spawning tests to one another.
+
+### The browser client reports a server that is not there (loft#2003, 2026-10-13)
+
+- The rule that settled it: one client script, any kernel
+  (`plans/18-engine-host/07-browser-kernel.md`).  A native connect blocks and answers
+  false, `run_client` prints `engine_host: cannot connect to <host>:<port>` and returns —
+  no event, no tick — so the browser kernel does the same.
+- `engine_host::browser::n_kernel_client_pump`: a socket that closed without opening ends
+  the client and pushes that line to the program's output.  The text is the one
+  `run_client` prints in `lib/engine_host/src/engine_host.loft`; the gate below compares
+  both against one expectation.
+- `n_kernel_client_tick_due` (browser) answers false until the socket has opened.  The
+  first call was always due, so `on_tick` ran in the loop's first turn, ahead of the
+  kind-0 event.
+- Host bridge: `ws_closed(id)` in `doc/loft-rt.js`, `wasm::host_ws_closed`.  A host
+  without it answers false and a refused connect goes unnoticed, as before.
+- `doc/kernel-differential.html?refused` runs the same script against a port nothing
+  listens on; `a_refused_connect_reads_the_same_on_a_seat_and_in_a_page` is its gate, both
+  legs.  `doc/pkg` rebuilt.
+
+### The browser client reports a closed connection (loft#2000, 2026-10-13)
+
+- `engine_host::browser::n_kernel_client_pump` ends the client when its WebSocket was
+  open and is no longer ready: the frames already queued are delivered, a `kind: 2` event
+  follows them, and `alive` goes false, so `client_loop` returns after that turn — the
+  native connector's `FrameRead::Closed`.  A local kernel (`ws` is -1) is exempt.
+- A socket that never opens is loft#2003, the entry above.
+- `doc/pkg` is rebuilt (`make wasm`), `doc/pkg-src.stamp` with it.
+- `doc/kernel-differential.html` appends each frame's output.  `resume_frame` hands over
+  what was printed during that frame and clears it; the page kept the last frame's share.
+- `browser_kernel_one_script_differential` requires the page's `DIFFERENTIAL-OK` line.
+  It asserted only that the page reported no error within 9 s, and a page that never
+  finished reported none.  Its server now broadcasts only after it has greeted the client:
+  with a server that ticked from the start, two of nine runs printed `t:sync-ok` before
+  `t:event 7:hi`.
+
+### The browser harness: one load, a required verdict, an optional GPU (loft#1998, loft#1999, 2026-10-13)
+
+- `tools/html_render_check.mjs` opens its tab blank and navigates once.  Opened on the URL,
+  every gate's page ran twice and `--wait-ms` counted from the second run.
+  `html_render::the_harness_loads_the_page_once` guards it.  The second run was also a warm
+  one: a gate's budget now covers the cold load of its page.
+- `--expect-log SUBSTRING` waits, polled, for a console line and fails with `log.missing`
+  when it never comes; it ends early on a failure the page reports.
+- `--no-gpu` starts Chrome with `--disable-gpu`.  The font gates use it: they measure on a
+  2D canvas, and the first GPU-drawn frame of a fresh browser held the bridge's WebGL
+  context and the `document.fonts.load` await past the gates' budgets under load.
+- `gl_instancing` polls for the probe's verdict in `#out` and asserts it, as
+  `audio_bridge` does.  With a flat wait and no assertion, a page that had not reached its
+  checks passed.
+
+### The signed index pair is read from one commit (loft#1991, 2026-10-13)
+
+- `registry_index::fetch_index` resolves a
+  `raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>` URL to the commit the branch
+  is at — the repository's ref advertisement, `…/<repo>.git/info/refs?service=git-upload-pack`,
+  bounded at 5 s to connect and 15 s in all — and reads `<path>` and `<path>.sig` under
+  that commit id (`pin_to_commit`, `branch_commit`).  The branch address is cached per
+  file: after each of five signed pushes on 2026-10-13 it served a new index beside the
+  old signature, or the reverse, for up to about two minutes, and a refreshing install
+  failed *registry index signature INVALID* on a pair that verified at the commit.
+- The advisories feed takes the same route, because it reads through `fetch_index`.
+- `FetchedIndex::commit` records the commit, or `None` for two reads through a moving
+  address.  `install::fetched_pair_verdict` uses it: an INVALID pair read through a
+  branch address says the two files may be from different moments and to run the command
+  again; one read from a commit names the commit.
+- No fallback from the commit to the branch: a file missing at the commit is missing at
+  the branch, and reading the cached branch copy in its place is the defect.
+- A signature whose download FAILED is no longer read as absent.  `http_get_within`
+  answers a `Miss`: `Absent` when the host says the file is not there (403, 404, 410, or
+  an unreadable `file://` path), `Failed` for no connection, a timeout, any other status
+  or a body over the ceiling.  Only `Absent` leaves `FetchedIndex::signature` empty, which
+  is what sends the caller to its cached signature; `Failed` is a fetch error.  Read as
+  absent, a timeout on the `.sig` checked a new index against the previous index's
+  signature — the same INVALID verdict on a validly signed registry.
+- `fetched_pair_verdict` adds nothing when the fetch brought no signature: the one that
+  failed came from the cache, so neither "two downloads" nor "both from commit X" is true.
+### The copy a return makes tests its source at every root (loft#2006, 2026-10-15)
+
+- **A source that may be nothing, whatever its root** (`@FR-N-Store`, `@FR-N-Road`).
+  `Parser::copy_source_may_be_absent` answers for an `OpGet…` read (an element out of range,
+  a keyed entry that is not there, a stored reference that holds none), a user call that
+  answers a record, and anything read off either.  `bind_return_source` reads it once where a
+  user call forbids the re-read: a read path rooted at a call binds the call to an owned
+  `_ret_root_N` first (the spelling `d = f(x); return d.inner`), a read with a call in its
+  index goes into a `τ?` handle `_ret_src_N`, and a pure read is re-read.  Pass 2 only, never
+  in a generic template.  `(R-ReturnField)` hands the call-root exits over as before.
+  `D-types-36` is closed.
+
+### Tests prove a limit at a small size, and a corpus chunk says where its time went (2026-10-15)
+
+- **Lowered limits** (`limits::Limits` on `Data`; `@LIMIT`, `@FRAME_LIMIT`, `LOFT_LIMIT`,
+  `LOFT_FRAME_LIMIT`).  Every enforcement site of the count and the frame reads the program's
+  limits, which a test can only LOWER.  The four `@C149` guards prove their relations at 20
+  (30 and 6540 bytes for the frame margin); the full-size files are `tests/limits_full/`, run
+  nightly.  Compiling depth costs roughly its square, so the nesting guard took 55 s.
+- **A lowered store ceiling** (`Stores::store_limit`; `@STORE_LIMIT`, `LOFT_STORE_LIMIT`).  The
+  leak guards that crossed the 65535-store ceiling with 70 000-iteration loops run at 1310
+  with every count / 50: 19 files, 1–3 s each on the interpreter instead of up to 55 s.
+- **`common::timing::Suite`.**  A corpus chunk prints each program's CPU and wall time, a
+  watchdog names the program still running when the chunk passes its 220 s budget (which
+  survives nextest's kill at 300 s), and a chunk whose CPU passes the budget fails with its
+  slowest programs listed.
+- **Sixteen interpreter chunks** (`loft_suite_00..15`, was eight).  Measured on the dev
+  profile: 133–169 s of CPU a chunk, every one inside its 220 s budget.
+- **The other chunked suites, sized on what they measured** (dev profile, a loaded machine).
+  The native corpus runs 64 chunks (was 32): 94–139 s of wall, 52–69 s charged — a parallel
+  `rustc` batch is charged its CPU divided by the compiles it ran at once
+  (`Suite::end_parallel`), since its raw CPU (640–800 s a chunk) is not time the chunk holds.
+  The drop gate's native leg runs 16 (was 8): 85–91 s.  The IR decode test parsed the
+  standard library once per PROGRAM; it parses it once per chunk now (639 s -> 273 s a chunk)
+  and runs 16 chunks (was 8): 125–175 s.
+
+### Every whole-record copy tests its source (loft#1997, loft#2004, 2026-10-13)
+
+- **One answer for three decoders** (`@FR-N-Store`, `@FR-B-Copy`, `@FR-N-Road`).
+  `Variables::bind_admits_absence` is gone, with the dense arm it selected: the
+  interpreter's first bind (`gen_set_first_ref_var_copy`) and its rebind both emit
+  `OpBindOrCopy` for every record source, and the native record bind
+  (`generation/dispatch.rs`) always takes the `rec == 0` arm.  The rebind had asked the
+  source's type in its own words.  `Parser::materialize_return_into` guards the copy of every
+  record local (`record_local_may_be_absent`) and splits a branch whose arm is one, in a
+  `-> S` function as in a `-> S?`; a local typed by a template's type variable keeps the bare
+  copy unless it is written `T?`.
+- **A field path is a copy source like a local** (loft#2006, first half).
+  `Parser::copy_source_may_be_absent` asks a path its root, and the return copy tests the
+  path by re-reading it; `branch_has_nullable_leaf` splits a branch whose arm is one.
+  `return_field.rs::Cx::tested_exit` rebuilds `ret = if OpRefIsNull(src) null else { mint;
+  copy; rb }; frees; return ret` into the bare exit block, drops the own-buffer release that
+  guards the removed mint, and hands it to the one admission; an admitted exit is emitted as
+  before.  A source rooted at a call or an element read is still copied bare (`D-types-36`).
+- **The scope pass reads the return copy through its presence test** (loft#2004).
+  `scopes/returns.rs::return_tail` and `materialised_join_mut`'s walk descend
+  `if <absent> { null } else { materialized_view_return }` (`is_presence_tested_copy`), so
+  `return_copied_local`, `return_copies_whole_local` and the hook move see the copy in both
+  spellings.  Read bare only, the nullable spelling kept the frame's hook beside the copy's
+  and released one record twice.
+- **A tuple written into a record** (`OpCopyRecordEmitter`).  A nullable tuple's absent arm
+  calls `Stores::copy_null_into` with the copy's own type operand, so `COPY_FRESH_DEST`
+  decides it exactly as the runtime copy's null-source branch does; a dense tuple is accounted
+  as a copy source only where it is surely present (`hoist::local_uses_ok`), and a copy's
+  source is a position `promote_presence` asks.  A presence test of a surely present dense
+  tuple is a constant (`PresenceEmitter`), and a `null` leaf in a dense function's result
+  promotes the function.
+- **A compiler temporary's presence test is never a constant** (`hoist::local_uses_ok`).
+  The presence clause above serves a presence test of a dense value local as the constant
+  "present" where the local is surely present, and `local_surely_present` skips a local's
+  `null` as its declaration.  For a compiler temporary that `null` is a hoisted preamble the
+  release machinery TESTS where no bind ran: a call's work buffer for the record it displaces
+  before the call writes it, a `??` lift bound in one arm and released on every path.  The
+  constant materialised a record never minted and released it (`D0`), on 20 native cells of
+  the drop gate.  Such a test is not served, so the temporary keeps the record form; only the
+  test — after its bind a temporary is present, so a copy from it, a function's result and a
+  join's widening read as before, and the rewrite census admits exactly what it did
+  (`R-ValueRecord` 18 in bench 17, `vec2`/`vec3`/`vertex` among them).  The live
+  `work_refs` set could not answer it: `Function::copy` starts it empty in the scope pass.
+- **A store-identity test between a join's result and its arm is never a constant**
+  (`hoist::local_uses_ok`, `may_hold`).  `OpDistinctStoreEmitter` answers "distinct" for every
+  value local, which is in no store.  `return if c { a } else { b }` over two locals bound
+  from a function that returns in registers guards each local's exit release with such a test
+  against the result, so both were released and the returned one again by the caller —
+  released before its read, then twice (drop-gate pilot `p_j5`, and the `??` cells
+  `q_default_{local,param}_var_ret`).  Between two locals one of which may hold the other the
+  answer turns on the path, so the test is not served and both keep the record form.  The
+  rewrite census admits exactly what it did.
+- 253 corpus files change native code; the interpreter's output is identical on all 2350
+  that ran, and every one of the 253 answers the same on both backends.
+
+### A dense tuple carries its presence where a null can reach a `S?` (loft#1993, loft#1994, 2026-10-13)
+
+- **Nullable tuple parameters** (`@FR-N-Road`, loft#1993).  `hoist::tuple_param_candidates`
+  admits a `p: S?` with the nullable layout key.  `Output::emit_call_arg` builds the tuple
+  at the site: a record's field reads followed by `<record>.rec != 0`, the absent tuple for
+  a `null` argument or default, a tuple that carries the layout as it is, and a surely
+  present dense tuple widened (`hoist::arg_tuple_form`, the question the site gate asks
+  through `tuple_arg_form`).  The live-reload arm materialises an absent tuple as the null
+  record and a library bridge reads the presence off the record it is handed
+  (`hoist::layout_reads`).  A function a fn-ref dispatch reaches keeps a reference.
+- **Surely present** (`@FR-N-Store`, loft#1994).  `hoist::surely_present` answers whether a
+  dense tuple can have come off a null record: a build cannot, a call to a function in
+  `ValueRecords::sp` cannot, a local bound only from those cannot; a view read in a dense
+  body, a tuple parameter and anything else can.  `hoist::widens` asks it at every join of a
+  dense key with a nullable one — a branch's arms, a local's binds, a result position — so a
+  tuple that is not surely present is never widened with the constant word.
+- **Promotion.**  `hoist::promote_presence` runs at the head of every round of the admission
+  fixpoint and turns a dense key into a nullable one where the value can reach a nullable
+  position: a dense tuple parameter (its sites then read the presence), a dense function
+  whose result is not surely present, a dense function that returns such a function's result
+  or such a parameter, and a dense parameter handed a tuple that carries the layout.  The
+  positions are read from the source types.  A bind of a `τ?` local promotes parameters
+  only: a local bound from dense tuples alone holds the dense tuple and widens nothing, and
+  a promoted function loses its registers at every site a nullable tuple does not serve (a
+  copy into a record).
+- Pins: `tests/value_record.rs::a_nullable_record_parameter_crosses_as_its_fields_and_presence_word`
+  and `::a_dense_slot_that_can_reach_a_nullable_carries_its_presence`.  `make nullable-road`
+  reads 0 roads and 0 open.
+- Open, found by the walk: loft#1997 — a whole-record copy of a dense slot that holds null
+  is a record of zeros on the interpreter and the record road.
+
+### A `-> S?` that joins a dense leaf returns in registers (loft#1990, `@FR-N-Road`, 2026-10-13)
+
+- **Layouts join.**  `hoist::join_layout` answers the key two value shapes carry together:
+  the same key, or — a dense key beside the nullable key of the same record — the nullable
+  one.  `value_shape`'s branch arm and `bind_shapes` both ask it, so the arms of a value
+  branch and the binds of one local may mix a `τ` tuple with a `τ?` tuple.
+- **A view is a leaf of a `-> S?` body**, under the layout its own type names; a view of
+  `S?` only there.
+- **Widening is per leaf.**  `hoist::widen_marks` walks a position that expects a nullable
+  tuple down to its leaves — through a block's last statement, a discharged-view copy's
+  source, a `return`'s operand and both arms of a branch — and marks each one whose own
+  tuple is dense; `ValueLeaves::widen` maps the leaf to the key it is widened to, in any
+  function, admitted or not.  The emitter appends `true` for a dense tuple and
+  `<view>.rec != 0` for a view.
+- **The discharged-view block as a value.**  Where a result can be absent the parser copies
+  arm by arm, and the copying arm is the block ending in the buffer instead of a `return` of
+  it (`hoist::mv_block_buffer`); it is the leaf its source is when the buffer is the body's
+  own return buffer.
+- **A statement list as the copy's source is a block** (loft#1992): the emitter bound
+  `let __mv = <Insert>` bare, so a dense `-> S` whose `if` arm holds a slice `match` did not
+  compile.
+- Pins: `tests/value_record.rs::a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple`.
+  Seven pairs join `make nullable-road`; two are `@OPEN` on loft#1993 (a `p: S?` parameter is
+  passed by reference).  loft#1994 records that a null stored into a dense tuple reads back
+  present once the tuple is widened.
+
+### `τ` and `τ?` take one lowering at three more sites (loft#1989, `@FR-N-Road`, 2026-10-12)
+
+- **The native live-reload entry check.**  `Generator::live_entry_check` reads each
+  parameter's type and the return type through `base()`, so a `τ?` gets the push and the
+  thunk its `τ` gets and a slot in `LOFT_LIVE_FNS`.  An admitted value-record function is
+  handed a buffer the arm mints (`__lrb`) for the parked call, the tuple is read out of the
+  answer BEFORE the buffer and the materialised tuple parameters are released, and a
+  nullable layout key is mapped to its record type (`hoist::layout_record`) where the
+  schema is asked.
+- **A struct literal bound to a nullable local** is built in the local
+  (`Parser::parse_object` reads the destination's type through `base()`);
+  `LOFT_NO_NULLABLE_INPLACE=1` restores the work reference.
+- **The one-argument borrow clause is gone.**  `Function::borrows_one_argument` read a
+  single-argument dep as ownership for a nullable local only; since a `τ?` record return
+  takes the caller's buffer and a nullable bind takes the dense arm, no nullable local holds
+  such a dep that its dense twin does not.  The displaced free, the return-source free and
+  the scope-exit sweep ask the same question of both spellings
+  (`Function::owns_displaced_store`, `scopes::free_vars`, `scopes::get_free_vars`).
+- **An inferred local widened by `= null` no longer depends on itself.**  The join typed the
+  local from a READ of it, whose dep names the local; nothing released what it held, which
+  the work reference had hidden.
+- `scripts/nullable_road.py --check` is a gate
+  (`tests/nullable_ret_buffer.rs::every_dense_and_nullable_pair_takes_one_road`), and
+  `(N-Road)` names the second place its one exception applies: a delivery that copies a
+  `τ?` value tests for its absence.  The pairs keep `??` on a plain read with a scalar
+  default, so the operator's own lowering stays on the channel that discounts it.
+- Still open, tracked as loft#1990: `(R-ValueRecord)` declines a `-> S?` whose result joins
+  a built record with a dense view.
+### A registry dependency fires its type and builder triggers (2026-10-15)
+
+- `Parser::trigger_map` derived a declared dependency's triggers from a sibling, a `path =`
+  or a `lib/<dep>` package only, and left a registry dependency to the catalogue, which
+  carries methods and builders and no types: `names: sorted<Word[key]>` over `script =
+  ">=0.2"` was "Undefined type Word" while the `path =` form of the same package fired.
+  `registry_dep_root` now reads the extracted copy in place — the version `loft.lock` pins
+  when it is in the cache, else the newest cached copy the declared range admits — a pure
+  read of the lock and the cache directory.  Cell
+  `a_registry_dependency_fires_its_type_and_builder_triggers` (tests/builder_trigger.rs,
+  both backends, under a private `LOFT_HOME`).
+
+### The catalog trigger map reads each package's newest loadable release (2026-10-14)
+
+- `registry_index::providers_of` took the union of every published version's triggers, so
+  a spelling a release dropped (regex 0.5.0 retired `regex_find`) still loaded the package
+  from a bare call, which then failed on an unknown method.  It now reads the release
+  `loft install` would choose for an undeclared consumer (`find_best_version` on `"*"`:
+  yanked, prerelease and floor-refused versions skipped); a package with no loadable
+  release answers nothing.  The sidecar carries a `derivation` stamp (2) beside the index
+  stamp, so a sidecar an older loft derived is rebuilt once rather than trusted until the
+  index moves.  PKG_REGISTRY.md § Derived trigger sidecar.
+
+### Builder triggers — the declared half of the auto-use surface (2026-10-14)
+
+- `[triggers] builders = ["set"]` (`Manifest::trigger_builders`): the free `pub fn`s a
+  consumer may call bare.  `triggers::derive_triggers(source, builders)` keeps a listed name
+  only when the source declares it as a free `pub fn` (`Triggers::builders`); the registry
+  entry carries it as `"set:fn"` beside the `"name:receiver"` methods, `loft publish` warns
+  on a listed name the entry file lacks, and the collision pre-check covers it.
+- The parser's auto-use scan collects bare calls minus the file's own `fn` declarations
+  (`libscan::scan_bare_calls_and_fn_declarations`); a name the stdlib or a loaded file
+  defines (`def_nr("n_<name>")`) is never a trigger; the declared packages' builder map
+  (`auto_use_builder_map`) is asked first, then the catalog's.  A fired name is imported
+  alone (`ImportSpec::Names`), as a type trigger is — the library's qualifier is all a load
+  binds (@C98).
+- The derived sidecar (`~/.loft/registry/triggers.json`) carries `builders` beside
+  `triggers`; `trigger_providers` skips `:fn` entries, `builder_providers` takes them, and a
+  sidecar written without the key reads as stale, so an upgraded loft rebuilds it once.
+- Why declared, not derived: a method or a type trigger takes no name from the program's
+  file, a free function does, so the author chooses the few worth a bare name and the shared
+  namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
+  cells `tests/builder_trigger.rs` on both backends.
+
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 
 - **loft#1987** — `Scopes::scan_args` records where each argument's hoisted operations start

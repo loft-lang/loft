@@ -1384,9 +1384,13 @@ impl Output<'_> {
             // Only a borrowed-view return needs the bracket; every other call keeps its
             // previous emit byte-for-byte.
             let bracket: Vec<String> = if is_borrowed_view {
+                // An argument this frame holds as a TUPLE (`@FR-R-ValueLocal`) names no
+                // store: the callee received its fields, and nothing it frees is the
+                // argument's.
                 crate::use_analysis::protectable_ref_args(self.data, self.def_nr, to)
                     .0
                     .iter()
+                    .filter(|av| !self.value_record_locals.contains_key(av))
                     .map(|&av| format!("var_{}", sanitize(variables.name(av))))
                     .collect()
             } else {
@@ -1815,7 +1819,7 @@ impl Output<'_> {
         // generic INSTANCE's selecting tail is the shape: its `if` lowers as a statement
         // join whose arms each bind the join local from a parameter's view, where the
         // source-level function lifts each arm into an expression the tuple path already
-        // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
+        // read (`loft-suite/rules/rewrites/R-ValueRecord/157-value-tail.loft` t14 — E0308 without this line).
         if let (Some(d_nr), Value::Var(src)) =
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
             && variables.record_copy_source(self.data, var, *src).is_some()
@@ -1852,12 +1856,11 @@ impl Output<'_> {
             // Allocating first and copying second would be worse than the panic — it leaves
             // the destination holding the record allocated for it, PRESENT where its source
             // was absent.  Same shape and same predicate as the element-read arm above
-            // (loft#823): `rec == 0` is the absence test every store accessor uses.  WHICH
-            // binds may carry absence is `Variables::bind_admits_absence`'s question, asked of
-            // BOTH sides and shared with the interpreter's record bind — a source typed
-            // non-null can still hold `nullref`, and a nullable destination has to receive it
-            // as absence.
-            if variables.bind_admits_absence(var, *src) {
+            // (loft#823): `rec == 0` is the absence test every store accessor uses.  EVERY
+            // record bind takes it, as the interpreter's does (`@FR-N-Store`, `@FR-N-Road`):
+            // the type of neither side says the source is there — a source typed non-null
+            // can hold `nullref` (`Variables::record_copy_source`).
+            {
                 // On the absent arm the placeholder must go back: writing `DbRef::NULL`
                 // DISPLACES whatever the destination held, and nothing downstream releases
                 // it.  At a FIRST bind that is the `null_named` store allocated just above.
@@ -1903,19 +1906,6 @@ impl Output<'_> {
                 );
                 return Ok(());
             }
-            let target = copy_target(&format!("var_{name}"), first_bind);
-            writeln!(w, "var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32);")?;
-            self.indent(w)?;
-            write!(w, "OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32)")?;
-            // @PLN130 — native's whole-record bind deep-copies unconditionally (it has no
-            // last-use move; that asymmetry with the interpreter is @PLN130 cluster V).
-            crate::copy_manifest::record(
-                self.def_nr,
-                var,
-                tp_nr,
-                crate::copy_manifest::Origin::NativeRecordBind,
-            );
-            return Ok(());
         }
         // For text/reference block assignments, pre-declare the variable so that
         // any drop(@var) inside the block (e.g., on break) can reference it.
@@ -2055,13 +2045,13 @@ impl Output<'_> {
             }
             // P199 — user-fn / Op-stub callees take `&UnsafeCell<Stores>`
             // (cell), not `&mut Stores` (stores).  Plan 09 phase 01 added
-            // per-fn ABI tagging via `crate::codegen_runtime::abi_of`:
+            // per-fn ABI tagging via `crate::runtime_abi::abi_of`:
             //   - Cell  → `name(cell, args...)`     (default)
             //   - None  → `name(args...)`           (no implicit Stores)
             let abi = if *def_fn.code() == Value::Null {
-                crate::codegen_runtime::abi_of(def_fn.name())
+                crate::runtime_abi::abi_of(def_fn.name())
             } else {
-                crate::codegen_runtime::Abi::Cell
+                crate::runtime_abi::Abi::Cell
             };
             // loft#1032 — a generator callee answers `Box<dyn LoftCoroutine>`, and every
             // caller holds the handle as a `DbRef` from the coroutine table, so the call
@@ -2077,7 +2067,7 @@ impl Output<'_> {
             }
             write!(w, "{}(", self.fn_ident(def_fn))?;
             let mut first_arg = true;
-            if matches!(abi, crate::codegen_runtime::Abi::Cell) {
+            if matches!(abi, crate::runtime_abi::Abi::Cell) {
                 write!(w, "cell")?;
                 first_arg = false;
             }

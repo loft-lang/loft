@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>script source — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The loft source of the script library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-script-src.html">
+<meta property="og:title" content="script source — Loft, a programming language for small browser games">
+<meta property="og:description" content="The loft source of the script library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-script-src.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="script source — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The loft source of the script library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>script source</h1>
+<article>
+<p><a href="lib-script.html">← script</a> · <a href="lib-script-api.html">API reference</a> · version 0.2.0</p>
+<p class="lib-legend">2 file(s), 227 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>walk</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L14">14</a></td><td>—</td><td><a href="#tests-script-loft-L24">24</a> <a href="#tests-script-loft-L27">27</a> <a href="#tests-script-loft-L29">29</a> <a href="#tests-script-loft-L30">30</a> <a href="#tests-script-loft-L31">31</a></td></tr>
+<tr><td><code>copy_to</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L37">37</a></td><td>—</td><td><a href="#tests-script-loft-L37">37</a> <a href="#tests-script-loft-L39">39</a></td></tr>
+<tr><td><code>glob</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L47">47</a></td><td>—</td><td><a href="#tests-script-loft-L46">46</a> <a href="#tests-script-loft-L47">47</a> <a href="#tests-script-loft-L48">48</a> <a href="#tests-script-loft-L49">49</a> <a href="#tests-script-loft-L50">50</a></td></tr>
+<tr><td><code>glob_match</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L72">72</a></td><td>—</td><td><a href="#src-script-loft-L60">60</a> <a href="#tests-script-loft-L51">51</a> <a href="#tests-script-loft-L52">52</a> <a href="#tests-script-loft-L53">53</a></td></tr>
+<tr><td><code>Word</code> <span class="search-kind">struct</span></td><td><a href="#src-script-loft-L109">109</a></td><td>—</td><td><a href="#src-script-loft-L112">112</a> <a href="#src-script-loft-L113">113</a> <a href="#src-script-loft-L114">114</a> <a href="#src-script-loft-L119">119</a> <a href="#src-script-loft-L124">124</a> <a href="#src-script-loft-L125">125</a> … (9 total)</td></tr>
+<tr><td><code>set</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L112">112</a></td><td>—</td><td><a href="#tests-script-loft-L64">64</a> <a href="#tests-script-loft-L71">71</a> <a href="#tests-script-loft-L72">72</a> <a href="#tests-script-loft-L76">76</a> <a href="#tests-script-loft-L77">77</a> <a href="#tests-script-loft-L82">82</a> … (7 total)</td></tr>
+<tr><td><code>has</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L119">119</a></td><td>—</td><td><a href="#tests-script-loft-L67">67</a> <a href="#tests-script-loft-L70">70</a></td></tr>
+<tr><td><code>put</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L124">124</a></td><td>—</td><td><a href="#tests-script-loft-L68">68</a> <a href="#tests-script-loft-L69">69</a> <a href="#tests-script-loft-L70">70</a> <a href="#tests-script-loft-L85">85</a></td></tr>
+<tr><td><code>minus</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L129">129</a></td><td>—</td><td><a href="#tests-script-loft-L78">78</a> <a href="#tests-script-loft-L79">79</a> <a href="#tests-script-loft-L80">80</a> <a href="#tests-script-loft-L82">82</a></td></tr>
+<tr><td><code>words</code> <span class="search-kind">fn</span></td><td><a href="#src-script-loft-L136">136</a></td><td>—</td><td><a href="#src-script-loft-L112">112</a> <a href="#src-script-loft-L114">114</a> <a href="#tests-script-loft-L66">66</a> <a href="#tests-script-loft-L70">70</a> <a href="#tests-script-loft-L86">86</a></td></tr>
+</table>
+<h2 id="src-script-loft">src/script.loft</h2>
+<pre class="src"><code><span id="src-script-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-script-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-script-loft-L3"></span>
+<span id="src-script-loft-L4"><span class="cm">// What a script reaches for and the standard library does not carry, because each is loft</span></span>
+<span id="src-script-loft-L5"><span class="cm">// over primitives the runtime already answers (`files`, `is_symlink`, `read_bytes`,</span></span>
+<span id="src-script-loft-L6"><span class="cm">// `write_bytes`): the recursive walk every port wrote by hand, the copy that was two calls</span></span>
+<span id="src-script-loft-L7"><span class="cm">// and a null discharge, the glob that was a listing and a filter.  Each hangs off `text` so</span></span>
+<span id="src-script-loft-L8"><span class="cm">// it fires as a trigger: a script writes `dir.walk(".loft")` and names no library.</span></span>
+<span id="src-script-loft-L9"></span>
+<span id="src-script-loft-L10"><span class="cm">/// Every file under the directory `self`, in every subdirectory, as paths joined with `/`</span></span>
+<span id="src-script-loft-L11"><span class="cm">/// below `self`, in path order.  A symbolic link is never followed, so a loop in the tree is</span></span>
+<span id="src-script-loft-L12"><span class="cm">/// not a loop here.  `suffix` keeps only the names that end with it (`".loft"`); `""` keeps</span></span>
+<span id="src-script-loft-L13"><span class="cm">/// every file.  A path that is not a directory answers no files.</span></span>
+<span id="src-script-loft-L14"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">walk</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, suffix: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-script-loft-L15">  found: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-script-loft-L16">  <span class="kw">if</span> !<span class="fn-call"><a href="stdlib-files-and-directories.html">is_dir</a></span>(self) { <span class="kw">return</span> found; }</span>
+<span id="src-script-loft-L17">  found = <span class="fn-call">walk_into</span>(self, suffix, found);</span>
+<span id="src-script-loft-L18">  <span class="fn-call"><a href="stdlib-vector-aggregates.html">sort</a></span>(found);</span>
+<span id="src-script-loft-L19">  found</span>
+<span id="src-script-loft-L20">}</span>
+<span id="src-script-loft-L21"></span>
+<span id="src-script-loft-L22"><span class="kw">fn</span> <span class="fn-call">walk_into</span>(dir: <span class="ty"><a href="stdlib-types.html">text</a></span>, suffix: <span class="ty"><a href="stdlib-types.html">text</a></span>, out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-script-loft-L23">  result = out;</span>
+<span id="src-script-loft-L24">  <span class="kw">for</span> f <span class="kw">in</span> <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(dir).<span class="fn-call"><a href="stdlib-files-and-directories.html">files</a></span>() {</span>
+<span id="src-script-loft-L25">    <span class="kw">if</span> <span class="fn-call"><a href="stdlib-files-and-directories.html">is_symlink</a></span>(f.path) { <span class="kw">continue</span>; }</span>
+<span id="src-script-loft-L26">    <span class="kw">if</span> f.format == <span class="en"><a href="stdlib-file-system.html">Format</a></span>.<span class="en">Directory</span> {</span>
+<span id="src-script-loft-L27">      result = <span class="fn-call">walk_into</span>(f.path, suffix, result);</span>
+<span id="src-script-loft-L28">    } <span class="kw">else</span> <span class="kw">if</span> suffix == <span class="st">""</span> || f.path.<span class="fn-call"><a href="stdlib-path-helpers.html">ends_with</a></span>(suffix) {</span>
+<span id="src-script-loft-L29">      result += [f.path];</span>
+<span id="src-script-loft-L30">    }</span>
+<span id="src-script-loft-L31">  }</span>
+<span id="src-script-loft-L32">  result</span>
+<span id="src-script-loft-L33">}</span>
+<span id="src-script-loft-L34"></span>
+<span id="src-script-loft-L35"><span class="cm">/// Copy the file at `self` to `dst`, bytes as they are: true when `dst` now holds them.  A</span></span>
+<span id="src-script-loft-L36"><span class="cm">/// source that cannot be read writes nothing and answers false, as does a write that fails.</span></span>
+<span id="src-script-loft-L37"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">copy_to</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, dst: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-script-loft-L38">  bytes = <span class="fn-call"><a href="stdlib-binary-file-i-o.html">read_bytes</a></span>(self);</span>
+<span id="src-script-loft-L39">  <span class="kw">if</span> bytes == <span class="kw">null</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-script-loft-L40">  <span class="fn-call"><a href="stdlib-binary-file-i-o.html">write_bytes</a></span>(dst, bytes ?? [])</span>
+<span id="src-script-loft-L41">}</span>
+<span id="src-script-loft-L42"></span>
+<span id="src-script-loft-L43"><span class="cm">/// The paths that match the pattern `self`, in name order: `*` stands for any run of</span></span>
+<span id="src-script-loft-L44"><span class="cm">/// characters inside one name, `?` for one character, and everything before the last `/` is</span></span>
+<span id="src-script-loft-L45"><span class="cm">/// a directory taken as written (`"default/*.loft"`, `"out/??.txt"`).  A pattern without a</span></span>
+<span id="src-script-loft-L46"><span class="cm">/// `/` is matched against the current directory.  An absent directory answers no paths.</span></span>
+<span id="src-script-loft-L47"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">glob</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-script-loft-L48">  dir = <span class="st">"."</span>;</span>
+<span id="src-script-loft-L49">  pattern = self;</span>
+<span id="src-script-loft-L50">  cut = -<span class="nm">1</span>;</span>
+<span id="src-script-loft-L51">  <span class="kw">for</span> c <span class="kw">in</span> self { <span class="kw">if</span> c == <span class="ch">'/'</span> { cut = c#<span class="ty">index</span>; } }</span>
+<span id="src-script-loft-L52">  <span class="kw">if</span> cut &gt;= <span class="nm">0</span> {</span>
+<span id="src-script-loft-L53">    dir = self[<span class="nm">0..</span>cut];</span>
+<span id="src-script-loft-L54">    pattern = self[cut + <span class="nm">1..</span>];</span>
+<span id="src-script-loft-L55">    <span class="kw">if</span> dir == <span class="st">""</span> { dir = <span class="st">"/"</span>; }</span>
+<span id="src-script-loft-L56">  }</span>
+<span id="src-script-loft-L57">  found: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-script-loft-L58">  <span class="kw">if</span> !<span class="fn-call"><a href="stdlib-files-and-directories.html">is_dir</a></span>(dir) { <span class="kw">return</span> found; }</span>
+<span id="src-script-loft-L59">  <span class="kw">for</span> name <span class="kw">in</span> <span class="fn-call"><a href="stdlib-files-and-directories.html">list_dir</a></span>(dir) ?? [] {</span>
+<span id="src-script-loft-L60">    <span class="kw">if</span> <span class="fn-call">glob_match</span>(pattern, name) {</span>
+<span id="src-script-loft-L61">      <span class="kw">if</span> dir == <span class="st">"."</span> &amp;&amp; cut &lt; <span class="nm">0</span> { found += [name]; }</span>
+<span id="src-script-loft-L62">      <span class="kw">else</span> <span class="kw">if</span> dir == <span class="st">"/"</span> { found += [<span class="st">"/{name}"</span>]; }</span>
+<span id="src-script-loft-L63">      <span class="kw">else</span> { found += [<span class="st">"{dir}/{name}"</span>]; }</span>
+<span id="src-script-loft-L64">    }</span>
+<span id="src-script-loft-L65">  }</span>
+<span id="src-script-loft-L66">  <span class="fn-call"><a href="stdlib-vector-aggregates.html">sort</a></span>(found);</span>
+<span id="src-script-loft-L67">  found</span>
+<span id="src-script-loft-L68">}</span>
+<span id="src-script-loft-L69"></span>
+<span id="src-script-loft-L70"><span class="cm">/// Does `name` match `pattern`, with `*` any run and `?` one character?  A plain character</span></span>
+<span id="src-script-loft-L71"><span class="cm">/// matches itself only.</span></span>
+<span id="src-script-loft-L72"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">glob_match</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-script-loft-L73">  pc: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">character</a></span>&gt; = [];</span>
+<span id="src-script-loft-L74">  <span class="kw">for</span> c <span class="kw">in</span> pattern { pc += [c]; }</span>
+<span id="src-script-loft-L75">  nc: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">character</a></span>&gt; = [];</span>
+<span id="src-script-loft-L76">  <span class="kw">for</span> c <span class="kw">in</span> name { nc += [c]; }</span>
+<span id="src-script-loft-L77">  <span class="fn-call">glob_at</span>(pc, <span class="nm">0</span>, nc, <span class="nm">0</span>)</span>
+<span id="src-script-loft-L78">}</span>
+<span id="src-script-loft-L79"></span>
+<span id="src-script-loft-L80"><span class="kw">fn</span> <span class="fn-call">glob_at</span>(p: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">character</a></span>&gt;, pi: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">character</a></span>&gt;, ni: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-script-loft-L81">  <span class="kw">if</span> pi == <span class="bi"><a href="stdlib-text.html">len</a></span>(p) { <span class="kw">return</span> ni == <span class="bi"><a href="stdlib-text.html">len</a></span>(n); }</span>
+<span id="src-script-loft-L82">  c = p[pi];</span>
+<span id="src-script-loft-L83">  <span class="kw">if</span> c == <span class="ch">'*'</span> {</span>
+<span id="src-script-loft-L84">    <span class="cm">// The star takes zero or more characters: try every length until one matches.</span></span>
+<span id="src-script-loft-L85">    k = ni;</span>
+<span id="src-script-loft-L86">    while k &lt;= <span class="bi"><a href="stdlib-text.html">len</a></span>(n) {</span>
+<span id="src-script-loft-L87">      <span class="kw">if</span> <span class="fn-call">glob_at</span>(p, pi + <span class="nm">1</span>, n, k) { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-script-loft-L88">      k += <span class="nm">1</span>;</span>
+<span id="src-script-loft-L89">    }</span>
+<span id="src-script-loft-L90">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-script-loft-L91">  }</span>
+<span id="src-script-loft-L92">  <span class="kw">if</span> ni == <span class="bi"><a href="stdlib-text.html">len</a></span>(n) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-script-loft-L93">  <span class="kw">if</span> c == <span class="ch">'?'</span> || c == n[ni] { <span class="kw">return</span> <span class="fn-call">glob_at</span>(p, pi + <span class="nm">1</span>, n, ni + <span class="nm">1</span>); }</span>
+<span id="src-script-loft-L94">  <span class="kw">false</span></span>
+<span id="src-script-loft-L95">}</span>
+<span id="src-script-loft-L96"></span>
+<span id="src-script-loft-L97"><span class="cm">// --- A set of texts ---</span></span>
+<span id="src-script-loft-L98"><span class="cm">//</span></span>
+<span id="src-script-loft-L99"><span class="cm">// A set is a keyed collection over a one-field record, and that is what these are: a</span></span>
+<span id="src-script-loft-L100"><span class="cm">// `sorted&lt;Word[key]&gt;` holds each text once, in key order, with the lookup, the removal and</span></span>
+<span id="src-script-loft-L101"><span class="cm">// the prefix range every keyed collection has.  What a script could not write in one line</span></span>
+<span id="src-script-loft-L102"><span class="cm">// was the building and the algebra: `set(words)` BUILDS one (the library's builder, bare</span></span>
+<span id="src-script-loft-L103"><span class="cm">// once builder triggers load a library, `script::set(words)` always), and the rest are</span></span>
+<span id="src-script-loft-L104"><span class="cm">// methods on the set — `seen.put(w)`, `seen.has(w)`, `a.minus(b)`, `seen.words()` — so a</span></span>
+<span id="src-script-loft-L105"><span class="cm">// script names no type.  The element is `Word`, for a field that declares the set</span></span>
+<span id="src-script-loft-L106"><span class="cm">// (`names: sorted&lt;Word[key]&gt;`), read as `x.key` in a walk.</span></span>
+<span id="src-script-loft-L107"></span>
+<span id="src-script-loft-L108"><span class="cm">/// One element of a set of texts: the text is the key.</span></span>
+<span id="src-script-loft-L109"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Word</span> { <span class="kw">pub</span> key: <span class="ty"><a href="stdlib-types.html">text</a></span> }</span>
+<span id="src-script-loft-L110"></span>
+<span id="src-script-loft-L111"><span class="cm">/// A set of the texts in `words`: each once, in key order.  `set([])` is the empty set.</span></span>
+<span id="src-script-loft-L112"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set</span>(words: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt; {</span>
+<span id="src-script-loft-L113">  out: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt; = [];</span>
+<span id="src-script-loft-L114">  <span class="kw">for</span> w <span class="kw">in</span> words { out += [<span class="en">Word</span> { key: w }]; }</span>
+<span id="src-script-loft-L115">  out</span>
+<span id="src-script-loft-L116">}</span>
+<span id="src-script-loft-L117"></span>
+<span id="src-script-loft-L118"><span class="cm">/// Is `w` in the set?</span></span>
+<span id="src-script-loft-L119"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has</span>(self: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt;, w: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-script-loft-L120">  self[w] != <span class="kw">null</span></span>
+<span id="src-script-loft-L121">}</span>
+<span id="src-script-loft-L122"></span>
+<span id="src-script-loft-L123"><span class="cm">/// Put `w` in the set; a text already there stays once.</span></span>
+<span id="src-script-loft-L124"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">put</span>(self: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt;, w: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-script-loft-L125">  self += [<span class="en">Word</span> { key: w }];</span>
+<span id="src-script-loft-L126">}</span>
+<span id="src-script-loft-L127"></span>
+<span id="src-script-loft-L128"><span class="cm">/// The texts of `self` that are not in `other`, in key order.</span></span>
+<span id="src-script-loft-L129"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">minus</span>(self: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt;, other: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-script-loft-L130">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-script-loft-L131">  <span class="kw">for</span> x <span class="kw">in</span> self { <span class="kw">if</span> other[x.key] == <span class="kw">null</span> { out += [x.key]; } }</span>
+<span id="src-script-loft-L132">  out</span>
+<span id="src-script-loft-L133">}</span>
+<span id="src-script-loft-L134"></span>
+<span id="src-script-loft-L135"><span class="cm">/// The texts of the set as a vector, in key order.</span></span>
+<span id="src-script-loft-L136"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">words</span>(self: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-script-loft-L137">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-script-loft-L138">  <span class="kw">for</span> x <span class="kw">in</span> self { out += [x.key]; }</span>
+<span id="src-script-loft-L139">  out</span>
+<span id="src-script-loft-L140">}</span>
+</code></pre>
+<h2 id="tests-script-loft">tests/script.loft</h2>
+<pre class="src"><code><span id="tests-script-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-script-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-script-loft-L3"><span class="cm">//</span></span>
+<span id="tests-script-loft-L4"><span class="cm">// The three helpers on a tree built here: a walk that takes every file below a directory</span></span>
+<span id="tests-script-loft-L5"><span class="cm">// and never follows a link, a copy that moves bytes as they are, a glob over one directory.</span></span>
+<span id="tests-script-loft-L6"><span class="cm">// Every expected value by hand.</span></span>
+<span id="tests-script-loft-L7"><span class="kw">use</span> script::*;</span>
+<span id="tests-script-loft-L8"></span>
+<span id="tests-script-loft-L9"><span class="kw">fn</span> <span class="fn-call">root</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{temp_dir()}/loft-script-lib-{now()}"</span> }</span>
+<span id="tests-script-loft-L10"></span>
+<span id="tests-script-loft-L11"><span class="kw">fn</span> <span class="fn-call">build</span>(r: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="tests-script-loft-L12">  <span class="fn-call"><a href="stdlib-files-and-directories.html">mkdir_all</a></span>(<span class="st">"{r}/a/b"</span>);</span>
+<span id="tests-script-loft-L13">  <span class="fn-call"><a href="stdlib-files-and-directories.html">mkdir_all</a></span>(<span class="st">"{r}/c"</span>);</span>
+<span id="tests-script-loft-L14">  <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"{r}/one.loft"</span>).<span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(<span class="st">"fn main() {{}}\n"</span>);</span>
+<span id="tests-script-loft-L15">  <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"{r}/a/two.loft"</span>).<span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(<span class="st">"// two\n"</span>);</span>
+<span id="tests-script-loft-L16">  <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"{r}/a/b/three.txt"</span>).<span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(<span class="st">"three"</span>);</span>
+<span id="tests-script-loft-L17">  <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"{r}/a/b/four.loft"</span>).<span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(<span class="st">""</span>);</span>
+<span id="tests-script-loft-L18">  <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"{r}/c/five.md"</span>).<span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(<span class="st">"# five\n"</span>);</span>
+<span id="tests-script-loft-L19">}</span>
+<span id="tests-script-loft-L20"></span>
+<span id="tests-script-loft-L21"><span class="kw">fn</span> <span class="fn-call">test_walk_takes_every_file_below_in_path_order</span>() {</span>
+<span id="tests-script-loft-L22">  r = <span class="fn-call">root</span>();</span>
+<span id="tests-script-loft-L23">  <span class="fn-call">build</span>(r);</span>
+<span id="tests-script-loft-L24">  all = r.<span class="fn-call">walk</span>();</span>
+<span id="tests-script-loft-L25">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(all) == <span class="nm">5</span>, <span class="st">"five files: {all}"</span>);</span>
+<span id="tests-script-loft-L26">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(all[<span class="nm">0</span>] == <span class="st">"{r}/a/b/four.loft"</span> &amp;&amp; all[<span class="nm">4</span>] == <span class="st">"{r}/one.loft"</span>, <span class="st">"path order: {all}"</span>);</span>
+<span id="tests-script-loft-L27">  lofts = r.<span class="fn-call">walk</span>(<span class="st">".loft"</span>);</span>
+<span id="tests-script-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(lofts == [<span class="st">"{r}/a/b/four.loft"</span>, <span class="st">"{r}/a/two.loft"</span>, <span class="st">"{r}/one.loft"</span>], <span class="st">"by suffix: {lofts}"</span>);</span>
+<span id="tests-script-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="st">"{r}/c"</span>.<span class="fn-call">walk</span>()) == <span class="nm">1</span>, <span class="st">"a subdirectory alone"</span>);</span>
+<span id="tests-script-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="st">"{r}/one.loft"</span>.<span class="fn-call">walk</span>()) == <span class="nm">0</span>, <span class="st">"a file is not a directory"</span>);</span>
+<span id="tests-script-loft-L31">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="st">"{r}/absent"</span>.<span class="fn-call">walk</span>()) == <span class="nm">0</span>, <span class="st">"an absent directory"</span>);</span>
+<span id="tests-script-loft-L32">}</span>
+<span id="tests-script-loft-L33"></span>
+<span id="tests-script-loft-L34"><span class="kw">fn</span> <span class="fn-call">test_copy_to_moves_the_bytes_as_they_are</span>() {</span>
+<span id="tests-script-loft-L35">  r = <span class="fn-call">root</span>();</span>
+<span id="tests-script-loft-L36">  <span class="fn-call">build</span>(r);</span>
+<span id="tests-script-loft-L37">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{r}/c/five.md"</span>.<span class="fn-call">copy_to</span>(<span class="st">"{r}/five-copy.md"</span>), <span class="st">"copied"</span>);</span>
+<span id="tests-script-loft-L38">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"{r}/five-copy.md"</span>).<span class="fn-call"><a href="stdlib-file-system.html">content</a></span>() == <span class="st">"# five\n"</span>, <span class="st">"same bytes"</span>);</span>
+<span id="tests-script-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"{r}/absent.md"</span>.<span class="fn-call">copy_to</span>(<span class="st">"{r}/never.md"</span>), <span class="st">"no source, no copy"</span>);</span>
+<span id="tests-script-loft-L40">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call"><a href="stdlib-files-and-directories.html">is_file</a></span>(<span class="st">"{r}/never.md"</span>), <span class="st">"nothing written for an absent source"</span>);</span>
+<span id="tests-script-loft-L41">}</span>
+<span id="tests-script-loft-L42"></span>
+<span id="tests-script-loft-L43"><span class="kw">fn</span> <span class="fn-call">test_glob_matches_one_directory</span>() {</span>
+<span id="tests-script-loft-L44">  r = <span class="fn-call">root</span>();</span>
+<span id="tests-script-loft-L45">  <span class="fn-call">build</span>(r);</span>
+<span id="tests-script-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{r}/a/*.loft"</span>.<span class="fn-call">glob</span>() == [<span class="st">"{r}/a/two.loft"</span>], <span class="st">"star with a suffix"</span>);</span>
+<span id="tests-script-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{r}/a/b/*"</span>.<span class="fn-call">glob</span>() == [<span class="st">"{r}/a/b/four.loft"</span>, <span class="st">"{r}/a/b/three.txt"</span>], <span class="st">"star alone, name order"</span>);</span>
+<span id="tests-script-loft-L48">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{r}/a/b/f???.loft"</span>.<span class="fn-call">glob</span>() == [<span class="st">"{r}/a/b/four.loft"</span>], <span class="st">"one ? per character"</span>);</span>
+<span id="tests-script-loft-L49">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="st">"{r}/a/b/*.md"</span>.<span class="fn-call">glob</span>()) == <span class="nm">0</span>, <span class="st">"no match"</span>);</span>
+<span id="tests-script-loft-L50">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="st">"{r}/nowhere/*"</span>.<span class="fn-call">glob</span>()) == <span class="nm">0</span>, <span class="st">"absent directory"</span>);</span>
+<span id="tests-script-loft-L51">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">glob_match</span>(<span class="st">"*.loft"</span>, <span class="st">"x.loft"</span>) &amp;&amp; !<span class="fn-call">glob_match</span>(<span class="st">"*.loft"</span>, <span class="st">"x.loft.bak"</span>), <span class="st">"the star ends where the pattern does"</span>);</span>
+<span id="tests-script-loft-L52">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">glob_match</span>(<span class="st">"a*b*c"</span>, <span class="st">"abc"</span>) &amp;&amp; <span class="fn-call">glob_match</span>(<span class="st">"a*b*c"</span>, <span class="st">"axxbyyc"</span>) &amp;&amp; !<span class="fn-call">glob_match</span>(<span class="st">"a*b*c"</span>, <span class="st">"ac"</span>), <span class="st">"several stars"</span>);</span>
+<span id="tests-script-loft-L53">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">glob_match</span>(<span class="st">""</span>, <span class="st">""</span>) &amp;&amp; !<span class="fn-call">glob_match</span>(<span class="st">""</span>, <span class="st">"a"</span>) &amp;&amp; !<span class="fn-call">glob_match</span>(<span class="st">"?"</span>, <span class="st">""</span>), <span class="st">"the empty cases"</span>);</span>
+<span id="tests-script-loft-L54">}</span>
+<span id="tests-script-loft-L55"></span>
+<span id="tests-script-loft-L56"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-script-loft-L57">  <span class="fn-call">test_walk_takes_every_file_below_in_path_order</span>();</span>
+<span id="tests-script-loft-L58">  <span class="fn-call">test_copy_to_moves_the_bytes_as_they_are</span>();</span>
+<span id="tests-script-loft-L59">  <span class="fn-call">test_glob_matches_one_directory</span>();</span>
+<span id="tests-script-loft-L60">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ok"</span>);</span>
+<span id="tests-script-loft-L61">}</span>
+<span id="tests-script-loft-L62"></span>
+<span id="tests-script-loft-L63"><span class="kw">fn</span> <span class="fn-call">test_a_set_holds_each_text_once_in_key_order</span>() {</span>
+<span id="tests-script-loft-L64">  seen = <span class="fn-call">set</span>([<span class="st">"c"</span>, <span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"a"</span>]);</span>
+<span id="tests-script-loft-L65">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(seen) == <span class="nm">3</span>, <span class="st">"three distinct texts, got {len(seen)}"</span>);</span>
+<span id="tests-script-loft-L66">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(seen.<span class="fn-call">words</span>() == [<span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>], <span class="st">"key order: {seen.words()}"</span>);</span>
+<span id="tests-script-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(seen.<span class="fn-call">has</span>(<span class="st">"a"</span>) &amp;&amp; !seen.<span class="fn-call">has</span>(<span class="st">"z"</span>), <span class="st">"membership"</span>);</span>
+<span id="tests-script-loft-L68">  seen.<span class="fn-call">put</span>(<span class="st">"z"</span>);</span>
+<span id="tests-script-loft-L69">  seen.<span class="fn-call">put</span>(<span class="st">"a"</span>);</span>
+<span id="tests-script-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(seen) == <span class="nm">4</span> &amp;&amp; seen.<span class="fn-call">has</span>(<span class="st">"z"</span>), <span class="st">"put adds once: {seen.words()}"</span>);</span>
+<span id="tests-script-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">set</span>([])) == <span class="nm">0</span>, <span class="st">"set([]) is the empty set"</span>);</span>
+<span id="tests-script-loft-L72">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(script::<span class="fn-call">set</span>([<span class="st">"q"</span>])) == <span class="nm">1</span>, <span class="st">"the qualified spelling always reaches the builder"</span>);</span>
+<span id="tests-script-loft-L73">}</span>
+<span id="tests-script-loft-L74"></span>
+<span id="tests-script-loft-L75"><span class="kw">fn</span> <span class="fn-call">test_minus_is_the_texts_not_in_the_other</span>() {</span>
+<span id="tests-script-loft-L76">  a = <span class="fn-call">set</span>([<span class="st">"x"</span>, <span class="st">"y"</span>, <span class="st">"z"</span>]);</span>
+<span id="tests-script-loft-L77">  b = <span class="fn-call">set</span>([<span class="st">"y"</span>]);</span>
+<span id="tests-script-loft-L78">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">minus</span>(b) == [<span class="st">"x"</span>, <span class="st">"z"</span>], <span class="st">"a minus b: {a.minus(b)}"</span>);</span>
+<span id="tests-script-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(b.<span class="fn-call">minus</span>(a)) == <span class="nm">0</span>, <span class="st">"b minus a is empty"</span>);</span>
+<span id="tests-script-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a.<span class="fn-call">minus</span>(a).<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"a minus itself"</span>);</span>
+<span id="tests-script-loft-L81">  <span class="cm">// the symmetric difference of two sets whose sizes differ by one is one text or none</span></span>
+<span id="tests-script-loft-L82">  d = a.<span class="fn-call">minus</span>(<span class="fn-call">set</span>([<span class="st">"x"</span>, <span class="st">"y"</span>]));</span>
+<span id="tests-script-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d == [<span class="st">"z"</span>], <span class="st">"one apart: {d}"</span>);</span>
+<span id="tests-script-loft-L84">  decl: <span class="ty"><a href="stdlib-collections.html">sorted</a></span>&lt;<span class="en">Word</span>[key]&gt; = [];</span>
+<span id="tests-script-loft-L85">  decl.<span class="fn-call">put</span>(<span class="st">"q"</span>);</span>
+<span id="tests-script-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(decl.<span class="fn-call">words</span>() == [<span class="st">"q"</span>], <span class="st">"a set declared by its element type"</span>);</span>
+<span id="tests-script-loft-L87">}</span>
+</code></pre>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

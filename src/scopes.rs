@@ -776,6 +776,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `(R-ExitVector)` — a local vector returned inside the exit literal is built in the
         // return buffer's store: decided on the same IR, after the placements it may host.
         crate::exit_vector::rewrite(data, d_nr);
+        // `(R-ExitVector)`'s record clause — a local record returned inside the exit literal
+        // is built in its field of the return buffer.
+        crate::exit_record::rewrite(data, database, d_nr);
         // `(R-ForwardResult)` — a returned local bound from a call is built in the return
         // buffer: the call is handed the buffer the delivery copied into.
         crate::forward_result::rewrite(data, d_nr);
@@ -798,9 +801,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-Compact` — a vector rebuilt from a contiguous run of its own elements is
         // compacted in place behind an in-range guard: decided on the same settled IR.
         crate::compact::rewrite(data, d_nr);
+        // `(R-MoveLast)`'s local clause — a vector local rebound from a local dead after the
+        // rebind takes that local's store.  After `(R-Compact)`, which keeps a rebuild of a
+        // vector's own run IN PLACE — better than any exchange — and matches the rebind
+        // this would otherwise consume.
+        crate::take_local::rewrite(data, d_nr);
         // A reduction loop a loop kernel covers is one call of it (@PLN180 § Kernels): decided
         // on the same settled IR, so both backends run the kernel and neither the loop.
-        crate::loop_kernels::rewrite(data, d_nr);
+        crate::loop_kernel_rewrite::rewrite(data, d_nr);
         // `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is one
         // append behind an in-range guard: decided on the same settled IR.
         crate::byte_copy::rewrite(data, database, d_nr);
@@ -957,8 +965,11 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
             .map(|&a| step(size(vars.var_type(a), &Context::Argument)))
             .sum();
         // return-address slot
-        u16::try_from(arg_size + step(4))
-            .unwrap_or_else(|_| crate::limits::frame_too_large(data, d_nr))
+        let end = arg_size + step(4);
+        if end > data.limits.frame {
+            crate::limits::frame_too_large(data, d_nr);
+        }
+        u16::try_from(end).unwrap_or_else(|_| crate::limits::frame_too_large(data, d_nr))
     };
     // @PLAN53 — the aligned V2 allocator is the ONLY allocator.  Compute the
     // V2 layout from the (immutable) function intervals, reset stale local
@@ -970,7 +981,7 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
         let d = &data.definitions[d_nr as usize];
         crate::variables::assign_slots_v2(&d.variables, local_start, &aliases)
     };
-    if result.frame_end > u32::from(u16::MAX) {
+    if result.frame_end > data.limits.frame {
         crate::limits::frame_too_large(data, d_nr);
     }
     {

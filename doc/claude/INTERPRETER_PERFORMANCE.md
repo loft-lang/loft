@@ -107,7 +107,7 @@ The bytecode generator emits the most frequent operator shapes as ONE op that re
 operands in place instead of pushing them first.  Each fused op calls the unfused operators'
 own functions in the same order, so fusion changes where operands come from and nothing about
 what is computed; `LOFT_NO_FUSE=1` emits the unfused form (R-Switch), and
-`tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft` is the guard.
+`loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft` is the guard.
 
 | fused op | replaces | chosen by |
 |---|---|---|

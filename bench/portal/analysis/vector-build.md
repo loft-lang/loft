@@ -223,7 +223,7 @@ asking the second-spelling question of the PUSHERS rather than of the call nodes
 
 What is KNOWN about that op, read from `scopes.rs`: it replaces `OpFreeRefIfDistinct` only in a
 function whose published return BORROWS ITS `__closure` (`return_borrows_closure`) — a capturing
-lambda's body, the shape `tests/scripts/1186-a-join-tail-hands-its-mint-an-owner.loft` guards.
+lambda's body, the shape `loft-suite/attic/scripts/1186-a-join-tail-hands-its-mint-an-owner.loft` guards.
 Such a body need hold no `CallRef` in its OWN tree, so the predicate above would elide ITS
 guard — and that frame's guard is the one that takes the mark and hands the registered store
 up at exit.

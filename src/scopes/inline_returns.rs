@@ -457,7 +457,7 @@ impl Scopes<'_> {
         // "not a user call" for a block that is one.  Whether a given spelling reuses the
         // temp is a numbering property, so the set of spellings this hides is not stable
         // enough to name here —
-        // `tests/scripts/1118b-an-inline-join-lifts-in-every-statement-context.loft` is
+        // `loft-suite/attic/scripts/1118b-an-inline-join-lifts-in-every-statement-context.loft` is
         // the measurement, one cell per statement context.
         //
         // Skipping a LEADING FREE cannot re-admit the `t[p] ?? dflt()` cell the narrowing

@@ -979,6 +979,10 @@ class Former:
         self.peel_prefix = (
             "|".join(rf"\.{v}\(\)" for v in peels) if peels else r"(?!)"
         )
+        # The same prefix as literal text, and the peel verbs by name: the caller table
+        # looks BACKWARD from each call it finds, which needs strings and not a pattern.
+        self.peels = tuple(peels)
+        self.peel_literals = tuple(f".{v}()" for v in peels)
 
 
 # The founding former, and the default every entry point falls back to.
@@ -987,6 +991,8 @@ OPTIONAL = Former("Optional")
 
 def type_discriminated(code):
     """The `Type` variants this body pattern-matches (not the ones it CONSTRUCTS)."""
+    if "Type::" not in code:
+        return set()  # all three patterns need the literal, and most bodies lack it
     return (
         set(TYPE_ARM.findall(code))
         | set(TYPE_LET.findall(code))
@@ -1167,6 +1173,8 @@ def shape_tests(code):
     them), and `matches!`.  A test is only yielded when its PATTERN half names a `Type`
     variant — a `match` over something else is not a shape test.
     """
+    if "Type::" not in code:
+        return  # no pattern here can name a `Type` variant, so nothing below would yield
     out, match_spans = [], []
     for m in MATCH_START.finditer(code):
         brace = _scan_to(code, m.end(), "{")
@@ -1227,6 +1235,54 @@ def test_sees(scrut, pats, peeled, former=None):
         return True
     m = IDENT_ONLY.match(scrut)
     return bool(m) and m.group(1) in peeled
+
+
+CALL_OPEN = re.compile(r"\s*\(")
+
+
+def matches_at_literal(code, literal, pattern):
+    """`pattern.finditer(code)`, for a pattern whose every match STARTS at `literal`.
+
+    Python's regex engine skips ahead to a literal only when the pattern begins with one.
+    A pattern that opens with a lookbehind or an optional group is tried at every character
+    instead, and the caller table asks two such patterns about every verb over the whole of
+    `src/`.  `str.find` names the positions a match can start at; the pattern is then
+    anchored on each, and one inside the previous match is skipped as `finditer` skips it.
+    """
+    at, done = code.find(literal), 0
+    while at >= 0:
+        m = pattern.match(code, at) if at >= done else None
+        if m:
+            done = m.end()
+            yield m
+        at = code.find(literal, at + 1)
+
+
+def method_calls(code, verb, call, former):
+    """Each `.verb(` call in `code` as `(offset, receiver_was_peeled)`.
+
+    `call` is the pattern that answers this on its own — an optional peeled receiver, then
+    the call — and it is what runs when `verb` is itself a peel, where one call can be the
+    receiver of the next.  Every other verb takes the `str.find` route: the call first, then
+    the text before it read backward for a peel, past whitespace and one `.0`.
+    """
+    if verb in former.peels:
+        for m in call.finditer(code):
+            yield m.start(), bool(m.group(1))
+        return
+    lits = former.peel_literals
+    needle = "." + verb
+    at = code.find(needle)
+    while at >= 0:
+        if CALL_OPEN.match(code, at + len(needle)):
+            end = at
+            while end > 0 and code[end - 1].isspace():
+                end -= 1
+            peeled = code.endswith(lits, 0, end) or (
+                code.endswith(".0", 0, end) and code.endswith(lits, 0, end - 2)
+            )
+            yield at, peeled
+        at = code.find(needle, at + 1)
 
 
 def audit_optional(former=None):
@@ -1304,12 +1360,14 @@ def audit_optional(former=None):
         own = re.compile(r"fn\s+%s\s*\(" % verb)
         free = re.compile(r"(?<!fn )(?<![A-Za-z0-9_.])%s\s*\(([^()]{0,80})\)" % verb)
         for p, code in src.items():
-            for m in call.finditer(code):
-                if m.group(1):
+            if verb not in code:
+                continue
+            for at, was_peeled in method_calls(code, verb, call, former):
+                if was_peeled:
                     peeled += 1
                 else:
-                    bare.append(f"{rel(p)}:{code[:m.start()].count(chr(10)) + 1}")
-            for m in free.finditer(code):
+                    bare.append(f"{rel(p)}:{code[:at].count(chr(10)) + 1}")
+            for m in matches_at_literal(code, verb, free):
                 if own.search(code, max(0, m.start() - 4), m.end()):
                     continue  # the definition, not a call
                 if re.search(former.peel_prefix, m.group(1)):

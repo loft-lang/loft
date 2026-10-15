@@ -21,6 +21,100 @@
 /// The limit.  The 301st level, field, parameter, variable or tuple element is refused.
 pub const LIMIT: u32 = 300;
 
+/// The largest frame, in bytes: positions are 16-bit, so a frame past 64 KiB is refused.
+pub const FRAME: u32 = u16::MAX as u32;
+
+/// The limits one program is compiled under ([`crate::data::Data::limits`]): [`LIMIT`] and
+/// [`FRAME`], unless a test LOWERS them.  Raising either is never possible — they are what
+/// every later pass is built to hold.  A lowered limit lets a guard prove the refusal and the
+/// fit at a small size: the same relations, without compiling a program 300 levels deep, which
+/// costs time that grows with the square of the depth.  `// @LIMIT: n` and `// @FRAME_LIMIT: n`
+/// set them for one corpus script; `LOFT_LIMIT` / `LOFT_FRAME_LIMIT` for a `loft` run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    /// The count: nesting levels, fields, parameters, variables, tuple elements.
+    pub count: u32,
+    /// The largest frame in bytes.
+    pub frame: u32,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            count: LIMIT,
+            frame: FRAME,
+        }
+    }
+}
+
+impl Limits {
+    /// The defaults, each lowered to the value given — never raised past it.
+    #[must_use]
+    pub fn lowered(count: Option<u32>, frame: Option<u32>) -> Self {
+        Limits {
+            count: count.map_or(LIMIT, |c| c.min(LIMIT)),
+            frame: frame.map_or(FRAME, |f| f.min(FRAME)),
+        }
+    }
+
+    /// [`Limits::lowered`] from `LOFT_LIMIT` and `LOFT_FRAME_LIMIT`, for a `loft` run.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let read = |k: &str| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.trim().parse::<u32>().ok())
+        };
+        Limits::lowered(read("LOFT_LIMIT"), read("LOFT_FRAME_LIMIT"))
+    }
+
+    /// [`Limits::lowered`] from a corpus script's `// @LIMIT: n` and `// @FRAME_LIMIT: n`
+    /// lines, read in its first 20 lines as `@ARGS` is.
+    #[must_use]
+    pub fn from_annotations(source: &str) -> Self {
+        let read = |key: &str| {
+            source
+                .lines()
+                .take(20)
+                .find_map(|l| l.trim().strip_prefix(key))
+                .and_then(|v| v.trim().parse::<u32>().ok())
+        };
+        Limits::lowered(read("// @LIMIT:"), read("// @FRAME_LIMIT:"))
+    }
+
+    /// A corpus script's `// @STORE_LIMIT: n` (`crate::keys::store_limit` for a `loft` run):
+    /// the store table's ceiling, lowered so a guard that proves a leak by crossing it
+    /// crosses it after `n` evaluations.  It belongs to the RUN, not the compile, so it is
+    /// not part of [`Limits`]; the runners hand it to the stores they build.
+    #[must_use]
+    pub fn store_limit_annotation(source: &str) -> Option<u16> {
+        source
+            .lines()
+            .take(20)
+            .find_map(|l| l.trim().strip_prefix("// @STORE_LIMIT:"))
+            .and_then(|v| v.trim().parse::<u16>().ok())
+    }
+
+    /// Each limit the lower of the two — a second source can only lower what the first set.
+    #[must_use]
+    pub fn min(self, other: Limits) -> Self {
+        Limits {
+            count: self.count.min(other.count),
+            frame: self.frame.min(other.frame),
+        }
+    }
+
+    /// The frame cap in words a message can say: "64 KiB" at the default.
+    #[must_use]
+    pub fn frame_text(self) -> String {
+        if self.frame == FRAME {
+            "64 KiB".to_string()
+        } else {
+            format!("{} bytes", self.frame)
+        }
+    }
+}
+
 /// The deepest expression tree the recursive passes after the parser accept (the scope pass,
 /// `scopes/scan.rs`, and the live-interval pass, `variables/intervals.rs`): past it they stop
 /// with an internal error rather than overflow the stack.  A program within [`LIMIT`] never
@@ -41,10 +135,20 @@ pub fn frame_too_large(data: &crate::data::Data, d_nr: u32) -> ! {
     crate::crash_report::limit_exceeded(
         d.position(),
         &format!(
-            "`{}` needs more than 64 KiB of stack for its parameters, its variables and the \
+            "`{}` needs more than {} of stack for its parameters, its variables and the \
              values its expressions hold — move part of the work into a function of its own, \
              or keep large tuples in a struct or a vector",
-            d.display_name()
+            d.display_name(),
+            data.limits.frame_text()
         ),
     )
 }
+
+/// Most frames a loft call stack may hold — `main` included, since `main` is a frame like any
+/// other and `stack_trace()` reports it as one.
+///
+/// Set below the store stack limit (~8000 bytes / ~8 bytes per frame) so the depth check fires
+/// before a store out-of-bounds panic.  Both backends enforce it against the same quantity:
+/// `fn_call` reads `call_stack.len()`, the generated binary reads its shadow stack in
+/// `cr_call_push` (loft#1058).
+pub const MAX_CALL_DEPTH: u32 = 10_000;

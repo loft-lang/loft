@@ -1,0 +1,10 @@
+# rust-analyzer's project settings — for every editor (and agent session) that runs it here.
+#
+# The check-on-save covers the library and the binaries, not every target.  With all targets
+# it ran `cargo check --workspace --all-targets` after each save: the 486k-line library a
+# second time in unit-test mode, plus every integration-test binary — a full front-end pass
+# beside every build on a shared box, which nobody saw because nothing prints it
+# (CI_BUDGET.md § What a build and each check costs here).  A test file's diagnostics come
+# from `cargo check --tests` or the test run itself.
+[check]
+allTargets = false

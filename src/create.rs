@@ -195,6 +195,68 @@ fn respell_stack_accessors(body: &[u8]) -> String {
         .replace("s.put_var(", "s.put_var_m::<F, _>(")
 }
 
+/// Write `op_layout.rs` — the slot names and the class sizes of the operator table — to
+/// `path`, format it with rustfmt and return the result.  The sibling of
+/// [`generate_code_to`]: `fill.rs` re-exports what this writes.
+/// # Errors
+/// When the file cannot be written.
+pub fn generate_layout_to(data: &Data, path: &str) -> std::io::Result<String> {
+    let mut into = crate::file_access::create(path)?;
+    generate_layout_into(data, &mut into)?;
+    drop(into);
+    let _ = Spawn::new(Program::search("rustfmt"))
+        .args(["--edition", "2024", path])
+        .status();
+    crate::file_access::read_to_string(path)
+}
+
+/// Write `op_layout.rs` content to an arbitrary writer (no rustfmt): the loft name of every
+/// operator slot, in slot order, and the two class sizes `Data::op_code` numbers a
+/// declaration from.  Its own file because `Data` (core) and the stdlib check read them,
+/// and the table they describe sits in the interpreter, above both (@PLN191).
+/// # Errors
+/// When the writer reports an error.
+pub fn generate_layout_into(data: &Data, into: &mut dyn Write) -> std::io::Result<()> {
+    let (slots, hot_count, normal_count) = operator_slots(data);
+    writeln!(
+        into,
+        "// @generated — DO NOT EDIT BY HAND.
+// @I67 — Opcode implementations: the layout of the operator table
+//
+// The slot names and class sizes of the interpreter's operator table (`fill.rs`), generated
+// from the operator declarations in default/*.loft by `src/create.rs::generate_layout_into`.
+// Regenerate with `make fill`; `tests/issues.rs::op_layout_rs_up_to_date` holds this file to
+// that regeneration byte for byte."
+    )?;
+    // The loft name of every slot of the table, in slot order: what a stdlib parsed at run
+    // time is checked against (`stdlib_ops::verify`), because the table is POSITIONAL —
+    // one declaration more or fewer in `default/` moves every later body under the wrong
+    // opcode, and nothing but this list can tell.
+    writeln!(
+        into,
+        "\n/// The loft name of each `fill::OPERATORS` slot, in slot order — the operator declarations\n\
+         /// of the `default/` this binary was generated from.\n\
+         pub const OPERATOR_NAMES: &[&str] = &["
+    )?;
+    for &d_nr in &slots {
+        writeln!(into, "    \"{}\",", data.def(d_nr).name)?;
+    }
+    writeln!(into, "];")?;
+    // The class sizes `Data::op_code` numbers a declaration from: `#hot` operators take the
+    // first slots, `#cold` ones the last, the rest between, each class in declaration order.
+    writeln!(
+        into,
+        "\n/// How many operators are `#hot` (slots `0..OP_HOT`, all one-byte opcodes): the lean\n\
+         /// loop runs them inline.  `Data::op_code` numbers a declaration from this and\n\
+         /// [`OP_NORMAL`], the order the tables in `fill` are laid out in.\n\
+         pub const OP_HOT: u16 = {hot_count};\n\
+         /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the\n\
+         /// `#cold` operators follow them, into the two-byte opcodes.\n\
+         pub const OP_NORMAL: u16 = {normal_count};"
+    )?;
+    Ok(())
+}
+
 /// Write fill.rs content directly to an arbitrary writer (no rustfmt).
 /// # Errors
 /// When the writer reports an error.
@@ -203,7 +265,7 @@ fn respell_stack_accessors(body: &[u8]) -> String {
     reason = "one pass over the operators: the table, the names, and each body"
 )]
 pub fn generate_code_into(data: &Data, into: &mut dyn Write) -> std::io::Result<()> {
-    let (slots, hot_count, normal_count) = operator_slots(data);
+    let (slots, _, _) = operator_slots(data);
     let mut slot_of: HashMap<u32, u16> = HashMap::new();
     for (slot, &d_nr) in slots.iter().enumerate() {
         slot_of.insert(d_nr, slot as u16);
@@ -273,31 +335,13 @@ pub static OPERATORS: &[fn(&mut State)] = &["
         writeln!(into, "    {}_r,", operator_name(&data.def(d_nr).name))?;
     }
     writeln!(into, "];")?;
-    // The loft name of every slot above, in the same order: what a stdlib parsed at run
-    // time is checked against (`stdlib_ops::verify`), because the table is POSITIONAL —
-    // one declaration more or fewer in `default/` moves every later body under the wrong
-    // opcode, and nothing but this list can tell.
+    // The slot names and the class sizes are written to `op_layout.rs` instead
+    // ([`generate_layout_into`]): `Data::op_code` and the stdlib check read them in the
+    // core layer, below this table.
     writeln!(
         into,
-        "\n/// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations\n\
-         /// of the `default/` this binary was generated from.\n\
-         pub const OPERATOR_NAMES: &[&str] = &["
-    )?;
-    for &d_nr in &slots {
-        writeln!(into, "    \"{}\",", data.def(d_nr).name)?;
-    }
-    writeln!(into, "];")?;
-    // The class sizes `Data::op_code` numbers a declaration from: `#hot` operators take the
-    // first slots, `#cold` ones the last, the rest between, each class in declaration order.
-    writeln!(
-        into,
-        "\n/// How many operators are `#hot` (slots `0..OP_HOT`, all one-byte opcodes): the lean\n\
-         /// loop runs them inline.  `Data::op_code` numbers a declaration from this and\n\
-         /// [`OP_NORMAL`], the order the tables above are laid out in.\n\
-         pub const OP_HOT: u16 = {hot_count};\n\
-         /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the\n\
-         /// `#cold` operators follow them, into the two-byte opcodes.\n\
-         pub const OP_NORMAL: u16 = {normal_count};"
+        "\n// The slot names and class sizes these tables are laid out by: `op_layout`.\n\
+         pub use crate::op_layout::{{OPERATOR_NAMES, OP_HOT, OP_NORMAL}};"
     )?;
     let mut hot_arms: Vec<(u16, String)> = Vec::new();
     for d_nr in 0..data.definitions() {

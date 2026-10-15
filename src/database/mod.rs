@@ -8,10 +8,14 @@ mod allocation;
 pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
+mod field_groups;
+pub use field_groups::{LinkedFieldGroup, LinkedFieldKind};
 mod format;
 mod io;
 pub mod journal;
 pub mod lazy;
+mod rebase;
+pub use rebase::StoreRebase;
 #[cfg(not(feature = "wasm"))]
 pub mod loft_file;
 mod search;
@@ -37,6 +41,14 @@ pub use types::Type;
 /// See `doc/claude/CONST_STORE.md` for the full design.
 pub const CONST_STORE: u16 = 1;
 
+/// Reserved store number for coroutine `DbRef` encoding (CO1.1).
+/// Cannot clash with real Stores allocations (limited by `Stores::max`).
+pub const COROUTINE_STORE: u16 = u16::MAX;
+
+/// Sentinel `store_nr` for `DbRef`s that point to native coroutine generators.
+/// Must not clash with any real `Stores` allocation (stores use 0..`Stores::max`).
+pub const NATIVE_COROUTINE_STORE: u16 = 0xFFFD;
+
 use crate::keys::{Content, DbRef};
 use crate::store::{Store, StoreChange};
 use std::collections::HashMap;
@@ -58,53 +70,12 @@ use std::time::Instant;
 /// Type alias for a native function callable from loft bytecode.
 pub type Call = fn(&mut Stores, &mut DbRef);
 
-/// Context injected into `Stores` by `State::execute()` so that native
-/// functions such as `n_parallel_for` / `n_parallel_for_light` can access
-/// the interpreter's bytecode, text segment, library, and compiled data
-/// for spawning workers.
-///
-/// All raw pointers are valid for the duration of the `execute()` call
-/// that set them.
-///
-/// A worker inherits its parent's context (`clone_for_light_worker_with_scratch`)
-/// so that a `par` inside a `par` worker can dispatch in turn — the pointers stay
-/// valid for a worker exactly as they do for the thread that set them, because
-/// workers are joined before `execute()` returns.
-#[derive(Clone)]
-pub struct ParallelCtx {
-    pub bytecode: *const Arc<Vec<u8>>,
-    pub library: *const Arc<Vec<Call>>,
-    pub data: crate::data_ref::DataRef,
-    /// Cached library index of `n_stack_trace`; `u16::MAX` = not found.
-    /// Copied into worker `State::stack_trace_lib_nr` so workers can snapshot
-    /// the call stack when `stack_trace()` is called (fix #92).
-    pub stack_trace_lib_nr: u16,
-    /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
-    pub frame_headroom: Arc<Vec<u32>>,
-    /// The running program's constant table (`State::const_refs`), handed to every worker
-    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
-    pub const_refs: Arc<Vec<DbRef>>,
-}
-
-impl ParallelCtx {
-    /// The definition table of the program this context was installed for.  Every
-    /// installer passes the run's own `Data`, so a context always carries one.
-    ///
-    /// # Panics
-    /// When the context was built without a definition table, which no installer does.
-    #[must_use]
-    pub fn data(&self) -> &crate::data::Data {
-        self.data
-            .get()
-            .expect("a parallel context carries its program's definitions")
-    }
-}
-
-// Safety: the pointed-to data lives for the duration of `State::execute()`,
-// which is on the main thread and outlives all worker threads it spawns
-// (workers are joined before execute() returns).
-unsafe impl Send for ParallelCtx {}
-unsafe impl Sync for ParallelCtx {}
+/// The interpreter's context, held by a store it runs on (`Stores::parallel_ctx`).  Opaque
+/// to the store; unwind-safe like the context it holds, so a `State` still crosses a
+/// `catch_unwind`.
+pub type InterpreterCtx = std::sync::Arc<
+    dyn std::any::Any + Send + Sync + std::panic::RefUnwindSafe + std::panic::UnwindSafe,
+>;
 
 /// TR1.4: snapshot of one local variable's runtime value, captured by
 /// `State::static_call` for inclusion in a `StackFrame.variables` vector.
@@ -535,9 +506,10 @@ pub struct Stores {
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
     pub last_json_errors: Vec<String>,
-    /// Set by `State::execute()` to allow native functions to access the
-    /// interpreter's bytecode, library, and compiled data during execution.
-    pub parallel_ctx: Option<Box<ParallelCtx>>,
+    /// The interpreter's context while it executes (`parallel::ParallelCtx`: its bytecode,
+    /// native table and program), set by `State::execute()` and read back by its `par`
+    /// natives.  Opaque here: the store a compiled program links never reads it.
+    pub parallel_ctx: Option<InterpreterCtx>,
     /// Plan-06 PRIORITY.md spine step 8a — stack of per-call result
     /// buffers populated by `n_parallel_queue` and consumed by
     /// `n_parallel_buf_get` / drained by `n_parallel_buf_drop`.  Each
@@ -676,6 +648,11 @@ pub struct Stores {
     /// don't rely on adoption — `copy_from_worker` reads through the
     /// graft swap regardless of slot reuse.
     pub disable_slot_reuse: bool,
+    /// The store table's ceiling: a store numbered at or past it is the "store table
+    /// exhausted" refusal.  65535 (the null sentinel) unless a test LOWERED it
+    /// (`LOFT_STORE_LIMIT`, `// @STORE_LIMIT:`), so a guard crosses it in a few hundred
+    /// evaluations instead of 65535.
+    pub store_limit: u16,
     /// `LOFT_UAF` use-after-free detector: slots freed by the CURRENT op
     /// (`free_named` pushes; the dispatch loop drains + scans after the op).
     /// Always empty when the detector is off.  See `keys::uaf_check_enabled`.
@@ -710,6 +687,9 @@ pub struct Stores {
     /// Script-level arguments (set by the CLI after parsing its own flags).
     /// When non-empty, `os_arguments()` returns these instead of raw `std::env::args`.
     pub user_args: Vec<String>,
+    /// `@FR-R-DecodeView` — the byte frame the running decode region's spans read: set by a
+    /// region's root for the length of its call (`codegen_runtime::DvFrame`), null outside one.
+    pub dv_frame: DbRef,
     /// Monotonic timestamp captured at `Stores::new()`.  Used by `ticks()` to return
     /// microseconds elapsed since program start; cloned into worker Stores unchanged so
     /// all threads share the same reference point.
@@ -802,12 +782,14 @@ impl Clone for Stores {
             frame_yield: false,
             poison_free: self.poison_free,
             disable_slot_reuse: self.disable_slot_reuse,
+            store_limit: self.store_limit,
             uaf_freed_this_op: Vec::new(),
             worker_slot_dispenser: None,
             worker_allocated_indices: Vec::new(),
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: self.user_args.clone(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: self.start_time,
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1253,8 +1235,8 @@ impl Stores {
         &mut self,
         worker: &mut Stores,
         parent_store_count: u16,
-    ) -> crate::parallel::StoreRebase {
-        let mut rebase = crate::parallel::StoreRebase::with_parent_count(parent_store_count);
+    ) -> StoreRebase {
+        let mut rebase = StoreRebase::with_parent_count(parent_store_count);
         let total = worker.allocations.len();
         for nr in (parent_store_count as usize)..total {
             if worker.allocations[nr].free {
@@ -1440,7 +1422,7 @@ mod worker_output_slot_tests {
 #[cfg(test)]
 mod store_rebase_tests {
     use super::DbRef;
-    use crate::parallel::StoreRebase;
+    use super::StoreRebase;
 
     #[test]
     fn translate_passes_through_unmapped() {
@@ -1569,12 +1551,14 @@ impl Stores {
             frame_yield: false,
             poison_free: false,
             disable_slot_reuse: false,
+            store_limit: crate::keys::store_limit(),
             uaf_freed_this_op: Vec::new(),
             worker_slot_dispenser: None,
             worker_allocated_indices: Vec::new(),
             report_asserts: false,
             assert_results: Vec::new(),
             user_args: Vec::new(),
+            dv_frame: DbRef::NULL,
             #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
             start_time: Instant::now(),
             // `Stores::new()` must not call `Instant::now()` or
@@ -1826,10 +1810,7 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            lg.log_runtime_kind(
-                &kind,
-                crate::codegen_runtime::running_frame_position().as_ref(),
-            );
+            lg.log_runtime_kind(&kind, crate::call_frames::running_frame_position().as_ref());
         }
     }
 
@@ -1866,7 +1847,7 @@ impl Stores {
         // `+1` encoding reserves raw 0, so `min + 65535` is the value that cannot be
         // stored here; it read back as null before by COLLIDING with the sentinel, and now
         // it is written as null deliberately.  Same observable answer, stated rather than
-        // stumbled into — `tests/scripts/389-narrow-runtime-collision.loft` pins it.
+        // stumbled into — `loft-suite/attic/scripts/389-narrow-runtime-collision.loft` pins it.
         let store = if crate::store::Store::short_fits(min, val) {
             val
         } else {
@@ -1925,10 +1906,21 @@ impl Stores {
         index: i64,
     ) -> crate::keys::DbRef {
         let len = crate::vector::length_vector(db, &self.allocations);
-        // @FR-H-Index — the native half of the one normalisation: negative counts from the
-        // end, and only a STILL-out-of-range index is out of bounds.  Kept byte-for-byte with
-        // `State::vec_get_or_raise` because a divergence here is a different program, not a
-        // different speed.
+        if self.index_or_raise_runtime(index, len).is_none() {
+            // `nullref`, the one value spelling of absence (`DbRef::or_null`,
+            // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
+            return crate::keys::DbRef::NULL_REPORTED;
+        }
+        crate::vector::get_vector(db, size, index, &self.allocations)
+    }
+
+    /// @FR-H-Index — the native half of the one normalisation, for a vector of `len`
+    /// elements: negative counts from the end, and only a STILL-out-of-range index is out
+    /// of bounds, which raises `NegativeIndex` or `IndexOutOfBounds` and answers `None`.
+    /// Kept byte-for-byte with `State::vec_get_or_raise` because a divergence here is a
+    /// different program, not a different speed; `vec_get_or_raise_runtime` and the
+    /// `@FR-R-Apart` element helpers (`codegen_runtime::ap_get_f64`) share it.
+    pub fn index_or_raise_runtime(&mut self, index: i64, len: u32) -> Option<u32> {
         let normalized = if index < 0 {
             index + i64::from(len)
         } else {
@@ -1938,17 +1930,15 @@ impl Stores {
             self.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::NegativeIndex {
                 idx: index,
             });
-            // `nullref`, the one value spelling of absence (`DbRef::or_null`,
-            // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
-            return crate::keys::DbRef::NULL_REPORTED;
+            return None;
         }
         if normalized >= i64::from(len) {
             self.raise_recoverable_runtime(
                 crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds { idx: index, len },
             );
-            return crate::keys::DbRef::NULL_REPORTED;
+            return None;
         }
-        crate::vector::get_vector(db, size, index, &self.allocations)
+        Some(normalized as u32)
     }
 
     /// `vec_get_or_raise_runtime` with the store resolution and the length load supplied
@@ -2043,7 +2033,7 @@ impl Stores {
     /// `@FR-H-WriteOOB` — the fast path's own test admits only `0 <= index < len`, so a
     /// negative index (which names an element from the END, `@FR-H-Index`) and an absent one
     /// are BOTH the cold path's to decide; the fast path never writes what the twin would
-    /// not.  The guard is `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`.
+    /// not.  The guard is `loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft`.
     ///
     /// # Panics
     ///
@@ -3130,7 +3120,7 @@ impl Stores {
         // @PLAN53 cluster 2 / S4: pop the value's STEPPED span (8-rounded in
         // aligned mode) so a native arg occupying a stepped slot is reached
         // correctly; identity (real size_of) when off → flag-OFF unchanged.
-        let step = crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        let step = crate::call_frames::aligned_stack_step(size_of::<T>() as u32);
         debug_assert!(
             stack.pos >= step,
             "Stack underflow in get<{}>: stack.pos={} but need {} bytes",
@@ -3179,7 +3169,7 @@ impl Stores {
         // @PLAN53 cluster 2 / S4: push the value's STEPPED span so a native
         // result lands at the aligned slot the caller's codegen expects;
         // identity when off.
-        stack.pos += crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        stack.pos += crate::call_frames::aligned_stack_step(size_of::<T>() as u32);
     }
 
     /// Look up a type by index, panicking with a diagnostic if the index is out of range.

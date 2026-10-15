@@ -1,0 +1,3 @@
+// A scalar parameter and a scalar return.  Nullable half.
+fn f(n: integer?) -> integer? { n + 1 }
+fn main() { a: integer? = 4; println("{f(a) ?? -9}"); }

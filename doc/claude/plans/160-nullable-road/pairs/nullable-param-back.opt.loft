@@ -1,0 +1,4 @@
+// A record parameter handed straight back.  Nullable half: the parameter and the result are `S?`.
+struct S { a: integer }
+fn f(p: S?) -> S? { p }
+fn main() { x = S { a: 41 }; t = f(x); println("{t.a ?? -1}"); }

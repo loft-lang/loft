@@ -1,0 +1,13 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index dfab3b4f4..763f86043 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -5579,7 +5579,7 @@ impl Stores {
+                                 let at = 8 + size * i + u32::from(t);
+                                 let p = store.get_u32_raw(cur, at);
+                                 if p != 0 {
+-                                    store.delete(p);
++                                    let _ = p;
+                                     store.set_u32_raw(cur, at, 0);
+                                 }
+                             }

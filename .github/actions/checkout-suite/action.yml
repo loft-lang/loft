@@ -1,0 +1,26 @@
+# The language suite (loft-lang/loft-suite, @PLN193) at the commit `tests/loft-suite.pin`
+# names, checked out as `loft-suite/` inside the workspace.  Every job that walks "every
+# program" — the suite's own run, the index, the IR round-trip, the oracle's leak scan, the
+# nightly sweeps — uses this step and sets `LOFT_SUITE_DIR: loft-suite`, so the readers
+# (`tests/common/corpus.rs`, `scripts/corpus.py`, `scripts/corpus_files.sh`, the indexer) find
+# it where it landed rather than beside the repository, where a runner has no room.
+name: Check out the language suite at the pinned commit
+description: loft-lang/loft-suite at the sha in tests/loft-suite.pin, under loft-suite/
+inputs:
+  pin:
+    description: The pin file, where the loft tree is not at the workspace root
+    required: false
+    default: tests/loft-suite.pin
+runs:
+  using: composite
+  steps:
+    - name: Which suite commit this tree pins
+      id: pin
+      shell: bash
+      run: echo "ref=$(grep -v '^#' '${{ inputs.pin }}' | head -1)" >> "$GITHUB_OUTPUT"
+    - name: Check out the suite at the pinned commit
+      uses: actions/checkout@v5
+      with:
+        repository: loft-lang/loft-suite
+        ref: ${{ steps.pin.outputs.ref }}
+        path: loft-suite

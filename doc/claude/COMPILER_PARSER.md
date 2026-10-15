@@ -136,7 +136,7 @@ declare its own. Making registration idempotent by looking the name up in
 (discriminant 2) read back `LittleEndian` — in a program containing no forward
 reference at all. `enumerate` shadowing the name is exactly what keeps two same-named
 enums apart, so the mint must stay unconditional. Guarded by the name-collision cell in
-`tests/scripts/803-forward-enum-value.loft`.
+`loft-suite/attic/scripts/803-forward-enum-value.loft`.
 
 **Every CONSUMER of a pass-1 placeholder needs its own pass-2 report.** The site that creates
 a stub reads as the risky half, so review lands there; the risk is spread across every reader,

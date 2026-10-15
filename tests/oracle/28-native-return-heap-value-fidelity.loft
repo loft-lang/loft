@@ -8,7 +8,7 @@
 // the interpreter was correct:
 //   - #488: a heap vector that is a FIELD OF A LOCAL struct returned EMPTY
 //     (fixed via parse_return's buffer-delivery gate, guard
-//     tests/scripts/450-struct-field-vector-return.loft);
+//     loft-suite/attic/scripts/450-struct-field-vector-return.loft);
 //   - the field-of-param variant of the same return;
 //   - a `float?` return ZEROED when the callee is invoked with a CONSTRUCTED text
 //     argument (`"{n}"`) — the corruption is a non-null 0, so a `?? d` discharge

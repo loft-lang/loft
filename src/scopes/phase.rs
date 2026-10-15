@@ -412,10 +412,9 @@ pub(super) fn run_scan_phase(
         scopes.local_owns.insert(v, flag);
     }
     // A nullable heap local that holds a PROJECTION VIEW owns no store it must free (a view
-    // is never owned, @FR-O-Owner).  Mark it never-free (@FR-O-Override) so the D-own-16
-    // `borrows_one_argument` residual — which reads its single-ARGUMENT dep as ownership —
-    // does not free the viewed store it displaces at a reassignment (the caller's nested
-    // record, or a local's field).  The two mixed-ownership shapes that DO own a store are
+    // is never owned, @FR-O-Owner).  Mark it never-free (@FR-O-Override) so no free releases
+    // the viewed store it displaces at a reassignment (the caller's nested record, or a
+    // local's field).  The two mixed-ownership shapes that DO own a store are
     // excluded: a solely-owned minting call keeps its loft#1200 runtime flag, and a view+mint
     // mix its owner witness (loft#1336).  What remains frees nothing of its own, so this
     // leaks nothing.

@@ -1,0 +1,4 @@
+// An `if` whose arms are a record PARAMETER and a literal.  Nullable half.
+struct S { a: integer }
+fn f(p: S, c: boolean) -> S? { if c { p } else { S { a: 5 } } }
+fn main() { x = S { a: 41 }; t = f(x, true); u = f(x, false); println("{t.a ?? -1} {u.a ?? -1}"); }

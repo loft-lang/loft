@@ -272,7 +272,7 @@ COLLECTION projection off an OWNED base — which is exactly `OWNERSHIP_MODEL §
 `af = bx.v`.
 
 **The whole boundary is pinned in one place:**
-`tests/scripts/bind-copies-or-views-the-whole-boundary.loft`, seventeen cells, measured identical
+`loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft`, seventeen cells, measured identical
 on both backends.  Ask it rather than re-deriving: the cells existed before, scattered across four
 files, and no single one said what the rule was.
 
@@ -291,7 +291,7 @@ the block can read. And a LOOP body's own disturbances precede every use on the 
 the back edge is a second disturbance a single forward reading cannot see. Both halves of that
 are what `a = w.inner` inside `for … { w = Outer{inner: a}; a = w.inner }` needs: the container
 is reassigned around a live view, so B-View materialises it and says so. Pinned by
-`tests/scripts/1184-a-view-assigned-back-onto-its-own-source.loft`, whose last two cells are the
+`loft-suite/rules/binding/B-View/1184-a-view-assigned-back-onto-its-own-source.loft`, whose last two cells are the
 control — an UNDISTURBED view still aliases and still writes through, on both backends.
 
 ### `const` — the immutability axis (binding-const vs value-const, @PLN40, shipped)
@@ -484,7 +484,7 @@ predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather tha
   Type::Vector(_, _))`, a set of ONE, so a keyed source took the deep-copy path and got its own
   store with `OpReplaceKeyed` filling it from the source.  The two collections were then
   independent — measured, after one write through each name `h` held `{1,3}` and `a` held
-  `{1,2}`, *both reporting length 2*.  The set now comes from `vectors::is_collection`, which
+  `{1,2}`, *both reporting length 2*.  The set now comes from `data::is_collection`, which
   `(Col-Store)` already defines as the `is_keyed` set plus `Vector`.
   ⚠ **This was NOT the broken emission path below**, though loft#1433 was filed as if it were
   ("the alias silently drops every append", which is how an EMPTY source presents).  The append
@@ -504,7 +504,7 @@ predicate into `keyed_kind` (peels) and `owns_keyed_store` (does not) rather tha
   predicates alone hands `append_source` a `RefVar` that matches no arm, and the
   `&vector<Row>` twin that always worked starts refusing.  Separately, two of the five kinds
   (`trie`, `spatial`) were an ICE through `&` at all — a deref allow-list listing kinds instead
-  of deriving them from `vectors::is_collection`.
+  of deriving them from `data::is_collection`.
   ⚠ **This entry previously said the refusal was the SAFER state and that "the fix belongs in
   the keyed emission path, not in the predicates".  That conclusion was exactly backwards, and
   the correction is worth more than the entry.**  The MEASUREMENTS behind it were real — the
@@ -583,4 +583,4 @@ check at all. Both appended into the CALLER on both backends while the parameter
 `const`. It is asked once now, ahead of the route dispatch, because whether a write is
 allowed is a property of the BINDING and never of the route that lowers it —
 `Parser::guard_const_write`, called from `parse_assign_op_inner`. The crossing the oracle
-was missing is `tests/scripts/const-binds-through-every-append-route.loft`.
+was missing is `loft-suite/rules/binding/Const-Value/const-binds-through-every-append-route.loft`.

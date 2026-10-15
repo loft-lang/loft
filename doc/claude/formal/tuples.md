@@ -417,20 +417,20 @@ the companion [tuples-history.md](tuples-history.md).
   swaps the CALLER's tuple: `(1,2)` reads back `2,1`. Verified on both backends for every
   admitted element type — `integer`, `float`, `single`, `character`, `boolean` — uniform and
   mixed (`&(integer, boolean, character)`), and at width 3 so the last element is reached
-  (`tests/scripts/1006-reference-tuple-element-types.loft`).
+  (`loft-suite/attic/scripts/1006-reference-tuple-element-types.loft`).
 - **A stored tuple is a place (`T-Ref-Src`, `T-Ref-Rep`)** — a vector element, a struct field, the
   element of a vector held in a field, a member of such a link and a link forwarded on each link
   by a `&` bind, an annotated bind and a `&(…)` argument, across a loop and a nine-member tuple of
   every member kind, with a callee declared below its caller; every written place's neighbours
-  are asserted unchanged (`tests/scripts/a-stored-tuple-is-a-place-a-link-names.loft`).  A tuple
+  are asserted unchanged (`loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft`).  A tuple
   literal and a call result are refused once each, in all three spellings
   (`a-tuple-value-has-no-place-to-link.loft`).  A program with no `&(…)` lowers to the same IR
   as before the record form, measured over the corpus with `loft introspect`.
 - **Refused element types (`T-Ref-El`)** — a NULLABLE element (`&(text?, text)`), a fn-ref
   (`&(fn() -> τ, …)`) and a NESTED TUPLE are STATIC errors naming the element type, never an
-  ICE (`tests/scripts/102-expected-errors.loft`). A bare `text` element and a struct element
+  ICE (`loft-suite/rules/closures/L-FnAbsent/102-expected-errors.loft`). A bare `text` element and a struct element
   are ADMITTED — the record-backed form, measured 2026-09-10 on both backends and guarded by
-  `tests/scripts/reference-tuple-heap-elements-link.loft`.
+  `loft-suite/attic/scripts/reference-tuple-heap-elements-link.loft`.
 - **Not a tuple (`T-Paren`)** — `.i` on a receiver that is not a tuple names the receiver's
   type and the cure for its KIND: `v.0` on a vector says to index it (`[0]`), `s.0` on a
   struct says to name the field, and a scalar gets the rule itself — `(e)` is grouping, not a
@@ -454,7 +454,7 @@ the companion [tuples-history.md](tuples-history.md).
   for EVERY heap element type, not just the vector the paragraph above names: `hash`, `hash<τ>?`,
   `sorted`, `index`, `trie`, `spatial`, and a DEEP case with a nested `vector<text>` inside the
   element. Both backends
-  (`tests/scripts/1230-a-keyed-tuple-element-owns-a-copy.loft`).
+  (`loft-suite/rules/tuples/T-Cons/1230-a-keyed-tuple-element-owns-a-copy.loft`).
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on a
 tuple's element order, values, or a projection is the definitional error this doc names.

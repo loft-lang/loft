@@ -1,0 +1,13 @@
+diff --git a/src/generation/calls.rs b/src/generation/calls.rs
+index 2a4160f72..be7a41bd8 100644
+--- a/src/generation/calls.rs
++++ b/src/generation/calls.rs
+@@ -588,7 +588,7 @@ impl Output<'_> {
+                 for i in 0..n {
+                     write!(w, "__wd.{i}, ")?;
+                 }
+-                return write!(w, "__tp.rec != 0) }}");
++                return write!(w, "true) }}");
+             }
+             self.output_record_tuple(w, tp, &Value::RawExpr("__tp".to_string()))?;
+             return write!(w, " }}");

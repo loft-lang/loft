@@ -301,7 +301,7 @@ plain exists-anywhere search.
   "planned for 1.1+") so this is landmine-removal, not a behavior change;
   the full native-coverage work stays under [NATIVE.md § N9](NATIVE.md).
 - **Regression coverage for the widened walker shapes:**
-  `tests/scripts/293-text-self-ref-wide-shapes.loft` pins text
+  `loft-suite/attic/scripts/293-text-self-ref-wide-shapes.loft` pins text
   self-reference through If / Block / Loop RHS on both backends (the
   shapes `code_references_var` missed); `par_shallow_tests` gains
   `parent_write_in_return_value_detected` + `…_in_tuple_element_detected`

@@ -29,6 +29,9 @@
 
 use crate::data::{Block, Data, DefType, Type, Value};
 use crate::database::Stores;
+pub(crate) use crate::ir_shape::split_call;
+pub use crate::ir_shape::{WrapperOperand, one_op_wrapper};
+use crate::ir_shape::{as_int, as_var, call_named};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -167,9 +170,10 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
 ];
 
 /// The operators that only COMPARE a reference — its record number, or the whole `DbRef` —
-/// and read no store: a view tested against null (`v != null`) is still the view it was, so a
-/// held address survives them (`@FR-R-RecPtr`).  An allow-list like the one above.
-pub const REF_COMPARE_OPS: [&str; 3] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef"];
+/// and read no store: a view tested against null (`v != null`, or the handle test
+/// `OpRefIsNull`) is still the view it was, so a held address survives them (`@FR-R-RecPtr`).
+/// An allow-list like the one above.
+pub const REF_COMPARE_OPS: [&str; 4] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef", "OpRefIsNull"];
 
 /// `@FR-R-InPlace`'s copy clause — `OpCopyRecord(src, dst, tp)` with no flag set, over a
 /// record type that owns NO heap: `size(tp)` bytes stored at the address of `dst`, which is
@@ -219,6 +223,41 @@ fn scalar_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Fu
     op == "OpCreateStack"
         && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
             if vars.is_some_and(|v| is_scalar(v.tp(*t))))
+}
+
+/// The address of a TEXT local (`OpCreateStack(t)`, a `&text` hand-off such as a callee's
+/// output text) writes nothing a header describes: on `--native` a text local is a Rust
+/// `String`, outside every store, and the link is its address.  Whatever writes through it is
+/// judged on its own.
+fn text_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+            if vars.is_some_and(|v| is_text_shape(v.tp(*t))))
+}
+
+/// A text, seen through `τ?` and any `&` link.
+fn is_text_shape(tp: &Type) -> bool {
+    matches!(tp.peel_link(), Type::Text(_))
+}
+
+/// `@FR-R-InPlace`'s link clause — the address of a local naming a record that owns NO heap
+/// (`&rows[i]` handed to `fn f(p: &(integer, integer))`) writes nothing either: through it a
+/// callee can only write the record's scalars in place or rebind the local, and neither claims,
+/// grows or frees.  What the callee writes is judged by its own summary.  A record that owns a
+/// text or a collection stays a writer — a callee writing it through the link re-claims.
+fn record_stack_ref(
+    stores: Option<&Stores>,
+    data: &Data,
+    op: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+        if vars.zip(stores).is_some_and(|(v, st)| {
+            plain_record_type(data, v.tp(*t))
+                .is_some_and(|tp| st.is_struct(tp) && !st.owns_heap(tp))
+        }))
 }
 
 /// `LOFT_NO_COPY_IN_PLACE=1` — a no-heap record copy is a store writer again
@@ -308,6 +347,10 @@ pub struct HoistOwned {
     /// The same fact for EVERY function of the program, so a CALLEE's body is judged with
     /// its own dead buffers exempt (`call_writes_store`): a program-wide table, shared.
     pub dead_by_fn: Rc<HashMap<u32, HashSet<u16>>>,
+    /// The elements `(R-RefillText)`'s collection clause builds into KEPT slots: a mint there
+    /// reuses a slot that still owns its previous text, so a text written into it releases
+    /// that text — no first write, and `@FR-R-Mint`'s text clause does not take it.
+    pub kept_elems: HashSet<u16>,
 }
 
 impl HoistOwned {
@@ -1006,7 +1049,7 @@ pub struct StoreFacts<'a> {
 
 impl StoreFacts<'_> {
     /// The end of `x`'s dep chain; `None` when the chain forks, loops or leaves the table.
-    fn terminal(&self, x: u16) -> Option<u16> {
+    pub(super) fn terminal(&self, x: u16) -> Option<u16> {
         let mut cur = x;
         let mut seen: HashSet<u16> = HashSet::new();
         loop {
@@ -1050,6 +1093,12 @@ impl StoreFacts<'_> {
             && !vars.is_compiler_generated(t)
             && !matches!(vars.tp(t).base(), Type::RefVar(_))
             && crate::data::is_dbref(vars.tp(t).base())
+    }
+
+    /// Is `t` the owner of a store nothing outside this activation can name — `fresh`,
+    /// asked by `@FR-R-Header`'s apart clause.
+    pub(super) fn owns_alone(&self, t: u16) -> bool {
+        self.fresh(t)
     }
 
     /// Do `a`'s and `b`'s records provably live in different stores?
@@ -1126,6 +1175,43 @@ fn mover_roots(
     out
 }
 
+/// `@FR-R-Header`'s apart clause — what a loop the gate DECLINES still holds: the header
+/// and the element base of each vector it only reads in a store nothing in it is handed
+/// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
+/// gate's verdict about the whole body, and this rests on the one store's mentions alone.
+fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts>) -> LoopHoist {
+    let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
+        return LoopHoist::default();
+    };
+    let vectors = super::apart::apart_headers(
+        body,
+        data,
+        facts,
+        &|t| work_buffer_arg(data, def_nr, t),
+        vector_candidates(body, data, def_nr),
+    );
+    crate::rewrite_census::fired("R-Header/apart", vectors.len());
+    if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+        let vars = data.def(def_nr).variables();
+        eprintln!(
+            "hoist: {} loop {} keeps {} header(s) apart from what declined it: {:?}",
+            data.def(def_nr).name(),
+            body.scope,
+            vectors.len(),
+            vectors
+                .iter()
+                .map(|(p, _)| vars.name(p.0))
+                .collect::<Vec<_>>()
+        );
+    }
+    LoopHoist {
+        // The loop grows no store these headers live in, so each carries its base.
+        growth_free: !vectors.is_empty(),
+        vectors,
+        ..LoopHoist::default()
+    }
+}
+
 /// The vector headers and the record scalars `body` may derive once up front.
 ///
 /// The gate is [`hoistable_vectors`]' gate; a body it declines hoists nothing.  Under it
@@ -1158,7 +1244,7 @@ pub fn hoistable(
     facts: Option<&StoreFacts>,
 ) -> LoopHoist {
     if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
-        return LoopHoist::default();
+        return apart_hoist(body, data, def_nr, facts);
     }
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
@@ -1362,7 +1448,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return LoopHoist::default();
+                return apart_hoist(body, data, def_nr, facts);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1378,7 +1464,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return LoopHoist::default();
+                return apart_hoist(body, data, def_nr, facts);
             }
             let any_retbuf = pushes
                 .iter()
@@ -2946,100 +3032,6 @@ pub fn nested_field_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("LOFT_NO_NESTED_FIELD").is_ok_and(|v| v != "0"))
 }
 
-/// @PLN157 § V-o — is `d_nr` a stdlib ONE-OP wrapper: a loft function whose whole body is
-/// one native op over its own parameters (`pub fn len(both: vector) -> integer {
-/// OpLengthVector(both) }`, `sqrt` = `OpMathFuncFloat(9, both)`)?
-///
-/// Answers the op and the operand list to emit in the wrapper's place, each operand a
-/// PARAMETER INDEX or a constant the body spells.  A body that does anything else — a
-/// conversion (`exp` passes `E as single`), a second statement, a call to another loft
-/// function, a return buffer — answers `None` and the call is emitted as a call.
-/// Emitting the op instead of the call changes nothing the program can observe (the
-/// wrapper's Rust body IS the op's template) and lets the registry's header-aware emitters
-/// see the op: `len(d)` after a view binding or inside a hoisted loop reads the header's
-/// length instead of resolving the store.
-#[must_use]
-/// Enforces `@FR-R-Wrapper`, the STDLIB qualifier included.
-pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand>)> {
-    if (d_nr as usize) >= data.definitions.len() {
-        return None;
-    }
-    let def = data.def(d_nr);
-    if !def.rust().is_empty() || matches!(def.code(), Value::Null) {
-        return None;
-    }
-    if def.hidden_return_buffer_attr().is_some() {
-        return None;
-    }
-    // Only the STDLIB's wrappers.  A user function's CALL is itself observable: the live
-    // tier may flip it to the interpreter (`live_flipped`), and its frame is on the shadow
-    // call stack — emitting its op in place of the call skips both.  A stdlib wrapper has
-    // neither (a `t_` method carries no frame and no live check), so for it and only for
-    // it the op IS the call.  Measured: a one-op user function (`fn reader(w: W) -> integer
-    // { w.a }`) flipped to the interpreter ran compiled, and the wasm live-dispatch probe
-    // counted 0 dispatches where it expected 2.
-    if def.source() != crate::data::STD_SOURCE {
-        return None;
-    }
-    // A text parameter or result takes the CALL's conversions (a `String` result handed to
-    // a `&str` parameter, a work buffer for the answer) that a template's operands do not
-    // get, so `len(t)` and `print(t)` stay calls.
-    if def
-        .attributes()
-        .iter()
-        .any(|a| matches!(a.typedef.base(), Type::Text(_)))
-        || matches!(def.returned().base(), Type::Text(_))
-    {
-        return None;
-    }
-    let params = def.attributes().len();
-    // The body: a block of exactly one statement (line markers aside), which is the op
-    // call, possibly under a `Return`.
-    let mut stmt: Option<&Value> = None;
-    match def.code().unspan() {
-        Value::Block(b) => {
-            for op in &b.operators {
-                if matches!(op.unspan(), Value::Line(_)) {
-                    continue;
-                }
-                if stmt.is_some() {
-                    return None;
-                }
-                stmt = Some(op);
-            }
-        }
-        other => stmt = Some(other),
-    }
-    let mut stmt = stmt?.unspan();
-    if let Value::Return(inner) = stmt {
-        stmt = inner.unspan();
-    }
-    let Value::Call(op, args) = stmt else {
-        return None;
-    };
-    let callee = data.def(*op);
-    if !matches!(callee.code(), Value::Null) || callee.rust().is_empty() {
-        return None;
-    }
-    let mut operands = Vec::with_capacity(args.len());
-    for a in args {
-        match a.unspan() {
-            Value::Var(v) if (*v as usize) < params => operands.push(WrapperOperand::Param(*v)),
-            Value::Int(n) => operands.push(WrapperOperand::Const(Value::Int(*n))),
-            _ => return None,
-        }
-    }
-    Some((*op, operands))
-}
-
-/// One operand of a [`one_op_wrapper`]'s op: the caller's argument at that parameter
-/// position, or a constant the wrapper body spells (a libm selector).
-#[derive(Clone, Debug, PartialEq)]
-pub enum WrapperOperand {
-    Param(u16),
-    Const(Value),
-}
-
 /// The typed getters an element read can be fused INTO, with the Rust type each reads and
 /// the null sentinel its `#rust` template answers at the absent element.
 ///
@@ -3512,186 +3504,10 @@ fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
     }
 }
 
-/// Is `v` a `break` — bare, or a block whose only statement is one?
-fn is_break_block(v: &Value) -> bool {
-    match v.unspan() {
-        Value::Break(_) => true,
-        Value::Block(b) => {
-            b.operators.len() == 1 && matches!(b.operators[0].unspan(), Value::Break(_))
-        }
-        _ => false,
-    }
-}
-
-/// The `if index == hi { break }` an INCLUSIVE range emits before its step (loft#1525) — the
-/// stop decided on the value just yielded, so `hi + 1` never has to exist.  Recognised by SHAPE
-/// (an equality whose arms are a break and a null), never by position alone, so an ordinary
-/// leading statement is not mistaken for it.
-fn is_inclusive_stop_guard(v: &Value, data: &Data) -> bool {
-    let Value::If(cond, on_true, on_false) = v.unspan() else {
-        return false;
-    };
-    if !is_break_block(on_true) || !matches!(on_false.unspan(), Value::Null) {
-        return false;
-    }
-    // The EQUALITY is what tells this guard from the range's own break test, and the
-    // distinction is load-bearing: the two-counter form is `[test, index, step, yield]`, whose
-    // leading statement is ALSO an if-break over a two-argument call.  Matching on the shape
-    // alone peeled that test and read the remainder as the single-counter form — a different
-    // loop, silently.  The range tests with `OpLtInt`/`OpLeInt`; only the stop guard is `==`.
-    matches!(
-        cond.unspan(),
-        Value::Call(d, args) if args.len() == 2 && data.def(*d).name() == "OpEqInt"
-    )
-}
-
-/// Recognise the fill idiom in a `For loop` body (@PLN157 § V-ae): the iterator block of a
-/// counted range in either lowering — the two-counter form `[if hi <cmp> next { break };
-/// index = next; next = next + 1; index]` (§ V-ab) or the single-counter form `[index =
-/// index + 1; if hi <cmp> index { break }; index]` (P3b) — followed by ONE statement, a
-/// fusable scalar set (`OpSetInt`/`OpSetSingle`/`OpSetFloat`) at field 0 of `v[idx]` with
-/// `v` a pure path, `idx` the loop variable or `invariant + variable`, and the value
-/// invariant.  `<cmp>` is `OpLtInt` for an inclusive range and `OpLeInt` for an exclusive
-/// one.  Reports shape only; the emitter confirms the path has a header.
-/// Enforces `@FR-R-Fill`.
-/// The counters of a counted `for` loop, as the parser lowers `for v in a..b`: the loop
-/// variable, the `#index` it yields, the `next` counter of the two-counter form (a
-/// computed start, § V-ab; `None` in the single-counter form, P3b), whether the range is
-/// inclusive, and its end operand.  ONE home — the fill rewrite reads the shape here and
-/// so does the non-sentinel pass, which seeds these counters as never-null off the bound.
-pub struct RangeCounters<'a> {
-    pub loop_var: u16,
-    pub index: u16,
-    pub next: Option<u16>,
-    pub inclusive: bool,
-    pub hi: &'a Value,
-}
-
-/// Parse a loop's iterator — its FIRST statement — into its counters, or say which part of
-/// the shape it is not.  The statement alone is read, because the counters are a fact about
-/// the iterator and not about what follows it: a `for` statement is `[iterator, body]`, with
-/// a filter (`for … if c`) or a `#count` step it carries more, and a comprehension
-/// `[for i in a..b { e }]` is `[iterator, element value, append]`.  All of them step the
-/// same counters under the same test, so all of them are counted ranges; a rewrite that
-/// also reads the BODY as one block asks [`plain_for_body`] for that shape itself.
-///
-/// # Errors
-///
-/// The reason the block is not a counted range — the trace the fill rewrite prints.
-pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a>, String> {
-    let decline = |why: &str| -> Result<RangeCounters<'a>, String> { Err(why.to_string()) };
-    let Some(first) = lp.operators.first() else {
-        return decline("loop has no statements");
-    };
-    let Value::Set(loop_var, iter) = first.unspan() else {
-        return decline("first statement is not the loop variable's Set");
-    };
-    let Value::Block(it) = iter.unspan() else {
-        return decline("iterator is not a block");
-    };
-    if it.name != "Iter range" {
-        return decline(&format!("iterator block is `{}`, not a range", it.name));
-    }
-    // loft#1525 — an INCLUSIVE range decides its stop on the value just YIELDED, so its
-    // iterator carries one extra leading statement: `if index == hi { break }`, emitted before
-    // the step so the loop never has to represent `hi + 1`.  Peel it, because the loop under it
-    // is the same fill: the guard changes when the loop ENDS, not which elements it writes.
-    //
-    // Safe to drop rather than carry, and `fill_hoisted` is why — it declines (returns false,
-    // falling back to this very loop) whenever the span does not fit the vector, including the
-    // `end >= h.len` and `u32::try_from` edges an unbounded end reaches.  So the fill applies
-    // only where the guard would never have fired, and where it would fire the fallback is the
-    // corrected loop.
-    let ops: &[Value] = match &it.operators[..] {
-        [first, rest @ ..] if rest.len() >= 3 && is_inclusive_stop_guard(first, data) => rest,
-        all => all,
-    };
-    // The three statements and the yield, in one of the two orders.
-    let (test, seed_index, step, yielded, next_var) = match ops {
-        [a, b, c, d] => {
-            // § V-ab: [if …; index = next; next = next + 1; index]
-            let Value::Set(xi, from) = b.unspan() else {
-                return decline("two-counter form: second statement is not the index Set");
-            };
-            let Value::Var(nx) = from.unspan() else {
-                return decline("two-counter form: the index is not set from a variable");
-            };
-            let Value::Set(nx2, step) = c.unspan() else {
-                return decline("two-counter form: third statement is not the step Set");
-            };
-            if nx2 != nx {
-                return decline("two-counter form: the step is on another variable");
-            }
-            (a, *xi, step.unspan(), d, Some(*nx))
-        }
-        [a, b, c] => {
-            // P3b: [index = index + 1; if …; index]
-            let Value::Set(xi, step) = a.unspan() else {
-                return decline("single-counter form: first statement is not the step Set");
-            };
-            (b, *xi, step.unspan(), c, None)
-        }
-        _ => return decline(&format!("iterator has {} statements", ops.len())),
-    };
-    let counter = next_var.unwrap_or(seed_index);
-    let loop_var = *loop_var;
-    // The step: counter = counter + 1.
-    let Value::Call(sd, sargs) = step else {
-        return decline("the step is not a call");
-    };
-    if data.def(*sd).name() != "OpAddInt"
-        || sargs.len() != 2
-        || !matches!(sargs[0].unspan(), Value::Var(c) if *c == counter)
-        || !matches!(sargs[1].unspan(), Value::Int(1))
-    {
-        return decline("the step is not `counter + 1`");
-    }
-    // The test: if hi <cmp> counter { break } else null.
-    let Value::If(cond, on_true, on_false) = test.unspan() else {
-        return decline("the test is not an if");
-    };
-    if !is_break_block(on_true) || !matches!(on_false.unspan(), Value::Null) {
-        return decline("the test does not break");
-    }
-    let Value::Call(cd, cargs) = cond.unspan() else {
-        return decline("the test's condition is not a call");
-    };
-    let inclusive = match data.def(*cd).name() {
-        "OpLtInt" => true,
-        "OpLeInt" => false,
-        _ => return decline("the test is not OpLtInt/OpLeInt"),
-    };
-    if cargs.len() != 2 || !matches!(cargs[1].unspan(), Value::Var(c) if *c == counter) {
-        return decline("the test is not against the counter");
-    }
-    // The yield: the index variable.
-    if !matches!(yielded.unspan(), Value::Var(y) if *y == seed_index) {
-        return decline("the iterator does not yield the index");
-    }
-    Ok(RangeCounters {
-        loop_var,
-        index: seed_index,
-        next: next_var,
-        inclusive,
-        hi: &cargs[0],
-    })
-}
-
-/// The body of a PLAIN `for` statement — a loop that is exactly `[iterator, body block]`.
-/// A filter (`for … if c`) and a `#count` step add statements beside the body, and a
-/// comprehension has no body block at all; a rewrite that replaces or re-runs "the body"
-/// as one unit (the fill, the bounded nest) is written for this shape alone, and `None`
-/// keeps every other loop on its general emission.
-#[must_use]
-pub fn plain_for_body(lp: &Block) -> Option<&Block> {
-    if lp.name != "For loop" || lp.operators.len() != 2 {
-        return None;
-    }
-    match lp.operators[1].unspan() {
-        Value::Block(body) => Some(body),
-        _ => None,
-    }
-}
+// The shape of a counted `for` loop is read in the core layer (`loop_shape`), because
+// the slot allocator and the validator ask it too; these are its paths here.
+use crate::loop_shape::is_break_block;
+pub use crate::loop_shape::{RangeCounters, plain_for_body, range_counters};
 
 /// The head of a vector iteration, as the parser lowers `for e in v`: the loop variable,
 /// the `#index` it steps, the vector operand and the element size.  ONE home — the record
@@ -4267,6 +4083,9 @@ pub struct StoreTextBorrows {
     /// The admitted LOCALS: bound by a statement of the body, so every `Set` of one binds a
     /// `&str` slot (`Output::output_set`).
     pub locals: HashSet<u16>,
+    /// `@FR-R-SliceBorrow` — the admitted locals with a value slice among their bindings,
+    /// counted apart for the rewrite census.
+    pub slices: HashSet<u16>,
 }
 
 /// `@FR-R-TextBorrow`'s store-read clause — the text variables of this function that BORROW
@@ -4318,6 +4137,18 @@ pub fn borrowed_store_texts(
             && !already.contains_key(&v)
             && matches!(vars.tp(v).base(), Type::Text(_))
     };
+    // `@FR-R-SliceBorrow` — a value slice of a plain text PARAMETER (`&str` of the
+    // caller's, never `&text`, never rebound) or of an admitted local is one more source a
+    // local may borrow: the `&str` the slice answers names the bytes its source does, so
+    // nothing this frame can do moves them.  A slice of an OWNED local declines here (its
+    // buffer can grow under the borrow; that clause needs the path condition).
+    // `LOFT_NO_SLICE_BORROW=1` keeps the copy for this clause alone.
+    let slice_disabled = std::env::var("LOFT_NO_SLICE_BORROW").is_ok_and(|v| v != "0");
+    let plain_text_arg = |s: u16| {
+        vars.is_argument(s) && matches!(vars.tp(s).base(), Type::Text(_)) && !rebound.contains(&s)
+    };
+    let slice_of =
+        |to: &Value| call_named(to, data, "OpGetTextSub").and_then(|a| as_var(a.first()));
     // The discharge temps: one bind, to a parameter's text.
     let mut temps: HashSet<u16> = HashSet::new();
     body.any_node(&mut |n| {
@@ -4406,7 +4237,11 @@ pub fn borrowed_store_texts(
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
             }
-            _ => param_read(to),
+            _ => {
+                param_read(to)
+                    || (!slice_disabled
+                        && slice_of(to).is_some_and(|s| plain_text_arg(s) || admitted.contains(&s)))
+            }
         };
         let temp_ok = |to: &Value| param_read(to);
         let mut drop: Vec<(u16, &'static str)> = Vec::new();
@@ -4447,6 +4282,15 @@ pub fn borrowed_store_texts(
         {
             continue;
         }
+        // `@FR-R-SliceBorrow` — a slice of a plain parameter names no store either: its
+        // bytes are the caller's `&str`, which no store write of this frame can move.
+        if !slice_disabled
+            && text_bound_only_by(body, v, &|to: &Value| {
+                matches!(to.unspan(), Value::Text(_)) || slice_of(to).is_some_and(plain_text_arg)
+            })
+        {
+            continue;
+        }
         let scope = mention_scope(body, v);
         if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
             temps.remove(&v);
@@ -4465,7 +4309,11 @@ pub fn borrowed_store_texts(
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
             }
-            _ => param_read(to),
+            _ => {
+                param_read(to)
+                    || (!slice_disabled
+                        && slice_of(to).is_some_and(|s| plain_text_arg(s) || admitted.contains(&s)))
+            }
         };
         let lost: Vec<u16> = locals
             .iter()
@@ -4480,9 +4328,22 @@ pub fn borrowed_store_texts(
             why.insert(v, "bound from a text that does not borrow");
         }
     }
+    // `@FR-R-SliceBorrow` — the admitted locals with a slice among their bindings, for the
+    // census and the trace.
+    let slices: HashSet<u16> = locals
+        .iter()
+        .copied()
+        .filter(|&v| {
+            body.any_node(
+                &mut |n| matches!(n, Value::Set(x, to) if *x == v && slice_of(to).is_some()),
+            )
+        })
+        .collect();
     if trace {
         for v in temps.iter().chain(locals.iter()) {
-            let what = if fmt_bound.contains(v) {
+            let what = if slices.contains(v) {
+                "a slice of a parameter's text"
+            } else if fmt_bound.contains(v) {
                 "a format's work text"
             } else {
                 "a parameter's text"
@@ -4505,6 +4366,7 @@ pub fn borrowed_store_texts(
         out.borrows.insert(*v, TextBorrow { read: None });
     }
     out.locals = locals;
+    out.slices = slices;
     out
 }
 
@@ -5353,6 +5215,15 @@ fn projection_root(data: &Data, v: &Value) -> Option<u16> {
     }
 }
 
+/// Recognise the fill idiom in a `For loop` body (@PLN157 § V-ae): the iterator block of a
+/// counted range in either lowering — the two-counter form `[if hi <cmp> next { break };
+/// index = next; next = next + 1; index]` (§ V-ab) or the single-counter form `[index =
+/// index + 1; if hi <cmp> index { break }; index]` (P3b) — followed by ONE statement, a
+/// fusable scalar set (`OpSetInt`/`OpSetSingle`/`OpSetFloat`) at field 0 of `v[idx]` with
+/// `v` a pure path, `idx` the loop variable or `invariant + variable`, and the value
+/// invariant.  `<cmp>` is `OpLtInt` for an inclusive range and `OpLeInt` for an exclusive
+/// one.  Reports shape only; the emitter confirms the path has a header.
+/// Enforces `@FR-R-Fill`.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
@@ -6041,6 +5912,136 @@ pub struct MintLoop {
     /// The most mint groups any one pass runs — one per arm of a branch, summed along a
     /// straight line — which times the trip count bounds the appends.
     pub mints_per_pass: u32,
+}
+
+/// `@FR-R-PushFill`'s hash clause — a counted loop that inserts records into ONE hash local:
+/// the hash, its type, the most inserts one pass runs, and the loop's counters.  Reserving
+/// the table for them up front changes capacity only — never `len` or contents — so no
+/// program answers differently; a pass whose key is already present inserts nothing, which
+/// leaves room unused, bounded by the trip count.
+pub struct HashFill {
+    pub hash: u16,
+    pub tp: u16,
+    pub per_pass: u32,
+    pub index: u16,
+    pub next: Option<u16>,
+    pub inclusive: bool,
+}
+
+/// [`HashFill`] for `lp`, or why it is no hash-fill loop.
+///
+/// # Errors
+///
+/// The reason the loop is no counted fill of one hash, as a trace would name it.
+pub fn hash_fill_loop<'a>(
+    lp: &'a Block,
+    data: &Data,
+    stores: &Stores,
+) -> Result<(HashFill, &'a Value), &'static str> {
+    let body = plain_for_body(lp).ok_or("not a plain counted loop")?;
+    let rc = range_counters(lp, data).map_err(|_| "not a range loop")?;
+    if leaves_early(body) {
+        return Err("the body can leave early, or loops");
+    }
+    let mint_of = |n: &Value| -> Option<(u16, u16)> {
+        let Value::Call(d, args) = n.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpNewRecord" {
+            return None;
+        }
+        let (Some(Value::Var(h)), Some(Value::Int(tp))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return None;
+        };
+        let tp = u16::try_from(*tp).ok()?;
+        matches!(
+            stores.types.get(tp as usize).map(|t| &t.parts),
+            Some(crate::database::Parts::Hash(..))
+        )
+        .then_some((*h, tp))
+    };
+    let mut target: Option<(u16, u16)> = None;
+    let mut two = false;
+    let mut rebound = false;
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Some(t) = mint_of(n) {
+                match target {
+                    Some(old) if old != t => two = true,
+                    _ => target = Some(t),
+                }
+            }
+            false
+        });
+    }
+    let (hash, tp) = target.ok_or("no hash insert in the body")?;
+    if two {
+        return Err("the inserts reach two hashes");
+    }
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if matches!(n, Value::Set(v, _) if *v == hash) {
+                rebound = true;
+            }
+            false
+        });
+    }
+    if rebound {
+        return Err("the hash is rebound in the body");
+    }
+    let mut banned = vec![rc.loop_var, rc.index, hash];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return Err("the range's end is not a simple invariant");
+    }
+    fn most(n: &Value, mint_of: &dyn Fn(&Value) -> Option<(u16, u16)>) -> u32 {
+        if mint_of(n).is_some() {
+            return 1;
+        }
+        if let Value::If(c, t, e) = n.unspan() {
+            return most(c, mint_of) + most(t, mint_of).max(most(e, mint_of));
+        }
+        let mut total = 0u32;
+        n.for_each_child(&mut |child| total += most(child, mint_of));
+        total
+    }
+    let per_pass: u32 = body.operators.iter().map(|s| most(s, &mint_of)).sum();
+    if per_pass == 0 {
+        return Err("no hash insert in the body");
+    }
+    Ok((
+        HashFill {
+            hash,
+            tp,
+            per_pass,
+            index: rc.index,
+            next: rc.next,
+            inclusive: rc.inclusive,
+        },
+        rc.hi,
+    ))
+}
+
+/// Can a statement of `body` leave the loop early, or run a loop of its own?
+fn leaves_early(body: &Block) -> bool {
+    body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
+    })
 }
 
 /// Recognise the counted RECORD-append loop (`@FR-R-PushFill`'s record clause): `for i in
@@ -7214,6 +7215,45 @@ fn fresh_copy(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
         && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e))
 }
 
+/// `@FR-R-Mint`'s text clause — the first text written into an element the body has just
+/// minted (`e.f = t` between `OpNewRecord` and `OpFinishRecord`): a claim in the store the
+/// mint itself claims in, so it can move nothing the admitted mint cannot, and the mint's
+/// aliasing decision covers it.  The slot holds no text yet, so nothing is released.
+fn fresh_text_set(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
+    name == "OpSetText"
+        && args.len() == 3
+        && fresh_text_set_enabled()
+        && matches!(args[0].unspan(), Value::Var(e) if fresh.contains(e))
+}
+
+/// `LOFT_NO_FRESH_TEXT_SET=1` — a text written into a just-minted element blocks the loop's
+/// header hold again.
+fn fresh_text_set_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_FRESH_TEXT_SET").is_ok_and(|v| v != "0"))
+}
+
+/// A write into the fresh element that moves nothing a held header describes: § V-d's delivery
+/// copy (under the in-place tier) or its first text (`@FR-R-Mint`'s text clause, the mint tier).
+fn fresh_write(
+    name: &str,
+    args: &[Value],
+    fresh: &HashSet<u16>,
+    tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
+) -> bool {
+    (tiers.in_place && fresh_copy(name, args, fresh))
+        || (tiers.mint
+            && fresh_text_set(name, args, fresh)
+            && !matches!(args[0].unspan(), Value::Var(e)
+                if owned.is_some_and(|o| o.kept_elems.contains(e))))
+}
+
+/// The address of a scalar local, or (`@FR-R-Mint`'s text clause) of a text local.
+fn local_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    scalar_stack_ref(op, args, vars) || (fresh_text_set_enabled() && text_stack_ref(op, args, vars))
+}
+
 /// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
 /// extra allowance: under `allow_in_place`, a direct [`IN_PLACE_SET_OPS`] call is
 /// not blocking (its target and value subtrees still walk, so a growing op INSIDE
@@ -7262,7 +7302,8 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
-                    || scalar_stack_ref(data.def(*d).name(), args, vars));
+                    || local_stack_ref(data.def(*d).name(), args, vars)
+                    || record_stack_ref(stores, data, data.def(*d).name(), args, vars));
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
@@ -7338,7 +7379,7 @@ fn blocks_header_hoist(
             let record_copy = known
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
-            let fresh_copy = known && tiers.in_place && fresh_copy(data.def(*d).name(), args, fresh);
+            let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers, owned);
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -7978,44 +8019,6 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
         }
     }
     out
-}
-
-/// The buffer and the separator of a call that is the standard library's `split` with a
-/// constant, non-null separator and a hidden return buffer — the call both
-/// `(R-LazySplit)` and `(R-SplitTable)` replace — or why it is not one.
-fn split_call(
-    call: &Value,
-    data: &Data,
-    vars: &crate::variables::Function,
-) -> Result<(u16, char), &'static str> {
-    let Some([_src, sep, buf]) = call_named(call, data, "t_4text_split") else {
-        return Err("");
-    };
-    let Value::Call(d, _) = call.unspan() else {
-        return Err("");
-    };
-    if !crate::file_access::is_stdlib_source(data.def(*d).position.file.as_str()) {
-        return Err("`split` is not the standard library's");
-    }
-    let Some(code) = call_named(sep, data, "OpConvCharacterFromInt")
-        .and_then(|a| a.first())
-        .and_then(|a| match a.unspan() {
-            Value::Int(k) => u32::try_from(*k).ok(),
-            _ => None,
-        })
-    else {
-        return Err("the separator is not a character constant");
-    };
-    let Some(separator) = char::from_u32(code).filter(|c| *c != '\0') else {
-        return Err("the separator is the null character");
-    };
-    let Some(buf) = as_var(Some(buf)) else {
-        return Err("the call's buffer is not a variable");
-    };
-    if buf >= vars.count() || !vars.name(buf).starts_with("__ref") {
-        return Err("the call's buffer is not a hidden return buffer");
-    }
-    Ok((buf, separator))
 }
 
 /// What [`table_mentions`] counted for one local.
@@ -8749,6 +8752,10 @@ pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
                     && let Some(Value::Var(w)) = gargs.first().map(Value::unspan)
                     && (*w as usize) < vars.count() as usize
                     && vars.name(*w).starts_with("__vdb")
+                    // A PARAMETER bound to a backing is a work buffer taking its null
+                    // road (`@FR-R-WorkBuffer`), never the result local: skipped, so the
+                    // first bind found is the first a local could be adopted through.
+                    && !vars.is_argument(*sv)
                     && init.is_none()
                 {
                     init = Some((*sv, *w));
@@ -10511,31 +10518,6 @@ pub struct ElemFirstMap {
     pub whole_copies: HashSet<(u16, u16)>,
 }
 
-fn call_named<'v>(stmt: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
-    if let Value::Call(d, args) = stmt.unspan()
-        && (*d as usize) < data.definitions.len()
-        && data.def(*d).name() == name
-    {
-        Some(args)
-    } else {
-        None
-    }
-}
-
-fn as_var(v: Option<&Value>) -> Option<u16> {
-    match v.map(Value::unspan) {
-        Some(Value::Var(w)) => Some(*w),
-        _ => None,
-    }
-}
-
-fn as_int(v: Option<&Value>) -> Option<i32> {
-    match v.map(Value::unspan) {
-        Some(Value::Int(n)) => Some(*n),
-        _ => None,
-    }
-}
-
 /// Default-ON; `LOFT_NO_ELEMENT_PLACE=1` keeps § V-z to what it admitted before @PLN164 E-2 —
 /// a literal-built temp appended into a LOCAL vector — and is the first bisect step for a
 /// wrong, empty or leaked vector field in an element appended to a parameter's collection, or
@@ -11630,6 +11612,10 @@ pub struct ValueRecords {
     /// tuple ([`FnRefSites`]).  One does when every arm of its dispatch is in `fns` with
     /// the site's record ([`fnref_value`]).
     pub fnref_sites: FnRefSites,
+    /// `@FR-N-Store` — the admitted DENSE functions whose tuple is SURELY PRESENT
+    /// ([`surely_present_fns`]): every result is a build or another such function's.  Only
+    /// their tuple may be widened with the constant presence word.
+    pub sp: HashSet<u32>,
 }
 
 /// `(R-FnRefValue)` — per fn-ref call site, keyed `(function, fn-ref variable)`: every arm
@@ -12381,16 +12367,19 @@ fn tuple_param_candidates(
         let mut rebound: Option<HashSet<u16>> = None;
         let mut written: Option<Option<WriteSet>> = None;
         for (idx, a) in def.attributes().iter().enumerate() {
-            if a.hidden
-                || a.typedef.peel_optional().1
-                || matches!(a.typedef.base(), Type::RefVar(_))
-            {
+            if a.hidden || matches!(a.typedef.base(), Type::RefVar(_)) {
+                continue;
+            }
+            // `@FR-N-Road` — a `p: S?` is a candidate exactly as `p: S` is, carried by the
+            // nullable layout: its fields, then whether the argument named a record.
+            let (inner, optional) = a.typedef.peel_optional();
+            if optional && nullable_value_record_disabled() {
                 continue;
             }
             let Type::Reference(rd, _) = a.typedef.base() else {
                 continue;
             };
-            let Some(tp) = plain_record_type(data, &a.typedef) else {
+            let Some(tp) = plain_record_type(data, inner) else {
                 continue;
             };
             if stores.owns_heap(tp) {
@@ -12503,10 +12492,40 @@ fn tuple_param_candidates(
                 }
                 continue;
             }
-            out.entry(d_nr).or_default().insert(idx, tp);
+            let key = if optional {
+                let Some(nkey) = nullable_presence_layout(types, index, tp) else {
+                    continue;
+                };
+                nkey
+            } else {
+                tp
+            };
+            out.entry(d_nr).or_default().insert(idx, key);
         }
     }
     out
+}
+
+/// The key of record type `tp`'s NULLABLE layout, registered beside its dense one when it
+/// is not yet ([`nullable_layout_of`]).  `None` where the record has no nullable layout: its
+/// dense layout is unknown, it carries a view leaf (whose null is a reported one the absent
+/// tuple does not spell), or its type number already uses the key bit.
+fn nullable_presence_layout(
+    types: &mut HashMap<u16, ValueTuple>,
+    index: &mut HashMap<(u16, i64), usize>,
+    tp: u16,
+) -> Option<u16> {
+    let nkey = nullable_layout(tp)?;
+    if types.contains_key(&nkey) {
+        return Some(nkey);
+    }
+    let layout = types.get(&tp)?.clone();
+    if layout.fields.iter().any(|(_, rt)| is_view_part(rt)) {
+        return None;
+    }
+    let nlayout = nullable_layout_of(&layout, tp, nkey, index);
+    types.insert(nkey, nlayout);
+    Some(nkey)
 }
 
 /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — which record-returning functions may return
@@ -12704,6 +12723,17 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         keep
     });
     close_fnref_groups(data, &sites, &mut cand, &mut params, trace);
+    // A dispatch passes ONE argument list to all its arms, built from the signature's dense
+    // record types, so an arm keeps a `p: S?` a reference and is never promoted
+    // ([`promote_presence`]).
+    let mut frozen: HashSet<u32> = arms.clone();
+    frozen.extend(grouped.iter().copied());
+    for d in &frozen {
+        if let Some(ps) = params.get_mut(d) {
+            ps.retain(|_, key| !is_nullable_layout(*key));
+        }
+    }
+    params.retain(|_, ps| !ps.is_empty());
     // The view-leaf plans, rebuilt each round beside the body gate that decides them (the
     // admitted set they read changes with it) and kept for the round that ends the fixpoint.
     let mut views: HashMap<u32, ViewPlan> = HashMap::new();
@@ -12734,11 +12764,42 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     // another; every round only removes, so it ends.  The body gate and the site gate read
     // the same three helpers the emitter reads (`value_shape`, `value_locals_in`,
     // `value_view_leaves`), so what is admitted here is exactly what is emitted there.
+    let presence_keys = |cand: &HashMap<u32, u16>, params: &TupleParams| {
+        cand.values()
+            .chain(params.values().flat_map(HashMap::values))
+            .filter(|k| is_nullable_layout(**k))
+            .count()
+    };
     loop {
-        let before = (cand.len(), params.values().map(HashMap::len).sum::<usize>());
+        let before = (
+            cand.len(),
+            params.values().map(HashMap::len).sum::<usize>(),
+            presence_keys(&cand, &params),
+        );
+        // `@FR-N-Store` — first, carry the presence wherever a dense tuple would otherwise
+        // be widened without it.  Every round, because a decline can leave a new leaf at a
+        // nullable position; it only ever turns a dense key into a nullable one, so it ends.
+        if !nullable_value_record_disabled() {
+            loop {
+                let sp = surely_present_fns(data, &cand, &params, &sites);
+                if !promote_presence(
+                    data,
+                    &mut cand,
+                    &mut params,
+                    &mut out.types,
+                    &mut out.index,
+                    &frozen,
+                    &sp,
+                    trace,
+                ) {
+                    break;
+                }
+            }
+        }
         let admitted: HashMap<u32, u16> = cand.clone();
+        let sp = surely_present_fns(data, &admitted, &params, &sites);
         cand.retain(|d_nr, record| {
-            let mut why = value_body(data, *d_nr, &admitted, &params, &view_offs, &sites);
+            let mut why = value_body(data, *d_nr, &admitted, &params, &view_offs, &sites, &sp);
             // @PLN164 C5 — and, for a record with a heap field, the body must deliver a
             // view of a place that outlives the frame for every one of its exits.
             if why.is_none()
@@ -12757,7 +12818,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                     why = Some("a view leaf would cross a library API (R-Escape)");
                 } else {
                     let locals =
-                        value_locals_in(data, *d_nr, &admitted, &params, &view_offs, &sites);
+                        value_locals_in(data, *d_nr, &admitted, &params, &view_offs, &sites, &sp);
                     let leaves = collect_leaves(data.def(*d_nr).code(), &locals, true, data);
                     match view_leaf_plan(
                         data,
@@ -12783,6 +12844,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             why.is_none()
         });
         let admitted: HashMap<u32, u16> = cand.clone();
+        let sp = surely_present_fns(data, &admitted, &params, &sites);
         let mut declined: HashSet<u32> = HashSet::new();
         // `(R-ValueLocal)` — a parameter whose uses the tuple cannot serve leaves this
         // round; a site that handed a value local to it is then unserved next round.
@@ -12792,7 +12854,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             if matches!(cdef.code(), Value::Null) {
                 continue;
             }
-            let locals = value_locals_in(data, caller, &admitted, &params, &view_offs, &sites);
+            let locals = value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
             let own = admitted.contains_key(&caller).then_some(caller);
             let c = ShapeCtx {
                 data,
@@ -12802,6 +12864,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 locals: &locals,
                 own,
                 fnref: &sites,
+                sp: &sp,
             };
             let top = if own.is_some() {
                 Pos::Tail
@@ -12862,7 +12925,12 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         }
         close_fnref_groups(data, &sites, &mut cand, &mut params, trace);
         params.retain(|_, ps| !ps.is_empty());
-        if (cand.len(), params.values().map(HashMap::len).sum::<usize>()) == before {
+        let after = (
+            cand.len(),
+            params.values().map(HashMap::len).sum::<usize>(),
+            presence_keys(&cand, &params),
+        );
+        if after == before {
             break;
         }
     }
@@ -12877,6 +12945,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             }
         }
     }
+    out.sp = surely_present_fns(data, &cand, &params, &sites);
     out.fns = cand;
     out.params = params;
     out.fnref_sites = sites;
@@ -12908,6 +12977,294 @@ fn fnref_site_listed(
     data.store_text_mask(params, args) == 0
         && (plain_record_type(data, ret).is_some()
             || params.iter().any(|p| plain_record_type(data, p).is_some()))
+}
+
+/// `@FR-N-Store` — CARRY THE PRESENCE where a dense tuple would otherwise be widened without
+/// it.  A dense tuple has no absent spelling (@C144), so the null a program stored into a
+/// dense slot is gone once that slot is read into one; widening such a tuple with the
+/// constant word would answer "present" for it.  So what stands where a nullable tuple is
+/// expected is made to carry its own presence:
+///
+/// * a dense TUPLE PARAMETER takes the nullable layout — its call sites read whether the
+///   argument names a record, exactly as they do for a `p: S?`;
+/// * a dense FUNCTION whose tuple is not surely present ([`surely_present_fns`]) returns the
+///   nullable layout, as does one whose own result is such a function's or such a
+///   parameter;
+/// * a dense parameter handed a tuple that carries the nullable layout takes it too, so the
+///   hand-off stays a tuple.
+///
+/// The positions that expect a nullable tuple are read from the SOURCE types, which the
+/// rewrite does not change: a result of a function admitted with the nullable layout, an
+/// argument of a nullable tuple parameter, and — for parameters — a bind of a `τ?` local.
+/// A local is followed to its binds.  Only ever turns a dense key into a nullable one; answers whether it did.  An arm
+/// of a fn-ref dispatch (`frozen`) keeps its ABI, and the gate then declines what it cannot
+/// serve.
+#[allow(clippy::too_many_arguments)]
+fn promote_presence(
+    data: &Data,
+    cand: &mut HashMap<u32, u16>,
+    params: &mut TupleParams,
+    types: &mut HashMap<u16, ValueTuple>,
+    index: &mut HashMap<(u16, i64), usize>,
+    frozen: &HashSet<u32>,
+    sp: &HashSet<u32>,
+    trace: bool,
+) -> bool {
+    let mut want_params: HashSet<(u32, usize)> = HashSet::new();
+    let mut want_fns: HashSet<u32> = HashSet::new();
+    for d in 0..data.definitions.len() as u32 {
+        if matches!(data.def(d).code(), Value::Null) {
+            continue;
+        }
+        let w = PresenceWalk {
+            data,
+            d,
+            cand,
+            params,
+            sp,
+        };
+        w.scan(&mut want_params, &mut want_fns);
+    }
+    let mut changed = false;
+    for (d, idx) in want_params {
+        if frozen.contains(&d) {
+            continue;
+        }
+        let Some(key) = params.get(&d).and_then(|ps| ps.get(&idx)).copied() else {
+            continue;
+        };
+        if is_nullable_layout(key) {
+            continue;
+        }
+        let Some(nkey) = nullable_presence_layout(types, index, key) else {
+            continue;
+        };
+        if let Some(ps) = params.get_mut(&d) {
+            ps.insert(idx, nkey);
+            changed = true;
+            if trace {
+                crate::loft_eprintln!(
+                    "[valuerec] {}: parameter `{}` carries its presence",
+                    data.def(d).name(),
+                    data.def(d).attributes()[idx].name
+                );
+            }
+        }
+    }
+    for d in want_fns {
+        if frozen.contains(&d) {
+            continue;
+        }
+        let Some(key) = cand.get(&d).copied() else {
+            continue;
+        };
+        if is_nullable_layout(key) {
+            continue;
+        }
+        let Some(nkey) = nullable_presence_layout(types, index, key) else {
+            continue;
+        };
+        cand.insert(d, nkey);
+        changed = true;
+        if trace {
+            crate::loft_eprintln!(
+                "[valuerec] {}: its result carries its presence",
+                data.def(d).name()
+            );
+        }
+    }
+    changed
+}
+
+/// One function's view for [`promote_presence`]: the tables as they stand, read only.
+struct PresenceWalk<'a> {
+    data: &'a Data,
+    d: u32,
+    cand: &'a HashMap<u32, u16>,
+    params: &'a TupleParams,
+    sp: &'a HashSet<u32>,
+}
+
+impl PresenceWalk<'_> {
+    /// Every position of this function that expects a nullable tuple, walked for what must
+    /// carry its presence there ([`PresenceWalk::demand`]), and every position that
+    /// expects a dense one and is handed a tuple that carries it
+    /// ([`PresenceWalk::carries_presence`]).
+    fn scan(&self, want_params: &mut HashSet<(u32, usize)>, want_fns: &mut HashSet<u32>) {
+        let (data, d) = (self.data, self.d);
+        let def = data.def(d);
+        let body = def.code();
+        let vars = def.variables();
+        let own = self.cand.get(&d).copied();
+        let own_nullable = own.is_some_and(is_nullable_layout);
+        if own_nullable {
+            self.demand(body, &mut HashSet::new(), want_params, want_fns);
+        } else if own.is_some() && self.carries_presence(body, &mut HashSet::new()) {
+            want_fns.insert(d);
+        }
+        body.any_node(&mut |n| {
+            match n {
+                Value::Return(x) if own_nullable => {
+                    self.demand(x, &mut HashSet::new(), want_params, want_fns);
+                }
+                Value::Return(x)
+                    if own.is_some() && self.carries_presence(x, &mut HashSet::new()) =>
+                {
+                    want_fns.insert(d);
+                }
+                // A bind of a `τ?` local asks its PARAMETERS only: a function is left as it
+                // is, because a local bound from dense tuples alone holds the dense tuple and
+                // widens nothing, while a promoted function loses its registers at every
+                // other site a nullable tuple does not serve.
+                Value::Set(v, rhs) if *v < vars.count() => {
+                    let (inner, optional) = vars.tp(*v).peel_optional();
+                    if optional && plain_record_type(data, inner).is_some() {
+                        self.demand(rhs, &mut HashSet::new(), want_params, &mut HashSet::new());
+                    }
+                }
+                // A whole-record copy FROM a tuple writes its fields into the destination,
+                // so the tuple must say whether there is anything to write.
+                Value::Call(callee, args)
+                    if (*callee as usize) < data.definitions.len()
+                        && data.def(*callee).name() == "OpCopyRecord" =>
+                {
+                    if let Some(src) = args.first() {
+                        self.demand(src, &mut HashSet::new(), want_params, want_fns);
+                    }
+                }
+                Value::Call(callee, args) => {
+                    for (i, key) in self.params.get(callee).into_iter().flatten() {
+                        let Some(arg) = args.get(*i) else { continue };
+                        if is_nullable_layout(*key) {
+                            self.demand(arg, &mut HashSet::new(), want_params, want_fns);
+                        } else if self.carries_presence(arg, &mut HashSet::new()) {
+                            want_params.insert((*callee, *i));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+
+    /// The dense tuple-parameter key of variable `v` of this function, when it is one.
+    fn param_of(&self, v: u16) -> Option<(usize, u16)> {
+        let def = self.data.def(self.d);
+        let vars = def.variables();
+        if !vars.is_argument(v) {
+            return None;
+        }
+        let ps = self.params.get(&self.d)?;
+        ps.iter()
+            .find(|(idx, _)| {
+                def.attributes()
+                    .get(**idx)
+                    .is_some_and(|a| vars.var(&a.name) == v)
+            })
+            .map(|(idx, key)| (*idx, *key))
+    }
+
+    /// Every bind of local `v` (the declaration's `null` aside), handed to `each`.
+    fn binds(&self, v: u16, each: &mut dyn FnMut(&Value)) {
+        self.data.def(self.d).code().any_node(&mut |n| {
+            if let Value::Set(w, rhs) = n
+                && *w == v
+                && !matches!(rhs.unspan(), Value::Null)
+            {
+                each(rhs);
+            }
+            false
+        });
+    }
+
+    /// `node` stands where a nullable tuple is expected: name what must carry its presence
+    /// for that — the dense tuple parameters and the dense functions, not surely present,
+    /// among its leaves.  The walk is [`value_shape`]'s own, a local followed to its binds.
+    fn demand(
+        &self,
+        node: &Value,
+        seen: &mut HashSet<u16>,
+        want_params: &mut HashSet<(u32, usize)>,
+        want_fns: &mut HashSet<u32>,
+    ) {
+        match node.unspan() {
+            Value::Block(bl) if bl.name == "Object" => {}
+            Value::Block(bl) if mv_return_source(bl, self.data).is_some() => {
+                if let Some(src) = mv_return_source(bl, self.data) {
+                    self.demand(src, seen, want_params, want_fns);
+                }
+            }
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => {
+                if let Some(last) = bl.operators.last() {
+                    self.demand(last, seen, want_params, want_fns);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last() {
+                    self.demand(last, seen, want_params, want_fns);
+                }
+            }
+            Value::Return(x) => self.demand(x, seen, want_params, want_fns),
+            Value::If(_, a, b) => {
+                self.demand(a, seen, want_params, want_fns);
+                self.demand(b, seen, want_params, want_fns);
+            }
+            Value::Var(v) => {
+                if !seen.insert(*v) {
+                    return;
+                }
+                if let Some((idx, key)) = self.param_of(*v) {
+                    if !is_nullable_layout(key) {
+                        want_params.insert((self.d, idx));
+                    }
+                    return;
+                }
+                self.binds(*v, &mut |rhs| self.demand(rhs, seen, want_params, want_fns));
+            }
+            Value::Call(g, _)
+                if self.cand.get(g).is_some_and(|k| !is_nullable_layout(*k))
+                    && !self.sp.contains(g) =>
+            {
+                want_fns.insert(*g);
+            }
+            _ => {}
+        }
+    }
+
+    /// Does a leaf of `node` carry the NULLABLE layout — a call to a function admitted with
+    /// it, a tuple parameter received with it, a local bound from either?  Then what `node`
+    /// is handed to, or returned from, must carry it too.
+    fn carries_presence(&self, node: &Value, seen: &mut HashSet<u16>) -> bool {
+        match node.unspan() {
+            Value::Block(bl) if bl.name == "Object" => false,
+            Value::Block(bl) if mv_return_source(bl, self.data).is_some() => {
+                mv_return_source(bl, self.data).is_some_and(|s| self.carries_presence(s, seen))
+            }
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => bl
+                .operators
+                .last()
+                .is_some_and(|l| self.carries_presence(l, seen)),
+            Value::Insert(ops) => ops.last().is_some_and(|l| self.carries_presence(l, seen)),
+            Value::Return(x) => self.carries_presence(x, seen),
+            Value::If(_, a, b) => self.carries_presence(a, seen) || self.carries_presence(b, seen),
+            Value::Var(v) => {
+                if !seen.insert(*v) {
+                    return false;
+                }
+                if let Some((_, key)) = self.param_of(*v) {
+                    return is_nullable_layout(key);
+                }
+                let mut any = false;
+                self.binds(*v, &mut |rhs| any = any || self.carries_presence(rhs, seen));
+                any
+            }
+            // A `null` exit is the absent tuple, which only the nullable layout spells.
+            Value::Call(g, args) if args.is_empty() && is_null_record(self.data, *g) => true,
+            Value::Call(g, _) => self.cand.get(g).is_some_and(|k| is_nullable_layout(*k)),
+            _ => false,
+        }
+    }
 }
 
 /// `(R-FnRefValue)` — take every arm of a group out of `cand` once one arm of it is out, or
@@ -13191,6 +13548,135 @@ pub struct LoopRecord {
     pub loop_scope: u16,
     /// The block whose direct `Set(v, null)` declares the local per iteration.
     pub decl_block: u16,
+    /// The REFILL clause: a record whose vector fields hold no-heap elements.  Its per-pass
+    /// mint keeps the store as it stands (`OpDatabaseRefill`) and each literal zero of a
+    /// vector field empties that vector in place, so the vectors keep their records.
+    pub refill: bool,
+}
+
+/// [`loop_records`]' answer: the admitted locals, and the literal zeros of the refill-clause
+/// records' vector fields (by node address) — the empties `emit.rs` writes for
+/// `@FR-R-RefillBuffer` too.
+#[derive(Default)]
+pub struct LoopRecords {
+    pub recs: HashMap<u16, LoopRecord>,
+    pub field_zeros: HashSet<usize>,
+}
+
+/// The byte offsets of `tp`'s vector fields.
+fn vector_field_offsets(stores: &Stores, tp: u16) -> Vec<i32> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return Vec::new();
+    };
+    fields
+        .iter()
+        .filter(|f| {
+            matches!(
+                stores.types.get(f.content as usize).map(|c| &c.parts),
+                Some(crate::database::Parts::Vector(_))
+            )
+        })
+        .map(|f| i32::from(f.position))
+        .collect()
+}
+
+/// The field NUMBERS of `tp`'s vector fields — what `OpNewRecord` / `OpFinishRecord` name
+/// an append's target field by.
+fn vector_field_numbers(stores: &Stores, tp: u16) -> Vec<i32> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return Vec::new();
+    };
+    (0i32..)
+        .zip(fields.iter())
+        .filter(|(_, f)| {
+            matches!(
+                stores.types.get(f.content as usize).map(|c| &c.parts),
+                Some(crate::database::Parts::Vector(_))
+            )
+        })
+        .map(|(nr, _)| nr)
+        .collect()
+}
+
+/// The REFILL clause's group check: every mint of `v` heads a literal group that writes
+/// every field of `tp` ([`group_covers_type`]), and every zero of a vector field of `v` is
+/// one of those groups' — answered as the set of those zeros, or `None`.  A zero anywhere
+/// else would drop a kept vector's record into the store, where the clear arm it replaces
+/// reclaimed it.
+fn loop_record_zeros(
+    body: &Value,
+    v: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> Option<HashSet<usize>> {
+    let offs = vector_field_offsets(stores, tp);
+    let mut ok = true;
+    let mut mints = 0usize;
+    let mut zeros: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let ops = &bl.operators;
+            for (i, stmt) in ops.iter().enumerate() {
+                let Some(Value::Call(d, args)) = Some(stmt.unspan()) else {
+                    continue;
+                };
+                if (*d as usize) >= data.definitions.len()
+                    || !matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                    || !matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                {
+                    continue;
+                }
+                mints += 1;
+                if !matches!(args.get(1).map(Value::unspan), Some(Value::Int(t)) if *t == i32::from(tp))
+                    || !group_covers_type(ops, i + 1, v, tp, data, stores)
+                {
+                    ok = false;
+                    continue;
+                }
+                for g in &ops[i + 1..] {
+                    let Value::Call(d, args) = g.unspan() else {
+                        if matches!(g.unspan(), Value::Line(_)) {
+                            continue;
+                        }
+                        break;
+                    };
+                    if (*d as usize) >= data.definitions.len()
+                        || !data.def(*d).name().starts_with("OpSet")
+                    {
+                        break;
+                    }
+                    if data.def(*d).name() == "OpSetInt4"
+                        && let [a0, Value::Int(off), zero] = &args[..]
+                        && matches!(a0.unspan(), Value::Var(w) if *w == v)
+                        && matches!(zero.unspan(), Value::Int(0))
+                        && offs.contains(off)
+                    {
+                        zeros.insert(std::ptr::from_ref(g.unspan()) as usize);
+                    }
+                }
+            }
+        }
+        false
+    });
+    // Every vector-field zero of `v` must be one the groups own.
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name().starts_with("OpSet")
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+            && matches!(args.get(1).map(Value::unspan), Some(Value::Int(off)) if offs.contains(off))
+            && !zeros.contains(&(std::ptr::from_ref(n) as usize))
+        {
+            ok = false;
+        }
+        false
+    });
+    (ok && mints > 0 && zeros.len() == mints * offs.len()).then_some(zeros)
 }
 
 /// `@FR-R-LoopRecord` (the `@FR-R-LoopBuffer` shape for a RECORD) — the loop records of
@@ -13213,17 +13699,18 @@ pub struct LoopRecord {
 /// The fallback is "not a loop record", which costs the reuse and never a value.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
+pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
     let def = data.def(def_nr);
     let vars = def.variables();
     let body = def.code();
-    let mut out = HashMap::new();
+    let mut out = LoopRecords::default();
     if matches!(body, Value::Null)
         || body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_)))
     {
         return out;
     }
     let trace = std::env::var("LOFT_TRACE_LOOP_RECORD").is_ok();
+    let refill_on = !std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0");
     // Where each candidate is declared: the innermost enclosing loop and the block holding
     // its `Set(v, null)`.
     let mut decls: HashMap<u16, LoopRecord> = HashMap::new();
@@ -13251,25 +13738,50 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
             && !matches!(vars.tp(*v), Type::Optional(_))
             && let Type::Reference(d, _) = vars.tp(*v).peel_link()
             && data.def_type(*d) == DefType::Struct
-            && all_scalar_record(data, *d)
         {
             decls.entry(*v).or_insert(LoopRecord {
                 loop_scope,
                 decl_block,
+                refill: !all_scalar_record(data, *d),
             });
         }
     });
-    for (v, rec) in decls {
+    for (v, mut rec) in decls {
         let mut minted = false;
         let mut declined: Option<&'static str> = None;
+        // The REFILL clause: the store type the mints name, refillable, every mint heading a
+        // complete literal group.  The vector fields' own ops are then part of the init family.
+        let mut vec_offs: Vec<i32> = Vec::new();
+        let mut vec_nrs: Vec<i32> = Vec::new();
+        let mut rec_tp: i32 = -1;
+        let mut zeros: HashSet<usize> = HashSet::new();
+        if rec.refill {
+            let tp = mint_type_of(data, def_nr, v);
+            match tp {
+                Some(tp) if refill_on && refillable_plain(stores, tp) => {
+                    match loop_record_zeros(body, v, tp, data, stores) {
+                        Some(z) => {
+                            zeros = z;
+                            vec_offs = vector_field_offsets(stores, tp);
+                            vec_nrs = vector_field_numbers(stores, tp);
+                            rec_tp = i32::from(tp);
+                        }
+                        None => declined = Some("a mint whose literal group the refill cannot see"),
+                    }
+                }
+                _ => declined = Some("a heap-owning type"),
+            }
+        }
         // Every mention of `v`, judged by its parent.
         fn check(
             n: &Value,
             v: u16,
+            vec: (&[i32], &[i32], i32),
             data: &Data,
             minted: &mut bool,
             declined: &mut Option<&'static str>,
         ) {
+            let (vec_offs, vec_nrs, rec_tp) = vec;
             let n = n.unspan();
             match n {
                 Value::Var(w) if *w == v => {
@@ -13297,6 +13809,22 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
+                    // The REFILL clause: a vector field read in place as a native op's
+                    // operated-on vector (`OpPushInt(OpGetField(v, off, tp), x)`, a length, an
+                    // element read) names the record only for that op.
+                    let on_vec_field = native
+                        && name != "OpGetField"
+                        && matches!(args.first().map(Value::unspan), Some(Value::Call(gf, ga))
+                            if (*gf as usize) < data.definitions.len()
+                                && data.def(*gf).name() == "OpGetField"
+                                && matches!(ga.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                                && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(off)) if vec_offs.contains(off)));
+                    if on_vec_field {
+                        for a in args.iter().skip(1) {
+                            check(a, v, vec, data, minted, declined);
+                        }
+                        return;
+                    }
                     if first && native {
                         let fld_lit = matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)));
                         let ok = match name {
@@ -13305,6 +13833,13 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                                 true
                             }
                             "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag" => true,
+                            // The refill clause: an append to one of the record's own vector
+                            // fields, named by field number (`e.v += [R {…}]`).
+                            "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord" => {
+                                let at = if name == "OpFinishRecord" { 2 } else { 1 };
+                                matches!(args.get(at).map(Value::unspan), Some(Value::Int(t)) if *t == rec_tp)
+                                    && matches!(args.get(at + 1).map(Value::unspan), Some(Value::Int(f)) if vec_nrs.contains(f))
+                            }
                             _ => {
                                 fld_lit
                                     && (SCALAR_GETTERS.contains(&name)
@@ -13317,7 +13852,7 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         }
                         // The other operands still walk (a value may mention `v` again).
                         for a in args.iter().skip(1) {
-                            check(a, v, data, minted, declined);
+                            check(a, v, vec, data, minted, declined);
                         }
                         return;
                     }
@@ -13337,7 +13872,7 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         }
                         for a in args {
                             if !matches!(a.unspan(), Value::Var(w) if *w == v) {
-                                check(a, v, data, minted, declined);
+                                check(a, v, vec, data, minted, declined);
                             }
                         }
                         return;
@@ -13345,9 +13880,16 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                 }
                 _ => {}
             }
-            n.for_each_child(&mut |c| check(c, v, data, minted, declined));
+            n.for_each_child(&mut |c| check(c, v, vec, data, minted, declined));
         }
-        check(body, v, data, &mut minted, &mut declined);
+        check(
+            body,
+            v,
+            (&vec_offs, &vec_nrs, rec_tp),
+            data,
+            &mut minted,
+            &mut declined,
+        );
         if !minted {
             declined.get_or_insert("never minted by a literal");
         }
@@ -13355,13 +13897,16 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
             None => {
                 if trace {
                     eprintln!(
-                        "[loop-record] {}: {} keeps its store across iterations of loop {}",
+                        "[loop-record] {}: {} keeps its store{} across iterations of loop {}",
                         def.name(),
                         vars.name(v),
+                        if rec.refill { " and its vectors" } else { "" },
                         rec.loop_scope
                     );
                 }
-                out.insert(v, rec);
+                rec.refill = rec.refill && !zeros.is_empty();
+                out.field_zeros.extend(zeros);
+                out.recs.insert(v, rec);
             }
             Some(why) => {
                 if trace {
@@ -14876,6 +15421,8 @@ struct ShapeCtx<'a> {
     own: Option<u32>,
     /// `(R-FnRefValue)` — the fn-ref call sites that may answer a tuple.
     fnref: &'a FnRefSites,
+    /// The admitted dense functions whose tuple is surely present ([`surely_present_fns`]).
+    sp: &'a HashSet<u32>,
 }
 
 impl<'a> ShapeCtx<'a> {
@@ -14930,28 +15477,41 @@ pub fn object_own_return(bl: &Block) -> Option<u16> {
 /// literal.  The value form returns that source's tuple and drops the mint, the copy and
 /// the buffer's return; the block's other statements (the discharge buffer's frees) stay.
 /// `None` for any other block.
+///
+/// The block has a second spelling ([`mv_block_buffer`]): where a result can be ABSENT the
+/// parser copies arm by arm (`Parser::materialize_return_into`), and each copying arm is this
+/// block used as a VALUE — it ends in the buffer, not in a `return` of it.  The source is the
+/// leaf of both.
 pub fn mv_return_source<'a>(bl: &'a Block, data: &Data) -> Option<&'a Value> {
-    if bl.name != "materialized_view_return" && bl.name != "materialized_view_return_armed" {
-        return None;
-    }
+    let (rb, _) = mv_block_buffer(bl)?;
     let copy_nr = data.def_nr("OpCopyRecord");
-    let last = bl.operators.last()?.unspan();
-    let Value::Return(ret) = last else {
-        return None;
-    };
-    let Value::Var(rb) = ret.unspan() else {
-        return None;
-    };
     bl.operators.iter().find_map(|op| match op.unspan() {
         Value::Call(d, args)
             if *d == copy_nr
                 && args.len() == 3
-                && matches!(args[1].unspan(), Value::Var(dst) if dst == rb) =>
+                && matches!(args[1].unspan(), Value::Var(dst) if *dst == rb) =>
         {
             Some(&args[0])
         }
         _ => None,
     })
+}
+
+/// The buffer a `materialized_view_return` block delivers, and whether the block RETURNS it
+/// (`…; return rb`) or is the buffer as a value (`…; rb`, an arm of a result that may be
+/// absent).
+fn mv_block_buffer(bl: &Block) -> Option<(u16, bool)> {
+    if bl.name != "materialized_view_return" && bl.name != "materialized_view_return_armed" {
+        return None;
+    }
+    match bl.operators.last()?.unspan() {
+        Value::Return(ret) => match ret.unspan() {
+            Value::Var(rb) => Some((*rb, true)),
+            _ => None,
+        },
+        Value::Var(rb) => Some((*rb, false)),
+        _ => None,
+    }
 }
 
 /// Is `v` the bare `null` record sentinel, `OpNullRefSentinel()` ([`is_null_record`])?
@@ -15015,13 +15575,20 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             let rec = own_record(ctx)?;
             (plain_record_type(ctx.data, &bl.result) == Some(layout_record(rec))).then_some(rec)
         }
-        // A discharged view returned through the buffer: the leaf is the copy's source.  A
-        // nullable layout has no view leaf, so this is a dense body's only.
+        // A discharged view returned through the buffer: the leaf is the copy's source,
+        // which carries the body's layout or widens to it ([`fits`]).
+        // As a VALUE the block is that leaf only when the buffer it fills is the body's own
+        // return buffer, the one mint the value form has no use for.
         Value::Block(bl) if mv_return_source(bl, ctx.data).is_some() => {
             ctx.own?;
             let src = mv_return_source(bl, ctx.data)?;
+            if let Some((rb, false)) = mv_block_buffer(bl)
+                && own_retbuf(ctx.data, ctx.own) != Some(rb)
+            {
+                return None;
+            }
             let rec = own_record(ctx)?;
-            (value_shape(src, ctx) == Some(rec)).then_some(rec)
+            fits(src, ctx, rec).then_some(rec)
         }
         Value::Block(bl) => {
             if matches!(bl.result.base(), Type::Void) {
@@ -15029,11 +15596,17 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             }
             value_shape(bl.operators.last()?, ctx)
         }
-        // Both arms carry ONE layout: a dense arm beside a nullable one would hand the join
-        // two tuple types.
+        // The arms JOIN ([`join_layout`]): one layout, or a dense arm beside a nullable one
+        // of the same record, which is the nullable layout once the dense arm is widened —
+        // where it can be without inventing its presence ([`widens`]).
         Value::If(_, then_v, else_v) => {
-            let callee = value_shape(then_v, ctx)?;
-            (value_shape(else_v, ctx)? == callee).then_some(callee)
+            let (a, b) = (value_shape(then_v, ctx)?, value_shape(else_v, ctx)?);
+            let key = join_layout(a, b)?;
+            let dense = [(a, then_v), (b, else_v)]
+                .into_iter()
+                .filter(|(k, _)| *k != key)
+                .all(|(_, arm)| widens(arm, ctx));
+            dense.then_some(key)
         }
         Value::Insert(ops) => value_shape(ops.last()?, ctx),
         Value::Return(x) => value_shape(x, ctx),
@@ -15072,20 +15645,198 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             {
                 return None;
             }
-            // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
-            // leaf (its absence would be a reported null, [`ValueTuple::absent`]).
+            // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
+            // dense one in a `-> S` and a `-> S?` body alike, a view of `S?` the nullable one.
+            // A nullable view is a leaf of a `-> S?` body only, where that layout exists.
+            let (inner, optional) = tp.peel_optional();
+            let view = plain_record_type(ctx.data, inner).filter(|t| *t == layout_record(rec));
+            let key = if optional {
+                view.filter(|_| is_nullable_layout(rec)).map(|_| rec)
+            } else {
+                view
+            };
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
             // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
             // minted default on the other (`Own::Join`), and reading it as then_v tuple would
             // leave that mint nobody's.  Only then_v value the frame never owns is read as one.
-            (plain_record_type(ctx.data, tp) == Some(rec)
-                && matches!(
+            key.filter(|_| {
+                matches!(
                     crate::use_analysis::ownership_of(ctx.data, ctx.def_nr, node),
                     crate::use_analysis::Own::Borrowed { .. }
-                ))
-            .then_some(rec)
+                )
+            })
         }
         _ => None,
+    }
+}
+
+/// The layout two value shapes JOIN to — the arms of a value branch, the binds of one local.
+/// The same key is itself.  A DENSE key beside the NULLABLE key of the same record is the
+/// nullable one (`@FR-N-Road`): the dense side is the present tuple once its leaves are
+/// widened ([`widen_marks`]), so a `τ?` result that joins a `τ` with a `τ?` takes the road
+/// its all-`τ` twin takes.  Two records have no join.
+fn join_layout(a: u16, b: u16) -> Option<u16> {
+    if a == b {
+        Some(a)
+    } else if layout_record(a) == layout_record(b) {
+        nullable_layout(layout_record(a))
+    } else {
+        None
+    }
+}
+
+/// Does `node` stand for layout `key` — carry it, or carry the DENSE layout of a nullable
+/// `key`'s record and widen to it with its presence known ([`widens`])?
+fn fits(node: &Value, c: &ShapeCtx, key: u16) -> bool {
+    value_shape(node, c)
+        .is_some_and(|k| k == key || (join_layout(k, key) == Some(key) && widens(node, c)))
+}
+
+/// `@FR-N-Store` — is the DENSE tuple `node` evaluates to SURELY PRESENT: built here, or
+/// answered by a function whose every result is ([`ShapeCtx::sp`])?  A dense tuple has no
+/// absent spelling (@C144), so one read off a record that may be null — a view in a dense
+/// body, a tuple parameter, the result of a function that returns either — does not say
+/// whether that record was there.  Only a surely present one may be widened with the
+/// constant presence word; a null stored into a dense slot must read back null.
+///
+/// The fallback is `false` because a shape not named here is not KNOWN present, and the
+/// caller then keeps the record, which costs the rewrite and never a value.
+fn surely_present(node: &Value, c: &ShapeCtx, seen: &mut HashSet<u16>) -> bool {
+    match node.unspan() {
+        Value::Block(bl) if bl.name == "Object" => true,
+        Value::Block(bl) if mv_return_source(bl, c.data).is_some() => {
+            mv_return_source(bl, c.data).is_some_and(|src| surely_present(src, c, seen))
+        }
+        Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => bl
+            .operators
+            .last()
+            .is_some_and(|l| surely_present(l, c, seen)),
+        Value::Insert(ops) => ops.last().is_some_and(|l| surely_present(l, c, seen)),
+        Value::Return(x) => surely_present(x, c, seen),
+        Value::If(_, a, b) => surely_present(a, c, seen) && surely_present(b, c, seen),
+        Value::Call(d, _) => c.sp.contains(d),
+        Value::Var(v) => local_surely_present(*v, c, seen),
+        _ => false,
+    }
+}
+
+/// [`surely_present`] of a local: every bind of it is (the declaration's `null` aside), and
+/// it has one.  A parameter is not — its tuple was read off whatever the caller held — the
+/// phantom return buffer aside, which is bound as a local is.  A local met again on its own
+/// path is taken as present: what it finally holds came from a bind outside the cycle.
+fn local_surely_present(v: u16, c: &ShapeCtx, seen: &mut HashSet<u16>) -> bool {
+    if !seen.insert(v) {
+        return true;
+    }
+    let def = c.data.def(c.def_nr);
+    if def.variables().is_argument(v) && own_retbuf(c.data, c.own) != Some(v) {
+        return false;
+    }
+    let (mut binds, mut present) = (0u32, true);
+    def.code().any_node(&mut |n| {
+        if let Value::Set(w, rhs) = n
+            && *w == v
+            && !matches!(rhs.unspan(), Value::Null)
+        {
+            binds += 1;
+            present = present && surely_present(rhs, c, seen);
+        }
+        false
+    });
+    binds > 0 && present
+}
+
+/// Can every leaf under `node` that stands where a nullable tuple is expected deliver one
+/// without inventing its presence?  A leaf that already carries the nullable layout does, a
+/// VIEW does (its presence word is read off its reference), an `Object` build and a `null`
+/// do; a DENSE tuple — a `-> S` call, a dense value local, a tuple parameter — only where it
+/// is [`surely_present`].  The walk is [`widen_marks`]' own.
+fn widens(node: &Value, c: &ShapeCtx) -> bool {
+    match node.unspan() {
+        Value::Block(bl) if bl.name == "Object" => true,
+        Value::Block(bl) if mv_return_source(bl, c.data).is_some() => {
+            mv_return_source(bl, c.data).is_none_or(|src| widens(src, c))
+        }
+        Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => {
+            bl.operators.last().is_none_or(|l| widens(l, c))
+        }
+        Value::Insert(ops) => ops.last().is_none_or(|l| widens(l, c)),
+        Value::Return(x) => widens(x, c),
+        Value::If(_, a, b) => widens(a, c) && widens(b, c),
+        Value::Var(v) => c.locals.get(v).is_none_or(|k| {
+            is_nullable_layout(*k) || local_surely_present(*v, c, &mut HashSet::new())
+        }),
+        Value::Call(d, _) => {
+            c.admitted.get(d).is_none_or(|k| is_nullable_layout(*k)) || c.sp.contains(d)
+        }
+        Value::CallRef(..) => value_shape(node, c).is_none_or(is_nullable_layout),
+        _ => true,
+    }
+}
+
+/// `@FR-N-Store` — the admitted DENSE functions whose tuple is surely present: every result
+/// position is a build, a call to another such function, or a local bound only from those
+/// ([`surely_present`]).  The GREATEST such set — a recursion through its own result is
+/// present when its other exits are — found by removing until nothing leaves.
+fn surely_present_fns(
+    data: &Data,
+    admitted: &HashMap<u32, u16>,
+    params: &TupleParams,
+    fnref: &FnRefSites,
+) -> HashSet<u32> {
+    let mut sp: HashSet<u32> = admitted
+        .iter()
+        .filter(|(_, k)| !is_nullable_layout(**k))
+        .map(|(d, _)| *d)
+        .collect();
+    let no_locals: HashMap<u16, u16> = HashMap::new();
+    loop {
+        let keep: HashSet<u32> = sp
+            .iter()
+            .copied()
+            .filter(|d| {
+                let c = ShapeCtx {
+                    data,
+                    def_nr: *d,
+                    admitted,
+                    params,
+                    locals: &no_locals,
+                    own: Some(*d),
+                    fnref,
+                    sp: &sp,
+                };
+                let body = data.def(*d).code();
+                let mut present = surely_present(body, &c, &mut HashSet::new());
+                // A block that returns the buffer it filled is judged as the block; its own
+                // `return` reads that buffer, which is bound by no assignment.
+                let mut own_returns: HashSet<usize> = HashSet::new();
+                body.any_node(&mut |n| {
+                    match n {
+                        Value::Block(bl)
+                            if object_own_return(bl).is_some()
+                                || mv_return_source(bl, data).is_some() =>
+                        {
+                            present = present && surely_present(n, &c, &mut HashSet::new());
+                            if let Some(last) = bl.operators.last() {
+                                own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+                            }
+                        }
+                        Value::Return(x)
+                            if !own_returns.contains(&(std::ptr::from_ref(n) as usize)) =>
+                        {
+                            present = present && surely_present(x, &c, &mut HashSet::new());
+                        }
+                        _ => {}
+                    }
+                    !present
+                });
+                present
+            })
+            .collect();
+        if keep.len() == sp.len() {
+            return sp;
+        }
+        sp = keep;
     }
 }
 
@@ -15112,9 +15863,10 @@ pub struct ValueLeaves {
     /// `-> S?` body, by both addresses: each emits the ABSENT tuple
     /// ([`ValueTuple::absent`]).
     pub nulls: HashSet<usize>,
-    /// The dense leaves at a result position of a `-> S?` body ([`widened_leaves`]), by
-    /// both addresses: each emits its tuple with the presence word `true` appended.
-    pub widen: HashSet<usize>,
+    /// The leaves whose own tuple is DENSE and that stand where a nullable one is expected
+    /// ([`widened_leaves`]), by both addresses, with the nullable key: each emits its tuple
+    /// with the presence word appended.
+    pub widen: HashMap<usize, u16>,
 }
 
 fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool, data: &Data) -> ValueLeaves {
@@ -15205,9 +15957,10 @@ fn value_body(
     params: &TupleParams,
     view_offs: &ViewOffsets,
     fnref: &FnRefSites,
+    sp: &HashSet<u32>,
 ) -> Option<&'static str> {
     let def = data.def(d_nr);
-    let locals = value_locals_in(data, d_nr, admitted, params, view_offs, fnref);
+    let locals = value_locals_in(data, d_nr, admitted, params, view_offs, fnref, sp);
     let c = ShapeCtx {
         data,
         def_nr: d_nr,
@@ -15216,13 +15969,14 @@ fn value_body(
         locals: &locals,
         own: Some(d_nr),
         fnref,
+        sp,
     };
     let body = def.code();
-    // Every result position carries THIS function's layout, or WIDENS to it
-    // ([`result_fit`]): a dense leaf anywhere else in a `-> S?` body is the shorter tuple,
-    // which the signature does not promise.
+    // Every result position carries THIS function's layout, or WIDENS to it ([`fits`]): a
+    // dense leaf of a `-> S?` body is the shorter tuple until the emitter appends the presence
+    // word ([`widen_marks`]).
     let key = admitted.get(&d_nr).copied();
-    if result_fit(body, &c, key).is_none() {
+    if !key.is_some_and(|k| fits(body, &c, k)) {
         return Some("the tail is not a value leaf");
     }
     // An `Object` that returns the record it builds is the leaf; its own `return`, the
@@ -15249,7 +16003,7 @@ fn value_body(
     body.any_node(&mut |n| {
         if let Value::Return(x) = n
             && !own_returns.contains(&(std::ptr::from_ref(n) as usize))
-            && result_fit(x, &c, key).is_none()
+            && !key.is_some_and(|k| fits(x, &c, k))
         {
             ok = false;
             return true;
@@ -15270,80 +16024,124 @@ fn value_body(
     (!retbuf_uses_ok(body, rb, &c, &leaves.objects)).then_some("the return buffer is used")
 }
 
-/// Does RESULT position `node` of an admitted body whose layout is `key` carry that layout?
-/// `Some(false)`: exactly.  `Some(true)`: WIDENED — `@FR-R-ValueRecord`'s nullable clause,
-/// `@FR-N-Road`: a `-> S?` body may answer a DENSE tuple of `S` (a `-> S` call forwarded, a
-/// tuple parameter returned whole), which is the present `S?` tuple once the presence word
-/// is appended; the emitter appends it at the leaf ([`result_leaf`], `ValueLeaves::widen`).
-/// Only a leaf that is one NODE widens — a `Var` or a call; a dense `if` arm beside a
-/// nullable one is declined by [`value_shape`]'s one-layout join, not widened.  `None`: the
-/// position carries no value leaf, or another layout.
-fn result_fit(node: &Value, c: &ShapeCtx, key: Option<u16>) -> Option<bool> {
-    let k = value_shape(node, c)?;
-    if Some(k) == key {
-        return Some(false);
-    }
-    let key = key?;
-    (is_nullable_layout(key)
-        && layout_record(key) == k
-        && matches!(
-            result_leaf(node).unspan(),
-            Value::Var(_) | Value::Call(..) | Value::CallRef(..)
-        ))
-    .then_some(true)
-}
-
-/// The one NODE a result position delivers: through a value block's last statement, an
-/// `Insert`'s last and a `return`'s operand.  An `Object` block is a leaf of its own.
-fn result_leaf(v: &Value) -> &Value {
-    match v.unspan() {
-        Value::Block(bl) if bl.name != "Object" && !matches!(bl.result.base(), Type::Void) => {
-            bl.operators.last().map_or(v, result_leaf)
+/// The WIDENED leaves under `node`, which stands where the NULLABLE layout `key` is expected
+/// (`@FR-R-ValueRecord`'s nullable clause, `@FR-N-Road`): every leaf whose own tuple is the
+/// DENSE one — a `-> S` call, a dense value local, and a VIEW, whose tuple is its field reads
+/// whatever its type — by both addresses.  The walk is [`value_shape`]'s own: through a value
+/// block's last statement, a discharged-view return's copy source, an `Insert`'s last, a
+/// `return`'s operand and BOTH arms of a branch, so a dense arm beside a nullable one is
+/// widened where it stands.  A `null` exit emits the absent tuple itself, and a nullable
+/// call or local already is one.
+fn widen_marks(node: &Value, c: &ShapeCtx, key: u16, out: &mut HashMap<usize, u16>) {
+    let mut mark = |leaf: &Value| {
+        out.insert(std::ptr::from_ref(leaf) as usize, key);
+        out.insert(std::ptr::from_ref(leaf.unspan()) as usize, key);
+    };
+    match node.unspan() {
+        // A build is the tuple of the body's OWN layout: the nullable one in a body that
+        // returns it, and in a dense body the dense one, present by construction.  It is
+        // marked by the `Block`'s address, which is what the build's emitter is handed.
+        Value::Block(bl) if bl.name == "Object" => {
+            if value_shape(node, c).is_some_and(|k| !is_nullable_layout(k)) {
+                out.insert(std::ptr::from_ref(&**bl) as usize, key);
+            }
         }
-        Value::Insert(ops) => ops.last().map_or(v, result_leaf),
-        Value::Return(x) => result_leaf(x),
-        _ => v,
+        Value::Block(bl) if mv_return_source(bl, c.data).is_some() => {
+            if let Some(src) = mv_return_source(bl, c.data) {
+                widen_marks(src, c, key, out);
+            }
+        }
+        Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => {
+            if let Some(last) = bl.operators.last() {
+                widen_marks(last, c, key, out);
+            }
+        }
+        Value::Insert(ops) => {
+            if let Some(last) = ops.last() {
+                widen_marks(last, c, key, out);
+            }
+        }
+        Value::Return(x) => widen_marks(x, c, key, out),
+        Value::If(_, then_v, else_v) => {
+            widen_marks(then_v, c, key, out);
+            widen_marks(else_v, c, key, out);
+        }
+        // A view reads its fields and nothing else, so it is widened whatever key its type
+        // names; a value local is widened when it holds the dense tuple.
+        Value::Var(v)
+            if c.locals.get(v).is_none_or(|k| !is_nullable_layout(*k)) && fits(node, c, key) =>
+        {
+            mark(node);
+        }
+        Value::Call(..) | Value::CallRef(..)
+            if value_shape(node, c) == Some(layout_record(key)) =>
+        {
+            mark(node);
+        }
+        _ => {}
     }
 }
 
-/// The WIDENED leaves of admitted body `d_nr` ([`result_fit`]), by both addresses: the
-/// tail and every `return` operand whose dense tuple the emitter extends with the presence
-/// word.  Empty for a dense body.
+/// Every leaf of `d_nr` the emitter widens ([`widen_marks`]), with the nullable key it is
+/// widened to: under each result position of an admitted `-> S?` body, and under the right
+/// of every `τ?` value local of any function.  A result an `Object` or a discharged-view
+/// block returns itself is reached through the block, never through its own `return`.
 fn widened_leaves(
     data: &Data,
     d_nr: u32,
     vr: &ValueRecords,
     locals: &HashMap<u16, u16>,
-) -> HashSet<usize> {
-    let mut out = HashSet::new();
-    let key = vr.fns.get(&d_nr).copied();
-    if !key.is_some_and(is_nullable_layout) {
-        return out;
-    }
+) -> HashMap<usize, u16> {
+    let mut out = HashMap::new();
+    let own = vr.fns.contains_key(&d_nr).then_some(d_nr);
     let c = ShapeCtx {
         data,
         def_nr: d_nr,
         admitted: &vr.fns,
         params: &vr.params,
         locals,
-        own: Some(d_nr),
+        own,
         fnref: &vr.fnref_sites,
-    };
-    let mut add = |node: &Value| {
-        if result_fit(node, &c, key) == Some(true) {
-            let leaf = result_leaf(node);
-            out.insert(std::ptr::from_ref(leaf) as usize);
-            out.insert(std::ptr::from_ref(leaf.unspan()) as usize);
-        }
+        sp: &vr.sp,
     };
     let body = data.def(d_nr).code();
-    add(body);
+    let key = vr
+        .fns
+        .get(&d_nr)
+        .copied()
+        .filter(|k| is_nullable_layout(*k));
+    let mut own_returns: HashSet<usize> = HashSet::new();
     body.any_node(&mut |n| {
-        if let Value::Return(x) = n {
-            add(x);
+        match n {
+            Value::Block(bl)
+                if own.is_some()
+                    && (object_own_return(bl).is_some()
+                        || mv_return_source(bl, data).is_some()) =>
+            {
+                if let Some(k) = key {
+                    widen_marks(n, &c, k, &mut out);
+                }
+                if let Some(last) = bl.operators.last() {
+                    own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+                }
+            }
+            Value::Return(x) if !own_returns.contains(&(std::ptr::from_ref(n) as usize)) => {
+                if let Some(k) = key {
+                    widen_marks(x, &c, k, &mut out);
+                }
+            }
+            Value::Set(w, rhs) => {
+                if let Some(k) = locals.get(w).copied().filter(|k| is_nullable_layout(*k)) {
+                    widen_marks(rhs, &c, k, &mut out);
+                }
+            }
+            _ => {}
         }
         false
     });
+    if let Some(k) = key {
+        widen_marks(body, &c, k, &mut out);
+    }
     out
 }
 
@@ -15369,6 +16167,8 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
                     true
                 }
                 Value::Return(x) if matches!(x.unspan(), Value::Var(w) if *w == rb) => true,
+                // The block as a VALUE ends in the buffer it filled ([`mv_block_buffer`]).
+                Value::Var(w) if *w == rb => true,
                 other => retbuf_uses_ok(other, rb, c, objects),
             })
         }
@@ -15414,9 +16214,10 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
 }
 
 /// Per local of `body`, the layout key its binds carry under `c`'s value locals — or `None`
-/// once ANY bind is not a value shape or carries another layout (the declaration's `null`
-/// aside).  Every assignment carries ONE layout: a local bound from a `-> S` call and from a
-/// `-> S?` call has no single tuple type.
+/// once ANY bind is not a value shape or carries another record (the declaration's `null`
+/// aside).  The binds JOIN as the arms of a branch do ([`join_layout`]): a local bound from a
+/// `-> S` call on one path and a `-> S?` call on another holds the nullable tuple, and the
+/// dense bind is widened where it stands.
 ///
 /// `@FR-R-ValueRecord`'s nullable clause (@C144) — a bind of the bare `null` sentinel
 /// (`w: S? = null`) is the ABSENT tuple of whatever layout the local's other binds carry, so
@@ -15427,6 +16228,7 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
 fn bind_shapes(body: &Value, c: &ShapeCtx) -> HashMap<u16, Option<u16>> {
     let mut shapes: HashMap<u16, Option<u16>> = HashMap::new();
     let mut null_bound: HashSet<u16> = HashSet::new();
+    let mut unwidened: HashSet<u16> = HashSet::new();
     body.any_node(&mut |n| {
         if let Value::Set(v, rhs) = n
             && is_null_sentinel(c.data, rhs)
@@ -15436,17 +16238,25 @@ fn bind_shapes(body: &Value, c: &ShapeCtx) -> HashMap<u16, Option<u16>> {
             && !matches!(rhs.unspan(), Value::Null)
         {
             let s = value_shape(rhs, c);
+            if s.is_some_and(|k| !is_nullable_layout(k)) && !widens(rhs, c) {
+                unwidened.insert(*v);
+            }
             shapes
                 .entry(*v)
-                .and_modify(|e| {
-                    if *e != s {
-                        *e = None;
-                    }
-                })
+                .and_modify(|e| *e = e.zip(s).and_then(|(a, b)| join_layout(a, b)))
                 .or_insert(s);
         }
         false
     });
+    // A dense bind of a local that holds the nullable tuple is widened where it stands, so
+    // it must be one that can be ([`widens`]).
+    for v in unwidened {
+        if let Some(e) = shapes.get_mut(&v)
+            && e.is_some_and(is_nullable_layout)
+        {
+            *e = None;
+        }
+    }
     let own_null = own_record(c).filter(|k| is_nullable_layout(*k));
     for v in null_bound {
         let e = shapes.entry(v).or_insert(own_null);
@@ -15476,6 +16286,7 @@ pub fn value_locals_in(
     params: &TupleParams,
     view_offs: &ViewOffsets,
     fnref: &FnRefSites,
+    sp: &HashSet<u32>,
 ) -> HashMap<u16, u16> {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -15509,6 +16320,7 @@ pub fn value_locals_in(
         locals: &empty_locals,
         own,
         fnref,
+        sp,
     };
     let shapes_given = |locals: &HashMap<u16, u16>| bind_shapes(body, &base.with_locals(locals));
     let joined = |locals: &HashMap<u16, u16>, cands: &HashMap<u16, u16>| -> HashMap<u16, u16> {
@@ -15666,6 +16478,8 @@ fn local_uses_ok(
     // would be expected at (a tuple parameter, a copy into a record).
     let key = c.locals.get(&v).copied();
     let nullable = key.is_some_and(is_nullable_layout);
+    let temp_test_unserved = !nullable && temp_presence_unserved(c, v);
+    let present = || local_surely_present(v, c, &mut HashSet::new());
     let no_objects = HashSet::new();
     let objects = phantom.unwrap_or(&no_objects);
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
@@ -15716,7 +16530,9 @@ fn local_uses_ok(
                 }
                 // `(R-ValueLocal)` — a hand-off to a TUPLE PARAMETER, and a nullable tuple's
                 // presence test.
-                accounted += handoffs_and_presence(data, params, *d, name, args, v, nullable);
+                if !(temp_test_unserved && is_presence_test(name, args, v)) {
+                    accounted += handoffs_and_presence(data, params, *d, name, args, v, key, &present);
+                }
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)
@@ -15744,9 +16560,16 @@ fn local_uses_ok(
                 // is a reference, and materialising it would be a vector copy the value
                 // path does not emit.  So a view-leaf record declines a copy site
                 // (@PLN164 C5); the record form stands there.
-                // A nullable tuple declines it too: an absent one would have to leave the
-                // destination as a null copy does, which no write per field spells.
-                let copies = name == "OpCopyRecord" && (!view_offs.is_empty() || nullable);
+                // A NULLABLE tuple materialises under its presence word — an absent one
+                // writes nothing, which is what a copy from the null record does — and a
+                // DENSE one only where it is surely present (`@FR-N-Store`): a tuple that
+                // may have been read off a null record would write that record's field
+                // nulls where the record form copies nothing.
+                let copies = name == "OpCopyRecord"
+                    && (!view_offs.is_empty()
+                        || (!nullable
+                            && arg_is_v(0)
+                            && !present()));
                 // The copy inside a discharged-view return is dropped with the block and
                 // its source stands as a LEAF read, accounted above as served — so that
                 // one mention is not counted here a second time (a bare mint beside it
@@ -15756,19 +16579,7 @@ fn local_uses_ok(
                         served.contains(&(std::ptr::from_ref(a) as usize))
                             || served.contains(&(std::ptr::from_ref(a.unspan()) as usize))
                     });
-                if arg_is_v(0)
-                    && !copies
-                    && !src_served
-                    && matches!(
-                        name,
-                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
-                    )
-                {
-                    accounted += 1;
-                }
-                if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
-                    accounted += 1;
-                }
+                accounted += release_uses(body, name, args, v, copies || src_served);
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
                 // one): the tuple's range is materialised into the destination.  A bind
                 // that VIEWS the sub-record (`q = w.pos`) is no copy and is not here.
@@ -15794,12 +16605,108 @@ fn local_uses_ok(
     mentions == accounted
 }
 
-/// The uses of local `v` one call accounts that turn on the local's LAYOUT: a hand-off to a
-/// `(R-ValueLocal)` TUPLE PARAMETER of callee `d` — the fields cross the call as the scalars
-/// they are, whole or as a SUB-RECORD of the local handed to a tuple parameter of the
-/// sub-record's type — which a NULLABLE tuple never serves (the parameter takes the dense
-/// layout); and, for a nullable one only, a PRESENCE test (`if x`, `x == null`), which reads
-/// the presence word (`@FR-R-ValueRecord`'s nullable clause, @C144).
+/// A presence test of a DENSE compiler temporary (the phantom buffer aside) is never the
+/// constant "present" (`@FR-N-Store`): its `null` is a hoisted preamble the release machinery
+/// tests where no bind ran — a work ref's displaced record before the call writes the buffer,
+/// a `??` lift bound in one arm and released on every path — so such a temporary keeps the
+/// record form.  Only the TEST: after its bind a temporary is present, so a copy from it, its
+/// result and a join's widening keep [`local_surely_present`].
+fn temp_presence_unserved(c: &ShapeCtx, local: u16) -> bool {
+    c.data
+        .def(c.def_nr)
+        .variables()
+        .is_compiler_generated(local)
+        && own_retbuf(c.data, c.own) != Some(local)
+}
+
+/// `OpConvBoolFromRef(local)` / `OpRefIsNull(local)` — the presence test of `local` itself.
+fn is_presence_test(name: &str, args: &[Value], local: u16) -> bool {
+    matches!(name, "OpConvBoolFromRef" | "OpRefIsNull")
+        && matches!(args, [a] if matches!(a.unspan(), Value::Var(w) if *w == local))
+}
+
+/// The uses of local `v` a release-side call accounts: its free, a copy from it, and either
+/// side of a store-identity test — but not a test whose answer turns on the path
+/// ([`identity_turns_on_path`]).  `settled`: the caller already decided the first operand's
+/// use (a copy it declines, or a source it served as a leaf read).
+fn release_uses(body: &Value, name: &str, args: &[Value], v: u16, settled: bool) -> u32 {
+    let arg_is_v =
+        |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
+    let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
+    if identity && identity_turns_on_path(body, args) {
+        return 0;
+    }
+    let first = arg_is_v(0)
+        && !settled
+        && matches!(
+            name,
+            "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
+        );
+    u32::from(first) + u32::from(identity && arg_is_v(1))
+}
+
+/// A store-identity test answers "distinct" for every value local — it is in no store.  Between
+/// two locals one of which may hold the other (a join's result and an arm it took) the answer
+/// turns on the path, so the test is not served and both keep the record form: the constant
+/// would release the record the result hands on.
+fn identity_turns_on_path(body: &Value, args: &[Value]) -> bool {
+    match (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) {
+        (Some(Value::Var(lhs)), Some(Value::Var(rhs))) => {
+            may_hold(body, *lhs, *rhs) || may_hold(body, *rhs, *lhs)
+        }
+        _ => false,
+    }
+}
+
+/// Can local `holder` hold what local `held` holds — is `held` a leaf of one of `holder`'s
+/// binds (an `if` arm, a value block's last operand), followed through the locals it names?
+fn may_hold(body: &Value, holder: u16, held: u16) -> bool {
+    fn leaf(node: &Value, held: u16, body: &Value, seen: &mut HashSet<u16>) -> bool {
+        match node.unspan() {
+            Value::Var(x) => *x == held || binds_hold(body, *x, held, seen),
+            Value::If(_, a, b) => leaf(a, held, body, seen) || leaf(b, held, body, seen),
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => bl
+                .operators
+                .last()
+                .is_some_and(|l| leaf(l, held, body, seen)),
+            Value::Insert(ops) => ops.last().is_some_and(|l| leaf(l, held, body, seen)),
+            Value::Return(x) => leaf(x, held, body, seen),
+            _ => false,
+        }
+    }
+    fn binds_hold(body: &Value, v: u16, held: u16, seen: &mut HashSet<u16>) -> bool {
+        if !seen.insert(v) {
+            return false;
+        }
+        let mut found = false;
+        body.any_node(&mut |n| {
+            if let Value::Set(w, rhs) = n
+                && *w == v
+                && leaf(rhs, held, body, seen)
+            {
+                found = true;
+            }
+            found
+        });
+        found
+    }
+    holder != held && binds_hold(body, holder, held, &mut HashSet::new())
+}
+
+/// The uses of local `v` one call accounts that turn on the local's LAYOUT `key`: a hand-off
+/// to a `(R-ValueLocal)` TUPLE PARAMETER of callee `d` — the fields cross the call as the
+/// scalars they are — and, for a nullable tuple only, a PRESENCE test (`if x`, `x == null`),
+/// which reads the presence word (`@FR-R-ValueRecord`'s nullable clause, @C144).
+///
+/// A whole hand-off is served where the parameter takes the local's own layout, and where a
+/// DENSE local meets a nullable parameter of its record and is surely present (`present`,
+/// asked only then: the site widens it, `@FR-N-Store`).  A nullable tuple is never handed to
+/// a dense parameter.  A SUB-RECORD of a dense local crosses to a dense parameter of the
+/// sub-record's type.
+#[allow(clippy::too_many_arguments)]
 fn handoffs_and_presence(
     data: &Data,
     params: &TupleParams,
@@ -15807,23 +16714,36 @@ fn handoffs_and_presence(
     name: &str,
     args: &[Value],
     v: u16,
-    nullable: bool,
+    key: Option<u16>,
+    present: &dyn Fn() -> bool,
 ) -> u32 {
     let arg_is_v =
         |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
-    if nullable {
-        let presence =
-            arg_is_v(0) && args.len() == 1 && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull");
-        return u32::from(presence);
-    }
+    let nullable = key.is_some_and(is_nullable_layout);
+    // A presence test reads the presence word of a nullable tuple, and is the constant
+    // "present" for a dense one that is surely so; any other dense tuple cannot answer it.
+    let mut uses = u32::from(
+        arg_is_v(0)
+            && args.len() == 1
+            && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull")
+            && (nullable || (key.is_some() && present())),
+    );
     let Some(ps) = params.get(&d) else {
-        return 0;
+        return uses;
     };
-    let hands = ps
-        .iter()
-        .filter(|(i, ptp)| arg_is_v(**i) || sub_record_of(data, args.get(**i), v) == Some(**ptp))
-        .count();
-    u32::try_from(hands).unwrap_or(u32::MAX)
+    for (i, ptp) in ps {
+        let whole = arg_is_v(*i)
+            && match key {
+                Some(k) => {
+                    k == *ptp
+                        || (!is_nullable_layout(k) && nullable_layout(k) == Some(*ptp) && present())
+                }
+                None => !is_nullable_layout(*ptp),
+            };
+        let sub = !nullable && sub_record_of(data, args.get(*i), v) == Some(*ptp);
+        uses += u32::from(whole || sub);
+    }
+    uses
 }
 
 /// `(R-FnRefValue)` — how many of a fn-ref call's arguments hand local `v` whole to a
@@ -16035,6 +16955,55 @@ pub fn tuple_arg_ready(
     }
 }
 
+/// How `arg` crosses to a tuple parameter of layout `tp`: `Some(false)` as the tuple it
+/// already is ([`tuple_arg_ready`]); `Some(true)` a DENSE tuple WIDENED into a nullable
+/// parameter of its record, which only a surely present one may be (`@FR-N-Store`); `None`
+/// a record the site reads field by field — with, for a nullable parameter, whether the
+/// record is there.  ONE home for the site gate and the emitter.
+fn tuple_arg_form(arg: &Value, tp: u16, c: &ShapeCtx) -> Option<bool> {
+    if tuple_arg_ready(arg, tp, c.admitted, c.locals) {
+        return Some(false);
+    }
+    if !is_nullable_layout(tp) {
+        return None;
+    }
+    let dense = layout_record(tp);
+    match arg.unspan() {
+        Value::Var(v)
+            if c.locals.get(v) == Some(&dense)
+                && local_surely_present(*v, c, &mut HashSet::new()) =>
+        {
+            Some(true)
+        }
+        Value::Call(g, _) if c.admitted.get(g) == Some(&dense) && c.sp.contains(g) => Some(true),
+        _ => None,
+    }
+}
+
+/// [`tuple_arg_form`] for the emitter: the form argument `arg` of a call in `def_nr` takes
+/// at a tuple parameter of layout `tp`, over that function's value locals.
+#[must_use]
+pub fn arg_tuple_form(
+    data: &Data,
+    def_nr: u32,
+    vr: &ValueRecords,
+    locals: &HashMap<u16, u16>,
+    arg: &Value,
+    tp: u16,
+) -> Option<bool> {
+    let c = ShapeCtx {
+        data,
+        def_nr,
+        admitted: &vr.fns,
+        params: &vr.params,
+        locals,
+        own: vr.fns.contains_key(&def_nr).then_some(def_nr),
+        fnref: &vr.fnref_sites,
+        sp: &vr.sp,
+    };
+    tuple_arg_form(arg, tp, &c)
+}
+
 /// Where a node stands, for the site gate: an admitted call is consumed as a TUPLE at a
 /// result position of an admitted body (`Tail`), on the right of a value local (`Bound`),
 /// or as a statement whose result is dropped (`Discard`); anywhere else (`Operand`) the
@@ -16072,7 +17041,7 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
                 // expression at that position is a record the site reads the fields off.
                 let pos_here = if let Some(ptp) =
                     ctx.params.get(callee).and_then(|ps| ps.get(&i).copied())
-                    && tuple_arg_ready(arg, ptp, ctx.admitted, ctx.locals)
+                    && tuple_arg_form(arg, ptp, ctx).is_some()
                 {
                     Pos::Bound
                 } else {
@@ -16218,6 +17187,7 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
         &vr.params,
         &vr.view_offs,
         &vr.fnref_sites,
+        &vr.sp,
     );
     // A forward's buffer is WRITTEN by the site (`forward_site`), so its argument is a use.
     let forwards = forward_sites(data, def_nr, &vr.fns, &locals);
@@ -16319,23 +17289,23 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     out
 }
 
-/// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]): empty for a function
-/// that is not admitted, since only an admitted body converts a view or an `Object`.
+/// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]), over its value locals
+/// `locals` ([`value_locals_in`]).  A function that is not admitted has only the WIDENED
+/// ones: only an admitted body converts a view or an `Object`, and any function may bind a
+/// `τ?` value local from a dense tuple.
 #[must_use]
-pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves {
-    if !vr.fns.contains_key(&def_nr) {
-        return ValueLeaves::default();
-    }
-    let locals = value_locals_in(
-        data,
-        def_nr,
-        &vr.fns,
-        &vr.params,
-        &vr.view_offs,
-        &vr.fnref_sites,
-    );
-    let mut leaves = collect_leaves(data.def(def_nr).code(), &locals, true, data);
-    leaves.widen = widened_leaves(data, def_nr, vr, &locals);
+pub fn value_leaves(
+    data: &Data,
+    def_nr: u32,
+    vr: &ValueRecords,
+    locals: &HashMap<u16, u16>,
+) -> ValueLeaves {
+    let mut leaves = if vr.fns.contains_key(&def_nr) {
+        collect_leaves(data.def(def_nr).code(), locals, true, data)
+    } else {
+        ValueLeaves::default()
+    };
+    leaves.widen = widened_leaves(data, def_nr, vr, locals);
     leaves
 }
 

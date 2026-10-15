@@ -236,7 +236,7 @@ arm names it — a guard does not), or a final `_`; otherwise the program does n
 > not bind `c` to `other`; `other` is read as a variant name and there is no variant of that name.
 > An arm whose name resolves NOWHERE is a compile error, never a skipped arm: a misspelled or
 > renamed variant would otherwise fall to `_` and answer the wildcard's value
-> (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
+> (`loft-suite/rules/matching/M-Unit/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
 no total final arm may select nothing at runtime and then yields **null** (the @C80 model), which makes
 its result type nullable. So a `match` still never faults on a fall-through: on an enum it cannot fall
@@ -306,7 +306,7 @@ follows `(P-Seq)` as a prefix reading of it.
 - **The subject is evaluated once (`M-Match`)** — `match next(lx) { Num { v } => …, … }` calls
   `next` once: the variant tested and the payload bound are the same token's.  A subject that is
   a place (a variable, a field or element of one) is read in place; anything else is bound
-  once.  Guard `tests/scripts/a-match-evaluates-its-subject-once.loft` c1–c10.
+  once.  Guard `loft-suite/rules/matching/M-Match/a-match-evaluates-its-subject-once.loft` c1–c10.
 - **Arm selection + payload bind (`M-Variant`)** — `match Sh::Circle { r: 5 } { Dot => 0,
   Circle { r } => r*r }` is `25`.
 - **Wildcard default (`M-Wild`)** — `match C::D { A => 1, _ => 0 }` is `0`; an arm after `_` is a

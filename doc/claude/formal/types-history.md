@@ -1303,6 +1303,196 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
   `tests/scripts/1380-an-else-if-chain-answers-in-its-first-arms-type.loft` and `1380b-…`,
   falsified at 2b992851 on both backends.
 
+## The `(N-Road)` walk of 2026-10-12 (loft#1989)
+
+The open entry in `types.md` listed two pairs as still differing, and its tracking issue
+(loft#1934) was closed.  A first re-measure read *0 of 15 pairs diverge* and the entry was
+about to be closed on it.  That reading was false: `scripts/nullable_road.py` ran a debug
+binary older than the tree, which refuses the standard library; both halves of every pair
+printed the same refusal, and two equal texts compared `same`.  On a current build nine pairs
+took two roads.  The script now stops when a half emits no IR.
+
+What the nine came to, read per emitted function:
+
+1. **The native live-reload entry check** matched bare type formers, so a function returning
+   or taking a `τ?` had no entry check (`Generator::live_entry_check`).  Fixed.  The matrix
+   beside it (32 shapes, each run interpreted, compiled, and compiled with the function
+   flipped) found a neighbour in the DENSE spelling: a value-record function flipped to the
+   interpreter was pushed no return buffer, and a record materialised for a tuple parameter
+   was released before the answer that viewed it was read.  Fixed with it.
+2. **The displaced free.**  `Function::borrows_one_argument` was the residual
+   `ownership-history.md` records for the nullable record local.  With the `τ?` record
+   return on the caller's buffer, the shape it was written for (`d: S? = p; d = mint()`)
+   lowers exactly as its dense twin does, and the clause fired only on compiler temporaries
+   and views.  Removed: 17 corpus files change emission, none changes its answer or leaves a
+   store.
+3. **A tail that is a nullable local** is copied into the buffer under a presence test.
+   That is not an accident of a site: a dense record local cannot be given an absence, so
+   its copy has no test to take.  `(N-Road)`'s exception clause names it beside `??`.
+4. **A struct literal bound to a nullable local** was built on a work reference
+   (`Parser::parse_object`).  The peel had been tried before and held back for loft#1483,
+   closed since.  Applying it showed one more nullable-only defect: an inferred local widened
+   by `= null` was typed from a read of itself and so depended on itself, and nothing
+   released it once the work reference no longer did.
+
+A fifth road came out of a pair that had not been a pair (`element-over-param`, whose halves
+differed in an arm's value): the native register return declines a `-> S?` that joins a built
+record with a dense view.  It is the entry `types.md` carries now, tracked as loft#1990.
+
+Three pairs were rewritten so that `??` stands on a plain read with a scalar default: a
+`??` over a lifted call, or with a record or vector default, mints and frees on channels the
+report cannot tell from a road.
+
+## The copy walk of 2026-10-13 (loft#1997, loft#2004)
+
+`D-types-35` was a copy that made something out of nothing: a whole-record bind minted its
+destination and copied unconditionally when both sides were typed dense, so a dense
+parameter that held the `null` `(N-Store)` let into it was copied into a PRESENT record of
+zeros.  The matrix (15 programs; value and presence hand-computed; the interpreter, the
+native record road and the native register road) had thirteen cells that answered zeros.
+
+One question had three decoders.  `Variables::bind_admits_absence` asked whether either side
+was typed `τ?` for the first bind on both backends; the interpreter's rebind asked the source
+alone, in its own words; and the parser's return copy asked the local's type.  All three now
+test the source, whatever it is typed: the predicate and both dense arms are gone, and
+`(N-Road)`'s exception for a copy with them.
+
+Three things the walk found beside it:
+
+- **A drop hook ran twice** (loft#2004) — on `main`, in the nullable spelling: a `-> H?` that
+  returned a `H?` local of a record with a hook released it in the callee and again at the
+  caller.  The scope pass moved the release into the return copy only where the return's tail
+  WAS the copy block; under the presence test it is one level down.  Giving the dense
+  spelling the same test would have doubled its release too (two corpus guards said so), so
+  the scope pass reads the copy through the test.  Fixed with it.
+- **A tuple written into a record** on the register road wrote an absent value's field nulls
+  where the record road copies nothing.  A nullable tuple now takes the copy's own null arm
+  (`Stores::copy_null_into`: a destination just created is written absent, an existing one
+  keeps what it held), and a dense one is written only where it is surely present.
+- **A generic's local** typed by a type variable is copied without the test unless it is
+  written `T?`: its instance may be a tuple, whose test is not the record's.
+
+Closed by it:
+
+* **D-types-35** *(opened 2026-10-13, CLOSED 2026-10-13; loft#1997)* — `(N-Store)`: a
+  whole-record copy of a dense slot that holds null was a present record of zeros on the
+  interpreter and the record road.  Guards
+  `1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft` and
+  `2004-a-drop-hook-runs-once-when-a-nullable-local-is-returned.loft`.
+* **D-types-36** *(opened 2026-10-14; loft#2006)* — `(N-Store)`: the walk closed the copy
+  of a LOCAL and found the same answer in the copy a `return` makes of a FIELD.
+  `o = f(null); return o.inner` was a present record of zeros on both backends where
+  `(R-ReturnField)` declined the exit — a scalar record, a root typed `τ?` — and for every
+  such exit under `LOFT_NO_RETURN_FIELD=1`.  The rewrite matched the bare copy block only,
+  so a test in the parser alone would have cost every admitted exit its hand-over.  Both
+  halves landed together: the copy tests a field path rooted at a local by re-reading it
+  (the read is pure), and the rewrite rebuilds the tested spelling — the test, the copy, the
+  frees after it — into the bare block its one admission reads (`Cx::tested_exit`).  The
+  matrix (16 programs, a null root and a present one each, three roads, the rewrite on and
+  off) holds; the rewrite admits the same thirteen exits of its pinned guard and emits them
+  as before.  Guard `2006-a-returned-field-of-a-record-that-is-null-is-null.loft`.
+  The matrix found the same answer at more roots — a CALL (`return f(x).inner`, whose lift
+  was bound inside the copy block, after any test), an element read out of range
+  (`return w[i]`, `return w[i].a`), a keyed entry that is not there, and a read whose index
+  calls a user function.  **Closed 2026-10-15** (loft#2006, second half): every such source
+  may be absent (`copy_source_may_be_absent`), and `bind_return_source` reads it once where a
+  user call forbids the re-read — a call root bound to an owned local first (the spelling
+  `d = f(x); return d.inner`), a call in an index read into a `τ?` handle — while a pure read
+  is re-read.  `(R-ReturnField)` still hands the two call-root exits over.  The 19-line
+  matrix holds on both backends with the rewrite on and off, both call counts are 1; of the
+  2354 corpus programs, 29 change emission and all 29 answer as before on both backends,
+  bar the guard itself.
+
+## The presence walk of 2026-10-13 (loft#1993, loft#1994)
+
+Two entries the `(N-Road)` walk below left open closed on one mechanism.
+
+`D-types-34` was the wrong answer: a dense tuple has no absent spelling, so a null stored
+into a dense parameter was gone once the call site read the record into the tuple, and the
+callee that handed it back as `S?` appended a constant `true`.  The matrix (38 programs,
+value and presence hand-computed, both backends) found the eight shapes that answered
+"present" for a null: the parameter handed back, at an arm, at a `return`, in a `match`, a
+`S?` local or a nullable call as the argument, and two hops through `-> S` functions.
+
+`D-types-33` was the road: a `p: S?` kept its reference where `p: S` crossed as fields.
+
+The fix for the first is the mechanism of the second.  A parameter can carry the nullable
+layout — its call sites read whether the argument names a record — so a dense parameter
+whose value can reach a `S?` takes that layout too, and so does a `-> S` function whose
+result is not surely present.  Nothing is widened with a constant except a tuple that is
+surely present: a build, or what is made only of builds
+(`hoist::surely_present`, `hoist::promote_presence`).
+
+The corpus run over the 47 files whose native code the change touches found one defect the
+walk below had shipped and its gate had not seen: in a function that returns `S`, a local
+joined from a record literal and a `-> S?` call took the nullable layout while the literal's
+arm was emitted as the body's own dense tuple, so the function did not compile on `--native`.
+Every cell of that walk's matrix stood in a `-> S?` body.  A build that stands where a
+nullable tuple is expected is widened now, whatever its body returns
+(`1990-…loft` cell `j22`).
+
+Found beside it and open: a whole-record COPY of a dense slot that holds null is a present
+record of zeros on the interpreter and on the record road (`D-types-35`, loft#1997).  The
+two cells of the matrix that copy such a slot answer null on the register road and zeros on
+the interpreter.
+
+Closed by it:
+
+* **D-types-33** *(opened 2026-10-13, CLOSED 2026-10-13; loft#1993)* — `(N-Road)`: a `p: S?`
+  record parameter was passed by reference where `p: S` crossed the call as its fields.
+  Guard `1993-a-nullable-record-parameter-crosses-as-its-fields.loft`; pairs
+  `nullable-param-back`, `nullable-param-read`, `nullable-param-copied`.
+* **D-types-34** *(opened 2026-10-13, CLOSED 2026-10-13; loft#1994)* — `(N-Store)`: a null
+  stored into a dense record slot read back PRESENT on `--native` once the tuple it crossed
+  as was widened to a `S?`.  Guard
+  `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft`.
+
+## The `(N-Road)` walk of 2026-10-13 (loft#1990)
+
+`D-types-32` named one shape: a `-> S?` whose result joins a built record with a dense view
+kept its return buffer where its `-> S` twin returned in registers.  The matrix beside it (42
+programs: each leaf kind — a build, `null`, a view of `S` and of `S?`, a `-> S` and a `-> S?`
+call, a dense and a nullable value local — alone and at a join, every nullable half against
+its all-`S` twin, value and presence hand-computed, run interpreted and compiled) put the
+boundary elsewhere.  Seven twin pairs differed, and what they shared was not the build beside
+the view:
+
+1. **A view had no layout in a `-> S?` body.**  `hoist::value_shape` compared the view's
+   record type with the body's nullable key, which never matches, so neither a view of `S`
+   nor a view of `S?` was a leaf there.
+2. **A join asked for one key.**  A `-> S` call beside a build, beside `null`, or beside a
+   `-> S?` call declined the whole function; so did a local bound from a dense tuple on one
+   path and a nullable one on another, in any function.
+3. **A copy under a presence test was no leaf.**  Where a result can be absent the parser
+   copies arm by arm, and each copying arm is the discharged-view block used as a value; the
+   gate read that block only where it ended in a `return`.
+
+One home answers all three now: `hoist::join_layout` (a dense key beside the nullable key of
+the same record is the nullable one) and `hoist::widen_marks` (the leaves the emitter widens
+where they stand).  A view's presence word is read off its reference, so a null `S?` handed
+in comes back absent.
+
+Three things the walk found beside it:
+
+- **A dense function did not compile** (loft#1992): a record returned from an `if` whose arm
+  holds a slice `match` reached the emitter with a statement list as the copy's source, which
+  it bound bare.  Fixed with it.
+- **A `p: S?` parameter is passed by reference** where `p: S` crosses as its fields.  The
+  pairs written for the result showed it once the result took one road.  Open as
+  `D-types-33`.
+- **A null stored into a dense tuple reads back present** when that tuple is widened.  It
+  predates the walk (`fn whole(p: S) -> S? { p }` with `whole(null)`), and the walk's joins
+  widen at more positions.  Open as `D-types-34`.
+
+Closed by it:
+
+* **D-types-32** *(opened 2026-10-12, CLOSED 2026-10-13; loft#1990)* — `(N-Road)`: the native
+  register return admitted a `-> S?` only where every result position carried the nullable
+  tuple or was one node that widened to it.  Guards
+  `1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft` (values and
+  presence, both backends), `tests/value_record.rs` (which makers are admitted) and the pair
+  gate `make nullable-road ARGS=--check`.
+
 ## Deviations carried by types.md until 2026-10-06
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.

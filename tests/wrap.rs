@@ -95,6 +95,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
     let mut p = Parser::new();
     let (data, db) = cached_default();
     p.data = data;
+    p.data.limits = loft::limits::Limits::from_annotations(&source);
     p.database = db;
     // Honour `// @ARGS: --lib <dir>` — same logic as `run_test`.
     for line in source.lines().take(20) {
@@ -405,7 +406,7 @@ fn wasm_dir() -> std::io::Result<()> {
 /// To run a single file use the individual test functions below, e.g.:
 ///   cargo test --test wrap integers
 ///
-/// The per-commit run is CHUNKED (`loft_suite_00` … `loft_suite_07`, every
+/// The per-commit run is CHUNKED (`loft_suite_00` … `loft_suite_15`, every
 /// [`LOFT_SUITE_CHUNKS`]-th script from each offset): one test over the whole corpus took
 /// 650-760 s on the Windows runner, and the duration gate allows a test half its 600 s limit.
 /// What a chunk gives up is the WHOLE-corpus interaction — one script corrupting shared state
@@ -419,6 +420,13 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
         .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
+    // The whole-corpus run (no chunk) takes every program of the language suite beside the
+    // tree too (@PLN193): the interaction ACROSS programs is what this run exists for, and
+    // the moved programs are still programs.  The per-commit chunks do not — the suite's own
+    // runner and the required `Language suite` check carry them.
+    if chunk.is_none() {
+        files.extend(common::corpus::suite_programs());
+    }
     // `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` — run only a WINDOW of the sorted corpus.
     //
     // The instrument for a fault that only appears in the whole-corpus run: one script
@@ -463,25 +471,52 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
     // Scripts with dedicated #[ignore] wrappers are skipped here to keep
     // loft_suite green while the feature is under development.
     let skip: HashSet<&str> = ignored_scripts();
+    // One line per corpus PROGRAM, and the chunk against its budget (`common::timing::Suite`),
+    // because to nextest this whole loop is a single test: ~300 programs with no individual
+    // time and one shared output bucket.  `LOFT_TEST_TIMING=<file>` also records the rows.
+    let suite = match chunk {
+        Some(k) => common::timing::Suite::start(
+            &format!("loft_suite_{k:02}"),
+            common::timing::CHUNK_BUDGET,
+        ),
+        None => common::timing::Suite::unbounded("loft_suite_whole_corpus"),
+    };
     for entry in files {
         let name = fa::file_name(&entry).unwrap_or_default();
         if skip.contains(name.as_str()) {
             println!("skip {entry:?} (has dedicated #[ignore] test)");
             continue;
         }
-        // One row per corpus PROGRAM (`LOFT_TEST_TIMING=<file>`), because to nextest this
-        // whole loop is a single test: ~895 programs with no individual time and one shared
-        // output bucket.  See `common::timing` for why the row is CPU and not wall.
-        let unit = common::timing::Unit::start();
+        let unit = suite.begin(&name);
         let outcome = run_test(entry, false, false);
-        unit.finish(&name);
+        suite.end(&name, unit);
         outcome?;
+    }
+    suite.finish()
+}
+
+/// The limit guards at the real limits (`tests/limits_full/`) on the interpreter.  The
+/// per-commit corpus proves the same relations under LOWERED limits (`// @LIMIT:`,
+/// `// @FRAME_LIMIT:`), in milliseconds; compiling a program 300 levels deep costs time that
+/// grows with the square of the depth.  Nightly, beside [`loft_suite_whole_corpus`].
+#[test]
+#[ignore = "the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored"]
+fn limits_at_full_size() -> std::io::Result<()> {
+    let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/limits_full")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
+        .collect();
+    files.sort();
+    for entry in files {
+        run_test(entry, false, false)?;
     }
     Ok(())
 }
 
 /// How many tests the per-commit `loft_suite` run is split across — see [`loft_suite_run`].
-const LOFT_SUITE_CHUNKS: usize = 8;
+const LOFT_SUITE_CHUNKS: usize = 16;
 
 macro_rules! loft_suite_chunks {
     ($($name:ident = $k:expr),* $(,)?) => {
@@ -503,6 +538,14 @@ loft_suite_chunks!(
     loft_suite_05 = 5,
     loft_suite_06 = 6,
     loft_suite_07 = 7,
+    loft_suite_08 = 8,
+    loft_suite_09 = 9,
+    loft_suite_10 = 10,
+    loft_suite_11 = 11,
+    loft_suite_12 = 12,
+    loft_suite_13 = 13,
+    loft_suite_14 = 14,
+    loft_suite_15 = 15,
 );
 
 /// Every chunk index has its test: a chunk count raised without a matching test would drop that
@@ -518,6 +561,14 @@ fn loft_suite_chunks_cover_the_corpus() {
         "loft_suite_05",
         "loft_suite_06",
         "loft_suite_07",
+        "loft_suite_08",
+        "loft_suite_09",
+        "loft_suite_10",
+        "loft_suite_11",
+        "loft_suite_12",
+        "loft_suite_13",
+        "loft_suite_14",
+        "loft_suite_15",
     ];
     assert_eq!(
         names.len(),
@@ -1746,6 +1797,7 @@ fn run_test_inner(
     let mut p = Parser::new();
     let (data, db) = cached_default();
     p.data = data;
+    p.data.limits = loft::limits::Limits::from_annotations(&source);
     p.database = db;
     // Honour `// @ARGS: --lib <dir>` lines at the top of the test file so
     // scripts using `use foo` / `use foo::*` can locate fixtures in
@@ -1867,6 +1919,9 @@ fn run_test_inner(
         }
         if diagnostics.level() >= loft::diagnostics::Level::Error {
             return None;
+        }
+        if let Some(n) = loft::limits::Limits::store_limit_annotation(&source) {
+            p.database.store_limit = p.database.store_limit.min(n);
         }
         let mut state = State::new(p.database);
         byte_code(&mut state, &mut p.data);

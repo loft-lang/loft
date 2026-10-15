@@ -1,0 +1,5 @@
+// A `match` whose arms are a parameter, a literal and a call.  Dense half.
+struct S { a: integer }
+fn g(n: integer) -> S { S { a: n } }
+fn f(p: S, n: integer) -> S { match n { 1 => p, 2 => S { a: 5 }, _ => g(11) } }
+fn main() { x = S { a: 41 }; t = f(x, 1); u = f(x, 3); println("{t.a} {u.a}"); }

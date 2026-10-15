@@ -270,6 +270,11 @@ perf report -i /tmp/lane.data --stdio --sort symbol | grep n_c_mesh_aabb   # the
 perf annotate -i /tmp/lane.data --stdio -s consumer::n_c_mesh_aabb__inv    # its instructions
 ```
 
+A PACKAGE's bench links its libraries' native halves, and which ones, from where, only the
+compile itself knows.  `LOFT_NATIVE_RUSTC_ARGS=<file>` makes a native compile write its
+`rustc` arguments there, one a line, and `hand_price.sh` replays them on the emitted file
+when given the list as a third argument (its header has the three commands).
+
 Read the row's TWIN when one exists (`n_<row>__inv`, `@FR-R-Callee`): the lane calls the
 twin, and the plain function carries no samples.  Check first that the named build times
 the row the same as the plain one (it did, both rows, to 0.3 %) — an attribute that moved

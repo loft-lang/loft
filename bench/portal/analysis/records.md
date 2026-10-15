@@ -352,7 +352,7 @@ is a VIEW by the oracle, not a copy, so that local keeps its record (n10).  The 
 stands behind (`sphere`, `mesh_to_floats`, `save_glb`, stage `draw_list`, tween `value`,
 game_protocol `msg_ping`) are re-read on the x86-64 lane at the next portal re-measure;
 `msg_ping` returns a nested record PAIR by value, so it is the row to read first.  Cells
-`tests/scripts/158-nested-value-record.loft`; the `nested_field` pin's n12 row moved
+`loft-suite/attic/scripts/158-nested-value-record.loft`; the `nested_field` pin's n12 row moved
 (2 → 9 reads through the address: the callee's parameter is a tuple now, filled at the site).
 
 ## The record lifecycle, profiled (2026-09-29) — what the elimination rules still leave
@@ -441,7 +441,7 @@ parameters, from 12 and 7).  Measured on this arm64 box, old compiler against ne
 hashes: **`resolve_move` 4.19 → 1.65 ms (14.0× → 5.33×, −60 %)**, **`emit_to_material`
 1.21 → 0.97 ms (10.6× → 8.1×, −20 %)**, `panel_build` and `truncate_to` unmoved as
 predicted (their cost is the copy-and-free pair, § Order 2 and 4).  Cells
-`tests/scripts/158-a-callees-own-buffer-is-a-fresh-record.loft`: the resolve_move shape, a
+`loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft`: the resolve_move shape, a
 builder into a fresh local's field, a builder two calls deep, and the aliasing negatives
 (c4b / c5b: a parameter naming the record written reads the write back) — the falsifier is
 the sabotage recorded in the cell header.  What `resolve_move` still pays is `map_get_hex`,

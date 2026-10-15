@@ -12,7 +12,7 @@ pub use text::text_timeline_summary;
 
 use crate::data::{Context, Data, Type};
 pub use crate::database::Call;
-use crate::database::{ParallelCtx, Stores, WorkerStores};
+use crate::database::{Stores, WorkerStores};
 use crate::fill::OPERATORS;
 use crate::fxhash::FxHashMap;
 use crate::keys::{DbRef, Str};
@@ -43,7 +43,7 @@ fn dev_soft_halt_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
 
-pub const STRING_NULL: &str = "\0";
+pub use crate::store::STRING_NULL;
 
 /// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
 /// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
@@ -254,9 +254,7 @@ fn fast_stack_allowed() -> bool {
         || std::env::var_os("LOFT_NO_FAST_STACK").is_some())
 }
 
-/// Reserved store number for coroutine `DbRef` encoding (CO1.1).
-/// Cannot clash with real Stores allocations (limited by `Stores::max`).
-pub const COROUTINE_STORE: u16 = u16::MAX;
+pub use crate::database::COROUTINE_STORE;
 
 /// Lifecycle state of a coroutine frame (CO1.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -950,14 +948,8 @@ impl State {
         }
     }
 
-    /// Most frames a loft call stack may hold — `main` included, since `main` is a
-    /// frame like any other and `stack_trace()` reports it as one.
-    ///
-    /// Set below the store stack limit (~8000 bytes / ~8 bytes per frame) so the depth
-    /// check fires before a store out-of-bounds panic.  Both backends enforce it against
-    /// the same quantity: `fn_call` reads `call_stack.len()`, the generated binary reads
-    /// its shadow stack in `cr_call_push` (loft#1058).
-    pub const MAX_CALL_DEPTH: u32 = 10_000;
+    /// Most frames a loft call stack may hold: [`crate::limits::MAX_CALL_DEPTH`].
+    pub const MAX_CALL_DEPTH: u32 = crate::limits::MAX_CALL_DEPTH;
 
     pub fn static_fn(&mut self, name: &str, call: Call) {
         let lib = Arc::make_mut(&mut self.library);
@@ -7055,7 +7047,7 @@ impl State {
             .get("n_stack_trace")
             .copied()
             .unwrap_or(u16::MAX);
-        self.database.parallel_ctx = Some(Box::new(ParallelCtx {
+        self.database.parallel_ctx = Some(std::sync::Arc::new(crate::parallel::ParallelCtx {
             bytecode: bc_ptr,
             library: lib_ptr,
             data: data_ptr,
@@ -7978,6 +7970,12 @@ impl State {
             if s_nr == 0 && self.database.stack_store_at_zero {
                 continue; // stack store — always alive
             }
+            // A forked runtime's stack store (`fork_program`, a `par` worker) sits at a later
+            // index with no type: it is the frame, not a value, and never a leak.  Read as
+            // one under `LOFT_LEAK_CHECK` it failed 635 of 711 corpus cells as `kt=65535 ?×1`.
+            if s.stack_buffer {
+                continue;
+            }
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
                 continue;
             }
@@ -8604,7 +8602,7 @@ impl State {
         // the n_parallel_for / _light dispatch.  When parallel_ctx is None (direct
         // run_parallel_* path), stack_trace_lib_nr is already set by
         // WorkerProgram::new_state — don't clobber it.
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -8637,7 +8635,7 @@ impl State {
         extra_args: &[u64],
         return_size: u32,
     ) -> u64 {
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -8690,7 +8688,7 @@ impl State {
         extra_args: &[u64],
         return_size: u32,
     ) -> u64 {
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -8786,7 +8784,7 @@ impl State {
             "wide input slot {} exceeds 64-byte cap",
             input_bytes.len()
         );
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -8871,7 +8869,7 @@ impl State {
         return_size: u32,
         dst: *mut u8,
     ) {
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -8934,7 +8932,7 @@ impl State {
         extra_args: &[u64],
         return_size: u32,
     ) -> u64 {
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -9043,7 +9041,7 @@ impl State {
         hidden_dests: &[DbRef],
         extra_args: &[u64],
     ) -> DbRef {
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -9090,7 +9088,7 @@ impl State {
         extra_args: &[u64],
         n_hidden_text: usize,
     ) -> String {
-        if let Some(ctx) = &self.database.parallel_ctx {
+        if let Some(ctx) = crate::parallel::ParallelCtx::of(&self.database) {
             self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
@@ -9185,7 +9183,7 @@ impl State {
             .get("n_stack_trace")
             .copied()
             .unwrap_or(u16::MAX);
-        self.database.parallel_ctx = Some(Box::new(crate::database::ParallelCtx {
+        self.database.parallel_ctx = Some(std::sync::Arc::new(crate::parallel::ParallelCtx {
             bytecode: bc_ptr,
             library: lib_ptr,
             data: data_ptr,

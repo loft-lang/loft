@@ -19,10 +19,23 @@
 //! interleaving — and nothing here detects that.  See `scopes::is_par_safe`, which
 //! classifies it but is wired to nothing.
 
+// `StoreRebase`, the worker -> parent `store_nr` translation, lives with the stores it
+// translates between (`database::rebase`); this is the path the parallel runtime names.
+pub use crate::database::StoreRebase;
 use crate::database::{Call, Stores, WorkerStores};
 use crate::keys::DbRef;
 use crate::state::State;
 use crate::vector;
+// The worker pool lives in `par_pool` (the runtime a compiled program links); the
+// interpreter's worker programs below run on it.
+pub use crate::par_pool::set_par_trace;
+#[cfg(feature = "threading")]
+#[allow(unused_imports)]
+pub(crate) use crate::par_pool::with_pool;
+#[allow(unused_imports)]
+pub(crate) use crate::par_pool::{
+    WorkerTrace, map_workers, merge_batches, par_trace_enabled, parallel_workers,
+};
 use std::sync::Arc;
 #[cfg(feature = "threading")]
 #[cfg(all(feature = "threading", not(feature = "wasm")))]
@@ -116,297 +129,6 @@ impl WorkerProgram {
     }
 }
 
-// ── Plan-06 phase 1 step 4.5 — shared run_parallel_* template ─────────────────
-//
-// The run_parallel_* variants share a uniform shape:
-//
-//   1. Slice `n_rows` across N rayon tasks (the work-stealing pool).
-//   2. Each worker BORROWS the parent stores read-only (`clone_for_light_worker`,
-//      @PLN108) + a small self-allocated writable scratch, an Arc-bumped reference
-//      to the WorkerProgram, and a row range `start..end`.
-//   3. Each worker computes some R from its row range and returns it.
-//   4. The main thread collects `Vec<R>` in worker-id order.
-//
-// `parallel_workers` captures that scaffolding; the per-variant `run_parallel_*`
-// fns are thin wrappers that pass a closure describing the per-worker work.
-// @PLN108: there is exactly ONE clone path (always the read-only borrow) — no
-// byte-copy, no size heuristic, no second `thread::scope` dispatcher.
-
-/// Common scope-spawn-collect scaffolding for the parallel runtime.
-///
-/// Spawns N rayon tasks (N = `min(n_threads, n_rows)`), each running
-/// `f(start, end, worker_stores) -> R` over its row range with a read-only
-/// `clone_for_light_worker` borrow of the parent.  Returns `Vec<R>` in
-/// worker-id order.
-///
-/// Used by both the interpreter dispatchers in this file and the native
-/// codegen dispatchers in `src/codegen_runtime.rs`.  The interpreter
-/// path needs an `Arc<WorkerProgram>`; it constructs its own and the
-/// closure captures it.  The native path constructs no extra context;
-/// it just runs a Rust closure per row.
-///
-/// Implementation notes:
-/// - `f` is captured by reference inside the spawn closures.  The
-///   spawn closures are `move`, so they capture `&f` by `Copy`; the
-///   `Sync` bound ensures concurrent calls are safe.
-/// - Each worker gets its own `WorkerStores` via `clone_for_light_worker`
-///   (read-only borrow of the parent + self-allocated scratch); the closure
-///   may call `add_output_slot` / `take_slot` as needed and include them in
-///   its `R` payload.
-/// - `n_threads` is clamped to `min(n_threads, n_rows)`; for `n_rows == 0`
-///   the caller is expected to short-circuit before calling.
-#[cfg(feature = "threading")]
-pub(crate) fn parallel_workers<R, F>(
-    stores: &Stores,
-    n_threads: usize,
-    n_rows: usize,
-    f: F,
-) -> Vec<R>
-where
-    R: Send,
-    F: Fn(usize, usize, WorkerStores) -> R + Sync,
-{
-    // Plan-06 phase 1.5 — use rayon's global work-stealing pool
-    // instead of `std::thread::scope` per-call.  Per-call cost drops
-    // from ~200 µs (thread spawn × N) to ~5 µs (task submission ×
-    // N).  Nested par submits onto the same pool — no thread-count
-    // explosion at depth K.  Matches the browser's
-    // wasm-bindgen-rayon model so the two scheduler stories converge.
-    use rayon::prelude::*;
-    let threads = n_threads.max(1).min(n_rows.max(1));
-    // @PLN117 step 0 — parallelism falsification instrument (see `WorkerTrace`):
-    // when armed, prove this `par` dispatched across ≥2 workers.
-    let trace = WorkerTrace::new();
-    let trace_ref = &trace;
-    let out = with_pool(|| {
-        (0..threads)
-            .into_par_iter()
-            .map(|t| {
-                trace_ref.record();
-                let start = t * n_rows / threads;
-                let end = (t + 1) * n_rows / threads;
-                // @PLN108 R2 — the SINGLE clone: always borrow the parent read-only
-                // (self-allocated scratch, R1), never byte-copy.  Safe on rayon exactly
-                // as on `thread::scope`: `pool.install` blocks until the parallel iterator
-                // has `collect`ed every task, so no worker (nor its read-only borrow of
-                // `stores`) outlives this call, and `stores` outlives `pool.install`.
-                // Workers never write the parent (@C93 → compile error), so the shared
-                // read-only buffers are race-free.  `WorkerStores: Send` (unsafe impl),
-                // so a borrowed one moves into a rayon task like the copy did.
-                let worker_stores = unsafe { stores.clone_for_light_worker() };
-                f(start, end, worker_stores)
-            })
-            .collect()
-    });
-    trace.report("parallel_workers", n_rows, threads);
-    out
-}
-
-/// @PLN117 step 0 — runtime arm switch for the parallel-worker tracer.  The
-/// wasm harness has no environment variables, so it flips this through a wasm
-/// export (`set_par_trace_workers`) before running the instrument.
-static PAR_TRACE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Arm or disarm the parallel-worker tracer at runtime (@PLN117 step 0).
-pub fn set_par_trace(on: bool) {
-    PAR_TRACE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// @PLN117 step 0 — is the parallel-worker tracer armed?  Armed by the runtime
-/// switch, or (native only) by `LOFT_TRACE_PAR_WORKERS` read once.  Off ⇒ the
-/// dispatch chokepoint stays allocation-free.
-fn par_trace_enabled() -> bool {
-    if PAR_TRACE_ON.load(std::sync::atomic::Ordering::Relaxed) {
-        return true;
-    }
-    #[cfg(not(feature = "wasm"))]
-    {
-        use std::sync::OnceLock;
-        static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("LOFT_TRACE_PAR_WORKERS").is_some())
-    }
-    #[cfg(feature = "wasm")]
-    {
-        false
-    }
-}
-
-/// @PLN117 step 0 — per-dispatch collector of the DISTINCT rayon worker indices
-/// that ran a `par`, so the harness can prove a dispatch really crossed ≥2
-/// workers (and that it can FAIL — `par(..., 1)` reports 1).  Used at EVERY
-/// dispatch chokepoint (`parallel_workers` and `run_parallel_queue_ref`) so the
-/// count is reported no matter which return-shape path a `par` takes.
-///
-/// Non-perturbing: `new()` allocates only when the tracer is armed; when off,
-/// `record()` is a single `Option` branch and nothing is heap-allocated.
-struct WorkerTrace(Option<std::sync::Mutex<std::collections::BTreeSet<usize>>>);
-
-impl WorkerTrace {
-    fn new() -> Self {
-        Self(par_trace_enabled().then(|| std::sync::Mutex::new(std::collections::BTreeSet::new())))
-    }
-
-    /// Record the current worker index — call once per task inside the pool.
-    /// A build without threads has exactly one worker, so it records index 0 and
-    /// reports `distinct_workers=1`: the honest answer, not an absent one.
-    fn record(&self) {
-        if let Some(seen) = &self.0 {
-            #[cfg(feature = "threading")]
-            let index = rayon::current_thread_index().unwrap_or(usize::MAX);
-            #[cfg(not(feature = "threading"))]
-            let index = 0usize;
-            seen.lock().unwrap().insert(index);
-        }
-    }
-
-    /// Emit the distinct-worker count for `site` after the join.  Native →
-    /// stderr; wasm → the program output (wasm stderr is dropped), where the
-    /// browser harness reads it back from `compile_and_run`'s JSON.
-    fn report(self, site: &str, n_rows: usize, threads: usize) {
-        if let Some(seen) = self.0 {
-            let indices = seen.into_inner().unwrap();
-            let summary = format!(
-                "loft: LOFT_TRACE_PAR_WORKERS {site} n_rows={n_rows} threads={threads} \
-                 distinct_workers={} indices={indices:?}",
-                indices.len(),
-            );
-            #[cfg(not(any(
-                feature = "wasm",
-                all(target_arch = "wasm32", not(target_os = "wasi"))
-            )))]
-            eprintln!("{summary}");
-            #[cfg(feature = "wasm")]
-            crate::wasm::output_push(&format!("{summary}\n"));
-            // @PLN117 — the raw browser build (`loft --html`) has no stderr, so
-            // the tracer would report into nothing.  Send it down the page's own
-            // print path instead, which is what makes an in-browser `par` gate
-            // able to READ how many workers actually ran.
-            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
-            {
-                let line = format!("{summary}\n");
-                crate::loft_host_print(line.as_ptr(), line.len());
-            }
-        }
-    }
-}
-
-/// Plan-06 phase 3b.1 — merge per-thread batches into one ordered vector.
-///
-/// Each `parallel_workers` call returns a `Vec<(start, batch)>` where every
-/// batch's `i`-th element belongs at row `start + i` of the result.  This
-/// helper writes the merge sequentially into a vector pre-filled with
-/// `default` and returns it.
-///
-/// Used by `run_parallel_raw`, `run_parallel_text`, `run_parallel_int`, and
-/// the codegen-runtime `run_native_workers_*` triple — five sites that
-/// previously inlined the same 5-line loop.
-///
-/// `R: Clone` because `vec![default; n_rows]` clones the seed once per row.
-/// For owning types (`String`, `Vec<…>`) the default is typically empty.
-pub(crate) fn merge_batches<R: Clone>(
-    batches: Vec<(usize, Vec<R>)>,
-    n_rows: usize,
-    default: R,
-) -> Vec<R> {
-    let mut results = vec![default; n_rows];
-    for (start, batch) in batches {
-        for (offset, val) in batch.into_iter().enumerate() {
-            results[start + offset] = val;
-        }
-    }
-    results
-}
-
-/// Run `f` on the rayon pool that drives loft's parallel dispatch (@PLN117 step 2).
-///
-/// - **Native:** install onto loft's private, lazily-built pool (`rayon_pool`).
-/// - **Browser:** run `f` directly so the `.into_par_iter()` inside it dispatches
-///   over the GLOBAL rayon pool the page installed — loft's own
-///   (`wasm_threads::loft_pool_build`) or, for the wasm-bindgen bundle,
-///   `initThreadPool(n)`.  A private `ThreadPoolBuilder` cannot spawn under wasm
-///   — there are no OS threads to build on — so the global pool is the only one
-///   with real workers.  Before the pool is installed (or when the host is not
-///   cross-origin-isolated so the page never built one), the global pool has a
-///   single thread and `f` runs sequentially on the caller: the never-break
-///   sequential fallback (@PLN117 arc D).  Same bounds as `ThreadPool::install`,
-///   so it is a drop-in at every call site.
-#[cfg(feature = "threading")]
-pub(crate) fn with_pool<R, F>(f: F) -> R
-where
-    R: Send,
-    F: FnOnce() -> R + Send,
-{
-    #[cfg(not(browser_pool))]
-    {
-        rayon_pool().install(f)
-    }
-    #[cfg(browser_pool)]
-    {
-        f()
-    }
-}
-
-/// Lazily-initialised private rayon pool for the native backend.  Uses rayon's
-/// default thread count.  Not built under wasm — the browser arm of `with_pool`
-/// uses the page's global pool instead (a private builder can't spawn OS threads
-/// that don't exist in the browser).
-#[cfg(all(feature = "threading", not(browser_pool)))]
-fn rayon_pool() -> &'static rayon::ThreadPool {
-    use std::sync::OnceLock;
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .build()
-            .expect("rayon pool init failed")
-    })
-}
-
-/// Run `f` once per worker index and collect the results — on the pool when loft
-/// was built with threads, sequentially when it was not.
-///
-/// [`parallel_workers`] is the same idea for dispatches that let this module
-/// build the worker's view of the stores.  `run_parallel_queue_ref` builds its
-/// own (it hands the worker's whole `Stores` back so the parent can adopt the
-/// records it allocated), so it maps the indices through here instead.  Either
-/// way, whether loft has threads is decided in ONE place per dispatch shape —
-/// the caller is written once and reads the same in both builds.
-#[cfg(feature = "threading")]
-pub(crate) fn map_workers<R, F>(n_workers: usize, f: F) -> Vec<R>
-where
-    R: Send,
-    F: Fn(usize) -> R + Sync + Send,
-{
-    use rayon::prelude::*;
-    with_pool(|| (0..n_workers).into_par_iter().map(&f).collect())
-}
-
-/// Sequential [`map_workers`] for a build without threads: same slicing, same
-/// order, same results — just one thread doing all of it.
-#[cfg(not(feature = "threading"))]
-pub(crate) fn map_workers<R, F>(n_workers: usize, f: F) -> Vec<R>
-where
-    F: Fn(usize) -> R,
-{
-    (0..n_workers).map(f).collect()
-}
-
-/// Sequential equivalent of `parallel_workers` for the `not(threading)` path.
-/// Runs the closure once with `start = 0`, `end = n_rows`, and a single
-/// `clone_for_light_worker()` snapshot.  Returned `Vec<R>` always has length 1.
-#[cfg(not(feature = "threading"))]
-pub(crate) fn parallel_workers<R, F>(
-    stores: &Stores,
-    _n_threads: usize,
-    n_rows: usize,
-    f: F,
-) -> Vec<R>
-where
-    F: FnOnce(usize, usize, WorkerStores) -> R,
-{
-    let worker_stores = unsafe { stores.clone_for_light_worker() };
-    vec![f(0, n_rows, worker_stores)]
-}
-
 // ── Plan-06 phase 3a — Stitch policy enum (DESIGN.md D1) ─────────────────────
 //
 // The unified runtime entry point that phase 3b lands will be
@@ -466,172 +188,6 @@ pub enum Stitch {
     /// `capacity` is the queue depth in elements (typically
     /// `2 × threads` to absorb worker-burstiness without blocking).
     Queue { capacity: u32 },
-}
-
-#[cfg(test)]
-mod stitch_tests {
-    use super::Stitch;
-
-    #[test]
-    fn enum_size_is_at_most_8_bytes() {
-        // Largest variant is Reduce { fold_fn: u32 } or Queue {
-        // capacity: u32 } — both 4 bytes payload + 1 disc + 3
-        // padding = 8.  Validates the opcode payload budget.
-        assert!(
-            std::mem::size_of::<Stitch>() <= 8,
-            "Stitch enum size {} bytes — opcode payload budget is 8",
-            std::mem::size_of::<Stitch>()
-        );
-    }
-
-    #[test]
-    fn variants_distinguishable_by_match() {
-        // ARC.md A4 (closed 2026-05-07) — Stitch::Concat removed.
-        // The materialised result-vector dispatch was retired when
-        // every par return type routed through the Queue family.
-        let cases = [
-            Stitch::Discard,
-            Stitch::Reduce { fold_fn: 42 },
-            Stitch::Queue { capacity: 16 },
-        ];
-        let names: Vec<&str> = cases
-            .iter()
-            .map(|s| match s {
-                Stitch::Discard => "discard",
-                Stitch::Reduce { .. } => "reduce",
-                Stitch::Queue { .. } => "queue",
-            })
-            .collect();
-        assert_eq!(names, vec!["discard", "reduce", "queue"]);
-    }
-}
-
-// ── Plan-06 phase 2 — store-rebase infrastructure ─────────────────────────────
-//
-// Today's `copy_from_worker` (src/database/allocation.rs:409) deep-copies
-// every struct result from a worker's WorkerStores into the parent's
-// result vector via `copy_block` + `copy_claims`.  For a 100K-element
-// result of 256-byte structs that's 25.6 MB of memcpy per parallel call.
-//
-// Phase 2's `StoreRebase` replaces deep-copy with **store adoption +
-// DbRef translation**: the worker's allocated stores are moved into
-// the parent's allocations table (store ownership transferred); any
-// DbRef referring to those stores from the worker's local namespace
-// is translated to the parent's new store_nr.  Bytes never move.
-//
-// See plan-06 DESIGN.md D2.1 (slot-marker design) and DESIGN.md D11c
-// (the per-field worker-own / parent-shared / cross-worker translation
-// rule).
-
-/// Translates DbRefs across the worker→parent adoption boundary.
-///
-/// Built once per `parallel_for` call: every worker-allocated store
-/// is adopted into the parent (via `Stores::adopt_store`), recording
-/// its worker-local store_nr → parent-side store_nr mapping in a
-/// per-worker `StoreRebase`.  When the parent later inspects a DbRef
-/// the worker handed back, it calls `StoreRebase::translate` to rewrite
-/// the `store_nr` field.
-///
-/// The translation is per-worker: each worker's DbRefs come from a
-/// different worker-local namespace, so the rebase map is constructed
-/// fresh for each worker.
-///
-/// Currently unused at runtime — phase 2b's narrow path
-/// (`copy_from_worker_unowned`) handles owned-free struct returns
-/// without needing the rebase walk.  The full step 2b will use this
-/// for owned-field structs (text, refs).
-#[allow(dead_code)]
-#[derive(Debug, Default)]
-pub struct StoreRebase {
-    /// Maps worker-local `store_nr` → parent-side `store_nr` for stores
-    /// adopted from one worker's WorkerStores.  A DbRef whose `store_nr`
-    /// is **not** in the map either points at a parent-shared store
-    /// (the original parent allocations the worker only read, store_nr
-    /// < parent_store_count) or at a worker-local store that wasn't
-    /// adopted (which would be a codegen bug).
-    pub map: std::collections::HashMap<u16, u16>,
-    /// Number of parent-side stores at the moment this rebase was
-    /// constructed (before any worker output was adopted).  Set via
-    /// `with_parent_count`; used by `translate` to apply the
-    /// 3-category rule from DESIGN.md D11c:
-    ///   - `db.store_nr` in `map` → worker-own, translate
-    ///   - `db.store_nr < parent_store_count` → parent-shared, pass through
-    ///   - otherwise → cross-worker (codegen bug); panic in debug,
-    ///     log + pass through in release
-    pub parent_store_count: u16,
-}
-
-#[allow(dead_code)]
-impl StoreRebase {
-    /// Construct an empty rebase map.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Construct an empty rebase map with the parent-side store count
-    /// captured at the moment of construction.  Adoption monotonically
-    /// increases the parent's store count, so any pre-existing parent
-    /// store has a `store_nr < parent_store_count` — which is how
-    /// `translate` separates parent-shared refs from worker-own ones.
-    #[must_use]
-    pub fn with_parent_count(parent_store_count: u16) -> Self {
-        Self {
-            map: std::collections::HashMap::new(),
-            parent_store_count,
-        }
-    }
-
-    /// Record a worker-local → parent-side translation.
-    pub fn add(&mut self, worker_local: u16, parent_nr: u16) {
-        self.map.insert(worker_local, parent_nr);
-    }
-
-    /// Translate a DbRef from the worker's local namespace to the
-    /// parent's namespace.  Implements the 3-category rule from
-    /// DESIGN.md D11c:
-    ///
-    /// | `db.store_nr` shape | Category | Action |
-    /// |---|---|---|
-    /// | In `map` | Worker-own | Translate to parent-side `store_nr` |
-    /// | `< parent_store_count` | Parent-shared | Pass through |
-    /// | Otherwise | Cross-worker | Debug-panic; release-pass-through |
-    ///
-    /// The cross-worker case is a codegen bug — workers should never
-    /// hand out DbRefs into a sibling worker's stores.  Phase 5's
-    /// auto-light analyser tightens this further; until then we keep
-    /// the release path defensive (pass through unchanged).
-    #[must_use]
-    pub fn translate(&self, db: &DbRef) -> DbRef {
-        if let Some(&parent_nr) = self.map.get(&db.store_nr) {
-            return DbRef {
-                store_nr: parent_nr,
-                rec: db.rec,
-                pos: db.pos,
-            };
-        }
-        if db.store_nr < self.parent_store_count {
-            // Parent-shared (input store, stdlib const, parent-allocated
-            // read-only).  Pass through.
-            return *db;
-        }
-        // Cross-worker: codegen bug.  Debug builds panic so the bug
-        // surfaces immediately; release builds log + pass through so a
-        // released runtime degrades gracefully on a corner the test
-        // suite missed.
-        debug_assert!(
-            false,
-            "StoreRebase::translate cross-worker DbRef: \
-             store_nr={} not in rebase map and not parent-shared \
-             (parent_store_count={})",
-            db.store_nr, self.parent_store_count
-        );
-        eprintln!(
-            "loft: StoreRebase cross-worker DbRef store_nr={} (parent_store_count={}); passing through unchanged",
-            db.store_nr, self.parent_store_count
-        );
-        *db
-    }
 }
 
 /// Plan-06 phase 2 — type-driven recursive walk that translates every
@@ -1719,9 +1275,7 @@ pub(crate) fn read_tuple_at_wide(
     // `@FR-L-Tuple` — the `__tuple<…>` record's own finished positions where the program's
     // types are at hand (a stored tuple packs largest alignment first, and an inline struct
     // member has a width the hand-computed view cannot know); that view otherwise.
-    let in_vec_offsets: Vec<usize> = stores
-        .parallel_ctx
-        .as_ref()
+    let in_vec_offsets: Vec<usize> = ParallelCtx::of(stores)
         .and_then(|ctx| crate::data::stored_tuple_offsets(ctx.data(), stores, elem_types))
         .map_or_else(
             || crate::data::element_storage_offsets(elem_types),
@@ -2002,5 +1556,99 @@ pub fn run_parallel_block(
             let mut state = program.new_state(unsafe { stores.clone_for_light_worker() });
             state.execute_at_void_with_snapshot(pos, parent_snapshot.as_ref());
         }
+    }
+}
+
+/// Context injected into `Stores` by `State::execute()` so that native
+/// functions such as `n_parallel_for` / `n_parallel_for_light` can access
+/// the interpreter's bytecode, text segment, library, and compiled data
+/// for spawning workers.  The store holds it as an opaque handle, since the store a
+/// compiled program links knows nothing of the interpreter; [`Self::of`] reads it back.
+///
+/// All raw pointers are valid for the duration of the `execute()` call
+/// that set them.
+///
+/// A worker inherits its parent's context (`clone_for_light_worker_with_scratch`)
+/// so that a `par` inside a `par` worker can dispatch in turn — the pointers stay
+/// valid for a worker exactly as they do for the thread that set them, because
+/// workers are joined before `execute()` returns.
+#[derive(Clone)]
+pub struct ParallelCtx {
+    pub bytecode: *const Arc<Vec<u8>>,
+    pub library: *const Arc<Vec<Call>>,
+    pub data: crate::data_ref::DataRef,
+    /// Cached library index of `n_stack_trace`; `u16::MAX` = not found.
+    /// Copied into worker `State::stack_trace_lib_nr` so workers can snapshot
+    /// the call stack when `stack_trace()` is called (fix #92).
+    pub stack_trace_lib_nr: u16,
+    /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
+    pub frame_headroom: Arc<Vec<u32>>,
+    /// The running program's constant table (`State::const_refs`), handed to every worker
+    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+    pub const_refs: Arc<Vec<DbRef>>,
+}
+
+impl ParallelCtx {
+    /// The context `stores` carries, when an interpreter installed one.
+    #[must_use]
+    pub fn of(stores: &Stores) -> Option<&ParallelCtx> {
+        let ctx: &dyn std::any::Any = stores.parallel_ctx.as_deref()?;
+        ctx.downcast_ref()
+    }
+
+    /// The definition table of the program this context was installed for.  Every
+    /// installer passes the run's own `Data`, so a context always carries one.
+    ///
+    /// # Panics
+    /// When the context was built without a definition table, which no installer does.
+    #[must_use]
+    pub fn data(&self) -> &crate::data::Data {
+        self.data
+            .get()
+            .expect("a parallel context carries its program's definitions")
+    }
+}
+
+// Safety: the pointed-to data lives for the duration of `State::execute()`,
+// which is on the main thread and outlives all worker threads it spawns
+// (workers are joined before execute() returns).
+unsafe impl Send for ParallelCtx {}
+unsafe impl Sync for ParallelCtx {}
+
+#[cfg(test)]
+mod stitch_tests {
+    use super::Stitch;
+
+    #[test]
+    fn enum_size_is_at_most_8_bytes() {
+        // Largest variant is Reduce { fold_fn: u32 } or Queue {
+        // capacity: u32 } — both 4 bytes payload + 1 disc + 3
+        // padding = 8.  Validates the opcode payload budget.
+        assert!(
+            std::mem::size_of::<Stitch>() <= 8,
+            "Stitch enum size {} bytes — opcode payload budget is 8",
+            std::mem::size_of::<Stitch>()
+        );
+    }
+
+    #[test]
+    fn variants_distinguishable_by_match() {
+        // ARC.md A4 (closed 2026-05-07) — Stitch::Concat removed.
+        // The materialised result-vector dispatch was retired when
+        // every par return type routed through the Queue family.
+        let cases = [
+            Stitch::Discard,
+            Stitch::Reduce { fold_fn: 42 },
+            Stitch::Queue { capacity: 16 },
+        ];
+        let names: Vec<&str> = cases
+            .iter()
+            .map(|s| match s {
+                Stitch::Discard => "discard",
+                Stitch::Reduce { .. } => "reduce",
+                Stitch::Queue { .. } => "queue",
+            })
+            .collect();
+        assert_eq!(names, vec!["discard", "reduce", "queue"]);
     }
 }

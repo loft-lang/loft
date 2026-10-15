@@ -36,6 +36,10 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FALSIFIED = ROOT / "tests/falsified"
+# Generated from the tree it sits in, so a receipt's hunk of it is never applied: the control
+# regenerates it (`falsify.sh`, which excludes the same file — the two must agree).
+GENERATED = "src/compiled_stdlib_gen.rs"
+MARKER = f"# regenerate: {GENERATED}\n"
 
 
 def git(*args, cwd=ROOT, check=True):
@@ -46,7 +50,8 @@ def git(*args, cwd=ROOT, check=True):
 
 
 def applies(patch, cwd=ROOT):
-    return git("apply", "--check", str(patch), cwd=cwd, check=False).returncode == 0
+    return git("apply", "--check", f"--exclude={GENERATED}", str(patch),
+               cwd=cwd, check=False).returncode == 0
 
 
 def citing_guards():
@@ -105,7 +110,8 @@ def refresh(patch):
             # enough — every removed line of the defect must still match exactly, and the
             # score that follows fails a patch that lands somewhere it does not belong.
             for how in (["--3way"], ["-C1"]):
-                if git("apply", *how, str(patch), cwd=wt, check=False).returncode == 0:
+                if git("apply", *how, f"--exclude={GENERATED}", str(patch),
+                       cwd=wt, check=False).returncode == 0:
                     break
                 git("checkout", "--", ".", cwd=wt, check=False)
             else:
@@ -113,7 +119,10 @@ def refresh(patch):
             diff = git("diff", "HEAD", "--", "src/", "default/", cwd=wt).stdout
             if not diff.strip():
                 return False
-            patch.write_text(diff, encoding="utf-8")
+            # The rewritten patch has no hunk of the generated file; keep the fact that the
+            # control must regenerate it.
+            names = GENERATED in patch.read_text(encoding="utf-8", errors="replace")
+            patch.write_text((MARKER if names else "") + diff, encoding="utf-8")
             return True
         finally:
             git("worktree", "remove", "--force", str(wt), check=False)

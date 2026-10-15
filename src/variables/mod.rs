@@ -111,7 +111,7 @@ struct Iterator {
     /// (the vector whose length bounds this loop). `Some` only when the range's upper bound
     /// is a bare `len(<addressable vector>)`; `None` for `0..n`, slices, or collection loops.
     /// Read by the gated `LOFT_LINT_STRICT_INDEX` warning to flag `w[i]` where `w != X`.
-    len_bound: Option<crate::parser::operators::VecKey>,
+    len_bound: Option<VecKey>,
     /// `@FR-I-For` — the PLACES this loop's source reads: a variable, or a field path rooted
     /// at one, in a range's bounds or as a text source.  The loop reads them once, before the
     /// first round, so a write to one inside the body cannot change what the loop walks;
@@ -413,12 +413,83 @@ pub fn author_spelling(name: &str) -> String {
     }
 }
 
+/// Identity of a "vector" a bounds guard can prove safe.  Either a bare
+/// local/parameter (`Var`) or a struct field read
+/// `OpGetField(Var(base), off, tp)`.  Skip-pattern 5 matches the guard's
+/// vec against the indexing's vec by this key, so
+/// `if i < len(self.v) { self.v[i] }` is proven exactly like the
+/// bare-local `if i < len(loc) { loc[i] }` form.  (A struct vector-field
+/// read COPIES post-@PLN85 #415, so the old `loc = self.v` alias trick is
+/// gone and value-correct code indexes the field directly.)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum VecKey {
+    Var(u16),
+    Field(u16, i32, i32),
+    /// A field of an OPEN instance (@PLN165 D5), read through a deferred
+    /// `Parser::TV_FIELD`: `(base variable, open instance, field)`.
+    OpenField(u16, i32, i32),
+}
+
+/// What a body's closure BUILDS say about the locals they capture.
+///
+/// Two facts, one walk, because both are read off the same `OpSetDbRef(___clos_N, …, capture)`
+/// point and a second walk would be a copy of an ordering that has drifted before.
+#[derive(Default, Debug, Clone)]
+pub(crate) struct CaptureBuilds {
+    /// The backing local a capture named AT THE BUILD — the store the record actually holds.
+    /// A capture that owns its store outright (a struct) has no backing root and is absent.
+    pub(crate) backing: crate::fxhash::FxHashMap<u16, u16>,
+    /// Locals whose store the record adopted and which were ASSIGNED AGAIN afterwards, so the
+    /// local no longer names the adopted store and the frame still owes its own free.
+    pub(crate) reassigned_after_build: crate::fxhash::FxHashSet<u16>,
+    /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
+    /// every pass and only the LAST adoption is the one it still holds.
+    pub(crate) rebuilt_in_loop: crate::fxhash::FxHashSet<u16>,
+    /// loft#1610, `@FR-L-CapOwn` — the closure record TYPES confined to one pass of a loop: built
+    /// inside a loop body into a fn-ref local that appears nowhere outside that loop and there
+    /// only as a call's callee, so no value of it survives the pass.  Such a record cannot
+    /// outlive what it captured, so it BORROWS every capture and the frame keeps its release,
+    /// at the local's own scope end ([`pass_confined_records`]).
+    pub(crate) pass_confined: crate::fxhash::FxHashSet<u32>,
+    /// Captures whose closure BUILD does not DOMINATE the scope exit — it sits inside an `if`
+    /// arm, a `match` arm or a loop body, so on some runs no record is ever built.
+    ///
+    /// `(L-CapOwn)` hands the release to the record's cascade, and the cascade only happens if
+    /// the build EXECUTES.  The suppression is a static fact about the function and the thing
+    /// it trades away is a per-RUN one, so where the two can disagree the frame's free is kept
+    /// and made conditional on the record existing (loft#1464).
+    pub(crate) built_conditionally: crate::fxhash::FxHashSet<u16>,
+    /// Per closure-record local: the `(capture local, generation)` pairs it adopted at ITS
+    /// build, where the generation counts assignments to that local before the build.
+    ///
+    /// This is the STORE identity `(L-CapOwn)`'s "freed once" needs.  Two records may name one
+    /// local and hold two different stores — `s = S{…}; k1 = |…| s.a; s = S{…}; k2 = |…| s.a`
+    /// — so the capture NAME cannot decide which of them owns, and grouping by it made one
+    /// borrow a store the other never held (loft#1440's first cut, measured as a leaked `S`).
+    pub(crate) adopted: crate::fxhash::FxHashMap<u16, Vec<(u16, u32)>>,
+    /// Per literal BUFFER: the `(closure record, capture local)` pairs that adopted the store
+    /// THAT buffer minted.
+    ///
+    /// `adopted` above answers "which store" with a generation, which is the right currency
+    /// between two builds; the frame's scope-exit free needs the store itself, because the
+    /// thing it is about to release is a buffer and a buffer names exactly one store for its
+    /// whole life.  A capture local does not: reassign it and the name covers two stores, so
+    /// asking about the NAME answers about whichever the local happens to hold last
+    /// (loft#1446).  `@FR-O-Witness` is the same currency for a mixed-ownership local.
+    pub(crate) buffer_adopted: crate::fxhash::FxHashMap<u16, Vec<(u16, u16)>>,
+    /// Per capture: the stores its value could be AT THE BUILD when that value was a JOIN
+    /// ([`join_arm_stores`]).  The local's own deps cannot say it once the local is assigned
+    /// again — a type's dep list is the whole body's, and the reassignment's store is on it —
+    /// so the arms are read off the assignment that reached the build.  loft#1725.
+    pub(crate) join_arms_at_build: crate::fxhash::FxHashMap<u16, Vec<u16>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Function {
     /// The closure-build facts the scope pass's free emitter decided on, kept for the static
     /// leak mirrors that read the function after it (`scopes::FrameReleases`).  Absent on a
     /// function restored from the IR cache.
-    capture_builds: Option<crate::scopes::CaptureBuilds>,
+    capture_builds: Option<CaptureBuilds>,
     /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
     ///
     /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
@@ -779,11 +850,11 @@ impl Display for Function {
 }
 
 impl Function {
-    pub(crate) fn set_capture_builds(&mut self, builds: crate::scopes::CaptureBuilds) {
+    pub(crate) fn set_capture_builds(&mut self, builds: CaptureBuilds) {
         self.capture_builds = Some(builds);
     }
 
-    pub(crate) fn capture_builds(&self) -> Option<&crate::scopes::CaptureBuilds> {
+    pub(crate) fn capture_builds(&self) -> Option<&CaptureBuilds> {
         self.capture_builds.as_ref()
     }
 
@@ -1306,7 +1377,7 @@ impl Function {
     /// @PLN102 strict-index lint — record the vector whose `len(...)` bounds the current
     /// loop's range (`for i in 0..len(X)` → `X`'s `VecKey`). No-op when there is no active
     /// loop. Set from `parse_in_range_body` right after the range's upper bound is parsed.
-    pub(crate) fn set_loop_len_bound(&mut self, vk: crate::parser::operators::VecKey) {
+    pub(crate) fn set_loop_len_bound(&mut self, vk: VecKey) {
         if self.current_loop != u16::MAX && (self.current_loop as usize) < self.loops.len() {
             self.loops[self.current_loop as usize].len_bound = Some(vk);
         }
@@ -1361,7 +1432,7 @@ impl Function {
     /// @PLN102 strict-index lint — the `len(...)` bound recorded for the active for-loop
     /// whose variable is `var_nr` (walks the active-loop chain like `is_active_loop_var`).
     /// `None` when `var_nr` is not an active loop var or the loop wasn't a `0..len(X)` range.
-    pub(crate) fn loop_len_bound(&self, var_nr: u16) -> Option<crate::parser::operators::VecKey> {
+    pub(crate) fn loop_len_bound(&self, var_nr: u16) -> Option<VecKey> {
         if var_nr == u16::MAX {
             return None;
         }
@@ -2695,7 +2766,7 @@ impl Function {
             matches!(
                 t,
                 Type::Tuple(_) | Type::Vector(_, _) | Type::Iterator(_, _)
-            ) || crate::parser::vectors::is_collection(t)
+            ) || crate::data::is_collection(t)
         };
         if (shaped(cur) && shaped(type_def)) || data.same_nullable_struct(cur, type_def).is_some() {
             return false;
@@ -3914,23 +3985,17 @@ impl Function {
         self.variables[var_nr as usize].argument = false;
     }
 
-    /// May the record bind `var = src` carry ABSENCE — is either side typed `τ?`?
-    ///
-    /// The one question both backends' record-bind emitters ask before choosing the
-    /// null-aware bind over the plain allocate-then-copy (`state/codegen.rs`
-    /// `gen_set_first_ref_var_copy`, `generation/dispatch.rs` the whole-value record bind).
-    /// A copy of an absent value is absent: `OpCopyRecord` from `nullref` reads nothing
-    /// and leaves the destination holding the record allocated for it, PRESENT where its
-    /// source was absent.  The destination's type is asked as well as the source's because
-    /// a source typed non-null can hold `nullref` — a keyed lookup and an element read
-    /// trusted by contract are typed bare views, and a miss or an overrun answers the one
-    /// value spelling of absence (`DbRef::or_null`, @FR-L-Null); asked of the source alone,
-    /// `x = t.h[k]; y: S? = x` on a miss read `y == null` false where `x == null` read
-    /// true, on both backends.  A dense destination keeps the plain copy: `(N-Store)` has
-    /// already reported that it cannot hold absence.
     /// The record a whole-value bind `v = src` COPIES (`@FR-B-Copy`), or `None` where it copies
     /// no whole record.  The one question both emitters' record-copy arms and their ownership
     /// screens ask, so the copy and the free that owns it cannot disagree.
+    ///
+    /// The copy it answers is of the VALUE, and the value may be absent whatever the two are
+    /// typed (`@FR-N-Store`, `@FR-N-Road`): a source typed non-null can hold `nullref` — a keyed
+    /// miss or an element overrun answers it (`DbRef::or_null`, @FR-L-Null), and a `null` handed
+    /// to a dense record parameter is held by it.  `OpCopyRecord` from `nullref` reads nothing
+    /// and would leave the destination holding the record allocated for it, emptiness standing
+    /// in for absence, so both emitters TEST the source and bind an absent one as the null it
+    /// is; the `?` is a compile-time marker and does not select the copy.
     ///
     /// A `&S` source reads as its `S` (`@FR-C-Ref`), so `v = e` with `e = &z` copies `z`'s
     /// record — but only into a destination that OWNS what it holds.  `@FR-O-Proxy` asks copy:
@@ -3971,10 +4036,6 @@ impl Function {
         }
     }
 
-    #[must_use]
-    pub fn bind_admits_absence(&self, var: u16, src: u16) -> bool {
-        matches!(self.tp(src), Type::Optional(_)) || matches!(self.tp(var), Type::Optional(_))
-    }
     /// `var_nr` stops being a parameter: the definition dropped the attribute it received
     /// (`value_record::rewrite_program` removing a return buffer the function no longer
     /// writes).  It stays in the table as a local nothing mentions.
@@ -4683,18 +4744,9 @@ impl Function {
         (0..count).any(|a| data.attr_value(d_nr, a).reads_var(idx))
     }
 
-    /// @PLN107 S1 — observable dump of the dead-store access classification (value-observing
-    /// READS vs `OpSet*` WRITE-TARGET bases), gated on `LOFT_DUMP_READS`. Purely diagnostic:
-    /// no warning is emitted, so the classifier can be verified against the shape corpus
-    /// before S2 wires it into a lint. `uses` is printed alongside to make the read /
-    /// write-target split visible against the codegen counter it deliberately does NOT change
-    /// (`reads == 0 && write_targets > 0` is the future S2 dead-store signal — see
-    /// `doc/claude/plans/107-dead-code-lint/`).
-    pub fn debug_dead_store_dump(&self, fn_name: &str, body: &Value, data: &Data) {
-        if crate::env_once!(std::env::var_os("LOFT_DUMP_READS").is_none()) {
-            return;
-        }
-        let acc = crate::use_analysis::dead_store_accesses(body, self, data);
+    /// Print one `dead-store-dbg:` line per user-named local: its `uses` beside the
+    /// `(reads, write_targets)` [`crate::use_analysis::debug_dead_store_dump`] classified.
+    pub(crate) fn print_dead_store_accesses(&self, fn_name: &str, acc: &[(u16, u16)]) {
         for (i, var) in self.variables.iter().enumerate() {
             if var.name.starts_with('_') || var.name.contains('#') || var.argument {
                 continue;
@@ -5225,33 +5277,12 @@ impl Function {
         self.caller_record_vars.contains(&v)
     }
 
-    /// Does `v`, a NULLABLE heap local, borrow exactly ONE argument of this function — the
-    /// D-own-16 residual `d: S? = p`, whose single dep names a parameter and nothing else?
-    ///
-    /// Such a local's dep reads as a permanent borrow though a later minting call may hand it
-    /// a store of its own; the displaced free it licenses is the GUARDED one, decided at run
-    /// time by store identity against the argument the dep names (`free_displaced` declines a
-    /// free-protected store, so the caller's argument survives the first round).  The ONE
-    /// spelling of a test three sites carried by hand — the interpreter's pre-`Set` free
-    /// (`state/codegen.rs`), the native reassignment gate (`generation/dispatch.rs`) and the
-    /// scope-exit sweep's borrow witness (`scopes.rs`) — so the two backends cannot drift on it
-    /// (@FR-O-NoDiverge).
-    #[must_use]
-    pub fn borrows_one_argument(&self, v: u16) -> bool {
-        let d = self.tp(v).depend();
-        d.len() == 1
-            && d[0] != v
-            && matches!(self.tp(v), Type::Optional(_))
-            && self.is_argument(d[0])
-            && !self.is_argument(v)
-    }
-
     /// May the store `v` DISPLACES at `v = value` be freed — the fact-reading half of the
     /// displacement free, asked identically by both backends?
     ///
     /// `v` names a store-backed kind (a record, a record enum, a vector or a keyed collection,
     /// read through `base()` so the nullable spelling is the same binding); its dep list says it
-    /// OWNS — empty (@FR-O-Proxy) or the one-argument borrow above; it is not never-free
+    /// OWNS — empty (@FR-O-Proxy), the same answer for `τ` and `τ?` (@FR-N-Road); it is not never-free
     /// (@FR-O-Override, the veto the proxy needs) and not captured (a closure holds its
     /// capture-time `DbRef`, @FR-L-CapHeap); and the assignment is not a DETACH, which
     /// displaces a store without claiming to have owned it (`is_null_sentinel_detach`).
@@ -5269,10 +5300,10 @@ impl Function {
         (matches!(
             self.tp(v).base(),
             Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
-        ) || crate::parser::vectors::is_keyed(self.tp(v).base()))
+        ) || crate::data::is_keyed(self.tp(v).base()))
             // @FR-O-Proxy asks free — the displacement free follows on this answer, so the
             // @FR-O-Override veto is consulted right after it, as every free on the proxy must.
-            && self.proxy_says_owned_or_arg(v)
+            && self.proxy_says_owned(v)
             && !self.is_captured(v)
             // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
             // proxy answers "owned" for such a local because the adoption leaves its dep list
@@ -5430,23 +5461,6 @@ impl Function {
             // its answer in the same step.
             && matches!(self.tp(v).base(), Type::Vector(_, _))
             && !self.tp(v).depend().is_empty()
-    }
-
-    /// [`Self::proxy_says_owned`] WIDENED: a binding whose dep list names exactly one
-    /// ARGUMENT still counts as owning what it displaces.
-    ///
-    /// The displacement question is not the sweep's.  A local that borrows one argument still
-    /// has a store of its own to release when a reassignment displaces it, and the dep naming
-    /// that argument is what makes the release decidable at runtime — so the proxy is read
-    /// wider here on purpose.  Routed through the pair rather than respelling it, because the
-    /// VETO is the same obligation either way: @FR-O-Override does not soften because the
-    /// proxy did.
-    #[must_use]
-    pub fn proxy_says_owned_or_arg(&self, v: u16) -> bool {
-        // @FR-O-Proxy asks free — the displacement release follows on this answer, and the
-        // @FR-O-Override veto rides on both halves: through the pair on the left, spelled on
-        // the right because the widening does not exempt it.
-        self.proxy_says_owned(v) || (self.borrows_one_argument(v) && !self.is_skip_free(v))
     }
 
     #[must_use]
@@ -6052,22 +6066,7 @@ pub fn align(tp: &Type) -> u8 {
     }
 }
 
-/// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance step.
-///
-/// When `aligned`, round `size` up to 8 (the max alignment on the
-/// stack) so successive pushes stay 8-aligned and every typed write
-/// lands on its required boundary; the LIFO pop reverses the same
-/// rounded step (the design's § 3 "uniform-8 step" choice).  When not
-/// `aligned`, returns `size` unchanged — V1's tight, real-size step.
-///
-/// This is the single seam the S4 work toggles: route every
-/// `stack_pos += size` / `-= size` and `stack.position += size` site
-/// through it so codegen and runtime advance in lockstep (S1).
-#[must_use]
-#[inline]
-pub fn aligned_stack_step(size: u32) -> u32 {
-    size.next_multiple_of(8)
-}
+pub use crate::call_frames::aligned_stack_step;
 
 #[cfg(test)]
 mod align_tests {

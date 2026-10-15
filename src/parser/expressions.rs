@@ -638,11 +638,11 @@ impl Parser {
         // value position — recurse into its args (nested natives), then wrap.
         let wrap_here = matches!(
             &*v,
-            Value::Call(op, _) if crate::state::codegen::is_text_dest_native(self.data.def(*op).name())
-                || crate::state::codegen::is_cdylib_text_call(self.data.def(*op))
+            Value::Call(op, _) if crate::text_calls::is_text_dest_native(self.data.def(*op).name())
+                || crate::text_calls::is_cdylib_text_call(self.data.def(*op))
                 // @PLN24 arc D — a `#c` binding returning text is a value-position
                 // producer like the other two, and needs the same work-text temp.
-                || crate::state::codegen::is_c_text_call(self.data.def(*op))
+                || crate::text_calls::is_c_text_call(self.data.def(*op))
         );
         if wrap_here {
             if let Value::Call(_, args) = v {
@@ -714,8 +714,8 @@ impl Parser {
     /// (nested natives still need a temp).  Any other shape walks normally.
     fn descend_skip_direct(&mut self, v: &mut Value) {
         if let Value::Call(op, args) = v.unspan_mut() {
-            let is_dest = crate::state::codegen::is_text_dest_native(self.data.def(*op).name())
-                || crate::state::codegen::is_cdylib_text_call(self.data.def(*op));
+            let is_dest = crate::text_calls::is_text_dest_native(self.data.def(*op).name())
+                || crate::text_calls::is_cdylib_text_call(self.data.def(*op));
             if is_dest {
                 for a in args.iter_mut() {
                     self.wrap_value_text_dest(a);
@@ -1227,7 +1227,7 @@ impl Parser {
         self.parse_depth += 1;
         // A statement's own expression is level 0 (it enters at 1), so `x = f(f(…))` with 300
         // nested calls is 300 deep.
-        if self.parse_depth > crate::limits::LIMIT + 1 {
+        if self.parse_depth > self.data.limits.count + 1 {
             self.parse_depth -= 1;
             self.refuse_depth_nesting();
             return false;
@@ -1245,7 +1245,7 @@ impl Parser {
             "expression nesting too deep: more than {} levels — split it with locals or a \
              function (each bracket, call argument, block, branch, element, chained operator \
              and postfix step is one level)",
-            crate::limits::LIMIT
+            self.data.limits.count
         );
         self.refuse_depth(&message);
     }
@@ -1303,15 +1303,15 @@ impl Parser {
         loop {
             match &self.lexer.peek().has {
                 LexItem::None => return,
-                LexItem::Token(t) if depth == 0 && !first && t == "{" => return,
-                LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => depth += 1,
-                LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                LexItem::Token(t) if depth == 0 && !first && *t == "{" => return,
+                LexItem::Token(t) if matches!(*t, "(" | "[" | "{") => depth += 1,
+                LexItem::Token(t) if matches!(*t, ")" | "]" | "}") => {
                     if depth == 0 {
                         return;
                     }
                     depth -= 1;
                 }
-                LexItem::Token(t) if depth == 0 && matches!(t.as_str(), ";" | ",") => return,
+                LexItem::Token(t) if depth == 0 && matches!(*t, ";" | ",") => return,
                 _ => {}
             }
             first = false;
@@ -4302,33 +4302,18 @@ use a separate collection or add after the loop"
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
             }
-            let mut all_steps: Vec<Value> = Vec::new();
+            // Every item is parsed into ONE element variable and the items are built by ONE
+            // `new_record`, as a field's literal is: `(E-Asgn-Compound)` reduces the whole
+            // right-hand side before anything is appended, and the build stages every item's
+            // reads of the destination ahead of the first mint only when it sees them all —
+            // built one call per item, `h += [K{n: len(h)}, K{n: len(h)}]` read 0 then 1.
+            let elm = self.unique_elm_var(&lhs_parent_tp, &elm_tp, var_nr);
+            let mut items: Vec<Value> = Vec::new();
             loop {
-                let elm = self.unique_elm_var(&lhs_parent_tp, &elm_tp, var_nr);
                 let mut item = Value::Var(elm);
                 let mut item_parent = Type::Null;
                 let _ = self.parse_operators(&elm_tp, &mut item, &mut item_parent, 0);
-                if !self.first_pass {
-                    // A capture has no owning struct and no name: it is placed by the
-                    // `OpGetDbRef` itself, and `record_new`'s kind dispatch reads the
-                    // COLLECTION type when the field is `u16::MAX` — the same two
-                    // substitutions the `dbref_append_target` routes below make.
-                    // loft#1664 — `resolved_group_write` is the one home for *"spell this
-                    // write against its origin field instead"*, and this LIST spelling of the
-                    // keyed append is the third site that builds an appended record.  A
-                    // capture is excluded for the reason above: it has no owning struct to
-                    // resolve to.
-                    let steps = if captured_keyed {
-                        self.new_record(&mut to.clone(), f_type, elm, u16::MAX, &[item], &elm_tp)
-                    } else {
-                        let (mut dest, parent) = match self.resolved_group_write(var_nr) {
-                            Some((origin, parent)) => (origin, parent),
-                            None => (Value::Var(var_nr), f_type.clone()),
-                        };
-                        self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp)
-                    };
-                    all_steps.extend(steps);
-                }
+                items.push(item);
                 if !self.lexer.has_token(",") {
                     break;
                 }
@@ -4338,6 +4323,27 @@ use a separate collection or add after the loop"
                 }
             }
             self.lexer.token("]");
+            let mut all_steps: Vec<Value> = Vec::new();
+            if !self.first_pass {
+                // A capture has no owning struct and no name: it is placed by the
+                // `OpGetDbRef` itself, and `record_new`'s kind dispatch reads the
+                // COLLECTION type when the field is `u16::MAX` — the same two
+                // substitutions the `dbref_append_target` routes below make.
+                // loft#1664 — `resolved_group_write` is the one home for *"spell this
+                // write against its origin field instead"*, and this LIST spelling of the
+                // keyed append is the third site that builds an appended record.  A
+                // capture is excluded for the reason above: it has no owning struct to
+                // resolve to.
+                all_steps = if captured_keyed {
+                    self.new_record(&mut to.clone(), f_type, elm, u16::MAX, &items, &elm_tp)
+                } else {
+                    let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+                        Some((origin, parent)) => (origin, parent),
+                        None => (Value::Var(var_nr), f_type.clone()),
+                    };
+                    self.new_record(&mut dest, &parent, elm, var_nr, &items, &elm_tp)
+                };
+            }
             *code = Value::Insert(all_steps);
             return Type::Void;
         }
@@ -5355,7 +5361,11 @@ use a separate collection or add after the loop"
                 self.convert_store(code, &Type::Null, f_type, &what, None);
                 s_type = f_type.clone();
             } else if !Self::nstore_narrow(f_type, false) {
-                let joined = Type::optional(f_type.clone());
+                // The join is the local's OWN type made nullable.  `f_type` is the type of a
+                // READ of the local, which names the local as the place it reads; carried into
+                // the local's type that dep makes it a borrower of itself, and nothing
+                // releases what such a local holds.
+                let joined = Type::optional(self.vars.tp(var_nr).clone());
                 self.convert_store(code, &Type::Null, &joined, "the assignment target", None);
                 s_type = joined;
             }

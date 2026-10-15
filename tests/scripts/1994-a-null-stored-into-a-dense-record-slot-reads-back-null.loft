@@ -1,0 +1,249 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULL STORED INTO A DENSE RECORD SLOT READS BACK NULL (`@FR-N-Store`,
+// `@FR-R-ValueRecord`'s nullable clause, @C144, loft#1994).  `(N-Store)` lets a `null` into a
+// non-null record parameter under a warning and promises that the slot holds it.  On
+// `--native` a dense tuple has no absent spelling, so a slot whose value can reach a
+// `S?` — a parameter handed back, a `-> S` that returns its parameter or a view — carries
+// its PRESENCE instead of being widened with a constant: the null handed in is the null that
+// comes out.
+//
+// The interpreter keeps the record and is the VALUES oracle: every cell asserts a
+// hand-computed value AND its presence, so a native answer that differs fails on native
+// alone.  tests/value_record.rs pins the layouts.
+//
+// A whole-record COPY of such a slot (`x = p; x`) is not here: both backends answer a record
+// of zeros for it, loft#1997.
+//
+// @EXPECT_WARNING: is stored into parameter
+// @falsified-by: tests/falsified/1994-a-null-stored-into-a-dense-record-slot-reads-back-null.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — the patch widens every dense tuple with the constant `true`
+//   and carries no presence, which is the register road as it stood.
+// WITNESS: on the patched tree `--native` stops at `w1 null -1`: the `null` handed to a dense
+//   parameter comes back with its field null and `== null` false.  The interpreter prints
+//   `ok`.
+// HOLDS: the interpreter's output, and every cell whose argument names a record.
+
+struct S { a: integer }
+
+fn g(n: integer) -> S {
+  S { a: n }
+}
+
+fn gn(n: integer) -> S? {
+  if n < 0 {
+    null
+  } else {
+    S { a: n }
+  }
+}
+
+// w1 — a dense parameter handed back as `S?`.
+fn w1(p: S) -> S? {
+  p
+}
+
+// w2 — a `-> S` that returns its parameter, forwarded by a `-> S?`.
+fn id2(p: S) -> S {
+  p
+}
+
+fn w2(k: integer) -> S? {
+  if k == 0 {
+    return id2(null);
+  }
+  id2(g(k))
+}
+
+// w3 — the same call at an arm beside `null`.
+fn id3(p: S) -> S {
+  p
+}
+
+fn w3(c: boolean) -> S? {
+  if c {
+    id3(null)
+  } else {
+    null
+  }
+}
+
+// w4 — a parameter at an arm beside a build.
+fn w4(p: S, c: boolean) -> S? {
+  if c {
+    p
+  } else {
+    S { a: 5 }
+  }
+}
+
+// w5 — three arms: the parameter, a build, a `-> S` call.
+fn w5(p: S, n: integer) -> S? {
+  match n {
+    1 => p,
+    2 => S { a: 5 },
+    _ => g(11)
+  }
+}
+
+// w6 — an early `return` of the parameter.
+fn w6(p: S, c: boolean) -> S? {
+  if c {
+    return p;
+  }
+  S { a: 5 }
+}
+
+// w7 — two hops through `-> S` functions.
+fn id7(p: S) -> S {
+  p
+}
+
+fn twice(p: S) -> S {
+  id7(id7(p))
+}
+
+fn w7(c: boolean) -> S? {
+  if c {
+    twice(g(9))
+  } else {
+    twice(null)
+  }
+}
+
+// w8 — a `-> S` that returns an element VIEW or a build, forwarded beside `null`.
+fn head(v: vector<S>) -> S {
+  match v {
+    [a, ..] => a,
+    _ => S { a: 5 }
+  }
+}
+
+fn w8(v: vector<S>, c: boolean) -> S? {
+  if c {
+    head(v)
+  } else {
+    null
+  }
+}
+
+// w9 — the parameter bound to a `S?` local and tested.
+fn w9(p: S) -> integer {
+  r: S? = p;
+  if r == null {
+    1
+  } else {
+    0
+  }
+}
+
+// w10 — the parameter handed on to a `S?` parameter.
+fn w10i(q: S?) -> boolean {
+  q == null
+}
+
+fn w10(p: S) -> boolean {
+  w10i(p)
+}
+
+// w11 — a dense parameter that is only read, handed `null`: its fields read null.
+fn w11(p: S) -> integer {
+  p.a ?? -3
+}
+
+// w13 — control: a dense parameter that is only read and never handed `null` stays the dense
+// tuple.
+fn w13(p: S) -> integer {
+  p.a + 1
+}
+
+// w12 — a function whose result carries its presence, used where a dense tuple is wanted:
+// handed to dense parameters, and read.
+fn id12(p: S) -> S {
+  p
+}
+
+fn add2(p: S, q: S) -> integer {
+  p.a + q.a
+}
+
+fn w12(c: boolean) -> S? {
+  if c {
+    id12(g(3))
+  } else {
+    null
+  }
+}
+
+fn main() {
+  x = S { a: 41 };
+  n: S? = null;
+  m: S? = S { a: 42 };
+
+  a1 = w1(null);
+  b1 = w1(x);
+  c1 = w1(n);
+  d1 = w1(m);
+  e1 = w1(gn(-1));
+  f1 = w1(gn(6));
+  assert(a1 == null && (a1.a ?? -1) == -1, "w1 null {a1.a ?? -1}");
+  assert((b1.a ?? -1) == 41 && b1 != null, "w1 record {b1.a ?? -1}");
+  assert(c1 == null && (d1.a ?? -1) == 42 && d1 != null, "w1 nullable local {d1.a ?? -1}");
+  assert(e1 == null && (f1.a ?? -1) == 6 && f1 != null, "w1 nullable call {f1.a ?? -1}");
+
+  a2 = w2(0);
+  b2 = w2(8);
+  assert(a2 == null && (a2.a ?? -1) == -1, "w2 null {a2.a ?? -1}");
+  assert((b2.a ?? -1) == 8 && b2 != null, "w2 record {b2.a ?? -1}");
+
+  a3 = w3(true);
+  b3 = w3(false);
+  assert(a3 == null && b3 == null, "w3 {a3.a ?? -1}");
+
+  a4 = w4(null, true);
+  b4 = w4(null, false);
+  c4 = w4(x, true);
+  assert(a4 == null && (a4.a ?? -1) == -1, "w4 null {a4.a ?? -1}");
+  assert((b4.a ?? -1) == 5 && b4 != null && (c4.a ?? -1) == 41 && c4 != null, "w4 {b4.a ?? -1}");
+
+  a5 = w5(null, 1);
+  b5 = w5(null, 2);
+  c5 = w5(null, 3);
+  assert(a5 == null && (b5.a ?? -1) == 5 && (c5.a ?? -1) == 11, "w5 {b5.a ?? -1} {c5.a ?? -1}");
+  assert(b5 != null && c5 != null, "w5 present");
+
+  a6 = w6(null, true);
+  b6 = w6(null, false);
+  assert(a6 == null && (b6.a ?? -1) == 5 && b6 != null, "w6 {b6.a ?? -1}");
+
+  a7 = w7(true);
+  b7 = w7(false);
+  assert((a7.a ?? -1) == 9 && a7 != null, "w7 record {a7.a ?? -1}");
+  assert(b7 == null && (b7.a ?? -1) == -1, "w7 null {b7.a ?? -1}");
+
+  q: vector<S> = [S { a: 7 }];
+  e: vector<S> = [];
+  a8 = w8(q, true);
+  b8 = w8(e, true);
+  c8 = w8(q, false);
+  d8 = head(q);
+  assert((a8.a ?? -1) == 7 && a8 != null && (b8.a ?? -1) == 5 && b8 != null, "w8 {a8.a ?? -1}");
+  assert(c8 == null && d8.a == 7, "w8 null {d8.a}");
+
+  assert(w9(null) == 1 && w9(x) == 0, "w9 {w9(null)} {w9(x)}");
+  assert(w10(null) && !w10(x), "w10");
+  assert(w11(null) == -3 && w11(x) == 41, "w11 {w11(null)} {w11(x)}");
+  assert(w13(x) == 42, "w13 {w13(x)}");
+
+  d12 = id12(x);
+  e12 = id12(g(1));
+  a12 = w12(true);
+  b12 = w12(false);
+  assert(add2(d12, e12) == 42 && d12.a == 41, "w12 dense uses {add2(d12, e12)}");
+  assert((a12.a ?? -1) == 3 && a12 != null && b12 == null, "w12 {a12.a ?? -1}");
+
+  // The sources are untouched.
+  assert(x.a == 41 && q[0].a == 7 && len(e) == 0, "sources");
+  println("ok");
+}

@@ -1,0 +1,15 @@
+[package]
+name = "builder_pkg"
+version = "0.1.0"
+description = "Fixture for the builder half of the auto-use trigger surface (tests/builder_trigger.rs)"
+
+# Declared as a published package declares it: an extracted registry copy lives in a
+# `<name>-<version>` directory, whose name would otherwise be taken for the entry's.
+[library]
+entry = "src/builder_pkg.loft"
+
+[triggers]
+enabled = true
+# `bag` is a free pub fn: a builder.  `has` is a method and `missing` is not in the
+# source: both are dropped by the derivation, so neither fires.
+builders = ["bag", "has", "missing"]

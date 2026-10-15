@@ -79,7 +79,7 @@ remove the need for it.
 
 **Revisit when.** Never for tuple variants.  The "reads like grammar" bar applies to each PEG
 syntax choice.  Decided 2026-07-10 — [record](DESIGN_DECISIONS-history.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced).
-**Holds at:** `@C89` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
+**Holds at:** `@C89` — `loft-suite/attic/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 
 ## C92 — Compound assignment evaluates its place expression exactly once
 
@@ -173,7 +173,7 @@ kinds; a generic `hole<T>` would drop the per-kind opt-in keeping non-literal va
 
 **Revisit when.** A multi-parameter keyed type has a use a record set cannot express.  Decided
 2026-08-11, revised 2026-09-21 by @C126 — [record](DESIGN_DECISIONS-history.md#c110--a-generics-type-variable-stays-in-the-first-parameter-and-a-keyed-collection-stays-a-record-set).
-**Holds at:** `@C110` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
+**Holds at:** `@C110` — `loft-suite/attic/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F26 (interfaces & bounded generics) · @F94 (type-directed interpolation)
 
 ## C112 — a binding position mints a local whatever else carries that name; the function stays reachable as a call
@@ -188,7 +188,7 @@ use.  This does not reopen @C95 (a local re-points no call site).
 the author meant — a bare name read as the local, with no type error, where the function was
 intended.  A bare name of a different type is a compile error, so only a local holding a function
 of the same type could do this.  Decided 2026-08-11 — [record](DESIGN_DECISIONS-history.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call).
-**Holds at:** `tests/scripts/852-local-shadows-a-function-name.loft`;
+**Holds at:** `loft-suite/attic/scripts/852-local-shadows-a-function-name.loft`;
 `tests/imports.rs::pln102_c98_a_local_may_shadow_a_library_function`.
 **Catalogue:** @F2 (operators) / modules + naming · [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756
 
@@ -327,5 +327,6 @@ table-shaped initialiser — or a slot grows until 300 ordinary variables no lon
 Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included).
 **Holds at:** `tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft` (the margin),
 `the-counts-within-the-limit-compile.loft` beside `a-count-past-the-limit-is-refused.loft` (the
-count itself).
+count itself) — under lowered limits per commit, and at 300 and 64 KiB in `tests/limits_full/`,
+nightly.
 **Catalogue:** [LOFT.md § Limits](LOFT.md#limits) · [COMPATIBILITY.md](COMPATIBILITY.md) (the consumer function it refuses).

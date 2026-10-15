@@ -1,0 +1,5 @@
+// A local bound from a call on one path and a literal on the other, then returned.  Nullable half.
+struct S { a: integer }
+fn g(n: integer) -> S { S { a: n } }
+fn f(c: boolean) -> S? { h: S? = if c { g(11) } else { S { a: 5 } }; h }
+fn main() { t = f(true); u = f(false); println("{t.a ?? -1} {u.a ?? -1}"); }

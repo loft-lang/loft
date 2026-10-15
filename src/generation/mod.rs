@@ -6,16 +6,27 @@ use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
+use crate::rust_spelling::native_narrow_int;
+pub use crate::rust_spelling::rust_type;
+pub(crate) use crate::rust_spelling::{is_raw_scalar_ref, link_base_type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
+pub mod apart;
+mod apart_emit;
+pub mod apart_value;
+pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
+pub mod decode_view;
+mod decode_view_emit;
 pub mod destination;
 mod dispatch;
 mod emit;
-pub mod fnref;
+pub mod file_hold;
+pub use crate::fnref;
 pub mod hoist;
+pub mod keyed_entry;
 pub mod keyed_place;
 pub mod non_sentinel;
 pub(crate) mod ops;
@@ -474,7 +485,7 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
 /// Final invariant scrub over a COMPLETE generated native source: rewrite the
 /// loft-internal module references `crate::rpc::` / `crate::store::` to
 /// `loft::…`.  In the interpreter's own crate `crate == loft`, so a `#rust`
-/// template can write `crate::rpc::print_or_capture` / `crate::store::Store`;
+/// template can write `crate::rpc::…` / `crate::store::Store`;
 /// but in a GENERATED binary `crate::` is the binary's own root (no `rpc` /
 /// `store` module), so they must be `loft::…` (loft is linked as an extern
 /// crate; both fns are `pub`).  The host-import intrinsics
@@ -1083,6 +1094,9 @@ pub struct Output<'a> {
     /// [`Output::borrowed_text_locals`] ([`hoist::borrowed_store_texts`]): every `Set` of
     /// one binds its `&str` slot.
     pub borrowed_store_locals: HashSet<u16>,
+    /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
+    /// value slice of a parameter, for the rewrite census; rebuilt per function.
+    pub slice_borrow_count: usize,
     /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
@@ -1120,6 +1134,19 @@ pub struct Output<'a> {
     /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
     /// for the whole program because the admission asks every call site.
     pub value_records: hoist::ValueRecords,
+    /// `@FR-R-Apart` — the program's apart types, twins and regions ([`apart_value::plan`]).
+    pub apart: apart_value::ApartPlan,
+    /// `@FR-R-Apart` — the plan for the body being emitted, whether a twin is being emitted,
+    /// and whether the value structs are written.
+    pub apart_ctx: Option<apart_emit::ApartCtx>,
+    pub apart_twin: bool,
+    /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
+    /// its `__dv` twin.
+    pub dv: decode_view::DvPlan,
+    pub dv_active: bool,
+    /// The node a hook is re-emitting through the ordinary path, which it must not take again.
+    pub dv_bypass: usize,
+    pub apart_types_done: bool,
     /// Whether `value_records` has been computed for this program — a whole-program
     /// analysis asked once, whatever it answered (an empty answer is an answer).
     pub value_records_done: bool,
@@ -1319,6 +1346,20 @@ pub struct Output<'a> {
     /// (`cr_call_site`), which is what `stack_trace()` reports as the callee's `line`
     /// (loft#1753): a frameless function writing a site would write its caller's slot.
     pub named_frame: bool,
+    /// The function now being emitted declares `__fwb` (`codegen_runtime::FnRefWork`): a
+    /// dispatch arm in it lends a candidate's work buffers from that, and anywhere else
+    /// hands the null sentinel, which sends the candidate down its own null road.
+    pub fnref_work: bool,
+    /// `LOFT_NO_FNREF_WORK_BUFFER=1` — a dispatch arm hands a candidate's work buffer the
+    /// null sentinel again, so the candidate mints its own on every call.  The bisect step
+    /// for a stale or shared scratch vector in a function reached through a function value.
+    pub fnref_work_disabled: bool,
+    /// `@FR-R-FileHold` — the files whose cursor an enclosing loop holds, innermost last,
+    /// each with the guard local that holds it.
+    pub file_holds: Vec<(u16, String)>,
+    /// Does any definition of the program take a work buffer (`Attribute::work_buffer`)?
+    /// Asked once: a program with none lends nothing.
+    any_work_buffer: std::cell::OnceCell<bool>,
     /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
@@ -1639,47 +1680,6 @@ fn narrow_int_cast(tp: &Type) -> Option<&'static str> {
     }
 }
 
-/// The narrow Rust type a value of this integer range fits UNENCODED, or `None` when it needs
-/// the full width.
-///
-/// The ONE home for that question, asked by `rust_type`'s Result arms (which pick the
-/// signature) and by [`narrow_int_cast`] (which casts the value at the return site).  They
-/// have to agree or the generated code does not compile — and they were two copies of the
-/// same four-line predicate, which is how they came to share a defect.
-///
-/// The test is which VALUES the range holds, not how MANY.  Read off the SPAN
-/// (`range() - 1 <= 255`) both answered `u8` for `integer limit(300, 400)` — 101 values,
-/// which fit a byte only OFFSET-encoded, which is what the store layer does and a register
-/// does not.  A body of `350` came back as `94` on `--native` and `350` on `--interpret`,
-/// silently, on every build back to the last release; `limit(70000, 70100)` is the cell that
-/// shows it is not a u8-vs-u16 boundary question at all, since a 101-wide range picked `u8`
-/// for a five-digit number (loft#1255).
-///
-/// `formal/layout.md` is why the answer is the values: the packed encoding is a STORAGE fact,
-/// so the span belongs to `bytes_for_range` and never to a register.  A value in flight is
-/// its plain number, which is what the interpreter's i64 slot already does.
-fn native_narrow_int(s: &crate::data::IntegerSpec) -> Option<&'static str> {
-    // ⚠ A NULLABLE spec never reaches here — `rust_type`'s Result arms peel the `Optional`
-    // first — which is what makes the declared range the whole answer.  Between loft#1634 and
-    // C127 a non-nullable spec that left a code spare inside its width carried one more value
-    // in flight than its range held (the null its overflow answered), so this returned `None`
-    // for those; C127 retired that null, so the range is again exactly what a value of the
-    // type can be.  loft#1634's guard keeps the cell either way: what changes is the value
-    // every frame boundary must agree on, from null to the type's default.
-    let (min, max) = (i64::from(s.min), s.max);
-    if min >= 0 && max <= 255 {
-        Some("u8")
-    } else if min >= 0 && max <= 65535 {
-        Some("u16")
-    } else if min >= -128 && max <= 127 {
-        Some("i8")
-    } else if min >= -32768 && max <= 32767 {
-        Some("i16")
-    } else {
-        None
-    }
-}
-
 /// Use this for the `bool` → `u8` coercion alone, without the narrow-integer
 /// cases of [`narrow_int_cast`].
 ///
@@ -1824,23 +1824,6 @@ pub(crate) fn absent_link_value(inner: &Type) -> Option<&'static str> {
     }
 }
 
-/// The Rust type behind a scalar `&τ` pointer — `link_base_type(τ)` — which for a NARROW
-/// integer is the storage width the field encoding uses (`data::NarrowSlot`, @PLN167
-/// decision 1), so one `*mut u8` names a linked local and a field alike; every other τ is
-/// its variable type.
-#[must_use]
-pub(crate) fn link_base_type(inner: &Type) -> String {
-    match crate::data::NarrowSlot::of_type(inner) {
-        Some(slot) => slot.rust_type().to_string(),
-        None => rust_type(inner.base(), &Context::Variable),
-    }
-}
-
-#[must_use]
-pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
-    matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
-}
-
 /// True when tuple element `idx` of `var` is TEXT — nullable or not.  The predicate
 /// behind [`tuple_elem_type`]'s most-asked question; see it for why the two are one.
 #[must_use]
@@ -1960,113 +1943,6 @@ pub(crate) fn returns_owned_string(def: &crate::data::Definition) -> bool {
 #[must_use]
 pub fn container_element_base(data: &Data, value: &Value) -> Option<u16> {
     crate::use_analysis::projection_container_var(data, value)
-}
-
-/// Use this to map a loft type to the Rust type used in generated code.
-/// The context controls whether the type appears as an owned value, argument, variable, or reference.
-///
-/// # Panics
-/// When the rust type cannot be determined.
-#[must_use]
-pub fn rust_type(tp: &Type, context: &Context) -> String {
-    if context == &Context::Reference {
-        let mut result = String::new();
-        result += "&";
-        result += &rust_type(tp, &Context::Argument);
-        return result;
-    }
-    if let Type::RefVar(in_tp) = tp {
-        if is_raw_scalar_ref(tp) {
-            return format!("*mut {}", link_base_type(in_tp));
-        }
-        return format!("&mut {}", rust_type(in_tp, &Context::Variable));
-    }
-    match tp {
-        // Narrow integer subtypes use their precise Rust type only in the function-return
-        // context.  In variable and argument contexts `i32` is used instead to avoid
-        // cascading type-mismatch errors when the variable is passed to a template
-        // operation (e.g. `set_short`) that expects `i32`.  The `return` site adds an
-        // explicit `as u16` / `as u8` cast (see `narrow_int_cast`).
-        //
-        // WHICH narrow type is `native_narrow_int`'s answer, shared with `narrow_int_cast` so
-        // the signature and the cast at the return site cannot disagree (loft#1255).
-        Type::Integer(s)
-            if context == &Context::Result && native_narrow_int(s).is_some() =>
-        {
-            native_narrow_int(s).unwrap_or("i64")
-        }
-        Type::Enum(_, false, _) => "u8",
-        Type::Character | Type::Null => "i32",
-        Type::Integer(_) => "i64",
-        // null is represented as the null sentinel of the target type
-        Type::Text(_) if context == &Context::Variable => "String",
-        Type::Text(_) if context == &Context::Argument => "&str",
-        Type::Text(_) => "Str",
-        // @PLN17: boolean tri-state.  Null-capable positions (local/field storage,
-        // params, returns) hold the raw byte `u8` (0/1/255); transient expression
-        // results are 2-state `bool`.  Mirrors the narrow-int Result→u8 split above
-        // and the text String/Str split; coercion to/from `bool` happens at the
-        // op-operand (calls.rs `as u8` wrap), store, return, and arg seams.
-        Type::Boolean
-            if matches!(
-                context,
-                Context::Variable | Context::Argument | Context::Result | Context::Reference
-            ) =>
-        {
-            "u8"
-        }
-        Type::Boolean => "bool",
-        Type::Float => "f64",
-        Type::Single => "f32",
-        Type::Reference(_, _)
-        | Type::Vector(_, _)
-        | Type::Sorted(_, _, _)
-        | Type::Hash(_, _, _)
-        | Type::Radix(_, _, _) | Type::Trie(_, _, _)
-        | Type::Enum(_, true, _)
-        | Type::Index(_, _, _)
-        // N8b.1: generator variables are stored as DbRef (index into native coroutine table).
-        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (@C125).
-        | Type::Iterator(_, _) => "DbRef",
-        Type::Routine(_) => "u32",
-        // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
-        Type::Function(..) => "(u32, DbRef)",
-        Type::Unknown(_) => "??",
-        Type::Keys => "&[Key]",
-        Type::Void => "()",
-        // N8a.1: emit the correct Rust tuple type, e.g. (i32, i64) for (integer, long).
-        // T1.8a: in Result context, recurse with Variable context for element
-        // types so a tuple-of-text return signature is `(String, String)` —
-        // matching the caller's owned-tuple slot.  Without this the signature
-        // becomes `(Str, Str)` (Result-context Text → "Str") while the
-        // caller's local declares `(String, String)` (Variable-context),
-        // producing a type mismatch.  Argument/Variable contexts already
-        // recurse with their own context (giving `(&str, &str)` or
-        // `(String, String)` respectively), which matches the call site
-        // and the variable slot.
-        Type::Tuple(elems) => {
-            let elem_context = if matches!(context, Context::Result) {
-                &Context::Variable
-            } else {
-                context
-            };
-            let parts: Vec<String> = elems.iter().map(|e| rust_type(e, elem_context)).collect();
-            return format!("({})", parts.join(", "));
-        }
-        // @PLN25: a nullable narrow integer is carried FULL-WIDTH (i64) as a Rust value.
-        // The narrow packing is store-only; a narrow Rust type (u8/u16) can't hold the
-        // null sentinel alongside the full value range (`u8?` must keep 255-as-value
-        // distinct from null). Non-Result contexts already map a narrow Integer to i64,
-        // so this only corrects the Result (function-return) signature to match the i64
-        // the body yields — else a `-> u8` header over a `return <i64>` body is rustc E0308.
-        Type::Optional(inner) if matches!(inner.base(), Type::Integer(_)) => {
-            return "i64".to_string();
-        }
-        // @PLN25 slice (b): `Optional(τ)` shares its base's Rust type (sentinel storage).
-        Type::Rewritten(inner) | Type::Optional(inner) => return rust_type(inner, context),
-        _ => panic!("Incorrect type {tp:?}"),
-    }
-    .to_string()
 }
 
 /// Return the Rust literal for the "null" default of a loft type, used when a function
@@ -2484,6 +2360,7 @@ impl<'a> Output<'a> {
             text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
+            slice_borrow_count: 0,
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
@@ -2495,6 +2372,13 @@ impl<'a> Output<'a> {
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
+            apart: apart_value::ApartPlan::default(),
+            apart_ctx: None,
+            apart_twin: false,
+            dv: decode_view::DvPlan::default(),
+            dv_active: false,
+            dv_bypass: 0,
+            apart_types_done: false,
             value_records_done: false,
             value_record_locals: HashMap::new(),
             widening: None,
@@ -2550,6 +2434,10 @@ impl<'a> Output<'a> {
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
             named_frame: false,
+            fnref_work: false,
+            fnref_work_disabled: std::env::var("LOFT_NO_FNREF_WORK_BUFFER").is_ok_and(|v| v != "0"),
+            file_holds: Vec::new(),
+            any_work_buffer: std::cell::OnceCell::new(),
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
@@ -2770,7 +2658,12 @@ impl Output<'_> {
     /// this (#305).
     #[must_use]
     pub fn fn_ident(&self, def: &crate::data::Definition) -> String {
-        disambiguated_fn_ident(&self.dup_fn_names, def)
+        let id = disambiguated_fn_ident(&self.dup_fn_names, def);
+        if self.dv_renames(def) {
+            format!("{id}__dv")
+        } else {
+            id
+        }
     }
 
     /// The Rust place for loft variable `var` — the generator's struct field when the
@@ -2842,6 +2735,7 @@ impl Output<'_> {
                 &self.value_records.params,
                 &self.value_records.view_offs,
                 &self.value_records.fnref_sites,
+                &self.value_records.sp,
             );
             self.forward_sites = hoist::forward_sites(
                 self.data,
@@ -2849,7 +2743,12 @@ impl Output<'_> {
                 &self.value_records.fns,
                 &self.value_record_locals,
             );
-            self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
+            self.value_leaves = hoist::value_leaves(
+                self.data,
+                def_nr,
+                &self.value_records,
+                &self.value_record_locals,
+            );
             if self.value_records.fns.contains_key(&def_nr) {
                 let def = self.data.def(def_nr);
                 self.value_phantom = hoist::ret_buffer_attr(def)
@@ -2983,6 +2882,7 @@ impl Output<'_> {
             .copied()
             .collect();
         self.borrowed_store_locals.clear();
+        self.slice_borrow_count = 0;
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
@@ -2996,6 +2896,7 @@ impl Output<'_> {
             let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
+            self.slice_borrow_count = store.slices.len();
             walks
         };
         self.char_walks = if self.char_walk_disabled {
@@ -3028,7 +2929,10 @@ impl Output<'_> {
         // (§ V-u) are left to those.
         self.loop_records.clear();
         if !self.loop_record_disabled {
-            self.loop_records = hoist::loop_records(self.data, def_nr);
+            let lr = hoist::loop_records(self.data, self.stores, def_nr);
+            self.loop_records = lr.recs;
+            // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
+            self.refill.field_zeros.extend(lr.field_zeros);
         }
         self.loop_buffers.clear();
         if !self.loop_buffer_disabled {
@@ -3060,6 +2964,12 @@ impl Output<'_> {
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
             dead_by_fn: std::rc::Rc::clone(&self.dead_by_fn),
+            kept_elems: self
+                .refill
+                .keep
+                .as_ref()
+                .map(|k| k.elems.iter().copied().collect())
+                .unwrap_or_default(),
         };
         self.group_ends.clear();
         self.declared.clear();
@@ -3099,6 +3009,7 @@ impl Output<'_> {
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
         fired("R-TextBorrow", self.borrowed_text_locals.len());
+        fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
         fired("R-LoopRecord", self.loop_records.len());
@@ -3884,6 +3795,10 @@ impl Output<'_> {
             if let Some(ps) = hoist::push_loop_paths(lp, self.data) {
                 return self.push_reserve_paths(w, lp, &ps);
             }
+            // `@FR-R-PushFill`'s hash clause — a counted loop inserting records into one
+            // hash reserves its table for them: capacity only, so it stands beside any
+            // other reservation the loop takes.
+            self.hash_reserve(w, lp)?;
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
@@ -4113,6 +4028,33 @@ impl Output<'_> {
         }
         crate::rewrite_census::fired("R-PushFill", windows.len());
         Ok(windows)
+    }
+
+    /// `@FR-R-PushFill`'s hash clause: `reserve(h, len(h) + inserts × trip count)` before a
+    /// counted loop inserting records into hash `h` ([`hoist::hash_fill_loop`]).  An ABSENT
+    /// hash (a discharged receiver, loft#1214's shape) reserves nothing.
+    /// `size(h)` then answers the reserved table (@C150); length, entries and order are the
+    /// plain fill's.
+    fn hash_reserve(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
+        if self.push_fill_disabled || self.in_coroutine_body || !hash_reserve_enabled() {
+            return Ok(());
+        }
+        let Ok((hf, hi)) = hoist::hash_fill_loop(lp, self.data, self.stores) else {
+            return Ok(());
+        };
+        let count = self.trip_count(hf.index, hf.next, hi, hf.inclusive)?;
+        let h = format!(
+            "var_{}",
+            sanitize(self.data.def(self.def_nr).variables().name(hf.hash))
+        );
+        self.indent(w)?;
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 && {h}.store_nr != u16::MAX && {h}.rec != 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}_u16); }} }} //@FR-R-PushFill hash reservation",
+            hf.per_pass, hf.tp
+        )?;
+        crate::rewrite_census::fired("R-PushFill/hash", 1);
+        Ok(())
     }
 
     /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
@@ -4587,22 +4529,15 @@ impl Output<'_> {
         if self.hoist_disabled {
             return hoist::LoopHoist::default();
         }
-        hoist::hoistable(
+        let tiers = self.hoist_tiers();
+        let mut verdict = hoist::hoistable(
             lp,
             self.data,
             self.stores,
             self.def_nr,
             &mut self.hoist_cache,
             &mut self.scalar_write_cache,
-            hoist::HoistTiers {
-                in_place: !self.write_hoist_disabled,
-                scalars: !self.scalar_hoist_disabled,
-                push: !self.push_hoist_disabled,
-                mint: !self.mint_hoist_disabled,
-                record_push: !self.record_push_disabled,
-                heap_push: !self.heap_record_push_disabled,
-                rebound_movers: !self.rebound_mover_disabled,
-            },
+            tiers,
             (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
             Some(&self.hoist_owned),
             (!self.distinct_growth_disabled)
@@ -4614,7 +4549,23 @@ impl Output<'_> {
                     assumed: &self.assumed_distinct,
                 })
                 .as_ref(),
-        )
+        );
+        // `@FR-R-Apart` instance 3 — an apart vector is no store vector: no path rooted at it
+        // or at a companion takes a header, and a loop whose only growth was such a vector
+        // grows no store.
+        if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs)
+            && !vecs.is_empty()
+        {
+            verdict.vectors.retain(|(p, _)| !vecs.holds(p.0));
+            verdict.pushes.retain(|(p, _)| !vecs.holds(p.0));
+            verdict.mint_pushes.retain(|(p, _)| !vecs.holds(p.0));
+            let movers = verdict.movers.len();
+            verdict.movers.retain(|m| !vecs.holds(*m));
+            if movers > 0 && verdict.movers.is_empty() {
+                verdict.growth_free = true;
+            }
+        }
+        verdict
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -4638,7 +4589,11 @@ impl Output<'_> {
         {
             HashSet::new()
         } else {
-            hoist::nest_read_paths(lp, self.data)
+            let mut paths = hoist::nest_read_paths(lp, self.data);
+            if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs) {
+                paths.retain(|p| !vecs.holds(p.0));
+            }
+            paths
         };
         let hoisted = self.compute_loop_hoist(lp);
         let hoist::LoopHoist {
@@ -4925,6 +4880,63 @@ impl Output<'_> {
         self.push_headers.push(push_frame);
         self.mint_push_headers.push(mint_frame);
         Ok(opened)
+    }
+
+    /// `@FR-R-FileHold` — before the loop `lp` is written: when it may read one `File`
+    /// through a held cursor ([`file_hold::held_file`]) and no enclosing loop holds that file
+    /// already, open a block, bind the guard in it and remember it for the reads.  Answers
+    /// whether a block was opened; [`Self::end_file_hold`] closes it after the loop, which is
+    /// where the guard drops and the record gets its cursor back.
+    pub(super) fn begin_file_hold(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || !crate::keys::file_hold_enabled() {
+            return Ok(false);
+        }
+        let typed = |args: &[Value]| ops::file_ops::typed_read(self, args).is_some();
+        let Some(f) = file_hold::held_file(lp, self.data, self.def_nr, &typed) else {
+            return Ok(false);
+        };
+        if self.file_holds.iter().any(|(held, _)| *held == f) {
+            return Ok(false);
+        }
+        self.hoist_counter += 1;
+        let name = format!("__fc_{}", self.hoist_counter);
+        let operand = self.expr_string(&Value::Var(f))?;
+        let check = if self.hoist_verify { "true" } else { "false" };
+        writeln!(
+            w,
+            "{{ //@FR-R-FileHold the file's cursor, held across the loop"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {name} = codegen_runtime::FileCursor::<{check}>::hold(cell, {operand});"
+        )?;
+        self.indent(w)?;
+        crate::rewrite_census::fired("R-FileHold", 1);
+        self.file_holds.push((f, name));
+        Ok(true)
+    }
+
+    /// Close what [`Self::begin_file_hold`] opened.
+    pub(super) fn end_file_hold(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
+        if opened {
+            self.file_holds.pop();
+            write!(w, " }}")?;
+        }
+        Ok(())
+    }
+
+    /// The guard that holds `f`'s cursor here, if a loop around this point holds it.
+    pub(crate) fn file_hold(&self, f: u16) -> Option<&str> {
+        self.file_holds
+            .iter()
+            .rev()
+            .find(|(held, _)| *held == f)
+            .map(|(_, name)| name.as_str())
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.
@@ -6318,6 +6330,23 @@ impl Output<'_> {
         ) && !self.text_borrowed(v)
     }
 
+    /// A text VALUE that borrows no store memory, so a store write may read its bytes where
+    /// they are instead of copying them first (`OpSetText`'s claim can move the store a
+    /// borrowed text points into): a literal, an owned text local, or a block that answers
+    /// one — the synthesised text a decoder builds into its work string.
+    #[must_use]
+    pub fn text_value_unborrowed(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Text(_) => true,
+            Value::Var(w) => self.text_owned(*w),
+            Value::Block(b) => b
+                .operators
+                .last()
+                .is_some_and(|r| matches!(r.unspan(), Value::Var(w) if self.text_owned(*w))),
+            _ => false,
+        }
+    }
+
     /// `@FR-R-SplitTable` — the split table whose local `v` reads through the op `reader`,
     /// or `None`: `v` must be `reader(Var(x), …)` with `x` a table of the function being
     /// emitted or the hidden vector of a walk over one.  Answers the TABLE's variable, whose
@@ -6794,6 +6823,42 @@ impl Output<'_> {
         registers
     }
 
+    /// Does `def` call through a function value that can reach a function taking a work
+    /// buffer — an arm of one of its dispatches (`fnref::dispatch_arms`, the list the arm
+    /// emitter walks)?  A frame whose function values reach none declares no lender; a
+    /// `false` here that an arm contradicts hands that arm the null sentinel, which is the
+    /// candidate's own null road.
+    fn calls_a_work_buffer_candidate(&self, def: &crate::data::Definition) -> bool {
+        let vars = def.variables();
+        def.code().any_node(&mut |n| {
+            let Value::CallRef(v, args) = n else {
+                return false;
+            };
+            if *v >= vars.count() {
+                return false;
+            }
+            fnref::dispatch_arms(self.data, &self.reachable, vars.tp(*v), args.len()).is_some_and(
+                |arms| {
+                    arms.iter().any(|arm| {
+                        self.data
+                            .def(arm.d_nr)
+                            .attributes()
+                            .iter()
+                            .any(|a| a.work_buffer)
+                    })
+                },
+            )
+        })
+    }
+
+    /// Does any definition take a work buffer?  (`fnref_work`'s program-wide half.)
+    fn any_work_buffer(&self) -> bool {
+        *self.any_work_buffer.get_or_init(|| {
+            (0..self.data.definitions.len() as u32)
+                .any(|d| self.data.def(d).attributes().iter().any(|a| a.work_buffer))
+        })
+    }
+
     /// Is NOTHING that registers a fn-ref buffer reachable from this definition — over the
     /// closure of its call graph, cycles included?  Then no entry can ever stand above the
     /// mark its buffer guard would take, its drop is empty every time, and the frame carries
@@ -6937,6 +7002,48 @@ impl Output<'_> {
         )
     }
 
+    /// The live-reload arm's record for tuple parameter `i` (`var_<name>`, layout `tp`): the
+    /// parked call takes a record, so the tuple is written into one (`pre`) and that record
+    /// released after the answer is read (`post`).  A nullable tuple that is ABSENT is the
+    /// null record again, which nothing releases.
+    fn live_tuple_param(
+        i: usize,
+        name: &str,
+        tp: u16,
+        layout: &hoist::ValueTuple,
+        pre: &mut String,
+        post: &mut String,
+    ) {
+        use std::fmt::Write as _;
+        let presence = layout.presence();
+        if let Some(k) = presence {
+            let _ = write!(
+                pre,
+                " let __lp_{i}: DbRef = if !var_{name}.{k} {{ DbRef::NULL }} else"
+            );
+        } else {
+            let _ = write!(pre, " let __lp_{i}: DbRef =");
+        }
+        let _ = write!(
+            pre,
+            " {{ let __d = OpDatabase(cell, DbRef::NULL, {rec}_i32); let __s = unsafe {{ &mut *cell.get() }};",
+            rec = hoist::layout_record(tp)
+        );
+        for (k, (off, rt)) in layout.fields.iter().enumerate() {
+            let setter = hoist::tuple_field_setter(*off, rt, "__d", &format!("var_{name}.{k}"));
+            let _ = write!(pre, " __s.store_mut(&__d).{setter};");
+        }
+        let _ = write!(pre, " __d }};");
+        if presence.is_some() {
+            let _ = write!(
+                post,
+                " if __lp_{i}.rec != 0 {{ OpFreeRef(cell, __lp_{i}, \"__lp_{i}\"); }}"
+            );
+        } else {
+            let _ = write!(post, " OpFreeRef(cell, __lp_{i}, \"__lp_{i}\");");
+        }
+    }
+
     fn live_entry_check(&mut self, def: &crate::data::Definition) -> Option<String> {
         if def.name() == "n_main" {
             return None;
@@ -6956,30 +7063,32 @@ impl Output<'_> {
         let mut post = String::new();
         for (i, a) in def.attributes().iter().enumerate() {
             // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted fn has no return buffer
-            // parameter, so the live-reload arm must not push one either: the
-            // interpreter allocates its own for the parked call.
+            // parameter, and the parked call's body still takes one.  The arm mints a buffer
+            // of the record's type for it and releases that buffer once the tuple is read
+            // out of the answer, which is the buffer or a view of an argument.
             if dropped == Some(i) {
+                if self.dest_twin.is_none()
+                    && let Some(key) = self.value_records.fns.get(&self.def_nr)
+                {
+                    let tp = hoist::layout_record(*key);
+                    let _ = write!(
+                        pre,
+                        " let __lrb: DbRef = OpDatabase(cell, DbRef::NULL, {tp}_i32);"
+                    );
+                    let _ = write!(pushes, " st.put_stack(__lrb);");
+                    let _ = write!(post, " OpFreeRef(cell, __lrb, \"__lrb\");");
+                }
                 continue;
             }
             if let Some(tp) = self.value_records.param_type(self.def_nr, i)
                 && let Some(layout) = self.value_records.types.get(&tp)
             {
-                let name = sanitize(&a.name);
-                let _ = write!(
-                    pre,
-                    " let __lp_{i}: DbRef = {{ let __d = OpDatabase(cell, DbRef::NULL, {tp}_i32); let __s = unsafe {{ &mut *cell.get() }};"
-                );
-                for (k, (off, rt)) in layout.fields.iter().enumerate() {
-                    let setter =
-                        hoist::tuple_field_setter(*off, rt, "__d", &format!("var_{name}.{k}"));
-                    let _ = write!(pre, " __s.store_mut(&__d).{setter};");
-                }
-                let _ = write!(pre, " __d }};");
+                Self::live_tuple_param(i, &sanitize(&a.name), tp, layout, &mut pre, &mut post);
                 let _ = write!(pushes, " st.put_stack(__lp_{i});");
-                let _ = write!(post, " OpFreeRef(cell, __lp_{i}, \"__lp_{i}\");");
                 continue;
             }
-            match &a.typedef {
+            // `@FR-N-Road` — a `τ?` parameter is pushed as its `τ` is: one slot, one layout.
+            match a.typedef.base() {
                 Type::Integer(_)
                 | Type::Float
                 | Type::Boolean
@@ -7003,7 +7112,9 @@ impl Output<'_> {
                 _ => return None,
             }
         }
-        let thunk = match def.returned() {
+        // `@FR-N-Road` — and a `-> τ?` takes the thunk its `-> τ` takes: absence is the
+        // sentinel the same word already carries.
+        let thunk = match def.returned().base() {
             Type::Void => "live_call_void",
             Type::Integer(_) if rust_type(def.returned(), &Context::Result) == "i64" => {
                 "live_call_i64"
@@ -7035,8 +7146,10 @@ impl Output<'_> {
             // shared with the cdylib bridge, the trailing comma of a 1-tuple included — and
             // for a `-> S?` the presence word, read off the same record.
             let reads = hoist::layout_reads(layout, "__lv", "__s");
+            // The tuple is read BEFORE the releases: the answer may be the buffer, or a
+            // record materialised for a tuple parameter that the body handed straight back.
             return Some(format!(
-                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &Stores = unsafe {{ &*cell.get() }}; return {reads}; }}\n"
+                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __t = {{ let __s: &Stores = unsafe {{ &*cell.get() }}; {reads} }};{post} return __t; }}\n"
             ));
         }
         Some(format!(
@@ -7846,7 +7959,7 @@ extern crate loft;"
         // `native-extensions`. Without it nothing can be `dlopen`ed, so the
         // right table is the empty one rather than a build failure.
         #[cfg(feature = "native-extensions")]
-        for (lib, syms) in crate::c_call::library_symbol_table(data) {
+        for (lib, syms) in crate::c_signature::library_symbol_table(data) {
             write!(w, "    ({lib:?}, &[")?;
             for s in &syms {
                 write!(w, "{s:?}, ")?;
@@ -8974,7 +9087,8 @@ extern crate loft;"
             let elem_tp = (**elem_tp_box).clone();
             // Refused at the declaration when it cannot be pre-built (`parse_constant`
             // asks the same question), so a failure here has already been reported.
-            let Ok(values) = crate::compile::extract_literal_values_public(def.code(), self.data)
+            let Ok(values) =
+                crate::const_literal::extract_literal_values_public(def.code(), self.data)
             else {
                 continue;
             };
@@ -9017,46 +9131,46 @@ extern crate loft;"
                         // One arm per field kind, exhaustively — the interpreter's
                         // `build_const_vectors` writes the same bytes from the same list.
                         match val {
-                            crate::compile::ConstField::Int(v) => {
+                            crate::const_literal::ConstField::Int(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_int(rec.rec, {at}, {v}_i64);"
                                 )?;
                             }
-                            crate::compile::ConstField::Long(v) => {
+                            crate::const_literal::ConstField::Long(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_long(rec.rec, {at}, {v}_i64);"
                                 )?;
                             }
-                            crate::compile::ConstField::Float(v) => {
+                            crate::const_literal::ConstField::Float(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_float(rec.rec, {at}, {});",
                                     rust_f64(*v)
                                 )?;
                             }
-                            crate::compile::ConstField::Single(v) => {
+                            crate::const_literal::ConstField::Single(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_single(rec.rec, {at}, {});",
                                     rust_f32(*v)
                                 )?;
                             }
-                            crate::compile::ConstField::Bool(v) => {
+                            crate::const_literal::ConstField::Bool(v) => {
                                 let byte = i32::from(*v);
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_byte(rec.rec, {at}, 0, {byte}_i32);"
                                 )?;
                             }
-                            crate::compile::ConstField::Char(v) => {
+                            crate::const_literal::ConstField::Char(v) => {
                                 writeln!(
                                     w,
                                     "            db.store_mut(&rec).set_u32_raw(rec.rec, {at}, {v}_u32);"
                                 )?;
                             }
-                            crate::compile::ConstField::Text(v) => {
+                            crate::const_literal::ConstField::Text(v) => {
                                 let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
                                 writeln!(
                                     w,
@@ -9621,6 +9735,32 @@ extern crate loft;"
                     );
                 }
             }
+            // `@FR-R-Apart` — after the value records, whose functions it leaves alone: a
+            // function that answers a tuple, or takes one, has no buffer to convert into.
+            let value_fns: crate::fxhash::FxHashSet<u32> = self
+                .value_records
+                .fns
+                .keys()
+                .copied()
+                .chain(self.value_records.params.keys().copied())
+                .collect();
+            // A build that ships the live tier keeps every call on the function a flip
+            // reaches: a twin's call would run the native body of a function flipped to the
+            // interpreter, so that build has no plan.
+            if !self.emit_live {
+                self.apart = apart_value::plan(self.data, self.stores, &value_fns);
+                self.dv = decode_view::plan(self.data, self.stores);
+                // A function both plans re-emit would need a twin of a twin.
+                if self
+                    .dv
+                    .region
+                    .iter()
+                    .any(|d| self.apart.twins.contains_key(d))
+                {
+                    self.dv = decode_view::DvPlan::default();
+                }
+            }
+            self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();
@@ -9647,6 +9787,13 @@ extern crate loft;"
                 continue;
             }
             self.output_function(w, dnr, program_store.as_ref())?;
+            // `@FR-R-Apart` — the function's apart twin beside it: the same body over values.
+            if self.apart.twins.contains_key(&dnr) {
+                self.apart_twin = true;
+                let r = self.output_function(w, dnr, program_store.as_ref());
+                self.apart_twin = false;
+                r?;
+            }
             // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
             // with its invariant inputs as extra parameters.
             if let Some(inputs) = self.callee_inputs_of(dnr) {
@@ -9654,6 +9801,7 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
+            self.output_dv_twins(w, dnr, program_store.as_ref())?;
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
@@ -9665,6 +9813,31 @@ extern crate loft;"
                 return Ok(());
             }
         }
+    }
+
+    /// `@FR-R-DecodeView` — a region function's `__dv` twin beside it, and its inputs twin.
+    fn output_dv_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        if !self.dv.region.contains(&dnr) {
+            return Ok(());
+        }
+        self.dv_active = true;
+        let r = self.output_function(w, dnr, program_store);
+        let r = r.and_then(|()| match self.callee_inputs_of(dnr) {
+            Some(inputs) => {
+                self.twin = Some(inputs);
+                let r = self.output_function(w, dnr, program_store);
+                self.twin = None;
+                r
+            }
+            None => Ok(()),
+        });
+        self.dv_active = false;
+        r
     }
 
     /// `@FR-R-Destination` — the destination twins calls asked for: each callee's body with
@@ -9681,13 +9854,16 @@ extern crate loft;"
             .iter()
             .position(|r| !self.dest_emitted.contains(r))
         {
-            let (dnr, vo) = self.dest_requests[at];
-            self.dest_emitted.insert((dnr, vo));
+            let (key, vo) = self.dest_requests[at];
+            self.dest_emitted.insert((key, vo));
+            let dnr = key & !decode_view::DV_BIT;
             let Some(Some(shape)) = self.dest_memo.get(&(dnr, vo)).cloned() else {
                 continue;
             };
             self.dest_twin = Some(shape);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.dest_twin = None;
             r?;
             any = true;
@@ -9710,10 +9886,12 @@ extern crate loft;"
             .iter()
             .position(|r| !self.vr_emitted.contains(r))
         {
-            let dnr = self.vr_requests[at];
-            self.vr_emitted.insert(dnr);
+            let key = self.vr_requests[at];
+            self.vr_emitted.insert(key);
             self.vr_twin = true;
-            let r = self.output_function(w, dnr, program_store);
+            self.dv_active = key & decode_view::DV_BIT != 0;
+            let r = self.output_function(w, key & !decode_view::DV_BIT, program_store);
+            self.dv_active = false;
             self.vr_twin = false;
             r?;
             any = true;
@@ -9734,14 +9912,17 @@ extern crate loft;"
             .iter()
             .position(|r| !self.ap_emitted.contains(r))
         {
-            let dnr = self.ap_requests[at];
-            self.ap_emitted.insert(dnr);
+            let key = self.ap_requests[at];
+            self.ap_emitted.insert(key);
+            let dnr = key & !decode_view::DV_BIT;
             let Some(b) = append_twin::buffer(self.data, dnr) else {
                 continue;
             };
             self.append_twin_buf = Some(b);
             self.append_twin_views = append_twin::views(self.data.def(dnr).variables(), b);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.append_twin_buf = None;
             self.append_twin_views.clear();
             r?;
@@ -9763,8 +9944,9 @@ extern crate loft;"
             .iter()
             .position(|r| !self.rg_emitted.contains(r))
         {
-            let (dnr, twin) = self.rg_requests[at];
-            self.rg_emitted.insert((dnr, twin));
+            let (key, twin) = self.rg_requests[at];
+            self.rg_emitted.insert((key, twin));
+            let dnr = key & !decode_view::DV_BIT;
             if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
                 eprintln!(
                     "ranged-call: emits {}{}__rg",
@@ -9783,7 +9965,9 @@ extern crate loft;"
             }
             self.range_override.push(std::rc::Rc::new(facts));
             self.emitting_ranged = true;
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.emitting_ranged = false;
             self.range_override.pop();
             self.twin = None;
@@ -9805,10 +9989,13 @@ extern crate loft;"
             .iter()
             .position(|r| !self.rt_emitted.contains(r))
         {
-            let dnr = self.rt_requests[at];
-            self.rt_emitted.insert(dnr);
+            let key = self.rt_requests[at];
+            self.rt_emitted.insert(key);
+            let dnr = key & !decode_view::DV_BIT;
             self.refill_twin_buf = hoist::retbuf_var(self.data, dnr);
+            self.dv_active = key & decode_view::DV_BIT != 0;
             let r = self.output_function(w, dnr, program_store);
+            self.dv_active = false;
             self.refill_twin_buf = None;
             r?;
             self.output_ranged_variants(w, program_store)?;
@@ -10310,10 +10497,9 @@ extern crate loft;"
         // native + interp agree on layout.  Without this, native
         // computes the closure record's auto-Reference field as
         // inline-bytes (size = inner struct's size) but interp writes
-        // 12-byte DbRef bytes — the resulting size mismatch causes
-        // `claim_child_rec`'s byte-copy to truncate at native's
-        // smaller size and the lambda body reads garbage instead of
-        // the captured DbRef.
+        // 12-byte DbRef bytes — the resulting size mismatch leaves the
+        // child record at native's smaller size and the lambda body
+        // reads garbage instead of the captured DbRef.
         //
         // #682: mirror the ADOPTED / BORROWED split too.  Both shapes are 12
         // bytes, so getting it wrong costs no layout mismatch — it silently
@@ -10406,10 +10592,33 @@ extern crate loft;"
         Ok(())
     }
 
-    /// Use this to emit one loft function as a Rust function.
+    /// Use this to emit one loft function as a Rust function, under the `@FR-R-Apart`
+    /// context of its body: a twin or a region is emitted with the vector hoists off
+    /// (`apart_emit`'s header says why).
+    fn output_function(
+        &mut self,
+        w: &mut dyn Write,
+        def_nr: u32,
+        program_store: Option<&(Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        let saved_hoist = self.hoist_disabled;
+        self.apart_ctx = self.apart_ctx_for(def_nr);
+        if self
+            .apart_ctx
+            .as_ref()
+            .is_some_and(|c| c.twin || !c.roles.is_empty())
+        {
+            self.hoist_disabled = true;
+        }
+        let r = self.output_function_body(w, def_nr, program_store);
+        self.hoist_disabled = saved_hoist;
+        self.apart_ctx = None;
+        r
+    }
+
     /// Every loft function receives `stores: &mut Stores` as its first implicit argument.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn output_function(
+    fn output_function_body(
         &mut self,
         w: &mut dyn Write,
         def_nr: u32,
@@ -10432,7 +10641,7 @@ extern crate loft;"
         // would shadow the real implementation.  Plan 09 phase 01
         // consolidated the hardcoded list into the registry in
         // `src/codegen_runtime.rs::CODEGEN_RUNTIME_FNS`.
-        if *def.code() == Value::Null && crate::codegen_runtime::is_codegen_runtime_fn(def.name()) {
+        if *def.code() == Value::Null && crate::runtime_abi::is_codegen_runtime_fn(def.name()) {
             return Ok(());
         }
         // N8b.1: generator functions (returning iterator<T>) are emitted as state machines.
@@ -10559,6 +10768,8 @@ extern crate loft;"
                 "__d"
             } else if self.vr_twin {
                 "__vr"
+            } else if self.apart_twin {
+                "__apv"
             } else {
                 ""
             }
@@ -10574,6 +10785,15 @@ extern crate loft;"
         for (i, a) in def.attributes().iter().enumerate() {
             if dropped == Some(i) {
                 continue;
+            }
+            // `@FR-R-Apart` — a twin takes its record parameters as values and no buffer.
+            match self.apart_twin_param(def_nr, i) {
+                apart_emit::TwinParam::Same => {}
+                apart_emit::TwinParam::Dropped => continue,
+                apart_emit::TwinParam::Value(p) => {
+                    write!(w, "{p}")?;
+                    continue;
+                }
             }
             // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
             // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
@@ -10627,7 +10847,9 @@ extern crate loft;"
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
-            if let Some(t) = &value_rec {
+            if let Some(t) = self.apart_twin_result(def_nr) {
+                write!(w, "-> {t} ")?;
+            } else if let Some(t) = &value_rec {
                 write!(w, "-> {t} ")?;
             } else if let Some(dt) = &self.dest_twin {
                 // `@FR-R-Destination` — the moved field is written into the caller's element;
@@ -10655,7 +10877,8 @@ extern crate loft;"
         // NULL SENTINEL only (no allocation; `OpFreeRef` no-ops on it); the
         // first body `Set(v, Null)` still emits `null_named` + `OpDatabase`
         // at its IR position via `predeclared`.
-        let mut vdb_prologue = String::new();
+        let mut vdb_prologue = self.apart_prologue();
+        vdb_prologue.push_str(&self.dv_prologue(def_nr));
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin
@@ -11186,6 +11409,18 @@ extern crate loft;"
                     fnref_guard
                 };
                 self.named_frame = !leaf && !self.lean;
+                // `@FR-R-WorkBuffer`'s function-value clause — a frame that calls through
+                // a function value lends the candidates' work buffers (`FnRefWork`).
+                self.fnref_work = !self.fnref_work_disabled
+                    && self.any_work_buffer()
+                    && self.calls_a_work_buffer_candidate(def);
+                let fnref_guard = if self.fnref_work {
+                    format!(
+                        "{fnref_guard}\n  let mut __fwb = codegen_runtime::FnRefWork::new(cell);"
+                    )
+                } else {
+                    fnref_guard
+                };
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
@@ -11217,6 +11452,7 @@ extern crate loft;"
                 self.pop_twin_frames();
                 self.call_stack_prefix = None;
                 self.named_frame = false;
+                self.fnref_work = false;
             } else {
                 // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
                 // derivation from the UnsafeCell parameter for templates / inner calls.
@@ -12418,7 +12654,7 @@ mod scrub_tests {
         const IMPORTED: &[&str] = &["codegen_runtime", "narrow"];
         /// Rewritten to `loft::<m>::` by `scrub_generated_crate_refs` and by
         /// `calls.rs`'s per-template substitution.
-        const REWRITTEN: &[&str] = &["rpc", "store", "state", "runtime_error"];
+        const REWRITTEN: &[&str] = &["store", "state", "runtime_error"];
         /// The generated crate's OWN item, so `crate::` is already right for it.
         const GENERATED_OWN: &[&str] = &["wasm"];
 
@@ -12586,11 +12822,11 @@ fn rust_f32(v: f32) -> String {
 /// same offsets with the same kinds — `(offset, the column's values)` — or `None` when the
 /// elements differ in shape (or there are none).
 fn const_columns(
-    values: &[crate::compile::ConstElement],
-) -> Option<Vec<(u32, Vec<&crate::compile::ConstField>)>> {
+    values: &[crate::const_literal::ConstElement],
+) -> Option<Vec<(u32, Vec<&crate::const_literal::ConstField>)>> {
     let first = values.first()?;
-    let kind = |f: &crate::compile::ConstField| std::mem::discriminant(f);
-    let mut columns: Vec<(u32, Vec<&crate::compile::ConstField>)> = first
+    let kind = |f: &crate::const_literal::ConstField| std::mem::discriminant(f);
+    let mut columns: Vec<(u32, Vec<&crate::const_literal::ConstField>)> = first
         .iter()
         .map(|(off, _)| (*off, Vec::with_capacity(values.len())))
         .collect();
@@ -12615,9 +12851,9 @@ fn write_const_columns(
     d_nr: u32,
     vec_tp: u16,
     count: usize,
-    columns: &[(u32, Vec<&crate::compile::ConstField>)],
+    columns: &[(u32, Vec<&crate::const_literal::ConstField>)],
 ) -> std::io::Result<()> {
-    use crate::compile::ConstField;
+    use crate::const_literal::ConstField;
     for (k, (_, col)) in columns.iter().enumerate() {
         let ty = match col.first() {
             Some(ConstField::Int(_) | ConstField::Long(_)) => "i64",
@@ -12731,4 +12967,11 @@ pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
         Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
         _ => false,
     })
+}
+
+/// `LOFT_NO_HASH_RESERVE=1` — a counted loop inserting into a hash grows its table as it
+/// goes again (`@FR-R-PushFill`'s hash clause).
+fn hash_reserve_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_NO_HASH_RESERVE").is_ok_and(|v| v != "0"))
 }
