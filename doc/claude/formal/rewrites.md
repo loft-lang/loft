@@ -3461,6 +3461,14 @@ line in `Output::output_function`'s prelude.
                  because folded in, in any arrangement, it slowed the text walk
                  of the `join` row and a reader of distinct elements has no
                  merge to gain.
+                 ONE-READ CLAUSE: a checked element read resolves the vector's
+                 store, collection slot and length ONCE (`vector::rec_and_len`),
+                 and answers an in-range index from them inline; only an index
+                 `@FR-H-Index` raises on reaches the outlined raise.  A read
+                 that asked the length and then the element asked the header
+                 twice.  The held walk's own out-of-range half
+                 (`get_vector_hoisted` at the walk's end) stays outlined, since
+                 the cheaper `get_vector` inlined there grows every held loop.
 ```
 
 **In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the
@@ -3475,8 +3483,17 @@ still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
 symbol and self time is the candidate).  The fold clause's cells are
 `tests/scripts/fused-element-read-resolves-every-index.loft` e1–e7 (falsified by a fold
 that drops the from-the-end resolution: `--native` fails e1, the verifier names index −2),
-and `vector::elem_index`'s own unit tests.  Fold sites: `vector::get_elem_at`,
-`vector::get_elem_hoisted`.  Outlined sites: `vector::text_elem_cold`,
+and `vector::elem_index`'s own unit tests.  The one-read clause took `arguments/parse` from
+16.92 to 14.67 ms (−13.3 %) — `Stores::vec_get_or_raise_runtime` was 120 reads per parse at
+180 instructions, each reading the length and then the header and length again through
+`get_vector` — and `length_vector`, which LLVM kept out of line under `#[inline]`, is
+`#[inline(always)]`; with `get_vector_hoisted`'s end-of-walk half inline instead, `mesh_aabb`
+ran 68 % slower.  Its cells are `tests/scripts/a-checked-element-read-answers-from-one-header-read.loft`
+c1–c8 (falsified by a checked read one element short: `--native` c5 reads `10,7,30`).
+Fold sites: `vector::get_elem_at`,
+`vector::get_elem_hoisted`, `vector::get_vector` and `Stores::vec_get_or_raise_runtime`
+(through `vector::rec_and_len`).  Outlined sites: `vector::text_elem_cold`,
+`vector::get_vector_cold`, `Stores::vec_get_raise_cold`,
 `Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
 `Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
 `State::mark_stale_handles`, `Stores::watch_oob_text_report`, and `ops::text_character`

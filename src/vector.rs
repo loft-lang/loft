@@ -694,6 +694,8 @@ pub fn is_absent_collection(db: &DbRef, stores: &[Store]) -> bool {
 /// left to `#[inline]`, kept the call: a call and two null tests around one load.  It is
 /// [`rec_and_len`]'s length, spelled out rather than called: through that call LLVM inlined
 /// it less well, and `arguments/parse` measured 2.5 % slower.
+// Measured: as a hint this was declined (the paragraph above).
+#[allow(clippy::inline_always)]
 #[inline(always)]
 pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     // A null vector (absent) and an unallocated/empty vector both have length 0;
