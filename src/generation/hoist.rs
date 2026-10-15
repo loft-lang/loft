@@ -1554,7 +1554,7 @@ pub fn hoistable(
     // off) appends through the runtime and grows its store all the same, and a base bound
     // for a sibling field of the same record would address the buffer that growth freed.
     out.growth_free =
-        out.pushes.is_empty() && mints.is_empty() && !dropped_mover;
+        out.pushes.is_empty() && mints.is_empty() && !dropped_mover && text_grown.is_none();
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
