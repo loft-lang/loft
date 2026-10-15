@@ -2076,8 +2076,12 @@ pub(crate) fn run_tests(
                     // runner's, not the program's.  The corpus entry-point rule
                     // (`Definition::is_corpus_entry_point`) runs void functions only for the
                     // same reason; `--tests` keeps arity (loft#1010), so it is narrowed here.
-                    let returns_void =
-                        matches!(clean_data.def(*d_nr).returned, crate::data::Type::Void);
+                    // Peeled, as every shape test is (@FR-N-Shape): a `void` cannot be
+                    // optional, and the test still says so through the one spelling.
+                    let returns_void = matches!(
+                        clean_data.def(*d_nr).returned.base(),
+                        crate::data::Type::Void
+                    );
                     // Per-function @IGNORE: skip without running.
                     if ann.ignore_fn.contains(fn_name.as_str()) {
                         file_result.tests.push((
