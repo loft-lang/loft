@@ -383,7 +383,8 @@ field, a leak or a double free out of a constructor call on either backend;
 the leaf inliner):** each removes work the IR shows is redundant, and each has its switch and
 its trace.  **`LOFT_NO_FORWARD_WALK=1`** keeps `for x in v` an iterator where the body cannot
 resize `v` (`@FR-R-ForwardWalk`); **`LOFT_NO_SAME_READ=1`** keeps both of two equal discharged
-reads in one statement (`@FR-R-SameRead`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
+reads in one statement (`@FR-R-SameRead`), and **`LOFT_NO_MATCH_READ=1`** alone its match
+clause, so each arm test of a slice `match` reads the subject again; **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
 record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
 a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
 **`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local

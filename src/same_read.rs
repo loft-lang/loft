@@ -32,7 +32,12 @@
 //! key again into it as its last statement: a hit looks the key up once and a miss reads what
 //! the plain second lookup would.
 //!
-//! `LOFT_NO_SAME_READ=1` keeps every read; `LOFT_TRACE_SAME_READ=1` names each statement it binds.
+//! THE MATCH CLAUSE — a slice `match`'s arm tests each read the subject's length and the
+//! elements their patterns test; the length and each integer computation of one element two of
+//! them make are bound once, before the first test (`bind_match_reads`).
+//!
+//! `LOFT_NO_SAME_READ=1` keeps every read; `LOFT_NO_MATCH_READ=1` only the match clause's;
+//! `LOFT_TRACE_SAME_READ=1` names each statement it binds.
 use crate::data::{Block, Data, DefType, Value};
 
 fn off() -> bool {
@@ -498,7 +503,8 @@ fn elem_read(data: &Data, v: &Value, subject: u16) -> Option<Proved> {
     let [s, Value::Int(_), idx] = args.as_slice() else {
         return None;
     };
-    if data.def(*op).name() != "OpGetVector" || !matches!(s.unspan(), Value::Var(x) if *x == subject)
+    if data.def(*op).name() != "OpGetVector"
+        || !matches!(s.unspan(), Value::Var(x) if *x == subject)
     {
         return None;
     }
@@ -573,40 +579,107 @@ fn one_elem(data: &Data, v: &Value, subject: u16) -> Option<Proved> {
 /// the computation with the local `t`.
 fn visit(
     data: &Data,
-    v: &mut Value,
+    node: &mut Value,
     subject: u16,
     facts: &mut Vec<Proved>,
-    f: &mut dyn FnMut(&Value, Proved, bool) -> Option<u16>,
+    seen: &mut dyn FnMut(&Value, Proved, bool) -> Option<u16>,
 ) {
-    match v {
-        Value::Span(s) => visit(data, &mut s.1, subject, facts, f),
-        Value::If(c, t, e) => {
-            visit(data, c, subject, facts, f);
+    match node {
+        Value::Span(s) => visit(data, &mut s.1, subject, facts, seen),
+        Value::If(test, then_arm, else_arm) => {
+            visit(data, test, subject, facts, seen);
             let at = facts.len();
-            proves(data, c, subject, facts);
-            visit(data, t, subject, facts, f);
+            proves(data, test, subject, facts);
+            visit(data, then_arm, subject, facts, seen);
             facts.truncate(at);
-            visit(data, e, subject, facts, f);
+            visit(data, else_arm, subject, facts, seen);
         }
         Value::Call(op, _) => {
             let op = *op;
-            if matches!(data.def(op).returned, crate::data::Type::Integer(..))
-                && let Some((base, k)) = one_elem(data, v, subject)
+            if matches!(data.def(op).returned.base(), crate::data::Type::Integer(..))
+                && let Some((base, k)) = one_elem(data, node, subject)
             {
                 let inside = facts.iter().any(|(b, n)| *b == base && *n > k);
-                if let Some(t) = f(v, (base, k), inside) {
-                    *v = Value::Var(t);
+                if let Some(local) = seen(node, (base, k), inside) {
+                    *node = Value::Var(local);
                 }
                 return;
             }
-            if let Value::Call(_, args) = v {
-                for a in args.iter_mut() {
-                    visit(data, a, subject, facts, f);
+            if let Value::Call(_, args) = node {
+                for arg in args.iter_mut() {
+                    visit(data, arg, subject, facts, seen);
                 }
             }
         }
         _ => {}
     }
+}
+
+/// The arm tests of a chain: the condition of each `if` down its else-spine.
+fn arm_tests(chain: &mut Value) -> Vec<&mut Value> {
+    let mut tests = Vec::new();
+    let mut at = chain;
+    loop {
+        match at {
+            Value::Span(s) => at = &mut s.1,
+            Value::If(c, _, e) => {
+                tests.push(&mut **c);
+                at = &mut **e;
+            }
+            _ => break,
+        }
+    }
+    tests
+}
+
+/// The statements that bind the length (when two tests read it) and each repeated element
+/// computation under its own length test; answers them with the length's local and one
+/// local per group, in `groups`' order.
+fn match_bindings(
+    data: &Data,
+    vars: &mut crate::variables::Function,
+    scope: u16,
+    subject: u16,
+    groups: &[(Value, Proved, usize)],
+    lens: usize,
+) -> (Vec<Value>, Option<u16>, Vec<u16>) {
+    let int_tp = data.def(data.def_nr("OpLengthVector")).returned.clone();
+    let len_call = Value::Call(data.def_nr("OpLengthVector"), vec![Value::Var(subject)]);
+    let mut before = Vec::new();
+    let len_val = if lens >= 2 {
+        let l = vars.add_unique("match_len", &int_tp, scope);
+        before.push(Value::Set(l, Box::new(len_call.clone())));
+        Some(l)
+    } else {
+        None
+    };
+    let mut temps = Vec::new();
+    for (e, (base, k), _) in groups {
+        let need = match base {
+            Some(b) => Value::Call(
+                data.def_nr("OpAddInt"),
+                vec![Value::Var(*b), Value::Int(k + 1)],
+            ),
+            None => Value::Int(k + 1),
+        };
+        let len = len_val.map_or_else(|| len_call.clone(), Value::Var);
+        let test = Value::Call(data.def_nr("OpLeInt"), vec![need, len]);
+        let tp = match e {
+            Value::Call(op, _) => data.def(*op).returned.clone(),
+            _ => int_tp.clone(),
+        };
+        let t = vars.add_unique("match_read", &tp, scope);
+        before.push(Value::Set(
+            t,
+            Box::new(Value::If(
+                Box::new(test),
+                Box::new(e.clone()),
+                Box::new(Value::Int(0)),
+            )),
+        ));
+        temps.push(t);
+    }
+    (before, len_val, temps)
 }
 
 /// THE MATCH CLAUSE — a slice `match`'s arms each test the subject again: its length, then
@@ -623,7 +696,11 @@ fn visit(
 /// and replaced only where the tests enclosing it prove that much (`base + n <= len` with
 /// `n > k`): there the bound value IS the value the read answers, and a read the plain
 /// chain never makes — one past the end, which would raise — is never made.
-fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &mut Block) -> usize {
+fn bind_match_reads(
+    data: &Data,
+    vars: &mut crate::variables::Function,
+    block: &mut Block,
+) -> usize {
     if match_off() || block.name != "vector_match" {
         return 0;
     }
@@ -633,7 +710,9 @@ fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &
     // The chain is the block's last `if`: the frees of the arms' text bindings follow it.
     let (Some(&first), Some(&last)) = (
         live.first(),
-        live.iter().rev().find(|i| matches!(block.operators[**i].unspan(), Value::If(..))),
+        live.iter()
+            .rev()
+            .find(|i| matches!(block.operators[**i].unspan(), Value::If(..))),
     ) else {
         return 0;
     };
@@ -644,19 +723,7 @@ fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &
     if first == last {
         return 0;
     }
-    // The arm tests: the condition of each `if` down the chain's else-spine.
-    let mut tests: Vec<&mut Value> = Vec::new();
-    let mut at = &mut block.operators[last];
-    loop {
-        match at {
-            Value::Span(s) => at = &mut s.1,
-            Value::If(c, _, e) => {
-                tests.push(&mut **c);
-                at = &mut **e;
-            }
-            _ => break,
-        }
-    }
+    let mut tests = arm_tests(&mut block.operators[last]);
     if tests.len() < 2 || !tests.iter().all(|t| pure(data, t)) {
         return 0;
     }
@@ -688,43 +755,7 @@ fn bind_match_reads(data: &Data, vars: &mut crate::variables::Function, block: &
     if groups.is_empty() && lens < 2 {
         return 0;
     }
-    let scope = block.scope;
-    let int_tp = data.def(data.def_nr("OpLengthVector")).returned.clone();
-    let len_call = Value::Call(data.def_nr("OpLengthVector"), vec![Value::Var(subject)]);
-    let mut before = Vec::new();
-    let len_val = if lens >= 2 {
-        let l = vars.add_unique("match_len", &int_tp, scope);
-        before.push(Value::Set(l, Box::new(len_call.clone())));
-        Some(l)
-    } else {
-        None
-    };
-    let mut temps = Vec::new();
-    for (e, (base, k), _) in &groups {
-        let need = match base {
-            Some(b) => Value::Call(
-                data.def_nr("OpAddInt"),
-                vec![Value::Var(*b), Value::Int(k + 1)],
-            ),
-            None => Value::Int(k + 1),
-        };
-        let len = len_val.map_or_else(|| len_call.clone(), Value::Var);
-        let test = Value::Call(data.def_nr("OpLeInt"), vec![need, len]);
-        let tp = match e {
-            Value::Call(op, _) => data.def(*op).returned.clone(),
-            _ => int_tp.clone(),
-        };
-        let t = vars.add_unique("match_read", &tp, scope);
-        before.push(Value::Set(
-            t,
-            Box::new(Value::If(
-                Box::new(test),
-                Box::new(e.clone()),
-                Box::new(Value::Int(0)),
-            )),
-        ));
-        temps.push(t);
-    }
+    let (before, len_val, temps) = match_bindings(data, vars, block.scope, subject, &groups, lens);
     for t in &mut tests {
         visit(data, t, subject, &mut Vec::new(), &mut |e, _, inside| {
             if !inside {

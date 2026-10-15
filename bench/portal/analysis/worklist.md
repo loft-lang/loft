@@ -114,7 +114,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 |--:|---|---|---|
 | 4.97 | `check_request` (7.55 before `(R-DecodeView)`) | the decode's result store minted and freed per call; the key bindings copied (S6) | on the line |
 | 6.01 | `panel_build` (7.44 before the release plan) | the claims and frees themselves (the store allocator ~26 % of the row), then the text formatting | no figure |
-| 7.34 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
+| 7.34 | `arguments/parse` | X7 | the cursor match BUILT — `(R-SameRead)`'s match clause: the subject's length and each integer computation of one element two arm tests make, bound once before the first test (`same_read::bind_match_reads`, `LOFT_NO_MATCH_READ`).  Then counted by callgrind (per parse, loft ~200 k instructions, the twin ~23.7 k; IPC 4.4 against 3.7, so the gap is work, not stalls): `find_long_opt` 51 k (25 %: each `fo.long_name` resolved through the store, the record and the text — a TEXT FIELD of a vector's record element, which `(R-Base)`'s text clause does not serve — and `len(name) > 0` counted by `char_count`, 6 k); `classify`'s own 56 k (the tokens' texts claimed and copied where the twin borrows, `opt_kind`'s scans); `cur = Cur { src: toks, pos: 0 }` 18 k (9 %) — the token vector DEEP-COPIED into the cursor record, though `toks` is dead after it: `(R-MoveLast)` relocates only within one store and `classify`'s result lives in its own; `parse`'s loops over `results` 31 k (a checked element read and a length per iteration of the reset `while`, and of the required-option walk); each matched text copied twice into its result (a `String`, then `set_str`: ~97 `malloc`/`free` pairs, 7 k) | `arguments/parse` | the match clause measured: 25.23 → 24.01 ms native (−4.9 %, 86 % of its −5.7 % hand price), interpreted −0.8 %, hash equal | price, largest first: the dead token vector moved into the cursor record (a literal whose field takes a dead local built in its own store, built in THAT store); a text field of a held vector's element read through the held base; the reset loop as a counted walk |
 | 6.86 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
 | 6.64 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.44 | `invert` | X10 | ≈ 4× (*est.*) |
@@ -173,8 +173,9 @@ before it; the slowest row goes first; a step with no price is priced before it 
    keys' arena claims.
 6. **`panel_build`** — S9 is sized and its release half built: the release plan,
    7.44× → 6.00×.  What is left is the frees and claims themselves.
-7. **`arguments/parse` (7.34×)** — X7: the cursor match's shared reads bound once is priced at
-   −7.4 %; build it, then price the text field read through the held base.
+7. **`arguments/parse` (7.34×)** — X7: the match clause is built (−4.9 %); next, price the dead
+   token vector moved into the cursor record (9 % of the instructions), then the text field
+   read through the held base (`find_long_opt`, 25 %).
 8. **`mapfile_to_painted` (6.86×), `reload_and_record` (6.64×)** — X5 d: P3 first, P4 with
    its range proof.  Re-profiled: the key-ordered walk's sort is 22 % of `reload_and_record`
    and 9 % of `mapfile_to_painted`; the generic compound-key probe (`find`, `key_hash`,
