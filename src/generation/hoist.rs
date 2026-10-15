@@ -5053,6 +5053,17 @@ fn minted_expr(e: &Value, data: &Data, minted: &HashSet<u16>) -> bool {
         {
             args.first().is_some_and(|a| minted_expr(a, data, minted))
         }
+        // A user call that builds into its hidden return buffer answers that buffer: the
+        // value is in whatever store the buffer argument names.
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && !matches!(data.def(*d).code(), Value::Null) =>
+        {
+            data.def(*d)
+                .hidden_return_buffer_attr()
+                .and_then(|i| args.get(i))
+                .is_some_and(|a| minted_expr(a, data, minted))
+        }
         _ => false,
     }
 }
