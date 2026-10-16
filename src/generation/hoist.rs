@@ -3071,26 +3071,7 @@ fn view_extent_verdict(
                     {
                         touched = true;
                     }
-                    // A copy INTO the view FROM a value local — a builder's tuple delivered
-                    // into an appended element — lowers to one typed setter per field
-                    // (`OpCopyRecordEmitter`), each served by the address like a direct
-                    // write; a copy from a store record stays a block copy and asks no
-                    // address.
-                    if name == "OpCopyRecord"
-                        && args.len() == 3
-                        && matches!(args[1].unspan(), Value::Var(v) if *v == *r)
-                        && matches!(args[0].unspan(), Value::Var(s)
-                            if owned.is_some_and(|o| o.value_locals.contains(s)))
-                    {
-                        touched = true;
-                    }
-                    // A flat copy INTO or OUT OF the view (`flat_copy`): its bytes stored at,
-                    // or read from, the address.
-                    if args.len() == 3
-                        && (matches!(args[1].unspan(), Value::Var(v) if *v == *r)
-                            || matches!(args[0].unspan(), Value::Var(v) if *v == *r))
-                        && flat_copy(stores, name, args).is_some()
-                    {
+                    if copy_serves_view(stores, name, args, *r, owned) {
                         touched = true;
                     }
                     if args.iter().enumerate().any(|(i, a)| {
@@ -3112,6 +3093,29 @@ fn view_extent_verdict(
         return Err(NO_FUSABLE_USE);
     }
     Ok(())
+}
+
+/// Is `name(args)` a record copy the view `r`'s address serves?  A copy INTO the view FROM a
+/// value local — a builder's tuple delivered into an appended element — lowers to one typed
+/// setter per field (`OpCopyRecordEmitter`), each served like a direct write; a flat copy
+/// INTO or OUT OF the view ([`flat_copy`]) stores its bytes at, or reads them from, the
+/// address.  Any other copy from a store record asks the store, not the address.
+fn copy_serves_view(
+    stores: &Stores,
+    name: &str,
+    args: &[Value],
+    r: u16,
+    owned: Option<&HoistOwned>,
+) -> bool {
+    if name != "OpCopyRecord" || args.len() != 3 {
+        return false;
+    }
+    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == r);
+    let from_value_local = is_r(&args[1])
+        && matches!(args[0].unspan(), Value::Var(s)
+            if owned.is_some_and(|o| o.value_locals.contains(s)));
+    from_value_local
+        || ((is_r(&args[1]) || is_r(&args[0])) && flat_copy(stores, name, args).is_some())
 }
 
 /// [`record_view_ptr`]'s LAST decline — every other condition held, and no statement of the
