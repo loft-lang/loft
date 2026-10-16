@@ -3646,8 +3646,8 @@ fn n_hash_sorted(stores: &mut Stores, stack: &mut DbRef) {
     stores.put(stack, result);
 }
 
-/// Raw bucket-walk sibling of `n_hash_sorted` for `for e in h par(...)` —
-/// skips the key sort because the parallel queue has no use for hash order.
+/// Slot-order sibling of `n_hash_sorted` for `for e in h par(...)` and
+/// `for e in unordered(h)` — skips the key sort (`@FR-Col-Unordered`).
 fn n_hash_unsorted(stores: &mut Stores, stack: &mut DbRef) {
     let v_tp = stores.get::<i64>(stack) as u16;
     let v_h = stores.get::<DbRef>(stack);

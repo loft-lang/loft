@@ -1,0 +1,21 @@
+// loft#2019, `@FR-Col-Order` — a `{for …}` inside a format string walks a hash through the
+// same snapshot a `for` statement and a comprehension take: in key order, every entry once.
+// Without the snapshot the walk read the hash's own table as if it were one, and the store
+// stopped on a corrupt reference on both backends.
+struct E { k: integer, v: integer }
+
+fn main() {
+  h: hash<E[k]> = [E { k: 3, v: 1 }, E { k: 1, v: 2 }, E { k: 2, v: 3 }];
+  // f1 — key order, as `for e in h` walks it.
+  f1 = "{for e in h {e.k}}";
+  assert(f1 == "[1,2,3]", "f1 {f1}");
+  // f2 — a field of each entry, and a filter.
+  f2 = "{for e in h if e.v > 1 {e.v}}";
+  assert(f2 == "[2,3]", "f2 {f2}");
+  // f3 — `unordered` in a format walk: the same entries, whatever the order.
+  t = 0;
+  for e in h { t += e.k; }
+  f3 = "{for e in unordered(h) {e.k}}";
+  assert(len(f3) == 7 && t == 6, "f3 {f3}");
+  println("ok");
+}

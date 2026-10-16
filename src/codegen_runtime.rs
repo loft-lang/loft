@@ -3793,8 +3793,8 @@ pub fn n_hash_sorted(cell: &std::cell::UnsafeCell<Stores>, h: DbRef, tp: i64) ->
     stores.build_hash_sorted_vec(&h, tp as u16)
 }
 
-/// Raw bucket-walk sibling of `n_hash_sorted` for `for e in h par(...)` —
-/// skips the key sort because the parallel queue has no use for hash order.
+/// Slot-order sibling of `n_hash_sorted` for `for e in h par(...)` and
+/// `for e in unordered(h)` — skips the key sort (`@FR-Col-Unordered`).
 /// Bytecode equivalent: `n_hash_unsorted` in `src/native.rs`.
 pub fn n_hash_unsorted(cell: &std::cell::UnsafeCell<Stores>, h: DbRef, tp: i64) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };

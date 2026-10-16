@@ -1047,6 +1047,10 @@ pub struct Parser {
     /// Set by `parse_in_range` when `rev(collection)` (without a `..` range) is parsed.
     /// Consumed by `fill_iter` to add the reverse bit (64) into the `on` byte of OpIterate/OpStep.
     reverse_iterator: bool,
+    /// `@FR-Col-Unordered` — set by `parse_in_range` when the iterable is `unordered(c)`, and
+    /// taken by `keyed_snapshot`, which then builds a hash's snapshot in slot order instead of
+    /// key order.  Any other walk ignores it: key order is one of the orders `unordered` allows.
+    unordered_iterator: bool,
     /// D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with
     /// save/restore around the iterable expression in `parse_in_range`).  A keyed range /
     /// partial-key subscript produces a `for`-only iterator (`Value::Iter`); `parse_key`
@@ -1946,6 +1950,7 @@ impl Parser {
             bound_method_stubs: Vec::new(),
             stub_origin: std::collections::HashMap::new(),
             reverse_iterator: false,
+            unordered_iterator: false,
             iterable_context: false,
             last_range_from: None,
             literal_walk: None,

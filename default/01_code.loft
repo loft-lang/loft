@@ -1575,10 +1575,10 @@ fn OpHashRemove(data: reference, rec: reference, tp: const u16);
 // by design — walks + sorts all records per call.  See CAVEATS.md C60.
 fn hash_sorted(h: reference, tp: integer) -> reference;
 #impure(parent_write)
-// Raw bucket-walk sibling of `hash_sorted` for `for e in h par(...)`.
-// Same fresh vector<reference<T>> scratch, but in storage order — skips the
-// key sort because the parallel queue has no use for a hash's order.  The
-// parser desugars the par form of `for e in h` into this call.
+// Slot-order sibling of `hash_sorted` for `for e in h par(...)` and
+// `for e in unordered(h)` (@FR-Col-Unordered).  Same fresh vector<reference<T>>
+// scratch, but in slot order — skips the key sort, because neither walk has a use
+// for key order.  The parser desugars both forms of `for e in h` into this call.
 fn hash_unsorted(h: reference, tp: integer) -> reference;
 #pure
 // @PLN48 — iterate a spatial/radix collection in its NATURAL key order (the tree's

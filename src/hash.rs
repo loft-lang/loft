@@ -1211,6 +1211,37 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
     out
 }
 
+/// `@FR-Col-Unordered` — every live entry in SLOT order: ascending by the number its bucket
+/// holds, the arena index the entry was handed out at (a record number, `SLOT_RECORD`, for an
+/// entry the table borrows; those follow the arena's, in record order).
+///
+/// The order an unordered walk promises is a FIXED one, so it is read from the slot numbers
+/// and not from the buckets: a bucket's position follows the key's hash under the table's
+/// seed, which `keys::fresh_seed` draws per hash and per run, while a slot number follows
+/// only the inserts and removes that made the table (growth moves no entry, and a copy
+/// re-files its entries in the source's order, `copy_claims_hash_body`).  So two runs of one
+/// program walk alike, on both backends.  The sort is of plain `u32`s, where the key-order
+/// walk ([`records_sorted`]) compares the key fields read out of every entry.
+#[must_use]
+pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
+    let store = keys::store(hash_ref, stores);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    if claim == 0 {
+        return Vec::new();
+    }
+    let count = elms(store, claim);
+    let width = stride(store, claim);
+    let mut slots: Vec<u32> = (0..count)
+        .map(|i| store.get_u32_raw(claim, BUCKET0 + i * SLOT_BYTES))
+        .filter(|&index| index != 0)
+        .collect();
+    slots.sort_unstable();
+    slots
+        .into_iter()
+        .map(|index| entry_ref(store, claim, index, hash_ref.store_nr, width))
+        .collect()
+}
+
 /// Every record the hash's storage occupies besides the entries themselves: the
 /// arena's chunks and its directory.
 ///

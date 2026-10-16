@@ -1,0 +1,8 @@
+// `@FR-Col-Unordered` — `unordered(…)` wraps a collection.  A range already walks in its own
+// order and a text's order is its meaning, so both are refused, each with one diagnostic.
+// @EXPECT_ERROR: unordered() takes a collection, not a range
+// @EXPECT_ERROR: unordered() must wrap a collection
+fn main() {
+  for x in unordered(1..3) { println("{x}"); }
+  for c in unordered("abc") { println("{c}"); }
+}

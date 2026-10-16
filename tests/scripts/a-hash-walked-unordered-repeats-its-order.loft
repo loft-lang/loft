@@ -1,0 +1,72 @@
+// `@FR-Col-Unordered` — `for e in unordered(h)` walks a hash in an order the program leaves to
+// the implementation, and skips the key sort a plain `for e in h` pays.  The order is not
+// promised, but it is FIXED: it follows the inserts and removes that made the table and nothing
+// else — not the table's seed, which is drawn per hash and per run.  So two tables built alike
+// walk alike, a copy walks as its source, and every entry is visited exactly once.  On a
+// collection that already walks in its own order without a sort (a vector, a `sorted`) the
+// walk is the plain one.  Both backends: the walk is the parser's choice of snapshot.
+//
+// The cells assert what the contract promises (the entries, their count, the repeat of an
+// order) and one thing the implementation must do for the walk to be worth writing: a table
+// filled in a scrambled key order does NOT come back in key order (u3), so the sort is skipped.
+struct E { k: integer, v: integer }
+struct H { h: hash<E[k]> }
+struct S { s: sorted<E[k]> }
+
+fn walk(hh: const H) -> text {
+  t = "";
+  for e in unordered(hh.h) { t += "{e.k},"; }
+  t
+}
+
+fn ordered(hh: const H) -> text {
+  t = "";
+  for e in hh.h { t += "{e.k},"; }
+  t
+}
+
+// 64 keys in the order k = (i * 37) % 64: every key 0..63 once, scrambled against key order.
+fn filled() -> H {
+  hh = H { h: [] };
+  for i in 0..64 { hh.h += [E { k: (i * 37) % 64, v: i }]; }
+  hh
+}
+
+fn main() {
+  a = filled();
+  b = filled();
+  // u1 — two tables built by the same inserts walk in the same order (each has its own seed).
+  assert(walk(a) == walk(b), "u1 {walk(a)} | {walk(b)}");
+  // u2 — a copy walks as its source.
+  c = a;
+  assert(walk(c) == walk(a), "u2 {walk(c)}");
+  // u3 — the walk skips the key sort: the scrambled fill does not come back in key order.
+  assert(walk(a) != ordered(a), "u3 {walk(a)}");
+  // u4 — every entry once: 64 visits, keys summing to 0 + … + 63 = 2016, values the same.
+  n = 0; sk = 0; sv = 0;
+  for e in unordered(a.h) { n += 1; sk += e.k; sv += e.v; }
+  assert(n == 64 && sk == 2016 && sv == 2016, "u4 {n} {sk} {sv}");
+  // u5 — `#index` counts the walk, 0 to 63: 63 * 64 / 2 = 2016.
+  si = 0;
+  for e in unordered(a.h) { si += e#index; }
+  assert(si == 2016, "u5 {si}");
+  // u6 — a comprehension walks the same order as the loop.
+  ks = [for e in unordered(a.h) { e.k }];
+  kt = "";
+  for k in ks { kt += "{k},"; }
+  assert(kt == walk(a), "u6 {kt}");
+  // u7 — a removal by key inside the walk: the walk reads its snapshot, the table loses 40.
+  r = 0;
+  for e in unordered(a.h) { if e.k == 40 { a.h[40] = null; } else { r += e.k; } }
+  assert(r == 2016 - 40 && len(a.h) == 63, "u7 {r} {len(a.h)}");
+  // u8 — a vector and a sorted walk in their own order.
+  v = [3, 1, 2];
+  vt = "";
+  for x in unordered(v) { vt += "{x}"; }
+  ss = S { s: [] };
+  for i in 0..5 { ss.s += [E { k: 5 - i, v: i }]; }
+  st = "";
+  for e in unordered(ss.s) { st += "{e.k}"; }
+  assert(vt == "312" && st == "12345", "u8 {vt} {st}");
+  println("ok");
+}

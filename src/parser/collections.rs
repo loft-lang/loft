@@ -3809,6 +3809,9 @@ use #count instead"
         is_par: bool,
     ) -> Option<(u16, Value)> {
         let mut fill = Value::Null;
+        // `@FR-Col-Unordered` — the program wrote `unordered(c)`: taken here, once, so it
+        // cannot reach the next walk.
+        let unordered = std::mem::take(&mut self.unordered_iterator);
         // `base()`: a nullable collection is refused before any walk, so the peel changes
         // no answer — it states that this reads the collection's shape, not its absence.
         if let Type::Hash(content, _, dep)
@@ -3817,8 +3820,8 @@ use #count instead"
         {
             // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
             // order: the hash builder sorts, and the walk reads the sorted copy.  Only
-            // the `par` walk skips the sort (@FR-C-Order), which is the one place the
-            // two orders differ.
+            // the `par` walk (@FR-C-Order) and a walk the program wrote as `unordered(h)`
+            // (@FR-Col-Unordered) skip the sort.
             //
             // A trie is a radix TREE too, so its in-order walk is already key
             // order: it takes the tree builder, not the hash one (whose bucket
@@ -3832,16 +3835,17 @@ use #count instead"
             } else {
                 i32::from(hash_tp_id)
             };
-            // Enforces @FR-C-Order's keyed exception.  A sequential `for x in h` is
-            // KEY-ordered; a `par` one is the hash's UNSORTED bucket walk, because the
-            // parallel queue has no use for key order — so it skips the O(n log n) key
-            // sort.  The two orders differing is stated by the rule, not a divergence.
+            // Enforces @FR-C-Order's keyed exception and @FR-Col-Unordered.  A sequential
+            // `for x in h` is KEY-ordered; a `par` one, and one over `unordered(h)`, takes
+            // the hash's SLOT-order snapshot, because neither has a use for key order — so
+            // it skips the key sort.  The orders differing is stated by the rules, not a
+            // divergence.
             //
             // A radix has a natural order and its walk is already ordered (no sort), so
             // it uses the same builder in every case (@PLN48).
             let scratch_fn_name = if is_radix {
                 "n_radix_sorted"
-            } else if is_par {
+            } else if is_par || unordered {
                 "n_hash_unsorted"
             } else {
                 "n_hash_sorted"
