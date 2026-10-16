@@ -231,7 +231,7 @@ src/data.rs	narration	20
 src/data.rs	stamp	75
 src/data_store.rs	narration	1
 src/data_store.rs	stamp	5
-src/database/allocation.rs	narration	11
+src/database/allocation.rs	narration	10
 src/database/allocation.rs	stamp	58
 src/database/descriptor.rs	stamp	2
 src/database/format.rs	narration	7
