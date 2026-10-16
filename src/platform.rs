@@ -242,7 +242,7 @@ pub fn sep() -> char {
 /// The path that swallows what is written to it: `/dev/null` on Unix, the `NUL` device on
 /// Windows, which has no `/dev/` at all.  A test that only wants a run's trace hands this to
 /// `--native-emit`; naming `/dev/null` there emitted nothing on Windows and the trace read
-/// empty (ci.yml's windows legs, 2026-10).
+/// empty (ci.yml's windows legs).
 #[must_use]
 pub fn null_sink() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
