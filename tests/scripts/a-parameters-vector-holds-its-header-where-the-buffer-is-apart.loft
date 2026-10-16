@@ -4,7 +4,8 @@
 // not the parameter's.  The store test is the whole of the proof: where a caller hands a
 // buffer claimed IN the parameter's store (the result stored straight into a field of the
 // same record), the pushes grow the very store the vector lives in and the copy without the
-// header runs.  Every cell's answer is the written-out program's, whichever copy ran.
+// header runs.  A loop that grows the store through ANOTHER parameter keeps no header at all:
+// two arguments are never proven apart (h6).  Every cell's answer is the written-out program's.
 //
 // Expected values are hand-computed.  `Doc.pieces` is 300 pieces (start 4·k, count 3, style
 // k % 5) over a 1200-character buffer whose character j is 'a' + j % 26; a slice of [a, b)
@@ -33,6 +34,15 @@ fn runs_of(d: Doc, a: integer, b: integer) -> vector<Run> {
     cum += p.count;
   }
   runs
+}
+
+// Reads `d.pieces` and grows `e`'s store: a writer the parameter clause can only prove apart
+// from `d` if the two are different records — called with ONE record twice, they are not.
+fn mirror(d: Doc, e: Doc) {
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    if i < 200 { e.runs += [Run { str: chars_of(d.buf, p.start, p.count), style: p.style }]; }
+  }
 }
 
 fn summary(rs: const vector<Run>) -> text {
@@ -71,5 +81,12 @@ fn main() {
   t = 0;
   for p in d.pieces { t += p.start + p.count; }
   assert(t == 4 * 44850 + 900, "h5 {t}");
+  // h6 — one record passed as both parameters: 200 runs pushed into its own `runs` (growing
+  //   the store `d.pieces` lives in) while `d.pieces` is read — pieces 0..199, 600 characters,
+  //   styles 40·10 — after h4's 199 runs, so 399 runs, 1197 characters, 800 styles.
+  x = make_doc();
+  x.runs = runs_of(x, 3, 600);
+  mirror(x, x);
+  assert(summary(x.runs) == "399/1197/800", "h6 {summary(x.runs)}");
   println("ok");
 }
