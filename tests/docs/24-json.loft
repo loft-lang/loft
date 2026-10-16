@@ -71,7 +71,9 @@ struct Catalogue { all: vector<Item>, by_key: hash<Item[key]> }
 //   if json_errors() != "" { log_warn(json_errors()); }
 //
 // 'record#errors' answers for the 'Type.parse(text)' that built that record, as a
-// vector<text> with one entry per error. Each parsed record keeps its own:
+// vector<text>. The one-step form stops at the first mismatch, so it holds at most one
+// entry; the staged 'Type.parse(json_parse(text))' lists every mismatch in
+// 'json_errors()' and leaves '#errors' empty. Each parsed record keeps its own:
 //
 //   for e in user#errors { log_warn(e); }
 //

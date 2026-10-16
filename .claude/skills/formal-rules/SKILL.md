@@ -1,6 +1,6 @@
 ---
 name: formal-rules
-description: Set up and use a NAMED-RULE register with code-site citations in any project — the mechanism that makes "which sites enforce this rule?" a grep and "is this rule already implemented?" a lookup. Use this when adopting the @FR- tag convention in a new project, when writing or citing a formal rule, when checking that every citation resolves, or when asking which rule a piece of code enforces. Tree-agnostic method with a bindings section for this repo; the portable checker is scripts/rule_tags.py (vendor it and repoint `RULES_DIR`/`CITE_DIRS`/`CITE_EXTS`; `coverage` also reads `GUARD_DIRS`/`GUARD_EXTS`).
+description: Set up and use a NAMED-RULE register with code-site citations in any project — the mechanism that makes "which sites enforce this rule?" a grep and "is this rule already implemented?" a lookup. Use this when adopting the @FR- tag convention in a new project, when writing or citing a formal rule, when checking that every citation resolves, or when asking which rule a piece of code enforces. Tree-agnostic method with a bindings section for this repo; the portable checker is scripts/rule_tags.py (vendor it and repoint `RULES_DIR`/`CITE_DIRS`/`CITE_EXTS`; `coverage` also reads `GUARD_DIRS`/`GUARD_EXTS`, and `LOFT_SUITE_DIR`, a sibling corpus read as a guard dir when present).
 user-invocable: false
 ---
 
@@ -27,8 +27,7 @@ deliberating a fix that has a choice in it.
    NOT definitions — both produced false positives when treated as such.
 2. **A namespaced citation tag: `@FR-<Name>`** in a code comment at each site that
    enforces the rule. A bare `@Name` is not unambiguous in a tree that already uses
-   `@` for anything else (measured in loft: a bare-`@` scan returned 4142 hits, not
-   one a rule). Pick a prefix that no other tag family can collide with.
+   `@` for anything else (loft measured this: formal/README.md § Rule tags). Pick a prefix that no other tag family can collide with.
 3. **Boundary-exact matching.** A general rule and its refinements share a stem
    (`B-View` / `B-View-Base`), so a citation matches only when the next character
    cannot continue a tag. Never rename rules to dodge a matcher.
@@ -78,7 +77,8 @@ it from one site, and wire `check` into CI before the register grows.
   open count to zero.
 - **The standing audit** (loft: STABILITY_METHOD.md § The rule-led walk): pick a
   rule, split it into the questions its sites ask, find each question's one home,
-  verify related cases against it — the defects are in the disagreements.
+  verify related cases against it — the defects are in the disagreements.  `make
+  rule-worklist` is its queue (the uncited rules, ordered by expected yield).
 
 ## In the loft tree (bindings — skip outside it)
 
@@ -87,7 +87,8 @@ it from one site, and wire `check` into CI before the register grows.
 - Checker: `scripts/rule_tags.py` (defaults already point here); `check` runs in CI as the
   `doc_hygiene::every_rule_citation_resolves` test, which shells out to this same command so
   the gate and the tool cannot drift — the `rule_tags` calls in `Makefile`/`.github/` are its
-  OTHER subcommands (`claims`, `fences`, `sections`, `coverage`), so a grep there does not
+  OTHER subcommands (`claims`, `fences`, `sections`, `coverage`, `worklist`; `selftest`, the
+  gate on `registers`' own parser, runs beside `check` in `doc_hygiene`), so a grep there does not
   show that `check` runs.
   `registers` is a REPORT, not a gate: its issue half needs the tracker, and a stale
   count is a doc fix rather than a reason to fail a build. `make rule-coverage` runs

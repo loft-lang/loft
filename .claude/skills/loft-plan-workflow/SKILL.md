@@ -35,7 +35,7 @@ span several sessions.
 | **Tiny deliverable** (demo deploy, version bump) | One overview/roadmap row, or nothing.  No plan. |
 | **Operational change** (CI tweak, doc fix) | Direct commit. |
 | **Light TODO** *(the default)* — fits in one row of a reference doc's table | An `## Open work` section in the relevant reference doc.  Same lifecycle as a plan, just one row.  Edit that doc's architecture content directly when you implement; the row and the design share a file. |
-| **Plan** — multi-phase, explicit phasing, design-before-build, cross-arc deps, or its own document space | A full plan directory.  Cap active plans at 2–3. |
+| **Plan** — multi-phase, explicit phasing, design-before-build, cross-arc deps, or its own document space | A full plan directory. |
 
 The light flow is the default.  A plan earns its directory only when the work is
 genuinely multi-phase **and** benefits from its own document space.  The sharpest
@@ -188,8 +188,9 @@ commit having reached the trunk — the code lands on main later, on its own clo
   shipped, `status:future` if nothing did.
 - Paused with **no** concrete trigger → the design becomes a closed-by-decision entry, not a
   deferred state: id from `./scripts/idx next-decision`, the entry in the subject's
-  `DESIGN_DECISIONS_<SUBJECT>.md`, a row in the `DESIGN_DECISIONS.md` index (procedure:
-  `DESIGN_DECISIONS_RULES.md`).
+  `DESIGN_DECISIONS_<SUBJECT>.md`, a row in the `DESIGN_DECISIONS.md` index, then
+  `python3 scripts/decisions.py sync` and classify its worklist line; `make decisions` lists
+  what the entry still owes (procedure: `DESIGN_DECISIONS_RULES.md`).
 
 **For each shipped phase:**
 
@@ -296,7 +297,7 @@ Everything above is tree-agnostic.  This section is the **only** loft-specific p
 |---|---|
 | Plan tracker / issue id | [`loft-lang/plans`](https://github.com/loft-lang/plans/issues) issues; id = `@PLN<N>`, the number `gh issue create -R loft-lang/plans` returns |
 | Plan file (optional, new model) | `doc/claude/plans/<N>-<slug>.md`, or `doc/claude/plans/<N>-<slug>/` when it has companions — **library plans too**.  ⚠ **`doc/claude/lib_plans/` is CLOSED to new work** (its README): a legacy archive being migrated here — read it, never add to it. |
-| Legacy layout (mid-migration) | only `doc/claude/plans/finished/<N>-<slug>/` remains (e.g. plan 51); ROADMAP.md rows are still maintained.  New plans use the flat/tracker model above. |
+| Legacy layout (mid-migration) | `doc/claude/plans/finished/<N>-<slug>/` (e.g. plan 51) plus a handful of slug-only hotspot/investigation dirs (`h<n>-…`, `library-compat-contract`, …) — read, never extend; ROADMAP.md rows are still maintained.  New plans use the flat/tracker model above. |
 | Standard plan template | [`doc/claude/plans/_TEMPLATE.md`](../../../doc/claude/plans/_TEMPLATE.md) |
 | Investigation template | [`doc/claude/plans/_INVESTIGATION_TEMPLATE.md`](../../../doc/claude/plans/_INVESTIGATION_TEMPLATE.md) — canonical example `plans/finished/51-hidden-buffer-aliasing/` (5 clusters; its README carries the probe census) |
 | Close / defer procedure (full) | [`doc/claude/plans/_LIFECYCLE.md`](../../../doc/claude/plans/_LIFECYCLE.md) |
@@ -311,10 +312,10 @@ Everything above is tree-agnostic.  This section is the **only** loft-specific p
 | Feature coverage gate — and its blind spot | `scripts/feature_coverage.sh --check` + `scripts/feature_hygiene.sh --check` (CI), baselined in `scripts/.feature_coverage_baseline`.  It counts **uncataloged FILES**, so a new capability landing in an already-tagged file passes at baseline 0.  Green here means "no new untagged file", never "the catalogue is complete" |
 | Drift checker | `scripts/check_doc_drift.sh` |
 | Incoming-link grep (close/promote) | `./scripts/idx incoming:<path>` (preferred), or `grep -rn "plans/<NN>-<slug>" CLAUDE.md doc/claude/ --include="*.md"` |
-| Investigation regression suite | `tests/scripts/NN-<slug>.loft` |
+| Investigation regression suite | a cell in `../loft-suite` under its rule (`make suite ARGS="@FR-…"`); `tests/scripts/` only when this repo names it — TESTING.md |
 | Probe gates (leak / exit) | `LOFT_STORES=warn`; the `loft_suite` leak gate; both backends = interpreter + native |
 | Execution modes to verify across | `--interpret` and `--native` |
-| Canonical examples | partial defer: plan-28 / plan-12 · create-and-move close: `31-html-export → HTML_EXPORT.md` · trim-only close: `04-slot-assignment-redesign → SLOTS.md` |
+| Canonical examples | partial defer: @PLN43 (`status:parked`, _LIFECYCLE.md § Pick the outcome) · create-and-move close: `31-html-export → HTML_EXPORT.md` · trim-only close: `04-slot-assignment-redesign → SLOTS.md` |
 | Consumer (dogfood) repos + their trackers | `moros` ([`jjstwerff/moros`](https://github.com/jjstwerff/moros/issues), `plans/<N>-<slug>/`, its own `plan-check` make target) · `dryopea` · `crawler` · `lib/markdown`.  Each keeps its own issue numbers and its own `plans/README.md` binding; the method above is shared verbatim |
 | Where a consumer files an ENGINE defect | `loft-lang/loft` issues (`bug_report`), `sev:`/`area:` + a verified `wa:*` + `hit-by:<project>` label (and `silent-wrong` when it answers wrong quietly; `CLAUDE.md § Bug-filing policy`) — never a plan in the consumer repo |
 | Branch / commit / bug-filing policy | `CLAUDE.md` |

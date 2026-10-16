@@ -121,6 +121,14 @@ jobs:
         with:
           path: loft-src
 
+      # The toolchain is part of the key: a restored `target/` built by the previous stable
+      # leaves that rustc's rlibs in `deps/`, the upload carries them, and a library leg's
+      # `--native` link then finds a `loft` crate "compiled by an incompatible version of
+      # rustc" (E0514) beside the fresh one.
+      - name: Install Rust stable
+        id: rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Cache cargo + loft build
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -129,8 +137,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             loft-src/target
-          key: revalidate-loft-${{ hashFiles('loft-src/Cargo.lock') }}
-          restore-keys: revalidate-loft-
+          key: revalidate-loft-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('loft-src/Cargo.lock') }}
+          restore-keys: revalidate-loft-${{ steps.rust.outputs.cachekey }}-
 
       - name: Build loft
         working-directory: loft-src

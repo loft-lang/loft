@@ -12,6 +12,10 @@ use std::process::Output;
 
 const CELLS: &str = "tests/scripts/a-walk-borrows-its-word-in-the-versioned-copy.loft";
 
+/// Where `--native-emit` writes when only the trace matters: the platform's null device
+/// (Windows has no `/dev/null`, so a test naming it there emits nothing and traces nothing).
+const NULL_SINK: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -58,7 +62,7 @@ fn a_walk_that_writes_only_the_result_borrows_and_one_that_writes_its_parameter_
     let borrows = |env: &[(&str, &str)]| -> String {
         let mut e = vec![("LOFT_TRACE_TEXT_BORROW", "1")];
         e.extend_from_slice(env);
-        let out = loft(&["--native-release", "--native-emit", "/dev/null"], &e);
+        let out = loft(&["--native-release", "--native-emit", NULL_SINK], &e);
         String::from_utf8_lossy(&out.stderr).into_owned()
     };
     let on = borrows(&[]);

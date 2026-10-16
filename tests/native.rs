@@ -66,8 +66,9 @@ const SCRIPTS_NATIVE_SKIP: &[&str] = &[
     //
     // A `#native` function with no library loaded is REFUSED by the native generator for the
     // whole file (`compile_error!` naming the symbol) — that refusal is this file's native
-    // answer, while the interpreter runs it and fails the one `@EXPECT_FAIL` function.  It was
-    // dropped as a `prepare error` skip until such a skip became a failure (loft#1841).
+    // answer, while the interpreter runs it and fails the one `@EXPECT_FAIL` function.  The
+    // entry ends when the generator answers a missing library per FUNCTION, so the file's
+    // other functions compile and only the stub fails as `@EXPECT_FAIL` says.
     "75-native-stub.loft",
 ];
 

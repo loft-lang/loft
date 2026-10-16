@@ -1421,6 +1421,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The suite's programs guard decisions too (@PLN193): without it every decision whose
+      # only guard moved there with the corpus reads as unguarded.
+      - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold

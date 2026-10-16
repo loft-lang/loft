@@ -12,8 +12,9 @@ is the census) plus a custom testing framework; picking the wrong
 binary or the wrong macro means either a slow CI cycle or a test that
 doesn't actually validate the change.
 
-For runtime debugging conventions (LOFT_LOG presets, dump files), see
-the parent project's [TESTING.md](../../../doc/claude/TESTING.md).  This
+For runtime debugging conventions (LOFT_LOG presets, dump files), see the parent
+project's [RUNNING_TESTS.md](../../../doc/claude/RUNNING_TESTS.md) § LogConfig;
+[TESTING.md](../../../doc/claude/TESTING.md) is where a test BELONGS.  This
 skill covers the *authoring* side: where a test belongs, which macro
 to use, and how to keep the suite fast.
 
@@ -26,7 +27,7 @@ binary that matches the kind of behaviour you're verifying.
 
 | Binary | Purpose | Typical macro / harness |
 |---|---|---|
-| `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter** (`dir` / `loft_suite`), plus the `wasm_dir` leg (`--native-wasm`, run under `wasmtime` when available). | Reads scripts from disk; no Rust-level macro. |
+| `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter** (`dir` / the chunked `loft_suite_NN`), plus the `wasm_dir` leg (`--native-wasm`, run under `wasmtime` when available). | Reads scripts from disk; no Rust-level macro. |
 | `tests/native.rs` | Same scripts driven through `--native` (`native_dir` / `native_features` / `native_scripts`).  Catches codegen vs interp divergence. | Disk-driven; `find_loft_rlib` + `compile_native_job`. |
 | `tests/issues.rs` | The regression register — small named pins for fixes.  Prefer a `tests/scripts/*.loft` file where possible: it locks all three backends. | `code!(...)` |
 | `tests/expressions.rs` | Language feature tests grouped by topic. | `code!(...)` and `expr!(...)` |
@@ -55,7 +56,7 @@ every binary uses every helper.
 ## The `code!` macro — primary unit-test API
 
 Lives in `tests/testing.rs`.  Used by issues / expressions / parse_errors /
-slots / doc_hygiene and others (`grep -l 'code!' tests/*.rs` is the census).
+slots and others (`grep -l 'code!' tests/*.rs` is the census).
 
 ```rust
 mod testing;
@@ -120,7 +121,7 @@ cross_mode!(my_cell, r#"
 ```
 
 Mechanics:
-1. Writes the body to `/tmp/loft_xmode_<test_name>.loft`.
+1. Writes the body to `<temp_dir>/loft_xmode_<test_name>.loft` (`$TMPDIR`, else `/tmp`).
 2. Runs `loft --interpret` and `loft --native` as subprocesses
    (uses `env!("CARGO_BIN_EXE_loft")`).
 3. Captures both stdouts, normalises CRLF→LF and trailing
@@ -149,16 +150,17 @@ as green.)
 
 ## Pure loft tests — `tests/scripts/*.loft` and `tests/docs/*.loft`
 
-A `.loft` test file is **three tests for the price of one**.  The same
-file is picked up by:
+A `.loft` test file is **three legs for the price of one** under `tests/docs/`, two under
+`tests/scripts/`.  The same file is picked up by:
 
-- `tests/wrap.rs::dir` (and `::loft_suite`) — runs it through the
-  **interpreter** end-to-end.
-- `tests/native.rs::native_dir` / `::native_scripts` — generates Rust source, compiles with
-  `rustc`, runs the **native** binary.
-- `tests/wrap.rs::wasm_dir` — compiles via `--native-wasm`, optionally
-  runs with `wasmtime` (skipped silently if `wasm32-wasip2` or
-  `wasmtime` is unavailable).
+- `tests/wrap.rs::dir` and the chunked `loft_suite_NN` tests (the chunking is explained at
+  wrap.rs § loft_suite) — runs it through the **interpreter** end-to-end.
+- `tests/native.rs::native_dir` / the chunked `native_scripts_NN` — generates Rust source,
+  compiles with `rustc`, runs the **native** binary.
+- `tests/wrap.rs::wasm_dir` — `tests/docs/` only: compiles via `--native-wasm`, optionally
+  runs with `wasmtime` (skipped silently if `wasm32-wasip2` or `wasmtime` is unavailable).
+  A `tests/scripts/` file's wasm leg is the corpus sweep (`scripts/corpus_files.sh`), not a
+  test binary.
 
 ### What a `.loft` test asserts with
 
@@ -387,9 +389,9 @@ tight loops, not the safety mechanism — the default is subtractive, so a gap i
 a subject costs seconds, never coverage.
 
 What the default skips is the `HEAVY_BINARIES` list in `scripts/test_subjects.sh` —
-binaries that are slow AND have very few tests. CI's
-`Test (ubuntu-latest)` job runs the suite unsharded as a required check, so none
-of them can be skipped on the way to main.
+binaries that are slow AND have very few tests. CI runs the whole suite on every
+PR — five ubuntu shards, all required checks — so none of them can be skipped on the
+way to main.
 
 **Always run after the targeted set:**
 - `cargo fmt --all` (format, don't just `--check`)

@@ -477,7 +477,8 @@ tells you to reach for:
   `make libcatalogue` + `loft install` — read the generated `doc/claude/LIBRARIES.md`,
   never a clone or installed copy.
 - The named-rule register is `doc/claude/formal/` (`@FR-` tags); `scripts/rule_tags.py`
-  is the citation instrument (`list` · `check` · `sites <tag>` · `dups` · `registers`), and
+  is the citation instrument (`list` · `check` · `sites <tag>` · `dups` · `registers` ·
+  `coverage` · `worklist` — `make rule-coverage`, `make rule-worklist`), and
   `formal/README.md` says how a rule is written and cited.
 - A construct's use cases are measured as one program per shape, run on `--interpret` and
   `--native` (a batch lets one wrong release corrupt the next cell). The full treatment —
@@ -487,4 +488,6 @@ tells you to reach for:
   `doc/claude/DESIGN_VERIFICATION.md § C1`; decided and declined designs are recorded in
   the register `doc/claude/DESIGN_DECISIONS.md` indexes (one `DESIGN_DECISIONS_<SUBJECT>.md`
   per subject) — check it before re-proposing one; `./scripts/idx next-decision` names the
-  id for a new entry.
+  id for a new entry, which is kept by `@C<n>` citations (a code site, a doc site, one guard
+  under `tests/`) and `make decisions` lists what it still owes — DESIGN_DECISIONS_RULES.md
+  § Using the register.

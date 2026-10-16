@@ -12,7 +12,7 @@ description: >-
   the exception). It is a SPEED tool, not a brake: a coherent explanation is a
   hypothesis, not a conclusion, and the fastest route to a fix that sticks is the
   cheapest probe that could prove your idea wrong (a timing, a grep of a count, one
-  --emit-and-look — seconds). So the moment you can state a cause or a fix, that
+  `introspect`/`--native-emit`-and-look — seconds). So the moment you can state a cause or a fix, that
   fluency is the cue to GATHER first, not act — which also lets you fix the SOURCE
   and delete the whole class, not just this instance. Then build the instrument
   that makes the CLASS visible (boundary matrix, falsification probe, usage
@@ -52,7 +52,7 @@ can see.
 
 Read this as a **speed tool.** The fastest route to a fix that's actually right is
 **the cheapest thing that could prove your idea wrong** — a single timing, a `grep`
-of a count, one `--emit`-and-look, a cold/warm run. *Seconds.* Reach for it like a
+of a count, one `introspect`/`--native-emit`-and-look, a cold/warm run. *Seconds.* Reach for it like a
 cherry: it's right there, it's cheap, and it hands you **certainty** — which is what
 lets you fix once and move on.
 
@@ -431,8 +431,9 @@ touching your tree (`git show origin/main:f` — never `git checkout … -- f`, 
 silently discards uncommitted work; undo a probe with the inverse edit, and commit
 before anything that rewrites the working tree). That instrument only works
 while you stay on **one** branch held **close to main** — build everything there (mixed
-topics are fine) and **rebase on `origin/main` often**, not once at the end (with review in
-flight on the branch — an open PR — coordinate before rebasing or force-pushing). Per-topic
+topics are fine) and **rebase on `origin/main` often**, not once at the end (with a PR open on the branch, push nothing to
+it and do not rebase it: stack further work on `<host>-pr<N>-next` and rebase onto `main`
+after the merge — CLAUDE.md § Branch policy, rules 4–5). Per-topic
 branches, or a branch left to diverge, poison the diff with merge noise AND make overlapping
 work un-mergeable later: a squash upstream vs your original commits is a guaranteed conflict,
 then a multi-commit rebase from hell. Do not create a branch unless the user explicitly asks;

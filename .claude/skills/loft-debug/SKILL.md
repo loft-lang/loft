@@ -21,8 +21,9 @@ irreversible moves not to make.
   labels each failure REGRESSION vs PRE-EXISTING; the validity rules — hand-computed
   expectations, no vacuous cells, control stays red — are hard errors).  Usage:
   `doc/claude/DEBUG_PROBES.md` § Boundary-matrix runner.
-- **Composition axes** (what to vary in the matrix) — `doc/claude/plans/README.md`
-  § The composition axes.
+- **Composition axes** (what to vary in the matrix) — `python3 scripts/matrix_axes.py file
+  <probe.loft>` names which axis values your cells reach (`cross A B` for never-crossed
+  pairs); the vocabulary is `doc/claude/plans/README.md` § The composition axes.
 - **Brittleness vs bugs** — `doc/claude/DESIGN_VERIFICATION.md` § C1 (the real target
   is robust algorithms; a green matrix can still be brittle).
 - **Prior attempts on THIS mechanism** — `doc/claude/formal/`, and grep it by the MECHANISM
@@ -40,7 +41,8 @@ irreversible moves not to make.
 - **First, one tracker probe**: `gh issue list --search "<symptom keywords>"` —
   a bug worth fixing is often already filed (consumers file fast, often minutes
   before an agent starts on the same symptom blind). An existing row hands
-  you scope + workaround for free, and the fix commit must claim it (below).
+  you scope + workaround for free: `scripts/claim.py take N` before touching code (a bug
+  you find and fix at once: `claim.py file …`), and the fix commit must claim it (below).
 - Single file, interpreter: `cargo run --bin loft -- --interpret file.loft`
 - Native: `cargo run --bin loft -- --native file.loft`
 - ⚠ **The default backend is `--native` wherever rustc is available** (a downloaded release
@@ -67,7 +69,7 @@ irreversible moves not to make.
 
 ## The build loop — which binary, and what each build costs
 
-`src/` is ONE crate of ~486k lines: any one-file edit recompiles all of it, and the release
+`src/` is ONE crate of half a million lines: any one-file edit recompiles all of it, and the release
 profile is not incremental.  So the loop is decided by which build answers the question
 ([CI_BUDGET.md § What a build and each check costs here](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)
 has the ladder; re-measure a number before it decides anything):
@@ -76,7 +78,7 @@ has the ladder; re-measure a number before it decides anything):
   `target/debug/loft --interpret | --native | introspect | --native-emit …`; it runs
   `--native` against the `deps/` rlib the same build wrote.  `make iter TEST=…` for one test.
 - **`cargo check --bin loft` for a compile-only question** — never a build.
-- **A release build (`cargo build --release --bin loft`, 20–40 min) once per fix, at the
+- **A release build (`cargo build --release --bin loft`, the costliest rung — CI_BUDGET.md) once per fix, at the
   end**: it refreshes `target/release/libloft.rlib`, which only the `cargo test --release`
   native suites link; `make check-rlib` says whether it is due.  Never one per hypothesis.
 - **Name the cause from an artefact before any build** — the IR (`loft introspect`) or the
@@ -86,7 +88,7 @@ has the ladder; re-measure a number before it decides anything):
 - **One heavy job at a time**: a build, a gate (`ci-run.sh start`), `make falsify` (two dev
   builds), the drop gate (every core for an hour), a native corpus census, a `cargo test` of
   many binaries.  Beside one another they slow every one of them and the one waited on most
-  of all; a load of 75 on this box was one session's own drop gate, blamed on siblings.
+  of all.
   While a build runs, read the next unit's code; wait on its pid or output file, never a
   sleep loop (CLAUDE.md § Never wait on a process by NAME).
 - **Receipts last**: `make falsify` builds the working tree, so it runs after the fix is
@@ -96,10 +98,9 @@ has the ladder; re-measure a number before it decides anything):
 
 The @PLN16 debugger speaks NDJSON over stdio (the contract:
 `doc/claude/plans/16-debugger/PROTOCOL.md`). One `printf` pipes a whole scripted
-session — breakpoint → inspect the live frame → eval → edit → resume. ⚠ An older
-installed `loft` sends NO `verified` field on setBreakpoints and ignores string-form
-`"log"` (array only) — when the setBreakpoints response lacks `verified`, drive
-`target/*/loft` from this tree instead.
+session — breakpoint → inspect the live frame → eval → edit → resume. A setBreakpoints
+response without `verified` is a pre-2026-06 installed binary — drive `target/*/loft` from
+this tree instead.
 
 ```sh
 printf '%s\n' \

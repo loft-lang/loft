@@ -41,7 +41,7 @@ than two:
   directory exists.  Numbers are per-repo and never shared; a plan id is only
   meaningful next to its repo.
 - **The same value letters** (`S/R/G/F/U/C/Q/N`) and the same effort letters
-  (`XS`…`VH`, plus `L` for large multi-arc — ROADMAP's legend), so "a `G` plan at `MH`"
+  (`XS`…`VH`, plus `L` for large multi-arc — the `E` column, plans/README.md § value categories), so "a `G` plan at `MH`"
   reads the same everywhere.  Only the *examples*
   are repo-specific.
 - **The same closing procedure** — move reference content out, rewrite incoming
@@ -59,7 +59,7 @@ behind the old behaviour.
 
 **Efficiency, concretely.** Most consumer work is not a plan: a row in the light
 TODO doc beats a plan directory that only points back at a reference doc, and the
-cap of 2–3 active plans is what keeps the tracker readable.  A plan whose only
+small set of active plans is what keeps the tracker readable.  A plan whose only
 content is "wait for the engine" is not a plan — it is one blocked row and an
 upstream issue.
 

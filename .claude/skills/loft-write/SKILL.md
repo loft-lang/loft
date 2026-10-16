@@ -32,9 +32,9 @@ for the code as written, and a rewrite only as an API an `advice` names to users
 
 The parser **rejects** code that violates these rules.
 
-`OpXxx` definitions are the stdlib's operator table.  A user `fn Op…` still binds its
-operator today, but @C132 retires that (loft#1833, DESIGN_DECISIONS_SYNTAX.md): give a user
-type named methods (`a.before(b)`, `v.plus(w)`) rather than new `fn Op…` definitions.
+`OpXxx` definitions are the stdlib's operator table only (@C132, DESIGN_DECISIONS_SYNTAX.md):
+a user `fn Op…` is an ordinary function and binds no operator.  To put an operator on your
+own type write `operator compare` / `plus` / `minus` / `times` / `negate` (§ Operators).
 
 ---
 
@@ -51,8 +51,8 @@ type named methods (`a.before(b)`, `v.plus(w)`) rather than new `fn Op…` defin
 
 **There is no `long` type and no `l` literal suffix.**  `integer` is already 64-bit (i64), so integer literals are
 plain (`86400000`, not `86400000l`), and `now()` / `File.size` return a
-full-range `integer`.  Writing `long` or `10l` is a parse error
-(*"Undefined type long"* / *"Expect token ;"*).
+full-range `integer`.  Writing `long` or `10l` is a compile error
+that names the fix.
 
 **Narrow / sized integers are aliases of `integer`** (defined in
 `default/01_code.loft`), for byte-width-sensitive file / wire formats:
@@ -65,9 +65,8 @@ spreadsheet model): divide / modulo by zero, and integer overflow
 (`i64::MAX + 1`), are uncomputable, so they yield `null` and execution CONTINUES
 — no trap, no halt, identically in dev / test / production.  Any arithmetic
 landing exactly on `i64::MIN` also reads as `null` (the in-band sentinel).
-Defend a site with `?? <fallback>` to turn the null into a value; an *unguarded*
-divide-by-zero additionally logs a Warn (overflow is silent — the null is the
-signal).  A function returning `integer` may `return null` (it yields `i64::MIN`,
+Defend a site with `?? <fallback>` to turn the null into a value; a CONSTANT zero
+divisor warns at compile time, a runtime one is silent — the null is the signal.  A function returning `integer` may `return null` (it yields `i64::MIN`,
 detectable with `!result`).
 
 **Prefer `x?` when the fallback is just the type's zero (@PLN116).** Postfix `?`
@@ -495,7 +494,7 @@ else { e.value += 1; }
 assert((t.data["x"].value ?? -1) == 2 and seen == "", "found, and written through the view");
 t.data["x"] = null;   // remove entry
 t.data += [Entry { key: "b", value: 2 }, Entry { key: "a", value: 1 }];
-for row in t.data { seen += row.key; }  // iterates in key order (C60)
+for row in t.data { seen += row.key; }  // iterates in key order
 assert(seen == "ab" and t.data["x"] == null, "removed, then walked in key order");
 ```
 
@@ -542,7 +541,8 @@ a = f.exists();      // method syntax
 b = exists(f);       // free function syntax
 ```
 
-**`both` is the retired spelling for this — do not write it.** It still resolves, and
+**`both` is the retired spelling for this (`fn f(both: T)`, a first parameter named
+`both`) — do not write it.** It still resolves, and
 still gives both spellings, but it emits `both-receiver-deprecated`, which is a
 `warning`; a library's CI runs with `LOFT_DENY_WARNINGS=1`, so writing `both` turns a
 package's own gate red (@C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILITY.md)).
@@ -869,7 +869,7 @@ b = s.char_slice(1, 3);     // "bc" — the same, counting CHARACTERS instead of
 ```
 
 **Pick by where the numbers came from**, and this is the commonest text bug in this stack:
-`len` counts CHARACTERS, `size` and `s[a..b]` count BYTES. A character count used as a byte
+`len(t)` counts CHARACTERS, `t.size()` and `s[a..b]` count BYTES (a File's `f.size` is a field). A character count used as a byte
 range fits fewer characters than it measured, so the text comes back SHORT — silently, and
 only once the text stops being ASCII. `"héllo"[0..4]` is `"hél"`; `"héllo".char_slice(0, 4)`
 is `"héll"`. Use `char_slice` whenever a character count becomes a cut (fitting a label,
