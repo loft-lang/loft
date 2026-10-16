@@ -1,7 +1,7 @@
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index d45e26808..c74e15a0b 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 92fd67567..5916bc221 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
 @@ -4818,11 +4818,6 @@ impl Parser {
          self.iterable_context = prev_iterable_context;
          let ranged = self.lexer.has_token("..") || self.lexer.has_token("..=");
@@ -14,18 +14,18 @@ index d45e26808..c74e15a0b 100644
              // The bound is read so the refusal is the only diagnostic, not a cascade.
              if !self.lexer.peek_token(")") {
                  let mut bound = Value::Null;
-@@ -4848,13 +4843,7 @@ impl Parser {
-                     "walk",
-                     "can be walked",
-                     "zero iterations",
--                ) {
--                    diagnostic!(
--                        self.lexer,
--                        Level::Error,
--                        "unordered() must wrap a collection (a hash, vector, sorted, index, spatial or trie)"
--                    );
--                }
-+                ) {}
-             }
+@@ -4851,13 +4846,7 @@ impl Parser {
+             | Type::Trie(_, _, _)
+             | Type::Null
+             | Type::Unknown(_) => {}
+-            _ => {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "unordered() must wrap a collection (a hash, vector, sorted, index, spatial or trie)"
+-                );
+-            }
++            _ => {}
          }
          in_type
+     }
