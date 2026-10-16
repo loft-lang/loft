@@ -1043,8 +1043,15 @@ impl Parser {
         names.sort();
         let have = names.join("`, `");
         let display = self.data.def(enum_d).original_name().clone();
+        // The SPELLED name: an arm's capture is the variable `w#1`, which no program wrote.
         let subject = match recv.unspan() {
-            Value::Var(v) if *v < self.vars.count() => self.vars.name(*v).to_string(),
+            Value::Var(v) if *v < self.vars.count() => self
+                .vars
+                .name(*v)
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .to_string(),
             _ => "the value".to_string(),
         };
         let first = names[0].clone();
@@ -1128,6 +1135,16 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
         // ONE derivation decides both the guard and what the diagnostic says: a message
         // describing behaviour the compiler no longer has is worse than none.
+        // loft#2025 — a match arm's root capture (`w: Circle { r } => …`) holds the variant its
+        // pattern fixed: the arm is the check, so the access is settled and needs no guard.
+        if let Value::Var(v) = recv.unspan()
+            && self
+                .capture_variant
+                .get(v)
+                .is_some_and(|d| owning.contains(d))
+        {
+            return recv;
+        }
         let guarded = recv.is_place_read(&self.data);
         self.warn_unchecked_variant_field(enum_d, field, &owning, total, &recv, guarded);
         if !guarded {

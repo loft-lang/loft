@@ -6419,7 +6419,8 @@ impl Parser {
             }
             // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
             // beside the pattern's own names; `other: _ => …` is the catch-all that binds it.
-            self.root_capture(&subject_val, &subject_type, &mut hoisted_bindings);
+            let root_capture =
+                self.root_capture(&subject_val, &subject_type, &mut hoisted_bindings);
             let Some(first_ident) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -6502,6 +6503,11 @@ impl Parser {
             }
             if self.data.def_type(variant_def_nr) == DefType::EnumValue {
                 self.check_visibility("variant", variant_def_nr, usize::MAX);
+                // loft#2025 — the capture holds this variant for the arm's body: the pattern
+                // is the check a field access through it would otherwise ask for.
+                if let Some(v) = root_capture {
+                    self.capture_variant.insert(v, variant_def_nr);
+                }
             }
 
             // for plain struct match, the pattern name must match the struct type.
@@ -7589,12 +7595,15 @@ impl Parser {
     /// source.  Consumes `name:`; anything else is left for the variant parse.  A BARE lowercase
     /// name at the root stays what `@FR-M-Unit` makes it — a misspelled variant, refused — so a
     /// typo never turns into a catch-all (a-match-arm-names-a-variant-that-exists.loft).
-    fn root_capture(&mut self, subject_val: &Value, subject_type: &Type, hoisted: &mut Vec<Value>) {
-        let Some(name) = self.lexer.peek_named_arg() else {
-            return;
-        };
+    fn root_capture(
+        &mut self,
+        subject_val: &Value,
+        subject_type: &Type,
+        hoisted: &mut Vec<Value>,
+    ) -> Option<u16> {
+        let name = self.lexer.peek_named_arg()?;
         if !Self::is_binding_name(&name) {
-            return;
+            return None;
         }
         self.lexer.has_identifier();
         self.lexer.token(":");
@@ -7626,6 +7635,7 @@ impl Parser {
                 }
             }
         }
+        (v != u16::MAX).then_some(v)
     }
 
     /// The `{ field, field: pattern, … }` of a plain-struct pattern: a bare field binds a new

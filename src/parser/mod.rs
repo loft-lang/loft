@@ -1564,6 +1564,9 @@ pub struct Parser {
     /// Pushed on entry to the proven branch, truncated to the saved length on exit; a
     /// reassignment of `v` inside the branch removes it (the proof no longer holds).
     pub(crate) narrowed_non_null: Vec<u16>,
+    /// loft#2025 — a match arm's root capture (`w: Circle { r } => …`) and the variant its
+    /// pattern fixed, so a field access through the capture is the checked one the arm is.
+    pub(crate) capture_variant: std::collections::HashMap<u16, u32>,
     /// loft#1540 — the VIEWS of a value-const value, keyed by `(context, view variable)`, each
     /// with a description of the value-const place it reads out of (`Const-Value`; plan 40's
     /// coherence rule 2: *"reading a field/element of a `const` value yields a `const` view"*).
@@ -2087,6 +2090,7 @@ impl Parser {
             field_read_counts: std::collections::HashMap::new(),
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
+            capture_variant: std::collections::HashMap::new(),
             const_views: std::collections::HashMap::new(),
             foreign_bound: std::collections::HashSet::new(),
             narrowed_non_null_exprs: Vec::new(),
