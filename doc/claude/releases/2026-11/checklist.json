@@ -15,9 +15,9 @@
     "note": "make file-sizes 2026-10-16: 18 docs over 1000 (2 read as several subjects: DESIGN_DECISIONS-history, PERFORMANCE-history), 117 code files over 1200 (86 several subjects; top parser/mod.rs 27205, control.rs 23123); last release's scopes.rs split stayed down (no scopes/ file in the list)"
   },
   "M-ignores": {
-    "at": "2026-10-16 15:59",
+    "at": "2026-10-16 16:00",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
-    "note": "every #[ignore] reason names a job that exists (miri.yml release-gate-sweeps runs each named test; ci.yml Differential oracle, leak-scan, front-end allocation pins; receipts.yml) and the sweeps job was GREEN on the 2026-10-16 nightly; NATIVE_SKIP, LIB_PKGS/LIB_TESTS_NATIVE_SKIP, LIB_TESTS_SKIP, ignored_scripts all empty; SCRIPTS_NATIVE_SKIP's one entry (75-native-stub) re-justified with its removal condition"
+    "note": "every #[ignore] reason names a job that exists (miri.yml release-gate-sweeps runs each named test; ci.yml Differential oracle, leak-scan, front-end allocation pins; receipts.yml) and the sweeps job was GREEN on the 2026-10-16 nightly; skip lists: NATIVE_SKIP, LIB_PKGS/LIB_TESTS_NATIVE_SKIP, LIB_TESTS_SKIP, ignored_scripts all empty; SCRIPTS_NATIVE_SKIP's one entry (75-native-stub) re-justified with its removal condition"
   },
   "M-liveness": {
     "at": "2026-10-16 15:53",
@@ -28,5 +28,10 @@
     "at": "2026-10-16 15:44",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "make bug-review 2026-10-16: narrow-int/width is the one RISING class (8.5% in the newest band, +2.2pp over its peak); Parser::nstore_unwrap_report reads NO EFFECT on null/sentinel (10.8% -> 18.6%, 15.1% minus PLN153's own finds) - premise to re-open; owns/proxy/N-Road keystones paid off; contract pressure 9.4% strained in 2026-10, 4 unjudged"
+  },
+  "M-ops-census": {
+    "at": "2026-10-16 16:33",
+    "commit": "b3c430a5c56e10a7434320f9ca0de0da6c2dbd19",
+    "note": "make ops-census 2026-10-16: 343 declared / 315 emitted / 28 UNEXERCISED / 0 orphan (2192 of 2570 .loft files produced bytecode). Last cycle read 11 unexercised; the census now reads lambda bodies (57f603646) and six orphans were retired (2ca397a4e), so the 28 are the honest denominator: control-flow and literal-width ops the hoist rewrites (OpGoto/GotoFalse, OpConstShort/Tiny, OpVarNarrow), LOFT_STORE_TAG-gated ops, and sixteen emitter sites no corpus program reaches (OpReverseVector, OpInsertVector, OpKeepRange, OpHashAdd, OpEvacuate, OpFillKeyed, OpSetRef/GetRef, OpSizeStruct/Scalar, OpNeContent, the fn-ref stack ops) - each a test gap to close or a blind spot to name, read per release"
   }
 }
