@@ -43,5 +43,10 @@
     "at": "2026-10-16 16:33",
     "commit": "b3c430a5c56e10a7434320f9ca0de0da6c2dbd19",
     "note": "make ops-census 2026-10-16: 343 declared / 315 emitted / 28 UNEXERCISED / 0 orphan (2192 of 2570 .loft files produced bytecode). Last cycle read 11 unexercised; the census now reads lambda bodies (57f603646) and six orphans were retired (2ca397a4e), so the 28 are the honest denominator: control-flow and literal-width ops the hoist rewrites (OpGoto/GotoFalse, OpConstShort/Tiny, OpVarNarrow), LOFT_STORE_TAG-gated ops, and sixteen emitter sites no corpus program reaches (OpReverseVector, OpInsertVector, OpKeepRange, OpHashAdd, OpEvacuate, OpFillKeyed, OpSetRef/GetRef, OpSizeStruct/Scalar, OpNeContent, the fn-ref stack ops) - each a test gap to close or a blind spot to name, read per release"
+  },
+  "M-perf-pass": {
+    "at": "2026-10-16 19:46",
+    "commit": "72055d28b1a6d8eb54e5e0156a4fcbff08eccc1c",
+    "note": "make speed at 72055d28b (box shared with loft3's build, load 7-12): 87 timed, 48 drifted beyond 25%, 18 SLOWER - the one past 3x is html_asyncify::html_asyncify_program_resumes_to_completion 0.80 -> 4.91 units, 3.2 s alone twice (still ~4x, +3 s: under the speed gate's 3x AND +5 s rule, the pin is stale rather than the test slow); the rest 1.3-2.4x are browser/engine-host tests under contention; 16 annotated tests no longer slow. Pins NOT blessed on a shared box. Portal read (PERF_PORTAL.md, laptop 2026-10-15 at cbe54eaa2): shipped median 2.00x, 82 of 162 within 2x, 44 over 3x; keyed is the slow class (median 3.26x, 16 of 22 over 3x: reload_and_record 6.86x), then parallel 2.54x, native-boundary 2.51x, call 2.49x; the over-3x library rows name their cause each (pack_instances 7.55x, insert_text 7.14x, check_request 7.97x, flow_layout_full 6.91x). The bar is gated by native_ratio.sh in make ci; no open D-perf deviation blocks"
   }
 }
