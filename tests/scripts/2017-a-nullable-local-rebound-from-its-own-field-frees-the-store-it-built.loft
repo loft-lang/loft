@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULLABLE LOCAL REBOUND FROM ITS OWN FIELD FREES THE STORE IT BUILT (`@FR-O-Owner`,
+// `@FR-N-Road`, loft#2017).  `x: Node? = Node { … }` builds its literal in `x` as the dense
+// twin does (loft#1989), and `x = x.next` then hands `x` a VIEW of the store it displaces:
+// the dep list names `x` itself.  That lone self-dep is the owned-keyed marker (@P302) on a
+// keyed local and nothing of the kind on a record one — read as "owns", it admitted the
+// in-place build and no site released the displaced store, one leaked record per walk.
+// A record local whose dep names itself does not own its store, so the literal takes the
+// work-reference road, which frees at scope exit — the same road a foreign dep already
+// takes (`x = p.inner`, the control cell).
+//
+// Every cell asserts its hand-computed value, and the harness fails a script that leaves a
+// store at exit (@P317): value AND leak, both backends.
+//
+// @falsified-at: a64514a4c — interpret: plain, then_null, two_hops, walker and main each leak
+//   kt=99 Node×1 -> clean; native: 1 store not freed at program exit, kt=99 Node×6 -> clean
+
+struct Node { value: integer, next: reference<Node>? }
+struct P { inner: Node }
+
+// plain — the issue's shape, as a void function so the exit sweep is the leak oracle.
+fn plain() {
+    b = Node { value: 2, next: null };
+    x: Node? = Node { value: 1, next: b };
+    x = x.next;
+    assert((x.value ?? 0) == 2, "plain {x.value ?? 0}");
+}
+
+// arm — the rebind inside a branch.
+fn arm(c: boolean) {
+    b = Node { value: 2, next: null };
+    x: Node? = Node { value: 1, next: b };
+    if c {
+        x = x.next;
+    }
+    assert((x.value ?? 0) == (if c { 2 } else { 1 }), "arm {x.value ?? 0}");
+}
+
+// then_null — a `= null` after the walk.
+fn then_null() {
+    b = Node { value: 2, next: null };
+    x: Node? = Node { value: 1, next: b };
+    x = x.next;
+    assert((x.value ?? 0) == 2, "then_null {x.value ?? 0}");
+    x = null;
+    assert(x == null, "then_null end");
+}
+
+// two_hops — the view rebound from a view: the second hop lands on null.
+fn two_hops() {
+    b = Node { value: 2, next: null };
+    x: Node? = Node { value: 1, next: b };
+    x = x.next;
+    x = x.next;
+    assert(x == null, "two_hops");
+}
+
+// walker — `(O-Witness)`'s own example, started from a literal instead of a copy.
+fn walker() {
+    b = Node { value: 2, next: null };
+    x: Node? = Node { value: 1, next: b };
+    i = 0;
+    while x != null {
+        x = x.next;
+        i = i + 1;
+    }
+    assert(i == 2, "walker {i}");
+}
+
+// two_statements — control: the view bound first, then copied in (`@FR-B-Copy`).
+fn two_statements() {
+    b = Node { value: 2, next: null };
+    x: Node? = Node { value: 1, next: b };
+    y = x.next;
+    x = y;
+    assert((x.value ?? 0) == 2, "two_statements {x.value ?? 0}");
+}
+
+// dense — control: the dense twin's spelling through `??`.
+fn dense() {
+    b = Node { value: 2, next: null };
+    y = Node { value: 7, next: null };
+    x: Node = Node { value: 1, next: b };
+    x = x.next ?? y;
+    assert(x.value == 2, "dense {x.value}");
+}
+
+// foreign — control: a view of ANOTHER local's field, the road a self-dep now shares.
+fn foreign() {
+    p = P { inner: Node { value: 2, next: null } };
+    x: Node? = Node { value: 1, next: null };
+    assert((x.value ?? 0) == 1, "foreign before");
+    x = p.inner;
+    assert((x.value ?? 0) == 2, "foreign {x.value ?? 0}");
+}
+
+fn main() {
+    plain();
+    arm(true);
+    arm(false);
+    then_null();
+    two_hops();
+    walker();
+    two_statements();
+    dense();
+    foreign();
+    println("ok");
+}

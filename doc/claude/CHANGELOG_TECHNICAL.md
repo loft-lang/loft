@@ -10,6 +10,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A nullable local rebound from its own field frees the store it built (loft#2017)
+
+`x: Node? = Node { … }; x = x.next` leaked the first record on both backends once the literal
+was built in `x` (loft#1989, `(N-Road)`): the rebind gives `x` a dep list naming itself, and
+`Function::is_independent` read a lone self-dep as the owned-keyed marker for every kind, so
+the in-place build was admitted with no site left to release the displaced store.  On a record
+local that self-dep is the self-projection rebind — a view of the displaced store — and now
+reads as not owning, which routes the literal onto the work-reference road a foreign dep
+(`x = p.inner`) already takes.  The guard
+`tests/scripts/2017-a-nullable-local-rebound-from-its-own-field-frees-the-store-it-built.loft`
+crosses the plain rebind, an arm, a `= null` after it, two hops and the `(O-Witness)` walker
+with the dense, two-statement and foreign-field controls.
+
 ### The three red shards of the joined branch (2026-10-15)
 
 Three classes of red on `tuxedo-pr1988-next`, each older than the corpus move and each from
