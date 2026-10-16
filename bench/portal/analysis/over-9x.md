@@ -351,16 +351,70 @@ inserts 4 615 new keys (all distinct, the table grown from empty):
 | — the rest (field writes, `set_key` writing `q, r` again, `record_finish`, the `keys.clone()` per insert: one `malloc`/`free`) | 2.9 M | — | |
 | the walk `for ph in pw.painted` | 4.55 M (18 %) | in 0.42 M | key order: `n_hash_sorted` sorts the entries (`sort_records` 9 %), then `OpStep` / `step_ordered` |
 | `palette_index_of` | 1.73 M (7 %) | 0.40 M | per element a `get_vector_hoisted` it does not need, `rec_text`, `op_eq_text` |
-| the outer loop over `m.ground` | 1.77 M (7 %) | in 0.42 M | not header-held (the body calls `paint`, which writes stores): `get_vector`, `length_vector` and a store resolve per field |
+| the two loops' own code (`mapfile_to_painted` is inlined) | 1.77 M (7 %) | in 0.42 M | the loop over `m.ground` is not header-held (the body calls `paint`, which writes stores): `get_vector`, `length_vector` and a store resolve per field read |
 
 The hash function is not the gap: `keys::hash` is ~170 instructions a call against the twin's
 SipHash at ~235.  The gap is how many times the work is done: each new key is hashed and
-probed twice and claimed as a record, and each rehash goes back to that record.  To reach 5×
-the row needs −24 %.  The levers it has, read off this profile (none priced yet): one probe
-per insert (the miss's bucket kept for the insert, ≤ −12 %), the order-free walk (P4,
-≤ −15 %, the walk-order decision), a rehash from the bucket's own record number without the
-key re-read (part of −9 %), and `keyed_place_finish` borrowing the key description instead of
-cloning it (−1.4 %).  P3 can buy at most ~5 %: the scan is 7 % of the row.
+probed twice and claimed as a record, and each rehash goes back to that record.  What the row
+needs to change is the next section.
+
+### What `mapfile_to_painted` needs to be under 3×
+
+3× of the twin is **11.85 M instructions per call** (0.75 ms), from 25.6 M: the row must drop
+**54 %**.  The time follows the instructions here (the same IPC on both sides), so the budget
+is kept in instructions.  Every figure below is read off the profile above (*est.*), never
+hand-priced; a profile estimate has paid about two thirds once built (worklist.md § 0), so
+the list is ordered to price the two levers that decide the outcome first.
+
+**The frame: C105 holds.**  The twin's `HashMap` keeps each value inside its table and
+probes by a stored hash fragment.  Both are declined for loft's hash (@C105: two random
+reads per lookup, no hash in the slot, no entries in the bucket table, because entries that
+move on growth break the `DbRef`s a program holds into the collection).  Nothing below needs
+C105 reopened.
+
+| # | change | what it removes | est. saving per call | needs |
+|---|---|---|--:|---|
+| K1 | `(R-KeyedEntry)` extended to the subscript-assign spelling `h[k₁, k₂] = T{…}` and to a compound key of two to four integer parts (the key handed over as an array, as L8b's compound clause does) | `keyed_place_begin`'s lookup (2.84 M), the second probe's re-hash and record compare, `arena::index_of`, `record_finish`'s bookkeeping, `set_key` writing `q, r` a second time, the `keys.clone()` per insert | 6.5 M | a both-shapes admission in `generation::keyed_entry`, and a compound `hash::entry_*` |
+| W | the walk `for ph in pw.painted` without its sorted snapshot, in one of two forms (below) | `n_hash_sorted` (3.26 M) and most of `OpStep` / `step_ordered` | 3.9 M | the walk-order decision, OR the speculative clause (no decision) |
+| K3 | the table reserved before the loop: at most one insert per pass into a hash that is empty where the loop starts (`mtp_out = painted_empty()` just before), so `hash::reserve(len(m.ground))` | every growth: 238 rebuilds over 21 calls, 4.52 M | 4.5 M | the insert seen through the call to `paint` (a callee summary *inserts at most one entry into `w.painted`*, or `paint` inlined in the IR) |
+| K2 | (instead of K3, where no reserve is provable) a rebuild typed by the key's shape: integer parts read straight from the entry and hashed without the key description | about half of each rebuild's ~470 instructions per entry | 2.5 M | runtime only, both backends |
+| L | the loop over `m.ground` header-held across the call to `paint` | `get_vector` + `length_vector` per pass and a store resolve per field | 1.0 M | the same callee summary as K3, answering that `paint` writes no store `m` lives in, or `(R-Alias)`'s versioned run-time store compare |
+| P | the palette scan (P3): no `get_vector_hoisted` for an element whose only use is its name, the length tested before the text is resolved | about half of the scan | 0.9 M | `(R-RecPtr)`'s text read, without the unused element reference |
+
+**Where it lands.**  K1 + W + K3 + L + P remove 16.8 M: **8.8 M per call, 2.2×** if every
+change pays in full, and 3.6× if each pays two thirds.  With K2 in place of K3, 10.8 M,
+2.7× in full.  So the row reaches 3× only if K1 and W pay close to their estimates, and those
+two are the first things to hand-price: K1 by hand-writing the one-probe insert into the
+emitted `n_paint`, W by hand-writing an unsorted walk over the table.  If they come in
+short, the margin left is the arena claim on a new key (`arena::alloc` and its zero fill,
+1.4 M; the allocator's free list) and the division in `home_bucket` (keyed.md § What is
+left, 7–10 % of a lookup).
+
+**W, the two forms.**  Loft walks a hash in key order (the sorted snapshot), the twin in
+table order.  The body here only accumulates: `acc += term(ph)`.  Each term is computed from
+one entry, so only the running sum can depend on the order.  An integer overflow yields null
+and the run continues, so the order changes the answer exactly when some partial sum
+overflows in one order and not in another.
+- *The decision* (worklist.md § 6): the language lets a walk run in table order where the
+  body cannot observe the order, with the range proof (no partial sum can overflow) stated
+  at compile time.  This bench has no such proof: `ph.q` and `ph.r` are stored integers of
+  unknown range.
+- *The speculative clause, no decision needed*: run the body in table order, summing the
+  positive and the negative terms apart in 128 bits.  If both totals fit in 64 bits, no
+  partial sum overflows in ANY order, so the sum is the key-order sum.  A term that is null,
+  or a total that does not fit, discards the pass and walks the sorted snapshot as now.
+  Every value the program sees is the key-order walk's, and the walk-after-a-fault rule
+  (C120) holds because a fault takes the original path.  It reaches any order-free
+  reduction over a keyed collection (`+` over integers, and `min`/`max`, which need no
+  bound at all), not this row alone.
+
+**Both backends.**  W, K3, L and P are IR facts (an order-free walk, a reservation, a
+callee summary), so the interpreter gets them too; K2 is runtime.  K1 is a native emission,
+as `(R-KeyedEntry)` is today.
+
+**Who else moves.**  K1 reaches every `h[a, b] = T{…}` of a heap-free element:
+`reload_and_record` (its compound-key probe is ~32 % of that row), `truncate_to`'s history
+writes, `field_add_cell`.  W reaches `reload_and_record`'s ordered walk (~33 % of that row).
 
 ### pluginabi `check_request` — the decode it shares, and the texts
 
