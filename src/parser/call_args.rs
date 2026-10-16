@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! What a call hands its callee and takes back: each argument converted and validated
 //! against its parameter, the defaults filled in, and the dependencies a result carries —

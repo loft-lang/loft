@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! Generic templates and their instances (`@FR-G-Mono`): the type variables a header
 //! declares, predicting a template's return for a call, and instantiating a template — or a

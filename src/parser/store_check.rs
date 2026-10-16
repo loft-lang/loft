@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! What may be STORED into a slot (`@FR-N-Store`, `@FR-I-Narrow`): the implicit checked
 //! narrowing between integer widths, the constants a narrow or nullable-narrow slot refuses,

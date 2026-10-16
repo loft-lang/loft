@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! The sandbox admission walk (@PLN86): which definitions a `[sandbox]` policy designates,
 //! what the sandboxed code can reach (definitions, FFI bridges, capability links), and the

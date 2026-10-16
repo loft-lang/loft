@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! Interface bounds (`(G-Sat)`): whether a concrete type satisfies every bound of a
 //! template's variables — the members it must carry, the operators that meet them, the

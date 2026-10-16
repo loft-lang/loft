@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! Conversion between types at a use site (`@FR-T-Sub`): [`Parser::convert`] accepts a
 //! value synthesised as one type where another is expected, with its store, condition and

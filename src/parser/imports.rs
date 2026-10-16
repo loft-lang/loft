@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! `use` inside a program: the import spec after a target, a package's own modules, the
 //! pending imports applied when their file becomes current, the trigger maps that auto-`use` a

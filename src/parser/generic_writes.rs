@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! Element writes a generic parsed against a type variable, rewritten for the concrete
 //! element type once it is known: the primitive setter calls and the matched write triplets.

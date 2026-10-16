@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! Comparison and equality over compound values (`@FR-E-Eq`): tuples element by element,
 //! value structs by content, struct-enums by their enum, and the user operator method an

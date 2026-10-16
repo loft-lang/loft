@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! What a tool reads back from a parse: the resolved occurrences an LSP asks for (@PLN115)
 //! and the similar-name suggestions a diagnostic offers for an unknown function, field or

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): a part of src/parser/mod.rs
 
 //! The two-pass driver: every way a parse is started (a file, a directory, the standard
 //! library, an in-memory source, a REPL statement, a live-reload snippet) and what each pass
