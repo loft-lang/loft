@@ -13477,7 +13477,9 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                         .map_or(u16::MAX, |a| cvars.var(&a.name));
                     let empty = HashSet::new();
                     let offs = view_offs.get(tp).unwrap_or(&empty);
-                    if v == u16::MAX || !local_uses_ok(cdef.code(), v, &c, &served, offs, None) {
+                    if v == u16::MAX
+                        || !local_uses_ok(cdef.code(), v, &c, &served, offs, None, &HashSet::new())
+                    {
                         declined_params.push((caller, *idx));
                     }
                 }
@@ -16969,7 +16971,8 @@ pub fn value_locals_in(
                             vars.name(*v)
                         );
                     }
-                    local_uses_ok(body, *v, &c, &served, offs, phantom).then_some((*v, d))
+                    local_uses_ok(body, *v, &c, &served, offs, phantom, &leaves.objects)
+                        .then_some((*v, d))
                 })
                 .collect();
             let stable = kept.len() == cands.len();
@@ -17066,6 +17069,7 @@ fn local_uses_ok(
     served: &HashSet<usize>,
     view_offs: &HashSet<i64>,
     phantom: Option<&HashSet<usize>>,
+    value_objects: &HashSet<usize>,
 ) -> bool {
     let (data, admitted, params) = (c.data, c.admitted, c.params);
     // The layout this local carries, when the walk already holds it as a candidate: a
@@ -17174,7 +17178,13 @@ fn local_uses_ok(
                         served.contains(&(std::ptr::from_ref(a) as usize))
                             || served.contains(&(std::ptr::from_ref(a.unspan()) as usize))
                     });
-                accounted += release_uses(body, name, args, v, copies || src_served);
+                // loft#2014 — a store-identity test whose OTHER operand is a value local, or
+                // the work-ref of a build the value form converts, releases nothing on either
+                // path: neither value is in a store, so the guard is moot rather than
+                // path-dependent, and the test is served.
+                let moot =
+                    |w: u16| c.locals.contains_key(&w) || converted_build_ref(body, value_objects, w);
+                accounted += release_uses(body, name, args, v, copies || src_served, &moot);
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
                 // one): the tuple's range is materialised into the destination.  A bind
                 // that VIEWS the sub-record (`q = w.pos`) is no copy and is not here.
@@ -17224,12 +17234,30 @@ fn is_presence_test(name: &str, args: &[Value], local: u16) -> bool {
 /// side of a store-identity test — but not a test whose answer turns on the path
 /// ([`identity_turns_on_path`]).  `settled`: the caller already decided the first operand's
 /// use (a copy it declines, or a source it served as a leaf read).
-fn release_uses(body: &Value, name: &str, args: &[Value], v: u16, settled: bool) -> u32 {
+fn release_uses(
+    body: &Value,
+    name: &str,
+    args: &[Value],
+    v: u16,
+    settled: bool,
+    moot: &dyn Fn(u16) -> bool,
+) -> u32 {
     let arg_is_v =
         |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
     let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
     if identity && identity_turns_on_path(body, args) {
-        return 0;
+        // loft#2014 — unless every other operand is a value local or a converted build:
+        // then nothing is released on any path and the constant "distinct" is right.
+        let others: Vec<u16> = args
+            .iter()
+            .filter_map(|a| match a.unspan() {
+                Value::Var(w) if *w != v => Some(*w),
+                _ => None,
+            })
+            .collect();
+        if others.is_empty() || !others.iter().all(|&w| moot(w)) {
+            return 0;
+        }
     }
     let first = arg_is_v(0)
         && !settled
@@ -17238,6 +17266,24 @@ fn release_uses(body: &Value, name: &str, args: &[Value], v: u16, settled: bool)
             "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
         );
     u32::from(first) + u32::from(identity && arg_is_v(1))
+}
+
+/// Is local `w` the work-ref an `Object` build the value form converts (`objects`, by the
+/// block's address) ends in — the build's own slot, which under the value form is a tuple
+/// leaf in no store (loft#2014)?
+fn converted_build_ref(body: &Value, objects: &HashSet<usize>, w: u16) -> bool {
+    let mut found = false;
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "Object"
+            && objects.contains(&(std::ptr::from_ref(&**bl) as usize))
+            && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+        {
+            found = true;
+        }
+        found
+    });
+    found
 }
 
 /// A store-identity test answers "distinct" for every value local — it is in no store.  Between
