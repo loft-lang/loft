@@ -68,9 +68,9 @@
 }</code></pre>
 <h2 id="bounded-generics-with-interfaces">Bounded generics with interfaces</h2>
 <p>By default, you can only assign and return T — no arithmetic, and no comparison either: <code>a == b</code> on an unbounded T is refused. To use an operator on T, add an interface bound.</p>
-<p>Each bound guarantees EXACTLY the operations in this table, and no more — a <code>+</code> under <code>Numeric</code> is refused as surely as one under no bound at all. Each names the FEWEST operators it needs, because the rest are derived: <code>&gt;</code>, <code>&lt;=</code> and <code>&gt;=</code> all come from <code>&lt;</code>, and <code>!=</code> comes from <code>==</code>.</p>
-<pre><code>Ordered    — declares `&lt;`; gives you `&lt;`, `&lt;=`, `&gt;`, `&gt;=`
-Equatable  — declares `==`; gives you `==` and `!=`
+<p>Each bound guarantees EXACTLY the operations in this table, and no more — a <code>+</code> under <code>Numeric</code> is refused as surely as one under no bound at all. Each names the FEWEST methods it needs, because the operators are derived: <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> all read <code>compare</code>, and <code>!=</code> comes from <code>==</code>.</p>
+<pre><code>Ordered    — declares `compare`; gives you `&lt;`, `&lt;=`, `&gt;`, `&gt;=`
+Equatable  — declares nothing; every type has `==` and `!=`
 Addable      — `+` only.  NOT `-`
 Numeric      — `*` and the UNARY `-a`.  NOT `+`, NOT `/`
 Subtractable — the BINARY `a - b`
@@ -131,7 +131,7 @@ Scalable     fn scale(self: T, factor: integer) -&gt; integer
 Printable    operator to_text(self: T) -&gt; text
 Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
-<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type, because <code>==</code> compares what two values hold — a struct field by field — unless the type defines <code>operator equals</code>.</p>
+<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type: <code>==</code> always compares what two values hold — a struct field by field — and no type can redefine it; a comparison of your own is a named method.</p>
 <p>The same definition serves the bare operator: once <code>Money</code> has <code>compare</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it.  Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing <code>operator compare(self: Money, other: Money) -&gt; Ordering</code>" — at the CALL site, because that is where the concrete type is known.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Money</span> { cents: <span class="ty"><a href="stdlib-types.html">integer</a></span> }
 <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span> { self.cents.<span class="fn-call">compare</span>(other.cents) }
@@ -291,11 +291,11 @@ fn test_vector_generics() {
 //
 // Each bound guarantees EXACTLY the operations in this table, and no more —
 // a `+` under `Numeric` is refused as surely as one under no bound at all.
-// Each names the FEWEST operators it needs, because the rest are derived:
-// `&gt;`, `&lt;=` and `&gt;=` all come from `&lt;`, and `!=` comes from `==`.
+// Each names the FEWEST methods it needs, because the operators are derived:
+// `&lt;`, `&lt;=`, `&gt;` and `&gt;=` all read `compare`, and `!=` comes from `==`.
 //
-//   Ordered    — declares `&lt;`; gives you `&lt;`, `&lt;=`, `&gt;`, `&gt;=`
-//   Equatable  — declares `==`; gives you `==` and `!=`
+//   Ordered    — declares `compare`; gives you `&lt;`, `&lt;=`, `&gt;`, `&gt;=`
+//   Equatable  — declares nothing; every type has `==` and `!=`
 //   Addable      — `+` only.  NOT `-`
 //   Numeric      — `*` and the UNARY `-a`.  NOT `+`, NOT `/`
 //   Subtractable — the BINARY `a - b`
@@ -369,8 +369,9 @@ fn test_combined_bounds() {
 //
 // `compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has
 // one, so `self.cents.compare(other.cents)` is the whole body for one field.
-// `Equatable` is met by every type, because `==` compares what two values hold —
-// a struct field by field — unless the type defines `operator equals`.
+// `Equatable` is met by every type: `==` always compares what two values hold — a
+// struct field by field — and no type can redefine it; a comparison of your own is a
+// named method.
 //
 // The same definition serves the bare operator: once `Money` has `compare`, both
 // `a &lt; b` and `&lt;T: Ordered&gt;` work on it.  Miss one and the error names it —
