@@ -1790,8 +1790,9 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
 /// record's type declares.
 ///
 /// # Panics
-/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the address, the span or the text no longer
-/// matches a fresh read through the store — a store grew or moved under the block.
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when a fresh read through the store answers a
+/// different address, span or text than the held ones: the proof the hold rests on did not
+/// hold for this block.
 #[inline]
 pub unsafe fn rec_text<const VERIFY: bool>(
     ptr: *const u8,
