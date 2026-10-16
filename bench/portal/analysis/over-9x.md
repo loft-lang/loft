@@ -336,6 +336,32 @@ result 15 %, the palette scan 12 %.
 | P3 | the palette scan reads each name through the generic `store.get_str` and `op_eq_text`; through the record address (`(R-RecPtr)`'s text read) it is a slice compare | unpriced, ≤ 12 % |
 | P4 | the row's `for ph in pw.painted` sorts the hash into a scratch first — loft's iteration order is by key, the twin's `HashMap` order is arbitrary.  A walk whose body only accumulates is order-free and need not sort, but integer overflow makes `+` order-sensitive, so the rewrite needs a range proof | unpriced, ≤ 15 % |
 
+**Re-profiled at `e218a2d48`** (6.58×; callgrind with `--toggle-collect` on `c_mapfile_to_painted`,
+21 calls, hashes equal).  Per call, loft 25.6 M instructions against the twin's 3.95 M — the
+same 6.5× as the time, so the gap is work, not stalls.  Each call reads 5 000 entries and
+inserts 4 615 new keys (all distinct, the table grown from empty):
+
+| part | loft | twin | what loft does that the twin does not |
+|---|--:|--:|---|
+| the keyed insert (`paint`) | 17.5 M (68 %) | 3.13 M (79 %) | |
+| — lookup before the insert (`keyed_place_begin` → `Stores::find`) | 2.84 M | — | a miss answered, then forgotten: the probe below repeats it |
+| — record claimed in the arena (`record_new`, `arena::alloc`) | 2.68 M | — | the twin's table holds the value inline |
+| — second probe (`probe_for_insert`: hash again, compare through `Entries::at`) | 3.52 M | ~1.3 M | |
+| — growth (`grow_if_full` → `rehash_into`) | 4.52 M | 1.81 M | 8 975 entries rehashed (twin ~7 200), ~470 instructions each against ~250: every key is re-read from its record and rehashed through the key description |
+| — the rest (field writes, `set_key` writing `q, r` again, `record_finish`, the `keys.clone()` per insert: one `malloc`/`free`) | 2.9 M | — | |
+| the walk `for ph in pw.painted` | 4.55 M (18 %) | in 0.42 M | key order: `n_hash_sorted` sorts the entries (`sort_records` 9 %), then `OpStep` / `step_ordered` |
+| `palette_index_of` | 1.73 M (7 %) | 0.40 M | per element a `get_vector_hoisted` it does not need, `rec_text`, `op_eq_text` |
+| the outer loop over `m.ground` | 1.77 M (7 %) | in 0.42 M | not header-held (the body calls `paint`, which writes stores): `get_vector`, `length_vector` and a store resolve per field |
+
+The hash function is not the gap: `keys::hash` is ~170 instructions a call against the twin's
+SipHash at ~235.  The gap is how many times the work is done: each new key is hashed and
+probed twice and claimed as a record, and each rehash goes back to that record.  To reach 5×
+the row needs −24 %.  The levers it has, read off this profile (none priced yet): one probe
+per insert (the miss's bucket kept for the insert, ≤ −12 %), the order-free walk (P4,
+≤ −15 %, the walk-order decision), a rehash from the bucket's own record number without the
+key re-read (part of −9 %), and `keyed_place_finish` borrowing the key description instead of
+cloning it (−1.4 %).  P3 can buy at most ~5 %: the scan is 7 % of the row.
+
 ### pluginabi `check_request` — the decode it shares, and the texts
 
 `(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  **`(R-ViewReturn)` built** (211d5055e):
