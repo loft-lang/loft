@@ -4728,9 +4728,9 @@ impl Parser {
         name: &str,
     ) -> Type {
         self.unordered_iterator = false;
-        if let LexItem::Identifier(u) = self.lexer.peek().has.clone()
-            && u == "unordered"
-        {
+        // Borrowed, not cloned: this runs for every `for` header, and a cloned identifier is
+        // an allocation each time (the front-end allocation pins count it).
+        if matches!(&self.lexer.peek().has, LexItem::Identifier(u) if u == "unordered") {
             return self.parse_unordered_source(expr);
         }
         let mut reverse = false;
