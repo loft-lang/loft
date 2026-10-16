@@ -15,7 +15,14 @@
 // byte the copy did not write reads as poison there.
 //
 // @falsify-tier: native-release
-// @falsified-at: PENDING
+// @falsified-by: tests/falsified/a-fresh-copy-into-a-minted-slot-needs-no-prefill.patch — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the PANIC channel, native only — the patch drops the append copy's FRESH flag
+//   and admits the copy anyway, so the slot is minted without its prefill and the copy
+//   releases the handles it finds there.
+//   WITNESS: under the patch native panics in `src/vector.rs` releasing a handle the
+//   unprefilled slot held; this tree runs every cell clean.
+//   HOLDS: the interpreter keeps the prefill and is exact on both trees; leak and
+//   free-refusal are clean on both.
 
 struct P { q: integer, r: integer }
 struct Entry { ps: vector<P>, ns: vector<integer>, label: text }

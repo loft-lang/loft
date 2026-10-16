@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### An appended record that owns heap is minted without its prefill (2026-10-16)
+
+- **`(R-CompleteWrite)`'s fresh-copy clause** — a whole-record `OpCopyRecord` into a minted
+  element covers a HEAP-OWNING element type too when the copy is flagged `COPY_FRESH_DEST`
+  for that type: a fresh copy releases nothing in its destination and writes every byte and
+  handle anew (or zeroes every byte for a null source), so the prefill is read by nothing
+  (`hoist::group_covers_type`, native, `LOFT_NO_COMPLETE_WRITE`).  dryopea `truncate_to`
+  78.3 → 73.4 µs (−6.1 %; with `(H-Park)` 87.8 → 73.4, −16 %).  Guard
+  `a-fresh-copy-into-a-minted-slot-needs-no-prefill.loft` (falsified: an unflagged copy
+  admitted panics on native), pin `tests/complete_write.rs` (`n_add_n` now skips).
+
 ### A freed small block is the next claim of its size (2026-10-16)
 
 - **`(H-Park)`, the allocator's small-block free list** — a delete of a block of 2 to 16

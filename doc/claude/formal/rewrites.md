@@ -3406,9 +3406,14 @@ line in `Output::output_function`'s prelude.
                  the site calls the no-prefill twin (`OpDatabaseNP` /
                  `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
                  itself (`self.items += [p]`, `p` a value of the element type)
-                 covers every field when the element owns no heap; a heap-owning
-                 element's copy trusts the zeroed handles the prefill wrote and
-                 keeps it.  An uncovered field — a nested struct arriving by
+                 covers every field when the element owns no heap, and also for a
+                 heap-owning element when the copy is flagged FRESH for that very
+                 type (`COPY_FRESH_DEST`): a fresh copy never reads its destination
+                 — it releases nothing there, then writes every byte and every
+                 handle anew, or zeroes every byte for a null source — so the
+                 prefill's zeroed handles are read by nothing.  An UNFLAGGED copy
+                 into a heap-owning element releases what the slot holds, and only
+                 the prefill makes that nothing: it keeps it.  An uncovered field — a nested struct arriving by
                  `OpCopyRecord` into a FIELD, a vector field bound by an append, a
                  `__nullable` element whose discriminant no `OpSet` names — keeps
                  the prefill: the check can only DECLINE the elision.  `db_vars`

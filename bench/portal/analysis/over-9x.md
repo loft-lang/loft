@@ -479,7 +479,7 @@ row, ~23 µs.  Under 3× leaves `history_push` ~18 µs for 300 pushes — ~60 ns
 
 | lever | price | status |
 |---|--:|---|
-| the append slot minted without its default prefill (`OpNewRecordNP`: the whole-record copy overwrites every byte) | **−6 %** (86.9 → 81.6 µs, hash unchanged) | priced by hand on 1d7ec5904's emission; `(R-CompleteWrite)` does not count a whole-record copy as covering the slot |
+| the append slot minted without its default prefill (`OpNewRecordNP`: the whole-record copy overwrites every byte) | **−6.1 %** (78.3 → 73.4 µs on the free list, hash unchanged) | **built**: `(R-CompleteWrite)`'s fresh-copy clause — a copy flagged `COPY_FRESH_DEST` never reads its slot |
 | the allocator's small-block free list (worklist.md § 4) | −13.0 % | **built**, `(H-Park)` (below) |
 | the dead entry MOVED instead of copied (X10) | +16 % | priced and declined (worklist.md § 4) |
 | a typed copy and release of a record of plain vectors (no generic dispatch per entry) | *est.* ~10 % | not priced |
