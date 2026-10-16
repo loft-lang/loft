@@ -10365,14 +10365,23 @@ fn group_covers_type(
                             Some(Value::Var(u)) if *u == target)) => {}
             // A WHOLE-record copy into the element (`self.items += [p]`, `p` a value of the
             // element type delivered field by field) writes every field: it covers the type
-            // when the element owns no heap.  A heap-owning element keeps the prefill — the
-            // copy's fresh-destination path trusts the zeroed handles the prefill wrote.
+            // when the element owns no heap.  A heap-owning element is covered too when the
+            // copy is flagged FRESH (`keys::COPY_FRESH_DEST`) for this very type: such a copy
+            // never reads its destination — no `remove_claims`, then `copy_block` over every
+            // byte and fresh handles from `copy_claims`, or every byte zeroed for a null
+            // source (`Stores::copy_null_into`) — so the prefill's zeroed handles are read by
+            // nothing.  Unflagged, the copy releases what the destination holds, and only the
+            // prefill makes that nothing.
             Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpCopyRecord"
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
             {
-                return !stores.owns_heap(tp);
+                let fresh_same_type = matches!(args.get(2).map(Value::unspan),
+                    Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
+                        n & crate::keys::COPY_FRESH_DEST != 0
+                            && n & crate::keys::COPY_TP_MASK == tp));
+                return fresh_same_type || !stores.owns_heap(tp);
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();

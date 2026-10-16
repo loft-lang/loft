@@ -1,0 +1,92 @@
+// `@FR-R-CompleteWrite` — an element appended by a whole-record copy flagged FRESH
+// (`keys::COPY_FRESH_DEST`) is minted without the default prefill on the native backend,
+// even when the element owns heap: the fresh copy never reads its destination (no release
+// of what it held, then every byte overwritten and every handle written anew), so the
+// prefill's zeroed handles are read by nothing.  Every cell appends records that own two
+// vectors and a text, and asserts their VALUES, their LENGTHS and that the copy is
+// independent of its source; the runner checks the store leak at exit.
+//
+// Predictions, hand-computed: c1 sums to 670 over five entries whose `ps` lengths are
+// 0..4; c2 (a call's result through a parameter) to 372; c3 (a call's result appended
+// directly) to 372; c4 keeps the first two of c1's entries (27) and appends two more (239),
+// 266; c5's source is changed after the append and the element still reads 25.  The
+// interpreter keeps the prefill and is the oracle.  `LOFT_NO_COMPLETE_WRITE=1` and
+// `LOFT_POISON_CLAIM=1` (every claim filled with 0xDEADBEEF) must answer identically: a
+// byte the copy did not write reads as poison there.
+//
+// @falsify-tier: native-release
+// @falsified-at: PENDING
+
+struct P { q: integer, r: integer }
+struct Entry { ps: vector<P>, ns: vector<integer>, label: text }
+struct Log { es: vector<Entry>, n: integer }
+
+fn push(l: &Log, e: Entry) {
+  l.es += [e];
+  l.n += 1;
+}
+
+fn make(k: integer) -> Entry {
+  Entry { ps: [P { q: k, r: k * 7 }], ns: [k, k + 100], label: "m{k}" }
+}
+
+fn weigh(l: const Log) -> integer {
+  s = 0;
+  for x in l.es {
+    for p in x.ps { s += p.q * 2 + p.r; }
+    for n in x.ns { s += n; }
+    s += len(x.label);
+  }
+  s
+}
+
+fn keep_first(l: &Log, n: integer) {
+  nv: vector<Entry> = [];
+  for i in 0..n { nv += [l.es[i]?]; }
+  l.es = nv;
+  l.n = n;
+}
+
+fn main() {
+  // c1 — a local built in a loop, appended through a parameter (`history_push`'s shape).
+  l = Log { es: [], n: 0 };
+  for k in 0..5 {
+    e = Entry { ps: [], ns: [], label: "e{k}" };
+    for j in 0..k { e.ps += [P { q: k * 10 + j, r: j }]; }
+    e.ns += [k * 3];
+    push(l, e);
+  }
+  lens = 0;
+  for i in 0..5 { lens = lens * 10 + len(l.es[i].ps); }
+  assert(weigh(l) == 670 && l.n == 5 && len(l.es) == 5 && lens == 1234,
+    "c1: five appended entries read their own values: {weigh(l)} {lens}");
+
+  // c2 — a call's result handed to the appending function.
+  l2 = Log { es: [], n: 0 };
+  for k in 1..4 { push(l2, make(k)); }
+  assert(weigh(l2) == 372 && len(l2.es) == 3, "c2: {weigh(l2)}");
+
+  // c3 — a call's result appended directly.
+  l3 = Log { es: [], n: 0 };
+  for k in 1..4 { l3.es += [make(k)]; }
+  assert(weigh(l3) == 372 && len(l3.es) == 3, "c3: {weigh(l3)}");
+
+  // c4 — the timeline cut back and grown again: the slots freed by the cut are reused.
+  keep_first(l, 2);
+  for k in 7..9 {
+    e = Entry { ps: [P { q: k, r: 1 }, P { q: k, r: 2 }], ns: [k * 11], label: "late" };
+    push(l, e);
+  }
+  assert(weigh(l) == 266 && len(l.es) == 4 && len(l.es[3].ps) == 2,
+    "c4: the cut-and-grown timeline: {weigh(l)}");
+
+  // c5 — the copy is the element's own: changing the source afterwards changes nothing.
+  l5 = Log { es: [], n: 0 };
+  src = Entry { ps: [P { q: 10, r: 0 }], ns: [3], label: "e1" };
+  push(l5, src);
+  src.ps += [P { q: 99, r: 99 }];
+  src.ns[0] = 1000;
+  assert(weigh(l5) == 25 && len(l5.es[0].ps) == 1, "c5: {weigh(l5)}");
+
+  println("fresh copy ok");
+}
