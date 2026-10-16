@@ -1,0 +1,8 @@
+// finding 002 — still holds while this is refused (a regex-shaped split and the words of a line).
+use regex;
+fn main() {
+  n = 0;
+  for piece in "a,b;c".split_on("[,;]") { n += 1; }
+  for m in "cd \"$(dirname \"$0\")\" && pwd".capture_all("[A-Za-z0-9_.-]+") { n += 1; }
+  println("{n}");
+}

@@ -6,7 +6,7 @@ fix: `dir.walk(suffix) -> vector<text>` in the on-demand `script` library (READM
 ref: `dir.walk(suffix)` in `script` 0.1.1 (registry, 2026-10-13), symlink-aware; fuzz/seed_program_source and tests/dump_ignored_tests re-twinned over it 2026-10-14 (SCOREBOARD.md) — their two hand-written walks are gone
 probe: 005.probe.loft
 expect: refused
-checked: f570a06e
+checked: 4b1553fc
 holds: no
 
 no recursive listing: `files()` answers one level, so `find … -name '*.loft'` is a hand-written walk — the tree already carries one in `tools/indexer/src/scan.loft` (`walk_plan_dirs`), one in each of the two gallery scripts, one in the census and one in this port, none symlink-aware before `is_symlink` existed

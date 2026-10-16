@@ -429,6 +429,139 @@ pub fn collect_stdlib_sources(default_dir: &str) -> Vec<(String, String)> {
     out
 }
 
+/// The standard library's two fingerprints — the stdlib cache key ([`stdlib_cache_key`])
+/// and the compiled stdlib's source hash (`compiled_stdlib::source_hash`) — WITHOUT reading
+/// its sources when nothing has moved.
+///
+/// A warm start read and hashed every `default/*.loft` twice: once for the program bundle's
+/// key, once for the compiled stdlib's dispatch check — 240 kB through SHA-256 and a second
+/// hash, about 4.5 ms of a 21 ms `hello` (@PLN179 finding 001).  The answer cannot change
+/// while the files have not, so it is kept in a STAMP beside the cache: the size and the
+/// nanosecond mtime of each file, the directory as the parse was given it, and the build
+/// inputs the key folds in.  A run whose stamp matches takes the two hashes from it (eight
+/// `stat`s); any difference reads the sources, recomputes both, and rewrites the stamp.
+/// Derived data, rebuilt on any doubt: a stamp that does not parse is a miss, a stamp that
+/// cannot be written costs the fast path and nothing else.  Size plus nanosecond mtime is
+/// the same test the registry's trigger sidecar makes of its index.
+///
+/// `None` when `default_dir` holds no `.loft` file or one of them cannot be read.
+#[must_use]
+pub fn stdlib_fingerprint(default_dir: &str) -> Option<([u8; 32], u64)> {
+    stdlib_fingerprint_in(default_dir, &cache_base_dir())
+}
+
+/// [`stdlib_fingerprint`] with its stamp under `dir` (tests keep theirs apart).  One stamp
+/// per configuration — the file is named by a hash of the stamp's header (the build inputs
+/// and the directory) — so two builds or two `LOFT_*` environments taking turns on one box
+/// each keep their own answer rather than rewriting the other's on every run.
+#[must_use]
+pub fn stdlib_fingerprint_in(default_dir: &str, dir: &std::path::Path) -> Option<([u8; 32], u64)> {
+    let now = stdlib_stamp(default_dir)?;
+    let header_end = now.find("\nfile ").unwrap_or(now.len());
+    let tag = hex32(&Sha256::digest(&now.as_bytes()[..header_end]).into());
+    let stamp = dir.join(format!("stdlib-fingerprint-{}.stamp", &tag[..16]));
+    stdlib_fingerprint_at(default_dir, &now, &stamp)
+}
+
+/// The fingerprint for the stamp text `now` of `default_dir`, read from or written to `stamp`.
+fn stdlib_fingerprint_at(
+    default_dir: &str,
+    now: &str,
+    stamp: &std::path::Path,
+) -> Option<([u8; 32], u64)> {
+    // The stamp text must match WHOLE, up to the `key` line: a prefix match would take a
+    // stamp whose file list is longer — one more file, last in name order — for current.
+    if let Ok(text) = crate::file_access::read_to_string(stamp)
+        && let Some((stamped, rest)) = text.split_once("key ")
+        && stamped == now
+    {
+        let rest = format!("key {rest}");
+        let mut key: Option<[u8; 32]> = None;
+        let mut src: Option<u64> = None;
+        for line in rest.lines() {
+            if let Some(hex) = line.strip_prefix("key ") {
+                key = unhex32(hex);
+            } else if let Some(h) = line.strip_prefix("src ") {
+                src = h.parse().ok();
+            }
+        }
+        if let (Some(key), Some(src)) = (key, src) {
+            return Some((key, src));
+        }
+    }
+    let sources = collect_stdlib_sources(default_dir);
+    if sources.is_empty() {
+        return None;
+    }
+    let key = stdlib_cache_key(default_dir, &sources);
+    let src = crate::compiled_stdlib::source_hash(&sources);
+    let content = format!("{now}key {}\nsrc {src}\n", hex32(&key));
+    if let Some(parent) = stamp.parent() {
+        let _ = crate::file_access::create_dir_all(parent);
+    }
+    let tmp = crate::file_access::with_extension(stamp, &format!("tmp{}", std::process::id()));
+    if crate::file_access::write(&tmp, content).is_ok()
+        && crate::file_access::rename(&tmp, stamp).is_err()
+    {
+        let _ = crate::file_access::remove_file(&tmp);
+    }
+    Some((key, src))
+}
+
+/// What a stdlib fingerprint is valid for: the build inputs [`stdlib_cache_key`] folds in,
+/// the directory as given, and each `.loft` file's name, size and nanosecond mtime, in name
+/// order.  `None` when the directory holds no `.loft` file or one cannot be stat'ed.
+fn stdlib_stamp(default_dir: &str) -> Option<String> {
+    let entries = crate::file_access::read_dir(default_dir).ok()?;
+    let mut files: Vec<(String, u64, u128)> = Vec::new();
+    for path in &entries {
+        if !crate::file_access::has_extension(path, "loft") {
+            continue;
+        }
+        let meta = crate::file_access::metadata(path).ok()?;
+        let mtime = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos();
+        files.push((
+            crate::file_access::file_name(path).unwrap_or_default(),
+            meta.len(),
+            mtime,
+        ));
+    }
+    if files.is_empty() {
+        return None;
+    }
+    files.sort();
+    let mut out = format!(
+        "stdlib-fingerprint v1\n{} {LOFT_VERSION} {BUILD_ID} {} {} {} {}\ndir {default_dir}\n",
+        CACHE_FORMAT_VERSION,
+        build_identity_tag(),
+        target_triple(),
+        feature_signature(),
+        semantic_env_signature()
+    );
+    for (name, len, mtime) in &files {
+        use std::fmt::Write as _;
+        let _ = writeln!(out, "file {name} {len} {mtime}");
+    }
+    Some(out)
+}
+
+/// The 32 bytes a 64-hex string spells, or `None` for anything else.
+fn unhex32(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
 /// The on-disk path for the stdlib bundle keyed by `key` (@PLN11 D2b — the
 /// store-format `.store` bundle written by `ir_store::save_bundle`).
 ///
@@ -1350,6 +1483,66 @@ mod tests {
         );
         // The key proper is never the 0 match-anything sentinel.
         assert_ne!(native_artifact_cache_key_of(0, ""), 0);
+    }
+
+    /// The stamped fingerprint answers from its stamp while nothing moved, recomputes when a
+    /// file's content changes under the same size (the mtime moves), and gives the same key
+    /// again when only an mtime moved.
+    #[test]
+    fn stdlib_fingerprint_follows_the_sources_through_its_stamp() {
+        let dir = std::env::temp_dir().join(format!("loft_stdlib_fp_{}", std::process::id()));
+        let _ = crate::file_access::remove_dir_all(&dir);
+        let lib = dir.join("default");
+        crate::file_access::create_dir_all(&lib).unwrap();
+        crate::file_access::write(lib.join("01_a.loft"), "fn a() -> integer { 1 }\n").unwrap();
+        crate::file_access::write(lib.join("02_b.loft"), "fn b() -> integer { 2 }\n").unwrap();
+        let lib_s = lib.to_string_lossy().into_owned();
+        let first = stdlib_fingerprint_in(&lib_s, &dir).expect("two sources");
+        let stamps = || {
+            crate::file_access::read_dir(&dir)
+                .unwrap()
+                .iter()
+                .filter(|p| crate::file_access::has_extension(*p, "stamp"))
+                .count()
+        };
+        assert_eq!(stamps(), 1, "the first call wrote its stamp");
+        // A second call answers from the stamp: the same fingerprint, no new file.
+        assert_eq!(stdlib_fingerprint_in(&lib_s, &dir), Some(first));
+        assert_eq!(stamps(), 1);
+        // The same size, other bytes: the mtime moves, the sources are read, the key differs.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        crate::file_access::write(lib.join("02_b.loft"), "fn b() -> integer { 3 }\n").unwrap();
+        let changed = stdlib_fingerprint_in(&lib_s, &dir).expect("still two sources");
+        assert_ne!(
+            changed.0, first.0,
+            "an edit under the same size must move the key"
+        );
+        assert_ne!(changed.1, first.1);
+        // Only the mtime moves: the sources are read again and the key is the same.
+        crate::file_access::set_modified(
+            crate::file_access::PathText::from_os(&lib.join("01_a.loft")),
+            std::time::SystemTime::now() + std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(
+            stdlib_fingerprint_in(&lib_s, &dir),
+            Some(changed),
+            "a touch keeps the key"
+        );
+        // The fingerprint of the sources read directly agrees with the stamped one.
+        let srcs = collect_stdlib_sources(&lib_s);
+        assert_eq!(changed.0, stdlib_cache_key(&lib_s, &srcs));
+        assert_eq!(changed.1, crate::compiled_stdlib::source_hash(&srcs));
+        // Without the file last in name order, the new stamp is a prefix of the old one and
+        // must miss all the same.
+        crate::file_access::remove_file(lib.join("02_b.loft")).unwrap();
+        let one = stdlib_fingerprint_in(&lib_s, &dir).expect("one source");
+        assert_ne!(one.0, changed.0, "a removed last file must move the key");
+        assert_eq!(
+            one.0,
+            stdlib_cache_key(&lib_s, &collect_stdlib_sources(&lib_s))
+        );
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]

@@ -9228,6 +9228,10 @@ fn main() {
                 p.diagnostics.restore_from_cache(e);
             }
             report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
+            // The copied-out views the cold run's scope pass noted, in the cold run's order:
+            // after the parse diagnostics, before the program runs.
+            loft::copy_manifest::restore_materialised(hit.materialised);
+            loft::copy_manifest::report_materialised_views();
             native_utils::touch_cached_binary(&hit.binary);
             exec_native_binary(
                 &hit.binary,

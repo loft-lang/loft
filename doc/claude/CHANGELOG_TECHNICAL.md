@@ -379,6 +379,34 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   default, so the operator's own lowering stays on the channel that discounts it.
 - Still open, tracked as loft#1990: `(R-ValueRecord)` declines a `-> S?` whose result joins
   a built record with a dense view.
+### A warm run says which views were copied out; `make warm-diff` asks whether it answers as a cold one (2026-10-15)
+
+- `scripts/warm_diff.sh` runs every corpus file through the cold reference, the cold save,
+  the warm bundle load and the two `LOFT_CODEGEN_STORE=1` lanes in a private cache and
+  compares exit code, stdout and stderr: nothing under cargo exercises the cache, so a warm
+  run that differed was a user's to find.  Its first run over 2466 files: 46 warm runs silent
+  where the cold run printed an `advice:` naming a view copied out of its container (the
+  scope pass notes them, and a warm load runs no scope pass; loft#2013), and 73 answering WRONG under
+  `LOFT_CODEGEN_STORE` (loft#2012: the copy decisions read callees' bodies natively, and the
+  skeleton leaves them empty).  The manifest now carries the views as `mview` lines and both
+  warm paths (the bundle load and the native fast path) replay them; the switch stays an
+  experiment.  Cell `a_warm_run_says_which_views_were_copied_out`; STARTUP_CACHE.md § Does a
+  warm run answer as a cold one.
+
+### A warm start no longer reads the stdlib sources (2026-10-15)
+
+- Every run read and hashed `default/*.loft` twice — for the program bundle's stdlib key
+  (`startup_cache::stdlib_key_hex`) and for the compiled stdlib's dispatch check
+  (`compiled_stdlib::mark`): 240 kB through SHA-256 and a second hash, 4.5 ms of a 21 ms
+  warm `hello` (@PLN179 finding 001).  `cache::stdlib_fingerprint` keeps both answers in a
+  stamp beside the cache (each file's size and nanosecond mtime, the directory as given, the
+  build inputs the key folds in; one stamp per configuration, named by its header's hash),
+  so a warm run spends eight `stat`s on the question: `stdlib_key` 2.9 → 0.1 ms, the
+  compiled-stdlib mark 1.6 → 0.2 ms.  Any difference reads the sources and rewrites the
+  stamp; a stamp that does not parse or cannot be written costs the fast path only.
+  `LOFT_TIMING=1` prints the warm start's parts (`warm_load stdlib_key= manifest= bundle=`).
+  Unit cell `stdlib_fingerprint_follows_the_sources_through_its_stamp`.
+
 ### A registry dependency fires its type and builder triggers (2026-10-15)
 
 - `Parser::trigger_map` derived a declared dependency's triggers from a sibling, a `path =`

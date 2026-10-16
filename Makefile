@@ -2848,6 +2848,11 @@ rule-coverage:  ## What share of the formal rules carry a code annotation, and a
 rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
 	@python3 scripts/rule_tags.py worklist $(ARGS)
 
+.PHONY: warm-diff
+warm-diff:  ## Does a program run the SAME from its cache as from its sources? Every corpus file through the cold, warm and skeleton lanes (a report; ARGS="--only 14")
+	@cargo build --release --bin loft -q
+	@scripts/warm_diff.sh $(ARGS)
+
 .PHONY: script-census
 script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)
 	@cargo build --release --bin loft -q

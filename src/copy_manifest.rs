@@ -123,6 +123,29 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
 }
 
+thread_local! {
+    /// The rows [`report_materialised_views`] has already printed.  Kept so the program cache
+    /// can still write them: `main` reports before it saves the bundle, and a warm load has
+    /// no scope pass to note them again.
+    static REPORTED: RefCell<Vec<(String, String, String)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Every materialised view this compilation noted, printed or not — what the program cache
+/// writes beside the parse so a warm run says what the cold run said (`startup_cache`).
+#[must_use]
+pub fn materialised_rows() -> Vec<(String, String, String)> {
+    let mut rows = MATERIALISED.with(|m| m.borrow().clone());
+    REPORTED.with(|r| rows.extend(r.borrow().iter().cloned()));
+    rows
+}
+
+/// Replay the rows a cold run noted, on a warm load that runs no scope pass of its own.
+pub fn restore_materialised(rows: Vec<(String, String, String)>) {
+    for row in rows {
+        note(row);
+    }
+}
+
 /// Record one materialised view, deduped on the whole key.
 fn note(key: (String, String, String)) {
     MATERIALISED.with(|m| {
@@ -217,7 +240,7 @@ pub fn note_reassigned_view(var: &str, owner: &str, function: &str, via: Option<
 pub fn report_materialised_views() {
     let rows: Vec<(String, String, String)> =
         MATERIALISED.with(|m| std::mem::take(&mut *m.borrow_mut()));
-    for (var, container, function) in rows {
+    for (var, container, function) in &rows {
         if let Some(name) = var.strip_suffix("\u{0}reassign") {
             let (name, via) = peel_via(name);
             eprintln!(
@@ -244,7 +267,7 @@ pub fn report_materialised_views() {
                  `{container}[key] = value`."
             );
         } else {
-            let (var, via) = peel_via(&var);
+            let (var, via) = peel_via(var);
             eprintln!(
                 "advice: in `{function}`, `{var}` was copied out of `{container}` because \
                  `{container}` is modified{via} while `{var}` is in use — removing an element \
@@ -253,6 +276,7 @@ pub fn report_materialised_views() {
             );
         }
     }
+    REPORTED.with(|r| r.borrow_mut().extend(rows));
 }
 
 /// Record a deep copy at the moment it is emitted.
@@ -306,6 +330,7 @@ pub fn clear() {
 pub fn begin_compilation() {
     clear();
     MATERIALISED.with(|s| s.borrow_mut().clear());
+    REPORTED.with(|s| s.borrow_mut().clear());
     clear_lease();
 }
 

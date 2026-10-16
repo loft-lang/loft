@@ -83,7 +83,7 @@ fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
 
 /// The hash of the standard-library source a program loads: every `default/*.loft` file's name
 /// and content (`cache::collect_stdlib_sources`, the input the program cache keys on too).
-fn source_hash(sources: &[(String, String)]) -> u64 {
+pub(crate) fn source_hash(sources: &[(String, String)]) -> u64 {
     let mut parts: Vec<&[u8]> = Vec::with_capacity(sources.len() * 2);
     for (name, content) in sources {
         parts.push(name.as_bytes());
@@ -192,7 +192,8 @@ pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
         || generated::BRIDGES.is_empty()
         || prefix_fingerprint(stores, generated::PREFIX_TYPES)
             != Some(generated::PREFIX_FINGERPRINT)
-        || source_hash(&crate::cache::collect_stdlib_sources(default_dir)) != generated::SOURCE_HASH
+        || crate::cache::stdlib_fingerprint(default_dir)
+            .is_none_or(|(_, h)| h != generated::SOURCE_HASH)
     {
         return 0;
     }

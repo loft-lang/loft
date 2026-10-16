@@ -63,6 +63,7 @@ scripts/test_speed.py	--help
 scripts/timing_compare.py	--help
 scripts/unreleased-work.py	--help
 scripts/validator-dryrun.py	--help
+scripts/warm_diff.sh	--help
 scripts/windows_parity.py	--help
 scripts/work-issues.sh	--help
 scripts/worst.py	--help

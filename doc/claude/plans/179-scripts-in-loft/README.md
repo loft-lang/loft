@@ -36,8 +36,9 @@ library from any working directory; it leaves when the library is published.  **
 wrote these by hand switched to it on 2026-10-14 and findings 004, 005 and 008 are struck,
 as is 011: regex 0.5.0 (@PLN192) is published and `tests/dump_ignored_tests` reads the
 reason and the name as the originals' capture groups.  `scripts/rule_predicate_audit` is
-on the library's set (`script` 0.2.0, merged, release and registry entry pending the
-maintainer's run): its twin is green against the checkout and red in CI until then.
+on the library's set (`script` 0.2.0, in the registry since 2026-10-14), its twin green in
+CI over the registry copy — which took a loft fix: a registry dependency's type and builder
+triggers are derived from its extracted copy, as a `path =` dependency's are.
 Finding 009 closed with `exit(code)` in the stdlib the same day, and
 016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
 `lib/process/tests/command.loft`).
@@ -203,9 +204,11 @@ binary) and so needs strand 4's `run` before any tool library — most of what t
 list had read as "needs nothing" — and **T8**, a shell fragment another script `source`s,
 which is not a program and is ported when its last consumer is.
 
-Still open in this strand: the start-up row above re-measured with `LOFT_PROFILE`, and the
-cross-check against `git ls-files` made a test once strand 4's `git` query exists (today it
-is a by-hand comparison, exact on 2026-09-29).
+Still open in this strand: the cross-check against `git ls-files` made a test once strand
+4's `git` query exists (today it is a by-hand comparison, exact on 2026-09-29).  The
+start-up row was re-measured on 2026-10-15 with `LOFT_TIMING=1`'s `warm_load` line and
+`strace` (`LOFT_PROFILE` samples operations and cannot see a start): finding 001 carries
+where a warm start's milliseconds go and what closed two of them.
 
 **A registry library on a box the registry cannot reach** (REASONS row 6): `git clone
 https://github.com/loft-lang/loft-libs-core` and copy the package under `~/.loft/lib/<name>`
