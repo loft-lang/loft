@@ -82,6 +82,18 @@ make check-rlib                          # 1s pre-flight: is libloft.rlib curren
                                          #   time on this box, LOFT_GATE_PARALLEL=1 beside it);
                                          #   ~20 min, twice that with two gates live.
 ./scripts/find_problems.sh --bg|--peek|--wait   # background full-suite run + inspect/block
+make after-join / make after-fix         # WHAT A CHANGE NEEDS, AND NOTHING MORE: reads the
+                                         #   changed files from git (a join: what the join
+                                         #   added; a fix: since the last green run here) and
+                                         #   runs only the steps they call for — fmt, the lint
+                                         #   gates, clippy, the ratchets, the changed guards on
+                                         #   both backends, the diff's test subjects (a fix) —
+                                         #   on the DEV binary, each with its reason and its
+                                         #   seconds; what needs a release build or a runner is
+                                         #   REPORTED as the dispatch it needs (`--dispatch`
+                                         #   sends them).  `--dry-run` is the plan.  Every
+                                         #   step stays inside twenty minutes; a release build
+                                         #   here is never part of it — JOINING.md § The script
 cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole stdlib + every
                                          #   tests/scripts file + every program of the language
                                          #   suite beside the tree (../loft-suite, LOFT_SUITE_DIR);

@@ -33,7 +33,15 @@ scripts/join.py verify           # the cheap checks a gate or a PR stops on: pre
                                  #   the hygiene tests, feature coverage, the PR's doc gate
 scripts/join.py guards           # the tests/scripts guards the join brought in, both backends
 scripts/join.py run [SRC …]      # all five, stopping at the first decision; then the gate
+scripts/after.py join            # what the joined diff calls for and nothing more, timed:
+                                 #   `make after-join`; `make after-fix` is the same after a fix
 ```
+
+`scripts/after.py` is the bounded form of `rederive` + `verify` + `guards`: it reads the
+changed files from git, runs only the steps they call for on the dev binary, prints each
+step's reason and seconds, and reports what needs a release build or a runner as the
+dispatch it needs (`--dispatch` sends them once the branch is pushed).  `--dry-run` shows
+the plan.  A join runs no test binaries unless `--tests`: the gate runs them on the sha.
 
 A SRC is a ref or `name=<sha>`; with none, every `origin/*` branch that moved in the last two
 days and has commits this tree lacks.  The survey classes each commit by the ladder below, in

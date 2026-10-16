@@ -196,10 +196,10 @@
         "default/",
         "tests/ownership_drop_gate.rs"
       ],
-      "check": "cargo test --release -q --test ownership_drop_gate -- --include-ignored",
+      "check": "cargo test -q --test ownership_drop_gate -- --include-ignored",
       "check_first": true,
       "regen": [
-        "LOFT_BLESS_DROP_GATE=1 cargo test --release -q --test ownership_drop_gate -- --include-ignored"
+        "LOFT_BLESS_DROP_GATE=1 cargo test -q --test ownership_drop_gate -- --include-ignored"
       ],
       "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand"
     },

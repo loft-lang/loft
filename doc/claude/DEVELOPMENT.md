@@ -372,6 +372,7 @@ tools around it do the rest:
 
 ```bash
 ./scripts/find_problems.sh --changed      # seconds: the subjects your diff touches, while iterating
+make after-fix                            # after a fix: every check the diff calls for, dev binary, timed
 scripts/ci-run.sh start                   # the full gate; a ~15 s pre-flight refuses it first
                                           #   when fmt, an audit row or doc drift would stop it
 scripts/ci-run.sh recheck                 # AFTER a gate: its failed tests + what changed since
