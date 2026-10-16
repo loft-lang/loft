@@ -5,6 +5,11 @@
 // source is unchanged, and a null source still writes the absent element.
 //
 // Expected values are hand-computed.  P is 24 bytes (three integers); N carries a narrow field.
+//
+// @falsified-by: tests/falsified/a-record-that-owns-no-heap-is-copied-as-its-bytes.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch copies 8 bytes short through the two
+//   addresses, so the reversed records lose their last field and f1's sum falls short.  The
+//   interpreter copies through its own path and cannot move.
 struct P { a: integer, b: integer, c: integer }
 struct N { x: integer, k: u8, y: integer }
 
