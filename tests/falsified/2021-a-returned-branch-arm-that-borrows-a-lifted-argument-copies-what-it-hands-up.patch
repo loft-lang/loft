@@ -1,5 +1,5 @@
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index a2d6b6c8a..8c32c9d6f 100644
+index bb29c4e15..8c32c9d6f 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -14,10 +14,9 @@ use super::insert_free::{
@@ -20,7 +20,7 @@ index a2d6b6c8a..8c32c9d6f 100644
                  "OpFreeRefIfDistinct"
              });
              let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
--            result.extend(Self::bind_return_temp(tmp, expr, data));
+-            result.extend(self.bind_return_temp(tmp, expr, function, data));
 +            result.extend(bind_return_temp(tmp, expr));
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
@@ -29,7 +29,7 @@ index a2d6b6c8a..8c32c9d6f 100644
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
--            result.extend(Self::bind_return_temp(tmp, expr, data));
+-            result.extend(self.bind_return_temp(tmp, expr, function, data));
 +            result.extend(bind_return_temp(tmp, expr));
              free_copied_text_sources(&mut result, expr, &ls, function, data);
              result.extend(ls);
@@ -38,7 +38,7 @@ index a2d6b6c8a..8c32c9d6f 100644
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
--            result.extend(Self::bind_return_temp(tmp, expr, data));
+-            result.extend(self.bind_return_temp(tmp, expr, function, data));
 +            result.extend(bind_return_temp(tmp, expr));
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
@@ -47,7 +47,7 @@ index a2d6b6c8a..8c32c9d6f 100644
                  }
              }
              let mut result = Vec::with_capacity(ls.len() + 2);
--            result.extend(Self::bind_return_temp(tmp, expr, data));
+-            result.extend(self.bind_return_temp(tmp, expr, function, data));
 +            result.extend(bind_return_temp(tmp, expr));
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
@@ -56,7 +56,7 @@ index a2d6b6c8a..8c32c9d6f 100644
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
--                    ls.splice(0..1, Self::bind_return_temp(tmp, expr, data));
+-                    ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
 +                    ls.splice(0..1, bind_return_temp(tmp, expr));
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else if ret_var != u16::MAX {
@@ -65,12 +65,12 @@ index a2d6b6c8a..8c32c9d6f 100644
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
--                    ls.splice(0..1, Self::bind_return_temp(tmp, expr, data));
+-                    ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
 +                    ls.splice(0..1, bind_return_temp(tmp, expr));
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1386,142 +1385,31 @@ pub(super) struct Delivered {
+@@ -1386,163 +1385,31 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -96,9 +96,15 @@ index a2d6b6c8a..8c32c9d6f 100644
 -    /// `r = if …` already takes), so each arm's bind IS the call bind that copies a borrowed
 -    /// result — `(O-Complete)`: the fact per binding and per path.  A branch no arm of which
 -    /// borrows keeps the whole-value bind it had.
--    fn bind_return_temp(tmp: u16, expr: &Value, data: &Data) -> Vec<Value> {
+-    fn bind_return_temp(
+-        &self,
+-        tmp: u16,
+-        expr: &Value,
+-        function: &Function,
+-        data: &Data,
+-    ) -> Vec<Value> {
 -        if Self::is_value_branch(expr)
--            && branch_arm_may_hand_back_a_caller_store(expr, data)
+-            && branch_arm_borrows_a_frame_local(expr, self.d_nr, function, data)
 -            && let Some(sunk) = sink_return_branch(tmp, expr, data)
 -        {
 -            // The sentinel first, so every arm's bind is a reassignment over a known slot:
@@ -124,23 +130,31 @@ index a2d6b6c8a..8c32c9d6f 100644
 -    }
 -}
 -
--/// Does an arm of this value branch end in a call to a loft-defined function whose result may
--/// be a store the caller already holds — a borrowed return, or a join of a borrow and a mint —
--/// so that binding the branch whole would alias it (loft#2021)?  Seen through the wrappers
--/// `is_value_branch` sees through; a `??` chain is an arm of its own.
--fn branch_arm_may_hand_back_a_caller_store(node: &Value, data: &Data) -> bool {
+-/// Does an arm of this value branch end in a call whose result the oracle reads as a BORROW
+-/// (or a join of a borrow and a mint) of a local THIS frame owns — a lifted argument, a local
+-/// built here — so that handing the branch up whole would hand up a view of a store the frame
+-/// frees at exit (loft#2021)?  A borrow of a PARAMETER is the caller's own store and the
+-/// caller's bind copies it (`@FR-F-Ret` at the call-bind, as before); a borrow whose base the
+-/// oracle cannot name is taken as the frame's, which costs a copy and never a dangling view.
+-/// Seen through the wrappers `is_value_branch` sees through; a `??` chain is an arm of its own.
+-fn branch_arm_borrows_a_frame_local(
+-    node: &Value,
+-    d_nr: u32,
+-    function: &Function,
+-    data: &Data,
+-) -> bool {
 -    match node.unspan() {
 -        Value::If(_, t, f) => {
--            branch_arm_may_hand_back_a_caller_store(t, data)
--                || branch_arm_may_hand_back_a_caller_store(f, data)
+-            branch_arm_borrows_a_frame_local(t, d_nr, function, data)
+-                || branch_arm_borrows_a_frame_local(f, d_nr, function, data)
 -        }
 -        Value::Block(bl) if bl.name == "ncc" => false,
 -        // At a return site the arms already carry their scope-exit frees AFTER the value
 -        // they yield, so the tail is the last op that is not one of those.
 -        Value::Block(bl) => last_non_free_result(&bl.operators, data)
--            .is_some_and(|l| branch_arm_may_hand_back_a_caller_store(l, data)),
+-            .is_some_and(|l| branch_arm_borrows_a_frame_local(l, d_nr, function, data)),
 -        Value::Insert(ops) => last_non_free_result(ops, data)
--            .is_some_and(|l| branch_arm_may_hand_back_a_caller_store(l, data)),
+-            .is_some_and(|l| branch_arm_borrows_a_frame_local(l, d_nr, function, data)),
 -        Value::Call(fn_nr, _) => {
 -            let def = data.def(*fn_nr);
 -            def.is_loft_defined()
@@ -148,8 +162,15 @@ index a2d6b6c8a..8c32c9d6f 100644
 -                    def.returned().peel_optional().0,
 -                    Type::Reference(_, _) | Type::Enum(_, true, _)
 -                )
--                && (!def.return_adopts_fresh_store()
--                    || crate::use_analysis::may_hand_back_a_caller_store(data, *fn_nr))
+-                && match crate::use_analysis::ownership_of(data, d_nr, node) {
+-                    crate::use_analysis::Own::Borrowed { base }
+-                    | crate::use_analysis::Own::Join { base } => {
+-                        base == u16::MAX
+-                            || ((base as usize) < function.count() as usize
+-                                && !function.is_argument(base))
+-                    }
+-                    _ => false,
+-                }
 -        }
 -        _ => false,
 -    }
@@ -239,7 +260,7 @@ index a2d6b6c8a..8c32c9d6f 100644
 +    vec![v_set(tmp, expr.clone())]
  }
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index b7fc75f97..34c1bdd48 100644
+index 00ee9a902..34c1bdd48 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
 @@ -2647,12 +2647,7 @@ impl State {
@@ -256,7 +277,7 @@ index b7fc75f97..34c1bdd48 100644
                  && (!is_hidden_buf_arg || entry_w.is_some());
              // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
              // container's backing store (a vector element / nested field), so
-@@ -2894,12 +2889,7 @@ impl State {
+@@ -2894,16 +2889,7 @@ impl State {
                  }
                  if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
                      stack.function.tp(v).base().clone()
@@ -265,12 +286,16 @@ index b7fc75f97..34c1bdd48 100644
 -                    // id(g(3)) } else { null }; r`, written out per arm).  Its bind from a
 -                    // callee that may hand back a caller's store copies like a local's does;
 -                    // adopted, it handed up the lifted argument the frame frees at exit.
--                    && (!stack.function.is_argument(v) || is_promoted_return_buffer(stack, v))
+-                    // Not where the call is handed that buffer itself (`r = f(…, r)`): the
+-                    // callee delivers INTO it and the result is its own store, which native's
+-                    // same-store passthrough adopts — copying it here minted a store per call.
+-                    && (!stack.function.is_argument(v)
+-                        || (is_promoted_return_buffer(stack, v) && !rhs_reads_v))
 +                    && !stack.function.is_argument(v)
                      && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
                      && let Some(fn_nr) =
                          crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-@@ -7156,43 +7146,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7160,43 +7146,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
          seed: Some((ix, *nxt)),
      })
  }
