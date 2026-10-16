@@ -1479,7 +1479,9 @@ fn sink_return_branch(tmp: u16, expr: &Value, data: &Data) -> Option<Value> {
             Value::Null | Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _) => true,
             Value::If(_, t, f) => sinkable(t, data) && sinkable(f, data),
             Value::Block(bl) if bl.name == "ncc" || bl.name == "Object" => false,
-            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => {
+            // Through `base()` as every shape test is asked (@FR-N-Shape): a `Void`/`Null`
+            // result is never wrapped, but the ratchet counts the spelling, not the case.
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Null) => {
                 last_non_free_result(&bl.operators, data).is_some_and(|l| sinkable(l, data))
             }
             Value::Insert(ops) => {

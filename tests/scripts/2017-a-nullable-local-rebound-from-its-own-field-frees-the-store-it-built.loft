@@ -16,6 +16,18 @@
 //
 // @falsified-at: a64514a4c — interpret: plain, then_null, two_hops, walker and main each leak
 //   kt=99 Node×1 -> clean; native: 1 store not freed at program exit, kt=99 Node×6 -> clean
+// @falsified-by: tests/falsified/2017-a-nullable-local-rebound-from-its-own-field-frees-the-store-it-built.patch
+//   — the fix's one clause of `Function::is_independent` reversed: a lone self-dep reads as
+//   owning for a record local again.  Scored by hand on the fixing commit's parent, both
+//   backends; the `--patch` run is owed on a runner.
+// CHANNEL: leak — every assertion passes on both trees; what moves is the store count at exit.
+// ARMED: the harness's own leak check (@P317) — `LOFT_LEAK_CHECK=1` for `loft --tests`; no
+//   other instrument changes the answer (`LOFT_STRICT_STORES=1` is clean on both trees).
+// WITNESS: on the patched tree the interpreter reports `1 store(s) not freed at exit: kt=99
+//   Node×1` for plain, then_null, two_hops and walker (and main, which runs them), and
+//   `--native` reports `kt=99 Node×6` at program exit; the fixed tree reports nothing.
+// HOLDS: every cell's value on both trees (`2`, `null`, `i == 2`), the three controls
+//   (two_statements, dense, foreign), and the loft#1989 guard's eleven cells.
 
 struct Node { value: integer, next: reference<Node>? }
 struct P { inner: Node }
