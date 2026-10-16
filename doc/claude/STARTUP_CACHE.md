@@ -245,7 +245,7 @@ after a change to the bundle, the manifest, the scope pass or what a run prints 
 first statement; exit 0 only when every deterministic file agrees.  The `skel` lane reads
 the whole `Data` from the mapped store and takes only the generated body from it: codegen's
 decisions about OTHER definitions — a call's dispatch, a callee's return ownership — read
-those definitions' bodies, so a load that leaves them empty answers wrong (loft#2012, 76
+those definitions' bodies, so a load that leaves them empty answers wrong (measured over 76
 corpus files).  The body-less skeleton stays a timing measurement (`read_data_skeleton`),
 not codegen's input.
 

@@ -513,7 +513,7 @@ scripts/lint_comments.sh incident # only incident-subject (§ B2, rule 9)
 It flags comment lines that match:
 
 - **History stamps:** `@PLAN | @P\d | plan-\d | phase \d | cluster \d | arc [A-Z] | \d{4}-\d{2}`
-- **Change-narration:** `\b((was|were|has been|have been) removed | no longer | used to \w+ | previously \w+ed | formerly | changed from)\b`
+- **Change-narration:** `\b((was|were|has been|have been) removed | no longer | used to \w+ | previously \w+ed | formerly | changed from)\b` <!-- doc-lint: ok -->
 
 **Read the output as hints, not verdicts.** The script never fails CI and never
 edits code. The text of a flagged comment is often worth keeping once you remove

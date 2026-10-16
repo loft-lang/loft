@@ -704,7 +704,7 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
-`D-types-36` (loft#2006) holds: the copy a `return` makes tests its source at every
+`D-types-36` (loft#2006) holds: the copy a `return` makes tests its source at every <!-- doc-lint: ok -->
 root — a local, a field path, a call (bound first), an element or keyed read (re-read), a
 read whose index calls (read once).  Its record is in [types-history.md](types-history.md).
 
