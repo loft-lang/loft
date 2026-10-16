@@ -192,6 +192,13 @@ jobs:
           name: revalidate-loft-build
           path: loft-src/target/release
 
+      # The SAME stable the build job installed: a library's `--native` suite compiles against
+      # the uploaded rlib with whatever `rustc` is on the path, and the runner image's own
+      # rustc can be one release behind rustup's stable — every leg then reads "found crate
+      # `loft` compiled by an incompatible version of rustc" (E0514) against a sound rlib.
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Put loft on the path
         run: |
           chmod +x loft-src/target/release/loft
