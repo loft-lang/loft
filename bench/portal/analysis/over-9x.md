@@ -521,14 +521,19 @@ calls of 300 pushes: 27.2 M instructions, ~4 500 a push).  The allocator is down
 
 | share | per push | mechanism |
 |--:|--:|---|
-| ~22 % | ~1 000 | the append SLOT: `record_new` → `vector_append` → `push_header` / `reserve_*`, then `record_finish` → `vector_finish`, a `store_mut` lookup at each step — the generic mint of one 16-byte element into a parameter's vector field |
-| 29 % | ~1 330 | `OpCopyRecord`: the entry's two vector blocks claimed and copied (`copy_plain_vectors`, `copy_block`, `memcpy`) — the copy the twin MOVES (X10) |
-| 21 % | ~950 | `keep_vector_range`: the dropped entries' vector blocks released (`release_plain_vectors`, `delete`) |
-| 14 % | — | the driver itself (`n_c_truncate_to__rg`: building `e`'s four deltas), the twin's work too |
+| 29 % | ~1 330 | `OpCopyRecord`: the entry's two vector blocks claimed and copied (`copy_plain_vectors` ~315 a push before a byte moves, `copy_block` ~87 a call around one `memmove`) — the copy the twin MOVES (X10) |
+| 21 % | ~950 | `keep_vector_range`: the dropped entries' vector blocks released (`release_plain_vectors`, `delete`), ~370 a block |
+| ~15 % | — | the driver's own appends building `e` (`OpNewRecordNP` / `OpFinishRecord` 4 a call, `reserve_more`, `push_header`, `clear_vector`) — work the twin does too |
+| 14 % | — | the driver's other code (`n_c_truncate_to__rg` self) |
+| ~7 % | ~315 | `history_push`'s append SLOT: `OpNewRecordNP` → `record_new` (~195) and `OpFinishRecord` → `record_finish` (~120), each redoing the field dispatch the emitter resolved |
 
-The slot is the clear next case: a mint the emitter already knows is filled whole by one
-fresh copy (`(R-CompleteWrite)` admits it) needs only the length bump and the slot's
-address — the shape `@FR-R-Mint`'s fused push gives a literal.  Not priced yet.
+**The slot PRICED** (the emitted `n_history_push` edited by script: `vector_append` /
+`vector_finish` on the field's vector directly, four interleaved rounds on core 2, hash
+equal): 73.7 → 72.0 µs, **−2.3 %** — the ceiling for dropping the dispatch, as both helpers
+still run.  `(R-PushRec)` gives a literal element this form only in a loop admitted under
+`(R-InPlace)`; a straight-line append (one per call) is outside it.  Not built: small beside
+the copy and the release, which together are half the row at a few hundred instructions per
+block, spread over permission checks, store lookups and shadow tests rather than one spot.
 
 ### pluginabi `check_request` — the decode it shares, and the texts
 
