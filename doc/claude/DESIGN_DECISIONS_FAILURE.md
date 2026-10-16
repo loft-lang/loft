@@ -126,9 +126,12 @@ value is null belongs to the program's own inspection (`??`, a test) or the log.
 
 ## C148 — A parsed value carries its own parse errors, wherever the whole value goes
 
-**Decision.** `x#errors` is a `vector<text>` with one entry per error of the `Type.parse(text)`
-call (or the `text as T` cast) that built the value `x` holds — a record, a struct-enum or a
-vector — and reading it changes nothing.  The entries are part of that value: they go with it
+**Decision.** `x#errors` is a `vector<text>` with one entry per value that did not fit in the
+`Type.parse(…)` call (or the `text as T` cast) that built the value `x` holds — a record, a
+struct-enum or a vector — whichever form built it: the one-step `Type.parse(text)` and the
+staged `Type.parse(json_parse(text))` both name EVERY mismatch there, and a value that did not
+fit leaves its field at the type's default while the values around it are kept (owner,
+2026-10-16, loft#2028).  Reading it changes nothing.  The entries are part of that value: they go with it
 when the WHOLE value is bound, rebound, passed, returned from a function or copied to another
 variable, whichever way the compiler delivers it (a move, an exchange of stores, a copy).  A
 value built any other way has none, and neither has a part copied out of a parsed value or a
@@ -140,8 +143,7 @@ on `b` once `b` was parsed, and it was one text the read cleared, so the loop a 
 writes walked characters and a second read answered nothing.  And a delivery that copies must
 answer as one that moves does, or the answer would follow an optimisation.
 
-**Revisit when.** The parse collects more than its first error (the shape already holds
-several), or a consumer needs the errors of a value stored inside another.  Decided 2026-10-12
+**Revisit when.** A consumer needs the errors of a value stored inside another.  Decided 2026-10-12
 (owner) — [record](DESIGN_DECISIONS-history.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes).
 **Holds at:** `@C148` — `./scripts/idx tag:@C148`: the store's content (`Store::parse_errors`,
 emptied by `Store::init`, exchanged by `Store::swap_contents`), `Stores::deliver_parse_errors`

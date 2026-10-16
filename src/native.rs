@@ -3457,7 +3457,12 @@ fn n_struct_from_jsonvalue(stores: &mut Stores, stack: &mut DbRef) {
     let bytes = u32::from(stores.size(struct_kt));
     let words = bytes.div_ceil(8) + 1;
     let result = stores.database(words.max(2));
+    // @C148 — the walk's mismatches are this value's `#errors`, as the text form's are
+    // (loft#2028); `json_errors()` keeps them too.
+    let seen = stores.last_json_errors.len();
     populate_struct_from_jsonvalue(stores, &result, struct_kt, &src);
+    let errs = stores.last_json_errors[seen..].to_vec();
+    stores.set_parse_errors(&result, struct_kt, errs);
     stores.put(stack, result);
 }
 

@@ -4218,7 +4218,10 @@ pub fn n_struct_from_jsonvalue(
     let bytes = u32::from(stores.size(struct_kt));
     let words = bytes.div_ceil(8) + 1;
     let result = stores.database(words.max(2));
+    let seen = stores.last_json_errors.len();
     crate::native::populate_struct_from_jsonvalue(stores, &result, struct_kt, &v);
+    let errs = stores.last_json_errors[seen..].to_vec();
+    stores.set_parse_errors(&result, struct_kt, errs);
     result
 }
 

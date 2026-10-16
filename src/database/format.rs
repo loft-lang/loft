@@ -19,8 +19,9 @@ use std::fmt::{Debug, Formatter, Write as _};
 enum TextErr {
     /// The text is not a well-formed document.
     Malformed(String),
-    /// The document is well-formed and one of its values does not fit its type.
-    Misfit(String),
+    /// The document is well-formed and some of its values do not fit their types: one
+    /// message per such value, in document order (loft#2028).
+    Misfit(Vec<String>),
 }
 
 fn format_walk_err(text: &str, at: usize, path: &[String]) -> String {
@@ -486,7 +487,8 @@ impl Stores {
     /// format `tests/data_structures.rs::record` asserts.
     fn try_parse_unified(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), String> {
         self.read_text(text, tp, result).map_err(|e| match e {
-            TextErr::Malformed(msg) | TextErr::Misfit(msg) => msg,
+            TextErr::Malformed(msg) => msg,
+            TextErr::Misfit(msgs) => msgs.join("|"),
         })
     }
 
@@ -496,13 +498,20 @@ impl Stores {
     /// its program an untouched record restores it ([`Self::record_from_text`]).
     fn read_text(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
         let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
-        let mut failed = None;
+        let mut failed = Vec::new();
         self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
             .and_then(|()| rd.finish())
             .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
-        failed.map_or(Ok(()), |e| {
-            Err(TextErr::Misfit(format_walk_err(text, e.at, &e.path)))
-        })
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(TextErr::Misfit(
+                failed
+                    .iter()
+                    .map(|e| format_walk_err(text, e.at, &e.path))
+                    .collect(),
+            ))
+        }
     }
 
     /// The store a `T.parse` fills: one record of `tp` holding the type's final defaults,
@@ -526,31 +535,30 @@ impl Stores {
     }
 
     /// `T.parse(text)` for both backends: a new store holding the `tp` that `text`
-    /// describes, with the read's one error — or none — filed under the record's
-    /// `#errors` and under `json_errors()`.
+    /// describes, with the read's errors — every value that did not fit, or none — filed
+    /// under the record's `#errors` and under `json_errors()` (@C148, loft#2028).
     ///
     /// The record is written while the text is read, so a document that turns out not to
     /// be well-formed has already written what came before its fault.  A program must
     /// not see that: such a document answers the type's defaults, as if nothing of it
     /// had been read, so the half-written store is released and a new one made.  A
-    /// well-formed document with a value that does not fit its field keeps what was
-    /// written before that value, and nothing after it.
+    /// well-formed document with values that do not fit their fields keeps every value
+    /// that does; a field whose value did not fit holds the type's default, and
+    /// `#errors` names each such value — as the staged `T.parse(JsonValue)` form reads it.
     pub fn record_from_text(&mut self, text: &str, tp: u16) -> DbRef {
         self.last_json_errors.clear();
         let mut into = self.text_target(tp);
-        let err = match self.read_text(text, tp, &into) {
-            Ok(()) => None,
-            Err(TextErr::Misfit(msg)) => Some(msg),
+        let errs = match self.read_text(text, tp, &into) {
+            Ok(()) => Vec::new(),
+            Err(TextErr::Misfit(msgs)) => msgs,
             Err(TextErr::Malformed(msg)) => {
                 self.free(&into);
                 into = self.text_target(tp);
-                Some(msg)
+                vec![msg]
             }
         };
-        if let Some(e) = &err {
-            self.last_json_errors.push(e.clone());
-        }
-        self.set_parse_errors(&into, tp, err);
+        self.last_json_errors.extend(errs.iter().cloned());
+        self.set_parse_errors(&into, tp, errs);
         into
     }
 
@@ -583,11 +591,12 @@ impl Stores {
         self.text_vector(&errors)
     }
 
-    /// Record what the parse that just filled `into`'s store with a `tp` reported: `err` is
-    /// its one error, or `None` for a parse that succeeded.
-    pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, err: Option<String>) {
+    /// Record what the parse that just filled `into`'s store with a `tp` reported: `errs`
+    /// are its errors, one per value that did not fit, empty for a parse that succeeded
+    /// (@C148).  Both forms file here — the text read and the `JsonValue` walk.
+    pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, errs: Vec<String>) {
         let store = &mut self.allocations[into.store_nr as usize];
-        store.parse_errors = err.into_iter().collect();
+        store.parse_errors = errs;
         store.parse_type = tp;
     }
 

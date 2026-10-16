@@ -557,8 +557,9 @@ pub struct Store {
     /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
     /// is the one place they have to be right.
     pub known_type: u16,
-    /// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built this
-    /// store's root, one element per error, empty for a store no parse built.  CONTENT, like
+    /// @C148 — what `record#errors` reads: the errors of the `Type.parse(…)` call that built this
+    /// store's root — the text read or the `JsonValue` walk, one element per value that did
+    /// not fit — empty for a store no parse built.  CONTENT, like
     /// [`Store::known_type`]: [`Store::init`] empties it, [`Store::swap_contents`] moves it
     /// with the records, and a write of the whole root takes the incoming value's
     /// (`Stores::deliver_parse_errors`).

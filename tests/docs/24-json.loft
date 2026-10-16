@@ -70,10 +70,11 @@ struct Catalogue { all: vector<Item>, by_key: hash<Item[key]> }
 //
 //   if json_errors() != "" { log_warn(json_errors()); }
 //
-// 'record#errors' answers for the 'Type.parse(text)' that built that record, as a
-// vector<text>. The one-step form stops at the first mismatch, so it holds at most one
-// entry; the staged 'Type.parse(json_parse(text))' lists every mismatch in
-// 'json_errors()' and leaves '#errors' empty. Each parsed record keeps its own:
+// 'record#errors' answers for the 'Type.parse(…)' that built that record, as a
+// vector<text> with one entry per value that did not fit — every mismatch, whether the
+// one-step 'Type.parse(text)' or the staged 'Type.parse(json_parse(text))' built it; a
+// field whose value did not fit holds the type's default, the rest is read. Each parsed
+// record keeps its own:
 //
 //   for e in user#errors { log_warn(e); }
 //
@@ -144,6 +145,10 @@ fn main() {
   bad = User.parse(`{{"id":"not_a_number","name":42}}`);
   assert(bad.id == 0, "type-mismatched id keeps its default: {bad.id}");
   assert(json_errors() != "", "the mismatch was reported: [{json_errors()}]");
+  // …and EVERY mismatch is named, on the record: `id` and `name` both, in either form.
+  assert(len(bad#errors) == 2, "both mismatches on the record: {bad#errors}");
+  staged = User.parse(json_parse(`{{"id":"not_a_number","name":42}}`));
+  assert(len(staged#errors) == 2, "the staged form names both too: {staged#errors}");
   // …and the next parse replaces it, so a good parse reads clean.
   fine = User.parse(`{{"id":2,"name":"n","email":"e"}}`);
   assert(fine.id == 2, "the good parse landed");
@@ -155,10 +160,12 @@ fn main() {
     total += s.value;
   }
   assert(total == 60, "vector sum: {total}");
-  // An array is all-or-nothing: one element the declaration cannot take
-  // abandons the whole vector, where a struct keeps its other fields.
+  // An element the declaration cannot take keeps its slot at the defaults, and the
+  // elements around it are read — as a struct keeps its other fields; `#errors` names it.
   spoiled = vector<Score>.parse(`[{{"value":"x"}},{{"value":2}}]`);
-  assert(len(spoiled) == 0, "one bad element empties the vector: {len(spoiled)}");
+  assert(len(spoiled) == 2, "one bad element keeps its slot: {len(spoiled)}");
+  assert(spoiled[0].value == 0 && spoiled[1].value == 2, "the fitting element is read: {spoiled}");
+  assert(len(spoiled#errors) == 1, "the mismatch is named: {spoiled#errors}");
 
   c = Contact.parse(`{{"name":"Carol","address":{{"city":"Amsterdam","zip":"1012"}}}}`);
   assert(c.name == "Carol", "nested name");

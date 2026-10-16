@@ -1,0 +1,88 @@
+// loft#2028 — `record#errors` names EVERY value that did not fit, whichever form built the
+// record: the one-step `U.parse(text)` stopped at the first mismatch (one entry), and the
+// staged `U.parse(json_parse(text))` listed every mismatch in `json_errors()` but left
+// `#errors` empty.  Both now fill it, one entry per mismatch (@C148; owner, 2026-10-16).  A
+// value that did not fit leaves its field at the type's default and the values around it
+// are read; a vector element that did not fit keeps its slot, null for a leaf.
+//
+// @falsified-at: d50460de7 — interpret and native: one-step answered 1 of 3, staged 0 of 3;
+//   the mixed record read `ok=false email=` after the misfit (nothing after it was written),
+//   the misfit vector read `[1]` for `[1,null,3,null]`
+// @falsified-by: tests/falsified/2028-both-parse-forms-name-every-mismatch-on-the-record.patch
+//   — the text read back to its first-misfit stop, the walkers back to the one error, the
+//   staged wrapper no longer filing; scored by hand on the fixing commit's parent, both
+//   backends; the `--patch` run is the runner's
+// CHANNEL: assertion — the counts and the values read differ, nothing crashes.
+// ARMED: LOFT_POISON=1 and the leak check are not needed; the counts are the signal.
+// WITNESS: on the patched tree `one-step three` fails first with `1`, then `staged three`
+//   with `0`; with those two cells dropped, `mixed one-step` reads `ok=false`.
+// HOLDS: the zero-mismatch cells, `json_errors()` carrying the same mismatches as one text,
+//   and the delivered copy (`w = v`) carrying the errors (@C148).
+
+struct U { id: integer, ok: boolean, email: text }
+struct N { name: text, u: U, tail: integer }
+struct V { xs: vector<integer> }
+struct S { value: integer }
+
+fn three() -> text { `{{"id":"x","ok":"y","email":3}}` }
+
+fn one_step_three() {
+  u = U.parse(three());
+  assert_eq(len(u#errors), 3, "one-step three: {u#errors}");
+  assert_eq(u#errors[0], "line 1:2 path:id", "the first entry names its path");
+  assert_eq(u#errors[2], "line 1:20 path:email", "the last entry names its path");
+  assert_eq(json_errors(), "line 1:2 path:id|line 1:11 path:ok|line 1:20 path:email", "the JSON register carries the same");
+}
+
+fn staged_three() {
+  v = U.parse(json_parse(three()));
+  assert_eq(len(v#errors), 3, "staged three: {v#errors}");
+  assert_eq(v#errors[0], "U.id: expected JNumber, got JString", "the staged entry names type and field");
+  w = v;
+  assert_eq(len(w#errors), 3, "the errors go with the whole value (C148)");
+}
+
+fn none_and_one() {
+  good = `{{"id":1,"ok":true,"email":"a"}}`;
+  g1 = U.parse(good);
+  g2 = U.parse(json_parse(good));
+  assert_eq("{len(g1#errors)}{len(g2#errors)}", "00", "no mismatch, both forms");
+  one = `{{"id":"x","ok":true,"email":"a"}}`;
+  a = U.parse(one);
+  b = U.parse(json_parse(one));
+  assert_eq("{len(a#errors)}{len(b#errors)}", "11", "one mismatch, both forms");
+  assert_eq("{a.id} {a.ok} {a.email}", "0 true a", "mixed one-step: the misfit field holds the default, the rest is read");
+  assert_eq("{b.id} {b.ok} {b.email}", "0 true a", "mixed staged reads the same");
+}
+
+fn nested() {
+  t = `{{"name":"n","u":{{"id":"x","ok":"y","email":"a"}},"tail":9}}`;
+  n1 = N.parse(t);
+  n2 = N.parse(json_parse(t));
+  assert_eq("{len(n1#errors)}{len(n2#errors)}", "22", "nested mismatches, both forms");
+  assert_eq(n1#errors[1], "line 1:27 path:u.ok", "the nested path");
+  assert_eq("{n1.name} {n1.u.email} {n1.tail}", "n a 9", "around the nested misfits everything is read");
+  assert_eq("{n2.name} {n2.u.email} {n2.tail}", "n a 9", "staged reads the same");
+}
+
+fn vector_elements() {
+  t = `{{"xs":[1,"b",3,"d"]}}`;
+  v1 = V.parse(t);
+  v2 = V.parse(json_parse(t));
+  assert_eq("{len(v1#errors)}{len(v2#errors)}", "22", "two misfit elements, both forms");
+  assert_eq("{v1.xs}", "[1,null,3,null]", "a misfit leaf element keeps its slot as null (one-step)");
+  assert_eq("{v2.xs}", "[1,null,3,null]", "a misfit leaf element keeps its slot as null (staged)");
+  xs = vector<integer>.parse(`[1,"b",3]`);
+  assert_eq("{xs} {len(xs#errors)}", "[1,null,3] 1", "a plain vector parse");
+  rs = vector<S>.parse(`[{{"value":"x"}},{{"value":2}}]`);
+  assert_eq("{len(rs)} {rs[0].value} {rs[1].value} {len(rs#errors)}", "2 0 2 1", "a misfit record element keeps its slot at the defaults");
+}
+
+fn main() {
+  one_step_three();
+  staged_three();
+  none_and_one();
+  nested();
+  vector_elements();
+  println("both parse forms name every mismatch");
+}

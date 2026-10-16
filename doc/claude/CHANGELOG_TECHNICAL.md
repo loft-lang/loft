@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Both parse forms name every mismatch on the record (loft#2028)
+
+`record#errors` holds one entry per value that did not fit, whichever form built the record:
+the one-step `U.parse(text)` stopped at its first mismatch and filed that one, the staged
+`U.parse(json_parse(text))` listed every mismatch in `json_errors()` and filed none.  The text
+read collects every misfit (`read_into`/`read_array`/`read_struct` carry a `Vec<WalkErr>`), a
+value that did not fit leaves its field at the type's default while the values around it
+are read, and a misfit vector element keeps its slot (null for a leaf, the defaults for a
+record) — what the staged walk already wrote; the staged wrappers
+(`n_struct_from_jsonvalue`, both backends) file the walk's entries on the record.  C148's
+entry says so; the owner's decision (2026-10-16).  Guard
+`tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft`; chapter 24
+and the suite's vector cell follow the rule (a misfit element no longer empties the vector).
+
 ### `**` on two integers answers an integer (loft#2024)
 
 Only the single and float powers existed, so `3 ** 20` widened to a `single` and printed
