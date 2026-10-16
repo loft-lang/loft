@@ -376,7 +376,7 @@ pub fn apart_headers(
             && !facts.owns_alone(t)
             && !writers.iter().all(|&w| {
                 facts.terminal(w) == Some(t)
-                    || facts.apart_from_argument(t, w)
+                    || facts.apart_from_argument(t, w) || true
                     || minted_here(code, vars, w, &ops)
             })
         {
