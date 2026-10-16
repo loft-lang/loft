@@ -5013,7 +5013,7 @@ Both parse forms report. 'json\_errors()' holds the LAST parse's diagnostics and
 if json_errors() != "" { log_warn(json_errors()); }
 ```
 
-'record\#errors' answers for the 'Type.parse(text)' that built that record, as a vector\<text\>. The one-step form stops at the first mismatch, so it holds at most one entry; the staged 'Type.parse(json\_parse(text))' lists every mismatch in 'json\_errors()' and leaves '\#errors' empty. Each parsed record keeps its own:
+'record\#errors' answers for the 'Type.parse(…)' that built that record, as a vector\<text\> with one entry per value that did not fit — every mismatch, whether the one-step 'Type.parse(text)' or the staged 'Type.parse(json\_parse(text))' built it; a field whose value did not fit holds the type's default, the rest is read. Each parsed record keeps its own:
 
 ```
 for e in user#errors { log_warn(e); }
@@ -5100,6 +5100,14 @@ A type-mismatched field leaves the record at its DECLARED default — `id` is pl
   assert(json_errors() != "", "the mismatch was reported: [{json_errors()}]");
 ```
 
+…and EVERY mismatch is named, on the record: `id` and `name` both, in either form.
+
+```rust
+  assert(len(bad#errors) == 2, "both mismatches on the record: {bad#errors}");
+  staged = User.parse(json_parse(`{{"id":"not_a_number","name":42}}`));
+  assert(len(staged#errors) == 2, "the staged form names both too: {staged#errors}");
+```
+
 …and the next parse replaces it, so a good parse reads clean.
 
 ```rust
@@ -5117,11 +5125,13 @@ A type-mismatched field leaves the record at its DECLARED default — `id` is pl
   assert(total == 60, "vector sum: {total}");
 ```
 
-An array is all-or-nothing: one element the declaration cannot take abandons the whole vector, where a struct keeps its other fields.
+An element the declaration cannot take keeps its slot at the defaults, and the elements around it are read — as a struct keeps its other fields; `\#errors` names it.
 
 ```rust
   spoiled = vector<Score>.parse(`[{{"value":"x"}},{{"value":2}}]`);
-  assert(len(spoiled) == 0, "one bad element empties the vector: {len(spoiled)}");
+  assert(len(spoiled) == 2, "one bad element keeps its slot: {len(spoiled)}");
+  assert(spoiled[0].value == 0 && spoiled[1].value == 2, "the fitting element is read: {spoiled}");
+  assert(len(spoiled#errors) == 1, "the mismatch is named: {spoiled#errors}");
 ```
 
 ```rust
