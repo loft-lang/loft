@@ -120,6 +120,25 @@ loop's header hold again — with it off, a loop that appends records with text 
 reading another vector keeps that vector's header.  First bisect step for a wrong element read
 in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**`LOFT_NO_CALL_TEXT_BORROW=1`** (`@FR-R-TextBorrow`'s call clause, default-ON, generation
+time) makes a text local bound to a call that fills a work buffer copy the call's text into a
+`String` again — with it off, the local borrows the work text, and a text set reads it in
+place.  First bisect step for a wrong text read from such a local on native; `LOFT_POISON=1`
+is the falsifier.
+
+**`LOFT_NO_TESTED_BORROW=1`** (`@FR-R-TextBorrow`'s tested clause, default-ON, generation
+time) makes a text a `match` arm or a statement binds out of a parameter's record copy itself
+again where its scope also writes the return buffer — with it off, such a bind borrows the
+record's bytes while a run-time compare finds the parameter's store and the buffer's apart.
+First bisect step for a wrong text read from a match binding on native; `LOFT_POISON=1` is the
+falsifier.
+
+**`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
+makes a loop that writes a text field or element decline its header hold again — with it off,
+such a loop holds the headers of the vectors it reads, and an element base only for a vector
+whose store no text set in it writes.  First bisect step for a stale length or element read in
+a loop that assigns texts; `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1` are the falsifiers.
+
 **`LOFT_NO_APART_HEADERS=1`** (`@FR-R-Header`'s apart clause, default-ON) makes a loop the
 header gate declines hold no header at all again.  By default such a loop still keeps the
 header and element base of each vector it only READS — its length, its elements, their
@@ -256,6 +275,14 @@ rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loo
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
+`--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
+store, the record and the text at each read again — with it off, the view's address from
+the held base serves the read: the field's record number one load through it, the text
+sliced off the store span beside the base (`vector::rec_text`).  The first bisect step for a
+wrong or stale text field read in a walk on native; `LOFT_HOIST_VERIFY=1` compares every
+such read with the store's, and `LOFT_NO_TEXT_BASE=1` (`(R-Base)`'s text clause) switches it
+off too.
 **`LOFT_NO_BASE_RECPTR=1`** (`@FR-R-RecPtr`'s base clause, default-ON, generation time,
 `--native` only) makes the loop variable of `for e in v` resolve the store for its address
 again — with it off, the address is the loop's held element base plus index times size
@@ -475,7 +502,8 @@ checks every plain operator.
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores
 differ, keeping the parameter's headers and its element views' record addresses there
-(`fill_polygon` 8.1× → 5.4×) — and is the first bisect step for a wrong value read from a
+(`fill_polygon` 8.1× → 5.4×), and borrowing a walk's text element instead of copying it
+(`@FR-R-TextBorrow`'s versioned clause) — and is the first bisect step for a wrong value read from a
 parameter inside a loop that appends to the result on native.  `LOFT_TRACE_RECPTR=1` names
 each address the copy binds.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation

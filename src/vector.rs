@@ -689,7 +689,14 @@ pub fn is_absent_collection(db: &DbRef, stores: &[Store]) -> bool {
 /// one question — how many elements does this source have — and `nullref` is a RUNTIME null of
 /// a non-nullable type.  A source whose TYPE is `τ?` never reaches here: it is refused at parse
 /// time, since `types.md` admits no implicit unwrap (`Parser::iterator`).
-#[inline]
+///
+/// `#[inline(always)]` because emitted code calls it once per unheld length read and LLVM,
+/// left to `#[inline]`, kept the call: a call and two null tests around one load.  It is
+/// [`rec_and_len`]'s length, spelled out rather than called: through that call LLVM inlined
+/// it less well, and `arguments/parse` measured 2.5 % slower.
+// Measured: as a hint this was declined (the paragraph above).
+#[allow(clippy::inline_always)]
+#[inline(always)]
 pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     // A null vector (absent) and an unallocated/empty vector both have length 0;
     // the null sentinel is checked first so it never indexes stores[u16::MAX].
@@ -702,6 +709,26 @@ pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
         0
     } else {
         store.get_u32_raw(v_rec, 4)
+    }
+}
+
+/// The vector's element record and its length, from ONE read of its header — what every
+/// element read needs, so `get_vector` and `Stores::vec_get_or_raise_runtime` resolve the
+/// store, the collection slot and the length once rather than once for the record and again
+/// for the length.  A null vector (absent), an unallocated one (`rec == 0`), a slot at
+/// `pos == 0` and an absent collection all answer `(0, 0)`: no records, no elements.  The
+/// null sentinel is checked first so it never indexes `stores[u16::MAX]`.
+#[inline]
+pub fn rec_and_len(db: &DbRef, stores: &[Store]) -> (u32, u32) {
+    if db.is_null() || db.rec == 0 || db.pos == 0 {
+        return (0, 0);
+    }
+    let store = keys::store(db, stores);
+    let v_rec = store.collection_rec(db.rec, db.pos);
+    if v_rec == 0 {
+        (0, 0)
+    } else {
+        (v_rec, store.get_u32_raw(v_rec, 4))
     }
 }
 
@@ -773,9 +800,8 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
             db.store_nr, db.rec, db.pos
         );
     }
-    let store = keys::store(db, stores);
-    let v_rec = store.collection_rec(db.rec, db.pos);
-    match elem_index(from, length_vector(db, stores)) {
+    let (v_rec, len) = rec_and_len(db, stores);
+    match elem_index(from, len) {
         None => DbRef::NULL,
         Some(f) => DbRef {
             store_nr: db.store_nr,
@@ -1103,8 +1129,17 @@ pub fn get_vector_hoisted<const VERIFY: bool>(
             pos: checked_vec_pos(from as u32, size),
         }
     } else {
-        get_vector(db, size, from, stores)
+        get_vector_cold(db, size, from, stores)
     }
+}
+
+/// [`get_vector_hoisted`]'s out-of-range half, outlined (`@FR-R-Cold`): a held walk reaches it
+/// once, at its end, and `get_vector` inlined there grew every held loop's body — `mesh_aabb`
+/// measured 68 % slower with it inline.
+#[cold]
+#[inline(never)]
+fn get_vector_cold(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
+    get_vector(db, size, from, stores)
 }
 
 /// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
@@ -1740,6 +1775,51 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
         return crate::store::STRING_NULL;
     }
     text_elem_cold(db, from, stores)
+}
+
+/// `@FR-R-RecPtr`'s text clause — the TEXT field at byte `fld` of the record view whose
+/// address `ptr` a held iteration derived from its element base: the field's record number is
+/// one `u32` load through the address, and the text is sliced off the span `(ptr, size)`
+/// derived beside that base ([`text_span_of`]) — a record element's texts are records in the
+/// SAME store as its vector.  A null address (past the end, the null element) answers the
+/// null text, as the store read of the null record does.
+///
+/// # Safety
+/// `ptr` is null or the address of a live record of the store the span was derived from, by
+/// the binding's growth-free proof (`hoist::record_view_ptr`), and `fld` a text field the
+/// record's type declares.
+///
+/// # Panics
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the address, the span or the text no longer
+/// matches a fresh read through the store — a store grew or moved under the block.
+#[inline]
+pub unsafe fn rec_text<const VERIFY: bool>(
+    ptr: *const u8,
+    (span, size): (*const u8, u32),
+    db: &DbRef,
+    fld: u32,
+    stores: &[Store],
+) -> &'static str {
+    if ptr.is_null() {
+        return crate::state::STRING_NULL;
+    }
+    // SAFETY: the caller's proof — `ptr` addresses a live record and `fld` is a field of it.
+    let rec = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
+    // SAFETY: the span is the record's store's, unchanged since it was derived.
+    let t = unsafe { text_at(span, size, rec) };
+    if VERIFY {
+        assert!(
+            std::ptr::eq(ptr, rec_ptr(db, stores)),
+            "record view address is stale — a store grew or moved under the block"
+        );
+        let store = keys::store(db, stores);
+        assert_eq!(
+            t,
+            store.get_str(store.get_u32_raw(db.rec, db.pos + fld)),
+            "record view text read disagrees with the store's"
+        );
+    }
+    t
 }
 
 /// The negative-index half of [`text_elem_at`], behind a call although it only reads: folded

@@ -68,6 +68,9 @@ The twelve rows reduce to a handful of mechanisms.  Ordered by how many rows eac
 
 ## Re-profiled at `f7f23c5b5` — where each row's time goes
 
+Superseded for the x86-64 cut by [worklist.md](worklist.md) § 0's re-profile at `1ed832afe`
+(each routine counted alone under callgrind); this section is the record of the tree before it.
+
 The same rows and the others over 5× on the x86-64 laptop, on the tree rebased onto `main`
 (`f0b49ec8f`).  The ratios are `bench/portal/results/laptop.tsv`'s; the shares are user-mode
 self time of the `--native-release` binary (§ Method notes, the last item).  The steps these

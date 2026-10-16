@@ -1,0 +1,63 @@
+// `@FR-R-SelfReplace` — a function that builds its result in its buffer names the vector as a
+// view of that buffer (`runs = OpGetField(B, 0)`), and every exit delivers the view into the
+// buffer (`OpReplaceVector(B, runs)`).  When the view is bound once and neither it nor the
+// buffer is rebound after, the two are one reference and the replace is dropped.  A function
+// whose result local is rebound to another vector keeps the replace: it names a buffer the view
+// is not.  Both backends (an IR rewrite); every cell asserts the VALUES a hand computation
+// gives, with `LOFT_NO_SELF_REPLACE=1` the A/B.
+//
+// Dropped: s1 (`slice_runs`' shape — an early `return runs` and the tail).  Kept: s2 (`out` is
+// a view of a store the function minted, and on one path is rebuilt in the buffer from `other`)
+// and s3 (`pick` builds `b` in the buffer and `a` in a store of its own, and returns `a` early).
+//
+// @falsified-by: tests/falsified/a-vector-delivered-into-its-own-buffer-is-not-copied.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch drops a view's delivery into ANY
+//   buffer and stops asking what follows, so `swap_in(0)` answers an empty buffer (`s2
+//   [7,8,9]|[]`).  Each of the three tests alone keeps every cell here: in the parser's output a
+//   view of a store other than the buffer is also rebound or freed after its binding.
+struct Run { str: text, style: integer }
+
+fn build(a: integer, b: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  if b <= a { return runs; }
+  for i in a..b { runs += [Run { str: "r{i}", style: i * 2 }]; }
+  return runs;
+}
+
+fn swap_in(a: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  out += [1, 2];
+  if a > 0 {
+    other: vector<integer> = [7, 8, 9];
+    out = other;
+  }
+  return out;
+}
+
+fn pick(n: integer) -> vector<integer> {
+  a: vector<integer> = [1];
+  b: vector<integer> = [2, 3];
+  a += [n];
+  if n > 0 { return a; }
+  b
+}
+
+fn show(rs: vector<Run>) -> text {
+  t = "";
+  for r in rs { t += "{r.str}/{r.style};"; }
+  t
+}
+
+fn main() {
+  // s1 — build(k, 3) for k = 0..3: three runs from 0, two from 1, one from 2, none from 3.
+  s1 = "";
+  for k in 0..4 { s1 += "[{show(build(k, 3))}]"; }
+  assert(s1 == "[r0/0;r1/2;r2/4;][r1/2;r2/4;][r2/4;][]", "s1 {s1}");
+  // s2 — a positive argument answers the other vector, zero the two pushed.
+  s2 = "{swap_in(1)}|{swap_in(0)}";
+  assert(s2 == "[7,8,9]|[1,2]", "s2 {s2}");
+  // s3 — a positive argument answers `a` with it appended, zero answers `b`.
+  s3 = "{pick(5)}|{pick(0)}";
+  assert(s3 == "[1,5]|[2,3]", "s3 {s3}");
+  println("ok");
+}

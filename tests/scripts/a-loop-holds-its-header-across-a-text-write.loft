@@ -1,0 +1,110 @@
+// `@FR-R-Header`'s text clause — a loop whose only store writes besides in-place sets are TEXT
+// sets (a text field or element assigned, `OpSetText` / `OpSetTextReplace`) still holds the
+// headers of the vectors it reads: a text set claims the new text's record and frees the old
+// one, which changes no vector's record or length.  It may grow the store it writes, so the
+// loop holds no element BASE for a vector in that store, and a loop that also pushes, mints
+// or reserves declines as before.  Native only (an emitter rewrite); every cell asserts the
+// VALUES a hand computation gives, and `tests/text_set_header.rs` runs them under
+// `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1` (every growth moves the store and scribbles the
+// old bytes) in both states of `LOFT_NO_TEXT_SET_HEADER`.
+//
+// Held: t1 (`parse`'s reset shape: a `while` over a field vector writing each element null),
+// t2 (each element's text rewritten with a long text — the store grows — while its integer
+// field is summed), t3 (a text written into one owned local's elements while another owned
+// local is read: two stores), t5 (an element's text set from its neighbour's: the value is
+// copied before the write), t6 (a record's own text field rewritten while its vector is read).
+// Declined: t4 (a text set and a push in one loop).
+//
+// @falsified-by: tests/falsified/a-loop-holds-its-header-across-a-text-write.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's) — under LOFT_POISON=1
+//   CHANNEL: the VALUE channel on native, under `LOFT_POISON=1` — the patch keeps the element
+//   base in a loop that grows its store through text sets, so t2's sum reads the scribbled
+//   old buffer (`t2 null`).  A plain run stays green: the old bytes are not yet reused.
+
+struct Item { n: integer, t: text }
+struct Bag { names: vector<text?>, items: vector<Item>, label: text }
+
+fn reset(b: Bag) -> integer {
+  ri = 0;
+  while ri < b.names.len() {
+    b.names[ri] = null;
+    ri += 1;
+  }
+  ri
+}
+
+fn relabel(v: vector<Item>) -> integer {
+  s = 0;
+  for i in 0..len(v) {
+    v[i].t = "item {i} carries a text long enough to need a record of its own";
+    s += v[i].n;
+  }
+  s
+}
+
+fn pair() -> text {
+  a: vector<Item> = [];
+  for k in 0..30 { a += [Item { n: k, t: "" }]; }
+  c: vector<integer> = [];
+  for k in 0..30 { c += [k * 3]; }
+  s = 0;
+  for i in 0..len(a) {
+    a[i].t = "a{c[i]}-and-some-more-text-to-claim-a-record";
+    s += c[i];
+  }
+  "{s}:{a[29].t}"
+}
+
+fn grow(v: vector<Item>) -> integer {
+  out: vector<integer> = [];
+  for i in 0..len(v) {
+    v[i].t = "g{i}";
+    out += [v[i].n];
+  }
+  len(out) * 1000 + out[len(out) - 1]
+}
+
+fn shift(v: vector<Item>) -> text {
+  for i in 1..len(v) { v[i].t = "{v[i - 1].t}+"; }
+  v[len(v) - 1].t
+}
+
+fn tally(b: Bag) -> text {
+  for i in 0..len(b.items) { b.label = "{b.label}{b.items[i].n}"; }
+  b.label
+}
+
+fn mk() -> Bag {
+  b = Bag { names: ["ab", "", "café"], items: [], label: "L" };
+  for k in 1..41 { b.items += [Item { n: k, t: "t{k}" }]; }
+  b
+}
+
+fn main() {
+  // t1 — three names, each set to null; the loop counts three.
+  b = mk();
+  t1 = reset(b);
+  assert(t1 == 3 && len(b.names) == 3 && b.names[0] == null && b.names[2] == null,
+    "t1 {t1} {len(b.names)}");
+  // t2 — n runs 1..40: the sum is 820, and each text is rewritten (element 39's names 39).
+  t2 = relabel(b.items);
+  assert(t2 == 820 && len(b.items) == 40 && b.items[39].t.starts_with("item 39 carries"),
+    "t2 {t2} {len(b.items)} {b.items[39].t}");
+  // t3 — c is 0, 3, …, 87: its sum is 3 × 435 = 1305; a[29]'s text names c[29] = 87.
+  t3 = pair();
+  assert(t3 == "1305:a87-and-some-more-text-to-claim-a-record", "t3 {t3}");
+  // t4 — 40 values pushed, the last n 40.
+  g = mk();
+  t4 = grow(g.items);
+  assert(t4 == 40040 && g.items[0].t == "g0", "t4 {t4} {g.items[0].t}");
+  // t5 — element 0 keeps "t1"; each next one is its neighbour's text and a "+": element 3 of
+  // a four-element vector is "t1+++".
+  s = [Item { n: 1, t: "t1" }, Item { n: 2, t: "t2" }, Item { n: 3, t: "t3" }, Item { n: 4, t: "t4" }];
+  t5 = shift(s);
+  assert(t5 == "t1+++" && s[1].t == "t1+", "t5 {t5} {s[1].t}");
+  // t6 — "L" followed by 1 through 40.
+  t = mk();
+  t6 = tally(t);
+  assert(t6.starts_with("L12345678910111213") && t6.ends_with("383940") && len(t6) == 72,
+    "t6 {t6} {len(t6)}");
+  println("ok");
+}

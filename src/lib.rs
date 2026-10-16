@@ -353,6 +353,7 @@ pub mod in_range;
 pub mod leaf_inline;
 pub mod literal_append;
 pub mod loop_kernel_rewrite;
+pub mod literal_host;
 pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;
@@ -371,6 +372,7 @@ pub mod return_field;
 pub mod rewrite_census;
 pub mod same_read;
 pub mod scopes;
+pub mod self_replace;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;
@@ -382,6 +384,7 @@ pub mod value_record;
 mod variables;
 pub mod vec_copy;
 pub mod vector;
+pub mod zero_count;
 
 pub mod trace;
 

@@ -96,6 +96,7 @@ impl OpEmitter for TextDispatchEmitter {
                         .output
                         .borrowed_text_locals
                         .get(p)
+                        .or_else(|| ctx.output.versioned_borrow(*p))
                         .and_then(|b| b.read.clone()) =>
             {
                 let name = super::super::sanitize(

@@ -422,6 +422,86 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   file, a free function does, so the author chooses the few worth a bare name and the shared
   namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
   cells `tests/builder_trigger.rs` on both backends.
+### A buffer's own view is not delivered into it, a count a run of statements repeats is made once (2026-10-16)
+
+- **`(R-SelfReplace)`** — `OpReplaceVector(B, x)` after `x = OpGetField(B, 0, …)` is dropped
+  when nothing after the binding assigns, re-points or frees `x` or `B`
+  (`self_replace::rewrite_program`, both backends, `LOFT_NO_SELF_REPLACE`).  Guard
+  `a-vector-delivered-into-its-own-buffer-is-not-copied.loft`, pin `tests/self_replace.rs`.
+- **`(R-SameRead)`'s sequence clause** — a pure store read with a scalar result that later
+  statements repeat, with only pure assignments and a minted record's field writes between, is
+  bound once (`same_read::bind_sequences`, both backends, `LOFT_NO_SEQUENCE_READ`).  Guard
+  `a-count-a-run-of-statements-repeats-is-made-once.loft`, pin `tests/same_read.rs`.
+  Together: `flow_layout_full` −6.6 % (out of the 5× cut), zttext `materialise` −23.9 %.
+
+### `arguments/parse` 7.3× → 3.8× by seven rewrites, and a match binding that borrows under a store test (2026-10-15)
+
+- **`(R-SameRead)`'s match clause** — a slice `match` binds the subject's length and each
+  integer computation of one element two arm tests make once, before the first test
+  (`same_read::bind_match_reads`, both backends, `LOFT_NO_MATCH_READ`).  Guard
+  `a-slice-match-reads-its-subject-once.loft`.
+- **`(R-MoveLast)`'s host clause** — a record literal holding a vector that is dead after it
+  is claimed in that vector's store and takes the vector's handle instead of a deep copy
+  (`literal_host::rewrite`, both backends, `LOFT_NO_LITERAL_HOST`).  Guard
+  `a-literal-takes-a-dead-vector-into-its-store.loft`.
+- **`(R-ZeroCount)`** — `len(t)` compared against the zero boundary reads the byte count, not
+  the character count (`zero_count::rewrite_program`, both backends, `LOFT_NO_ZERO_COUNT`).
+  Guard `a-zero-length-test-counts-no-characters.loft`.
+- **`(R-RecPtr)`'s text clause** — a text field of a held vector's record element is read
+  through the element's address and the store's text span (`vector::rec_text`, native,
+  `LOFT_NO_TEXT_FIELD`).  Guard `a-text-field-of-a-held-element-reads-through-its-address.loft`.
+- **`(R-Cold)`'s one-read clause** — a checked element read resolves the store, the element
+  record and the length once (`vector::rec_and_len`); `vec_get_or_raise_runtime` answers an
+  in-range index inline and outlines the raise, `length_vector` is `#[inline(always)]`, and
+  `get_vector_hoisted`'s end-of-walk half is outlined (`get_vector_cold`).  Runtime, no switch
+  (a layout discipline).  Guard `a-checked-element-read-answers-from-one-header-read.loft`;
+  `chunk_lookup` −14.6 %, `slope_path_with_undo` −15.6 %, `resolve_move` −11.1 % beside it.
+- **`(R-Header)`'s text clause** — a loop the header gate declines only for its text sets
+  holds its headers: a text set changes no vector's record or length.  It may grow the store,
+  so a base is kept only for a vector proven apart from every text set's root, and a loop that
+  also pushes declines (`hoist::hoistable`'s second verdict under `HoistTiers::text_set`,
+  native, `LOFT_NO_TEXT_SET_HEADER`).  `x.f = null` writes the static null text instead of
+  copying it into a `String` (`Output::text_value_unborrowed`).  Guard
+  `a-loop-holds-its-header-across-a-text-write.loft`, pin `tests/text_set_header.rs`.
+- **`(R-Alias)`'s versioned clause counts a walked path for its parameter, and
+  `(R-TextBorrow)`'s versioned clause** — `for e in v` over a parameter that appends to the
+  result now versions on `v`'s store, and inside the copy a text walk borrows its element
+  when every writer names a frame-minted store or the return buffer
+  (`hoist::versioned_text_walks`, `Output::versioned_borrow`, `Output::param_root`, native,
+  `LOFT_NO_DISTINCT_VERSION` / `LOFT_NO_TEXT_BORROW`).  Guard
+  `a-walk-borrows-its-word-in-the-versioned-copy.loft`, pin `tests/versioned_text_walk.rs`;
+  `tween/value` −9.0 % beside it.
+
+- **`(R-TextBorrow)`'s tested clause** — a statement-bound text local whose scope also writes
+  the return buffer borrows its parameter's text under a run-time compare of the two stores,
+  copying when they coincide (`hoist::borrowed_store_texts`'s `tested`, native,
+  `LOFT_NO_TESTED_BORROW`).  Guard `a-match-binding-borrows-its-text-while-the-stores-differ.loft`,
+  pin `tests/tested_text_borrow.rs`; cbor `encode_bytes` −10 %.
+
+- **`(R-TextBorrow)`'s call clause** — a text local bound to a call whose result is its own
+  work text borrows that text, and a store write reads it in place (`hoist::own_call_work`,
+  native, `LOFT_NO_CALL_TEXT_BORROW`).  Guard `a-call-text-is-borrowed-from-its-work-buffer.loft`,
+  pin `tests/call_text_borrow.rs`; `flow_layout_full` −5.9 %.
+
+### A keyed insert writes its entry, a decoded text is read where it lies, a record of texts is released by plan (2026-10-14)
+
+- **`(R-KeyedEntry)`** — an integer-keyed hash insert of a heap-free element answers the entry
+  its key names in one probe and overwrites a repeated key in place (`generation::keyed_entry`,
+  `Stores::keyed_entry_long`, native, `LOFT_NO_KEYED_ENTRY`).  Guard
+  `a-keyed-insert-writes-the-entry-its-key-names.loft`.
+- **`(R-SameRead)`'s get-or-insert clause** — `if !h[k] { h += […] }; b = h[k]` looks the key
+  up once (`same_read::bind_get_or_insert`, both backends).  Guard
+  `a-lookup-a-get-or-insert-repeats-is-made-once.loft`.  `field_add_cell` 7.68× → 4.54× with
+  the clause above; loft#2008 (a keyed literal read its destination after the insert) fixed in
+  `snapshot_read_destination`.
+- **`(R-DecodeView)` instance 1** — a decoded value's texts and byte strings are views into the
+  input frame (C141): `<f>__dv` twins (`generation::decode_view`, native,
+  `LOFT_NO_DECODE_VIEW`).  Guard `a-decoded-text-is-read-where-it-lies.loft`; `check_request`
+  7.55× → 5.07×.
+- **The release plan** — a record whose heap is texts and vectors of text-owning elements is
+  released by its type's plan instead of the type walk (`Stores::release_by_plan`, runtime,
+  both backends, `LOFT_NO_RELEASE_PLAN`).  Guard `a-record-of-texts-is-released-by-its-plan.loft`;
+  `panel_build` 7.44× → 6.00×.
 
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 

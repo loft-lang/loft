@@ -58,6 +58,9 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
     // inlined bodies) — after the value records, so a leaf it inlines is final.
     crate::leaf_inline::rewrite_program(data);
+    // `@FR-R-ZeroCount` — a character count compared with zero reads the byte count, after
+    // the inlining that may leave `len` as its operator.
+    crate::zero_count::rewrite_program(data);
     // `@FR-R-CtorLiteral` — a constructor's call is its literal, after the leaf inlining
     // that leaves a constructor's scalar fields as operator expressions.
     crate::ctor_literal::rewrite_program(data, database);
@@ -65,6 +68,8 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     crate::forward_walk::rewrite_program(data);
     // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
     crate::same_read::rewrite_program(data);
+    // `@FR-R-SelfReplace` — a vector delivered into the buffer it already is, dropped.
+    crate::self_replace::rewrite_program(data);
     // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
     crate::in_range::rewrite_program(data);
     // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.

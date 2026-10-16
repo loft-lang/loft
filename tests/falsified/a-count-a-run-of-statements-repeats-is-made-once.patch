@@ -1,0 +1,13 @@
+diff --git b/src/same_read.rs a/src/same_read.rs
+index ccb44aa54..0702a62a3 100644
+--- b/src/same_read.rs
++++ a/src/same_read.rs
+@@ -767,7 +767,7 @@ fn run_users(
+                 }
+                 live.retain(|e| *e != v);
+             }
+-            Some(Step::Fill(e, rest)) if live.contains(&e) => {
++            Some(Step::Fill(e, rest)) if live.contains(&e) || e != u16::MAX => {
+                 if rest.iter().any(|r| evaluates(r, cand)) {
+                     users.push(j);
+                 }

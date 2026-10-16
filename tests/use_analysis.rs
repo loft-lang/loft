@@ -1188,6 +1188,10 @@ fn introspect_move_elide_src(src: &str, stem: &str, move_on: bool) -> String {
     if !move_on {
         cmd.env("LOFT_NO_MOVE_ELIDE", "1");
     }
+    // `@FR-R-MoveLast`'s host clause takes the fresh construction the OFF baseline leaves
+    // (`a = Bag { items: base }`), so these pins count copies with it off: they measure the
+    // move-elision, not the rewrite that runs after it.
+    cmd.env("LOFT_NO_LITERAL_HOST", "1");
     let out = cmd.output().expect("spawn loft");
     let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stdout).into_owned()

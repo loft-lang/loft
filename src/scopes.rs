@@ -782,6 +782,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `(R-ForwardResult)` — a returned local bound from a call is built in the return
         // buffer: the call is handed the buffer the delivery copied into.
         crate::forward_result::rewrite(data, d_nr);
+        // `@FR-R-MoveLast`'s host clause — a record literal whose vector field takes an owned
+        // local at its last use is built in that local's store.
+        crate::literal_host::rewrite(data, d_nr);
         // `(R-LiteralAppend)` — a record literal bound to a local whose one use is the append
         // of it is built in its element.
         crate::literal_append::rewrite(data, d_nr);
