@@ -8028,6 +8028,12 @@ pub fn log(self: single, v2: single) -> single?
 Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).
 
 ```rust
+pub fn pow(self: integer, v2: integer) -> integer?
+```
+
+Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 \*\* 20` is 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the answer does not fit an integer (`pow(2, 63)`), as `\*` answers null past the range.
+
+```rust
 pub fn pow(self: single, v2: single) -> single?
 ```
 

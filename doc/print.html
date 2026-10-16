@@ -4162,6 +4162,10 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Logarithm in the base given second: <code>log(8.0, 2.0)</code> is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: <span class="ty"><a href="stdlib-types.html">integer</a></span>, v2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>?</code></pre>
+<p>Raises the integer to the power given second: <code>pow(3, 4)</code> is 81, and <code>3 ** 20</code> is 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the answer does not fit an integer (<code>pow(2, 63)</code>), as <code>*</code> answers null past the range.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, v2: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>
 <p>Raises the value to the power given second: <code>pow(2.0, 10.0)</code> is 1024. Null when the answer is not a real number (<code>pow(-8.0, 0.5)</code>). Use for exponential growth curves and scaling.</p>
 </div>
