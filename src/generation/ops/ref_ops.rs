@@ -679,7 +679,7 @@ fn emit_flat_copy(
         let lock = super::super::rec_ptr_lock(&pd);
         write!(
             ctx.w,
-            "; if !{lock} && !{ps}.is_null() && !{pd}.is_null() {{ unsafe {{ std::ptr::copy({ps}, {pd}.cast_mut(), {size}) }} }} else {{ "
+            "; if !{lock} && !{ps}.is_null() && !{pd}.is_null() {{ unsafe {{ std::ptr::copy({ps}, {pd}.cast_mut(), {size} - 8) }} }} else {{ "
         )?;
     } else {
         write!(
