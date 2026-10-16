@@ -133,9 +133,13 @@ impl ApartWalk<'_, '_> {
             return;
         }
         let named = self.owners_of(x);
+        // A writer is anything that can name a store: a reference, a collection, and a `&`
+        // link of ANY type (`x = &o.f` writes `o`'s store through it).
         if matches!(ctx, Ctx::Other)
             && (x as usize) < vars.var_count()
-            && crate::data::is_dbref(vars.tp(x).base())
+            && (crate::data::is_dbref(vars.tp(x).base())
+                || matches!(vars.tp(x), crate::data::Type::RefVar(_))
+                || matches!(vars.tp(x).base(), crate::data::Type::RefVar(_)))
         {
             self.writers.insert(x);
         }

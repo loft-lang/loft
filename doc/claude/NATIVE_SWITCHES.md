@@ -149,6 +149,12 @@ inside the loop, or read in a generator's loop keeps the per-access form.  The f
 step for a stale element or length read from a vector the loop only reads, beside a call
 that writes or a push to another vector; `LOFT_HOIST_VERIFY=1` re-derives every such header
 at every read, and `LOFT_TRACE_HOIST_DECLINE=1` names the vectors each declined loop keeps.
+**`LOFT_NO_APART_PARAM=1`** (`@FR-R-Header`'s apart clause, its parameter half, default-ON)
+makes a PARAMETER's vector in such a loop take no header again.  By default it keeps one
+where every store the loop writes or grows is proven apart from the parameter's — a store
+this call minted, or the return buffer inside R-Alias's versioned copy — and the vector is
+only read, or handed to a callee that writes no store.  The first bisect step for a stale
+element or length read from a parameter's vector in a loop that grows the return buffer.
 
 ## Text walks
 

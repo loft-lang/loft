@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A parameter's vector holds its header where every writer is apart (2026-10-16)
+
+- **`(R-Header)`'s apart clause, its parameter half** — in a loop the header gate declines, a
+  by-value parameter's vector (bare or a field path, `d.pieces`) keeps its header and base when
+  every variable the body names outside a read ends at a store this call minted (not an
+  argument), a local only ever minted, or a pair `(R-Alias)`'s versioned copy tested apart; a
+  field projection read in place and an argument handed to a callee that writes no store are
+  reads (`apart::apart_headers`, `StoreFacts::apart_from_argument`, native,
+  `LOFT_NO_APART_PARAM`).  `distinct_version` also versions a declined loop whose movers end
+  at the return buffer (`Output::grows_buffer`).  zttext `invert` 4.51 → 3.75 ms (−17 %);
+  twelve programs in the census.  Guard
+  `a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft`, pin
+  `tests/apart_param.rs`.
+
 ### A vector prepended to is rebuilt in place (2026-10-16)
 
 - **`(R-Compact)`'s prepend form** — `t = []; t += g; t += V; V = t`, `g` a local, becomes

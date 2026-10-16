@@ -588,6 +588,17 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  store.  Nothing else of the loop is hoisted — no push header, no
                  scalar, no callee input: those rest on the gate's verdict about
                  the whole body.
+  (R-Header), the apart clause's PARAMETER half: the same holds for a vector
+                 a by-value PARAMETER reaches — bare, or a field path over it
+                 (`d.pieces`) — where, beside (b) and (c), every variable the body
+                 names outside a read is proven apart from the parameter's store:
+                 its dep chain ends at a store this activation minted that is no
+                 argument (a hidden vector buffer is an argument), or at a local
+                 every binding of which is a null or a mint, or the pair is one
+                 R-Alias's versioned copy tested at run time.  A field projection
+                 read in place is a read of its base, and an argument handed to a
+                 loft callee that writes no store and answers no reference is a
+                 read.  Two arguments are never proven apart.
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
@@ -605,6 +616,23 @@ falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `generation::apart` (`apart_headers`, `
 `tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft`; pin
 `tests/apart_headers.rs`.  cbor `encode` (x86-64): 10.52 → 8.42 ms, hash unchanged — its
 emit loop reads `ranks`, `koff`, `klen` and `keybuf` and calls the recursive `encode`.
+
+**The parameter half, in words.**  A parameter's store is named by the caller too, so the
+mention test alone proves nothing about it: another argument, or the return buffer, may be a
+field of the same record.  What a loop can write or grow it names (a push's target, a
+setter's, a mint's store, an argument handed to a writer), so the half asks that every such
+variable be one the parameter cannot share a store with.  The return buffer is an argument a
+caller may claim in the parameter's own store (`(R-Place)`), so a loop that grows it gains
+the header only in R-Alias's versioned copy, which `distinct_version` now also opens for a
+loop the gate declined whose movers end at the buffer.  zttext `slice_runs` (inside
+`invert`): 4.51 → 3.75 ms per `invert` (−17 %, the hand price −16 %), hash unchanged; the
+census counts it in twelve programs.  Switch `LOFT_NO_APART_PARAM=1`; falsifier
+`LOFT_HOIST_VERIFY=1`.  Sites: `apart::apart_headers` (the `param` owners, `minted_here`,
+`ApartWalk::store_free_call`), `StoreFacts::apart_from_argument`, `Output::grows_buffer`.
+Guard `tests/scripts/a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft`
+(h1–h7; h7 is the same record passed as both parameters and emptied through one, falsified
+by a plant that takes every writer as apart: `h7 179400` where the file says 220); pin
+`tests/apart_param.rs`.
 
 **The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
 self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its
