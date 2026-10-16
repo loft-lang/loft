@@ -193,6 +193,9 @@ def plan(mode, paths, base, want_tests):
                               "B", needs="bin"))
     if want_tests:
         ok, filt, _ = sh(f"bash -c 'source scripts/test_subjects.sh; changed_filter {base}'")
+        # The expression is the first line; `changed_filter` reports the subjects it chose
+        # on a second line, which nextest would read as unparsed input.
+        filt = filt.strip().splitlines()[0] if filt.strip() else ""
         if ok and filt.strip():
             steps.append(Step("tests", f"cargo nextest run --no-fail-fast --status-level fail -E \"{filt.strip()}\"",
                               f"the subjects the diff touches ({filt.strip()[:60]}…)", "B"))
