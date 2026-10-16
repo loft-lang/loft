@@ -353,6 +353,20 @@ pub fn op_mul_long(v1: i64, v2: i64) -> i64 {
     }
 }
 
+/// Integer power (loft#2024): null in, null out; a negative exponent has no integer answer and
+/// is null; past the range it answers null as `*` does, noting the overflow.
+#[inline]
+#[must_use]
+pub fn op_pow_int(v1: i64, v2: i64) -> i64 {
+    if v1 == i64::MIN || v2 == i64::MIN || v2 < 0 {
+        return i64::MIN;
+    }
+    match u32::try_from(v2) {
+        Ok(e) => checked_long!(v1.checked_pow(e), "**", v1, v2),
+        Err(_) => checked_long!(None, "**", v1, v2),
+    }
+}
+
 /// @C94 — integer `/` truncates toward zero.
 #[inline]
 #[must_use]

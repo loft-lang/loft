@@ -494,6 +494,17 @@ pub fn log(self: single, v2: single) -> single? {
 }
 #pure
 
+fn OpPowInt(v1: integer, v2: integer) -> integer;
+#cold
+#rust"ops::op_pow_int(@v1, @v2)"
+/// Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 ** 20` is
+/// 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the
+/// answer does not fit an integer (`pow(2, 63)`), as `*` answers null past the range.
+pub fn pow(self: integer, v2: integer) -> integer? {
+  OpPowInt(self, v2)
+}
+#pure
+
 fn OpPowSingle(v1: single, v2: single) -> single;
 #cold
 #rust"@v1.powf(@v2)"

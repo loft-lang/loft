@@ -10,6 +10,37 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `**` on two integers answers an integer (loft#2024)
+
+Only the single and float powers existed, so `3 ** 20` widened to a `single` and printed
+3486784500 for 3486784401 with nothing said.  `OpPowInt` (`ops::op_pow_int`) answers the exact
+integer: null for a negative exponent and null past the range, as `*` answers null past the
+range; `pow(self: integer, v2: integer) -> integer?` is its method.  The operator table is
+regenerated (`src/fill.rs`, `src/op_layout.rs`).  Guard:
+`tests/scripts/2024-an-integer-power-answers-an-integer.loft`, both backends.
+
+### A match arm's root capture is settled for `variant-field-unchecked` (loft#2025)
+
+`w: Circle { r } => { w.r = 10 }` warned that the access does not check the variant, naming
+the capture `w#1`.  The parser records the variant an arm's root capture holds
+(`Parser::capture_variant`) and `guard_variant_receiver` returns the access unchanged for it;
+a message that fires names the spelled binding.  `tests/variant_field.rs` pins it.
+
+### `lost-write` is quiet for a local bound only to `null` (loft#2026)
+
+`p: P? = null; p.x = 5` was diagnosed as a copy whose mutation is lost; nothing was copied,
+and the write is dropped at run time with its own log line.  `warn_dead_stores` skips a local
+every whole-value bind of which is a bare `null` (`bound_only_to_null`).
+`tests/dead_code_lint.rs` pins it.
+
+### A moot store-identity test no longer declines the value form (loft#2014)
+
+`(R-ValueRecord)` declined six pinned returns since 932209dc4: the exit release of a `?`
+default's build is guarded by a store-identity test against the result, and
+`identity_turns_on_path` read that as path-dependent.  Where the test's other operand is a
+value local or the work-ref of a build the value form converts, nothing is released on any
+path, so the test is served (`release_uses`'s `moot`); the pins return to the register form.
+
 ### The Windows-rules harness holds the per-script run lock (loft#2018)
 
 `tests/windows_rules.rs` ran `#cwd` scripts from the repository root beside the corpus

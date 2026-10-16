@@ -277,6 +277,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpRemSingleNullable",
     "OpMathFuncSingle",
     "OpMathFunc2Single",
+    "OpPowInt",
     "OpPowSingle",
     "OpFormatSingle",
     "OpFormatStackSingle",

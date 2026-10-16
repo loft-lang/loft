@@ -296,6 +296,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     rem_single_nullable::<false>,
     math_func_single::<false>,
     math_func2_single::<false>,
+    pow_int::<false>,
     pow_single::<false>,
     format_single::<false>,
     format_stack_single::<false>,
@@ -644,6 +645,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     rem_single_nullable::<true>,
     math_func_single::<true>,
     math_func2_single::<true>,
+    pow_int::<true>,
     pow_single::<true>,
     format_single::<true>,
     format_stack_single::<true>,
@@ -992,6 +994,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     rem_single_nullable_r,
     math_func_single_r,
     math_func2_single_r,
+    pow_int_r,
     pow_single_r,
     format_single_r,
     format_stack_single_r,
@@ -2390,6 +2393,20 @@ fn math_func2_single<const F: bool>(s: &mut State) {
 fn math_func2_single_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     math_func2_single::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn pow_int<const F: bool>(s: &mut State) {
+    let v_v2 = s.get_stack_m::<F, i64>();
+    let v_v1 = s.get_stack_m::<F, i64>();
+    let new_value = ops::op_pow_int(v_v1, v_v2);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn pow_int_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    pow_int::<true>(s);
     s.regs_out()
 }
 

@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN INTEGER POWER ANSWERS AN INTEGER (loft#2024).  `**` on two integers answered a `single`:
+// `3 ** 20` printed 3486784500 for 3486784401 and nothing said so, because only the single
+// and float powers existed and the integers were widened.  `OpPowInt` answers the exact
+// integer, null for a negative exponent (no integer answers it) and null past the range, as
+// `*` answers null past the range.  Every cell is hand-computed, both backends.
+//
+// @falsified-at: 476c0328b — interpret and native: `3 ** 20` answered 3486784500 for
+//   3486784401 and `c: integer = 2 ** 10` was refused as a single -> exact and typed
+
+fn main() {
+  a = 3;
+  b = 20;
+  c: integer = a ** b;
+  assert(c == 3486784401, "3 ** 20 {c}");
+  assert(2 ** 40 == 1099511627776, "2 ** 40 {2 ** 40}");
+  assert(7 ** 2 == 49, "7 ** 2 {7 ** 2}");
+  assert(5 ** 0 == 1 && 0 ** 0 == 1 && 0 ** 5 == 0, "zero powers");
+  assert((-2) ** 3 == -8 && (-2) ** 2 == 4, "negative base {(-2) ** 3} {(-2) ** 2}");
+  assert(2 ** 62 == 4611686018427387904, "2 ** 62 {2 ** 62}");
+  big: integer? = 2 ** 63;
+  assert(big == null, "2 ** 63 overflows to null");
+  neg: integer? = 2 ** -1;
+  assert(neg == null, "a negative exponent is null");
+  f = 2.0 ** 10.0;
+  assert(f == 1024.0, "the float power keeps its road {f}");
+  println("ok");
+}
