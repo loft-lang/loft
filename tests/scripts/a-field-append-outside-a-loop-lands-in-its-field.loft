@@ -1,4 +1,4 @@
-// `@FR-R-FieldMint` — a straight-line append to a struct's plain vector field (`r.f += [x]`
+// `@FR-R-FieldAppend` — a straight-line append to a struct's plain vector field (`r.f += [x]`
 // where no loop holds a push header for `r.f`) is emitted on the native backend as the
 // field's own append, the field's offset and the element's size resolved by the emitter,
 // instead of `record_new` / `record_finish` resolving them on every call.  Every cell asserts
@@ -11,11 +11,16 @@
 // element's field) leaves `v` one element long with nothing in it; f6 (a vector<text>
 // field) "x,y"; f7 (an element whose nested struct arrives by copy, so the slot keeps its
 // prefill) 2 elements, sum 3 + 4 + 5 + 6 + 1 + 2 = 21.  The
-// interpreter is the oracle.  `LOFT_NO_FIELD_MINT=1` and `LOFT_POISON_CLAIM=1` must answer
+// interpreter is the oracle.  `LOFT_NO_FIELD_APPEND=1` and `LOFT_POISON_CLAIM=1` must answer
 // identically.
 //
 // @falsify-tier: native-release
-// @falsified-at: PENDING
+// @falsified-by: tests/falsified/a-field-append-outside-a-loop-lands-in-its-field.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch resolves every admitted field at
+//   offset 0, so f1's appends (`b.items`, 8 bytes in) land in `count`'s word instead.
+//   WITNESS: under the patch native's first failing assertion is f1's.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
 
 struct It { n: integer, label: text }
 struct Bag { items: vector<It>, count: integer }
