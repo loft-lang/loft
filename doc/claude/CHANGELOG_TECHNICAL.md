@@ -10,6 +10,23 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The Windows-rules harness holds the per-script run lock (loft#2018)
+
+`tests/windows_rules.rs` ran `#cwd` scripts from the repository root beside the corpus
+runners, which run the same file from the same directory in other nextest processes, and
+`116-file-append-log` lost its size assertion to the other run's writes.  It now takes
+`common::source_run_lock`, the cross-process lock keyed by the file's path that `wrap` and
+`native` already hold.
+
+### The warm store-backed load reads every body (loft#2012)
+
+`LOFT_CODEGEN_STORE=1`'s warm run loaded the bundle as a body-less skeleton and read only the
+generated body from the mapped store; every decision codegen makes about another definition
+(a call's user-or-native dispatch, a callee's return ownership) asked that definition's native
+body and answered wrong over an empty one — a panic or a silently adopted view on 76 corpus
+files.  `open_program_store` now reads the whole `Data`; `read_data_skeleton` stays as the
+timing measurement it also is.
+
 ### A returned branch arm that borrows a lifted argument copies what it hands up (loft#2021)
 
 `if c { id(g(3)) } else { null }` as a function's value, with `fn id(p: S) -> S { p }`: the
@@ -18,8 +35,9 @@ return temp, and the value handed up was a view of the temp the frame frees at e
 poison word under `LOFT_POISON=1`, and for the dense twin (`-> S`, else a build) the next
 call's record plainly, on both backends once the record road is taken.  The same blindness
 loft#2016 closed for the body-tail and mid-return spellings, one level up.
-`Scopes::bind_return_temp` now writes a branch out per arm (`sink_set_into_arms`, the spelling
-a parser-level `r = if …` already takes) where an arm's callee may hand back a caller's store,
+`Scopes::bind_return_temp` now writes a branch out per arm (`sink_return_branch`, the spelling
+a parser-level `r = if …` already takes) where an arm's call borrows a local this frame owns (a lifted argument; a borrow of a
+parameter is the caller's store and the caller's bind copies it, as before),
 so each arm's bind is the call bind that copies a borrowed result; and the interpreter's
 call-bind copy arm accepts the promoted return buffer as its destination, where it had excluded
 every argument.  Guard:

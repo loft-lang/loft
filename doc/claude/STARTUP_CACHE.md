@@ -242,10 +242,12 @@ stdout and stderr with `ref`.  One line per differing file names the lanes; a fi
 every lane differs is nondeterministic (a clock, a pid in its output) and reported apart,
 and the differing outputs stay under the directory the verdict names.  A report, by hand,
 after a change to the bundle, the manifest, the scope pass or what a run prints before its
-first statement; exit 0 only when every deterministic file agrees.  The `skel` lane answers
-WRONG (loft#2012), which is why the switch is off: the decisions that copy a record out of
-a callee's view read other functions' bodies natively, and the skeleton leaves every body
-it does not generate empty.
+first statement; exit 0 only when every deterministic file agrees.  The `skel` lane reads
+the whole `Data` from the mapped store and takes only the generated body from it: codegen's
+decisions about OTHER definitions — a call's dispatch, a callee's return ownership — read
+those definitions' bodies, so a load that leaves them empty answers wrong (loft#2012, 76
+corpus files).  The body-less skeleton stays a timing measurement (`read_data_skeleton`),
+not codegen's input.
 
 ## See also — the startup-cache design
 
