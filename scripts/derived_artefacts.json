@@ -78,10 +78,10 @@
         "default/",
         "bench/"
       ],
-      "check": "make -s rewrite-census",
+      "check": "cargo build -q --bin loft && LOFT_BIN=target/debug/loft python3 scripts/rewrite_census.py",
       "check_first": true,
       "regen": [
-        "make -s rewrite-census-bless"
+        "cargo build -q --bin loft && LOFT_BIN=target/debug/loft python3 scripts/rewrite_census.py --bless"
       ],
       "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline"
     },
@@ -241,10 +241,6 @@
       "scripts/gate_preflight.sh"
     ],
     [
-      "optional ratchet",
-      "python3 scripts/ir_walker_audit.py optional --check-ratchet"
-    ],
-    [
       "cargo check",
       "cargo check --all-targets -q"
     ],
@@ -262,7 +258,7 @@
     ],
     [
       "file_access guard",
-      "cargo test --release -q --lib file_access::guard"
+      "cargo test -q --lib file_access::guard"
     ],
     [
       "rule tags",
@@ -274,11 +270,11 @@
     ],
     [
       "hygiene",
-      "cargo nextest run --release --test doc_hygiene"
+      "cargo nextest run --test doc_hygiene"
     ],
     [
       "index hygiene",
-      "cargo nextest run --release --test index_hygiene"
+      "cargo nextest run --test index_hygiene"
     ],
     [
       "feature coverage",

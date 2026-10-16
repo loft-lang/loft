@@ -603,6 +603,12 @@ def cmd_rederive(args):
         if not art["regen"]:
             print(f"  --    {name:22} not re-derived on a join ({art.get('note', 'no writer')[:60]}…)")
             continue
+        # A pure artefact is the runner's (`derive.yml`, JOINING.md § Derived artefacts on a
+        # runner): regenerating it here is a wasm or release build the branch pays again on
+        # the runner, which is what took a join's rederive past an hour on this box.
+        if art.get("ci") and not args.with_ci:
+            print(f"  --    {name:22} left to the runner: `scripts/derive-ci.sh` (--with-ci regenerates here)")
+            continue
         if not inputs_changed(plan, art):
             print(f"  --    {name:22} its inputs did not move in the join")
             continue
@@ -831,6 +837,8 @@ def main():
     p.add_argument("--skip", help="mark this commit (sha prefix) as deliberately not picked")
     p = sub.add_parser("rederive")
     p.add_argument("--only", help="comma-separated artefact names")
+    p.add_argument("--with-ci", action="store_true",
+                   help="regenerate the runner's (`ci`) artefacts here too")
     p.add_argument("--accept", help="artefacts whose growth is meant (say why in the commit)")
     p.add_argument("--commit", action="store_true")
     sub.add_parser("verify")
@@ -849,6 +857,7 @@ def main():
     p.add_argument("--skip")
     p.add_argument("--only")
     p.add_argument("--accept")
+    p.add_argument("--with-ci", action="store_true")
     p.add_argument("--commit", action="store_true")
     p.add_argument("--jobs", type=int, default=4)
     p.add_argument("--interp-only", action="store_true")

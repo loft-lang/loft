@@ -50,6 +50,15 @@ same when an earlier pending commit of its source changes one of its files.  A p
 is the case: this tree never had what it removes, and skipping it leaves the reverted change
 in.  A commit that really is here comes out empty when picked, and `apply` drops it.
 
+**Every step is bounded at twenty minutes**, and the bound is kept by not building what the
+runner builds.  `rederive` re-measures the ratchets with the dev binary (the census counts
+admissions, which no profile changes) and leaves every `ci` artefact to `derive.yml` unless
+`--with-ci` is passed; `verify` runs its test rows in the dev profile and asks the optional
+ratchet once (the pre-flight already does).  A release build of the crate is the cost that
+breaks the bound, and every release-build check here is one the PR's gate repeats on the
+exact sha: that gate is the release-build verdict.  The measurement that set the bound is in
+[JOINING-history.md](JOINING-history.md).
+
 `apply` resolves a conflict itself only in a derived artefact (either side, re-derived later)
 and in an append-only changelog (both sides); a conflict in anything else STOPS with the file
 named, and `apply` resumes after your `git cherry-pick --continue`.  `rederive` reads its list
