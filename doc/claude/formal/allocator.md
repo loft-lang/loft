@@ -121,6 +121,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  deferred merge, not a missed one); a tree rebuild (the sweep, an open, a
                  resync) and a reset empty the lists, and a reclaim or a shrink flushes them
                  first.
+                 The lists and the set are CONTENT: an exchange of two stores' contents
+                 (`(H-SwapIn)`) carries them with the memory they index, so the store
+                 that now holds a parked block is the one whose claim pops it.
                  Not parked: a block that ends the store (it joins the wilderness), a
                  block freed while the edit journal records, and every block of a store
                  bound to a file.  `LOFT_NO_PARK=1` turns it off.

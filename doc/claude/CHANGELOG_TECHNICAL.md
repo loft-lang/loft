@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A content swap carries the parked blocks (loft#2031)
+
+`Store::swap_contents` exchanged the memory, the claims, the free tree and the lazy phase
+of two stores but left each store's `(H-Park)` lists and set behind, so after a rebind that
+exchanges stores a store's set named live records of the content it received: a delete
+parked one of them twice, and the flush walked a list whose links were that record's bytes
+for ever — hex_body 0.3.6's planar-rig test spun on `--native` while the interpreter
+passed it.  The lists and the set move with the memory (`park` with them); two debug
+assertions name a double park and a list that does not end.  Guard
+`store::tests::a_content_swap_carries_the_parked_blocks`.
+
 ### A division by zero is silent: C80's one-warning clause is dropped (loft#2027)
 
 C80 and `(E-Report)` promised a Warn-level log line on an unguarded division by zero at run

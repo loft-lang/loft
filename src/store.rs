@@ -1867,6 +1867,10 @@ impl Store {
     /// block by its header and footer, so every walk of the store reads it as free, pushed
     /// on the list for its exact size.
     fn park_block(&mut self, rec: u32, words: i32) {
+        debug_assert!(
+            !self.parked.set.contains(rec),
+            "block {rec} ({words} words) parked twice (loft#2031)"
+        );
         self.set_free_header(rec, words);
         let head = self.parked.heads[words as usize];
         self.write_block_meta::<u32>(rec, PARK_PREV, 0);
@@ -1922,11 +1926,17 @@ impl Store {
     /// neighbour still parked is merged when its own turn comes, backward off this block.
     fn flush_parked(&mut self) {
         for words in MIN_FREE_TREE..=PARK_MAX_WORDS {
+            let mut steps = 0u32;
             loop {
                 let rec = self.parked.heads[words as usize];
                 if rec == 0 {
                     break;
                 }
+                steps += 1;
+                debug_assert!(
+                    steps <= self.parked.count + 1,
+                    "the {words}-word list does not end at {rec} (loft#2031)"
+                );
                 self.unpark(rec);
                 self.free_exact(rec, words);
             }
@@ -3085,6 +3095,12 @@ impl Store {
         std::mem::swap(&mut a.lazy, &mut b.lazy);
         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+        // `@FR-H-Park` — the parked blocks are positions in the memory that moves, so the
+        // lists and the set move with it (loft#2031: left behind, a store's set named live
+        // records of the content it received, a delete parked one of them twice, and the
+        // flush walked a list whose links were that record's bytes — for ever).
+        std::mem::swap(&mut a.park, &mut b.park);
+        std::mem::swap(&mut a.parked, &mut b.parked);
         std::mem::swap(&mut a.known_type, &mut b.known_type);
         std::mem::swap(&mut a.parse_errors, &mut b.parse_errors);
         std::mem::swap(&mut a.parse_type, &mut b.parse_type);
@@ -7668,6 +7684,48 @@ mod tests {
         assert_eq!(store.claim(3), b);
         assert!(store.claims.contains(b) && store.parked.count == 0);
         assert!(store.claims.contains(c));
+    }
+
+    /// `@FR-H-Park` + `@FR-H-SwapIn` — the parked blocks are CONTENT: a content swap
+    /// carries the lists and the set to the store that now holds the memory, so a claim
+    /// there pops the parked block and the store that gave the memory up parks nothing
+    /// it does not hold (loft#2031: left behind, the set named a live record of the
+    /// received content, whose delete parked it twice, and the flush never ended).
+    #[test]
+    fn a_content_swap_carries_the_parked_blocks() {
+        let mut a = parking_store();
+        let mut b = parking_store();
+        let a1 = a.claim(20);
+        let a2 = a.claim(3);
+        let a3 = a.claim(5);
+        a.delete(a2);
+        let b1 = b.claim(3);
+        let b2 = b.claim(6);
+        assert!(a.parked.set.contains(a2) && a.parked.count == 1 && b.parked.count == 0);
+        Store::swap_contents(&mut a, &mut b);
+        // The memory with the parked block is `b`'s now, and so are its lists.
+        assert!(
+            b.parked.set.contains(a2) && b.parked.count == 1,
+            "the lists moved with the memory"
+        );
+        assert!(
+            a.parked.count == 0 && a.parked.set.is_empty(),
+            "the giver parks nothing it does not hold"
+        );
+        check_parked(&a);
+        check_parked(&b);
+        // A claim of the parked size in `b` pops it; `a` grows its own memory instead.
+        assert_eq!(b.claim(3), a2);
+        assert!(b.claims.contains(a2) && b.parked.count == 0);
+        // `a` now holds the other memory: its records are live, and a delete of the
+        // 3-word one parks it once, on an empty list.
+        assert!(a.claims.contains(b1) && a.claims.contains(b2));
+        a.delete(b1);
+        assert!(a.parked.set.contains(b1) && a.parked.count == 1);
+        check_parked(&a);
+        assert_eq!(a.claim(3), b1);
+        // The records that moved stay reachable where they are.
+        assert!(b.claims.contains(a1) && b.claims.contains(a3));
     }
 
     /// `@FR-H-Park` — the flush frees each parked block through the tree, and parked
