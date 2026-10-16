@@ -415,6 +415,7 @@
 16_consumer_shapes	-	R-CompleteWrite	49
 16_consumer_shapes	-	R-Counter	100
 16_consumer_shapes	-	R-DischargeInto	1
+16_consumer_shapes	-	R-FlatCopy	2
 16_consumer_shapes	-	R-FormatAppend	1
 16_consumer_shapes	-	R-ForwardWalk	4
 16_consumer_shapes	-	R-GuardFree	8
@@ -874,6 +875,7 @@ glb	b3cb7445f	R-CharWalk	10
 glb	b3cb7445f	R-CompleteWrite	12
 glb	b3cb7445f	R-Counter	58
 glb	b3cb7445f	R-DischargeInto	1
+glb	b3cb7445f	R-FlatCopy	6
 glb	b3cb7445f	R-FnHeader	4
 glb	b3cb7445f	R-FormatAppend	37
 glb	b3cb7445f	R-ForwardWalk	8
@@ -968,6 +970,7 @@ gridmesh	873da7f9a	R-CompleteWrite	17
 gridmesh	873da7f9a	R-Counter	62
 gridmesh	873da7f9a	R-DischargeInto	1
 gridmesh	873da7f9a	R-ExitVector	3
+gridmesh	873da7f9a	R-FlatCopy	1
 gridmesh	873da7f9a	R-FormatAppend	1
 gridmesh	873da7f9a	R-ForwardWalk	3
 gridmesh	873da7f9a	R-GuardFree	18
@@ -1058,6 +1061,7 @@ hex_draw	3bdb69ef2	R-Counter	470
 hex_draw	3bdb69ef2	R-DischargeInto	5
 hex_draw	3bdb69ef2	R-ExitVector	39
 hex_draw	3bdb69ef2	R-FileHold	4
+hex_draw	3bdb69ef2	R-FlatCopy	3
 hex_draw	3bdb69ef2	R-FnHeader	7
 hex_draw	3bdb69ef2	R-FormatAppend	1
 hex_draw	3bdb69ef2	R-ForwardWalk	2
@@ -1191,6 +1195,7 @@ hex_fit	3bdb69ef2	R-CtorLiteral	4
 hex_fit	3bdb69ef2	R-DischargeInto	7
 hex_fit	3bdb69ef2	R-ExitVector	46
 hex_fit	3bdb69ef2	R-FileHold	4
+hex_fit	3bdb69ef2	R-FlatCopy	3
 hex_fit	3bdb69ef2	R-FnHeader	17
 hex_fit	3bdb69ef2	R-FormatAppend	1
 hex_fit	3bdb69ef2	R-ForwardWalk	2
@@ -1425,6 +1430,7 @@ hex_roof	3bdb69ef2	R-Counter	368
 hex_roof	3bdb69ef2	R-DischargeInto	2
 hex_roof	3bdb69ef2	R-ExitVector	34
 hex_roof	3bdb69ef2	R-FileHold	4
+hex_roof	3bdb69ef2	R-FlatCopy	3
 hex_roof	3bdb69ef2	R-FormatAppend	1
 hex_roof	3bdb69ef2	R-ForwardWalk	2
 hex_roof	3bdb69ef2	R-GuardFree	9
@@ -1599,6 +1605,7 @@ hex_world	3bdb69ef2	R-Counter	26
 hex_world	3bdb69ef2	R-DischargeInto	1
 hex_world	3bdb69ef2	R-ExitVector	1
 hex_world	3bdb69ef2	R-FileHold	1
+hex_world	3bdb69ef2	R-FlatCopy	2
 hex_world	3bdb69ef2	R-FormatAppend	1
 hex_world	3bdb69ef2	R-ForwardWalk	2
 hex_world	3bdb69ef2	R-GuardFree	8
@@ -1689,6 +1696,7 @@ mesh3d	b3cb7445f	R-CharWalk	10
 mesh3d	b3cb7445f	R-CompleteWrite	11
 mesh3d	b3cb7445f	R-Counter	59
 mesh3d	b3cb7445f	R-DischargeInto	1
+mesh3d	b3cb7445f	R-FlatCopy	2
 mesh3d	b3cb7445f	R-FormatAppend	1
 mesh3d	b3cb7445f	R-ForwardWalk	4
 mesh3d	b3cb7445f	R-GuardFree	11
@@ -2047,6 +2055,7 @@ tween	873da7f9a	R-CharWalk	10
 tween	873da7f9a	R-CompleteWrite	8
 tween	873da7f9a	R-Counter	31
 tween	873da7f9a	R-DischargeInto	1
+tween	873da7f9a	R-FlatCopy	2
 tween	873da7f9a	R-FormatAppend	1
 tween	873da7f9a	R-ForwardWalk	5
 tween	873da7f9a	R-GroupPush	1
@@ -2063,7 +2072,7 @@ tween	873da7f9a	R-Push	4
 tween	873da7f9a	R-PushFill	2
 tween	873da7f9a	R-Range	37
 tween	873da7f9a	R-RangedCall	2
-tween	873da7f9a	R-RecPtr	13
+tween	873da7f9a	R-RecPtr	15
 tween	873da7f9a	R-RefillBuffer	4
 tween	873da7f9a	R-RetAdopt	3
 tween	873da7f9a	R-Reuse	1
@@ -2115,6 +2124,7 @@ zttext	bd4932067	R-CompleteWrite	187
 zttext	bd4932067	R-Counter	206
 zttext	bd4932067	R-DischargeInto	1
 zttext	bd4932067	R-ExitVector	24
+zttext	bd4932067	R-FlatCopy	24
 zttext	bd4932067	R-FnRefValue	10
 zttext	bd4932067	R-FormatAppend	10
 zttext	bd4932067	R-ForwardWalk	5
@@ -2143,7 +2153,7 @@ zttext	bd4932067	R-PushRec	34
 zttext	bd4932067	R-Range	199
 zttext	bd4932067	R-RangedCall	24
 zttext	bd4932067	R-Rebind	2
-zttext	bd4932067	R-RecPtr	106
+zttext	bd4932067	R-RecPtr	129
 zttext	bd4932067	R-RefillBuffer	14
 zttext	bd4932067	R-RefillText	1
 zttext	bd4932067	R-RetAdopt	3
