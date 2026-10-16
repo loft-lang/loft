@@ -29,6 +29,11 @@
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "every #[ignore] reason names a job that exists (miri.yml release-gate-sweeps runs each named test; ci.yml Differential oracle, leak-scan, front-end allocation pins; receipts.yml) and the sweeps job was GREEN on the 2026-10-16 nightly; skip lists: NATIVE_SKIP, LIB_PKGS/LIB_TESTS_NATIVE_SKIP, LIB_TESTS_SKIP, ignored_scripts all empty; SCRIPTS_NATIVE_SKIP's one entry (75-native-stub) re-justified with its removal condition"
   },
+  "M-libs": {
+    "at": "2026-10-16 20:19",
+    "commit": "98e778d989b43f6d8ae9b3cca28e25c6949eae4a",
+    "note": "revalidate-libs run 38943370117 on 98e778d98: every one of the 45 library legs green (interpret + native). The earlier run 38940514632 read E0514 in every native suite - the legs ran loft --native with the runner image's rustc against the rlib the build job compiled with rustup's stable; the legs now install the same stable (98e778d98), which also cures the chronic 9-of-14 revalidate-libs red. Still red in the run: the unreleased-work job - loft-libs-core branches 174-f5-crypto-foreign (2 ahead) and 174-f6-cbor-spans (3 ahead), @PLN174's finished library halves from 2026-09-28, 20 commits behind main; the rebase conflicts on crypto.loft's contract for base64_to_bytes (main: an ordinary vector; the branch: a read-only foreign view), a design pick for the owner - PR after the pick, or delete"
+  },
   "M-liveness": {
     "at": "2026-10-16 15:53",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
