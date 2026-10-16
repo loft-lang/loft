@@ -138,7 +138,6 @@ impl ApartWalk<'_, '_> {
         if matches!(ctx, Ctx::Other)
             && (x as usize) < vars.var_count()
             && (crate::data::is_dbref(vars.tp(x).base())
-                || matches!(vars.tp(x), crate::data::Type::RefVar(_))
                 || matches!(vars.tp(x).base(), crate::data::Type::RefVar(_)))
         {
             self.writers.insert(x);
@@ -279,6 +278,8 @@ struct MintOps {
 /// from nothing, is bound to nothing but a null, and is minted (`OpDatabase` / `OpDatabaseNP`
 /// with it as the store) — each mint a store that did not exist before, so no parameter's.
 fn minted_here(code: &Value, vars: &crate::variables::Function, w: u16, ops: &MintOps) -> bool {
+    // @FR-O-Proxy asks alloc — an empty dep list beside a mint at every binding is a store
+    // this call allocated; it drives a header hold, never a free.
     if (w as usize) >= vars.var_count() || vars.is_argument(w) || !vars.tp(w).depend().is_empty() {
         return false;
     }
