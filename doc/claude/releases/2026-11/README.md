@@ -20,16 +20,17 @@ Opened at the cycle's **halfway point**: `make release-checklist ARGS="--version
 |---|---|---|
 | `A-audit` | ✅ | four rustls advisories (RUSTSEC-2026-0346..0349) against 0.23.45; `cargo update -p rustls` → 0.23.46 (`f14aef881`).  Warnings left: `memmap` 0.7 and `ttf-parser` unmaintained, `zip` 2.4.2 yanked (the whole 2.x line is; 9.x is the live major — an API move, not a bump) |
 | `A-docs-lint` | ✅ | 111 over the baseline, all in the files the join split out of main.rs and friends (the count-keyed baseline cannot see a move).  The 51 stamps and the real narration rewritten; the narration pattern no longer fires on the word `removed` alone, which `@FR-H-Removed` makes domain vocabulary; baseline re-pinned at 4069 (`a9d4063a1`) |
-| `A-ci` | ⏳ | the local gate on `0a923a169`; main's own CI at `46ec215e0` was red on the `optional` audit row (276 vs 275 — this branch's join already carries 275) and on two Windows tests handed `--native-emit /dev/null` (cured, `bb4da4cbe`) |
+| `A-ci` | ⏳ | the runner's gate on `6b80c93b1` (run 38927571189) was red on five tests: the platform census twice (the sibling's new `scripts/after.py` without a smoke row, with five hazards), the two adopt mint counts (the sibling's loft#2021 fix moved them), and `doc/examples.js` behind the corrected chapters.  The sibling's `ed31795cd` cures the first four; the branch is rebased onto its tip `b32951d9b` and the examples regenerated.  Local `make after-fix` under a sibling build read the drop gate and the socket tests red on contention alone (`REFUSED` with no reason, `r899a.bin` deleted under it) — the runner is the verdict |
 | `A-reference-review` | ✅ | 11 chapters re-read against the interpreter (probes, not prose): 17-libraries carried the pre-#1855 model in five sentences, 25-generics declared `<`/`==` where the interface declares `compare`, 24-json promised one `#errors` entry per error — fixed in `bb4da4cbe`; 40/40 at their source |
 | `A-skills-review` | ✅ | 12 skills read on the three axes; the untrue claims (engineering-rigor's rebase licence, loft-write's `fn Op…` and divide-by-zero Warn, loft-test's unsharded leg, loft-plan-workflow's closed canon) fixed in `bb4da4cbe`; 13/13 at their sources |
-| `M-doc-validation-mid` | ⏳ | part 1: 51 libraries moved since their watermark, every one with zero `pub fn` lines changed — dismissed as the method allows, watermarks bumped; part 3: 20 `@F` entries re-read, 11 corrected on the tracker (`features#2 #16 #11 #47 #124 #120 #121 #6 #5 #100 #126`), the catalogue shadow regenerates after the gate; part 2 (gendoc, `.doc_review_ledger`) after the gate |
+| `M-doc-validation-mid` | ✅ | part 1: 51 libraries moved since their watermark, every one with zero `pub fn` lines changed — dismissed as the method allows, watermarks bumped, the stale `audio_bus` row dropped; part 2: gendoc on the runner, `scripts/doc_review.py` 267/267 signed off; part 3: 20 `@F` entries re-read, 11 corrected on the tracker and the shadow regenerated |
 | `M-monthly-bugs` | read | narrow-int/width is the one RISING class; `Parser::nstore_unwrap_report` reads NO EFFECT on null/sentinel (10.8 % → 18.6 %) — a premise to re-open |
 | `M-liveness` | read | one stale rationale (re-justified); chronic reds named below |
 | `M-ignores` | ✅ | every reason's job exists and the sweeps job was green on the 2026-10-16 nightly |
 | `M-close-plans` | ✅ | plans#178 and #183 already closed |
 | `M-file-sizes` | read | `src/parser/mod.rs` (27 205) and `src/parser/control.rs` (23 123) are the picks |
 | `M-falsify-receipts` | read | 117 receipts the census cannot classify (108 `hand-measured`) |
+| `M-ops-census` | read | 343 operators declared, 315 emitted by some program, 28 unexercised, 0 orphan |
 
 ## Red on main's tip when the pass opened, and what this branch does about each
 
@@ -37,9 +38,11 @@ Opened at the cycle's **halfway point**: `make release-checklist ARGS="--version
 - **Two Windows tests** (`ctor_literal`, `fresh_text_hold`): `--native-emit /dev/null` — `NULL_SINK`.
 - **Nightly native ASan**: `tests/scripts/10-match.loft` absent at `46ec215e0` — the join's `1c7e3c440` put the five programs back.
 - **Nightly doc index hygiene**: 28 decisions "unguarded" because the job never checked out the language suite — `checkout-suite` added.
-- **Nightly LOFT_POISON**: `1994-…` w2 reads freed memory — loft#2022, claimed, the fix is this pass's code work.
+- **Nightly LOFT_POISON**: `1994-…` w2 reads freed memory — filed as loft#2022, a duplicate of loft#2021: the sibling's `64068fc63` (a returned branch arm that borrows a lifted argument copies what it hands up) cures w2, w2g and w2h under poison; closed.
 - **Nightly debug-assertions**: `issue_328` leaks a store — loft#2023, claimed.
 - **Dependency advisories**: rustls, cured.
+- **The crate layers and the platform census after the join**: `literal_host`, `self_replace` and `zero_count` sat above their readers, `stable_hash`/`source_hash` were read from `cache` up into `compiled_stdlib`, and `--native-emit /dev/null` in eight tests emitted nothing on Windows — `loft::platform::null_sink()` here, the layer moves taken as the sibling resolved them.
+- **The features-shadow derived check** read `git status` and failed on the bot's own regeneration — dropped from `scripts/derived_artefacts.json` with a note.
 - **revalidate-libs** (chronic, 9 of 14): E0514 from rlibs a toolchain bump left in the cached `deps/` — the toolchain is in the cache key now.
 - **browser-threads** (chronic, 7 of 14): `par-scaling-bench.sh` 147 % < 150 % and `par-ui-responsive.sh` — timing bars on a shared runner; open.
 - **consumer-main-health** (chronic): dryopea ×14, moros/crawler ×8 — the consumers' own agents, per their `LOFT_HANDOFF.md`.
@@ -53,6 +56,6 @@ JSON parse forms disagree about `#errors`.
 
 ## What the cycle still owes before the tag
 
-`M-ops-census`, `M-perf-pass`, `M-docs-review`, `M-doc-review` (one doc under
-DOC_CONTRACT, its own PR), `M-file-split` (the two picks), `M-libs`, the `[cand]` sweeps on
-the candidate, and loft#2022 / loft#2023 fixed.
+`M-perf-pass`, `M-docs-review`, `M-doc-review` (one doc under DOC_CONTRACT, its own PR),
+`M-file-split` (the two picks), `M-libs`, the `[cand]` sweeps on the candidate, and loft#2023
+fixed (a debug-assertions binary is built in the session's scratchpad for it).
