@@ -16231,7 +16231,7 @@ impl Parser {
                 // and the `min` cannot drift.  A NON-nullable byte that kept a top code
                 // writes through the NULLABLE setter: the plain one casts its value
                 // `as i32` before the store sees it, and `i64::MIN as i32` is `0` — a
-                // VALUE — so @C85's overflow used to land in the slot as the number zero.
+                // VALUE — so @C85's overflow would land in the slot as the number zero.
                 let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
                 // H6: the WRITE op encodes against the same `usable_min` the READ
                 // op (`get_val`) decodes against — derived from the KIND so a

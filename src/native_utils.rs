@@ -1582,8 +1582,8 @@ pub(crate) fn publish_cached_binary(
         let _ = crate::file_access::remove_file(&staged);
     }
     // Bound the directory AFTER the publish and never touching the entry just written.
-    // Sweeping first deleted the very binary a concurrent run had already accepted as
-    // usable, leaving it to exec a path that no longer existed.
+    // Sweeping first would delete the very binary a concurrent run has already accepted
+    // as usable, leaving it to exec a path that does not exist.
     sweep_cached_binaries(cache_dir, cached_binary, source_stem, NATIVE_CACHE_KEEP);
 }
 

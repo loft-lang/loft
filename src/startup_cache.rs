@@ -793,8 +793,8 @@ pub fn native_fast_path(
     let binary = std::path::PathBuf::from(lines.next()?.strip_prefix("bin ")?);
     // The manifest the binary was built beside.  The manifest is SHARED with every other
     // mode: an `--interpret` run of an edited source rewrites it for the new source, and
-    // without this line the next native run validated the new source against it and
-    // exec'd the old source's binary — a silent answer from code that no longer exists.
+    // without this line the next native run would validate the new source against it and
+    // exec the old source's binary — a silent answer from code that is gone.
     let built_beside = lines.next()?.strip_prefix("man ")?.to_string();
     // A line this build does not know is a sidecar this build did not write.
     if lines.next().is_some() {

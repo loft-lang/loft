@@ -384,7 +384,7 @@ fn register_natives(state: &mut State) {
     for (name, implement) in native::WEB_FUNCTIONS_WASM {
         state.static_fn(name, *implement);
     }
-    // @PLN18 phase 07 — the browser kernel (see KERNEL_FUNCTIONS_WASM).
+    // The browser kernel (see KERNEL_FUNCTIONS_WASM).
     #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
     for (name, implement) in native::KERNEL_FUNCTIONS_WASM {
         state.static_fn(name, *implement);

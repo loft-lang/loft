@@ -14,7 +14,7 @@ use std::collections::HashMap;
 #[cfg(feature = "native-extensions")]
 use std::sync::Mutex;
 
-/// @PLN24 arc D/G — one C library a package declared, as every consumer of the
+/// One C library a package declared, as every consumer of the
 /// declaration needs to see it.
 ///
 /// A named struct rather than a tuple because four sites read it and each reads
@@ -56,8 +56,8 @@ pub(crate) static NATIVE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex
 /// keyed by loft symbol.  Populated from a cdylib's `loft_register_bridges_v1`.
 /// Every native call dispatches through its bridge (`dispatch_via_bridge`); a
 /// symbol absent here is an un-migrated cdylib (a pre-bridge library version)
-/// and panics at call time — the legacy raw-ptr marshaller it used to fall back
-/// to has been removed now that every native library ships bridges.
+/// and panics at call time: there is no raw-pointer marshaller to fall back
+/// to, because every native library ships bridges.
 #[cfg(feature = "native-extensions")]
 pub(crate) static BRIDGE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex::new(None);
 
@@ -131,7 +131,7 @@ pub fn bridge_symbol_resolves(_sym: &str) -> bool {
 
 /// Loaded libraries kept alive for the process lifetime, each paired with
 /// whether it exported `loft_register_v1` (the registration protocol).  Used by
-/// `try_dlsym` to look up symbols from previously loaded cdylibs *and* report
+/// `try_dlsym` to look up symbols from the cdylibs already loaded *and* report
 /// whether the resolving library opted into registration — so the "unregistered
 /// symbol" guard fires only for a library that chose the protocol, not for a
 /// (legitimately) zero-registration cdylib loaded after one that did.
@@ -206,7 +206,7 @@ pub(crate) unsafe fn open_library(name: &str) -> Result<libloading::Library, Str
 /// tree by a Linux build is a file macOS cannot map, and a caller that reads
 /// "the path is there" as "the symbols are there" reports success and then
 /// fails at the first `#c` call, naming the symbol rather than the library
-/// (loft#739's neighbour — see `load_c_library`, which used to do exactly this).
+/// (loft#739's neighbour; compare `load_c_library`).
 pub(crate) fn load_one(path: &str) -> bool {
     use std::collections::HashSet;
 
@@ -297,7 +297,7 @@ pub(crate) fn try_dlsym(name: &str) -> Option<(*const (), bool)> {
     None
 }
 
-/// @PLN24 arc D — `dlopen` a C library a package declared with `[c] libs`, and
+/// `dlopen` a C library a package declared with `[c] libs`, and
 /// KEEP it loaded so its symbols resolve.
 ///
 /// Distinct from the `[native] runtime-libs` probe, which opens a library only
@@ -339,7 +339,7 @@ pub fn load_c_library(name: &str, pkg_dir: &str) -> bool {
             Err(e) => last_err = Some((cand, e)),
         }
     }
-    // @PLN24 arc G — an OPTIONAL library that does not open is an ordinary
+    // An OPTIONAL library that does not open is an ordinary
     // answer (`c_library_available` says false and the program takes its
     // fallback), so this must not print by default. But "not installed" and
     // "installed and unloadable" are very different problems with the same
@@ -369,7 +369,7 @@ pub(crate) fn host_lib_variants(name: &str) -> Vec<String> {
     crate::platform::host_lib_variants(name)
 }
 
-/// @PLN24 arc B — the same lookup, for the `#c` caller: a C binding resolves
+/// The same lookup, for the `#c` caller: a C binding resolves
 /// against the cdylibs loft has already loaded before it falls back to the
 /// process. One resolver, so a symbol cannot mean two different things
 /// depending on which caller asked for it.
@@ -454,11 +454,11 @@ pub fn set_library_symbols(table: Vec<(String, Vec<String>)>) {
 ///
 /// `only` narrows it to one library by name. A symbol MISS has no name to give —
 /// a `#c` annotation never says which library it comes from, so the miss path
-/// widens the search across all of them (arc B: one resolver, one meaning per
+/// widens the search across all of them (one resolver, one meaning per
 /// symbol). An availability QUESTION does have one, and answering it by opening
 /// every optional library made `c_library_available("libsqlite3.so.0")` dlopen
 /// libduckdb as a side effect — 70 MB mapped by a program that never mentions
-/// duckdb, which is the cost arc G exists to avoid.
+/// duckdb, which is the cost the lazy open exists to avoid.
 #[cfg(feature = "native-extensions")]
 fn open_pending_optional_named(only: Option<&[String]>) -> bool {
     // The entries are cloned out and the guard dropped before any `dlopen`: an
@@ -500,10 +500,10 @@ fn open_pending_optional_named(only: Option<&[String]>) -> bool {
 /// which is what makes a libc binding work with nothing declared and nothing
 /// installed. A declared REQUIRED library is already open by the time this runs
 /// ([`register`]); an OPTIONAL one is opened here, on the miss, which is the
-/// whole of arc G's interpreter half.
+/// interpreter half of the lazy open.
 ///
 /// One resolver, so a symbol cannot mean two different things depending on
-/// which caller asked for it — arc B's rule, and the lazy path keeps it by
+/// which caller asked for it — the one-resolver rule, and the lazy path keeps it by
 /// widening the search rather than adding a second search.
 #[cfg(feature = "native-extensions")]
 #[must_use]
@@ -514,8 +514,8 @@ pub fn resolve(symbol: &str) -> Option<*const ()> {
     // Miss: an optional library that has not been opened yet may export it.
     //
     // Try the library the SOURCE attributes this symbol to first. Widening to every
-    // declared library still happens below when that does not answer — the arc B rule
-    // is unchanged, a symbol still means one thing — but it is no longer the first
+    // declared library still happens below when that does not answer — one resolver,
+    // a symbol means one thing — but it is not the first
     // move, because it dlopens libraries the program never mentions. With four
     // one-library packages declared, resolving `sqlite3_open` mapped libduckdb's 70 MB
     // as a side effect, which is the cost `[c] optional-libs` exists to avoid.
@@ -532,7 +532,7 @@ pub fn resolve(symbol: &str) -> Option<*const ()> {
     None
 }
 
-/// @PLN24 arc G — [`resolve`], for a `--native` binary.
+/// [`resolve`], for a `--native` binary.
 ///
 /// A compiled program never runs [`register`], so nothing has told it which
 /// libraries may be opened on demand; the generated crate carries the list as a
@@ -591,7 +591,7 @@ pub fn register_native(libs: &[(&str, &str)], syms: &[(&str, &[&str])]) {
     });
 }
 
-/// @PLN24 arc G — is this C library usable RIGHT NOW?
+/// Is this C library usable RIGHT NOW?
 ///
 /// True when the library opens **and** every `#c` symbol declared against it
 /// resolves. Both halves are load-bearing: a library of the wrong vintage opens

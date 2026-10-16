@@ -56,7 +56,7 @@ FILES=$(find src lib -name '*.rs' 2>/dev/null | grep -E '/src/|^src/')
 if [ -z "$FILES" ]; then echo "no source files found"; exit 0; fi
 
 TAGS_RE='(@PLAN|@P[0-9]|plan-[0-9]|phase [0-9]|cluster [0-9]|arc [A-Z]|[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-[0-9]{2})'
-HIST_RE='\b(removed|no longer|used to [a-z]+|previously [a-z]+ed|formerly|changed from)\b'
+HIST_RE='\b((was|were|has been|have been) removed|no longer|used to [a-z]+|previously [a-z]+ed|formerly|changed from)\b'
 # The incident as the comment's SUBJECT (§ B2).
 #
 # Deliberately a strong UNDER-approximation, and the reason is precision: this axis is

@@ -8,7 +8,7 @@
 
 use crate::keys::DbRef;
 
-// ── Plan-06 phase 2 — store-rebase infrastructure ─────────────────────────────
+// ── store-rebase infrastructure ───────────────────────────────────────────────
 //
 // Today's `copy_from_worker` (src/database/allocation.rs:409) deep-copies
 // every struct result from a worker's WorkerStores into the parent's
@@ -21,9 +21,8 @@ use crate::keys::DbRef;
 // DbRef referring to those stores from the worker's local namespace
 // is translated to the parent's new store_nr.  Bytes never move.
 //
-// See plan-06 DESIGN.md D2.1 (slot-marker design) and DESIGN.md D11c
-// (the per-field worker-own / parent-shared / cross-worker translation
-// rule).
+// Each field is translated by its class: worker-own, parent-shared or
+// cross-worker.
 
 /// Translates DbRefs across the worker→parent adoption boundary.
 ///
@@ -38,10 +37,10 @@ use crate::keys::DbRef;
 /// different worker-local namespace, so the rebase map is constructed
 /// fresh for each worker.
 ///
-/// Currently unused at runtime — phase 2b's narrow path
+/// Unused at runtime — the narrow path
 /// (`copy_from_worker_unowned`) handles owned-free struct returns
-/// without needing the rebase walk.  The full step 2b will use this
-/// for owned-field structs (text, refs).
+/// without needing the rebase walk.  Owned-field structs (text, refs)
+/// are the case this walk is for.
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct StoreRebase {

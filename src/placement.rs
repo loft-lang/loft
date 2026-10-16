@@ -99,7 +99,7 @@ pub const HASH: &str = "2";
 /// an ARENA record whose node 0 is the header and whose nodes hold 8-byte key parts beside
 /// record numbers, descended by part and broken by the record's key.
 ///
-/// `2` is that tree.  The slot used to name the ROOT RECORD of a red-black tree threaded
+/// `2` is that tree.  An older layout put, in this slot, the ROOT RECORD of a red-black tree threaded
 /// through the element records' own `#left/#right/#color` fields; a store written then and
 /// read now would take that record for an arena header and descend through bytes nothing
 /// laid out as nodes, so it must REFUSE rather than answer.

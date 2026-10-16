@@ -7782,8 +7782,8 @@ mod tests {
     }
 
     /// The control: the same claims on any other store grow it as always.
-    /// `@FR-R-ElementPath` — a raw read no longer reads the record's size header in a build
-    /// without debug assertions (only those assertions used it).  What that header read also
+    /// `@FR-R-ElementPath` — a raw read reads no record size header in a build
+    /// without debug assertions (only those assertions use it).  What that header read also
     /// did was a bounds check, and this is the claim that the field read's own check catches
     /// every failure it caught: a record past the store's end still refuses.
     #[test]

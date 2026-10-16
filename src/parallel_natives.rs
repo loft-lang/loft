@@ -39,9 +39,8 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_parallel_buf_drop_fn", n_parallel_buf_drop_fn),
 ];
 
-/// Plan-06 phase 4d.A — typed worker-input dispatch.  Replaces the
-/// sentinel-encoded `primitive_first_arg_slot_size` channel with an
-/// explicit enum so the dispatcher's pre-loop code reads as a plain
+/// Typed worker-input dispatch: an explicit enum rather than a
+/// sentinel-encoded slot size, so the dispatcher's pre-loop code reads as a plain
 /// match, and so wide-inline first args (tuples, fn-refs, anything
 /// 9..=64 bytes) are not silently misrouted as "DbRef-by-pointer"
 /// when their vector storage is actually inline.
@@ -77,7 +76,7 @@ const INPUT_PRIMITIVE_MAX_BYTES: usize = 64;
 /// notably 4 B heap text-pointer → 16 B stack `Str`) instead of
 /// `read_primitive_at_wide` (flat memcpy).
 ///
-/// Plan-06 phase 4d.A.2: also returns `Some(vec![first.typedef])`
+/// Also returns `Some(vec![first.typedef])`
 /// for `Type::Function` first-args so the dispatcher routes through
 /// `read_tuple_at_wide` which produces a clean failure mode (vs. the
 /// hang from raw `read_primitive_at_wide` reading 20 bytes from a
@@ -116,18 +115,15 @@ fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
     }
 }
 
-/// Plan-06 ARC.md A4 (closed 2026-05-07) — the legacy materialised
-/// `parallel_for` path is unreachable.  After A3.6, every primitive
+/// The materialised `parallel_for` path is unreachable: every primitive
 /// return type — including Single (4-byte f32) and Float (8-byte
 /// f64) — routes through the Queue family (`n_parallel_queue` /
-/// `_narrow` / `_text` / `_ref` / `_fn`).  The materialised path
-/// (`Stitch::Concat`) had only one consumer in the parser (the
-/// `actual_par_d_nr` resolution in `build_parallel_for_ir`) which is
-/// now dead.  The function entry is retained in the FUNCTIONS table
+/// `_narrow` / `_text` / `_ref` / `_fn`), and nothing in the parser
+/// builds a `Stitch::Concat`.  The function entry is retained in the FUNCTIONS table
 /// for stack-trace symbol resolution but its body panics if invoked.
 fn n_parallel_for(_stores: &mut Stores, _stack: &mut DbRef) {
     unreachable!(
-        "n_parallel_for: ARC.md A4 retired the materialised path; \
+        "n_parallel_for: the materialised path is retired; \
          all par() routes through the Queue family (n_parallel_queue / \
          _narrow / _text / _ref / _fn).  If you reached this, the \
          parser failed to route the worker's return type to a Queue \
@@ -136,12 +132,11 @@ fn n_parallel_for(_stores: &mut Stores, _stack: &mut DbRef) {
     );
 }
 
-/// Plan-06 ARC.md A4 (closed 2026-05-07) — companion to
-/// `n_parallel_for`.  Was the per-worker-pool variant; same fate
-/// after A3.6 routes Single/Float through Queue.
+/// Companion to `n_parallel_for`: the per-worker-pool variant of the
+/// materialised path, unreachable for the same reason.
 fn n_parallel_for_light(_stores: &mut Stores, _stack: &mut DbRef) {
     unreachable!(
-        "n_parallel_for_light: ARC.md A4 retired the light Concat \
+        "n_parallel_for_light: the retired light Concat \
          path.  See `n_parallel_for` panic message for the diagnosis \
          hint."
     );
@@ -377,7 +372,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         };
         // Per-stitch extras (computed unconditionally; cost is a
         // few attribute reads, not heap allocations).
-        // @PLAN59: classify worker attrs by TYPE, not name prefix.  The
+        // Classify worker attrs by TYPE, not name prefix.  The
         // old prefix heuristic ('__'-named ⇒ text buffer, user-named
         // hidden ⇒ heap dest) misclassified wrapper-promoted dests (named
         // `__ref_1`, Reference/Vector-typed) as text buffers — a live
@@ -677,7 +672,7 @@ fn n_parallel_buf_drop(stores: &mut Stores, _stack: &mut DbRef) {
 /// loop bound.
 ///
 /// Step 8c's parser rewrite extends the gate to text returns so
-/// fused for-par over text-returning workers no longer allocates a
+/// fused for-par over text-returning workers allocates no
 /// heap text-vector.  Reads use `n_parallel_buf_get_text` (clones
 /// into scratch following the standard text-return convention).
 fn n_parallel_queue_text(stores: &mut Stores, stack: &mut DbRef) {
@@ -849,7 +844,7 @@ fn n_parallel_buf_drop_narrow(stores: &mut Stores, _stack: &mut DbRef) {
 /// returning an i64 that the caller would then have to bit-cast.
 ///
 /// Justified by symmetry with `Store::set_single` /
-/// `Store::get_single` in `src/store.rs:1406-1421`: those write /
+/// `Store::get_single` in `src/store.rs`: those write /
 /// read f32 as a typed-pointer memcpy at a slot.  Worker functions
 /// returning `single` populate their return slot via the same
 /// typed pointer write, so the slot bytes ARE the f32 bit pattern.

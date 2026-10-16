@@ -58,8 +58,8 @@ pub(crate) fn local_remap_flags() -> String {
 /// codegen via `--extern <crate>=<path>` (see
 /// `src/main.rs::add_native_extern_flags`).
 ///
-/// Pre-2026-05-12 this function checked ONLY the cdylib before
-/// returning early, which let a parallel test see "cdylib exists"
+/// Checking ONLY the cdylib before returning early lets a parallel test
+/// see "cdylib exists"
 /// → skip the build → then fail later when `add_native_extern_flags`
 /// looked for the rlib that hadn't been written yet.  On Windows
 /// (where file-system flush ordering between cdylib and rlib differs
@@ -73,7 +73,7 @@ pub(crate) fn local_remap_flags() -> String {
 /// either artifact is missing, run cargo (which is itself
 /// fcntl-locked per target dir, so concurrent invocations serialize
 /// and only one actually rebuilds).
-/// @PLAN12 Phase 6b — compute the target dir for a package's
+/// Compute the target dir for a package's
 /// native cdylib/rlib build.
 ///
 /// When `pkg_dir` is under `~/.loft/registry/` (i.e., a
@@ -129,8 +129,8 @@ pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
 /// so a cached run re-checks cdylib freshness exactly like a cold parse.
 /// Set for a `loft --html` run: the program is built for the browser, which never loads a
 /// package's HOST native library — the page answers the package's imports itself.  So the
-/// parse registers no host cdylib and the driver builds no default-native one, where both
-/// used to run a full cargo build of code the build never links (`html_gl_imports` spent
+/// parse registers no host cdylib and the driver builds no default-native one: either
+/// is a full cargo build of code the build never links (`html_gl_imports` spent
 /// minutes of a 327 s run there on a cold runner).  The program cache keys on `--html`
 /// (`startup_cache::native_lib_context`), so a browser run's bundle is never warm-loaded by
 /// a run that needs those libraries.
@@ -232,7 +232,7 @@ pub(crate) fn relocatable_dylib_flags(lib_name: &str) -> String {
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     use std::path::PathBuf;
-    // P244-windows fix #2 (2026-05-12): use PathBuf::join, not
+    // Use PathBuf::join, not
     // `format!("{pkg_dir}/...")`.  When `pkg_dir` arrives as a
     // canonicalized Windows extended-length path (e.g.
     // `\\?\D:\a\loft\loft\lib\server`), concatenating with `/native/...`
@@ -249,7 +249,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     let lib_name = platform_lib_name(stem);
     let rlib_name = format!("lib{stem}.rlib");
 
-    // @PLAN12 Phase 6b — target root via the shared helper (redirects
+    // Target root via the shared helper (redirects
     // chunk-resident installs to ~/.loft/build-cache/<pkg>-<ver>/;
     // keeps in-tree target/ for the monorepo's lib/<pkg>/native/).
     let target_root = native_target_root(&pkg);
@@ -339,14 +339,14 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
         }
     }
 
-    // @P388: serialise on-demand native builds ACROSS PROCESSES.  Parallel test
+    // Serialise on-demand native builds ACROSS PROCESSES.  Parallel test
     // binaries (nextest runs one process per test) and parallel end-user `loft`
     // invocations otherwise each run an unlocked `cargo build` that re-resolves
     // the dependency tree concurrently, racing cargo's shared registry index +
     // package cache → transient "required to be available in rlib format" errors
     // and non-deterministic version picks.  A single cross-process advisory file
     // lock serialises the builds.  (The CI pre-build already serialises CI; this
-    // covers the latent end-user-parallelism half of @P388.)  The `--locked`
+    // covers the latent end-user-parallelism half.)  The `--locked`
     // route is unavailable: the repo deliberately gitignores every `Cargo.lock`,
     // and these crates.io-sourced native deps would drift against the actively-
     // versioned loft-ffi crates.  Best-effort: if the lock can't be opened/taken
@@ -534,7 +534,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     }
 }
 
-/// @PLN26 phase 3 — cross-build a `#native` package's crate to a wasm `target`
+/// Cross-build a `#native` package's crate to a wasm `target`
 /// (`wasm32-wasip2` for `--native-wasm`, `wasm32-unknown-unknown` for `--html`) so the
 /// wasm linker can consume its **rlib**, the way [`auto_build_native`] produces the host
 /// cdylib.  The rlib lands at the IN-TREE `<pkg>/native/target/<target>/release/lib<stem>.rlib`
