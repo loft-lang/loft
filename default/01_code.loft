@@ -735,7 +735,7 @@ fn OpMinFloat(v1: float, v2: float) -> float;
 fn OpMulFloat(v1: float, v2: float) -> float;
 #hot
 #rust"@v1 * @v2"
-// C80 / E-Report: an unguarded zero divisor CONTINUES and logs a Warn — it never
+// C80 / E-Report: a zero divisor CONTINUES, silent — the null is the signal, and it never
 // traps, so the spreadsheet model still degrades one value and lets the rest of the
 // program compute.  The VALUE is IEEE, and NaN is the one float null (`doc/23-safety`:
 // "NaN (Not a Number) is null"): `0.0 / 0.0` is null, `1.0 / 0.0` is `inf` — a

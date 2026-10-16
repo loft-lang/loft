@@ -1754,6 +1754,16 @@ never a halt.
 
 **Moved from the register entry (2026-09-29).**  The "No runtime exceptions — ever" paragraph is an owner ruling of 2026-09-28.
 
+### Revised 2026-10-16 — the one run-time warning is dropped (loft#2027)
+
+The decision text read *"silent except for one warning on an unguarded division by zero"*,
+and `(E-Report)` asked the unguarded site for a Warn-level `divide_by_zero` line.  No site
+ever emitted it: both backends answered the null and printed nothing, which the 2026-11
+halfway skills review measured.  The owner dropped the clause rather than build the line —
+it singled out one fault among four that all go quietly, and a hot loop's repetition would
+have needed a rule nobody asked for.  The null is the whole signal; the compile-time
+`divide-by-constant-zero` warning and `--dev-soft-halt` stay.
+
 ## C81 — `&` stays one token, disambiguated by position (bitwise-and vs reference)
 
 **Catalogue:** @F21 (references `&T`), @F37 (operators — bitwise `&`).

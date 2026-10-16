@@ -10,6 +10,14 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A division by zero is silent: C80's one-warning clause is dropped (loft#2027)
+
+C80 and `(E-Report)` promised a Warn-level log line on an unguarded division by zero at run
+time; no site emitted it on either backend.  The owner dropped the clause (2026-10-16): the
+null is the whole signal, as for overflow, an out-of-range index and an absent deref; the
+compile-time `divide-by-constant-zero` warning and `--dev-soft-halt` are unchanged.  Register,
+rule, stdlib comment and the history record say so.
+
 ### Both parse forms name every mismatch on the record (loft#2028)
 
 `record#errors` holds one entry per value that did not fit, whichever form built the record:

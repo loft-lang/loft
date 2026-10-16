@@ -330,15 +330,18 @@ a / b ?? 0      // 0     — `??` is LOOSEST, so it discharges the division
 a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISION is undischarged
 ```
 
-### Observability — report a fault only where it is UNGUARDED
+### Observability — a dropped write is reported where it is UNGUARDED
 
 ```
-  (E-Report)   an UNGUARDED uncomputable divide/modulo-by-zero ALSO emits a Warn-level
-               log (`divide_by_zero`) — the "no guard" signal — before yielding null.
-               A GUARDED site (the operand of `??` / a following null-check) emits the
-               silent `*Nullable` op and reports NOTHING (the guard owns the null).
-               Integer OVERFLOW is silent at every site (the null IS the signal — also
-               the rustc-release default); the value is null, never a wrapped wrong answer.
+  (E-Report)   an uncomputable divide/modulo-by-zero yields null and reports NOTHING, at a
+               guarded and an unguarded site alike: the null IS the signal, as it is for
+               integer OVERFLOW (also the rustc-release default — the value is null, never
+               a wrapped wrong answer).  A GUARDED site (the operand of `??` / a following
+               null-check) emits the silent `*Nullable` op; the unguarded one its plain
+               peer — an emission choice no program can tell apart.  (The Warn-level
+               `divide_by_zero` line this rule once asked of the unguarded site was never
+               emitted and was dropped by decision, @C80, loft#2027; `--dev-soft-halt`
+               names each fault in development.)
                A DROPPED WRITE (H-Write-Else's "did not take", a lock fault excepted, which
                reports its own under (H-WriteLocked)) is reported the same way, ONCE, in every
                build kind, when the statement has no `else`: an index out of range by the

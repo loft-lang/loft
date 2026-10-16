@@ -21,9 +21,9 @@ use std::cmp::Ordering;
 // ── the `--dev-soft-halt` overflow report (loft#1265) ────────────────────────────────────
 //
 // `(E-Report)` promises the flag surfaces the recoverable faults uniformly -- div0, overflow,
-// OOB -- and overflow was the one it missed.  It is also the one with no other signal at all:
-// div0 writes a Warn log at an undefended site and an overrun has its own, while overflow is
-// silent everywhere by design, the null being the signal.  So the flag was the whole of its
+// OOB -- and overflow was the one it missed.  A dropped write has its own report; div0 and
+// overflow are silent everywhere by design, the null being the signal (@C80, loft#2027 dropped
+// the one Warn line it once promised div0).  So the flag was the whole of overflow's
 // observability, and it was not answering.
 //
 // Reporting from here rather than from the ops' callers is what makes it free.  Overflow
