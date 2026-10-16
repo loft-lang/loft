@@ -39,10 +39,11 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // c9 / c10 — a value of the element type appended WHOLE (`b.ps += [p]`): the one
     // `OpCopyRecord` into the element covers every field, so the heap-free P3 mint skips
     // (n_add_p — its one prefilled site is the live-dispatch prelude's `OpDatabase` that
-    // materialises the tuple parameter, not a mint) and the text-owning NT mint keeps the
-    // prefill (n_add_n).  The two drivers mint their bag with a vector store apiece, covered.
+    // materialises the tuple parameter, not a mint), and so does the text-owning NT mint
+    // (n_add_n): its copy is flagged FRESH, so it never reads the slot's handles.  The two
+    // drivers mint their bag with a vector store apiece, covered.
     ("n_add_p", 1, 1),
-    ("n_add_n", 0, 1),
+    ("n_add_n", 1, 0),
     ("n_c9", 2, 0),
     ("n_c10", 2, 0),
 ];

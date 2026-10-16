@@ -339,7 +339,9 @@ result 15 %, the palette scan 12 %.
 **Re-profiled at `e218a2d48`** (6.58×; callgrind with `--toggle-collect` on `c_mapfile_to_painted`,
 21 calls, hashes equal).  Per call, loft 25.6 M instructions against the twin's 3.95 M — the
 same 6.5× as the time, so the gap is work, not stalls.  Each call reads 5 000 entries and
-inserts 4 615 new keys (all distinct, the table grown from empty):
+inserts 4 615 new keys (all distinct, the table grown from empty).  The twin column is the
+twin before @C151, walking its `HashMap` in table order; the key-order twin is the next
+section's baseline:
 
 | part | loft | twin | what loft does that the twin does not |
 |---|--:|--:|---|
@@ -351,16 +353,187 @@ inserts 4 615 new keys (all distinct, the table grown from empty):
 | — the rest (field writes, `set_key` writing `q, r` again, `record_finish`, the `keys.clone()` per insert: one `malloc`/`free`) | 2.9 M | — | |
 | the walk `for ph in pw.painted` | 4.55 M (18 %) | in 0.42 M | key order: `n_hash_sorted` sorts the entries (`sort_records` 9 %), then `OpStep` / `step_ordered` |
 | `palette_index_of` | 1.73 M (7 %) | 0.40 M | per element a `get_vector_hoisted` it does not need, `rec_text`, `op_eq_text` |
-| the outer loop over `m.ground` | 1.77 M (7 %) | in 0.42 M | not header-held (the body calls `paint`, which writes stores): `get_vector`, `length_vector` and a store resolve per field |
+| the two loops' own code (`mapfile_to_painted` is inlined) | 1.77 M (7 %) | in 0.42 M | the loop over `m.ground` is not header-held (the body calls `paint`, which writes stores): `get_vector`, `length_vector` and a store resolve per field read |
 
 The hash function is not the gap: `keys::hash` is ~170 instructions a call against the twin's
 SipHash at ~235.  The gap is how many times the work is done: each new key is hashed and
-probed twice and claimed as a record, and each rehash goes back to that record.  To reach 5×
-the row needs −24 %.  The levers it has, read off this profile (none priced yet): one probe
-per insert (the miss's bucket kept for the insert, ≤ −12 %), the order-free walk (P4,
-≤ −15 %, the walk-order decision), a rehash from the bucket's own record number without the
-key re-read (part of −9 %), and `keyed_place_finish` borrowing the key description instead of
-cloning it (−1.4 %).  P3 can buy at most ~5 %: the scan is 7 % of the row.
+probed twice and claimed as a record, and each rehash goes back to that record.  What the row
+needs to change is the next section.
+
+### What `mapfile_to_painted` needs to be under 3×
+
+The twin walks its hash in key order since @C151 (`by_key`: a sorted snapshot, as loft's), so
+it runs 5.46 M instructions per call (0.36 ms) where it ran 3.95 M, and the row reads **4.76×**
+(`portal.py measure --routine`, hashes equal), out of the release cut.  3× is **16.4 M
+instructions per call** (1.08 ms), from 25.6 M: the row must drop **36 %**.  The time follows
+the instructions here (the same IPC on both sides), so the budget is kept in instructions.  Every figure below is read off the profile above (*est.*), never
+hand-priced; a profile estimate has paid about two thirds once built (worklist.md § 0), so
+the list is ordered to price the two levers that decide the outcome first.
+
+**The frame: C105 holds.**  The twin's `HashMap` keeps each value inside its table and
+probes by a stored hash fragment.  Both are declined for loft's hash (@C105: two random
+reads per lookup, no hash in the slot, no entries in the bucket table, because entries that
+move on growth break the `DbRef`s a program holds into the collection).  Nothing below needs
+C105 reopened.
+
+| # | change | what it removes | est. saving per call | needs |
+|---|---|---|--:|---|
+| K1 | `(R-KeyedEntry)` extended to the subscript-assign spelling `h[k₁, k₂] = T{…}` and to a compound key of two to four integer parts (the key handed over as an array, as L8b's compound clause does) | `keyed_place_begin`'s lookup (2.84 M), the second probe's re-hash and record compare, `arena::index_of`, `record_finish`'s bookkeeping, `set_key` writing `q, r` a second time, the `keys.clone()` per insert | 6.5 M | a both-shapes admission in `generation::keyed_entry`, and a compound `hash::entry_*` |
+| W | the key-order snapshot made as the twin's is: each entry's key parts read once into the sort array, without the key description per entry, and the walk stepped over the array without `step_ordered`'s per-step dispatch | loft's walk 4.55 M against the twin's `by_key` 1.55 M | ~2 M | runtime only (`records_sorted`, `build_ref_scratch`, `OpStep` on a hash scratch) |
+| K3 | the table reserved before the loop: at most one insert per pass into a hash that is empty where the loop starts (`mtp_out = painted_empty()` just before), so `hash::reserve(len(m.ground))` | every growth: 238 rebuilds over 21 calls, 4.52 M | 4.5 M | the insert seen through the call to `paint` (a callee summary *inserts at most one entry into `w.painted`*, or `paint` inlined in the IR) |
+| K2 | (instead of K3, where no reserve is provable) a rebuild typed by the key's shape: integer parts read straight from the entry and hashed without the key description | about half of each rebuild's ~470 instructions per entry | 2.5 M | runtime only, both backends |
+| L | the loop over `m.ground` header-held across the call to `paint` | `get_vector` + `length_vector` per pass and a store resolve per field | 1.0 M | the same callee summary as K3, answering that `paint` writes no store `m` lives in, or `(R-Alias)`'s versioned run-time store compare |
+| P | the palette scan (P3): no `get_vector_hoisted` for an element whose only use is its name, the length tested before the text is resolved | about half of the scan | 0.9 M | `(R-RecPtr)`'s text read, without the unused element reference |
+
+**Where it lands.**  K1 + K3 + W + L + P remove 14.9 M: **10.7 M per call, 2.0×** if every
+change pays in full, and 2.6× if each pays two thirds.  With K2 in place of K3, 12.9 M, 2.4×
+in full and 2.9× at two thirds.  K1 alone is 6.5 M of the 9.2 M the row needs, so it is the
+first thing to hand-price: the one-probe insert hand-written into the emitted `n_paint`.  The
+margin past the list is the arena claim on a new key (`arena::alloc` and its zero fill,
+1.4 M; the allocator's free list) and the division in `home_bucket` (keyed.md § What is
+left, 7–10 % of a lookup).
+
+**Built: 2.81×** (`portal.py measure --only 08,15,16,17,18`, hashes equal; 1.712 → 1.015 ms
+per call, −41 %).  Each step was priced pinned on one core against the build before it:
+
+| step | per call | what it bought against the estimate |
+|---|--:|---|
+| — the row before | 1.681 ms | |
+| K1, hand-priced: `n_paint` calling `Stores::keyed_entry_ints` (one probe for both parts, the parts written on a miss) in place of `keyed_place_begin` / `keyed_place_finish` | 1.123 ms (−33 %) | more than the 25 % read off the profile |
+| K2: `rehash_into` filing an integer-part key from the parts read off each entry (`rehash_ints`) | 1.097 ms (−2.3 %) | a quarter of the estimate: what a rebuild costs is the walk of the new table and the store's checked reads, not the key description |
+| the arena: `arena::alloc_at` answering the address with the index, a slot at the append cursor not zeroed again | 1.056 ms (−3.7 %) | the margin item named below the table |
+| K1 built (`(R-KeyedEntry)`'s subscript clause, which also drops the literal's key-field writes) | 1.029 ms (−2.6 %) | the built form beats the price: it writes one field where the price wrote three |
+
+W, K3, L and P are not built; the row is under the bar without them.  The runtime half moved
+the keyed class with it — `hash_fill` 3.02 → 2.58×, `composite_hash` 4.43 → 4.06×,
+`hash_text_keys` 4.63 → 4.34×, `hash_remove` 3.34 → 3.07×, `grouped_fill_find` 3.92 → 3.72×
+— and no routine of the five lanes slowed beyond its noise (`emit_to_material`, which makes
+no hash operation, +1.5 % pinned: the relinked runtime's layout).
+
+**The walk keeps key order (@C151).**  `for ph in pw.painted` is the dryopea source's own
+loop, so the bench keeps it, and W makes the key-order walk cheaper rather than giving the
+order up.  A program that has no use for the order writes `for ph in unordered(pw.painted)`,
+which skips the sort; that reaches this row only if dryopea's `save.loft` writes it, and then
+the twin walks `.values()` for that loop.
+
+**Both backends.**  K3, L and P are IR facts (a reservation, a callee summary), so the
+interpreter gets them too; W and K2 are runtime.  K1 is a native emission, as
+`(R-KeyedEntry)` is today.
+
+**Who else moves.**  K1 reaches every `h[a, b] = T{…}` of a heap-free element:
+`reload_and_record` (its compound-key probe is ~32 % of that row, now 3.65× against the
+key-order twin), `truncate_to`'s history writes, `field_add_cell`.  W reaches every key-order
+hash walk, `reload_and_record`'s four among them.
+
+### zttext `invert` — what it needs to be under 3×
+
+The row read 6.28×: 8.00 ms per call against the twin's 1.27 ms, so 3× is 3.82 ms, a 53 %
+cut.  Per op (300 a call: an insert, a delete or a restyle in turn, over a 1 000-piece,
+20 000-character document) `invert` computes the op's inverse group against the current
+document, prepends it to the result, and applies the op.  The twin MOVES the buffer on a
+delete and a restyle (`Doc { buf: d.buf, pieces }`), prepends by `splice` (no copy of an
+earlier op's text), and pushes a `Piece` as 24 bytes.
+
+**Priced, not profiled.**  The callgrind split put `memcpy` at 23 % of the row and the
+buffer copies first; in time the buffer move is the SMALLEST lever.  Callgrind counts every
+iteration of `rep movsb` as an instruction, so a block copy reads far above its time — this
+row's levers are ordered by hand prices only (`perf` with LBR call chains, restricted to
+`n_invert`, for the time split; each price pinned on one core, three interleaved runs,
+hashes equal):
+
+| # | lever | alone | in sequence | what building it takes |
+|---|---|--:|--:|---|
+| L1 | `cur = apply_op(cur, op)` hands `cur` as the callee's buffer, through `apply_op`'s chain exits (`return delete_range(d, …)`): the literal's `buf: d.buf` is a self-replace | −6 % | 8.00 → 7.53 ms | `(R-Rebind)` across a chain exit; the chain's delivery must take a result in the parameter's store as the buffer it is — without that, `OpRebindRecord` deep-copies it and the row is **8 % slower** |
+| L2 | the prepend `tmp += g; tmp += result; result = tmp` done in `result`'s own record | −24 % | 7.53 → 5.53 ms | **BUILT**: `(R-Compact)`'s prepend form, `OpPrependVector` (both backends): 6.48 → 4.48 ms on top of L3 (−31 %, more than the price: the build appends then rotates once, where the price inserted per element) |
+| L3 | `np += [p]` of a 24-byte `Piece` view as its bytes | −19 % | 5.53 → 4.10 ms | **BUILT**: `(R-FlatCopy)`'s emitted clause, 7.99 → 6.59 ms on the row as it was (−17.5 %, the hand price) |
+| L4 | `slice_runs` holds `d.pieces`' header across its loop | — | 4.10 → 3.43 ms (−16 %) | **BUILT**: `(R-Header)`'s apart clause, its parameter half, in `(R-Alias)`'s versioned copy (the return buffer tested apart from `d` at run time; `buf_slice_text` a callee that writes no store): 4.51 → 3.75 ms on top of L3 and L2 (−17 %) |
+
+**Where it lands.**  All four, priced: **3.43 ms, 2.70×**.  Without L1, about 3.65 ms (≈ 2.87×).
+With L3 and L2 built: **3.60×** in the portal (4.45 ms against 1.24 ms; `make perf-portal` at
+164252e78), and `insert_text` 5.09 → 1.93× beside it from L3 alone.  With L4: **2.97×** in the portal (3.72 ms; `make perf-portal` at 1d7ec5904) — under the bar, with
+L1 (about −6 %) the margin left to take.  The same run read
+the text lane (13) 10–23 % slower; the emitted Rust there is unchanged, and with
+`-align-all-functions=6` on both runtimes the two builds are level — the relinked runtime's layout.
+L3 and L4 are exactly the emitted forms, so they land at their price, as L3 did.  The
+hand-priced files are the emitted `invert` with each edit applied by script
+(`hand_price.sh` with the package's `LOFT_NATIVE_RUSTC_ARGS`); the edits are the four
+`python3` replacements recorded in the commit that built L3.
+
+### dryopea `truncate_to` — what it needs to be under 3× (analysis, not priced in full)
+
+6.38× at 1d7ec5904: 86.9 µs per call against the twin's 13.6 µs, so 3× is 40.9 µs (−53 %).
+300 `history_push`es on a 50-deep timeline; `(R-Compact)` already admits both rebuilds
+(`truncate_to` and `drop_oldest` are one in-place keep each), and the driver's `e` is a loop
+record refilled in place, so neither the rebuild nor the entry's build is the cost.  Callgrind
+(no large block copies here, so the instruction split stands), per call 1.47 M: `history_push`
+73 % — the entry copied into the timeline (`OpCopyRecord` → `copy_plain_vectors`, two vector
+blocks claimed and copied) 31 %, the dropped entries released (`keep_vector_range` →
+`remove_claims` → `delete`) 21 %, the append slot (`OpNewRecord` with its default prefill,
+`OpFinishRecord`) ~13 %, its own code 9.5 %; the allocator inside all of them (`claim_best_fit`,
+`delete`, `set_free_header`, `fl_insert`) ~25 % of the row.  Per push that is about 3 600
+instructions inside `history_push`; the twin's whole iteration is ~45 ns.
+
+**The arithmetic.**  Outside `history_push` (the entry's build, the final walk) is 27 % of the
+row, ~23 µs.  Under 3× leaves `history_push` ~18 µs for 300 pushes — ~60 ns a push against
+~210 ns now (−72 %).  No one lever comes near that:
+
+| lever | price | status |
+|---|--:|---|
+| the append slot minted without its default prefill (`OpNewRecordNP`: the whole-record copy overwrites every byte) | **−6.1 %** (78.3 → 73.4 µs on the free list, hash unchanged) | **built**: `(R-CompleteWrite)`'s fresh-copy clause — a copy flagged `COPY_FRESH_DEST` never reads its slot |
+| the allocator's small-block free list (worklist.md § 4) | −13.0 % | **built**, `(H-Park)` (below) |
+| the dead entry MOVED instead of copied (X10) | +16 % | priced and declined (worklist.md § 4) |
+| a typed copy and release of a record of plain vectors (no generic dispatch per entry) | *est.* ~10 % | not priced |
+
+Together ~−30 %, about 4.4×.  What the twin does that loft does not is pay a `malloc`/`free`
+(~30–50 instructions) where loft pays a best-fit claim (~280) and a delete with coalescing
+(~170), twice each per push, plus a generic copy and release walk around them.  The row
+reaches 3× only when a claim and a delete of a small block cost what the twin's do — the
+free list built lean (a size-class pop and push, ~50 instructions) — AND the copy and release
+are typed per entry.  Next: build the free list (it also moves `panel_build` −15 %, `map_json`
+−4 %), take the prefill, then re-profile; the shares above assume none of them.
+
+**The free list's build design.**  The probe kept a parked block's header POSITIVE, so every
+walk of the store's blocks (the coalescing sweep, `claims_rebuild`, `usage`, an image, the
+open walk) read it as a live record.  The build parks it as an ordinary FREE block instead —
+negative header and footer, as `(H-FreeFooter)` writes them — on a list for its exact size,
+doubly linked through the two half-words a tree node uses for its links, with a bit set that
+confirms membership.  Every walk then reads the store right without knowing the lists exist;
+what must know them is the short list of places that TAKE a free block: `fl_remove` (the
+exact-position claim, an in-place resize, the growth step), the chain walk's claim, and the
+merges.  A delete's merges stop at a parked neighbour (a merge would destroy the size the
+list holds it for), so a parked block is merged only by a flush.  A claim of a parked size
+pops its list before the tree; a claim the tree and the wilderness cannot hold FLUSHES the
+lists — each block through the exact delete, merging with its tracked neighbours — and asks
+the tree again before it sweeps or grows, so the store grows no sooner than it did.  Not
+parked: a block that ends the store (it is the wilderness), a store bound to a file, a store
+whose edit journal records, and above 16 words.  A tree rebuild (the sweep, an open) and a
+reset empty the lists, since the walk tracks every free block itself; a shrink flushes first.
+`LOFT_NO_PARK=1` restores the allocator without the lists.  **Built** (`(H-Park)`,
+`formal/allocator.md`): `truncate_to` 87.8 → 76.4 µs (−13.0 %, ≈ 5.5×), `panel_build` 4.51 →
+4.07 ms (−9.8 %), `mapfile_to_painted` −1.7 %, three interleaved rounds on core 2, every hash
+equal.  Beside it: `fl_tree_contains` — the
+confirmation every backward merge asks — searches BOTH subtrees (a full walk); by the tree's
+own (size, position) key it is one descent.
+
+**Re-profiled after both** (callgrind, collection toggled on `n_c_truncate_to__rg`, 20
+calls of 300 pushes: 27.2 M instructions, ~4 500 a push).  The allocator is down to ~13 %
+(`claim` 6.9 %, `delete` 6.5 %).  What is left, by mechanism:
+
+| share | per push | mechanism |
+|--:|--:|---|
+| 29 % | ~1 330 | `OpCopyRecord`: the entry's two vector blocks claimed and copied (`copy_plain_vectors` ~315 a push before a byte moves, `copy_block` ~87 a call around one `memmove`) — the copy the twin MOVES (X10) |
+| 21 % | ~950 | `keep_vector_range`: the dropped entries' vector blocks released (`release_plain_vectors`, `delete`), ~370 a block |
+| ~15 % | — | the driver's own appends building `e` (`OpNewRecordNP` / `OpFinishRecord` 4 a call, `reserve_more`, `push_header`, `clear_vector`) — work the twin does too |
+| 14 % | — | the driver's other code (`n_c_truncate_to__rg` self) |
+| ~7 % | ~315 | `history_push`'s append SLOT: `OpNewRecordNP` → `record_new` (~195) and `OpFinishRecord` → `record_finish` (~120), each redoing the field dispatch the emitter resolved |
+
+**The slot PRICED** (the emitted `n_history_push` edited by script: `vector_append` /
+`vector_finish` on the field's vector directly, four interleaved rounds on core 2, hash
+equal): 73.7 → 72.0 µs, **−2.3 %** — the ceiling for dropping the dispatch, as both helpers
+still run.  `(R-PushRec)` gives a literal element this form only in a loop admitted under
+`(R-InPlace)`; a straight-line append (one per call) is outside it.  Not built: small beside
+the copy and the release, which together are half the row at a few hundred instructions per
+block, spread over permission checks, store lookups and shadow tests rather than one spot.
 
 ### pluginabi `check_request` — the decode it shares, and the texts
 

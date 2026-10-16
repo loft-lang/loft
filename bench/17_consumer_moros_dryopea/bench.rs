@@ -1100,18 +1100,28 @@ fn history_push(h: &mut Timeline, e: Stroke) {
     }
 }
 
+/// The values of a hash in KEY order, as loft walks a `hash<T[k…]>`: a sorted snapshot of the
+/// entries, taken when the walk starts.  Every twin walk of a `HashMap` that stands for a loft
+/// hash goes through this, so the twin pays the order the language promises (owner, the hash
+/// walk keeps key order).
+fn by_key<K: Ord + Copy, V>(m: &HashMap<K, V>) -> Vec<&V> {
+    let mut v: Vec<(K, &V)> = m.iter().map(|(k, x)| (*k, x)).collect();
+    v.sort_unstable_by_key(|(k, _)| *k);
+    v.into_iter().map(|(_, x)| x).collect()
+}
+
 fn reload_and_record(pw_cur: &PaintedWorld, mw_cur: &MarkerWorld, pw_ld: &PaintedWorld, mw_ld: &MarkerWorld, history: &mut Timeline) {
     let mut e = undo_entry_empty();
-    for cp in pw_cur.painted.values() {
+    for cp in by_key(&pw_cur.painted) {
         let lk = lookup_painted(pw_ld, cp.q, cp.r);
         if lk != cp.kind { e.painted.push(PaintedDelta { q: cp.q, r: cp.r, old_kind: cp.kind as i64, new_kind: lk as i64 }); }
     }
-    for lp in pw_ld.painted.values() {
+    for lp in by_key(&pw_ld.painted) {
         if lookup_painted(pw_cur, lp.q, lp.r) == 0 {
             e.painted.push(PaintedDelta { q: lp.q, r: lp.r, old_kind: 0, new_kind: lp.kind as i64 });
         }
     }
-    for cm in mw_cur.markers.values() {
+    for cm in by_key(&mw_cur.markers) {
         if has_marker(mw_ld, cm.q, cm.r) {
             let lk = marker_kind(mw_ld, cm.q, cm.r);
             let ld = marker_direction(mw_ld, cm.q, cm.r);
@@ -1124,7 +1134,7 @@ fn reload_and_record(pw_cur: &PaintedWorld, mw_cur: &MarkerWorld, pw_ld: &Painte
                 old_direction: cm.direction as i64, new_present: false, new_kind: 0, new_direction: 0 });
         }
     }
-    for lm in mw_ld.markers.values() {
+    for lm in by_key(&mw_ld.markers) {
         if !has_marker(mw_cur, lm.q, lm.r) {
             e.markers.push(MarkerDelta { q: lm.q, r: lm.r, old_present: false, old_kind: 0, old_direction: 0,
                 new_present: true, new_kind: lm.kind as i64, new_direction: lm.direction as i64 });
@@ -1219,7 +1229,7 @@ fn make_mapfile(pal: &[GroundType], salt: i64) -> MapFile {
 fn c_mapfile_to_painted(mf: &MapFile, pal: &[GroundType]) -> i64 {
     let pw = mapfile_to_painted(mf, pal);
     let mut acc = pw.painted.len() as i64 * 1000000;
-    for ph in pw.painted.values() { acc += (ph.q + 50) * 31 + (ph.r + 25) * 17 + ph.kind as i64 * (ph.q + 101); }
+    for ph in by_key(&pw.painted) { acc += (ph.q + 50) * 31 + (ph.r + 25) * 17 + ph.kind as i64 * (ph.q + 101); }
     acc
 }
 

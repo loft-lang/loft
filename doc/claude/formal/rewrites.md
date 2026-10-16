@@ -588,6 +588,17 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  store.  Nothing else of the loop is hoisted — no push header, no
                  scalar, no callee input: those rest on the gate's verdict about
                  the whole body.
+  (R-Header), the apart clause's PARAMETER half: the same holds for a vector
+                 a by-value PARAMETER reaches — bare, or a field path over it
+                 (`d.pieces`) — where, beside (b) and (c), every variable the body
+                 names outside a read is proven apart from the parameter's store:
+                 its dep chain ends at a store this activation minted that is no
+                 argument (a hidden vector buffer is an argument), or at a local
+                 every binding of which is a null or a mint, or the pair is one
+                 R-Alias's versioned copy tested at run time.  A field projection
+                 read in place is a read of its base, and an argument handed to a
+                 loft callee that writes no store and answers no reference is a
+                 read.  Two arguments are never proven apart.
 ```
 
 **The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
@@ -605,6 +616,23 @@ falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `generation::apart` (`apart_headers`, `
 `tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft`; pin
 `tests/apart_headers.rs`.  cbor `encode` (x86-64): 10.52 → 8.42 ms, hash unchanged — its
 emit loop reads `ranks`, `koff`, `klen` and `keybuf` and calls the recursive `encode`.
+
+**The parameter half, in words.**  A parameter's store is named by the caller too, so the
+mention test alone proves nothing about it: another argument, or the return buffer, may be a
+field of the same record.  What a loop can write or grow it names (a push's target, a
+setter's, a mint's store, an argument handed to a writer), so the half asks that every such
+variable be one the parameter cannot share a store with.  The return buffer is an argument a
+caller may claim in the parameter's own store (`(R-Place)`), so a loop that grows it gains
+the header only in R-Alias's versioned copy, which `distinct_version` now also opens for a
+loop the gate declined whose movers end at the buffer.  zttext `slice_runs` (inside
+`invert`): 4.51 → 3.75 ms per `invert` (−17 %, the hand price −16 %), hash unchanged; the
+census counts it in twelve programs.  Switch `LOFT_NO_APART_PARAM=1`; falsifier
+`LOFT_HOIST_VERIFY=1`.  Sites: `apart::apart_headers` (the `param` owners, `minted_here`,
+`ApartWalk::store_free_call`), `StoreFacts::apart_from_argument`, `Output::grows_buffer`.
+Guard `tests/scripts/a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft`
+(h1–h7; h7 is the same record passed as both parameters and emptied through one, falsified
+by a plant that takes every writer as apart: `h7 179400` where the file says 220); pin
+`tests/apart_param.rs`.
 
 **The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
 self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its
@@ -2765,6 +2793,35 @@ entry and panics where the two differ.  Cells
 `generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
 `Stores::keyed_entry_long`, `hash::entry_long`.
 
+```
+  (R-KeyedEntry)'s subscript clause
+                  c[e₁, …, eₘ] = T{f₁: v₁, …} where c is a `hash<T[k₁, …, kₘ]>` whose
+                  1 ≤ m ≤ 4 key parts are each of `integer` width, T owns no heap and no
+                  linked group holds its records, `(R-InPlaceLiteral)`'s keyed clause admits
+                  the assignment, and the literal writes, through scalar setters, every
+                  field of T that is not a key part — is emitted as: the values evaluated
+                  in source order into temps (that clause's staging), then ONE probe for
+                  (e₁, …, eₘ) that answers the entry already under that key or a fresh one
+                  filed with every part written, then the temps of the fields that are not
+                  key parts written into it.
+```
+
+**In words.** The keyed clause it replaces removes the entry under the key, claims a fresh
+one, writes the literal into it and then the SUBSCRIPT's key over the literal's key fields
+(`set_key`), so the entry always carries the subscript's key whatever the literal says.
+The entry this clause answers carries that key already, found or filed, so the literal's
+writes to key fields are dropped and the rest is the overwrite `(R-KeyedEntry)` argues
+above: heap-free, every other field written, nothing of the old entry left.  The probe's
+digest is `keys::ints_hash` over the parts, which is `keys::hash` over a record carrying
+them, so a lookup by either route walks the same buckets.  `Stores::keyed_entry_ints`
+takes the two-probe path at run time where `keyed_entry_long` does: no table yet, a
+snapshot of the collection live.  dryopea `mapfile_to_painted` (`w.painted[q, r] =
+PaintedHex{…}`) 4.76× → 2.81×, with the runtime changes beside it
+(`bench/portal/analysis/over-9x.md`).  Same switch, same falsifier.  Cells
+`tests/scripts/a-hash-written-by-a-compound-subscript-keeps-every-entry.loft`.  Sites:
+`keyed_entry::subscript_keys` (the admission), `Output::output_keyed_entry_subscript`,
+`Stores::keyed_entry_ints`, `hash::entry_ints`.
+
 ### A result vector adopts the return buffer
 
 ```
@@ -3349,9 +3406,14 @@ line in `Output::output_function`'s prelude.
                  the site calls the no-prefill twin (`OpDatabaseNP` /
                  `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
                  itself (`self.items += [p]`, `p` a value of the element type)
-                 covers every field when the element owns no heap; a heap-owning
-                 element's copy trusts the zeroed handles the prefill wrote and
-                 keeps it.  An uncovered field — a nested struct arriving by
+                 covers every field when the element owns no heap, and also for a
+                 heap-owning element when the copy is flagged FRESH for that very
+                 type (`COPY_FRESH_DEST`): a fresh copy never reads its destination
+                 — it releases nothing there, then writes every byte and every
+                 handle anew, or zeroes every byte for a null source — so the
+                 prefill's zeroed handles are read by nothing.  An UNFLAGGED copy
+                 into a heap-owning element releases what the slot holds, and only
+                 the prefill makes that nothing: it keeps it.  An uncovered field — a nested struct arriving by
                  `OpCopyRecord` into a FIELD, a vector field bound by an append, a
                  `__nullable` element whose discriminant no `OpSet` names — keeps
                  the prefill: the check can only DECLINE the elision.  `db_vars`
@@ -3672,6 +3734,32 @@ insert; the type's heap facts are cached, so the answer is one lookup.  `insert_
 → 4.0–5.0 ms (≈ −40 %) and `invert` −20 to −30 % on arm64 macOS, hashes unchanged.  Like
 `(R-Cold)` it is the runtime's own shape and not counted by the census.  Switch
 `LOFT_NO_FLAT_COPY`.  Sites: `OpCopyRecord`, `Stores::flat_record_type`.
+
+```
+  (R-FlatCopy)'s emitted clause
+                 such a copy whose source is a VARIABLE — the fresh-destination mark of
+                 a minted push slot (`COPY_FRESH_DEST`) admitted, since the type has no
+                 claims to release in it — is emitted as its bytes, the width a
+                 constant read off the schema: from the source's record address to the
+                 destination's where the block holds both (`(R-RecPtr)`; a flat copy
+                 into or out of a view is a use the address serves, so a minted slot
+                 holds its address for its window), and through
+                 `Stores::copy_flat_record` otherwise.  A null end, a locked
+                 destination, and on the store path a foreign destination, an armed
+                 shadow, a traced or a checked copy take `OpCopyRecord`.
+```
+
+**In words.**  The runtime clause still asked, per copy, what the type is: its size, its
+heap facts, and the fn-ref hand-off flag, a thread-local read.  The emitter knows the type
+at the site, so it writes the copy as a few moves.  The flag is not consumed: it is set by
+an unresolved fn-ref call and consumed by the bind of that call's result, and a copy whose
+source is a variable is never that bind.  The address path writes past the copy
+instruments, as `(R-RecPtr)`'s field writes do.  zttext `invert` 7.99 → 6.59 ms (−17.5 %,
+the hand price), which is `insert_text`'s `np += [p]` per piece
+(`bench/portal/analysis/over-9x.md`).  Same switch.  Cells
+`tests/scripts/a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  Sites:
+`hoist::flat_copy` (the admission), `hoist::copy_serves_view`, `ref_ops::emit_flat_copy`,
+`Stores::copy_flat_record`.
 
 ### A result is built where it will live, moved at its last use, and written over a place
 
@@ -4201,13 +4289,29 @@ to bisect to.
   A SCALAR element keeps the rebuild: an in-range scalar can hold the null its `??`
   replaces, where an in-range record element is never absent — the one difference between
   the two forms the guard cannot see.  Not yet built: the FILTER form (`for e in V { if p {
-  t += [e] } }`, a loop rewrite with a write index), the PREPEND form (`invert`) and the
-  IDENTITY form (`insert_text`), which the rule states and this unit's recogniser does not
-  reach.
+  t += [e] } }`, a loop rewrite with a write index) and the IDENTITY form (`insert_text`),
+  which the rule states and this unit's recogniser does not reach.
   Cells: `tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft`
   (c1–c18, hand-computed, both backends under `LOFT_STRICT_STORES` / `LOFT_POISON` /
   `LOFT_POISON_CLAIM` / the native leak check, the switch A/B answering the same); the
   admission is pinned on the emitted Rust in `tests/compact.rs`.
+  **The PREPEND form is BUILT** in the same unit: `t = []; t += g; t += V; V = t`, with `g`
+  a LOCAL (the fallback arm evaluates it again, so it must be pure) that is not `t` and is
+  `V` itself or no root of it, becomes `if !OpPrependVector(V, g, tp) { the statements as
+  written }`.  `Stores::prepend_vector` appends `g` as `OpAppendVector` does (its elements
+  copied with what they own, whichever store `g` is in, `g` being `V` included) and rotates
+  the record's element bytes so they stand first: a rotation moves each element whole, the
+  numbers of the records it owns among its bytes, so nothing is claimed or released.  It
+  answers false, having done nothing, for a null or absent `V` and a linked element type,
+  which keep the written-out statements.  The op moves every element of `V` to another
+  index, so it is a RESHAPE of `V` (`scopes::disturbance`, beside `OpRemoveVector`): a view
+  of `V` live across it is materialised first.  The rebind's local form now also accepts
+  its `vdb = null` where the scan left it in the list (straight-line code); that init stays
+  AHEAD of the guard, so the slot its later free names is set on the fast arm too.
+  zttext `invert` 6.48 → 4.48 ms (−31 %; the hand price was −24 %).  Cells
+  `tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft` (p1–p7, both backends,
+  the switch A/B, `LOFT_STORES` / `LOFT_POISON` / `LOFT_STRICT_STORES` /
+  `LOFT_HOIST_VERIFY`).
 - **`(R-Const)`** — text2d `write_text` **86×**: `face_codes()` / `face_rows()` return
   vector literals of 56 and 392 elements, rebuilt for every glyph drawn and read only;
   moros `panel_build` (19×) copies a constant `vector<text>` into a list box per frame,

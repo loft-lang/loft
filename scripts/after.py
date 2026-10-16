@@ -185,10 +185,11 @@ def plan(mode, paths, base, want_tests):
     ratchets, runner = artefact_steps(paths)
     steps.extend(ratchets)
     if guards:
+        # `--tests` takes ONE target per run, so the guards run one after another.
         files = " ".join(f"'{g}'" for g in guards)
         for backend in ("interpret", "native"):
             steps.append(Step(f"guards {backend}",
-                              f"LOFT_TIMEOUT=120 LOFT_LEAK_CHECK=1 {BIN} --{backend} --tests {files}",
+                              f"for g in {files}; do LOFT_TIMEOUT=120 LOFT_LEAK_CHECK=1 {BIN} --{backend} --tests \"$g\" || exit 1; done",
                               ", ".join(guards[:2]) + (f" +{len(guards) - 2}" if len(guards) > 2 else ""),
                               "B", needs="bin"))
     if want_tests:

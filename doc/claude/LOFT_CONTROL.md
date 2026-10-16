@@ -56,6 +56,17 @@ for i in rev(1..10) { }        // integer range in reverse (9, 8, 7, …, 1)
 for x in rev(sorted_col) { }   // sorted / index collection in reverse key order
 ```
 
+A walk with no use for the order:
+```
+for e in unordered(h) { }      // a hash without its key sort: every entry once, in an
+                               // order loft chooses and keeps the same from run to run
+```
+A plain `for e in h` walks a hash in key order, which costs a sort of its entries each time
+the walk starts.  `unordered(h)` skips the sort.  The order it gives is not promised (it is
+not the insertion order once an entry has been removed), but it does not change between runs
+of the same program.  On a vector, `sorted`, `index`, `spatial` or `trie` it changes nothing:
+those walk in their own order without a sort.
+
 Inside a loop, the iteration variable supports several attributes using `#`:
 
 | Attribute    | Meaning                                                                              |

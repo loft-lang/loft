@@ -1,0 +1,77 @@
+// `@FR-R-KeyedEntry`'s subscript clause, `@FR-Col-Insert` — `h[q, r] = T{…}` into a hash keyed
+// by integer parts writes the entry under the key in one probe: the one already there is
+// overwritten (latest insert wins), a new key is filed where the probe ended.  Every entry
+// stays findable through the rebuilds a fill from empty makes, an overwrite leaves the count
+// alone, and the entry carries the SUBSCRIPT's key whatever the literal says.  The rebuild of
+// a table keyed by integer parts reads the parts straight from each entry on both backends.
+//
+// Expected values are hand-computed: entry i of the fill is (q, r) = (i % 30, i / 30), its v
+// is 7·i, and 7·(0 + … + 599) = 7·179700 = 1257900.
+//
+// @falsified-by: tests/falsified/a-hash-written-by-a-compound-subscript-keeps-every-entry.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch compares the first key part only, so
+//   (q, r) and (q, r') answer one entry and c1's count falls short.  The interpreter keeps the
+//   plain form, so it cannot move.
+struct T { q: integer, r: integer, v: integer }
+struct W { h: hash<T[q, r]> }
+struct U { a: integer, b: integer, c: integer, k: u8 }
+struct V { h: hash<U[a, b, c]> }
+
+fn put(w: W, q: integer, r: integer, v: integer) { w.h[q, r] = T { q: q, r: r, v: v }; }
+
+fn mislabelled(w: W, q: integer, r: integer, v: integer) { w.h[q, r] = T { q: 9, r: 9, v: v }; }
+
+fn bump(w: W, q: integer, r: integer) { w.h[q, r] = T { q: q, r: r, v: (w.h[q, r].v ?? 0) + 1 }; }
+
+fn put3(x: V, a: integer, b: integer, c: integer, k: u8) { x.h[a, b, c] = U { a: a, b: b, c: c, k: k }; }
+
+fn total(w: const W) -> integer {
+  t = 0;
+  for q in 0..30 { for r in 0..20 { t += w.h[q, r].v ?? 0; } }
+  t
+}
+
+fn main() {
+  w = W { h: [] };
+  // c1 — 600 distinct keys from an empty table: every one found after the rebuilds.
+  for i in 0..600 { put(w, i % 30, i / 30, i * 7); }
+  missing = 0;
+  for i in 0..600 { if w.h[i % 30, i / 30].v != i * 7 { missing += 1; } }
+  assert(len(w.h) == 600 && missing == 0 && total(w) == 1257900, "c1 {len(w.h)} {missing} {total(w)}");
+  // c2 — every third key overwritten with -i: the count stays, 1257900 - 8·59700 = 780300.
+  for i in 0..600 { if i % 3 == 0 { put(w, i % 30, i / 30, 0 - i); } }
+  assert(len(w.h) == 600 && total(w) == 780300, "c2 {len(w.h)} {total(w)}");
+  // c3 — the subscript's key wins: (1, 2) is entry 61, and (9, 9) — entry 279, overwritten
+  // in c2 — is untouched.
+  mislabelled(w, 1, 2, 5);
+  e = w.h[1, 2];
+  assert(len(w.h) == 600 && e.q == 1 && e.r == 2 && e.v == 5 && w.h[9, 9].v == -279,
+         "c3 {len(w.h)} {e.q} {e.r} {e.v} {w.h[9, 9].v}");
+  // c4 — a value that reads the entry it replaces: (2, 0) is entry 2, v 14.
+  bump(w, 2, 0);
+  assert(w.h[2, 0].v == 15, "c4 {w.h[2, 0].v}");
+  // c5 — the 30 keys of row r = 5 removed and written again: the freed slots are reused.
+  for q in 0..30 { w.h[q, 5] = null; }
+  gone = len(w.h);
+  for q in 0..30 { put(w, q, 5, 1); }
+  back = 0;
+  for q in 0..30 { back += w.h[q, 5].v; }
+  assert(gone == 570 && len(w.h) == 600 && back == 30, "c5 {gone} {len(w.h)} {back}");
+  // c6 — a walk is in key order and visits all 600.
+  n = 0;
+  first = "";
+  for t in w.h {
+    if n < 3 { first += "{t.q}:{t.r},"; }
+    n += 1;
+  }
+  assert(n == 600 && first == "0:0,0:1,0:2,", "c6 {n} {first}");
+  // c7 — three parts: 200 keys (i, i % 7, -i), k = i as a byte, one
+  // overwritten.  0 + … + 199 = 19900; the overwrite of i = 50 swaps 50 for 3: 19853.
+  x = V { h: [] };
+  for i in 0..200 { put3(x, i, i % 7, 0 - i, (i & 255) as u8); }
+  put3(x, 50, 1, -50, 3 as u8);
+  s = 0;
+  for i in 0..200 { s += (x.h[i, i % 7, 0 - i].k as integer?) ?? 0; }
+  assert(len(x.h) == 200 && s == 19853, "c7 {len(x.h)} {s}");
+  println("ok");
+}

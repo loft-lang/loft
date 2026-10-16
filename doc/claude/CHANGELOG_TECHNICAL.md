@@ -549,6 +549,100 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   file, a free function does, so the author chooses the few worth a bare name and the shared
   namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
   cells `tests/builder_trigger.rs` on both backends.
+### An appended record that owns heap is minted without its prefill (2026-10-16)
+
+- **`(R-CompleteWrite)`'s fresh-copy clause** — a whole-record `OpCopyRecord` into a minted
+  element covers a HEAP-OWNING element type too when the copy is flagged `COPY_FRESH_DEST`
+  for that type: a fresh copy releases nothing in its destination and writes every byte and
+  handle anew (or zeroes every byte for a null source), so the prefill is read by nothing
+  (`hoist::group_covers_type`, native, `LOFT_NO_COMPLETE_WRITE`).  dryopea `truncate_to`
+  78.3 → 73.4 µs (−6.1 %; with `(H-Park)` 87.8 → 73.4, −16 %).  Guard
+  `a-fresh-copy-into-a-minted-slot-needs-no-prefill.loft` (falsified: an unflagged copy
+  admitted panics on native), pin `tests/complete_write.rs` (`n_add_n` now skips).
+
+### A freed small block is the next claim of its size (2026-10-16)
+
+- **`(H-Park)`, the allocator's small-block free list** — a delete of a block of 2 to 16
+  words parks it on a list for its exact size (a free block by header and footer, doubly
+  linked through the tree node's link half-words, confirmed by a set of starts) and a claim
+  of that size pops it before the tree; a claim the tree and the wilderness cannot hold
+  flushes the lists through the exact delete before it sweeps or grows.  Runtime, both
+  backends, `LOFT_NO_PARK`.  dryopea `truncate_to` 87.8 → 76.4 µs (−13 %), `panel_build`
+  4.51 → 4.07 ms (−10 %), every hash equal.  `fl_tree_contains` — the confirmation each
+  backward merge asks — is one descent by the tree's key instead of a walk of both subtrees.
+  The allocator's layout rules moved from `formal/heap.md` to `formal/allocator.md`.
+
+### A parameter's vector holds its header where every writer is apart (2026-10-16)
+
+- **`(R-Header)`'s apart clause, its parameter half** — in a loop the header gate declines, a
+  by-value parameter's vector (bare or a field path, `d.pieces`) keeps its header and base when
+  every variable the body names outside a read ends at a store this call minted (not an
+  argument), a local only ever minted, or a pair `(R-Alias)`'s versioned copy tested apart; a
+  field projection read in place and an argument handed to a callee that writes no store are
+  reads (`apart::apart_headers`, `StoreFacts::apart_from_argument`, native,
+  `LOFT_NO_APART_PARAM`).  `distinct_version` also versions a declined loop whose movers end
+  at the return buffer (`Output::grows_buffer`).  zttext `invert` 4.51 → 3.75 ms (−17 %);
+  twelve programs in the census.  Guard
+  `a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft`, pin
+  `tests/apart_param.rs`.
+
+### A vector prepended to is rebuilt in place (2026-10-16)
+
+- **`(R-Compact)`'s prepend form** — `t = []; t += g; t += V; V = t`, `g` a local, becomes
+  `if !OpPrependVector(V, g, tp) { the statements as written }` (`compact::match_prepend`,
+  both backends, `LOFT_NO_COMPACT`): `Stores::prepend_vector` appends `g` as `OpAppendVector`
+  does and rotates the record's elements so `g`'s stand first; a null or absent `V` or a
+  linked element type keeps the statements.  The op reshapes `V`, so a live view of it is
+  materialised (`scopes::disturbance`).  The rebind's local form also accepts its `vdb =
+  null` in the list, kept ahead of the guard.  New op: `index/target_surface.json`
+  regenerated.  zttext `invert` 6.48 → 4.48 ms (−31 %).  Guard
+  `a-vector-prepended-to-is-rebuilt-in-place.loft`.
+
+### A record that owns no heap is copied as its bytes at the site (2026-10-16)
+
+- **`(R-FlatCopy)`'s emitted clause** — `OpCopyRecord` from a variable, of a record type that
+  owns no heap and keeping its source (a minted push slot's fresh-destination mark admitted),
+  is emitted as a constant-width copy: between the two record addresses where the block holds
+  both (`(R-RecPtr)` now counts such a copy as a use its address serves, so a minted slot
+  holds its address for its window), through `Stores::copy_flat_record` otherwise
+  (`hoist::flat_copy`, `ref_ops::emit_flat_copy`, native, `LOFT_NO_FLAT_COPY`).  zttext
+  `invert` 7.99 → 6.59 ms (−17.5 %); fires in ten programs.  Guard
+  `a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  The rest of `invert`'s way under
+  3× is priced in `bench/portal/analysis/over-9x.md` (`price_invert.py`).
+
+### `h[q, r] = T{…}` in one probe; a hash keyed by integer parts rebuilt without its key description (2026-10-16)
+
+- **`(R-KeyedEntry)`'s subscript clause** — a keyed literal assignment into a hash keyed by one
+  to four integer parts, of a heap-free element whose literal writes every field that is not a
+  key part, asks `Stores::keyed_entry_ints` for the entry under the subscript (`hash::entry_ints`,
+  one walk: found, or filed with every part written) and writes the literal's other fields into
+  it, in place of `keyed_place_begin`'s lookup, removal and claim and `keyed_place_finish`'s
+  second probe (`keyed_entry::subscript_keys`, native, `LOFT_NO_KEYED_ENTRY`).
+  `hash::entry_long` is now `entry_ints` over one part.  Guard
+  `a-hash-written-by-a-compound-subscript-keeps-every-entry.loft`.
+- **Runtime, both backends** — `hash::rehash_into` files each entry of a table keyed by integer
+  parts from the parts read straight off it (`rehash_ints`, `keys::ints_hash`), the new table's
+  count and seed read once; `arena::alloc_at` answers the slot's address with its index and
+  zeroes only a slot reused off the free list (a slot at the append cursor lies in a chunk
+  zero-filled when claimed).  dryopea `mapfile_to_painted` 4.76× → 2.81× (1.71 → 1.01 ms per call); `hash_fill` 3.02× → 2.58×.
+
+### `for e in unordered(h)`: a hash walked without its key sort; a format string's `{for}` takes the snapshot (2026-10-16)
+
+- **`(Col-Unordered)`, @C151** — `unordered(c)` in a `for` / comprehension / format-walk header
+  (`Parser::parse_unordered_source`, beside `rev(…)`) makes a hash's walk take the SLOT-order
+  snapshot (`n_hash_unsorted` → `hash::records_by_slot`) instead of the key-sorted one.  Slot
+  order is the arena index each entry was handed out at: fixed by the inserts and removes,
+  independent of the per-hash, per-run seed, kept by a copy.  The `par` walk takes the same
+  snapshot, so it no longer follows the seed either.  Other collection kinds walk as before; a
+  range or a text is refused.  The decision (key order stays the default, no rewrite walks a
+  hash in another order) is @C151; the twins walk their hashes in key order too (`by_key`,
+  bench 17).  Guards `a-hash-walked-unordered-repeats-its-order.loft`,
+  `unordered-takes-a-collection.loft`.
+- **loft#2019** — `Parser::iter_for` (a format string's `{for e in h …}`) never took the keyed
+  snapshot, so it walked the hash's own table as one and the store stopped on a corrupt
+  reference on both backends.  It now calls `keyed_snapshot` like the `for` statement and the
+  comprehension.  Guard `a-hash-walked-in-a-format-string-is-in-key-order.loft`.
+
 ### A buffer's own view is not delivered into it, a count a run of statements repeats is made once (2026-10-16)
 
 - **`(R-SelfReplace)`** — `OpReplaceVector(B, x)` after `x = OpGetField(B, 0, …)` is dropped

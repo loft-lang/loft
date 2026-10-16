@@ -120,6 +120,11 @@ program loads it and brings in that one name.  Your own `fn set` always wins, an
 `script::set(…)` reaches the library's whatever you defined.  Nothing else from the library
 enters your namespace, and a listed name the library does not declare as a free `pub fn` is
 ignored (`loft publish` says so).
+**`for e in unordered(h)` walks a hash without sorting it.**  A plain `for e in h` visits a
+hash in key order, and pays a sort of its entries each time the walk starts.  When the loop
+has no use for the order — a sum, a count, a search — `unordered(h)` skips the sort.  Every
+entry is visited once, in an order loft chooses and keeps the same from run to run (not the
+insertion order once an entry has been removed).  On the other collections it changes nothing.
 
 **A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
@@ -198,6 +203,9 @@ downloads, and the host could serve a new list beside the previous signature.  B
 read from one fixed state of the registry.  With a mirror (`LOFT_REGISTRY_URL`) that offers no
 such state, the message says the two files may be from different moments and to run the
 command again.
+**A hash can be walked inside a format string.**  `"{for e in h {e.k}}"` over a `hash`
+stopped the program with a store error on both backends; it now gives the entries in key order,
+as a `for` loop does.
 
 **Operands are evaluated left to right, also around a call that answers a vector or a
 record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and

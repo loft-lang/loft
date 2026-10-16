@@ -218,6 +218,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     vector_ref::<false>,
     get_vector_nullable::<false>,
     vector_ref_nullable::<false>,
+    prepend_vector::<false>,
     append_text_bytes::<false>,
     new_record::<false>,
     finish_record::<false>,
@@ -567,6 +568,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     vector_ref::<true>,
     get_vector_nullable::<true>,
     vector_ref_nullable::<true>,
+    prepend_vector::<true>,
     append_text_bytes::<true>,
     new_record::<true>,
     finish_record::<true>,
@@ -916,6 +918,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     vector_ref_r,
     get_vector_nullable_r,
     vector_ref_nullable_r,
+    prepend_vector_r,
     append_text_bytes_r,
     new_record_r,
     finish_record_r,
@@ -4952,6 +4955,22 @@ fn keep_vector_range<const F: bool>(s: &mut State) {
 fn keep_vector_range_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     keep_vector_range::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn prepend_vector<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_g = s.get_stack_m::<F, DbRef>();
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.prepend_vector(&v_r, &v_g, v_tp);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn prepend_vector_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    prepend_vector::<true>(s);
     s.regs_out()
 }
 

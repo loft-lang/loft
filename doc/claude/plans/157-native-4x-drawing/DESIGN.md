@@ -3529,7 +3529,7 @@ whole was ~49 % of the row.  P2's own sentence named the fix: *"a footer on FREE
 `delete` coalesces backward in O(1) and the sweep goes."*  The bound probe (sweep off,
 reuse lost) measured −7.5 %, so the footer (sweep off, reuse kept) had at least that.
 
-**Invariant (`@FR-H-FreeFooter`, formal/heap.md).**  A free block of n words carries −n at
+**Invariant (`@FR-H-FreeFooter`, formal/allocator.md).**  A free block of n words carries −n at
 both ends — the header word and the HIGH half of its last word.  The prerequisite was one
 byte of layout: the tree node's fields (`header · LEFT · RIGHT · COLOR`) covered both
 words of a 2-word block, so the COLOR now rides bit 31 of the RIGHT link (positions are

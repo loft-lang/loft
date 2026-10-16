@@ -1,0 +1,15 @@
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index d45e26808..0fc6c0f94 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -4078,9 +4078,7 @@ impl Parser {
+             // walked the HASH as if it were a snapshot and read a record number out of its
+             // table header: a store panic on both backends.  The scope-exit release frees the
+             // scratch, as it does for a comprehension's.
+-            let snapshot = self
+-                .keyed_snapshot(&mut expr, &in_type, false)
+-                .map(|(_, fill)| fill);
++            let snapshot: Option<Value> = None;
+             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
+                 let pos_var = self.create_var(&format!("{id}#next"), &I32);

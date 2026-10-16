@@ -150,6 +150,12 @@ inside the loop, or read in a generator's loop keeps the per-access form.  The f
 step for a stale element or length read from a vector the loop only reads, beside a call
 that writes or a push to another vector; `LOFT_HOIST_VERIFY=1` re-derives every such header
 at every read, and `LOFT_TRACE_HOIST_DECLINE=1` names the vectors each declined loop keeps.
+**`LOFT_NO_APART_PARAM=1`** (`@FR-R-Header`'s apart clause, its parameter half, default-ON)
+makes a PARAMETER's vector in such a loop take no header again.  By default it keeps one
+where every store the loop writes or grows is proven apart from the parameter's — a store
+this call minted, or the return buffer inside R-Alias's versioned copy — and the vector is
+only read, or handed to a callee that writes no store.  The first bisect step for a stale
+element or length read from a parameter's vector in a loop that grows the return buffer.
 
 ## Text walks
 
@@ -205,10 +211,12 @@ only) empties a text with a fresh `String` again — with it off, `s = ""` on a 
 local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
 `materialise` −59 %) — and is the first bisect step for a text that reads leftover content
 after it was emptied.
-**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, RUNTIME, `--native` only) copies a
+**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time, `--native` only) copies a
 record that owns no heap through the full release-and-walk path again — with it off, such a
-copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %) — and is
-the first bisect step for a wrong value or a leak right after a record copy.
+copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %), and the
+emitter writes such a copy from a variable as its bytes, address to address where the block
+holds both — and is the first bisect step for a wrong value or a leak right after a record
+copy.
 **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
 makes `for c in text` take every character through the step as written again — with it
 off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
@@ -789,10 +797,11 @@ and written, and the subscript's key links it — and is the first bisect step f
 key or count after a keyed literal assignment on native.
 **`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
 hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
-repeated key — with it on, one probe answers the entry the key names and the literal's staged
-values are written into it — and is the first bisect step for a wrong value or count after a
-keyed insert on native; `LOFT_KEYED_VERIFY=1` checks every answered entry against the general
-lookup.
+repeated key, and makes `h[a, b] = T{…}` on a hash keyed by integer parts take
+`LOFT_NO_KEYED_IN_PLACE`'s removal and claim again — with it on, one probe answers the entry the
+key names and the literal's staged values are written into it — and is the first bisect step
+for a wrong value or count after a keyed insert or keyed literal assignment on native;
+`LOFT_KEYED_VERIFY=1` checks every answered entry against the general lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
 is the first bisect step for a freed, leaked or wrong lookup result on native;

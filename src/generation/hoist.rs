@@ -200,6 +200,31 @@ pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Optio
     (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
 }
 
+/// `@FR-R-FlatCopy`'s emitted clause — `OpCopyRecord(src, dst, tp)` that keeps its source
+/// (no `COPY_FREE_SOURCE`), from a VARIABLE, of a record type that owns no heap: the copy is
+/// the type's bytes, so the emitter writes them (`OpCopyRecordEmitter`), through the two
+/// record addresses where the block holds both (`@FR-R-RecPtr`).  A fresh destination
+/// (`COPY_FRESH_DEST`, a minted push slot) is no case apart: such a type has no claims to
+/// release in it.  The source is never the call whose result the copy binds, because that
+/// bind is what consumes an unresolved fn-ref's borrowed-return marker.  Answers the width.
+#[must_use]
+pub fn flat_copy(stores: &Stores, op: &str, args: &[Value]) -> Option<u16> {
+    if op != "OpCopyRecord" || !crate::keys::flat_copy_enabled() {
+        return None;
+    }
+    let [src, _, tp] = args else {
+        return None;
+    };
+    let Value::Int(n) = tp.unspan() else {
+        return None;
+    };
+    if n & i32::from(crate::keys::COPY_FREE_SOURCE) != 0 || !matches!(src.unspan(), Value::Var(_)) {
+        return None;
+    }
+    let known = u16::try_from(n & i32::from(crate::keys::COPY_TP_MASK)).ok()?;
+    stores.flat_record_type(known).then(|| stores.size(known))
+}
+
 /// `@FR-R-InPlace`'s read clause — `OpReadFile(f, OpCreateStack(t), n, tp)` into a SCALAR
 /// local writes that local and the File record's own cursor fields (`#next`, `#pos`, the
 /// handle number on first use), each in place: nothing is claimed, grown or freed.  A read
@@ -1111,6 +1136,27 @@ impl StoreFacts<'_> {
         self.fresh(t)
     }
 
+    /// `@FR-R-Header`'s parameter clause: is the store `w` names provably apart from the
+    /// store of ARGUMENT `p`?  Only where `w`'s chain ends at a store this activation minted
+    /// that is no argument itself — a hidden vector buffer is an argument a caller may have
+    /// claimed in `p`'s store (`(R-Place)`) — or where a run-time test proved the pair apart
+    /// (`assumed`, `@FR-R-Alias`'s versioned copy).
+    #[must_use]
+    pub fn apart_from_argument(&self, p: u16, w: u16) -> bool {
+        let assumed = |a: u16, b: u16| {
+            self.assumed
+                .iter()
+                .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
+        };
+        if assumed(p, w) {
+            return true;
+        }
+        let Some(t) = self.terminal(w) else {
+            return false;
+        };
+        assumed(p, t) || (t != p && !self.vars.is_argument(t) && self.fresh(t))
+    }
+
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
@@ -1156,7 +1202,7 @@ pub fn placed_locals(code: &Value, data: &Data) -> HashSet<u16> {
 /// they grow — in first-appearance order.  Exactly the ops [`blocks_header_hoist`] lets
 /// through under the push and mint tiers, so a caller that proves every root apart from a
 /// store may open those tiers.
-fn mover_roots(
+pub(super) fn mover_roots(
     stmts: &[Value],
     data: &Data,
     stores: &Stores,
@@ -1189,7 +1235,14 @@ fn mover_roots(
 /// and the element base of each vector it only reads in a store nothing in it is handed
 /// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
 /// gate's verdict about the whole body, and this rests on the one store's mentions alone.
-fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts>) -> LoopHoist {
+fn apart_hoist(
+    body: &Block,
+    data: &Data,
+    def_nr: u32,
+    facts: Option<&StoreFacts>,
+    cache: &mut HashMap<u32, bool>,
+    owned: Option<&HoistOwned>,
+) -> LoopHoist {
     let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
         return LoopHoist::default();
     };
@@ -1199,6 +1252,11 @@ fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts
         facts,
         &|t| work_buffer_arg(data, def_nr, t),
         vector_candidates(body, data, def_nr),
+        super::apart::Callees {
+            cache,
+            owned,
+            code: data.def(def_nr).code(),
+        },
     );
     crate::rewrite_census::fired("R-Header/apart", vectors.len());
     if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
@@ -1284,7 +1342,7 @@ pub fn hoistable(
     {
         Some(text_set_roots(body, data))
     } else {
-        return apart_hoist(body, data, def_nr, facts);
+        return apart_hoist(body, data, def_nr, facts, cache, owned);
     };
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
@@ -1487,7 +1545,7 @@ pub fn hoistable(
                     body.scope
                 );
             }
-            return apart_hoist(body, data, def_nr, facts);
+            return apart_hoist(body, data, def_nr, facts, cache, owned);
         }
         crate::rewrite_census::fired("R-Header/text", 1);
         out.movers = roots.clone().unwrap_or_default();
@@ -1507,7 +1565,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return apart_hoist(body, data, def_nr, facts);
+                return apart_hoist(body, data, def_nr, facts, cache, owned);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1523,7 +1581,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return apart_hoist(body, data, def_nr, facts);
+                return apart_hoist(body, data, def_nr, facts, cache, owned);
             }
             let any_retbuf = pushes
                 .iter()
@@ -3049,17 +3107,7 @@ fn view_extent_verdict(
                     {
                         touched = true;
                     }
-                    // A copy INTO the view FROM a value local — a builder's tuple delivered
-                    // into an appended element — lowers to one typed setter per field
-                    // (`OpCopyRecordEmitter`), each served by the address like a direct
-                    // write; a copy from a store record stays a block copy and asks no
-                    // address.
-                    if name == "OpCopyRecord"
-                        && args.len() == 3
-                        && matches!(args[1].unspan(), Value::Var(v) if *v == *r)
-                        && matches!(args[0].unspan(), Value::Var(s)
-                            if owned.is_some_and(|o| o.value_locals.contains(s)))
-                    {
+                    if copy_serves_view(stores, name, args, *r, owned) {
                         touched = true;
                     }
                     if args.iter().enumerate().any(|(i, a)| {
@@ -3081,6 +3129,29 @@ fn view_extent_verdict(
         return Err(NO_FUSABLE_USE);
     }
     Ok(())
+}
+
+/// Is `name(args)` a record copy the view `r`'s address serves?  A copy INTO the view FROM a
+/// value local — a builder's tuple delivered into an appended element — lowers to one typed
+/// setter per field (`OpCopyRecordEmitter`), each served like a direct write; a flat copy
+/// INTO or OUT OF the view ([`flat_copy`]) stores its bytes at, or reads them from, the
+/// address.  Any other copy from a store record asks the store, not the address.
+fn copy_serves_view(
+    stores: &Stores,
+    name: &str,
+    args: &[Value],
+    r: u16,
+    owned: Option<&HoistOwned>,
+) -> bool {
+    if name != "OpCopyRecord" || args.len() != 3 {
+        return false;
+    }
+    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == r);
+    let from_value_local = is_r(&args[1])
+        && matches!(args[0].unspan(), Value::Var(s)
+            if owned.is_some_and(|o| o.value_locals.contains(s)));
+    from_value_local
+        || ((is_r(&args[1]) || is_r(&args[0])) && flat_copy(stores, name, args).is_some())
 }
 
 /// [`record_view_ptr`]'s LAST decline — every other condition held, and no statement of the
@@ -8010,7 +8081,7 @@ fn blocks_header_hoist(
     })
 }
 
-fn call_writes_store(
+pub(super) fn call_writes_store(
     d_nr: u32,
     data: &Data,
     cache: &mut HashMap<u32, bool>,
@@ -9998,14 +10069,23 @@ fn group_covers_type(
                             Some(Value::Var(u)) if *u == target)) => {}
             // A WHOLE-record copy into the element (`self.items += [p]`, `p` a value of the
             // element type delivered field by field) writes every field: it covers the type
-            // when the element owns no heap.  A heap-owning element keeps the prefill — the
-            // copy's fresh-destination path trusts the zeroed handles the prefill wrote.
+            // when the element owns no heap.  A heap-owning element is covered too when the
+            // copy is flagged FRESH (`keys::COPY_FRESH_DEST`) for this very type: such a copy
+            // never reads its destination — no `remove_claims`, then `copy_block` over every
+            // byte and fresh handles from `copy_claims`, or every byte zeroed for a null
+            // source (`Stores::copy_null_into`) — so the prefill's zeroed handles are read by
+            // nothing.  Unflagged, the copy releases what the destination holds, and only the
+            // prefill makes that nothing.
             Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpCopyRecord"
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
             {
-                return !stores.owns_heap(tp);
+                let fresh_same_type = matches!(args.get(2).map(Value::unspan),
+                    Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
+                        n & crate::keys::COPY_FRESH_DEST != 0
+                            && n & crate::keys::COPY_TP_MASK == tp));
+                return fresh_same_type || !stores.owns_heap(tp);
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();

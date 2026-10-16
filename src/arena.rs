@@ -238,6 +238,17 @@ fn ensure_chunk(store: &mut Store, table: u32, k: u32, stride: u32, owner: u32) 
 /// before: a reused slot still carries the bytes of whatever last lived there, and a
 /// constructor that writes only some fields would otherwise inherit the rest.
 pub fn alloc(store: &mut Store, table: u32, stride: u32, owner: u32) -> u32 {
+    alloc_at(store, table, stride, owner).0
+}
+
+/// [`alloc`], answering the slot's `(index, chunk record, byte offset)` — the address the
+/// claim resolved, so the caller does not look the chunk up again through [`slot`].
+///
+/// Only a slot off the free list is zeroed here.  A slot at the append cursor has never
+/// been handed out: its chunk was zero-filled when it was claimed ([`ensure_chunk`]), and
+/// only this function moves the cursor past it — a rebuild of the table carries the cursor
+/// with the chunks.
+pub fn alloc_at(store: &mut Store, table: u32, stride: u32, owner: u32) -> (u32, u32, u32) {
     let free = store.get_u32_raw(table, FREE_FLD);
     let index = if free != 0 {
         let (k, off) = locate(free, stride);
@@ -252,10 +263,12 @@ pub fn alloc(store: &mut Store, table: u32, stride: u32, owner: u32) -> u32 {
     };
     let (k, off) = locate(index, stride);
     let rec = ensure_chunk(store, table, k, stride, owner);
-    for w in 0..stride / 4 {
-        store.set_u32_raw(rec, off + 4 * w, 0);
+    if free != 0 {
+        for w in 0..stride / 4 {
+            store.set_u32_raw(rec, off + 4 * w, 0);
+        }
     }
-    index
+    (index, rec, off)
 }
 
 /// Return slot `index` to the arena.

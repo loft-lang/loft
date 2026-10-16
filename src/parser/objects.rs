@@ -4073,6 +4073,14 @@ impl Parser {
             let loop_nr = self.vars.start_loop();
             let mut expr = Value::Null;
             let in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            // A keyed source is walked through its snapshot here as in a `for` statement and a
+            // comprehension (`keyed_snapshot`, the one home).  Without it `"{for e in h {…}}"`
+            // walked the HASH as if it were a snapshot and read a record number out of its
+            // table header: a store panic on both backends.  The scope-exit release frees the
+            // scratch, as it does for a comprehension's.
+            let snapshot = self
+                .keyed_snapshot(&mut expr, &in_type, false)
+                .map(|(_, fill)| fill);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
@@ -4106,6 +4114,13 @@ impl Parser {
                     "Need an iterable expression in a for statement"
                 );
                 return Type::Null;
+            }
+            // The snapshot is filled before the walk's init reads it (`append_iter` emits the
+            // init first); `Insert` keeps both at the loop's own scope level.
+            if let Some(fill) = snapshot
+                && fill != Value::Null
+            {
+                create_iter = Value::Insert(vec![fill, create_iter]);
             }
             let for_next = v_set(for_var, iter_next);
             self.vars.loop_var(for_var);
@@ -4712,6 +4727,12 @@ impl Parser {
         subject_tp: &Type,
         name: &str,
     ) -> Type {
+        self.unordered_iterator = false;
+        // Borrowed, not cloned: this runs for every `for` header, and a cloned identifier is
+        // an allocation each time (the front-end allocation pins count it).
+        if matches!(&self.lexer.peek().has, LexItem::Identifier(u) if u == "unordered") {
+            return self.parse_unordered_source(expr);
+        }
         let mut reverse = false;
         if let LexItem::Identifier(rev) = self.lexer.peek().has.clone()
             && &rev == "rev"
@@ -4781,6 +4802,64 @@ impl Parser {
             return in_type;
         }
         self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
+    }
+
+    /// `@FR-Col-Unordered` (@C151) — the iterable `unordered(c)`: a walk of `c` in an order the
+    /// program leaves to the implementation.  For a `hash` it is slot order, which skips the
+    /// key sort (`keyed_snapshot` reads the flag set here); every other collection already
+    /// walks in its own order without a sort, so `unordered` leaves it as it is.  A range, a
+    /// text or anything else that is not a collection is refused, as `rev(…)` refuses one.
+    fn parse_unordered_source(&mut self, expr: &mut Value) -> Type {
+        self.lexer.has_identifier();
+        self.lexer.token("(");
+        let prev_iterable_context = self.iterable_context;
+        self.iterable_context = true;
+        let in_type = self.expression(expr);
+        self.iterable_context = prev_iterable_context;
+        let ranged = self.lexer.has_token("..") || self.lexer.has_token("..=");
+        if ranged {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "unordered() takes a collection, not a range — a range already walks in its own order"
+            );
+            // The bound is read so the refusal is the only diagnostic, not a cascade.
+            if !self.lexer.peek_token(")") {
+                let mut bound = Value::Null;
+                self.expression(&mut bound);
+            }
+        }
+        self.lexer.token(")");
+        // A nullable collection is refused first (`@FR-I-NullSrc`, as for `rev(…)`), so the
+        // `base()` below peels only a shape whose `?` has already been answered.
+        if ranged
+            || self.nullable_collection_refusal(
+                &in_type,
+                "walk",
+                "can be walked",
+                "zero iterations",
+            )
+        {
+            return in_type;
+        }
+        match in_type.base() {
+            Type::Hash(_, _, _) => self.unordered_iterator = true,
+            Type::Vector(_, _)
+            | Type::Sorted(_, _, _)
+            | Type::Index(_, _, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
+            | Type::Null
+            | Type::Unknown(_) => {}
+            _ => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "unordered() must wrap a collection (a hash, vector, sorted, index, spatial or trie)"
+                );
+            }
+        }
+        in_type
     }
 
     /// @FR-R-InPlaceLiteral's staging clause — does `value` read the PLACE `(root, off)` a

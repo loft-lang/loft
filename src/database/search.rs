@@ -664,6 +664,48 @@ impl Stores {
         self.record_new(coll, db, u16::MAX)
     }
 
+    /// `@FR-R-KeyedEntry`'s subscript clause: the entry `coll[sub…] = T{…}` writes its fields
+    /// into, for a hash whose key is one to four `integer` / `long` parts and whose element
+    /// owns no heap — the one already under `sub`, or a fresh one filed under it, with every
+    /// key part written.  What [`Self::keyed_place_begin`] … [`Self::keyed_place_finish`] do
+    /// in two probes, a removal and a claim, in one probe: on a repeated key the overwrite IS
+    /// the replace (`@FR-Col-Insert`), because the element releases nothing.
+    ///
+    /// The caller writes the literal's fields and then the subscript's key parts, so the key
+    /// the entry carries is the subscript's, as `keyed_place_finish`'s `set_key` leaves it.
+    /// Where the one-walk form cannot serve (no table yet, a sorted snapshot of `coll` live)
+    /// the entry is claimed, keyed and linked through the general path before its fields are
+    /// written: a hash places an entry by its key alone.
+    ///
+    /// # Panics
+    /// Under `LOFT_KEYED_VERIFY=1`, when a lookup of `sub` answers another entry than the one
+    /// the one-probe walk answered.
+    pub fn keyed_entry_ints(&mut self, coll: &DbRef, db: u16, sub: &[i64]) -> DbRef {
+        if !self.live_scratches.iter().any(|(source, _)| source == coll)
+            && let Some(rec) = crate::hash::entry_ints(
+                coll,
+                &mut self.allocations,
+                &self.types[db as usize].keys,
+                sub,
+                coll.rec,
+            )
+        {
+            if keys::keyed_verify() {
+                let key: Vec<Content> = sub.iter().map(|v| Content::Long(*v)).collect();
+                let found = self.find(coll, db, &key);
+                assert!(
+                    (found.rec, found.pos) == (rec.rec, rec.pos),
+                    "LOFT_KEYED_VERIFY: key {sub:?} answers {found:?} where the entry is {rec:?}"
+                );
+            }
+            return rec;
+        }
+        let key: Vec<Content> = sub.iter().map(|v| Content::Long(*v)).collect();
+        let new = self.keyed_place_begin(coll, db, &key);
+        self.keyed_place_finish(coll, &new, db, &key);
+        new
+    }
+
     /// The second half of [`Self::keyed_place_begin`]: the subscript's key written into the
     /// record and the record linked by it — the tail of `insert_keyed_copy_at`.
     pub fn keyed_place_finish(&mut self, coll: &DbRef, new: &DbRef, db: u16, sub: &[Content]) {
@@ -1062,6 +1104,46 @@ impl Stores {
             );
         }
         store.set_u32_raw(vec_rec, 4, kept);
+    }
+
+    /// `@FR-R-Compact`'s prepend form — `g`'s elements put in front of `data`'s, in `data`'s
+    /// own record.  They are appended as [`Self::vector_add`] appends them (copied, with what
+    /// they own, whichever store `g` lives in, `g` being `data` itself included), then the
+    /// record's element bytes are rotated so they stand first.  A rotation moves each
+    /// element's bytes whole, its owned records' numbers among them, so nothing is claimed
+    /// or released by it.
+    ///
+    /// `false`, having done nothing, for a null or absent vector or a linked element type
+    /// (whose slots are record ids a group shares): the rewrite that emits this keeps the
+    /// written-out statements for that case.
+    pub fn prepend_vector(&mut self, data: &DbRef, g: &DbRef, elem_tp: u16) -> bool {
+        if data.is_null()
+            || data.rec == 0
+            || data.pos == 0
+            || self.is_linked(elem_tp)
+            || self.store(data).get_u32_raw(data.rec, data.pos) == DbRef::ABSENT_REC
+        {
+            return false;
+        }
+        let before = vector::length_vector(data, &self.allocations);
+        self.vector_add(data, g, elem_tp);
+        let after = vector::length_vector(data, &self.allocations);
+        if before == 0 || after <= before {
+            return true;
+        }
+        let size = usize::from(self.size(elem_tp));
+        let vec_rec = self.store(data).collection_rec(data.rec, data.pos);
+        let store = self.store_mut(data);
+        // SAFETY: the vector's record holds `after` elements of `size` bytes from byte 8 —
+        // the layout `vector_add` just wrote.
+        let elements = unsafe {
+            std::slice::from_raw_parts_mut(
+                store.ptr.add(vec_rec as usize * 8 + 8),
+                after as usize * size,
+            )
+        };
+        elements.rotate_right((after - before) as usize * size);
+        true
     }
 
     pub fn remove_vector_at(&mut self, data: &DbRef, elem_tp: u16, index: i64) -> bool {

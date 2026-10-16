@@ -3644,6 +3644,40 @@ impl Stores {
         }
     }
 
+    /// `@FR-R-FlatCopy`'s emitted clause: the copy of a record that owns no heap, `N` bytes,
+    /// for a site whose type the emitter read off the schema — `OpCopyRecord`'s flat path
+    /// without its per-copy type lookups, and with the width a constant, so the copy is a few
+    /// moves rather than a call.  `false` where that path would not have been a plain byte
+    /// copy (a null end, a locked or foreign destination, a store whose shadow tags travel
+    /// with its bytes, a copy the instruments trace or check), and nothing was done: the
+    /// caller takes `OpCopyRecord`.  A record copied onto itself is done.
+    #[inline]
+    pub fn copy_flat_record<const N: usize>(&mut self, from: &DbRef, to: &DbRef) -> bool {
+        if from.store_nr == u16::MAX
+            || to.store_nr == u16::MAX
+            || from.rec == 0
+            || to.rec == 0
+            || Store::is_foreign_rec(to.rec)
+            || crate::keys::trace_copy()
+            || self.copy_check_enabled()
+        {
+            return false;
+        }
+        let dst = &self.allocations[to.store_nr as usize];
+        if dst.is_locked() || dst.shadow_armed() {
+            return false;
+        }
+        if from != to {
+            let s = vector::rec_ptr(from, &self.allocations);
+            let d = vector::rec_ptr(to, &self.allocations).cast_mut();
+            // SAFETY: both are records of live stores (checked non-null above), each at least
+            // `N` bytes wide — the width of the type the emitter read the site's copy off —
+            // and `ptr::copy` admits an overlap.
+            unsafe { std::ptr::copy(s, d, N) };
+        }
+        true
+    }
+
     pub fn copy_block(&mut self, from: &DbRef, to: &DbRef, len: u32) {
         if !self.store(to).write_allowed(to.rec, to.pos) {
             return;

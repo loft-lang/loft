@@ -41,7 +41,9 @@ const HEADERS: &[(&str, usize, usize)] = &[
     // d11–d13: the LOOP stays blocked (no vector header); the one push header each is the
     // seeding literal's own group header (`@FR-R-GroupPush`, 2026-09-18 — a heap-owning
     // element takes it too), bound before the loop and closed at the literal's last finish.
-    ("n_d11", 0, 1), // a heap-owning record: blocked
+    ("n_d11", 1, 1), // a heap-owning record: the loop blocked; the one header is `e.tags`,
+    //                  kept by `@FR-R-Header`'s apart clause (a field read in
+    //                  place of a store only read; `f`'s discharge mints its own)
     ("n_d12", 0, 1), // the alias shape over a record with a default vector: blocked
     ("n_d13", 1, 1), // the alias falsifier proper: heap-owning, no default — with P1 the
                      //                  discharge no longer blocks the loop, and the LINK clause keeps

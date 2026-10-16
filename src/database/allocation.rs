@@ -2396,18 +2396,17 @@ impl Stores {
         self.build_ref_scratch(hash_ref, &recs)
     }
 
-    /// Like `build_hash_sorted_vec` but in raw bucket-walk order, skipping the
-    /// O(n log n) key sort.  Used to feed `for e in h par(...)`: the parallel
-    /// queue preserves input order, but a hash has no user-meaningful order, so
-    /// sorting the records only to hand them straight to worker threads is
-    /// wasted work.  Iteration order therefore differs from sequential
-    /// `for e in h` (which is key-ordered) — acceptable for a hash.
+    /// Like `build_hash_sorted_vec` but in SLOT order, skipping the key sort
+    /// (`@FR-Col-Unordered`): the snapshot of `for e in unordered(h)` and of
+    /// `for e in h par(...)` — the parallel queue preserves input order, but has no use for
+    /// key order.  Slot order is fixed by the inserts and removes alone
+    /// ([`crate::hash::records_by_slot`]), so these walks repeat from run to run.
     pub fn build_hash_unsorted_vec(&mut self, hash_ref: &DbRef, _tp: u16) -> DbRef {
         // An absent holder has no scratch — see `build_hash_sorted_vec`.
         if hash_ref.rec == 0 {
             return DbRef::NULL;
         }
-        let recs = crate::hash::records(hash_ref, &self.allocations);
+        let recs = crate::hash::records_by_slot(hash_ref, &self.allocations);
         self.build_ref_scratch(hash_ref, &recs)
     }
 

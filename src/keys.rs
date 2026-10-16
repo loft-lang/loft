@@ -1780,6 +1780,15 @@ pub fn apart_headers_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APART_HEADERS"))
 }
 
+/// `LOFT_NO_APART_PARAM=1` — a PARAMETER's vector in a loop the header gate declines takes no
+/// header again (`@FR-R-Header`'s apart clause, its parameter half, off): the first bisect step
+/// for a stale element or length read from a parameter's vector in a loop that also grows the
+/// return buffer or calls a writer.
+pub fn apart_param_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APART_PARAM"))
+}
+
 /// `LOFT_NO_TEXT_SET_HEADER=1` — a text set in a loop body declines the loop's header hold
 /// again (`@FR-R-Header`'s text clause off): the first bisect step for a stale length or
 /// element read in a loop that writes a text field or element.
@@ -3893,6 +3902,18 @@ pub fn hash(rec: &DbRef, stores: &[Store], keys: &[Key], seed: u64) -> u64 {
 pub fn long_hash(value: i64, seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
     hasher.write_i64(value);
+    hasher.finish()
+}
+
+/// [`key_hash`] of a key whose every part is an integer value — the same digest, for a
+/// caller that holds the parts and not `Content`s of them (`hash::entry_ints`).
+#[inline]
+#[must_use]
+pub fn ints_hash(values: &[i64], seed: u64) -> u64 {
+    let mut hasher = seeded_hasher(seed);
+    for v in values {
+        hasher.write_i64(*v);
+    }
     hasher.finish()
 }
 

@@ -311,18 +311,12 @@ pub fn ensure_table(hash: &DbRef, stride: u32, stores: &mut [Store]) -> u32 {
 /// The replacement for the per-entry `Store::claim` in `record_new`'s keyed arm.
 /// `owner` is the record that owns the collection — written once per CHUNK, since
 /// every slot in a chunk shares it, and read by `database::search` to decide whether
-/// a record is live.
-///
-/// # Panics
-///
-/// If the slot the arena just handed out cannot be addressed — the arena's own
-/// invariant, asserted here rather than papered over, because a silent null would
-/// hand the constructor a `DbRef` that writes to record 0.
+/// a record is live.  The address is the one the arena's claim resolved
+/// ([`arena::alloc_at`]): a chunk it just ensured, never record 0.
 pub fn alloc_entry(hash: &DbRef, stride: u32, owner: u32, stores: &mut [Store]) -> DbRef {
     let claim = ensure_table(hash, stride, stores);
     let store = keys::mut_store(hash, stores);
-    let index = arena::alloc(store, claim, stride, owner);
-    let (rec, pos) = arena::slot(store, claim, index, stride).expect("just allocated");
+    let (_, rec, pos) = arena::alloc_at(store, claim, stride, owner);
     DbRef {
         store_nr: hash.store_nr,
         rec,
@@ -331,22 +325,7 @@ pub fn alloc_entry(hash: &DbRef, stride: u32, owner: u32, stores: &mut [Store]) 
 }
 
 /// `@FR-R-KeyedEntry` — the entry an insert of a record keyed `value` writes its fields into:
-/// the one already under that key, or a fresh one filed where the probe for it ended.
-///
-/// ONE walk from the key's home bucket answers both, as [`probe_for_insert`]'s does, but over
-/// the key VALUE: the record is not built yet.  A hit answers the entry itself — the caller
-/// overwrites its fields, which is what replacing it with an identical-keyed record leaves,
-/// with no slot claimed and none released.  A miss claims an arena slot, writes the key into
-/// it, and files it in the empty bucket the walk stopped at, under the arena index the claim
-/// answered (no `arena::index_of` scan to recover it).
-///
-/// `None` when the table cannot be walked this way — no table yet, a table that borrows its
-/// entries, a key kind other than an 8-byte `integer` or `long` — and nothing was changed:
-/// the caller takes the general insert.
-///
-/// # Panics
-/// When the slot the arena just handed out cannot be addressed — the arena's own invariant,
-/// as in [`alloc_entry`].
+/// [`entry_ints`] for a key of one `integer` or `long` part.
 pub fn entry_long(
     hash: &DbRef,
     stores: &mut [Store],
@@ -354,14 +333,42 @@ pub fn entry_long(
     value: i64,
     owner: u32,
 ) -> Option<DbRef> {
-    use keys::FastKey;
-    let [key] = keys else { return None };
-    let p = u32::from(key.position);
-    let fast = match key.type_nr.unsigned_abs() {
-        1 => FastKey::Int(p, value),
-        2 => FastKey::Long(p, value),
-        _ => return None,
-    };
+    entry_ints(hash, stores, keys, &[value], owner)
+}
+
+/// `@FR-R-KeyedEntry` — the entry an insert of a record keyed `values` writes its fields into:
+/// the one already under that key, or a fresh one filed where the probe for it ended.
+///
+/// ONE walk from the key's home bucket answers both, as [`probe_for_insert`]'s does, but over
+/// the key VALUES: the record is not built yet.  A hit answers the entry itself — the caller
+/// overwrites its fields, which is what replacing it with an identical-keyed record leaves,
+/// with no slot claimed and none released.  A miss claims an arena slot, writes every key part
+/// into it, and files it in the empty bucket the walk stopped at, under the arena index the
+/// claim answered (no `arena::index_of` scan to recover it).  The digest is
+/// [`keys::ints_hash`], which is [`keys::hash`]'s over a record carrying those parts, so a
+/// later lookup by either route walks the same buckets.
+///
+/// `None` when the table cannot be walked this way — no table yet, a table that borrows its
+/// entries, a key that is not one to four `integer` / `long` parts, one value per part — and
+/// nothing was changed: the caller takes the general insert.
+pub fn entry_ints(
+    hash: &DbRef,
+    stores: &mut [Store],
+    keys: &[Key],
+    values: &[i64],
+    owner: u32,
+) -> Option<DbRef> {
+    // An `integer` and a `long` part are the same 8-byte read and write (`Store::get_int`,
+    // `get_long`), so one compare serves both.
+    if keys.is_empty()
+        || keys.len() > 4
+        || keys.len() != values.len()
+        || keys
+            .iter()
+            .any(|k| !matches!(k.type_nr.unsigned_abs(), 1 | 2))
+    {
+        return None;
+    }
     let store = keys::store(hash, stores);
     let claim = store.collection_rec(hash.rec, hash.pos);
     if claim == 0 || store.record_words(claim) <= RESERVED_WORDS {
@@ -372,7 +379,7 @@ pub fn entry_long(
         return None;
     }
     let count = elms(store, claim);
-    let mut at = home_bucket(keys::long_hash(value, read_seed(store, claim)), count);
+    let mut at = home_bucket(keys::ints_hash(values, read_seed(store, claim)), count);
     let mut bucket = None;
     for _ in 0..count {
         let slot = store.get_u32_raw(claim, BUCKET0 + at * SLOT_BYTES);
@@ -381,7 +388,11 @@ pub fn entry_long(
             break;
         }
         let (rec, pos) = entries.at(store, slot);
-        if fast.matches(store, rec, pos) {
+        if keys
+            .iter()
+            .zip(values)
+            .all(|(k, v)| store.get_int(rec, pos + u32::from(k.position)) == *v)
+        {
             return Some(DbRef {
                 store_nr: hash.store_nr,
                 rec,
@@ -397,9 +408,10 @@ pub fn entry_long(
     // general insert, which rebuilds the table first.
     let bucket = bucket?;
     let store = keys::mut_store(hash, stores);
-    let index = arena::alloc(store, claim, entries.stride, owner);
-    let (rec, pos) = arena::slot(store, claim, index, entries.stride).expect("just allocated");
-    store.set_int(rec, pos + p, value);
+    let (index, rec, pos) = arena::alloc_at(store, claim, entries.stride, owner);
+    for (k, v) in keys.iter().zip(values) {
+        store.set_int(rec, pos + u32::from(k.position), *v);
+    }
     let rec = DbRef {
         store_nr: hash.store_nr,
         rec,
@@ -718,15 +730,86 @@ fn rehash_into(hash: &DbRef, from: u32, into: u32, stores: &mut [Store], keys: &
     }
     let length = keys::store(hash, stores).get_u32_raw(from, LEN_FLD);
     let count = elms(keys::store(hash, stores), from);
+    if let Some(parts) = int_parts(keys) {
+        rehash_ints(
+            hash,
+            from,
+            into,
+            count,
+            &entries,
+            &parts[..keys.len()],
+            seed,
+            stores,
+        );
+    } else {
+        for i in 0..count {
+            let index = keys::store(hash, stores).get_u32_raw(from, BUCKET0 + SLOT_BYTES * i);
+            if index == 0 {
+                continue;
+            }
+            let entry = entries.entry(keys::store(hash, stores), index);
+            hash_set(into, index, &entry, stores, keys);
+        }
+    }
+    keys::mut_store(hash, stores).set_u32_raw(into, LEN_FLD, length);
+}
+
+/// The field offsets of a key whose every part is an `integer` or a `long` (one to four of
+/// them), or `None` for any other key — the shape [`rehash_ints`] files without the key
+/// description.
+fn int_parts(keys: &[Key]) -> Option<[u32; 4]> {
+    if keys.is_empty() || keys.len() > 4 {
+        return None;
+    }
+    let mut parts = [0; 4];
+    for (n, k) in keys.iter().enumerate() {
+        if !matches!(k.type_nr.unsigned_abs(), 1 | 2) {
+            return None;
+        }
+        parts[n] = u32::from(k.position);
+    }
+    Some(parts)
+}
+
+/// [`rehash_into`]'s loop for a key of integer parts (`int_parts`): each entry's parts read
+/// straight from it and digested by [`keys::ints_hash`] — the digest [`keys::hash`] answers
+/// for that entry, so every bucket is the one the general loop chooses — with the new table's
+/// count and seed read once rather than per entry.
+#[allow(clippy::too_many_arguments)]
+fn rehash_ints(
+    hash: &DbRef,
+    from: u32,
+    into: u32,
+    count: u32,
+    entries: &Entries,
+    parts: &[u32],
+    seed: u64,
+    stores: &mut [Store],
+) {
+    let store = keys::mut_store(hash, stores);
+    let into_count = elms(store, into);
+    let mut values = [0_i64; 4];
     for i in 0..count {
-        let index = keys::store(hash, stores).get_u32_raw(from, BUCKET0 + SLOT_BYTES * i);
+        let index = store.get_u32_raw(from, BUCKET0 + SLOT_BYTES * i);
         if index == 0 {
             continue;
         }
-        let entry = entries.entry(keys::store(hash, stores), index);
-        hash_set(into, index, &entry, stores, keys);
+        let (rec, pos) = entries.at(store, index);
+        for (v, p) in values.iter_mut().zip(parts) {
+            *v = store.get_int(rec, pos + p);
+        }
+        let mut at = home_bucket(keys::ints_hash(&values[..parts.len()], seed), into_count);
+        for _ in 0..into_count {
+            if store.get_u32_raw(into, BUCKET0 + at * SLOT_BYTES) == 0 {
+                break;
+            }
+            at += 1;
+            if at >= into_count {
+                at = 0;
+            }
+        }
+        store.set_u32_raw(into, BUCKET0 + at * SLOT_BYTES, index);
     }
-    keys::mut_store(hash, stores).set_u32_raw(into, LEN_FLD, length);
 }
 
 /// File arena `index` (whose entry is at `rec`) into table `claim`'s buckets.
@@ -1209,6 +1292,37 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
         }
     }
     out
+}
+
+/// `@FR-Col-Unordered` (@C151) — every live entry in SLOT order: ascending by the number its bucket
+/// holds, the arena index the entry was handed out at (a record number, `SLOT_RECORD`, for an
+/// entry the table borrows; those follow the arena's, in record order).
+///
+/// The order an unordered walk promises is a FIXED one, so it is read from the slot numbers
+/// and not from the buckets: a bucket's position follows the key's hash under the table's
+/// seed, which `keys::fresh_seed` draws per hash and per run, while a slot number follows
+/// only the inserts and removes that made the table (growth moves no entry, and a copy
+/// re-files its entries in the source's order, `copy_claims_hash_body`).  So two runs of one
+/// program walk alike, on both backends.  The sort is of plain `u32`s, where the key-order
+/// walk ([`records_sorted`]) compares the key fields read out of every entry.
+#[must_use]
+pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
+    let store = keys::store(hash_ref, stores);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    if claim == 0 {
+        return Vec::new();
+    }
+    let count = elms(store, claim);
+    let width = stride(store, claim);
+    let mut slots: Vec<u32> = (0..count)
+        .map(|i| store.get_u32_raw(claim, BUCKET0 + i * SLOT_BYTES))
+        .filter(|&index| index != 0)
+        .collect();
+    slots.sort_unstable();
+    slots
+        .into_iter()
+        .map(|index| entry_ref(store, claim, index, hash_ref.store_nr, width))
+        .collect()
 }
 
 /// Every record the hash's storage occupies besides the entries themselves: the

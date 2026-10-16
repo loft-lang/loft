@@ -4359,6 +4359,28 @@ impl Output<'_> {
             .find_map(|j| self.vec_headers[j].get(path).cloned())
     }
 
+    /// Does `lp`'s body grow one of `bufs` — a push, reservation or mint whose root's dep chain
+    /// ends at one?  A loop the header gate DECLINES holds no push to count, and its apart
+    /// clause may still gain a parameter's vector once the buffer is tested apart.
+    fn grows_buffer(&self, lp: &crate::data::Block, bufs: &[u16]) -> bool {
+        let vars = self.data.def(self.def_nr).variables();
+        hoist::mover_roots(&lp.operators, self.data, self.stores, vars)
+            .iter()
+            .any(|&m| {
+                let mut cur = m;
+                for _ in 0..vars.var_count() {
+                    if bufs.contains(&cur) {
+                        return true;
+                    }
+                    match vars.tp(cur).depend().as_slice() {
+                        [d] if *d != cur => cur = *d,
+                        _ => return false,
+                    }
+                }
+                false
+            })
+    }
+
     /// `@FR-R-Alias`'s versioned clause — when `lp` pushes into this function's return buffer
     /// and keeps fewer headers than it would if each parameter's store were apart from the
     /// buffer's (`StoreFacts::distinct` cannot prove that statically: a caller may hand a
@@ -4420,6 +4442,7 @@ impl Output<'_> {
             .chain(plain.mint_pushes.iter())
             .all(|(p, _)| !bufs.contains(&p.0))
             && !plain.movers.iter().any(|m| bufs.contains(m))
+            && !self.grows_buffer(lp, &bufs)
         {
             return None;
         }

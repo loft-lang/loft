@@ -1,0 +1,26 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index f597348da..ea7b99d19 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -10381,7 +10381,7 @@ fn group_covers_type(
+                     Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
+                         n & crate::keys::COPY_FRESH_DEST != 0
+                             && n & crate::keys::COPY_TP_MASK == tp));
+-                return fresh_same_type || !stores.owns_heap(tp);
++                return true || fresh_same_type || !stores.owns_heap(tp);
+             }
+             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                 let name = data.def(*d).name();
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index bc7f44364..6efcdb6c9 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -6918,7 +6918,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                                 (n & i32::from(crate::keys::COPY_TP_MASK)) == (n & 0x7FFF),
+                                 "type id {n} collides with the OpCopyRecord flag bits"
+                             );
+-                            Value::Int(n | i32::from(crate::keys::COPY_FRESH_DEST))
++                            Value::Int(n)
+                         }
+                         other => other,
+                     };
