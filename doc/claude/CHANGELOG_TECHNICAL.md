@@ -10,6 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A returned branch arm that borrows a lifted argument copies what it hands up (loft#2021)
+
+`if c { id(g(3)) } else { null }` as a function's value, with `fn id(p: S) -> S { p }`: the
+arm's call borrowed the argument lifted into a frame temp, the branch was bound whole to the
+return temp, and the value handed up was a view of the temp the frame frees at exit — the
+poison word under `LOFT_POISON=1`, and for the dense twin (`-> S`, else a build) the next
+call's record plainly, on both backends once the record road is taken.  The same blindness
+loft#2016 closed for the body-tail and mid-return spellings, one level up.
+`Scopes::bind_return_temp` now writes a branch out per arm (`sink_set_into_arms`, the spelling
+a parser-level `r = if …` already takes) where an arm's callee may hand back a caller's store,
+so each arm's bind is the call bind that copies a borrowed result; and the interpreter's
+call-bind copy arm accepts the promoted return buffer as its destination, where it had excluded
+every argument.  Guard:
+`tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft`.
+
 ### A nullable local rebound from its own field frees the store it built (loft#2017)
 
 `x: Node? = Node { … }; x = x.next` leaked the first record on both backends once the literal

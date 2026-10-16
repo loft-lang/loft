@@ -2647,7 +2647,12 @@ impl State {
             // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
             // null-handed buffer to nobody when a call that took the buffer answered another
             // store: `none = rec(k - 1, none)` leaked one record per top-level call.
-            let owned_ref = stack.function.owns_displaced_store(v, value, stack.data)
+            // loft#2021 — a return temp bound in a branch written out per arm: its one dep
+            // names the hidden return buffer, which the proxy reads as a borrow, while each
+            // arm's bind copies into the temp (that is what the write-out is for), so the
+            // temp owns what the arm displaces — the sentinel its pre-init put there.
+            let owned_ref = (stack.function.owns_displaced_store(v, value, stack.data)
+                || is_return_temp_owning_its_arms(stack, v))
                 && (!is_hidden_buf_arg || entry_w.is_some());
             // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
             // container's backing store (a vector element / nested field), so
@@ -2889,7 +2894,12 @@ impl State {
                 }
                 if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
                     stack.function.tp(v).base().clone()
-                    && !stack.function.is_argument(v)
+                    // loft#2021 — the PROMOTED return buffer is the one argument this frame
+                    // binds a value into: a local renamed onto the hidden buffer (`r = if c {
+                    // id(g(3)) } else { null }; r`, written out per arm).  Its bind from a
+                    // callee that may hand back a caller's store copies like a local's does;
+                    // adopted, it handed up the lifted argument the frame frees at exit.
+                    && (!stack.function.is_argument(v) || is_promoted_return_buffer(stack, v))
                     && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
                     && let Some(fn_nr) =
                         crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
@@ -7145,4 +7155,44 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
         store: r.store,
         seed: Some((ix, *nxt)),
     })
+}
+
+/// Is `v` the function's return buffer with a local's name — a `__retbuf` parameter the
+/// parser renamed onto the local it delivers (`RetPromotion::Rename`)?  The one argument a
+/// frame binds a value INTO, so a bind into it answers as a local's bind does (loft#2021).
+/// The same test `scopes::handoff::promoted_ret_buffer` asks.
+fn is_promoted_return_buffer(stack: &Stack, v: u16) -> bool {
+    let name = stack.function.name(v);
+    name != "__retbuf"
+        && stack
+            .data
+            .def(stack.def_nr)
+            .attr_names
+            .get(name)
+            .is_some_and(|&a| stack.data.def(stack.def_nr).attributes()[a].hidden)
+}
+
+/// Is `v` a `__ret_N` temp whose dep list names only the function's hidden return buffer —
+/// the shape `Scopes::bind_return_temp` leaves when it writes a branch out per arm
+/// (loft#2021)?  Each arm then binds the temp from a call, and the reassignment path's copy
+/// arm is the one that copies a result the callee may have borrowed; read as a borrow by its
+/// dep the temp never reached it.
+fn is_return_temp_owning_its_arms(stack: &Stack, v: u16) -> bool {
+    let name = stack.function.name(v);
+    if !name.starts_with("__ret_") {
+        return false;
+    }
+    let deps = stack.function.tp(v).depend();
+    !deps.is_empty()
+        && deps.iter().all(|&d| {
+            (d as usize) < stack.function.count() as usize && {
+                let n = stack.function.name(d);
+                let def = stack.data.def(stack.def_nr);
+                n == "__retbuf"
+                    || def
+                        .attr_names
+                        .get(n)
+                        .is_some_and(|&a| def.attributes()[a].hidden)
+            }
+        })
 }

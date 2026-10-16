@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RETURNED BRANCH ARM THAT BORROWS A LIFTED ARGUMENT COPIES WHAT IT HANDS UP (`@FR-F-Ret`,
+// `@FR-O-Complete`, loft#2021).  `if c { id(g(3)) } else { null }` as a function's value: the
+// arm's callee returns its PARAMETER, the argument is a call lifted into a frame temp, and the
+// branch is bound whole to the return temp — so the value handed up was a view of the temp the
+// frame frees at exit.  Under `LOFT_POISON=1` the caller read the poison word; the dense twin
+// (`-> S`, else a build) answered the next call's record plainly, on both backends once the
+// record road is taken (a struct with a text field).  The branch is now written out per arm,
+// so each arm's bind is the call bind that copies a borrowed result, as the body-tail and
+// mid-return spellings of the same call do (loft#2016).
+//
+// Every cell asserts a hand-computed value; the harness fails a leaked store (@P317).  `S`
+// carries a text so `--native` takes the record road rather than the value-record one.
+//
+// @falsified-at: 3e9394e41 — interpret: dense answered 4 for 3 plainly -> 3; if_null read the
+//   poison word under LOFT_POISON=1 -> 3; native on the record road: the same two -> clean
+//   (the first failing assertion stops a run, so the other cells were taken by the matrix in
+//   the issue, one cell at a time)
+
+struct S { a: integer, t: text }
+
+fn g(n: integer) -> S {
+  S { a: n, t: "g" }
+}
+
+fn id(p: S) -> S {
+  p
+}
+
+fn jn(p: S, c: boolean) -> S {
+  if c { p } else { S { a: 50, t: "j" } }
+}
+
+// if_null — the issue's shape.
+fn if_null(c: boolean) -> S? {
+  if c { id(g(3)) } else { null }
+}
+
+// dense — the dense twin, else a build: answered the other call's record.
+fn dense(c: boolean) -> S {
+  if c { id(g(3)) } else { g(4) }
+}
+
+// match_null — the match spelling.
+fn match_null(n: integer) -> S? {
+  match n {
+    1 => id(g(3)),
+    _ => null
+  }
+}
+
+// nested — the arm inside an arm.
+fn nested(c: boolean, d: integer) -> S? {
+  if c { if d == 1 { id(g(3)) } else { null } } else { null }
+}
+
+// bound — bound to a local first, then returned.
+fn bound(c: boolean) -> S? {
+  r = if c { id(g(3)) } else { null };
+  r
+}
+
+// both_arms — two borrowing arms.
+fn both_arms(c: boolean) -> S? {
+  if c { id(g(3)) } else { id(g(4)) }
+}
+
+// depth2 — the borrow through two hops.
+fn depth2(c: boolean) -> S? {
+  if c { id(id(g(3))) } else { null }
+}
+
+// join_param — a join callee that hands back its parameter on the taken path.
+fn join_param(c: boolean) -> S? {
+  if c { jn(g(3), true) } else { null }
+}
+
+// control_build — the callee builds: nothing is borrowed.
+fn control_build(c: boolean) -> S? {
+  if c { g(3) } else { null }
+}
+
+// control_local — the argument bound first: the workaround.
+fn control_local(c: boolean) -> S? {
+  t = g(3);
+  if c { id(t) } else { null }
+}
+
+// control_param — the argument a parameter: the caller's record is untouched.
+fn control_param(p: S, c: boolean) -> S? {
+  if c { id(p) } else { null }
+}
+
+// control_join_build — the join callee builds on the taken path.
+fn control_join_build(c: boolean) -> S? {
+  if c { jn(g(3), false) } else { null }
+}
+
+fn main() {
+  v = if_null(true);
+  u = if_null(false);
+  assert((v.a ?? -1) == 3 && v != null && u == null, "if_null {v.a ?? -1}");
+  d1 = dense(true);
+  d2 = dense(false);
+  assert(d1.a == 3 && d2.a == 4, "dense {d1.a} {d2.a}");
+  m1 = match_null(1);
+  m2 = match_null(2);
+  assert((m1.a ?? -1) == 3 && m2 == null, "match_null {m1.a ?? -1}");
+  n1 = nested(true, 1);
+  n2 = nested(true, 0);
+  assert((n1.a ?? -1) == 3 && n2 == null, "nested {n1.a ?? -1}");
+  b1 = bound(true);
+  assert((b1.a ?? -1) == 3, "bound {b1.a ?? -1}");
+  a1 = both_arms(true);
+  a2 = both_arms(false);
+  assert((a1.a ?? -1) == 3 && (a2.a ?? -1) == 4, "both_arms {a1.a ?? -1} {a2.a ?? -1}");
+  e1 = depth2(true);
+  assert((e1.a ?? -1) == 3, "depth2 {e1.a ?? -1}");
+  j1 = join_param(true);
+  assert((j1.a ?? -1) == 3, "join_param {j1.a ?? -1}");
+  c1 = control_build(true);
+  c2 = control_local(true);
+  x = S { a: 7, t: "x" };
+  c3 = control_param(x, true);
+  c4 = control_join_build(true);
+  assert((c1.a ?? -1) == 3 && (c2.a ?? -1) == 3, "controls {c1.a ?? -1} {c2.a ?? -1}");
+  assert((c3.a ?? -1) == 7 && x.a == 7 && (c4.a ?? -1) == 50, "controls {c3.a ?? -1} {c4.a ?? -1}");
+  println("ok");
+}
