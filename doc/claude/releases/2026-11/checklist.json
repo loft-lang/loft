@@ -29,6 +29,11 @@
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "make file-sizes 2026-10-16: 18 docs over 1000 (2 read as several subjects: DESIGN_DECISIONS-history, PERFORMANCE-history), 117 code files over 1200 (86 several subjects; top parser/mod.rs 27205, control.rs 23123); last release's scopes.rs split stayed down (no scopes/ file in the list)"
   },
+  "M-file-split": {
+    "at": "2026-10-16 22:55",
+    "commit": "9e74d94389c6b1f23732e445c48b34ba6a697835",
+    "note": "src/parser/mod.rs split into 21 parts + 6 test files in 9e74d9438 (pick at 0e51a2eff: 27209 lines, split value 25181; mod.rs now 3305): a pure move verified by token multiset (nothing removed; additions = headers, part docs, use/impl/mod lines, pub(super)), cargo check + both clippy legs green, docs-lint baseline re-pinned in the commit (131 moved, 0 new, 4059). PR: loft3 joins the branch and opens it on the owner's ask (link to add at the pre-tag pass). Second pick (control.rs) not taken this cycle; passes/packages/monomorph/generics/admission-tests parts stay over the bar for the next pick"
+  },
   "M-ignores": {
     "at": "2026-10-16 16:00",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
