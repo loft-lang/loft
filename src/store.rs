@@ -1211,6 +1211,14 @@ impl Store {
         store
     }
 
+    /// `@FR-H-Park` — switch the size lists on or off for this store, for a test that pins
+    /// the layout one of them gives.
+    #[cfg(test)]
+    pub(crate) fn set_park(&mut self, on: bool) {
+        self.flush_parked();
+        self.park = on;
+    }
+
     /// Do these leading bytes carry the store [`SIGNATURE`]?
     ///
     /// The one place that answers it, because it is asked from two very different
