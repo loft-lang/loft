@@ -4,6 +4,11 @@
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "close-shipped-plans.sh --range v2026.10.0..HEAD --dry-run: directives name plans#178 and #183, both already closed"
   },
+  "M-doc-review": {
+    "at": "2026-10-16 21:13",
+    "commit": "708405784386ff58128624f0db09d16fc25aec8e",
+    "note": "PLANNING.md brought under DOC_CONTRACT in the code-free PR https://github.com/loft-lang/loft/pull/2029 (branch tuxedo-doc-review-planning on main, auto-merge armed): 913 -> 220 lines, ~30 completed items moved verbatim to PLANNING-history.md, CLAUDE.md index entry reworded, docs-lint baseline re-pinned; the open sketches left are CO1's three unwritten generator cells, A2, A12 (blockers as facts) and game_client"
+  },
   "M-doc-validation-mid": {
     "at": "2026-10-16 17:56",
     "commit": "6b80c93b18a1481119be61948c138e3c6fd2c76d",

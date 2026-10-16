@@ -30,6 +30,7 @@ Opened at the cycle's **halfway point**: `make release-checklist ARGS="--version
 | `M-close-plans` | ✅ | plans#178 and #183 already closed |
 | `M-file-sizes` | read | `src/parser/mod.rs` (27 205) and `src/parser/control.rs` (23 123) are the picks |
 | `M-falsify-receipts` | read | 117 receipts the census cannot classify (108 `hand-measured`) |
+| `M-doc-review` | ✅ | PLANNING.md under DOC_CONTRACT in the code-free loft#2029 (913 → 220 lines; the shipped entries verbatim in PLANNING-history.md; baseline re-pinned) |
 | `M-ops-census` | read | 343 operators declared, 315 emitted by some program, 28 unexercised, 0 orphan |
 
 ## Red on main's tip when the pass opened, and what this branch does about each
@@ -56,7 +57,5 @@ JSON parse forms disagree about `#errors`.
 
 ## What the cycle still owes before the tag
 
-`M-doc-review` (one doc under DOC_CONTRACT, its own PR — PLANNING.md is the
-docs review's candidate: some thirty completed items sit in place), `M-file-split` (the two
-picks), the two @PLN174 library branches decided, the `[cand]` sweeps on the
+`M-file-split` (the two picks), the two @PLN174 library branches decided, the `[cand]` sweeps on the
 candidate, and loft#2024..#2028 fixed.
