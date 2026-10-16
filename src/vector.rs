@@ -1802,7 +1802,7 @@ pub unsafe fn rec_text<const VERIFY: bool>(
     stores: &[Store],
 ) -> &'static str {
     if ptr.is_null() {
-        return crate::state::STRING_NULL;
+        return crate::store::STRING_NULL;
     }
     // SAFETY: the caller's proof — `ptr` addresses a live record and `fld` is a field of it.
     let rec = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };

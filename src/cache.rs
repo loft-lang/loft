@@ -408,6 +408,34 @@ pub fn host_triple() -> String {
 /// file directly under `default_dir` (non-recursive — the stdlib is flat).
 ///
 /// Returns an empty vec on any read error; the caller treats that as
+/// A hash that is the same on every toolchain: these values are written into a COMMITTED
+/// file (`src/compiled_stdlib_gen.rs`, the stdlib stamp), and `DefaultHasher` promises
+/// stability only within one Rust release.
+pub(crate) fn stable_hash(parts: &[&[u8]]) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for p in parts {
+        h.update((p.len() as u64).to_le_bytes());
+        h.update(p);
+    }
+    let d = h.finalize();
+    u64::from_le_bytes([d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]])
+}
+
+/// The hash of the standard-library source a program loads: every `default/*.loft` file's
+/// name and content ([`collect_stdlib_sources`], the input the program cache keys on too).
+/// Here and not in `compiled_stdlib`, whose reader it also is: the cache is a core module and
+/// the compiled stdlib a runtime one, and a lower layer may not name a higher
+/// (`scripts/crate_layers.py`).
+pub(crate) fn source_hash(sources: &[(String, String)]) -> u64 {
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(sources.len() * 2);
+    for (name, content) in sources {
+        parts.push(name.as_bytes());
+        parts.push(content.as_bytes());
+    }
+    stable_hash(&parts)
+}
+
 /// "cannot cache" and falls back to a cold parse.
 #[must_use]
 pub fn collect_stdlib_sources(default_dir: &str) -> Vec<(String, String)> {
@@ -494,7 +522,7 @@ fn stdlib_fingerprint_at(
         return None;
     }
     let key = stdlib_cache_key(default_dir, &sources);
-    let src = crate::compiled_stdlib::source_hash(&sources);
+    let src = source_hash(&sources);
     let content = format!("{now}key {}\nsrc {src}\n", hex32(&key));
     if let Some(parent) = stamp.parent() {
         let _ = crate::file_access::create_dir_all(parent);
@@ -1532,7 +1560,7 @@ mod tests {
         // The fingerprint of the sources read directly agrees with the stamped one.
         let srcs = collect_stdlib_sources(&lib_s);
         assert_eq!(changed.0, stdlib_cache_key(&lib_s, &srcs));
-        assert_eq!(changed.1, crate::compiled_stdlib::source_hash(&srcs));
+        assert_eq!(changed.1, source_hash(&srcs));
         // Without the file last in name order, the new stamp is a prefix of the old one and
         // must miss all the same.
         crate::file_access::remove_file(lib.join("02_b.loft")).unwrap();

@@ -8,6 +8,7 @@ bench/stats.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py	--help
 doc/claude/presentations/par/build_par_slides.sh	--help
+scripts/after.py	--help
 scripts/audit-stale-plans.sh	--help
 scripts/bug-review.py	--help
 scripts/campaign_review.py	--help

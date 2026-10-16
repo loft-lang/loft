@@ -69,14 +69,14 @@ def base_for(mode, since):
     if mode == "join":
         plan = ROOT / ".git" / "loft-join" / "plan.json"
         if plan.exists():
-            head = json.loads(plan.read_text())["head"]
+            head = json.loads(plan.read_text(encoding="utf-8"))["head"]
             if subprocess.run(["git", "merge-base", "--is-ancestor", head, "HEAD"],
                               cwd=ROOT).returncode == 0:
                 return head, "the head the join plan recorded"
         return "origin/main", "origin/main (no join plan)"
     last = STATE / "last"
     if last.exists():
-        sha = last.read_text().split()[0]
+        sha = last.read_text(encoding="utf-8").split()[0]
         if subprocess.run(["git", "merge-base", "--is-ancestor", sha, "HEAD"],
                           cwd=ROOT).returncode == 0:
             return sha, "the last green run here"
@@ -121,7 +121,7 @@ def first_match(paths, pattern, limit=2):
 
 def artefact_steps(paths):
     """The ratchets whose inputs moved (their `check`), and the runner's artefacts to report."""
-    reg = json.loads((ROOT / "scripts" / "derived_artefacts.json").read_text())
+    reg = json.loads((ROOT / "scripts" / "derived_artefacts.json").read_text(encoding="utf-8"))
     ratchets, runner = [], []
     for art in reg["artefacts"]:
         inputs = art.get("inputs") or []
@@ -284,7 +284,7 @@ def main():
     print(f"  gh workflow run ci.yml --ref {branch} -f os=ubuntu-latest   # the gate, on the exact sha")
     if failed:
         return 1
-    (STATE / "last").write_text(git("rev-parse", "HEAD").strip() + f" {stamp}\n")
+    (STATE / "last").write_text(git("rev-parse", "HEAD").strip() + f" {stamp}\n", encoding="utf-8")
     if args.dispatch:
         local, remote = git("rev-parse", "HEAD").strip(), git("rev-parse", f"origin/{branch}").strip()
         if local != remote or git("status", "--porcelain", "--untracked-files=no").strip():

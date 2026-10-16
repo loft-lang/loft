@@ -2899,7 +2899,11 @@ impl State {
                     // id(g(3)) } else { null }; r`, written out per arm).  Its bind from a
                     // callee that may hand back a caller's store copies like a local's does;
                     // adopted, it handed up the lifted argument the frame frees at exit.
-                    && (!stack.function.is_argument(v) || is_promoted_return_buffer(stack, v))
+                    // Not where the call is handed that buffer itself (`r = f(…, r)`): the
+                    // callee delivers INTO it and the result is its own store, which native's
+                    // same-store passthrough adopts — copying it here minted a store per call.
+                    && (!stack.function.is_argument(v)
+                        || (is_promoted_return_buffer(stack, v) && !rhs_reads_v))
                     && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
                     && let Some(fn_nr) =
                         crate::use_analysis::callee_of(stack.data, stack.def_nr, value)

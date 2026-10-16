@@ -691,7 +691,7 @@ impl Scopes<'_> {
                 "OpFreeRefIfDistinct"
             });
             let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
-            result.extend(Self::bind_return_temp(tmp, expr, data));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             let distinct = data.def_nr("OpDistinctStore");
             let join_arm_dropped = &join_arm_dropped;
             for &src in &null_arm_record_sources {
@@ -845,7 +845,7 @@ impl Scopes<'_> {
             self.var_scope.insert(tmp, self.scope);
             self.var_order.push(tmp);
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.extend(Self::bind_return_temp(tmp, expr, data));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             free_copied_text_sources(&mut result, expr, &ls, function, data);
             result.extend(ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
@@ -891,7 +891,7 @@ impl Scopes<'_> {
             self.var_scope.insert(tmp, self.scope);
             self.var_order.push(tmp);
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.extend(Self::bind_return_temp(tmp, expr, data));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             result.extend(ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
@@ -946,7 +946,7 @@ impl Scopes<'_> {
                 }
             }
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.extend(Self::bind_return_temp(tmp, expr, data));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
@@ -1243,7 +1243,7 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
-                    ls.splice(0..1, Self::bind_return_temp(tmp, expr, data));
+                    ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
                     ls.push(Value::Return(Box::new(Value::Var(tmp))));
                 } else if ret_var != u16::MAX {
                     ls.push(Value::Return(Box::new(Value::Var(ret_var))));
@@ -1305,7 +1305,7 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
-                    ls.splice(0..1, Self::bind_return_temp(tmp, expr, data));
+                    ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
                     ls.push(Value::Return(Box::new(Value::Var(tmp))));
                 } else {
                     ls.push(Value::Return(Box::new(Value::Null)));
@@ -1408,9 +1408,15 @@ impl Scopes<'_> {
     /// `r = if …` already takes), so each arm's bind IS the call bind that copies a borrowed
     /// result — `(O-Complete)`: the fact per binding and per path.  A branch no arm of which
     /// borrows keeps the whole-value bind it had.
-    fn bind_return_temp(tmp: u16, expr: &Value, data: &Data) -> Vec<Value> {
+    fn bind_return_temp(
+        &self,
+        tmp: u16,
+        expr: &Value,
+        function: &Function,
+        data: &Data,
+    ) -> Vec<Value> {
         if Self::is_value_branch(expr)
-            && branch_arm_may_hand_back_a_caller_store(expr, data)
+            && branch_arm_borrows_a_frame_local(expr, self.d_nr, function, data)
             && let Some(sunk) = sink_return_branch(tmp, expr, data)
         {
             // The sentinel first, so every arm's bind is a reassignment over a known slot:
@@ -1436,23 +1442,31 @@ impl Scopes<'_> {
     }
 }
 
-/// Does an arm of this value branch end in a call to a loft-defined function whose result may
-/// be a store the caller already holds — a borrowed return, or a join of a borrow and a mint —
-/// so that binding the branch whole would alias it (loft#2021)?  Seen through the wrappers
-/// `is_value_branch` sees through; a `??` chain is an arm of its own.
-fn branch_arm_may_hand_back_a_caller_store(node: &Value, data: &Data) -> bool {
+/// Does an arm of this value branch end in a call whose result the oracle reads as a BORROW
+/// (or a join of a borrow and a mint) of a local THIS frame owns — a lifted argument, a local
+/// built here — so that handing the branch up whole would hand up a view of a store the frame
+/// frees at exit (loft#2021)?  A borrow of a PARAMETER is the caller's own store and the
+/// caller's bind copies it (`@FR-F-Ret` at the call-bind, as before); a borrow whose base the
+/// oracle cannot name is taken as the frame's, which costs a copy and never a dangling view.
+/// Seen through the wrappers `is_value_branch` sees through; a `??` chain is an arm of its own.
+fn branch_arm_borrows_a_frame_local(
+    node: &Value,
+    d_nr: u32,
+    function: &Function,
+    data: &Data,
+) -> bool {
     match node.unspan() {
         Value::If(_, t, f) => {
-            branch_arm_may_hand_back_a_caller_store(t, data)
-                || branch_arm_may_hand_back_a_caller_store(f, data)
+            branch_arm_borrows_a_frame_local(t, d_nr, function, data)
+                || branch_arm_borrows_a_frame_local(f, d_nr, function, data)
         }
         Value::Block(bl) if bl.name == "ncc" => false,
         // At a return site the arms already carry their scope-exit frees AFTER the value
         // they yield, so the tail is the last op that is not one of those.
         Value::Block(bl) => last_non_free_result(&bl.operators, data)
-            .is_some_and(|l| branch_arm_may_hand_back_a_caller_store(l, data)),
+            .is_some_and(|l| branch_arm_borrows_a_frame_local(l, d_nr, function, data)),
         Value::Insert(ops) => last_non_free_result(ops, data)
-            .is_some_and(|l| branch_arm_may_hand_back_a_caller_store(l, data)),
+            .is_some_and(|l| branch_arm_borrows_a_frame_local(l, d_nr, function, data)),
         Value::Call(fn_nr, _) => {
             let def = data.def(*fn_nr);
             def.is_loft_defined()
@@ -1460,8 +1474,15 @@ fn branch_arm_may_hand_back_a_caller_store(node: &Value, data: &Data) -> bool {
                     def.returned().peel_optional().0,
                     Type::Reference(_, _) | Type::Enum(_, true, _)
                 )
-                && (!def.return_adopts_fresh_store()
-                    || crate::use_analysis::may_hand_back_a_caller_store(data, *fn_nr))
+                && match crate::use_analysis::ownership_of(data, d_nr, node) {
+                    crate::use_analysis::Own::Borrowed { base }
+                    | crate::use_analysis::Own::Join { base } => {
+                        base == u16::MAX
+                            || ((base as usize) < function.count() as usize
+                                && !function.is_argument(base))
+                    }
+                    _ => false,
+                }
         }
         _ => false,
     }
