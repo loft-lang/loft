@@ -610,6 +610,12 @@ at 1–2 %, taken only because the code was already open, did not.  When a row's
 FLAT — nothing over about 5 % — that is the finding to record: the row is bound by a class
 (DESIGN.md § V-an's table for `parse`), and the unit is the class, not a spot.
 
+The same holds across ROWS: the slowest routines carry the cleaner upgrades, and a row
+already near its Rust twin (≲ 2.5×) is hard to analyse — its cost is spread thin and a
+10–20 % move there is as often the machine's library or layout as the code.  Such a row is
+not taken as a unit of its own; it moves when a slow row's fix lands the shared mechanism
+(the allocator, the copy, the text paths) it runs on.
+
 ### Wide before deep
 
 **The owner's direction for the perf stream: WIDE, not deep.** Optimisation stays

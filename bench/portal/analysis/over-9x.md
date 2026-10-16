@@ -492,6 +492,26 @@ free list built lean (a size-class pop and push, ~50 instructions) — AND the c
 are typed per entry.  Next: build the free list (it also moves `panel_build` −15 %, `map_json`
 −4 %), take the prefill, then re-profile; the shares above assume none of them.
 
+**The free list's build design.**  The probe kept a parked block's header POSITIVE, so every
+walk of the store's blocks (the coalescing sweep, `claims_rebuild`, `usage`, an image, the
+open walk) read it as a live record.  The build parks it as an ordinary FREE block instead —
+negative header and footer, as `(H-FreeFooter)` writes them — on a list for its exact size,
+doubly linked through the two half-words a tree node uses for its links, with a bit set that
+confirms membership.  Every walk then reads the store right without knowing the lists exist;
+what must know them is the short list of places that TAKE a free block: `fl_remove` (the
+exact-position claim, an in-place resize, the growth step), the chain walk's claim, and the
+merges.  A delete's merges stop at a parked neighbour (a merge would destroy the size the
+list holds it for), so a parked block is merged only by a flush.  A claim of a parked size
+pops its list before the tree; a claim the tree and the wilderness cannot hold FLUSHES the
+lists — each block through the exact delete, merging with its tracked neighbours — and asks
+the tree again before it sweeps or grows, so the store grows no sooner than it did.  Not
+parked: a block that ends the store (it is the wilderness), a store bound to a file, a store
+whose edit journal records, and above 16 words.  A tree rebuild (the sweep, an open) and a
+reset empty the lists, since the walk tracks every free block itself; a shrink flushes first.
+`LOFT_NO_PARK=1` restores today's allocator.  Beside it: `fl_tree_contains` — the
+confirmation every backward merge asks — searches BOTH subtrees (a full walk); by the tree's
+own (size, position) key it is one descent.
+
 ### pluginabi `check_request` — the decode it shares, and the texts
 
 `(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  **`(R-ViewReturn)` built** (211d5055e):
