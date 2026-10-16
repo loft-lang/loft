@@ -257,6 +257,33 @@ impl ApartWalk<'_, '_> {
     }
 }
 
+struct MintOps {
+    database: u32,
+    database_np: u32,
+}
+
+/// Is every store `w` names one this activation minted?  A local that is no argument, borrows
+/// from nothing, is bound to nothing but a null, and is minted (`OpDatabase` / `OpDatabaseNP`
+/// with it as the store) — each mint a store that did not exist before, so no parameter's.
+fn minted_here(code: &Value, vars: &crate::variables::Function, w: u16, ops: &MintOps) -> bool {
+    if (w as usize) >= vars.var_count() || vars.is_argument(w) || !vars.tp(w).depend().is_empty() {
+        return false;
+    }
+    let mut minted = false;
+    let mut other = false;
+    code.walk(&mut |n| match n {
+        Value::Set(x, rhs) if *x == w && !matches!(rhs.unspan(), Value::Null) => other = true,
+        Value::Call(d, args)
+            if (*d == ops.database || *d == ops.database_np)
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w) =>
+        {
+            minted = true;
+        }
+        _ => {}
+    });
+    minted && !other
+}
+
 /// Of `candidates` — the vector paths `body` reads through an element address — the ones
 /// the apart clause keeps: a bare variable whose store's owner is this activation's own
 /// (`StoreFacts::fresh`) or a work buffer the caller lends (`lent`), and whose store the
@@ -269,8 +296,13 @@ pub fn apart_headers(
     candidates: Vec<(PathKey, Value)>,
     cache: &mut HashMap<u32, bool>,
     owned: Option<&HoistOwned>,
+    code: &Value,
 ) -> Vec<(PathKey, Value)> {
     let vars = facts.vars;
+    let ops = MintOps {
+        database: data.def_nr("OpDatabase"),
+        database_np: data.def_nr("OpDatabaseNP"),
+    };
     // A parameter the clause may consider: a by-value record or vector argument, neither a
     // `&` link nor captured (those name the store through what the loop may never mention).
     let param = |t: u16| {
@@ -342,9 +374,11 @@ pub fn apart_headers(
     for &t in &owners {
         if param(t)
             && !facts.owns_alone(t)
-            && !writers
-                .iter()
-                .all(|&w| facts.terminal(w) == Some(t) || facts.apart_from_argument(t, w))
+            && !writers.iter().all(|&w| {
+                facts.terminal(w) == Some(t)
+                    || facts.apart_from_argument(t, w)
+                    || minted_here(code, vars, w, &ops)
+            })
         {
             tainted.insert(t);
         }

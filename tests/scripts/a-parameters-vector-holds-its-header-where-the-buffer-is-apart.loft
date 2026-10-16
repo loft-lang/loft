@@ -1,0 +1,75 @@
+// `@FR-R-Header`'s apart clause, its PARAMETER half, under `@FR-R-Alias`'s versioned copy — a
+// loop that reads a parameter's vector field and grows the return buffer (a push and a text
+// set per pass) holds that vector's header in the copy that runs when the buffer's store is
+// not the parameter's.  The store test is the whole of the proof: where a caller hands a
+// buffer claimed IN the parameter's store (the result stored straight into a field of the
+// same record), the pushes grow the very store the vector lives in and the copy without the
+// header runs.  Every cell's answer is the written-out program's, whichever copy ran.
+//
+// Expected values are hand-computed.  `Doc.pieces` is 300 pieces (start 4·k, count 3, style
+// k % 5) over a 1200-character buffer whose character j is 'a' + j % 26; a slice of [a, b)
+// is one run per overlapping piece, its text the buffer characters it covers.
+pub struct Piece { pub start: integer, pub count: integer, pub style: integer }
+pub struct Run { str: text, style: integer }
+pub struct Doc { pub buf: vector<character>, pub pieces: vector<Piece>, pub runs: vector<Run> }
+
+fn chars_of(buf: vector<character>, start: integer, count: integer) -> text {
+  out: text = "";
+  for j in start..(start + count) { ch = buf[j]?; out += "{ch}"; }
+  out
+}
+
+fn runs_of(d: Doc, a: integer, b: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  cum = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    lo = if a > cum { a } else { cum };
+    hi = if b < cum + p.count { b } else { cum + p.count };
+    if hi > lo {
+      s = chars_of(d.buf, p.start + (lo - cum), hi - lo);
+      runs += [Run { str: s, style: p.style }];
+    }
+    cum += p.count;
+  }
+  runs
+}
+
+fn summary(rs: const vector<Run>) -> text {
+  n = 0; chars = 0; styles = 0;
+  for r in rs { n += 1; chars += len(r.str); styles += r.style; }
+  "{n}/{chars}/{styles}"
+}
+
+fn make_doc() -> Doc {
+  d = Doc { buf: [], pieces: [], runs: [] };
+  for j in 0..1200 { d.buf += [(97 + j % 26) as character]; }
+  for k in 0..300 { d.pieces += [Piece { start: 4 * k, count: 3, style: k % 5 }]; }
+  d
+}
+
+fn main() {
+  d = make_doc();
+  // h1 — a fresh buffer: the whole text, 900 characters in 300 runs, styles 60·(0+1+2+3+4).
+  r1 = runs_of(d, 0, 900);
+  assert(summary(r1) == "300/900/600", "h1 {summary(r1)}");
+  // h2 — the first two runs' texts: piece 0 covers buffer 0..3 "abc", piece 1 covers 4..7
+  //   "efg"; [1, 5) is "bc" from piece 0 and "ef" from piece 1.
+  r2 = runs_of(d, 1, 5);
+  assert(len(r2) == 2 && r2[0].str == "bc" && r2[1].str == "ef" && r2[1].style == 1,
+         "h2 {summary(r2)}");
+  // h3 — the result stored into a field of the SAME record: the buffer may be claimed in the
+  //   store `d.pieces` lives in, and 300 pushes with a text each grow it.  The answer is h1's.
+  d.runs = runs_of(d, 0, 900);
+  assert(summary(d.runs) == "300/900/600" && len(d.pieces) == 300, "h3 {summary(d.runs)}");
+  // h4 — again, into the field that now holds 300 runs: the same answer, the old runs gone.
+  d.runs = runs_of(d, 3, 600);
+  //   [3, 600): piece 1 (logical 3..6) through piece 199 (597..600): 199 runs, 597 chars;
+  //   styles sum over k = 1..199 of k % 5: 39 full cycles (k = 1..195, 10 each) + 1+2+3+4.
+  assert(summary(d.runs) == "199/597/400", "h4 {summary(d.runs)}");
+  // h5 — the parameter's vector read after both, unchanged.
+  t = 0;
+  for p in d.pieces { t += p.start + p.count; }
+  assert(t == 4 * 44850 + 900, "h5 {t}");
+  println("ok");
+}
