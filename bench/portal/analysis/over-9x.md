@@ -515,6 +515,21 @@ equal.  Beside it: `fl_tree_contains` — the
 confirmation every backward merge asks — searches BOTH subtrees (a full walk); by the tree's
 own (size, position) key it is one descent.
 
+**Re-profiled after both** (callgrind, collection toggled on `n_c_truncate_to__rg`, 20
+calls of 300 pushes: 27.2 M instructions, ~4 500 a push).  The allocator is down to ~13 %
+(`claim` 6.9 %, `delete` 6.5 %).  What is left, by mechanism:
+
+| share | per push | mechanism |
+|--:|--:|---|
+| ~22 % | ~1 000 | the append SLOT: `record_new` → `vector_append` → `push_header` / `reserve_*`, then `record_finish` → `vector_finish`, a `store_mut` lookup at each step — the generic mint of one 16-byte element into a parameter's vector field |
+| 29 % | ~1 330 | `OpCopyRecord`: the entry's two vector blocks claimed and copied (`copy_plain_vectors`, `copy_block`, `memcpy`) — the copy the twin MOVES (X10) |
+| 21 % | ~950 | `keep_vector_range`: the dropped entries' vector blocks released (`release_plain_vectors`, `delete`) |
+| 14 % | — | the driver itself (`n_c_truncate_to__rg`: building `e`'s four deltas), the twin's work too |
+
+The slot is the clear next case: a mint the emitter already knows is filled whole by one
+fresh copy (`(R-CompleteWrite)` admits it) needs only the length bump and the slot's
+address — the shape `@FR-R-Mint`'s fused push gives a literal.  Not priced yet.
+
 ### pluginabi `check_request` — the decode it shares, and the texts
 
 `(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  **`(R-ViewReturn)` built** (211d5055e):
