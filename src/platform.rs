@@ -239,6 +239,14 @@ pub fn is_windows_fs() -> bool {
 pub fn sep() -> char {
     if is_windows_fs() { '\\' } else { '/' }
 }
+/// The path that swallows what is written to it: `/dev/null` on Unix, the `NUL` device on
+/// Windows, which has no `/dev/` at all.  A test that only wants a run's trace hands this to
+/// `--native-emit`; naming `/dev/null` there emitted nothing on Windows and the trace read
+/// empty (ci.yml's windows legs, 2026-10).
+#[must_use]
+pub fn null_sink() -> &'static str {
+    if cfg!(windows) { "NUL" } else { "/dev/null" }
+}
 
 /// Platform separator as a `&str`, for use as the replacement in [`str::replace`].
 #[must_use]

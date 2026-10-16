@@ -21,10 +21,6 @@ const SWITCHES: [&str; 4] = [
     "LOFT_NO_VADD_FITS",
 ];
 
-/// Where `--native-emit` writes when only the trace matters: the platform's null device
-/// (Windows has no `/dev/null`, so a test naming it there emits nothing and traces nothing).
-const NULL_SINK: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
-
 fn loft(args: &[&str], file: &str, env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -128,7 +124,11 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
 #[test]
 fn the_refill_clause_keeps_the_designed_loop_records() {
     let out = loft(
-        &["--native-release", "--native-emit", NULL_SINK],
+        &[
+            "--native-release",
+            "--native-emit",
+            loft::platform::null_sink(),
+        ],
         REFILL,
         &[("LOFT_TRACE_LOOP_RECORD", "1")],
     );
@@ -156,7 +156,11 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
         "{lines:#?}"
     );
     let off = loft(
-        &["--native-release", "--native-emit", NULL_SINK],
+        &[
+            "--native-release",
+            "--native-emit",
+            loft::platform::null_sink(),
+        ],
         REFILL,
         &[
             ("LOFT_TRACE_LOOP_RECORD", "1"),

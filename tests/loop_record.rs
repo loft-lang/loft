@@ -14,10 +14,6 @@ use std::process::Output;
 
 const CELLS: &str = "tests/scripts/157-loop-record.loft";
 
-/// Where `--native-emit` writes when only the trace matters: the platform's null device
-/// (Windows has no `/dev/null`, so a test naming it there emits nothing and traces nothing).
-const NULL_SINK: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
-
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -156,7 +152,11 @@ fn the_switch_restores_the_per_pass_free_and_fresh_store() {
 fn the_declines_are_the_designed_ones() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = loft(
-        &["--native-emit", NULL_SINK, src.to_str().unwrap()],
+        &[
+            "--native-emit",
+            loft::platform::null_sink(),
+            src.to_str().unwrap(),
+        ],
         &[("LOFT_TRACE_LOOP_RECORD", "1")],
     );
     let trace = String::from_utf8_lossy(&out.stderr);

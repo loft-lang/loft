@@ -11,10 +11,6 @@ use std::process::Output;
 
 const CELLS: &str = "tests/scripts/a-loop-holds-its-header-across-a-text-write.loft";
 
-/// Where `--native-emit` writes when only the trace matters: the platform's null device
-/// (Windows has no `/dev/null`, so a test naming it there emits nothing and traces nothing).
-const NULL_SINK: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
-
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -57,7 +53,14 @@ fn a_loop_that_writes_texts_holds_and_one_that_also_pushes_declines() {
     let declines = |env: &[(&str, &str)]| -> Vec<String> {
         let mut e = vec![("LOFT_TRACE_HOIST_DECLINE", "1")];
         e.extend_from_slice(env);
-        let out = loft(&["--native-release", "--native-emit", NULL_SINK], &e);
+        let out = loft(
+            &[
+                "--native-release",
+                "--native-emit",
+                loft::platform::null_sink(),
+            ],
+            &e,
+        );
         String::from_utf8_lossy(&out.stderr)
             .lines()
             .filter(|l| l.starts_with("hoist: n_") && l.contains(" loop "))

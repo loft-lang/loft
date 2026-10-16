@@ -11,10 +11,6 @@ use std::process::Output;
 
 const CELLS: &str = "tests/scripts/a-call-text-is-borrowed-from-its-work-buffer.loft";
 
-/// Where `--native-emit` writes when only the trace matters: the platform's null device
-/// (Windows has no `/dev/null`, so a test naming it there emits nothing and traces nothing).
-const NULL_SINK: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
-
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -54,7 +50,14 @@ fn a_call_answering_its_work_text_is_borrowed_and_one_that_may_answer_a_paramete
     let trace = |env: &[(&str, &str)]| -> String {
         let mut e = vec![("LOFT_TRACE_TEXT_BORROW", "1")];
         e.extend_from_slice(env);
-        let out = loft(&["--native-release", "--native-emit", NULL_SINK], &e);
+        let out = loft(
+            &[
+                "--native-release",
+                "--native-emit",
+                loft::platform::null_sink(),
+            ],
+            &e,
+        );
         String::from_utf8_lossy(&out.stderr).into_owned()
     };
     let on = trace(&[]);
