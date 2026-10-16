@@ -391,7 +391,6 @@ pub fn entry_ints(
         if keys
             .iter()
             .zip(values)
-            .take(1)
             .all(|(k, v)| store.get_int(rec, pos + u32::from(k.position)) == *v)
         {
             return Some(DbRef {

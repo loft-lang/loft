@@ -7,6 +7,11 @@
 //
 // Expected values are hand-computed: entry i of the fill is (q, r) = (i % 30, i / 30), its v
 // is 7·i, and 7·(0 + … + 599) = 7·179700 = 1257900.
+//
+// @falsified-by: tests/falsified/a-hash-written-by-a-compound-subscript-keeps-every-entry.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch compares the first key part only, so
+//   (q, r) and (q, r') answer one entry and c1's count falls short.  The interpreter keeps the
+//   plain form, so it cannot move.
 struct T { q: integer, r: integer, v: integer }
 struct W { h: hash<T[q, r]> }
 struct U { a: integer, b: integer, c: integer, k: u8 }
