@@ -43,7 +43,7 @@ Opened at the cycle's **halfway point**: `make release-checklist ARGS="--version
 - **Dependency advisories**: rustls, cured.
 - **The crate layers and the platform census after the join**: `literal_host`, `self_replace` and `zero_count` sat above their readers, `stable_hash`/`source_hash` were read from `cache` up into `compiled_stdlib`, and `--native-emit /dev/null` in eight tests emitted nothing on Windows — `loft::platform::null_sink()` here, the layer moves taken as the sibling resolved them.
 - **The features-shadow derived check** read `git status` and failed on the bot's own regeneration — dropped from `scripts/derived_artefacts.json` with a note.
-- **revalidate-libs** (chronic, 9 of 14): E0514 from rlibs a toolchain bump left in the cached `deps/` — the toolchain is in the cache key now.
+- **revalidate-libs** (chronic, 9 of 14): E0514 twice over — rlibs a toolchain bump left in the cached `deps/` (the toolchain is in the cache key now), and the library legs compiling with the runner image's rustc against the build job's rustup-stable rlib (the legs install the same stable now).  Run 38943370117: 45 of 45 legs green.  Its `unreleased` job stays red on two `loft-libs-core` branches, `174-f5-crypto-foreign` and `174-f6-cbor-spans` — @PLN174's finished library halves, 20 commits behind that main and conflicting on `base64_to_bytes`'s contract (main: an ordinary vector; the branch: a read-only foreign view) — the owner's pick, then a PR or a delete.
 - **browser-threads** (chronic, 7 of 14): `par-scaling-bench.sh` 147 % < 150 % and `par-ui-responsive.sh` — timing bars on a shared runner; open.
 - **consumer-main-health** (chronic): dryopea ×14, moros/crawler ×8 — the consumers' own agents, per their `LOFT_HANDOFF.md`.
 
@@ -58,5 +58,5 @@ JSON parse forms disagree about `#errors`.
 
 `M-perf-pass`, `M-doc-review` (one doc under DOC_CONTRACT, its own PR — PLANNING.md is the
 docs review's candidate: some thirty completed items sit in place), `M-file-split` (the two
-picks), `M-libs` (the revalidate-libs run on the candidate), the `[cand]` sweeps on the
+picks), the two @PLN174 library branches decided, the `[cand]` sweeps on the
 candidate, and loft#2024..#2028 fixed.
