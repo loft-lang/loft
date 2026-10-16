@@ -14,7 +14,8 @@ Each entry names its `LOFT_NO_*` switch (the first bisect step: the before-half 
 one binary), its falsifier (usually `LOFT_HOIST_VERIFY=1`, which emits the checking form) and
 its `LOFT_TRACE_*` switch (which names each admission and decline).  The rules the rewrites
 enforce live in [formal/rewrites.md](formal/rewrites.md) (`@FR-R-…`); the emitter's design is
-[NATIVE.md](NATIVE.md) and [PERFORMANCE.md](PERFORMANCE.md) § Design.
+[NATIVE.md](NATIVE.md) and [PERFORMANCE.md](PERFORMANCE.md) § Design.  The dated measurements
+moved out of this doc are [NATIVE_SWITCHES-history.md](NATIVE_SWITCHES-history.md).
 
 ## Vector headers, pushes and mints
 

@@ -478,17 +478,6 @@ the record it points at, not a place of the holder's.
                  places an ELEMENT of that very collection, so it holds.  A field
                  vector, a user-struct root and a placed buffer are not store roots
                  and carry no such claim.
-  (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
-                 `OpDatabase` mints holds NOTHING ELSE: every record in it was
-                 claimed for that collection — its elements, and whatever they own.
-                 The collection's extent IS the store's extent, so a point at which
-                 the collection is wholly dead is a point at which the store is, and
-                 releasing it there is one store reset rather than a free per
-                 element.  What would break the rule is a record placed into the
-                 store from outside; the one mechanism that places (R-MoveAppend)
-                 places an ELEMENT of that very collection, so it holds.  A field
-                 vector, a user-struct root and a placed buffer are not store roots
-                 and carry no such claim.
   (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
                  elements own.  `clear_vector` is a length reset — sound wherever
                  the vector's store dies straight after (every use it was written

@@ -914,7 +914,7 @@ inline the same pattern in `parse_tuple_match` or extract a small helper.
 
 ## Test Plan
 
-New test file `tests/tuple_match.rs` or additions to `tests/match.rs`:
+The tests, in `tests/expressions.rs`:
 
 | Test | Coverage |
 |---|---|

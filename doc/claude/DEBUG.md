@@ -421,7 +421,7 @@ intervals share the same stack slot. The panic message includes both variable na
 their slot range, and their live intervals.
 
 1. Identify which function and which two variables conflict.
-2. Add a minimal reproducer to `tests/slot_assign.rs`.
+2. Add a minimal reproducer to `tests/slots.rs`.
 3. Check whether the live intervals truly overlap (can both variables be live at the
    same time?) or whether `compute_intervals` is computing a conservatively wide range.
 4. If the overlap is real: a bug in scope analysis assigned the same slot to two

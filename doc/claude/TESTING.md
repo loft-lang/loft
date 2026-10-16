@@ -250,17 +250,11 @@ codegen-inspection test can read them under `cargo test --release`.  They are gi
 cleared by `make test`, and compiled by nothing: a `tests/` subdirectory is not a Cargo
 test target.
 
-### `tests/generated/default.rs`
-
-Rewritten on every test execution: the native Rust of the default library alone, everything
-up to `start` (the definition count before the test's own code was parsed).  A reference
-snapshot of the default-library schema, with no `#[test]`.
-
 ### `tests/generated/<file>_<name>.rs`
 
 Written only when a test has a non-null `.result` or a non-unknown `.tp`, named after the Rust
-module and the test function: `define_enum` in `tests/enums.rs` writes
-`tests/generated/enums_define_enum.rs`.  It holds the crate-level `#![allow]`s, the `use loft::…`
+module and the test function: `call_with_null` in `tests/expressions.rs` writes
+`tests/generated/expressions_call_with_null.rs`.  It holds the crate-level `#![allow]`s, the `use loft::…`
 imports, an `init` that rebuilds the whole type schema (default library plus the test's own
 types), the functions reachable from `n_test` (`output_native_reachable`), and a
 `#[test] fn code_<name>()` that calls `init` and `n_test`.
