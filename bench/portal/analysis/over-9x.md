@@ -450,7 +450,8 @@ hashes equal):
 
 **Where it lands.**  All four, priced: **3.43 ms, 2.70×**.  Without L1, about 3.65 ms (≈ 2.87×).
 With L3 and L2 built: **3.60×** in the portal (4.45 ms against 1.24 ms; `make perf-portal` at
-164252e78), and `insert_text` 5.09 → 1.93× beside it from L3 alone.  With L4: **3.75 ms** pinned on one core (portal row below).  The same run read
+164252e78), and `insert_text` 5.09 → 1.93× beside it from L3 alone.  With L4: **2.97×** in the portal (3.72 ms; `make perf-portal` at 1d7ec5904) — under the bar, with
+L1 (about −6 %) the margin left to take.  The same run read
 the text lane (13) 10–23 % slower; the emitted Rust there is unchanged, and with
 `-align-all-functions=6` on both runtimes the two builds are level — the relinked runtime's layout.
 L3 and L4 are exactly the emitted forms, so they land at their price, as L3 did.  The
