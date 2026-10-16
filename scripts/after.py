@@ -266,8 +266,8 @@ def main():
     failed = [s for s in steps if not s.ok]
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     log = STATE / f"{args.mode}-{stamp}.log"
-    log.write_text("\n\n".join(f"== {s.name} ({'ok' if s.ok else 'FAIL'}, {s.secs:.0f}s)\n$ {s.cmd}\n{s.out}"
-                               for s in steps))
+    report = "\n\n".join(f"== {s.name} ({'ok' if s.ok else 'FAIL'}, {s.secs:.0f}s)\n$ {s.cmd}\n{s.out}" for s in steps)
+    log.write_text(report, encoding="utf-8")
     for s in failed:
         print(f"\n-- {s.name} failed; its last lines ({log} has all of it):")
         print("\n".join("   " + l for l in s.out.strip().splitlines()[-15:]))
