@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A freed small block is the next claim of its size (2026-10-16)
+
+- **`(H-Park)`, the allocator's small-block free list** — a delete of a block of 2 to 16
+  words parks it on a list for its exact size (a free block by header and footer, doubly
+  linked through the tree node's link half-words, confirmed by a set of starts) and a claim
+  of that size pops it before the tree; a claim the tree and the wilderness cannot hold
+  flushes the lists through the exact delete before it sweeps or grows.  Runtime, both
+  backends, `LOFT_NO_PARK`.  dryopea `truncate_to` 87.8 → 76.4 µs (−13 %), `panel_build`
+  4.51 → 4.07 ms (−10 %), every hash equal.  `fl_tree_contains` — the confirmation each
+  backward merge asks — is one descent by the tree's key instead of a walk of both subtrees.
+  The allocator's layout rules moved from `formal/heap.md` to `formal/allocator.md`.
+
 ### A parameter's vector holds its header where every writer is apart (2026-10-16)
 
 - **`(R-Header)`'s apart clause, its parameter half** — in a loop the header gate declines, a

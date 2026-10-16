@@ -480,7 +480,7 @@ row, ~23 µs.  Under 3× leaves `history_push` ~18 µs for 300 pushes — ~60 ns
 | lever | price | status |
 |---|--:|---|
 | the append slot minted without its default prefill (`OpNewRecordNP`: the whole-record copy overwrites every byte) | **−6 %** (86.9 → 81.6 µs, hash unchanged) | priced by hand on 1d7ec5904's emission; `(R-CompleteWrite)` does not count a whole-record copy as covering the slot |
-| the allocator's small-block free list (worklist.md § 4) | −12.8 % | priced at d88f8556d, probe undone: needs a parked-block state every store walk knows |
+| the allocator's small-block free list (worklist.md § 4) | −13.0 % | **built**, `(H-Park)` (below) |
 | the dead entry MOVED instead of copied (X10) | +16 % | priced and declined (worklist.md § 4) |
 | a typed copy and release of a record of plain vectors (no generic dispatch per entry) | *est.* ~10 % | not priced |
 
@@ -508,7 +508,10 @@ the tree again before it sweeps or grows, so the store grows no sooner than it d
 parked: a block that ends the store (it is the wilderness), a store bound to a file, a store
 whose edit journal records, and above 16 words.  A tree rebuild (the sweep, an open) and a
 reset empty the lists, since the walk tracks every free block itself; a shrink flushes first.
-`LOFT_NO_PARK=1` restores today's allocator.  Beside it: `fl_tree_contains` — the
+`LOFT_NO_PARK=1` restores the allocator without the lists.  **Built** (`(H-Park)`,
+`formal/allocator.md`): `truncate_to` 87.8 → 76.4 µs (−13.0 %, ≈ 5.5×), `panel_build` 4.51 →
+4.07 ms (−9.8 %), `mapfile_to_painted` −1.7 %, three interleaved rounds on core 2, every hash
+equal.  Beside it: `fl_tree_contains` — the
 confirmation every backward merge asks — searches BOTH subtrees (a full walk); by the tree's
 own (size, position) key it is one descent.
 

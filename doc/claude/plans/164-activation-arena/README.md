@@ -161,8 +161,9 @@ per-path proof).
 - [`formal/ownership.md`](../../formal/ownership.md) (`O-Buffer`, `O-Move`, `O-LazyBuffer`,
   `O-ViewField`), [`formal/rewrites.md`](../../formal/rewrites.md) (`R-Place`, `R-MoveLast`,
   `R-InPlaceLiteral`, `R-ElemFirst`, `R-ValueRecord`, `R-Prefill`, `R-Escape`),
-  [`formal/heap.md`](../../formal/heap.md) (`H-Wilderness`, `H-ClearRelease`,
-  `H-FreeFooter`), [`formal/binding.md`](../../formal/binding.md) (`B-Disturb`,
+  [`formal/heap.md`](../../formal/heap.md) (`H-ClearRelease`),
+  [`formal/allocator.md`](../../formal/allocator.md) (`H-Wilderness`, `H-FreeFooter`),
+  [`formal/binding.md`](../../formal/binding.md) (`B-Disturb`,
   `B-Ref-Reshape`).
 - [`PERFORMANCE.md`](../../PERFORMANCE.md) § 3e — the row's remaining composition and the next
   lever; § The clear case first — the bar the two dropped units were priced against.

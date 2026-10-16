@@ -100,6 +100,40 @@ const LAZY_FLOOR_WORDS: u32 = 256;
 /// leaving it dead is what doubled a ladder's working set and moved a persisted hash's
 /// layout.
 const LAZY_MAX_WORDS: i32 = 64;
+/// `LOFT_NO_PARK=1` frees every block through the tree (or the lazy phase) at its delete —
+/// no size lists (`@FR-H-Park`); the bisect step for a store-layout fault, a claim that
+/// hands out a live block, or a store that grows instead of reusing a freed block.  Read
+/// once; each store copies it at construction.
+fn park_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_PARK").is_ok_and(|v| v != "0"))
+}
+/// `@FR-H-Park` — a freed block of at most this many words (128 B: a record, a short text,
+/// a small vector) is parked on the list for its exact size.  A 64-word bound priced the
+/// same on the rows that churn small blocks.
+const PARK_MAX_WORDS: i32 = 16;
+/// `@FR-H-Park` — a parked block's list links ride the two half-words a tree node keeps its
+/// links in (`FL_LEFT`, `FL_RIGHT`), clear of the footer in its last word's high half.
+const PARK_PREV: u32 = 4;
+const PARK_NEXT: u32 = 8;
+
+/// `@FR-H-Park` — the parked free blocks of one store: one doubly linked list per exact
+/// size, and the set of their starts, which is what tells a parked block from a tree node
+/// or a lazily freed one (claimed data can spell a free header; the set cannot lie).
+#[derive(Clone, Default)]
+struct Parked {
+    heads: [u32; PARK_MAX_WORDS as usize + 1],
+    set: Claims,
+    count: u32,
+}
+
+impl Parked {
+    fn clear(&mut self) {
+        self.heads = [0; PARK_MAX_WORDS as usize + 1];
+        self.set.clear();
+        self.count = 0;
+    }
+}
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -480,6 +514,12 @@ pub struct Store {
     /// backward merge (a footer alone can be spelled by claimed data) and what tells a
     /// consumer the block it takes was dead.  Empty outside the phase.
     lazy_free: Claims,
+    /// `@FR-H-Park` — whether this store parks small freed blocks: a heap store with
+    /// `LOFT_NO_PARK` unset; a store bound to a file never does, as it never enters the
+    /// lazy phase.
+    park: bool,
+    /// `@FR-H-Park` — the parked blocks, by exact size.  Empty when `park` is off.
+    parked: Parked,
     /// CO1.9/S28: monotonic counter incremented on every `claim`, `resize`, and `delete`.
     /// Saved into `CoroutineFrame` at yield; compared at resume to detect store mutations
     /// that may have invalidated `DbRef` locals held by the generator.  Always compiled in
@@ -1135,6 +1175,8 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
+            park: park_enabled(),
+            parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1290,6 +1332,8 @@ impl Store {
             lazy: false,
             dead_words: 0,
             lazy_free: Claims::default(),
+            park: false,
+            parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1399,6 +1443,8 @@ impl Store {
             lazy: false,
             dead_words: 0,
             lazy_free: Claims::default(),
+            park: false,
+            parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1510,6 +1556,8 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
+            park: park_enabled(),
+            parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1562,6 +1610,8 @@ impl Store {
         self.lazy = lazy_free_enabled();
         self.dead_words = 0;
         self.lazy_free.clear();
+        // `@FR-H-Park` — the whole store is one free block again: nothing is parked.
+        self.parked.clear();
         // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
         // store's one FREE block, so naming it in the live-record set records a block that
         // is free.  `claims_rebuild` answers the same question off the store's own bytes for
@@ -1678,6 +1728,12 @@ impl Store {
             self.dead_words = 0;
             self.lazy_free.clear();
         }
+        // `@FR-H-Park` — a block parked at exactly this size is the claim: one list pop.
+        if self.parked.count != 0
+            && let Some(pos) = self.pop_parked(size)
+        {
+            return self.finish_claim(pos);
+        }
         // Faster path: the store has freed nothing yet, so its one free block is the
         // tail and the claim is two header writes (`bump_tail`).
         if !self.wilderness
@@ -1692,6 +1748,17 @@ impl Store {
             #[cfg(debug_assertions)]
             self.fl_validate();
             return self.finish_claim(result);
+        }
+        // `@FR-H-Park` — before the store sweeps or grows, the parked blocks are freed
+        // through the tree, merging with their neighbours, and the tree is asked again: the
+        // store grows no sooner than it would have without the lists.
+        if self.parked.count != 0 {
+            self.flush_parked();
+            if let Some(result) = self.claim_best_fit(size) {
+                #[cfg(debug_assertions)]
+                self.fl_validate();
+                return self.finish_claim(result);
+            }
         }
         // P6: a fast-path miss means no single tracked free block fits.
         // `delete` only merges forward, so adjacent frees that each don't
@@ -1732,7 +1799,7 @@ impl Store {
                 break;
             }
             let nh = self.read::<i32>(next, 0);
-            if nh >= 0 {
+            if nh >= 0 || self.parked.set.contains(next) {
                 break;
             }
             self.forget_free(next);
@@ -1779,6 +1846,90 @@ impl Store {
         } else {
             self.fl_remove(pos);
         }
+    }
+
+    /// `@FR-H-Park` — park the `words`-word block at `rec` (out of `claims` already): a free
+    /// block by its header and footer, so every walk of the store reads it as free, pushed
+    /// on the list for its exact size.
+    fn park_block(&mut self, rec: u32, words: i32) {
+        self.set_free_header(rec, words);
+        let head = self.parked.heads[words as usize];
+        self.write_block_meta::<u32>(rec, PARK_PREV, 0);
+        self.write_block_meta::<u32>(rec, PARK_NEXT, head);
+        if head != 0 {
+            self.write_block_meta::<u32>(head, PARK_PREV, rec);
+        }
+        self.parked.heads[words as usize] = rec;
+        self.parked.set.insert(rec);
+        self.parked.count += 1;
+    }
+
+    /// `@FR-H-Park` — take the parked block at `rec` off its list; it stays a free block.
+    fn unpark(&mut self, rec: u32) {
+        let prev = self.read::<u32>(rec, PARK_PREV);
+        let next = self.read::<u32>(rec, PARK_NEXT);
+        if prev == 0 {
+            self.parked.heads[self.fl_size(rec) as usize] = next;
+        } else {
+            self.write_block_meta::<u32>(prev, PARK_NEXT, next);
+        }
+        if next != 0 {
+            self.write_block_meta::<u32>(next, PARK_PREV, prev);
+        }
+        self.parked.set.remove(rec);
+        self.parked.count -= 1;
+    }
+
+    /// `@FR-H-Park` — claim a block parked at exactly `size` words, if one is.
+    #[inline]
+    fn pop_parked(&mut self, size: u32) -> Option<u32> {
+        let rec = *self.parked.heads.get(size as usize)?;
+        if rec == 0 {
+            return None;
+        }
+        let next = self.read::<u32>(rec, PARK_NEXT);
+        self.parked.heads[size as usize] = next;
+        if next != 0 {
+            self.write_block_meta::<u32>(next, PARK_PREV, 0);
+        }
+        self.parked.set.remove(rec);
+        self.parked.count -= 1;
+        self.write(rec, 0, size as i32);
+        self.claims.insert(rec);
+        if let Some(log) = self.recording.as_mut() {
+            log.push(StoreChange::Insert { pos: rec, size });
+        }
+        Some(rec)
+    }
+
+    /// `@FR-H-Park` — free every parked block through the tree, each merging with its
+    /// tracked neighbours: what the exact delete would have done at the time, now.  A
+    /// neighbour still parked is merged when its own turn comes, backward off this block.
+    fn flush_parked(&mut self) {
+        for words in MIN_FREE_TREE..=PARK_MAX_WORDS {
+            loop {
+                let rec = self.parked.heads[words as usize];
+                if rec == 0 {
+                    break;
+                }
+                self.unpark(rec);
+                self.free_exact(rec, words);
+            }
+        }
+    }
+
+    /// `@FR-H-Park` — whether the free footer before `rec` names a parked block.
+    fn parked_predecessor(&self, rec: u32) -> bool {
+        if self.parked.count == 0 {
+            return false;
+        }
+        let f = self.read::<i32>(rec - 1, 4);
+        let Some(words) = f.checked_neg() else {
+            return false;
+        };
+        rec.checked_sub(words as u32).is_some_and(|prev| {
+            prev >= PRIMARY && self.parked.set.contains(prev) && self.read::<i32>(prev, 0) == f
+        })
     }
 
     /// `@FR-H-LazyFree` — are the untracked words worth the one sweep that ends the
@@ -1956,6 +2107,9 @@ impl Store {
     }
 
     fn claim_scan(&mut self, size: u32) -> u32 {
+        // `@FR-H-Park` — `claim` flushes the lists before it gets here, so the scan's indexes
+        // (`@FR-H-ScanIndex`) hold every free block: no parked one is left for the walk to meet.
+        debug_assert_eq!(self.parked.count, 0, "a claim scanned past parked blocks");
         let req_size = size as i32;
         let (mut pos, last, claim) = self
             .indexed_scan(req_size)
@@ -2240,19 +2394,42 @@ impl Store {
         // where it becomes the wilderness.  The sweep `claim` runs at the bound tracks every
         // such block at once, and a store freed whole before that never pays for its
         // deletes at all.
-        if self.lazy && self.read::<i32>(rec, 0) <= LAZY_MAX_WORDS {
+        let words = self.read::<i32>(rec, 0);
+        // `@FR-H-Park` — a small block is parked on the list for its size, merged with
+        // nothing, for the next claim of that size to pop.  Not a block that ends the store
+        // (it joins the wilderness), and not while the edit journal records: its undo
+        // restores a freed block by position, and replays each claim by `claim_at`.
+        if self.park
+            && (MIN_FREE_TREE..=PARK_MAX_WORDS).contains(&words)
+            && self.recording.is_none()
+            && rec + words as u32 != self.size
+        {
+            self.claims.remove(rec);
+            self.park_block(rec, words);
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return;
+        }
+        if self.lazy && words <= LAZY_MAX_WORDS {
             self.lazy_delete(rec);
             #[cfg(debug_assertions)]
             self.fl_validate();
             return;
         }
-        let mut claim = self.read::<i32>(rec, 0);
         self.claims.remove(rec);
+        self.free_exact(rec, words);
+    }
+
+    /// The exact free of the `claim`-word block at `rec`, already out of `claims`: merge it
+    /// with the free blocks on both sides and track the result in the tree (or as the
+    /// wilderness).  A parked neighbour is left where it is (`@FR-H-Park`).
+    fn free_exact(&mut self, rec: u32, claim: i32) {
+        let mut claim = claim;
         // Coalesce with any adjacent free blocks that follow.
         while (rec + claim as u32) < self.size {
             let next_pos = rec + claim as u32;
             let next_header = self.read::<i32>(next_pos, 0);
-            if next_header >= 0 {
+            if next_header >= 0 || self.parked.set.contains(next_pos) {
                 break;
             }
             // Remove the about-to-be-absorbed block from the tree before merging.
@@ -2271,10 +2448,12 @@ impl Store {
             self.fl_remove(prev);
             claim += words;
             rec = prev;
-        } else if rec > PRIMARY && self.read::<i32>(rec - 1, 4) < 0 {
+        } else if rec > PRIMARY && self.read::<i32>(rec - 1, 4) < 0 && !self.parked_predecessor(rec)
+        {
             // A negative word that could not be confirmed: either a one-word free
             // predecessor (real, unmergeable here) or a claimed block's data noise.
-            // Leave the lazy sweep armed for it — the pre-footer behaviour.
+            // Leave the lazy sweep armed for it — the pre-footer behaviour.  A PARKED
+            // predecessor needs no sweep: its flush merges forward into this block.
             self.needs_coalesce = true;
         }
         self.set_free_header(rec, claim);
@@ -2641,6 +2820,9 @@ impl Store {
         if self.read_only || self.borrowed || self.has_durable_sidecar() {
             return false;
         }
+        // `@FR-H-Park` — a parked block past the mark would be cut off while its list
+        // still names it.
+        self.flush_parked();
         let mark = {
             let u = self.usage();
             if !u.walk_complete {
@@ -3025,6 +3207,8 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
+            park: false,
+            parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -3095,6 +3279,8 @@ impl Store {
             lazy: self.lazy,
             dead_words: self.dead_words,
             lazy_free: self.lazy_free.clone(),
+            park: self.park,
+            parked: self.parked.clone(),
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -3146,6 +3332,8 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
+            park: false,
+            parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -3498,6 +3686,12 @@ impl Store {
 
     /// Remove `rec` from the free tree if it is currently tracked.
     fn fl_remove(&mut self, rec: u32) {
+        // `@FR-H-Park` — a parked block leaves its list: the exact-position claim, an
+        // in-place resize and the growth step take it like any free block.
+        if self.parked.count != 0 && self.parked.set.contains(rec) {
+            self.unpark(rec);
+            return;
+        }
         // `@FR-H-LazyFree` — a lazy store's free block may be untracked (a lazy delete
         // beside a tree the sweep or a split left), and only a tree node leaves the tree:
         // the exact-position claim, an in-place resize and the chain walk's growth step
@@ -3529,9 +3723,29 @@ impl Store {
 
     /// Return `true` if `target` is reachable from the free-tree root — the release-mode
     /// confirmation `free_predecessor` needs (a footer can be spelled by claimed data;
-    /// tree membership cannot).  O(log n) by key, not a full walk.
+    /// tree membership cannot).  O(log n): one descent by the tree's own (size, position)
+    /// key, which `target`'s header gives — a block whose header is not its key's is in
+    /// no node's place, and the descent answers `false` for it.
     fn fl_tree_contains(&self, target: u32) -> bool {
-        (target != 0 && target == self.wild) || self.fl_contains_node(self.free_root, target)
+        if target == 0 {
+            return false;
+        }
+        if target == self.wild {
+            return true;
+        }
+        let mut h = self.free_root;
+        while h != 0 {
+            h = match self.fl_cmp(target, h) {
+                Ordering::Less => self.fl_left(h),
+                Ordering::Greater => self.fl_right(h),
+                Ordering::Equal => {
+                    debug_assert!(self.fl_contains_node(self.free_root, target));
+                    return true;
+                }
+            };
+        }
+        debug_assert!(!self.fl_contains_node(self.free_root, target));
+        false
     }
 
     /// Return `true` if `target` is reachable from the free-tree root.
@@ -3560,6 +3774,8 @@ impl Store {
         // so nothing is untracked after it: a bit left set would name a tree node as dead.
         self.lazy_free.clear();
         self.dead_words = 0;
+        // `@FR-H-Park` — and the parked blocks: each is a free block the walk tracks.
+        self.parked.clear();
         let mut pos = PRIMARY;
         while pos < self.size {
             let header = self.read::<i32>(pos, 0);
@@ -6742,6 +6958,7 @@ mod tests {
     fn a_lazy_delete_merges_backward_into_a_lazy_predecessor() {
         // Sixteen words: the three blocks fill the store, so no tail can take the claim.
         let mut store = Store::new(16);
+        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
         store.free = false;
         let a = store.claim(5);
         let b = store.claim(5);
@@ -6793,6 +7010,7 @@ mod tests {
     #[test]
     fn a_lazy_delete_is_untracked_and_the_claim_takes_the_tail() {
         let mut store = Store::new(64);
+        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
         store.free = false;
         assert!(store.lazy, "a fresh store starts the lazy phase");
         let _a = store.claim(5);
@@ -6861,6 +7079,7 @@ mod tests {
     fn at_the_growth_bound_one_sweep_ends_the_phase() {
         let size = 4 * super::LAZY_FLOOR_WORDS;
         let mut store = Store::new(size);
+        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
         store.free = false;
         // Fill three quarters of the store in 16-word blocks, then free every one of
         // them but the last (the survivor keeps the run off the wilderness): the dead
@@ -6937,6 +7156,7 @@ mod tests {
     #[test]
     fn coalesce_free_merges_adjacent_and_reuses_space() {
         let mut store = Store::new(64);
+        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
         store.free = false;
         store.lazy = false; // the exact allocator's merge, not the lazy phase
         let _a = store.claim(5);
@@ -7037,8 +7257,10 @@ mod tests {
         store.init();
         store.free = false;
         // The seeded side-by-side tests pin the EXACT allocator's layout across its
-        // switches; the lazy phase folds a freed tail block into the wilderness only.
+        // switches; the lazy phase folds a freed tail block into the wilderness only, and a
+        // parked block is merged at a flush, not at its delete (`@FR-H-Park`).
         store.lazy = false;
+        store.park = false;
         store
     }
 
@@ -7357,6 +7579,161 @@ mod tests {
         }
     }
 
+    /// `@FR-H-Park` — the lists read independently: every parked block is a free block in
+    /// the set, on the list for its own size, linked both ways, and the count is the set's.
+    fn check_parked(store: &Store) {
+        let mut seen = 0u32;
+        for words in super::MIN_FREE_TREE..=super::PARK_MAX_WORDS {
+            let (mut prev, mut rec) = (0u32, store.parked.heads[words as usize]);
+            while rec != 0 {
+                assert_eq!(
+                    store.read::<i32>(rec, 0),
+                    -words,
+                    "parked {rec} has its size"
+                );
+                assert_eq!(
+                    store.read::<i32>(rec + words as u32 - 1, 4),
+                    -words,
+                    "footer"
+                );
+                assert!(store.parked.set.contains(rec) && !store.claims.contains(rec));
+                assert!(!store.fl_contains_node(store.free_root, rec) && rec != store.wild);
+                assert_eq!(
+                    store.read::<u32>(rec, super::PARK_PREV),
+                    prev,
+                    "back link of {rec}"
+                );
+                (prev, rec) = (rec, store.read::<u32>(rec, super::PARK_NEXT));
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, store.parked.count);
+        assert_eq!(seen as usize, store.parked.set.len());
+    }
+
+    fn parking_store() -> Store {
+        let mut store = Store::new(256);
+        store.init();
+        store.free = false;
+        store.lazy = false;
+        store.park = true;
+        store
+    }
+
+    /// `@FR-H-Park` — a freed small block is parked, not merged, and the next claim of its
+    /// size takes it back; a larger delete beside it stops at it.
+    #[test]
+    fn a_parked_block_is_the_next_claim_of_its_size() {
+        let mut store = parking_store();
+        let a = store.claim(20);
+        let b = store.claim(3);
+        let c = store.claim(5);
+        store.delete(b);
+        assert!(store.parked.set.contains(b) && store.read::<i32>(b, 0) == -3);
+        store.delete(a);
+        // `a`'s exact delete stops at the parked `b`: two free blocks, one in the tree.
+        assert_eq!(store.read::<i32>(a, 0), -20);
+        assert!(store.fl_tree_contains(a));
+        check_parked(&store);
+        assert_eq!(store.claim(3), b);
+        assert!(store.claims.contains(b) && store.parked.count == 0);
+        assert!(store.claims.contains(c));
+    }
+
+    /// `@FR-H-Park` — the flush frees each parked block through the tree, and parked
+    /// neighbours end as ONE free block whichever list held them.
+    #[test]
+    fn a_flush_merges_parked_neighbours_into_one_block() {
+        let mut store = parking_store();
+        let a = store.claim(4);
+        let b = store.claim(7);
+        let c = store.claim(4);
+        let d = store.claim(9);
+        for rec in [c, a, b] {
+            store.delete(rec);
+        }
+        check_parked(&store);
+        assert_eq!(store.parked.count, 3);
+        store.flush_parked();
+        assert_eq!(store.parked.count, 0);
+        assert_eq!(store.read::<i32>(a, 0), -15, "a, b and c merged");
+        assert!(store.fl_tree_contains(a));
+        assert!(store.claims.contains(d));
+        // A claim of a size no list holds flushes before it grows: 15 words fit at `a`.
+        let mut store = parking_store();
+        let a = store.claim(4);
+        let b = store.claim(7);
+        let c = store.claim(4);
+        let _d = store.claim(store.size - 1 - 15 - 2);
+        store.delete(b);
+        store.delete(a);
+        store.delete(c);
+        let size = store.size;
+        assert_eq!(store.claim(15), a, "the flushed blocks hold the claim");
+        assert_eq!(store.size, size, "and the store did not grow");
+    }
+
+    /// `@FR-H-Park` — a seeded churn of claims, deletes and resizes on a parking store: every
+    /// live record keeps the bytes written into it, the block chain tiles the store, and the
+    /// lists stay consistent — with the lazy phase on and off.
+    #[test]
+    fn parking_keeps_every_live_record_and_its_bytes() {
+        for lazy in [false, true] {
+            for seed in 1..=24u64 {
+                let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+                let mut next = move |n: u64| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state % n
+                };
+                let mut store = parking_store();
+                store.lazy = lazy;
+                let mut live: Vec<(u32, u32)> = Vec::new();
+                let fill = |store: &mut Store, rec: u32, tag: u32| {
+                    let words = store.read::<i32>(rec, 0) as u32;
+                    for w in 1..words {
+                        store.write::<u32>(rec, w * 8, tag ^ w);
+                    }
+                };
+                for step in 0..800u32 {
+                    let op = next(10);
+                    if op < 5 || live.is_empty() {
+                        let bound = if next(4) == 0 { 60 } else { 14 };
+                        let rec = store.claim(1 + next(bound) as u32);
+                        let tag = (seed as u32) << 16 | step;
+                        fill(&mut store, rec, tag);
+                        live.push((rec, tag));
+                    } else if op < 8 {
+                        let i = next(live.len() as u64) as usize;
+                        store.delete(live.swap_remove(i).0);
+                    } else {
+                        let i = next(live.len() as u64) as usize;
+                        let (rec, tag) = live[i];
+                        let grow = store.read::<i32>(rec, 0) as u32 + 1 + next(8) as u32;
+                        let moved = store.resize(rec, grow);
+                        fill(&mut store, moved, tag);
+                        live[i] = (moved, tag);
+                    }
+                    let tiles: u32 = chain(&store).iter().map(|(_, h)| h.unsigned_abs()).sum();
+                    assert_eq!(
+                        tiles + super::PRIMARY,
+                        store.size,
+                        "seed {seed} step {step}: tiles"
+                    );
+                    for &(rec, tag) in &live {
+                        assert!(store.claims.contains(rec), "seed {seed} step {step}: {rec}");
+                        for w in 1..store.read::<i32>(rec, 0) as u32 {
+                            assert_eq!(store.read::<u32>(rec, w * 8), tag ^ w, "{seed}/{step}");
+                        }
+                    }
+                    check_parked(&store);
+                    check_wilderness(&store);
+                }
+            }
+        }
+    }
+
     /// `@FR-H-ScanIndex` — the indexed scan answers what the block-chain walk answers: on a
     /// lazy store driven by a seeded sequence of claims, deletes and resizes, at every claim
     /// the tree and the wilderness cannot serve, the index names the same first fit — or, none
@@ -7373,6 +7750,7 @@ mod tests {
                 state % n
             };
             let mut store = Store::new(64);
+            store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
             store.free = false;
             let mut live: Vec<u32> = Vec::new();
             for step in 0..800 {
@@ -7584,6 +7962,7 @@ mod tests {
         // arithmetic below is what this test still owns.
         fn fragmented() -> (Store, Vec<u32>) {
             let mut store = Store::new(256);
+            store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
             store.free = false;
             store.lazy = false; // the exact allocator's merge, not the lazy phase
             let recs: Vec<u32> = (0..21).map(|_| store.claim(5)).collect();

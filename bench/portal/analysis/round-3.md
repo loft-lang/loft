@@ -35,7 +35,7 @@ was ~10 % of the row's self time and the free-tree walks alone (delete, insert, 
 rotations, color flips, the find) ~6.6 % — the ceiling for this lever; hashing is the row's
 bulk (SipHash 12 %, `hash::find` 11 %, `keys::hash` 9 %).  A claim that takes a tree block and
 splits it deleted the node and inserted the remainder.  Built as the heap rule `(H-Carve)`
-(`formal/heap.md`, beside `(H-Wilderness)`): when the block is at least twice the request the
+(`formal/allocator.md`, beside `(H-Wilderness)`): when the block is at least twice the request the
 remainder takes the node's place — links, color, parent pointer — because the node is the
 smallest that fits, so every node before it is smaller than the request and a remainder of at
 least the request keeps its order.  One iterative descent finds the node and its parent
