@@ -1,8 +1,8 @@
 diff --git a/src/generation/ops/vector_ops.rs b/src/generation/ops/vector_ops.rs
-index 657a04375..ce91070d1 100644
+index d6aa911f6..0f80c5cb6 100644
 --- a/src/generation/ops/vector_ops.rs
 +++ b/src/generation/ops/vector_ops.rs
-@@ -835,7 +835,7 @@ fn field_mint(out: &crate::generation::Output, tp: &Value, fld: &Value) -> Optio
+@@ -839,7 +839,7 @@ fn field_append(
          .stores
          .plain_vector_field(u16::try_from(*tp).ok()?, fld)?;
      let elem = out.stores.content(vtp);
@@ -11,3 +11,21 @@ index 657a04375..ce91070d1 100644
  }
  
  /// `OpFinishRecord` — the finish half of [`NewRecordEmitter`]'s fused form: the length
+diff --git a/tests/falsified/a-field-append-outside-a-loop-lands-in-its-field.patch b/tests/falsified/a-field-append-outside-a-loop-lands-in-its-field.patch
+index d90b6cb3c..e69de29bb 100644
+--- a/tests/falsified/a-field-append-outside-a-loop-lands-in-its-field.patch
++++ b/tests/falsified/a-field-append-outside-a-loop-lands-in-its-field.patch
+@@ -1,13 +0,0 @@
+-diff --git a/src/generation/ops/vector_ops.rs b/src/generation/ops/vector_ops.rs
+-index 657a04375..ce91070d1 100644
+---- a/src/generation/ops/vector_ops.rs
+-+++ b/src/generation/ops/vector_ops.rs
+-@@ -835,7 +835,7 @@ fn field_mint(out: &crate::generation::Output, tp: &Value, fld: &Value) -> Optio
+-         .stores
+-         .plain_vector_field(u16::try_from(*tp).ok()?, fld)?;
+-     let elem = out.stores.content(vtp);
+--    Some((pos, elem, out.stores.size(elem)))
+-+    Some((0, elem, out.stores.size(elem)))
+- }
+- 
+- /// `OpFinishRecord` — the finish half of [`NewRecordEmitter`]'s fused form: the length

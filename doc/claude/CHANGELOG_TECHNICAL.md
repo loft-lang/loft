@@ -10,6 +10,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A field append outside a loop goes straight to its field (2026-10-16)
+
+- **`(R-FieldAppend)`** — a straight-line `r.f += [x]` on a struct's plain vector field (no
+  push header holds `r.f`) is emitted as `Stores::field_vector_append::<PREFILL>(r, offset,
+  size, elem)` and `field_vector_finish(r, offset)`: the field's offset and the element's
+  size resolved by the emitter instead of by `record_new` / `record_finish` on every call.
+  The admission is the runtime's own plain-field test made once, so a null parent, a locked
+  store and a growth step behave as before.  Native, `LOFT_NO_FIELD_APPEND`.  Lane 17, four
+  paired rounds, every hash equal: `emit_to_material` −12.5 %, `slope_path_with_undo` −8 %,
+  `truncate_to` −6.1 %, `reload_and_record` −2.6 %, `map_json` −2 %.  Guard
+  `a-field-append-outside-a-loop-lands-in-its-field.loft` (falsified: a wrong field offset),
+  pin `tests/field_append.rs`; the `field_mint` and `record_push` pins run with it off.
+
 ### A content swap carries the parked blocks (loft#2031)
 
 `Store::swap_contents` exchanged the memory, the claims, the free tree and the lazy phase
@@ -560,6 +573,7 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   file, a free function does, so the author chooses the few worth a bare name and the shared
   namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
   cells `tests/builder_trigger.rs` on both backends.
+
 ### An appended record that owns heap is minted without its prefill (2026-10-16)
 
 - **`(R-CompleteWrite)`'s fresh-copy clause** — a whole-record `OpCopyRecord` into a minted
