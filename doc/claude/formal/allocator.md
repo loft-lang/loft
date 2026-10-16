@@ -10,9 +10,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > **Rules then deviations** (see [README](README.md)). [heap.md](heap.md) defines what the
 > store STEPS do — claim, read, write, copy, free — and what a program may observe of them.
 > This chapter defines how ONE store lays out its blocks underneath: where a claim lands, when
-> a freed block is merged, which index finds it again.  No program can observe these choices
-> (a claim's bytes are undefined, `H-Claim`; a freed record is unreachable), so every rule
-> here is free to change for speed; what each must keep is that every free block is found
+> a freed block is merged, which index finds it again.  No VALUE a program computes depends on
+> these choices (a claim's bytes are undefined, `H-Claim`; a freed record is unreachable), so
+> every rule here is free to change for speed.  The one window onto them is the store report
+> (`store_memory()`: free blocks, mergeable pairs, the largest hole), which describes each
+> store as its pending merges will leave it.  What each rule must keep is that every free block is found
 > again by exactly one index, that the block chain tiles the store, and that a store grows no
 > sooner than a free block that holds the claim is out of reach.
 
@@ -114,8 +116,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  consumer that takes a free block (an exact-position claim, an in-place
                  resize, the growth step) takes a parked one off its list.  Every block is
                  still free or claimed by its header, so the usage walk, an image and the
-                 open walk read the same store; a tree rebuild (the sweep, an open, a
-                 resync) and a reset empty the lists, and a shrink flushes them first.
+                 open walk read the same store, and the store report counts a free
+                 run holding a parked block as the ONE block its flush will leave (a
+                 deferred merge, not a missed one); a tree rebuild (the sweep, an open, a
+                 resync) and a reset empty the lists, and a reclaim or a shrink flushes them
+                 first.
                  Not parked: a block that ends the store (it joins the wilderness), a
                  block freed while the edit journal records, and every block of a store
                  bound to a file.  `LOFT_NO_PARK=1` turns it off.
@@ -145,5 +150,8 @@ from the store's bytes after every step of a seeded churn of claims, deletes and
 - `H-Park` — `a_parked_block_is_the_next_claim_of_its_size`,
   `a_flush_merges_parked_neighbours_into_one_block`, and
   `parking_keeps_every_live_record_and_its_bytes` (every live record's bytes intact and the
-  lists consistent at every step, with the lazy phase on and off).  The rules above it pin
+  lists consistent at every step, with the lazy phase on and off), and
+  `the_report_counts_a_parked_run_as_the_block_its_flush_leaves`; the published example is
+  `tests/scripts/947-feature-worked-examples.loft` (`@FTR-002`, a contiguous drop reads as a
+  handful of blocks).  The rules above it pin
   their own layouts with parking off.

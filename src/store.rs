@@ -2662,6 +2662,8 @@ impl Store {
         }
         let mut pos = PRIMARY;
         let mut prev_was_free = false;
+        // The free run the walk is in: its words, and whether it holds a parked block.
+        let (mut run_words, mut run_parked) = (0u32, false);
         while pos < self.size {
             let claim = self.read::<i32>(pos, 0);
             if claim == 0 {
@@ -2670,14 +2672,24 @@ impl Store {
             let sz = claim.unsigned_abs();
             if claim < 0 {
                 u.free_words += sz;
-                u.free_count += 1;
-                if sz > u.largest_free_words {
-                    u.largest_free_words = sz;
+                let parked = self.parked.count != 0 && self.parked.set.contains(pos);
+                if prev_was_free && (run_parked || parked) {
+                    // `@FR-H-Park` — a parked block's merge is deferred, not missed: the flush
+                    // frees it forward over every free block that follows, so the run is the
+                    // ONE block it will leave.
+                    run_words += sz;
+                    run_parked = true;
+                } else {
+                    // Two consecutive free blocks are physical neighbours that
+                    // `delete` should have coalesced — flag the missed merge.
+                    if prev_was_free {
+                        u.mergeable_free_pairs += 1;
+                    }
+                    u.free_count += 1;
+                    (run_words, run_parked) = (sz, parked);
                 }
-                // Two consecutive free blocks are physical neighbours that
-                // `delete` should have coalesced — flag the missed merge.
-                if prev_was_free {
-                    u.mergeable_free_pairs += 1;
+                if run_words > u.largest_free_words {
+                    u.largest_free_words = run_words;
                 }
                 prev_was_free = true;
             } else {
@@ -3943,6 +3955,8 @@ impl Store {
     #[allow(dead_code)] // @PLN123 A2 lands inert: A3 is what calls it.
     pub fn reclaim_tail(&mut self) -> u32 {
         refuse_stack_buffer(self.stack_buffer, "reclaim_tail");
+        // `@FR-H-Park` — a compact store holds nothing parked: each block merges now.
+        self.flush_parked();
         if self.needs_coalesce {
             self.coalesce_free();
         }
@@ -6985,6 +6999,7 @@ mod tests {
         let mut store = Store::new(64);
         store.free = false;
         store.lazy = false;
+        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
         let _a = store.claim(4);
         let b = store.claim(1);
         let c = store.claim(4);
@@ -7671,6 +7686,38 @@ mod tests {
         let size = store.size;
         assert_eq!(store.claim(15), a, "the flushed blocks hold the claim");
         assert_eq!(store.size, size, "and the store did not grow");
+    }
+
+    /// `@FR-H-Park` — the store report counts a run of free blocks holding a parked one as the
+    /// one block a flush leaves, with no mergeable pair, and says so of the flushed store too.
+    #[test]
+    fn the_report_counts_a_parked_run_as_the_block_its_flush_leaves() {
+        let mut store = parking_store();
+        let recs: Vec<u32> = (0..6).map(|i| store.claim(3 + i % 3)).collect();
+        let keep = store.claim(9);
+        for &rec in &recs[1..5] {
+            store.delete(rec);
+        }
+        assert_eq!(store.parked.count, 4);
+        let before = store.usage();
+        assert_eq!(
+            before.mergeable_free_pairs, 0,
+            "a deferred merge is no missed one"
+        );
+        store.flush_parked();
+        let after = store.usage();
+        assert_eq!(
+            (
+                before.free_count,
+                before.free_words,
+                before.largest_free_words
+            ),
+            (after.free_count, after.free_words, after.largest_free_words),
+            "the report read the store the flush left"
+        );
+        assert_eq!(after.mergeable_free_pairs, 0);
+        assert!(store.claims.contains(recs[0]) && store.claims.contains(recs[5]));
+        assert!(store.claims.contains(keep));
     }
 
     /// `@FR-H-Park` — a seeded churn of claims, deletes and resizes on a parking store: every
