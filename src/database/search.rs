@@ -1142,6 +1142,46 @@ impl Stores {
         store.set_u32_raw(vec_rec, 4, kept);
     }
 
+    /// `@FR-R-Compact`'s prepend form — `g`'s elements put in front of `data`'s, in `data`'s
+    /// own record.  They are appended as [`Self::vector_add`] appends them (copied, with what
+    /// they own, whichever store `g` lives in, `g` being `data` itself included), then the
+    /// record's element bytes are rotated so they stand first.  A rotation moves each
+    /// element's bytes whole, its owned records' numbers among them, so nothing is claimed
+    /// or released by it.
+    ///
+    /// `false`, having done nothing, for a null or absent vector or a linked element type
+    /// (whose slots are record ids a group shares): the rewrite that emits this keeps the
+    /// written-out statements for that case.
+    pub fn prepend_vector(&mut self, data: &DbRef, g: &DbRef, elem_tp: u16) -> bool {
+        if data.is_null()
+            || data.rec == 0
+            || data.pos == 0
+            || self.is_linked(elem_tp)
+            || self.store(data).get_u32_raw(data.rec, data.pos) == DbRef::ABSENT_REC
+        {
+            return false;
+        }
+        let before = vector::length_vector(data, &self.allocations);
+        self.vector_add(data, g, elem_tp);
+        let after = vector::length_vector(data, &self.allocations);
+        if before == 0 || after <= before {
+            return true;
+        }
+        let size = usize::from(self.size(elem_tp));
+        let vec_rec = self.store(data).collection_rec(data.rec, data.pos);
+        let store = self.store_mut(data);
+        // SAFETY: the vector's record holds `after` elements of `size` bytes from byte 8 —
+        // the layout `vector_add` just wrote.
+        let elements = unsafe {
+            std::slice::from_raw_parts_mut(
+                store.ptr.add(vec_rec as usize * 8 + 8),
+                after as usize * size,
+            )
+        };
+        elements.rotate_right((after - before) as usize * size);
+        true
+    }
+
     pub fn remove_vector_at(&mut self, data: &DbRef, elem_tp: u16, index: i64) -> bool {
         if !self.is_linked(elem_tp) {
             let size = u32::from(self.size(elem_tp));

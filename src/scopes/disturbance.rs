@@ -116,7 +116,7 @@ pub(super) fn reshaped_containers(
 ) -> HashSet<(u16, u32)> {
     let mut out = places_named_by(code, data, &|name| match name {
         "OpRemove" => Some(1),
-        "OpRemoveVector" | "OpKeepVectorRange" => Some(0),
+        "OpRemoveVector" | "OpKeepVectorRange" | "OpPrependVector" => Some(0),
         _ => None,
     });
     // @FR-Col-RemoveDense — a KEYED removal reaches all five keyed kinds through ONE op, and
@@ -351,7 +351,7 @@ fn removed_ref_params(data: &Data, d_nr: u32) -> HashSet<u16> {
     def.code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let arg = match data.def(*d).name() {
-            "OpRemoveVector" | "OpKeepVectorRange" => args.first(),
+            "OpRemoveVector" | "OpKeepVectorRange" | "OpPrependVector" => args.first(),
             "OpRemove" => args.get(1),
             _ => return,
         };

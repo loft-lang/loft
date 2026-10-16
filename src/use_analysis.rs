@@ -168,6 +168,7 @@ fn is_first_arg_write_name(n: &str) -> bool {
                 | "OpInsertVector"
                 | "OpRemoveVector"
                 | "OpKeepVectorRange"
+                | "OpPrependVector"
         )
 }
 

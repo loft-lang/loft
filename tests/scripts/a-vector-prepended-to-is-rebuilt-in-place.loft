@@ -1,0 +1,104 @@
+// `@FR-R-Compact`'s prepend form — `t: vector<T> = []; t += g; t += r; r = t` puts `g`'s
+// elements in front of `r`'s IN r's OWN RECORD (`OpPrependVector`, both backends): `g` is
+// copied in, its texts with it, and the record's elements are rotated.  The values are the
+// written-out program's: the order, every text, the length, `g` left as it was and
+// independent of `r` afterwards, a vector prepended to itself, the field form of the rebind,
+// and a view of `r` taken before the prepend still reading what it read.  The vector put in
+// front is a LOCAL in every cell: the rewrite's fallback arm evaluates it again.
+//
+// Expected values are hand-computed.
+pub enum Op {
+  Ins { pub at: integer, pub str: text },
+  Del { pub from: integer, pub to: integer },
+}
+
+struct Log { list: vector<Op> }
+
+fn group(k: integer) -> vector<Op> {
+  ops: vector<Op> = [];
+  if k % 2 == 0 { ops += [Ins { at: k, str: "s{k}" }]; } else { ops += [Del { from: k, to: k + 1 }, Del { from: k + 2, to: k + 3 }]; }
+  ops
+}
+
+fn show(v: const vector<Op>) -> text {
+  t = "";
+  for o in v {
+    if o is Ins { at, str } { t += "I{at}{str},"; }
+    if o is Del { from, to } { t += "D{from}-{to},"; }
+  }
+  t
+}
+
+fn build(n: integer) -> vector<Op> {
+  result: vector<Op> = [];
+  for i in 0..n {
+    g = group(i);
+    tmp: vector<Op> = [];
+    tmp += g;
+    tmp += result;
+    result = tmp;
+  }
+  result
+}
+
+fn main() {
+  // p1 — the groups of 0..4 put in front, last first: g3 g2 g1 g0.
+  r = build(4);
+  assert(len(r) == 6 && show(r) == "D3-4,D5-6,I2s2,D1-2,D3-4,I0s0,", "p1 {len(r)} {show(r)}");
+  // p2 — 40 groups: 20 inserts and 20 pairs of deletes, 60 ops, the first g39's pair.
+  big = build(40);
+  ins = 0;
+  for o in big { if o is Ins { str } { if str == "s{0}" || len(str) > 1 { ins += 1; } } }
+  assert(len(big) == 60 && ins == 20 && show(big)[0..8] == "D39-40,D", "p2 {len(big)} {ins}");
+  // p3 — an empty group leaves the vector as it was; a prepend into an empty one is the group.
+  e: vector<Op> = [];
+  t1: vector<Op> = [];
+  t1 += e;
+  t1 += r;
+  r = t1;
+  f: vector<Op> = [];
+  g2 = group(2);
+  t2: vector<Op> = [];
+  t2 += g2;
+  t2 += f;
+  f = t2;
+  assert(show(r) == "D3-4,D5-6,I2s2,D1-2,D3-4,I0s0," && show(f) == "I2s2,", "p3 {show(r)} {show(f)}");
+  // p4 — `g` is left as it was, and is independent of `r` afterwards: a write to g's text
+  //   after the prepend does not reach r's copy of it.
+  g = group(8);
+  q: vector<Op> = [Del { from: 1, to: 2 }];
+  t3: vector<Op> = [];
+  t3 += g;
+  t3 += q;
+  q = t3;
+  g[0] = Ins { at: 8, str: "changed" };
+  assert(show(q) == "I8s8,D1-2," && show(g) == "I8changed,", "p4 {show(q)} {show(g)}");
+  // p5 — a vector prepended to itself is doubled.
+  d: vector<Op> = [Ins { at: 1, str: "a" }, Del { from: 2, to: 3 }];
+  t4: vector<Op> = [];
+  t4 += d;
+  t4 += d;
+  d = t4;
+  assert(len(d) == 4 && show(d) == "I1a,D2-3,I1a,D2-3,", "p5 {show(d)}");
+  // p6 — the field form: a vector field of a record prepended to.
+  lg = Log { list: [Del { from: 5, to: 6 }] };
+  for k in 0..3 {
+    g5 = group(k * 2);
+    t5: vector<Op> = [];
+    t5 += g5;
+    t5 += lg.list;
+    lg.list = t5;
+  }
+  assert(show(lg.list) == "I4s4,I2s2,I0s0,D5-6,", "p6 {show(lg.list)}");
+  // p7 — a view of `r` taken before the prepend reads the element it read: r[0] was D3-4.
+  first = r[0]?;
+  g6 = group(10);
+  t6: vector<Op> = [];
+  t6 += g6;
+  t6 += r;
+  r = t6;
+  ok7 = false;
+  if first is Del { from, to } { ok7 = from == 3 && to == 4; }
+  assert(ok7 && show(r)[0..9] == "I10s10,D3", "p7 {show(r)}");
+  println("ok");
+}
