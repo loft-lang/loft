@@ -45,6 +45,18 @@ fn mirror(d: Doc, e: Doc) {
   }
 }
 
+// Reads `d.pieces` while `e` — the same record, in h7 — empties it partway and grows its own
+// `runs`: from i = 11 on, `d.pieces[i]?` is past the end and answers the default piece.
+fn drain(d: Doc, e: Doc) -> integer {
+  t = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    t += p.start;
+    if i == 10 { e.pieces = []; e.runs += [Run { str: "x", style: 0 }]; }
+  }
+  t
+}
+
 fn summary(rs: const vector<Run>) -> text {
   n = 0; chars = 0; styles = 0;
   for r in rs { n += 1; chars += len(r.str); styles += r.style; }
@@ -88,5 +100,10 @@ fn main() {
   x.runs = runs_of(x, 3, 600);
   mirror(x, x);
   assert(summary(x.runs) == "399/1197/800", "h6 {summary(x.runs)}");
+  // h7 — the same record emptied through the other parameter at i = 10: the starts of
+  //   pieces 0..10 are 4·(0 + … + 10) = 220, and every later read is the default piece.
+  y = make_doc();
+  dt = drain(y, y);
+  assert(dt == 220 && len(y.pieces) == 0 && len(y.runs) == 1, "h7 {dt} {len(y.pieces)}");
   println("ok");
 }
