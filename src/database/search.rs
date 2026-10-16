@@ -700,6 +700,48 @@ impl Stores {
         self.record_new(coll, db, u16::MAX)
     }
 
+    /// `@FR-R-KeyedEntry`'s subscript clause: the entry `coll[sub…] = T{…}` writes its fields
+    /// into, for a hash whose key is one to four `integer` / `long` parts and whose element
+    /// owns no heap — the one already under `sub`, or a fresh one filed under it, with every
+    /// key part written.  What [`Self::keyed_place_begin`] … [`Self::keyed_place_finish`] do
+    /// in two probes, a removal and a claim, in one probe: on a repeated key the overwrite IS
+    /// the replace (`@FR-Col-Insert`), because the element releases nothing.
+    ///
+    /// The caller writes the literal's fields and then the subscript's key parts, so the key
+    /// the entry carries is the subscript's, as `keyed_place_finish`'s `set_key` leaves it.
+    /// Where the one-walk form cannot serve (no table yet, a sorted snapshot of `coll` live)
+    /// the entry is claimed, keyed and linked through the general path before its fields are
+    /// written: a hash places an entry by its key alone.
+    ///
+    /// # Panics
+    /// Under `LOFT_KEYED_VERIFY=1`, when a lookup of `sub` answers another entry than the one
+    /// the one-probe walk answered.
+    pub fn keyed_entry_ints(&mut self, coll: &DbRef, db: u16, sub: &[i64]) -> DbRef {
+        if !self.live_scratches.iter().any(|(source, _)| source == coll)
+            && let Some(rec) = crate::hash::entry_ints(
+                coll,
+                &mut self.allocations,
+                &self.types[db as usize].keys,
+                sub,
+                coll.rec,
+            )
+        {
+            if keys::keyed_verify() {
+                let key: Vec<Content> = sub.iter().map(|v| Content::Long(*v)).collect();
+                let found = self.find(coll, db, &key);
+                assert!(
+                    (found.rec, found.pos) == (rec.rec, rec.pos),
+                    "LOFT_KEYED_VERIFY: key {sub:?} answers {found:?} where the entry is {rec:?}"
+                );
+            }
+            return rec;
+        }
+        let key: Vec<Content> = sub.iter().map(|v| Content::Long(*v)).collect();
+        let new = self.keyed_place_begin(coll, db, &key);
+        self.keyed_place_finish(coll, &new, db, &key);
+        new
+    }
+
     /// The second half of [`Self::keyed_place_begin`]: the subscript's key written into the
     /// record and the record linked by it — the tail of `insert_keyed_copy_at`.
     pub fn keyed_place_finish(&mut self, coll: &DbRef, new: &DbRef, db: u16, sub: &[Content]) {

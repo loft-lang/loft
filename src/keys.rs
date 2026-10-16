@@ -3873,6 +3873,18 @@ pub fn long_hash(value: i64, seed: u64) -> u64 {
     hasher.finish()
 }
 
+/// [`key_hash`] of a key whose every part is an integer value — the same digest, for a
+/// caller that holds the parts and not `Content`s of them (`hash::entry_ints`).
+#[inline]
+#[must_use]
+pub fn ints_hash(values: &[i64], seed: u64) -> u64 {
+    let mut hasher = seeded_hasher(seed);
+    for v in values {
+        hasher.write_i64(*v);
+    }
+    hasher.finish()
+}
+
 #[inline]
 #[must_use]
 pub fn key_hash(key: &[Content], seed: u64) -> u64 {

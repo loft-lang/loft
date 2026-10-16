@@ -153,6 +153,27 @@ pub fn site<'a>(stmt: &'a Value, data: &Data, d_nr: u32) -> Option<Site<'a>> {
     })
 }
 
+impl Site<'_> {
+    /// The literal's field writes as `(setter, byte offset)`, an offset that is not a constant
+    /// reading `u16::MAX` — what `keyed_entry::subscript_keys` admits the subscript clause on.
+    #[must_use]
+    pub fn setters<'d>(&self, data: &'d Data) -> Vec<(&'d str, u16)> {
+        let mut out = Vec::new();
+        for op in &self.body {
+            if let Value::Call(d, args) = op.unspan()
+                && args.first().is_some_and(|a| is_var(a, self.buf))
+            {
+                let off = match args.get(1).map(Value::unspan) {
+                    Some(Value::Int(o)) => u16::try_from(*o).unwrap_or(u16::MAX),
+                    _ => u16::MAX,
+                };
+                out.push((name(data, *d), off));
+            }
+        }
+        out
+    }
+}
+
 /// Is `v` a constant operand of a setter (an offset, a bias), which needs no staging?
 #[must_use]
 pub fn constant(v: &Value) -> bool {
