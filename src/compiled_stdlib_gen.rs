@@ -1695,4 +1695,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 pub(crate) const PREFIX_TYPES: usize = 99;
 pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 6636514166665436443;
+pub(crate) const SOURCE_HASH: u64 = 618285542757077885;
