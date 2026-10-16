@@ -44,7 +44,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".git" / "loft-after"
-BIN = ROOT / "target" / "debug" / "loft"
+# The PROBE profile's binary (`[profile.probe]`, opt-level 0, its own target directory): an
+# incremental rebuild after an edit is seconds on an idle box where the dev profile's was
+# minutes (@PLN194).  The ratchets, guards and probes run on it; clippy and `cargo check`
+# keep their own artefacts.
+PROBE = ["--profile", "probe", "--target-dir", "target/probe"]
+BIN = ROOT / "target" / "probe" / "probe" / "loft"
 
 
 def git(*args):
@@ -171,7 +176,7 @@ def plan(mode, paths, base, want_tests):
         steps.append(Step("compiled stdlib", "python3 scripts/compiled_stdlib_fresh.py", stdlib or src, "A"))
     # Phase B — one cargo at a time.
     if rs or stdlib:
-        steps.append(Step("build", "cargo build -q --bin loft", rs or stdlib, "B"))
+        steps.append(Step("build", "cargo build -q --bin loft " + " ".join(PROBE), rs or stdlib, "B"))
         steps.append(Step("cargo check", "cargo check -q --all-targets", rs or stdlib, "B"))
     if src:
         steps.append(Step("clippy", "cargo clippy -q --bin loft -- -D warnings", src, "B"))
@@ -241,6 +246,12 @@ def main():
             print(f"  runner {name:17}     stale ({why}) — scripts/derive-ci.sh")
         return 0
 
+    others = subprocess.run(["scripts/pgrep_others.sh", "cargo (build|test|clippy|check|nextest)", "--count"],
+                            cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if others not in ("", "0"):
+        print(f"another cargo is running on this box ({others}); one at a time — a build beside "
+              "another took minutes where it takes seconds alone (@PLN194).  Wait, or stop it.")
+        return 2
     t0 = time.monotonic()
     a_steps = [s for s in steps if s.phase == "A"]
     b_steps = [s for s in steps if s.phase == "B"]

@@ -78,10 +78,10 @@
         "default/",
         "bench/"
       ],
-      "check": "cargo build -q --bin loft && LOFT_BIN=target/debug/loft python3 scripts/rewrite_census.py",
+      "check": "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py",
       "check_first": true,
       "regen": [
-        "cargo build -q --bin loft && LOFT_BIN=target/debug/loft python3 scripts/rewrite_census.py --bless"
+        "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py --bless"
       ],
       "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline"
     },
