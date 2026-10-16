@@ -449,7 +449,10 @@ hashes equal):
 | L4 | `slice_runs` holds `d.pieces`' header across its loop | — | 4.10 → 3.43 ms (−16 %) | `(R-Header)` for a PARAMETER's vector across a call that writes no store (`buf_slice_text` writes its work text only): X2's unbuilt half, a callee summary or `(R-Alias)`'s versioned store compare |
 
 **Where it lands.**  All four, priced: **3.43 ms, 2.70×**.  Without L1, about 3.65 ms (≈ 2.87×).
-With L3 and L2 built: **4.48 ms**, about 3.5× against the twin's 1.27 ms; L4 is next.
+With L3 and L2 built: **3.60×** in the portal (4.45 ms against 1.24 ms; `make perf-portal` at
+164252e78), and `insert_text` 5.09 → 1.93× beside it from L3 alone.  L4 is next.  The same run read
+the text lane (13) 10–23 % slower; the emitted Rust there is unchanged, and with
+`-align-all-functions=6` on both runtimes the two builds are level — the relinked runtime's layout.
 L3 and L4 are exactly the emitted forms, so they land at their price, as L3 did.  The
 hand-priced files are the emitted `invert` with each edit applied by script
 (`hand_price.sh` with the package's `LOFT_NATIVE_RUSTC_ARGS`); the edits are the four
