@@ -380,6 +380,7 @@ by EXCLUSION leaves a miss set that is small, named and reviewable.
 | a tight loop on what YOUR diff touches | `./scripts/find_problems.sh --changed [ref]` (seconds) |
 | a tight loop on one area | `./scripts/find_problems.sh --subject <name>` (seconds) |
 | everything, incl. the slow-and-few | `./scripts/find_problems.sh --full` |
+| what a CHANGE needs and nothing more, read from git | `make after-fix` (since the last green run here) / `make after-join` (what a join added): fmt, the lint gates, clippy, the ratchets, the changed guards on both backends, the diff's subjects, each timed; what needs a runner is reported as the dispatch (`--dispatch` sends it); `ARGS=--dry-run` is the plan |
 | to see subjects + what is excluded | `./scripts/find_problems.sh --list-subjects` |
 
 Subjects are `parser scopes codegen runtime store wasm packages lsp sql docs
