@@ -250,7 +250,7 @@ impl Stores {
         rec
     }
 
-    /// `@FR-R-FieldMint` — [`Self::record_new`]'s plain-field path with the dispatch resolved
+    /// `@FR-R-FieldAppend` — [`Self::record_new`]'s plain-field path with the dispatch resolved
     /// by the emitter: the element slot `vector_append` claims at the vector field `pos`
     /// bytes into `data`, `size` bytes wide, prefilled with `elem`'s defaults when `PREFILL`
     /// (`OpNewRecord`; `OpNewRecordNP` when the group writes every field).  The emitter
@@ -278,7 +278,7 @@ impl Stores {
         slot
     }
 
-    /// `@FR-R-FieldMint` — [`Self::record_finish`]'s plain-field path: the length bump of the
+    /// `@FR-R-FieldAppend` — [`Self::record_finish`]'s plain-field path: the length bump of the
     /// vector field `pos` bytes into `data`.
     #[inline]
     pub fn field_vector_finish(&mut self, data: &DbRef, pos: u32) {

@@ -1683,6 +1683,23 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  writes its own tag (OpSetEnum(e, 0, variant)) beside the variant's
                  fields — with its slot always zeroed, a narrower variant leaving a
                  wider one's tail unwritten.
+  (R-FieldAppend)  a mint group over a vector FIELD of a struct that no push header
+                 holds — a straight-line `r.f += [x]`, outside any loop (R-PushRec)
+                 admits — whose parent type is a STRUCT and whose field is a plain
+                 vector no sibling collection shares, is emitted as the field's own
+                 append: OpNewRecord is `field_vector_append` at the field's offset
+                 with the element's size (prefilled with the element's defaults
+                 unless (R-CompleteWrite) covers the group), OpFinishRecord the
+                 field's length bump.  The admission is exactly the test
+                 `record_new`'s plain-field path makes on every call, made once by
+                 the emitter, so the slot claimed, its prefill and the finish are
+                 the ones the runtime would have produced — a null parent's
+                 no-op, a locked store's refusal and a growth step included.  A
+                 keyed collection, a linked group member and a `__nullable`
+                 parent are not plain vector fields and keep the templates.
+                 Native; the interpreter's own plain-field path is the oracle.
+                 Switch `LOFT_NO_FIELD_APPEND` (and the runtime's own
+                 `LOFT_NO_PLAIN_FIELD_APPEND`).
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a

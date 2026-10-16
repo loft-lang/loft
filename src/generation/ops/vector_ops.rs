@@ -760,13 +760,13 @@ impl OpEmitter for NewRecordEmitter {
             let no_prefill = matches!(args.get(1).map(Value::unspan), Some(Value::Int(ptp))
                 if u16::try_from(*ptp)
                     .is_ok_and(|t| ctx.output.complete_writes.mint_tps.contains(&t)));
-            // `@FR-R-FieldMint` — a straight-line append to a struct's plain vector field:
+            // `@FR-R-FieldAppend` — a straight-line append to a struct's plain vector field:
             // the slot `record_new`'s plain-field path would claim, with the field's offset
             // and the element's size resolved here instead of on every call.
             if args.len() == 3
-                && let Some((pos, elem, size)) = field_mint(ctx.output, &args[1], &args[2])
+                && let Some((pos, elem, size)) = field_append(ctx.output, &args[1], &args[2])
             {
-                crate::rewrite_census::fired("R-FieldMint", 1);
+                crate::rewrite_census::fired("R-FieldAppend", 1);
                 write!(ctx.w, "stores.field_vector_append::<{}>(&(", !no_prefill)?;
                 ctx.emit(&args[0])?;
                 return write!(ctx.w, "), {pos}, {size}, {elem})");
@@ -819,12 +819,16 @@ impl OpEmitter for NewRecordEmitter {
     }
 }
 
-/// `@FR-R-FieldMint` — the field a mint or finish without a push header appends to, as
+/// `@FR-R-FieldAppend` — the field a mint or finish without a push header appends to, as
 /// `(offset, element type, element size)`: `parent_tp` a struct whose field `fld` is a plain
 /// vector no sibling collection shares — exactly what `Stores::plain_field_vector` admits at
 /// runtime, so the emitted helpers do what `record_new` / `record_finish` would have done.
-fn field_mint(out: &crate::generation::Output, tp: &Value, fld: &Value) -> Option<(u16, u16, u16)> {
-    if out.field_mint_disabled {
+fn field_append(
+    out: &crate::generation::Output,
+    tp: &Value,
+    fld: &Value,
+) -> Option<(u16, u16, u16)> {
+    if out.field_append_disabled {
         return None;
     }
     let (Value::Int(tp), Value::Int(fld)) = (tp.unspan(), fld.unspan()) else {
@@ -863,9 +867,9 @@ impl OpEmitter for FinishRecordEmitter {
                 Some((t, header))
             })
         else {
-            // `@FR-R-FieldMint` — the finish half: the length bump of the same field.
+            // `@FR-R-FieldAppend` — the finish half: the length bump of the same field.
             if args.len() == 4
-                && let Some((pos, _, _)) = field_mint(ctx.output, &args[2], &args[3])
+                && let Some((pos, _, _)) = field_append(ctx.output, &args[2], &args[3])
             {
                 write!(ctx.w, "stores.field_vector_finish(&(")?;
                 ctx.emit(&args[0])?;
