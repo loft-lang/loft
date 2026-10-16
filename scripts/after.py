@@ -246,7 +246,7 @@ def main():
             print(f"  runner {name:17}     stale ({why}) — scripts/derive-ci.sh")
         return 0
 
-    others = subprocess.run(["scripts/pgrep_others.sh", "cargo (build|test|clippy|check|nextest)", "--count"],
+    others = subprocess.run(["scripts/pgrep_others.sh", "(^|/)cargo (build|test|clippy|check|nextest)", "--count"],
                             cwd=ROOT, capture_output=True, text=True).stdout.strip()
     if others not in ("", "0"):
         print(f"another cargo is running on this box ({others}); one at a time — a build beside "

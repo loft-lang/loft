@@ -17182,8 +17182,16 @@ fn local_uses_ok(
                 // the work-ref of a build the value form converts, releases nothing on either
                 // path: neither value is in a store, so the guard is moot rather than
                 // path-dependent, and the test is served.
-                let moot =
-                    |w: u16| c.locals.contains_key(&w) || converted_build_ref(body, value_objects, w);
+                // Never for a record that owns a DROP hook: its release is observable
+                // (`(H-Drop)`), and the guard is what times it — the drop gate's
+                // `q_default_param_var_ret` ran the hook before a read when it was moot.
+                let droppable = |w: u16| {
+                    data.type_owns_droppable_anywhere(data.def(c.def_nr).variables().tp(w))
+                };
+                let moot = |w: u16| {
+                    !droppable(w)
+                        && (c.locals.contains_key(&w) || converted_build_ref(body, value_objects, w))
+                };
                 accounted += release_uses(body, name, args, v, copies || src_served, &moot);
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
                 // one): the tuple's range is materialised into the destination.  A bind
