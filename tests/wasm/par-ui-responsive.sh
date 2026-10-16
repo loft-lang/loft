@@ -57,18 +57,37 @@ SRV=$!; trap 'kill $SRV 2>/dev/null; rm -f "$REPORT"' EXIT; sleep 1
 run() { : > "$REPORT"; timeout $(( 40 * ${WAIT_SCALE:-1} )) "$CHROME" --headless=new --no-sandbox --disable-gpu \
   "http://127.0.0.1:$PORT/par-ui-responsive.html?threads=$1&work=$WORK&elems=$ELEMS&window=$WINDOW" >/dev/null 2>&1 & local ch=$!; await_report "$REPORT" $(( WINDOW/1000 + 6 )); stop_browser $ch; head -1 "$REPORT"; }
 echo "== UI responsiveness (heavy par per rAF frame, window=${WINDOW}ms, threads=$THREADS) =="
-TH="$(run "$THREADS")"; echo "  threaded:   $TH"
-SQ="$(run 0)"; echo "  sequential: $SQ"
-fail=0
-echo "$TH" | grep -q '^E1 ' && echo "$SQ" | grep -q '^E1 ' || { echo "FAIL: a run did not report"; exit 1; }
 num() { echo "$1" | grep -oP "$2=\K[0-9.]+"; }
-# Block time in tenths of a ms, so the ratio stays in integer arithmetic.
-# Read back with `10#` — a sub-millisecond block gives a leading zero (`0.8` ->
-# `08`), which bash would otherwise parse as octal and reject outright.
-tb=$(num "$TH" avg_block_ms); sb=$(num "$SQ" avg_block_ms)
-tbx=${tb%.*}$(printf '%s' "${tb#*.}" | cut -c1); sbx=${sb%.*}$(printf '%s' "${sb#*.}" | cut -c1)
+# One measured pair: both legs, and the block times they answer.  Block time in tenths of
+# a ms, so the ratio stays in integer arithmetic.  Read back with `10#` — a sub-millisecond
+# block gives a leading zero (`0.8` -> `08`), which bash would otherwise parse as octal and
+# reject outright.
+measure() {
+  TH="$(run "$THREADS")"; echo "  threaded:   $TH"
+  SQ="$(run 0)"; echo "  sequential: $SQ"
+  echo "$TH" | grep -q '^E1 ' && echo "$SQ" | grep -q '^E1 ' || { echo "FAIL: a run did not report"; exit 1; }
+  tb=$(num "$TH" avg_block_ms); sb=$(num "$SQ" avg_block_ms)
+  tbx=${tb%.*}$(printf '%s' "${tb#*.}" | cut -c1); sbx=${sb%.*}$(printf '%s' "${sb#*.}" | cut -c1)
+  tp=$(num "$TH" p90_block_ms); sp=$(num "$SQ" p90_block_ms)
+}
+# Does this pair clear the two timing bars?
+clears() {
+  [ $(( 10#${tbx:-999999} * MIN_BLOCK_RATIO_X10 )) -le $(( 10#${sbx:-0} * 10 )) ] 2>/dev/null \
+    && [ "${tp:-999999}" -lt "${sp:-0}" ] 2>/dev/null
+}
+measure
+fail=0
+# A pair under a timing bar is re-measured before it fails, as the speed gate does
+# (scripts/test_speed_gate.py): contention on a shared runner does not repeat, a par that
+# leaves the main thread blocked does.  Always a fresh PAIR, so a throttled sequential leg
+# cannot carry a slow threaded one.
+attempt=0
+while ! clears && [ $attempt -lt "${UI_RETRIES:-2}" ]; do
+  attempt=$(( attempt + 1 ))
+  echo "  under the bar (threaded avg ${tb}ms vs sequential ${sb}ms) — re-measuring (attempt $attempt)"
+  measure
+done
 tm=$(num "$TH" max_block_ms); sm=$(num "$SQ" max_block_ms)
-tp=$(num "$TH" p90_block_ms); sp=$(num "$SQ" p90_block_ms)
 t1=$(num "$TH" first_block_ms); s1=$(num "$SQ" first_block_ms)
 tf=$(num "$TH" frames); sf=$(num "$SQ" frames)
 tw=$(num "$TH" work_ms); sw=$(num "$SQ" work_ms)

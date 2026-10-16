@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Lexer
 // @TITLE: Lexer library.
+// (`lexer` is a piece of the loft-in-loft front end that lives in loft's own `lib/`, @F120;
+// it is not a registry library yet, so a program outside this tree cannot `use` it.)
 // The lexer library breaks a text into tokens so your program can understand
 // its structure. Tokens are the smallest meaningful pieces: numbers, names
 // (like variable and function names), operators, and quoted strings. You tell

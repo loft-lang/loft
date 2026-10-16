@@ -1,0 +1,32 @@
+{
+  "M-close-plans": {
+    "at": "2026-10-16 15:41",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "close-shipped-plans.sh --range v2026.10.0..HEAD --dry-run: directives name plans#178 and #183, both already closed"
+  },
+  "M-falsify-receipts": {
+    "at": "2026-10-16 15:56",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make falsify-review 2026-10-16: worklist 0 of 1059 unscored; 117 receipts the census cannot classify (108 read '@falsified-at: hand-measured'), absent from --check - the inflow to bring under the instrument"
+  },
+  "M-file-sizes": {
+    "at": "2026-10-16 15:48",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make file-sizes 2026-10-16: 18 docs over 1000 (2 read as several subjects: DESIGN_DECISIONS-history, PERFORMANCE-history), 117 code files over 1200 (86 several subjects; top parser/mod.rs 27205, control.rs 23123); last release's scopes.rs split stayed down (no scopes/ file in the list)"
+  },
+  "M-ignores": {
+    "at": "2026-10-16 15:59",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "every #[ignore] reason names a job that exists (miri.yml release-gate-sweeps runs each named test; ci.yml Differential oracle, leak-scan, front-end allocation pins; receipts.yml) and the sweeps job was GREEN on the 2026-10-16 nightly; NATIVE_SKIP, LIB_PKGS/LIB_TESTS_NATIVE_SKIP, LIB_TESTS_SKIP, ignored_scripts all empty; SCRIPTS_NATIVE_SKIP's one entry (75-native-stub) re-justified with its removal condition"
+  },
+  "M-liveness": {
+    "at": "2026-10-16 15:53",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make release-liveness 2026-10-16: one STALE rationale (SCRIPTS_NATIVE_SKIP cited closed #1841) re-justified in bb4da4cbe; chronic reds: consumer-main-health (dryopea x14, moros/crawler x8 - consumers' own), browser-threads par on Web Workers x7 (a speedup threshold on a shared runner), revalidate-libs gate x9 (E0514 stale rlibs - cache key fixed in bb4da4cbe), lib-main-health loft-libs-game x7 (green on 10-16); NEVER RUN: M-doc-review, M-doc-validation-mid (both running this pass), M-windows-parity, M-vscode"
+  },
+  "M-monthly-bugs": {
+    "at": "2026-10-16 15:44",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make bug-review 2026-10-16: narrow-int/width is the one RISING class (8.5% in the newest band, +2.2pp over its peak); Parser::nstore_unwrap_report reads NO EFFECT on null/sentinel (10.8% -> 18.6%, 15.1% minus PLN153's own finds) - premise to re-open; owns/proxy/N-Road keystones paid off; contract pressure 9.4% strained in 2026-10, 4 unjudged"
+  }
+}

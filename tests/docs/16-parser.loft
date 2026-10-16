@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Parser
 // @TITLE: Parsing Loft source code programmatically
+// (`parser` is a piece of the loft-in-loft front end that lives in loft's own `lib/`, @F121;
+// it is not a registry library yet, so a program outside this tree cannot `use` it.)
 // The 'parser' library lets a Loft program read and validate other Loft source
 // code at runtime. This is useful when you want to:
 // * validate configuration files written in the Loft syntax
