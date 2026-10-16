@@ -39,7 +39,7 @@ Opened at the cycle's **halfway point**: `make release-checklist ARGS="--version
 - **Nightly native ASan**: `tests/scripts/10-match.loft` absent at `46ec215e0` — the join's `1c7e3c440` put the five programs back.
 - **Nightly doc index hygiene**: 28 decisions "unguarded" because the job never checked out the language suite — `checkout-suite` added.
 - **Nightly LOFT_POISON**: `1994-…` w2 reads freed memory — filed as loft#2022, a duplicate of loft#2021: the sibling's `64068fc63` (a returned branch arm that borrows a lifted argument copies what it hands up) cures w2, w2g and w2h under poison; closed.
-- **Nightly debug-assertions**: `issue_328` leaks a store — loft#2023, claimed.
+- **Nightly debug-assertions**: `issue_328` leaks a store — filed as loft#2023, a duplicate of loft#2017: the sibling's `cdc57da9a` (a nullable local rebound from its own field frees the store it built) is red on its parent and green on itself under the nightly's recipe; closed.
 - **Dependency advisories**: rustls, cured.
 - **The crate layers and the platform census after the join**: `literal_host`, `self_replace` and `zero_count` sat above their readers, `stable_hash`/`source_hash` were read from `cache` up into `compiled_stdlib`, and `--native-emit /dev/null` in eight tests emitted nothing on Windows — `loft::platform::null_sink()` here, the layer moves taken as the sibling resolved them.
 - **The features-shadow derived check** read `git status` and failed on the bot's own regeneration — dropped from `scripts/derived_artefacts.json` with a note.
@@ -56,6 +56,7 @@ JSON parse forms disagree about `#errors`.
 
 ## What the cycle still owes before the tag
 
-`M-perf-pass`, `M-docs-review`, `M-doc-review` (one doc under DOC_CONTRACT, its own PR),
-`M-file-split` (the two picks), `M-libs`, the `[cand]` sweeps on the candidate, and loft#2023
-fixed (a debug-assertions binary is built in the session's scratchpad for it).
+`M-perf-pass`, `M-doc-review` (one doc under DOC_CONTRACT, its own PR — PLANNING.md is the
+docs review's candidate: some thirty completed items sit in place), `M-file-split` (the two
+picks), `M-libs` (the revalidate-libs run on the candidate), the `[cand]` sweeps on the
+candidate, and loft#2024..#2028 fixed.
