@@ -459,6 +459,39 @@ hand-priced files are the emitted `invert` with each edit applied by script
 (`hand_price.sh` with the package's `LOFT_NATIVE_RUSTC_ARGS`); the edits are the four
 `python3` replacements recorded in the commit that built L3.
 
+### dryopea `truncate_to` — what it needs to be under 3× (analysis, not priced in full)
+
+6.38× at 1d7ec5904: 86.9 µs per call against the twin's 13.6 µs, so 3× is 40.9 µs (−53 %).
+300 `history_push`es on a 50-deep timeline; `(R-Compact)` already admits both rebuilds
+(`truncate_to` and `drop_oldest` are one in-place keep each), and the driver's `e` is a loop
+record refilled in place, so neither the rebuild nor the entry's build is the cost.  Callgrind
+(no large block copies here, so the instruction split stands), per call 1.47 M: `history_push`
+73 % — the entry copied into the timeline (`OpCopyRecord` → `copy_plain_vectors`, two vector
+blocks claimed and copied) 31 %, the dropped entries released (`keep_vector_range` →
+`remove_claims` → `delete`) 21 %, the append slot (`OpNewRecord` with its default prefill,
+`OpFinishRecord`) ~13 %, its own code 9.5 %; the allocator inside all of them (`claim_best_fit`,
+`delete`, `set_free_header`, `fl_insert`) ~25 % of the row.  Per push that is about 3 600
+instructions inside `history_push`; the twin's whole iteration is ~45 ns.
+
+**The arithmetic.**  Outside `history_push` (the entry's build, the final walk) is 27 % of the
+row, ~23 µs.  Under 3× leaves `history_push` ~18 µs for 300 pushes — ~60 ns a push against
+~210 ns now (−72 %).  No one lever comes near that:
+
+| lever | price | status |
+|---|--:|---|
+| the append slot minted without its default prefill (`OpNewRecordNP`: the whole-record copy overwrites every byte) | **−6 %** (86.9 → 81.6 µs, hash unchanged) | priced by hand on 1d7ec5904's emission; `(R-CompleteWrite)` does not count a whole-record copy as covering the slot |
+| the allocator's small-block free list (worklist.md § 4) | −12.8 % | priced at d88f8556d, probe undone: needs a parked-block state every store walk knows |
+| the dead entry MOVED instead of copied (X10) | +16 % | priced and declined (worklist.md § 4) |
+| a typed copy and release of a record of plain vectors (no generic dispatch per entry) | *est.* ~10 % | not priced |
+
+Together ~−30 %, about 4.4×.  What the twin does that loft does not is pay a `malloc`/`free`
+(~30–50 instructions) where loft pays a best-fit claim (~280) and a delete with coalescing
+(~170), twice each per push, plus a generic copy and release walk around them.  The row
+reaches 3× only when a claim and a delete of a small block cost what the twin's do — the
+free list built lean (a size-class pop and push, ~50 instructions) — AND the copy and release
+are typed per entry.  Next: build the free list (it also moves `panel_build` −15 %, `map_json`
+−4 %), take the prefill, then re-profile; the shares above assume none of them.
+
 ### pluginabi `check_request` — the decode it shares, and the texts
 
 `(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  **`(R-ViewReturn)` built** (211d5055e):
