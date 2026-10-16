@@ -1133,6 +1133,27 @@ impl StoreFacts<'_> {
         self.fresh(t)
     }
 
+    /// `@FR-R-Header`'s parameter clause: is the store `w` names provably apart from the
+    /// store of ARGUMENT `p`?  Only where `w`'s chain ends at a store this activation minted
+    /// that is no argument itself — a hidden vector buffer is an argument a caller may have
+    /// claimed in `p`'s store (`(R-Place)`) — or where a run-time test proved the pair apart
+    /// (`assumed`, `@FR-R-Alias`'s versioned copy).
+    #[must_use]
+    pub fn apart_from_argument(&self, p: u16, w: u16) -> bool {
+        let assumed = |a: u16, b: u16| {
+            self.assumed
+                .iter()
+                .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
+        };
+        if assumed(p, w) {
+            return true;
+        }
+        let Some(t) = self.terminal(w) else {
+            return false;
+        };
+        assumed(p, t) || (t != p && !self.vars.is_argument(t) && self.fresh(t))
+    }
+
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
@@ -1178,7 +1199,7 @@ pub fn placed_locals(code: &Value, data: &Data) -> HashSet<u16> {
 /// they grow — in first-appearance order.  Exactly the ops [`blocks_header_hoist`] lets
 /// through under the push and mint tiers, so a caller that proves every root apart from a
 /// store may open those tiers.
-fn mover_roots(
+pub(super) fn mover_roots(
     stmts: &[Value],
     data: &Data,
     stores: &Stores,
@@ -1211,7 +1232,14 @@ fn mover_roots(
 /// and the element base of each vector it only reads in a store nothing in it is handed
 /// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
 /// gate's verdict about the whole body, and this rests on the one store's mentions alone.
-fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts>) -> LoopHoist {
+fn apart_hoist(
+    body: &Block,
+    data: &Data,
+    def_nr: u32,
+    facts: Option<&StoreFacts>,
+    cache: &mut HashMap<u32, bool>,
+    owned: Option<&HoistOwned>,
+) -> LoopHoist {
     let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
         return LoopHoist::default();
     };
@@ -1221,6 +1249,8 @@ fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts
         facts,
         &|t| work_buffer_arg(data, def_nr, t),
         vector_candidates(body, data, def_nr),
+        cache,
+        owned,
     );
     crate::rewrite_census::fired("R-Header/apart", vectors.len());
     if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
@@ -1306,7 +1336,7 @@ pub fn hoistable(
     {
         Some(text_set_roots(body, data))
     } else {
-        return apart_hoist(body, data, def_nr, facts);
+        return apart_hoist(body, data, def_nr, facts, cache, owned);
     };
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
@@ -1509,7 +1539,7 @@ pub fn hoistable(
                     body.scope
                 );
             }
-            return apart_hoist(body, data, def_nr, facts);
+            return apart_hoist(body, data, def_nr, facts, cache, owned);
         }
         crate::rewrite_census::fired("R-Header/text", 1);
         out.movers = roots.clone().unwrap_or_default();
@@ -1529,7 +1559,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return apart_hoist(body, data, def_nr, facts);
+                return apart_hoist(body, data, def_nr, facts, cache, owned);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1545,7 +1575,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return apart_hoist(body, data, def_nr, facts);
+                return apart_hoist(body, data, def_nr, facts, cache, owned);
             }
             let any_retbuf = pushes
                 .iter()
@@ -8306,7 +8336,7 @@ fn blocks_header_hoist(
     })
 }
 
-fn call_writes_store(
+pub(super) fn call_writes_store(
     d_nr: u32,
     data: &Data,
     cache: &mut HashMap<u32, bool>,

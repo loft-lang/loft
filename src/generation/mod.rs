@@ -4570,12 +4570,33 @@ impl Output<'_> {
             return None;
         }
         let plain = self.compute_loop_hoist(lp);
+        // A loop the header gate DECLINES holds no push to count, and its apart clause may
+        // still gain a parameter's vector once the buffer is tested apart: its body's own
+        // movers (pushes, reservations, mints) ending at the buffer say it grows it.
+        let grows_buffer = || {
+            hoist::mover_roots(&lp.operators, self.data, self.stores, vars)
+                .iter()
+                .any(|&m| {
+                    let mut cur = m;
+                    for _ in 0..vars.var_count() {
+                        if bufs.contains(&cur) {
+                            return true;
+                        }
+                        match vars.tp(cur).depend().as_slice() {
+                            [d] if *d != cur => cur = *d,
+                            _ => return false,
+                        }
+                    }
+                    false
+                })
+        };
         if plain
             .pushes
             .iter()
             .chain(plain.mint_pushes.iter())
             .all(|(p, _)| !bufs.contains(&p.0))
             && !plain.movers.iter().any(|m| bufs.contains(m))
+            && !grows_buffer()
         {
             return None;
         }
