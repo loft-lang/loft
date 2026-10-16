@@ -393,6 +393,23 @@ margin past the list is the arena claim on a new key (`arena::alloc` and its zer
 1.4 M; the allocator's free list) and the division in `home_bucket` (keyed.md § What is
 left, 7–10 % of a lookup).
 
+**Built: 2.81×** (`portal.py measure --only 08,15,16,17,18`, hashes equal; 1.712 → 1.015 ms
+per call, −41 %).  Each step was priced pinned on one core against the build before it:
+
+| step | per call | what it bought against the estimate |
+|---|--:|---|
+| — the row before | 1.681 ms | |
+| K1, hand-priced: `n_paint` calling `Stores::keyed_entry_ints` (one probe for both parts, the parts written on a miss) in place of `keyed_place_begin` / `keyed_place_finish` | 1.123 ms (−33 %) | more than the 25 % read off the profile |
+| K2: `rehash_into` filing an integer-part key from the parts read off each entry (`rehash_ints`) | 1.097 ms (−2.3 %) | a quarter of the estimate: what a rebuild costs is the walk of the new table and the store's checked reads, not the key description |
+| the arena: `arena::alloc_at` answering the address with the index, a slot at the append cursor not zeroed again | 1.056 ms (−3.7 %) | the margin item named below the table |
+| K1 built (`(R-KeyedEntry)`'s subscript clause, which also drops the literal's key-field writes) | 1.029 ms (−2.6 %) | the built form beats the price: it writes one field where the price wrote three |
+
+W, K3, L and P are not built; the row is under the bar without them.  The runtime half moved
+the keyed class with it — `hash_fill` 3.02 → 2.58×, `composite_hash` 4.43 → 4.06×,
+`hash_text_keys` 4.63 → 4.34×, `hash_remove` 3.34 → 3.07×, `grouped_fill_find` 3.92 → 3.72×
+— and no routine of the five lanes slowed beyond its noise (`emit_to_material`, which makes
+no hash operation, +1.5 % pinned: the relinked runtime's layout).
+
 **The walk keeps key order (@C151).**  `for ph in pw.painted` is the dryopea source's own
 loop, so the bench keeps it, and W makes the key-order walk cheaper rather than giving the
 order up.  A program that has no use for the order writes `for ph in unordered(pw.painted)`,

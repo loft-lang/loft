@@ -10,6 +10,22 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `h[q, r] = T{…}` in one probe; a hash keyed by integer parts rebuilt without its key description (2026-10-16)
+
+- **`(R-KeyedEntry)`'s subscript clause** — a keyed literal assignment into a hash keyed by one
+  to four integer parts, of a heap-free element whose literal writes every field that is not a
+  key part, asks `Stores::keyed_entry_ints` for the entry under the subscript (`hash::entry_ints`,
+  one walk: found, or filed with every part written) and writes the literal's other fields into
+  it, in place of `keyed_place_begin`'s lookup, removal and claim and `keyed_place_finish`'s
+  second probe (`keyed_entry::subscript_keys`, native, `LOFT_NO_KEYED_ENTRY`).
+  `hash::entry_long` is now `entry_ints` over one part.  Guard
+  `a-hash-written-by-a-compound-subscript-keeps-every-entry.loft`.
+- **Runtime, both backends** — `hash::rehash_into` files each entry of a table keyed by integer
+  parts from the parts read straight off it (`rehash_ints`, `keys::ints_hash`), the new table's
+  count and seed read once; `arena::alloc_at` answers the slot's address with its index and
+  zeroes only a slot reused off the free list (a slot at the append cursor lies in a chunk
+  zero-filled when claimed).  dryopea `mapfile_to_painted` 4.76× → 2.81× (1.71 → 1.01 ms per call); `hash_fill` 3.02× → 2.58×.
+
 ### `for e in unordered(h)`: a hash walked without its key sort; a format string's `{for}` takes the snapshot (2026-10-16)
 
 - **`(Col-Unordered)`, @C151** — `unordered(c)` in a `for` / comprehension / format-walk header

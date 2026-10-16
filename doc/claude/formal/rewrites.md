@@ -2765,6 +2765,35 @@ entry and panics where the two differ.  Cells
 `generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
 `Stores::keyed_entry_long`, `hash::entry_long`.
 
+```
+  (R-KeyedEntry)'s subscript clause
+                  c[e₁, …, eₘ] = T{f₁: v₁, …} where c is a `hash<T[k₁, …, kₘ]>` whose
+                  1 ≤ m ≤ 4 key parts are each of `integer` width, T owns no heap and no
+                  linked group holds its records, `(R-InPlaceLiteral)`'s keyed clause admits
+                  the assignment, and the literal writes, through scalar setters, every
+                  field of T that is not a key part — is emitted as: the values evaluated
+                  in source order into temps (that clause's staging), then ONE probe for
+                  (e₁, …, eₘ) that answers the entry already under that key or a fresh one
+                  filed with every part written, then the temps of the fields that are not
+                  key parts written into it.
+```
+
+**In words.** The keyed clause it replaces removes the entry under the key, claims a fresh
+one, writes the literal into it and then the SUBSCRIPT's key over the literal's key fields
+(`set_key`), so the entry always carries the subscript's key whatever the literal says.
+The entry this clause answers carries that key already, found or filed, so the literal's
+writes to key fields are dropped and the rest is the overwrite `(R-KeyedEntry)` argues
+above: heap-free, every other field written, nothing of the old entry left.  The probe's
+digest is `keys::ints_hash` over the parts, which is `keys::hash` over a record carrying
+them, so a lookup by either route walks the same buckets.  `Stores::keyed_entry_ints`
+takes the two-probe path at run time where `keyed_entry_long` does: no table yet, a
+snapshot of the collection live.  dryopea `mapfile_to_painted` (`w.painted[q, r] =
+PaintedHex{…}`) 4.76× → 2.81×, with the runtime changes beside it
+(`bench/portal/analysis/over-9x.md`).  Same switch, same falsifier.  Cells
+`tests/scripts/a-hash-written-by-a-compound-subscript-keeps-every-entry.loft`.  Sites:
+`keyed_entry::subscript_keys` (the admission), `Output::output_keyed_entry_subscript`,
+`Stores::keyed_entry_ints`, `hash::entry_ints`.
+
 ### A result vector adopts the return buffer
 
 ```
