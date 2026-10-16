@@ -56,7 +56,7 @@ JSON parse forms disagree about `#errors`.
 
 ## What the cycle still owes before the tag
 
-`M-perf-pass`, `M-doc-review` (one doc under DOC_CONTRACT, its own PR — PLANNING.md is the
+`M-doc-review` (one doc under DOC_CONTRACT, its own PR — PLANNING.md is the
 docs review's candidate: some thirty completed items sit in place), `M-file-split` (the two
 picks), the two @PLN174 library branches decided, the `[cand]` sweeps on the
 candidate, and loft#2024..#2028 fixed.
