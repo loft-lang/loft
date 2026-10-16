@@ -1,5 +1,5 @@
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index 873364972..8c32c9d6f 100644
+index a2d6b6c8a..8c32c9d6f 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -14,10 +14,9 @@ use super::insert_free::{
@@ -70,7 +70,7 @@ index 873364972..8c32c9d6f 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1386,140 +1385,31 @@ pub(super) struct Delivered {
+@@ -1386,142 +1385,31 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -167,7 +167,9 @@ index 873364972..8c32c9d6f 100644
 -            Value::Null | Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _) => true,
 -            Value::If(_, t, f) => sinkable(t, data) && sinkable(f, data),
 -            Value::Block(bl) if bl.name == "ncc" || bl.name == "Object" => false,
--            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => {
+-            // Through `base()` as every shape test is asked (@FR-N-Shape): a `Void`/`Null`
+-            // result is never wrapped, but the ratchet counts the spelling, not the case.
+-            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Null) => {
 -                last_non_free_result(&bl.operators, data).is_some_and(|l| sinkable(l, data))
 -            }
 -            Value::Insert(ops) => {
