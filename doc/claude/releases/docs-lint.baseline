@@ -103,7 +103,6 @@ doc/claude/PKG_REGISTRY.md	timeline	10
 doc/claude/PKG_REGISTRY_RESOLUTION.md	timeline	7
 doc/claude/PKG_REGISTRY_SEARCH.md	timeline	6
 doc/claude/PKG_REGISTRY_TRUST.md	timeline	3
-doc/claude/PLANNING.md	timeline	9
 doc/claude/PLANNING_NATIVE.md	timeline	3
 doc/claude/PLANNING_STABILITY.md	timeline	4
 doc/claude/PLANNING_WEB.md	timeline	2
@@ -470,7 +469,7 @@ src/variables/mod.rs	narration	16
 src/variables/mod.rs	stamp	27
 src/variables/slots_v2.rs	stamp	3
 src/variables/validate.rs	stamp	6
-src/vector.rs	narration	11
+src/vector.rs	narration	10
 src/vector.rs	stamp	5
 src/verify_self.rs	narration	1
 src/wasm_assets.rs	stamp	1
