@@ -1,8 +1,8 @@
 # host=laptop
 # arch=x86_64-linux
 # date=2026-10-16
-# commit=e218a2d48
-# dirty=no
+# commit=ccf4d764a
+# dirty=yes
 # rustc=rustc 1.97.0 (2d8144b78 2026-07-07)
 # samples=7
 # target_ms=400.0
@@ -58,9 +58,9 @@ bench	step	wall_s	cpu_s	peak_mb	jobs	commit	date
 16_consumer_shapes	native-emit	0.11	0.11	26	5	e218a2d48	2026-10-16
 16_consumer_shapes	native-rustc	2.57	2.69	261	5	e218a2d48	2026-10-16
 16_consumer_shapes	rust-rustc	0.56	0.80	143	5	e218a2d48	2026-10-16
-17_consumer_moros_dryopea	native-emit	0.15	0.15	30	5	e218a2d48	2026-10-16
-17_consumer_moros_dryopea	native-rustc	4.01	4.11	287	5	e218a2d48	2026-10-16
-17_consumer_moros_dryopea	rust-rustc	1.75	2.16	165	5	e218a2d48	2026-10-16
+17_consumer_moros_dryopea	native-emit	0.15	0.15	30	5	ccf4d764a	2026-10-16
+17_consumer_moros_dryopea	native-rustc	4.09	3.99	281	5	ccf4d764a	2026-10-16
+17_consumer_moros_dryopea	rust-rustc	1.78	2.45	171	5	ccf4d764a	2026-10-16
 18_consumer_crawler	native-emit	0.12	0.12	27	5	e218a2d48	2026-10-16
 18_consumer_crawler	native-rustc	3.18	3.27	269	5	e218a2d48	2026-10-16
 18_consumer_crawler	rust-rustc	0.74	1.04	150	5	e218a2d48	2026-10-16

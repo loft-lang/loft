@@ -4830,10 +4830,19 @@ impl Parser {
             }
         }
         self.lexer.token(")");
-        if ranged {
+        // A nullable collection is refused first (`@FR-I-NullSrc`, as for `rev(…)`), so the
+        // `base()` below peels only a shape whose `?` has already been answered.
+        if ranged
+            || self.nullable_collection_refusal(
+                &in_type,
+                "walk",
+                "can be walked",
+                "zero iterations",
+            )
+        {
             return in_type;
         }
-        match in_type.clone() {
+        match in_type.base() {
             Type::Hash(_, _, _) => self.unordered_iterator = true,
             Type::Vector(_, _)
             | Type::Sorted(_, _, _)
@@ -4842,19 +4851,12 @@ impl Parser {
             | Type::Trie(_, _, _)
             | Type::Null
             | Type::Unknown(_) => {}
-            other => {
-                if !self.nullable_collection_refusal(
-                    &other,
-                    "walk",
-                    "can be walked",
-                    "zero iterations",
-                ) {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "unordered() must wrap a collection (a hash, vector, sorted, index, spatial or trie)"
-                    );
-                }
+            _ => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "unordered() must wrap a collection (a hash, vector, sorted, index, spatial or trie)"
+                );
             }
         }
         in_type

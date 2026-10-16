@@ -10,6 +10,23 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `for e in unordered(h)`: a hash walked without its key sort; a format string's `{for}` takes the snapshot (2026-10-16)
+
+- **`(Col-Unordered)`, @C151** — `unordered(c)` in a `for` / comprehension / format-walk header
+  (`Parser::parse_unordered_source`, beside `rev(…)`) makes a hash's walk take the SLOT-order
+  snapshot (`n_hash_unsorted` → `hash::records_by_slot`) instead of the key-sorted one.  Slot
+  order is the arena index each entry was handed out at: fixed by the inserts and removes,
+  independent of the per-hash, per-run seed, kept by a copy.  The `par` walk takes the same
+  snapshot, so it no longer follows the seed either.  Other collection kinds walk as before; a
+  range or a text is refused.  The decision (key order stays the default, no rewrite walks a
+  hash in another order) is @C151; the twins walk their hashes in key order too (`by_key`,
+  bench 17).  Guards `a-hash-walked-unordered-repeats-its-order.loft`,
+  `unordered-takes-a-collection.loft`.
+- **loft#2019** — `Parser::iter_for` (a format string's `{for e in h …}`) never took the keyed
+  snapshot, so it walked the hash's own table as one and the store stopped on a corrupt
+  reference on both backends.  It now calls `keyed_snapshot` like the `for` statement and the
+  comprehension.  Guard `a-hash-walked-in-a-format-string-is-in-key-order.loft`.
+
 ### A buffer's own view is not delivered into it, a count a run of statements repeats is made once (2026-10-16)
 
 - **`(R-SelfReplace)`** — `OpReplaceVector(B, x)` after `x = OpGetField(B, 0, …)` is dropped
