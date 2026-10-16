@@ -257,6 +257,15 @@ impl ApartWalk<'_, '_> {
     }
 }
 
+/// What the parameter clause asks beyond the loop: the per-callee "writes a store" memo, the
+/// emitter-owned buffers that memo exempts, and the whole function's code (for the locals
+/// only ever minted).
+pub struct Callees<'a> {
+    pub cache: &'a mut HashMap<u32, bool>,
+    pub owned: Option<&'a HoistOwned>,
+    pub code: &'a Value,
+}
+
 struct MintOps {
     database: u32,
     database_np: u32,
@@ -294,10 +303,9 @@ pub fn apart_headers(
     facts: &StoreFacts,
     lent: &dyn Fn(u16) -> bool,
     candidates: Vec<(PathKey, Value)>,
-    cache: &mut HashMap<u32, bool>,
-    owned: Option<&HoistOwned>,
-    code: &Value,
+    callees: Callees<'_>,
 ) -> Vec<(PathKey, Value)> {
+    let Callees { cache, owned, code } = callees;
     let vars = facts.vars;
     let ops = MintOps {
         database: data.def_nr("OpDatabase"),
@@ -376,7 +384,7 @@ pub fn apart_headers(
             && !facts.owns_alone(t)
             && !writers.iter().all(|&w| {
                 facts.terminal(w) == Some(t)
-                    || facts.apart_from_argument(t, w) || true
+                    || facts.apart_from_argument(t, w)
                     || minted_here(code, vars, w, &ops)
             })
         {

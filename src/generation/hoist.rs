@@ -1249,9 +1249,11 @@ fn apart_hoist(
         facts,
         &|t| work_buffer_arg(data, def_nr, t),
         vector_candidates(body, data, def_nr),
-        cache,
-        owned,
-        data.def(def_nr).code(),
+        super::apart::Callees {
+            cache,
+            owned,
+            code: data.def(def_nr).code(),
+        },
     );
     crate::rewrite_census::fired("R-Header/apart", vectors.len());
     if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {

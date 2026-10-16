@@ -10,6 +10,13 @@
 // Expected values are hand-computed.  `Doc.pieces` is 300 pieces (start 4·k, count 3, style
 // k % 5) over a 1200-character buffer whose character j is 'a' + j % 26; a slice of [a, b)
 // is one run per overlapping piece, its text the buffer characters it covers.
+//
+// @falsified-by: tests/falsified/a-parameters-vector-holds-its-header-where-the-buffer-is-apart.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion, on --native — the patch takes every writer as apart from the
+//   parameter, so `drain(y, y)` holds `d.pieces`' header while `e` empties the same vector.
+//   WITNESS: `h7 179400` (4·44850, every piece's start read through the stale header) where
+//   the file says 220.  The header verifier (`LOFT_HOIST_VERIFY=1`) is pinned on the cells by
+//   `tests/apart_param.rs`, beside which loops keep a parameter's header.
 pub struct Piece { pub start: integer, pub count: integer, pub style: integer }
 pub struct Run { str: text, style: integer }
 pub struct Doc { pub buf: vector<character>, pub pieces: vector<Piece>, pub runs: vector<Run> }
@@ -20,20 +27,31 @@ fn chars_of(buf: vector<character>, start: integer, count: integer) -> text {
   out
 }
 
+fn clampi(x: integer, lo: integer, hi: integer) -> integer {
+  if x < lo { return lo; }
+  if x > hi { return hi; }
+  return x;
+}
+
+// zttext's `slice_runs`, in its shape: a store-free callee per pass (`clampi`, `chars_of`), a
+// push and a text set into the return buffer.
 fn runs_of(d: Doc, a: integer, b: integer) -> vector<Run> {
   runs: vector<Run> = [];
+  if b <= a { return runs; }
   cum = 0;
   for i in 0..len(d.pieces) {
     p = d.pieces[i]?;
-    lo = if a > cum { a } else { cum };
-    hi = if b < cum + p.count { b } else { cum + p.count };
+    ps = cum;
+    pe = cum + p.count;
+    lo = clampi(a, ps, pe);
+    hi = clampi(b, ps, pe);
     if hi > lo {
-      s = chars_of(d.buf, p.start + (lo - cum), hi - lo);
+      s = chars_of(d.buf, p.start + (lo - ps), hi - lo);
       runs += [Run { str: s, style: p.style }];
     }
-    cum += p.count;
+    cum = pe;
   }
-  runs
+  return runs;
 }
 
 // Reads `d.pieces` and grows `e`'s store: a writer the parameter clause can only prove apart
