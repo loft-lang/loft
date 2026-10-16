@@ -7,6 +7,10 @@
 // front is a LOCAL in every cell: the rewrite's fallback arm evaluates it again.
 //
 // Expected values are hand-computed.
+//
+// @falsified-by: tests/falsified/a-vector-prepended-to-is-rebuilt-in-place.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch rotates the record the wrong way,
+//   so `g`'s elements land behind the vector's and p1's order fails first.
 pub enum Op {
   Ins { pub at: integer, pub str: text },
   Del { pub from: integer, pub to: integer },

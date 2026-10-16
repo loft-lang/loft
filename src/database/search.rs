@@ -1178,7 +1178,7 @@ impl Stores {
                 after as usize * size,
             )
         };
-        elements.rotate_left((after - before) as usize * size);
+        elements.rotate_right((after - before) as usize * size);
         true
     }
 
