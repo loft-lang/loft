@@ -634,7 +634,7 @@ survey of routines most likely to answer silently wrong, each with its hardening
 formal lens: [FORMALIZATION.md](doc/claude/FORMALIZATION.md) / [TYPING_RELATION.md](doc/claude/TYPING_RELATION.md) ·
 strict: [formal/README.md](doc/claude/formal/README.md) (rules + deviations driven to zero).
 
-**Plans / roadmap:** [plans/README.md](doc/claude/plans/README.md) · [PLANNING.md](doc/claude/PLANNING.md) backlog ·
+**Plans / roadmap:** [plans/README.md](doc/claude/plans/README.md) · [PLANNING.md](doc/claude/PLANNING.md) the backlog of sketches not yet plans ·
 [ROADMAP.md](doc/claude/ROADMAP.md) by milestone · [BROADENING.md](doc/claude/BROADENING.md) beyond games ·
 [WEB_STACK.md](doc/claude/WEB_STACK.md) the **better-PHP** end-to-end design — a client that calls a
 web service (JSON + auth) and its counterpart HTTPS server (Let's Encrypt with rotation, auth,
