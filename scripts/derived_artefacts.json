@@ -150,10 +150,10 @@
         "index/features.json",
         "scripts/"
       ],
-      "check": "make -s features-check",
       "regen": [
         "make -s features-gen"
       ],
+      "note": "no `check` here on purpose: `make features-check` is `features-gen` plus `git status --porcelain` over the shadow, so run right after a regeneration that changed anything it fails on the bot's own output (derive.yml run 38922400633).  The regeneration is deterministic; ci.yml's doc-index job runs that check on the COMMITTED shadow, which is the drift gate.",
       "ci": true
     },
     {
