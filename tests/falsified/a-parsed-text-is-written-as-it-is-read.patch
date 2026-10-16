@@ -1,13 +1,13 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index 8bd0527a4..88537309f 100644
+index d933776a3..7ad1f7457 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
-@@ -542,8 +542,6 @@ impl Stores {
-             Ok(()) => None,
-             Err(TextErr::Misfit(msg)) => Some(msg),
+@@ -552,8 +552,6 @@ impl Stores {
+             Ok(()) => Vec::new(),
+             Err(TextErr::Misfit(msgs)) => msgs,
              Err(TextErr::Malformed(msg)) => {
 -                self.free(&into);
 -                into = self.text_target(tp);
-                 Some(msg)
+                 vec![msg]
              }
          };

@@ -1,7 +1,7 @@
-diff --git a/src/parser/control.rs bsrc/parser/control.rs
+diff --git a/src/parser/control.rs b/src/parser/control.rs
 index 90a62e6c6..0a57fc74e 100644
 --- a/src/parser/control.rs
-+++ bsrc/parser/control.rs
++++ b/src/parser/control.rs
 @@ -6419,8 +6419,6 @@ impl Parser {
              }
              // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
