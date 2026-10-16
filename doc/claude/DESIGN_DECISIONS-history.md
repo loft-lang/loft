@@ -4935,3 +4935,18 @@ reservation before the counted loop measured −45 %.  The reservation flipped
 ladder.  Presented as: `size()` is a representation report the compiler may change; `size()`
 binds the optimiser (drop the clause); or the clause opt-in until a design pass.  The owner
 chose the first.
+
+## C151 — A hash walks in key order; a walk that needs no order says `unordered(h)`
+
+Decided 2026-10-16 by the owner while `mapfile_to_painted` (6.58×) was analysed for a route
+under 3×.  The profile put 18 % of the row in the key sort of `for ph in pw.painted`, a body
+that only sums; the twin walks its `HashMap` unordered.  Offered: an order-free walk on a range
+proof, or a speculative table-order walk checked by 128-bit totals.  The owner: *"I do not want
+the random walk on the hash so make the rustc version do the ordered loop too"*, then *"The only
+way to allow random walk in loft is if we can specify that somehow as an optimization"*.  A
+`sum(h, |e| …)` reduction was declined (*"I do not like the closure notation … it is harder to
+reason about them"*); `for v in unordered(h)` was the owner's spelling.  Asked whether the cheap
+order should become the default with key order as the option, the analysis advised against it
+for this cycle (a breaking change, and slot order is not insertion order under removals); the
+owner agreed and asked for `unordered(h)`.  Building it found loft#2019: a format string's
+`{for e in h}` never took the snapshot and crashed the store.

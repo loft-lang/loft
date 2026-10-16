@@ -227,7 +227,8 @@ range you want, or iterate and count positions yourself.
 
 **Gotcha (INC#2) — vector has a richer literal/build API than the keyed
 collections.** All four collection types share `+=`, `for` iteration
-(hash iterates via its internal ordered index), and subscript removal
+(hash iterates via its internal ordered index, or without the sort as
+`unordered(h)`), and subscript removal
 (`h[key] = null`), but **comprehensions** (`[for x in c if p { … }]`)
 produce only a `vector<T>`; there is no `sorted<T>` / `index<T>` / `hash<T>`
 comprehension form — instead, build a vector literal and assign it to a

@@ -158,3 +158,29 @@ structural version, is the alternative), or text keys share more than 24 bytes i
 `placement::INDEX` = 2 (`src/placement.rs`), `formal/collections.md` `(Col-Index)`, guard
 `tests/btree.rs` (the tree against a sorted model; a walk under removals).
 **Catalogue:** @F9 (`index<T[keys]>`) · @PLN190.
+
+## C151 — A hash walks in key order; a walk that needs no order says `unordered(h)`
+
+**Decision.** `for e in h` over a `hash` walks in KEY order, as (Col-Order) states, and no
+rewrite changes that order behind the program's back — not for a body that only sums, and not
+by speculating and checking.  A program that has no use for the order writes
+`for e in unordered(h)`: the walk skips the key sort and visits the entries in slot order, an
+order loft does not specify but keeps FIXED — it follows the inserts and removes that made the
+table, never the table's seed, so a run repeats.  Insertion order is not promised: a removed
+entry's slot is reused by a later insert.  On a collection that already walks without a sort
+(vector, `sorted`, `index`, `spatial`, `trie`) `unordered` changes nothing.  The comparison
+twins walk a hash in key order too (`by_key` in `bench/17_consumer_moros_dryopea/bench.rs`), so
+a ratio compares like with like.
+**Why.** The owner did not want a random walk on the hash: an order the program can observe
+must be the one it was promised.  A closure-based reduction (`sum(h, |e| …)`) was declined as
+harder to reason about; making storage order the DEFAULT was declined for now, because it
+changes what existing programs print (COMPATIBILITY.md's breaking class) and storage order is
+not insertion order once an entry is removed.
+**Revisit when.** A compatibility break is made for another reason: storage order as the default
+walk, with key order as the opt-in, can be weighed then against how often programs wrote
+`unordered`.  Decided 2026-10-16 (owner) — [record](DESIGN_DECISIONS-history.md#c151--a-hash-walks-in-key-order-a-walk-that-needs-no-order-says-unorderedh).
+**Holds at:** `@C151` — `hash::records_by_slot` (`src/hash.rs`), `Parser::parse_unordered_source`
+(`src/parser/objects.rs`), `Parser::keyed_snapshot` (`src/parser/collections.rs`),
+`formal/collections.md` `(Col-Unordered)`, guard
+`tests/scripts/a-hash-walked-unordered-repeats-its-order.loft`.
+**Catalogue:** @F7 (`hash<T[keys]>` keyed collection).

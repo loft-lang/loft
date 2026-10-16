@@ -94,6 +94,7 @@ a guard that does not exercise it — is its line in
 - [C118](DESIGN_DECISIONS_COLLECTIONS.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined) — an append to an ABSENT collection instantiates it empty and fills it; refusing or warning is declined
 - [C146](DESIGN_DECISIONS_COLLECTIONS.md#c146--a-hash-tables-bucket-count-is-a-power-of-two) — A hash table's bucket count is a power of two
 - [C147](DESIGN_DECISIONS_COLLECTIONS.md#c147--an-index-is-a-btree-of-key-parts-and-record-numbers-kept-apart-from-the-records) — An `index` is a B+tree of key parts and record numbers, kept apart from the records
+- [C151](DESIGN_DECISIONS_COLLECTIONS.md#c151--a-hash-walks-in-key-order-a-walk-that-needs-no-order-says-unorderedh) — A hash walks in key order; a walk that needs no order says `unordered(h)`
 
 ## Failure — [DESIGN_DECISIONS_FAILURE.md](DESIGN_DECISIONS_FAILURE.md)
 

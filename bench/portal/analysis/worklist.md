@@ -463,6 +463,11 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
   much of it was read: its half-written store is released (`Stores::record_from_text`).  A
   value under an enum, and a value whose shape its type does not have, is still read as a
   `Parsed` and written by the walk that says what each type accepts.
+- **A hash's walk order**: DECIDED (@C151) — `for e in h` keeps key order and no rewrite walks
+  a hash in another order behind the program's back; a program that needs no order writes
+  `for e in unordered(h)` (slot order, fixed from run to run, no sort).  The twins walk a hash
+  in key order too (`by_key`), so `reload_and_record`'s and `mapfile_to_painted`'s walks
+  compare like with like.
 - **Keyed store format**: DECIDED and built — a hash's bucket count is a power of two (@C146);
   `index` is a B+tree of key parts and record numbers (@C147).  `sorted`'s random insert stays
   as it is (declined).

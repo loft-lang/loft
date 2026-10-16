@@ -2,6 +2,10 @@
 // same snapshot a `for` statement and a comprehension take: in key order, every entry once.
 // Without the snapshot the walk read the hash's own table as if it were one, and the store
 // stopped on a corrupt reference on both backends.
+//
+// @falsified-by: tests/falsified/a-hash-walked-in-a-format-string-is-in-key-order.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   CHANNEL: the PANIC channel on the interpreter (the store's out-of-bounds stop) and the
+//   exit code on native — the patch drops the format walk's snapshot, the defect loft#2019.
 struct E { k: integer, v: integer }
 
 fn main() {

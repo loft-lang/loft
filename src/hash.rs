@@ -1211,7 +1211,7 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
     out
 }
 
-/// `@FR-Col-Unordered` — every live entry in SLOT order: ascending by the number its bucket
+/// `@FR-Col-Unordered` (@C151) — every live entry in SLOT order: ascending by the number its bucket
 /// holds, the arena index the entry was handed out at (a record number, `SLOT_RECORD`, for an
 /// entry the table borrows; those follow the arena's, in record order).
 ///

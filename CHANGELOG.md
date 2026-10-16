@@ -113,6 +113,12 @@ write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is r
 
 ### New
 
+**`for e in unordered(h)` walks a hash without sorting it.**  A plain `for e in h` visits a
+hash in key order, and pays a sort of its entries each time the walk starts.  When the loop
+has no use for the order — a sum, a count, a search — `unordered(h)` skips the sort.  Every
+entry is visited once, in an order loft chooses and keeps the same from run to run (not the
+insertion order once an entry has been removed).  On the other collections it changes nothing.
+
 **A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
 1 and a message.  Under `loft test` it fails the test that called it, naming the code.
@@ -173,6 +179,10 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**A hash can be walked inside a format string.**  `"{for e in h {e.k}}"` over a `hash`
+stopped the program with a store error on both backends; it now gives the entries in key order,
+as a `for` loop does.
 
 **Operands are evaluated left to right, also around a call that answers a vector or a
 record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and

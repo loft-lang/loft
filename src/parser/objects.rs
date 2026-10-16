@@ -4804,7 +4804,7 @@ impl Parser {
         self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
     }
 
-    /// `@FR-Col-Unordered` — the iterable `unordered(c)`: a walk of `c` in an order the
+    /// `@FR-Col-Unordered` (@C151) — the iterable `unordered(c)`: a walk of `c` in an order the
     /// program leaves to the implementation.  For a `hash` it is slot order, which skips the
     /// key sort (`keyed_snapshot` reads the flag set here); every other collection already
     /// walks in its own order without a sort, so `unordered` leaves it as it is.  A range, a

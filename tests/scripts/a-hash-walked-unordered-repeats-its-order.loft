@@ -1,4 +1,4 @@
-// `@FR-Col-Unordered` — `for e in unordered(h)` walks a hash in an order the program leaves to
+// `@FR-Col-Unordered` (@C151) — `for e in unordered(h)` walks a hash in an order the program leaves to
 // the implementation, and skips the key sort a plain `for e in h` pays.  The order is not
 // promised, but it is FIXED: it follows the inserts and removes that made the table and nothing
 // else — not the table's seed, which is drawn per hash and per run.  So two tables built alike
@@ -9,6 +9,11 @@
 // The cells assert what the contract promises (the entries, their count, the repeat of an
 // order) and one thing the implementation must do for the walk to be worth writing: a table
 // filled in a scrambled key order does NOT come back in key order (u3), so the sort is skipped.
+//
+// @falsified-by: tests/falsified/a-hash-walked-unordered-repeats-its-order.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch walks the buckets instead of the
+//   slots, so each table's walk follows its own seed and u1 (two tables built alike) fails
+//   first.  Walking in key order instead fails u3.
 struct E { k: integer, v: integer }
 struct H { h: hash<E[k]> }
 struct S { s: sorted<E[k]> }

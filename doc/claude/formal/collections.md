@@ -297,11 +297,24 @@ down (loft#1437).
   (Col-Order)   for x in c { … } visits in a per-kind ORDER, identical on both backends:
                   vector  → index order 0,1,2,… (iteration.md I-For)
                   hash    → KEY order, via the ordered snapshot the walk builds for it
-                            (its `par` walk is the UNSORTED one — concurrency.md C-Order)
+                            (its `par` walk, and `unordered(h)`, take the SLOT-order one —
+                            concurrency.md C-Order, Col-Unordered below)
                   sorted  → key order
                   index   → key order (its leaf chain)
                   spatial → Morton / Z-order
                   trie    → key order (lexicographic over the text key)
+
+  (Col-Unordered)   for x in unordered(c) { … } visits every element of c exactly once, in an
+                    order the program leaves to loft.  For a hash it is SLOT order: ascending
+                    by the arena index each entry was handed out at, so the key sort is skipped.
+                    That order is FIXED — a function of the inserts and removes that made the
+                    table, never of its seed — so two tables built alike walk alike, a copy
+                    walks as its source, and a run repeats on both backends.  It is not
+                    insertion order: an insert after a removal may take the removed slot.
+                    Every other kind already walks without a sort, and keeps its Col-Order
+                    order.  The walk reads the same snapshot as the ordered one, so what the
+                    body may do to c is what an ordered walk allows.  A range or a text is
+                    refused: its order is its meaning.  (@C151)
 
   (Col-Order-Sign)  a `-` on a key field is applied by the COMPARATOR and by nothing else, so
                     exactly once.  The stored form (a B+tree, a sorted vector) is
