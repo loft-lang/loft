@@ -4078,7 +4078,9 @@ impl Parser {
             // walked the HASH as if it were a snapshot and read a record number out of its
             // table header: a store panic on both backends.  The scope-exit release frees the
             // scratch, as it does for a comprehension's.
-            let snapshot: Option<Value> = None;
+            let snapshot = self
+                .keyed_snapshot(&mut expr, &in_type, false)
+                .map(|(_, fill)| fill);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
