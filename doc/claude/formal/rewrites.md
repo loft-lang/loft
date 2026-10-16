@@ -4205,13 +4205,29 @@ to bisect to.
   A SCALAR element keeps the rebuild: an in-range scalar can hold the null its `??`
   replaces, where an in-range record element is never absent — the one difference between
   the two forms the guard cannot see.  Not yet built: the FILTER form (`for e in V { if p {
-  t += [e] } }`, a loop rewrite with a write index), the PREPEND form (`invert`) and the
-  IDENTITY form (`insert_text`), which the rule states and this unit's recogniser does not
-  reach.
+  t += [e] } }`, a loop rewrite with a write index) and the IDENTITY form (`insert_text`),
+  which the rule states and this unit's recogniser does not reach.
   Cells: `tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft`
   (c1–c18, hand-computed, both backends under `LOFT_STRICT_STORES` / `LOFT_POISON` /
   `LOFT_POISON_CLAIM` / the native leak check, the switch A/B answering the same); the
   admission is pinned on the emitted Rust in `tests/compact.rs`.
+  **The PREPEND form is BUILT** in the same unit: `t = []; t += g; t += V; V = t`, with `g`
+  a LOCAL (the fallback arm evaluates it again, so it must be pure) that is not `t` and is
+  `V` itself or no root of it, becomes `if !OpPrependVector(V, g, tp) { the statements as
+  written }`.  `Stores::prepend_vector` appends `g` as `OpAppendVector` does (its elements
+  copied with what they own, whichever store `g` is in, `g` being `V` included) and rotates
+  the record's element bytes so they stand first: a rotation moves each element whole, the
+  numbers of the records it owns among its bytes, so nothing is claimed or released.  It
+  answers false, having done nothing, for a null or absent `V` and a linked element type,
+  which keep the written-out statements.  The op moves every element of `V` to another
+  index, so it is a RESHAPE of `V` (`scopes::disturbance`, beside `OpRemoveVector`): a view
+  of `V` live across it is materialised first.  The rebind's local form now also accepts
+  its `vdb = null` where the scan left it in the list (straight-line code); that init stays
+  AHEAD of the guard, so the slot its later free names is set on the fast arm too.
+  zttext `invert` 6.48 → 4.48 ms (−31 %; the hand price was −24 %).  Cells
+  `tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft` (p1–p7, both backends,
+  the switch A/B, `LOFT_STORES` / `LOFT_POISON` / `LOFT_STRICT_STORES` /
+  `LOFT_HOIST_VERIFY`).
 - **`(R-Const)`** — text2d `write_text` **86×**: `face_codes()` / `face_rows()` return
   vector literals of 56 and 392 elements, rebuilt for every glyph drawn and read only;
   moros `panel_build` (19×) copies a constant `vector<text>` into a list box per frame,

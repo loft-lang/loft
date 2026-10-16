@@ -444,11 +444,12 @@ hashes equal):
 | # | lever | alone | in sequence | what building it takes |
 |---|---|--:|--:|---|
 | L1 | `cur = apply_op(cur, op)` hands `cur` as the callee's buffer, through `apply_op`'s chain exits (`return delete_range(d, …)`): the literal's `buf: d.buf` is a self-replace | −6 % | 8.00 → 7.53 ms | `(R-Rebind)` across a chain exit; the chain's delivery must take a result in the parameter's store as the buffer it is — without that, `OpRebindRecord` deep-copies it and the row is **8 % slower** |
-| L2 | the prepend `tmp += g; tmp += result; result = tmp` done in `result`'s own record | −24 % | 7.53 → 5.53 ms | `(R-Compact)`'s prepend form (`formal/rewrites.md`), not built: a runtime prepend (the elements moved up as one block, `g`'s copied in front) and the parser's admission |
+| L2 | the prepend `tmp += g; tmp += result; result = tmp` done in `result`'s own record | −24 % | 7.53 → 5.53 ms | **BUILT**: `(R-Compact)`'s prepend form, `OpPrependVector` (both backends): 6.48 → 4.48 ms on top of L3 (−31 %, more than the price: the build appends then rotates once, where the price inserted per element) |
 | L3 | `np += [p]` of a 24-byte `Piece` view as its bytes | −19 % | 5.53 → 4.10 ms | **BUILT**: `(R-FlatCopy)`'s emitted clause, 7.99 → 6.59 ms on the row as it was (−17.5 %, the hand price) |
 | L4 | `slice_runs` holds `d.pieces`' header across its loop | — | 4.10 → 3.43 ms (−16 %) | `(R-Header)` for a PARAMETER's vector across a call that writes no store (`buf_slice_text` writes its work text only): X2's unbuilt half, a callee summary or `(R-Alias)`'s versioned store compare |
 
-**Where it lands.**  All four: **3.43 ms, 2.70×**.  Without L1, about 3.65 ms (≈ 2.87×).
+**Where it lands.**  All four, priced: **3.43 ms, 2.70×**.  Without L1, about 3.65 ms (≈ 2.87×).
+With L3 and L2 built: **4.48 ms**, about 3.5× against the twin's 1.27 ms; L4 is next.
 L3 and L4 are exactly the emitted forms, so they land at their price, as L3 did.  The
 hand-priced files are the emitted `invert` with each edit applied by script
 (`hand_price.sh` with the package's `LOFT_NATIVE_RUSTC_ARGS`); the edits are the four

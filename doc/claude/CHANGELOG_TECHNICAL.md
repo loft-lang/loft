@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A vector prepended to is rebuilt in place (2026-10-16)
+
+- **`(R-Compact)`'s prepend form** — `t = []; t += g; t += V; V = t`, `g` a local, becomes
+  `if !OpPrependVector(V, g, tp) { the statements as written }` (`compact::match_prepend`,
+  both backends, `LOFT_NO_COMPACT`): `Stores::prepend_vector` appends `g` as `OpAppendVector`
+  does and rotates the record's elements so `g`'s stand first; a null or absent `V` or a
+  linked element type keeps the statements.  The op reshapes `V`, so a live view of it is
+  materialised (`scopes::disturbance`).  The rebind's local form also accepts its `vdb =
+  null` in the list, kept ahead of the guard.  New op: `index/target_surface.json`
+  regenerated.  zttext `invert` 6.48 → 4.48 ms (−31 %).  Guard
+  `a-vector-prepended-to-is-rebuilt-in-place.loft`.
+
 ### A record that owns no heap is copied as its bytes at the site (2026-10-16)
 
 - **`(R-FlatCopy)`'s emitted clause** — `OpCopyRecord` from a variable, of a record type that

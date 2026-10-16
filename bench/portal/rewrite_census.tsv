@@ -2120,7 +2120,8 @@ zttext	bd4932067	H-SwapRebind	14
 zttext	bd4932067	R-AliasVersion	2
 zttext	bd4932067	R-Base	84
 zttext	bd4932067	R-CharWalk	19
-zttext	bd4932067	R-CompleteWrite	187
+zttext	bd4932067	R-Compact/prepend	1
+zttext	bd4932067	R-CompleteWrite	186
 zttext	bd4932067	R-Counter	206
 zttext	bd4932067	R-DischargeInto	1
 zttext	bd4932067	R-ExitVector	24
