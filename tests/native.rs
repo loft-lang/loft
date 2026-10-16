@@ -3361,17 +3361,20 @@ fn a_connection_the_registry_opened_is_a_connection() -> std::io::Result<()> {
     //   cursor names=ada grace alan   bound INSERTs and a walked cursor, so the
     //           mutation reached inside the variant. An enum holding a stale copy
     //           answers "" here, which is what an empty table also answers.
-    //   float naive=false dialect=true   sqlite renders a REAL as %!.15g, so the
-    //           portable `SELECT score` loses the low bits of a full-mantissa
-    //           double. The PAIR is the claim: `dialect=true` alone could mean the
-    //           naive read was fine too, `naive=false` alone that the write failed.
+    //   float naive=… dialect=true   `dialect=true` is the claim: the driver's
+    //           read gives back the full-mantissa double it wrote.  `naive` is what the
+    //           portable `SELECT score` answers, and that is the SQLite library's
+    //           choice: one that renders a REAL as %!.15g loses the low bits
+    //           (`naive=false`, which shows the value was hard), one that renders it
+    //           round-trip exact (3.53 does) reads it whole (`naive=true`).  Either is
+    //           accepted; what may never happen is `dialect=false`.
     //   tx … rows=3/4   rollback discarded, commit kept. A db_begin that quietly
     //           did nothing answers 4/4 and one that discarded everything 3/3.
     let expect = [
         "connected backend=sqlite quote=\"",
         "round trip cols=4 ix=1 bound=true",
         "cursor names=ada grace alan",
-        "float naive=false dialect=true",
+        "dialect=true\n",
         "tx begin=true/true rollback=true commit=true rows=3/4",
         "registry_live ok",
     ];
