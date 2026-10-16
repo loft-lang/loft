@@ -18427,22 +18427,34 @@ impl Parser {
         };
     }
 
-    fn chain_site_set_shape(ret: &Type, tail: &mut Value, w: u16) {
+    fn chain_site_set_shape(ret: &Type, tail: &mut Value, w: u16, data: &crate::data::Data) {
         match tail {
-            Value::Span(b) => Self::chain_site_set_shape(ret, &mut b.1, w),
-            Value::Return(inner) => Self::chain_site_set_shape(ret, inner, w),
+            Value::Span(b) => Self::chain_site_set_shape(ret, &mut b.1, w, data),
+            Value::Return(inner) => Self::chain_site_set_shape(ret, inner, w, data),
             // Argument lifting wraps the site call in `Insert([lifts…,
             // call])`; descend to the call so its value still surfaces.
             Value::Insert(ops) => {
                 if let Some(last) = ops.last_mut() {
-                    Self::chain_site_set_shape(ret, last, w);
+                    Self::chain_site_set_shape(ret, last, w, data);
                 }
             }
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last_mut() {
-                    Self::chain_site_set_shape(ret, last, w);
+                    Self::chain_site_set_shape(ret, last, w, data);
                 }
             }
+            // loft#2016 — the chain `{ w = call(…, w); w }` reads the call as a DELIVERY into
+            // `w`, and the `Set` is then the same-store no-op it is for one.  A callee whose
+            // return BORROWS a visible parameter (`fn id(p: S) -> S { p }`, published as
+            // `S["p"]`) delivers nothing on that path: the value that comes back is the
+            // ARGUMENT's store, so the no-op `Set` aliases `w` to it and the site's own free of
+            // the lifted argument that follows the chain releases what `w` now names (`@FR-F-Ret`:
+            // the returned whole value is owned by the caller, never a view).  Left as the bare
+            // call, the site takes the shape every other call result no binding holds takes
+            // (`scopes/free_vars.rs`, the `__ret_tail_N` wrap): a first bind from the call,
+            // which copies a borrowed result and adopts a fresh one by the callee's own
+            // ownership facts, exactly as the body-tail spelling of the same call already does.
+            Value::Call(d, _) if data.def(*d).returns_borrowed_view() => {}
             Value::Call(_, _) => {
                 let block_tp = match ret {
                     Type::Reference(td, _) => Type::Reference(*td, Deps::frame1(w)),
@@ -19440,7 +19452,7 @@ impl Parser {
                             && !signature_only
                             && let Some(tail) = body.last_mut()
                         {
-                            Self::chain_site_set_shape(&ret, tail, *v);
+                            Self::chain_site_set_shape(&ret, tail, *v, &self.data);
                         }
                     }
                     RetPromotion::Rename {
@@ -19473,7 +19485,7 @@ impl Parser {
                         // their NRVO / unify wiring untouched (wrapping there
                         // broke if-arm emission).
                         if chain_site && let Some(tail) = body.last_mut() {
-                            Self::chain_site_set_shape(&ret, tail, *v);
+                            Self::chain_site_set_shape(&ret, tail, *v, &self.data);
                         }
                     }
                     RetPromotion::Bind {
@@ -19492,7 +19504,7 @@ impl Parser {
                             // A bare-call site tail needs its value made
                             // explicit (see `chain_site_set_shape`).
                             if let Some(tail) = body.last_mut() {
-                                Self::chain_site_set_shape(&ret, tail, buf_var);
+                                Self::chain_site_set_shape(&ret, tail, buf_var, &self.data);
                             }
                         } else if let Some(tail) = body.last_mut() {
                             // Named local: keep its own store; deliver a COPY

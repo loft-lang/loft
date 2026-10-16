@@ -690,7 +690,7 @@ impl Scopes<'_> {
                 "OpFreeRefIfDistinct"
             });
             let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(bind_return_temp(tmp, expr));
             let distinct = data.def_nr("OpDistinctStore");
             let join_arm_dropped = &join_arm_dropped;
             for &src in &null_arm_record_sources {
@@ -844,7 +844,7 @@ impl Scopes<'_> {
             self.var_scope.insert(tmp, self.scope);
             self.var_order.push(tmp);
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(bind_return_temp(tmp, expr));
             free_copied_text_sources(&mut result, expr, &ls, function, data);
             result.extend(ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
@@ -890,7 +890,7 @@ impl Scopes<'_> {
             self.var_scope.insert(tmp, self.scope);
             self.var_order.push(tmp);
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(bind_return_temp(tmp, expr));
             result.extend(ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
@@ -945,7 +945,7 @@ impl Scopes<'_> {
                 }
             }
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(bind_return_temp(tmp, expr));
             result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
@@ -1242,7 +1242,7 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
-                    ls[0] = v_set(tmp, expr.clone());
+                    ls.splice(0..1, bind_return_temp(tmp, expr));
                     ls.push(Value::Return(Box::new(Value::Var(tmp))));
                 } else if ret_var != u16::MAX {
                     ls.push(Value::Return(Box::new(Value::Var(ret_var))));
@@ -1304,7 +1304,7 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
-                    ls[0] = v_set(tmp, expr.clone());
+                    ls.splice(0..1, bind_return_temp(tmp, expr));
                     ls.push(Value::Return(Box::new(Value::Var(tmp))));
                 } else {
                     ls.push(Value::Return(Box::new(Value::Null)));
@@ -1383,4 +1383,33 @@ pub(super) struct Delivered {
     /// loft#1628 — the local a return copies out and the holders that may hold its record, whose
     /// hooks run only where they hold a DIFFERENT record.  See [`return_moved_holders`].
     pub(super) moved_out: Option<(u16, Vec<u16>)>,
+}
+
+/// Bind the value a return hands up to its `__ret_N` temp, as the one `Set` the first-bind
+/// dispatch reads.
+///
+/// loft#2016 — an argument lifted at the site (`return f(g(k))`: `g(k)` into `__lift_1`) wraps
+/// the call in `Insert([Set(__lift_1, …), call])`, and bound WHOLE the temp's first bind is of an
+/// `Insert`, which no arm of either backend's call-bind dispatch names: the result was adopted
+/// as a plain alias, and a callee returning its parameter (`fn id(p: S) -> S { p }`) handed the
+/// temp the lifted argument's store, freed right after by the site's own `OpFreeRef(__lift_1)`.
+/// The body-tail spelling of the same call never had the wrapper (its lifts are hoisted to
+/// statement level before the bind), so its bind copied the borrow and adopted a mint by the
+/// callee's own facts (`@FR-F-Ret`).  Hoisting the leading ops out here gives the mid-body
+/// return that same shape: the lifts run in the same order, one statement earlier.
+fn bind_return_temp(tmp: u16, expr: &Value) -> Vec<Value> {
+    let mut e = expr;
+    while let Value::Span(b) = e {
+        e = &b.1;
+    }
+    if let Value::Insert(ops) = e
+        && let Some((last, lifts)) = ops.split_last()
+        && !lifts.is_empty()
+        && matches!(last.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
+    {
+        let mut out: Vec<Value> = lifts.to_vec();
+        out.push(v_set(tmp, last.clone()));
+        return out;
+    }
+    vec![v_set(tmp, expr.clone())]
 }
