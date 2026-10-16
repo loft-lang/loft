@@ -6879,10 +6879,14 @@ pub fn warn_dead_stores(
             if !(reads == 0 && write_targets > 0) {
                 continue;
             }
-            // loft#2026 — a local bound only to `null` holds no copy: a write through it is
-            // dropped at run time and the log says so, and the copy this lint explains never
-            // happened.  The `else` arm of a discharge is the compile-time cure (@F126).
-            if bound_only_to_null(&def.code, v, data) {
+            // loft#2026 — a NULLABLE local bound only to `null` holds no copy: a write through
+            // it is dropped at run time and the log says so, and the copy this lint explains
+            // never happened.  The `else` arm of a discharge is the compile-time cure (@F126).
+            // Nullable only: a dense keyed or value-struct copy lowers as a null bind and a
+            // fill op, and that copy IS the one the lint is for.
+            if matches!(func.tp(v), crate::data::Type::Optional(_))
+                && bound_only_to_null(&def.code, v, data)
+            {
                 continue;
             }
             // A dead store requires the var to OWN its store (a copy). A Borrowed/Join var
