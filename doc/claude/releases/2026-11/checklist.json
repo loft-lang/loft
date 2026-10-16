@@ -4,6 +4,11 @@
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "close-shipped-plans.sh --range v2026.10.0..HEAD --dry-run: directives name plans#178 and #183, both already closed"
   },
+  "M-doc-validation-mid": {
+    "at": "2026-10-16 17:56",
+    "commit": "6b80c93b18a1481119be61948c138e3c6fd2c76d",
+    "note": "read at 6b80c93b1 (the pre-tag pass starts from it). Part 1: make libcatalogue && make libraries-review - 51 libraries moved since their watermark, every one with 0 pub fn lines changed, dismissed per LIBRARY_DOC_REVIEW.md and watermarks bumped; reads clean. Part 2: gendoc regenerated on the runner (derive.yml 38925036203, no diff after); scripts/doc_review.py 267/267 sections cleared, the 47 that moved re-read (default/*.loft hunks since a80e26737 against their bodies; chapters 03 04 08 15 16 17 24 25 29 30 33 36 probed on the interpreter - 17-libraries, 25-generics, 24-json corrected; LOFT.md's new sections against today's probes). Part 3: make features-review SINCE=v2026.10.0 - 20 @F entries re-read, every example run, 11 issues corrected on loft-lang/features (#2 #5 #6 #11 #16 #47 #100 #120 #121 #124 #126), index/features.json fetched and the shadow regenerated (be2617a26); defects met filed as loft#2024..2028"
+  },
   "M-falsify-receipts": {
     "at": "2026-10-16 15:56",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
