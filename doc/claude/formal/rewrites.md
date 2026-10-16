@@ -3662,6 +3662,32 @@ insert; the type's heap facts are cached, so the answer is one lookup.  `insert_
 `(R-Cold)` it is the runtime's own shape and not counted by the census.  Switch
 `LOFT_NO_FLAT_COPY`.  Sites: `OpCopyRecord`, `Stores::flat_record_type`.
 
+```
+  (R-FlatCopy)'s emitted clause
+                 such a copy whose source is a VARIABLE — the fresh-destination mark of
+                 a minted push slot (`COPY_FRESH_DEST`) admitted, since the type has no
+                 claims to release in it — is emitted as its bytes, the width a
+                 constant read off the schema: from the source's record address to the
+                 destination's where the block holds both (`(R-RecPtr)`; a flat copy
+                 into or out of a view is a use the address serves, so a minted slot
+                 holds its address for its window), and through
+                 `Stores::copy_flat_record` otherwise.  A null end, a locked
+                 destination, and on the store path a foreign destination, an armed
+                 shadow, a traced or a checked copy take `OpCopyRecord`.
+```
+
+**In words.**  The runtime clause still asked, per copy, what the type is: its size, its
+heap facts, and the fn-ref hand-off flag, a thread-local read.  The emitter knows the type
+at the site, so it writes the copy as a few moves.  The flag is not consumed: it is set by
+an unresolved fn-ref call and consumed by the bind of that call's result, and a copy whose
+source is a variable is never that bind.  The address path writes past the copy
+instruments, as `(R-RecPtr)`'s field writes do.  zttext `invert` 7.99 → 6.59 ms (−17.5 %,
+the hand price), which is `insert_text`'s `np += [p]` per piece
+(`bench/portal/analysis/over-9x.md`).  Same switch.  Cells
+`tests/scripts/a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  Sites:
+`hoist::flat_copy` (the admission), `hoist::copy_serves_view`, `ref_ops::emit_flat_copy`,
+`Stores::copy_flat_record`.
+
 ### A result is built where it will live, moved at its last use, and written over a place
 
 ```

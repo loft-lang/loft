@@ -204,10 +204,12 @@ only) empties a text with a fresh `String` again — with it off, `s = ""` on a 
 local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
 `materialise` −59 %) — and is the first bisect step for a text that reads leftover content
 after it was emptied.
-**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, RUNTIME, `--native` only) copies a
+**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time, `--native` only) copies a
 record that owns no heap through the full release-and-walk path again — with it off, such a
-copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %) — and is
-the first bisect step for a wrong value or a leak right after a record copy.
+copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %), and the
+emitter writes such a copy from a variable as its bytes, address to address where the block
+holds both — and is the first bisect step for a wrong value or a leak right after a record
+copy.
 **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
 makes `for c in text` take every character through the step as written again — with it
 off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;

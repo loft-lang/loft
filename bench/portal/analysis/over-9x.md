@@ -425,6 +425,35 @@ interpreter gets them too; W and K2 are runtime.  K1 is a native emission, as
 key-order twin), `truncate_to`'s history writes, `field_add_cell`.  W reaches every key-order
 hash walk, `reload_and_record`'s four among them.
 
+### zttext `invert` — what it needs to be under 3×
+
+The row read 6.28×: 8.00 ms per call against the twin's 1.27 ms, so 3× is 3.82 ms, a 53 %
+cut.  Per op (300 a call: an insert, a delete or a restyle in turn, over a 1 000-piece,
+20 000-character document) `invert` computes the op's inverse group against the current
+document, prepends it to the result, and applies the op.  The twin MOVES the buffer on a
+delete and a restyle (`Doc { buf: d.buf, pieces }`), prepends by `splice` (no copy of an
+earlier op's text), and pushes a `Piece` as 24 bytes.
+
+**Priced, not profiled.**  The callgrind split put `memcpy` at 23 % of the row and the
+buffer copies first; in time the buffer move is the SMALLEST lever.  Callgrind counts every
+iteration of `rep movsb` as an instruction, so a block copy reads far above its time — this
+row's levers are ordered by hand prices only (`perf` with LBR call chains, restricted to
+`n_invert`, for the time split; each price pinned on one core, three interleaved runs,
+hashes equal):
+
+| # | lever | alone | in sequence | what building it takes |
+|---|---|--:|--:|---|
+| L1 | `cur = apply_op(cur, op)` hands `cur` as the callee's buffer, through `apply_op`'s chain exits (`return delete_range(d, …)`): the literal's `buf: d.buf` is a self-replace | −6 % | 8.00 → 7.53 ms | `(R-Rebind)` across a chain exit; the chain's delivery must take a result in the parameter's store as the buffer it is — without that, `OpRebindRecord` deep-copies it and the row is **8 % slower** |
+| L2 | the prepend `tmp += g; tmp += result; result = tmp` done in `result`'s own record | −24 % | 7.53 → 5.53 ms | `(R-Compact)`'s prepend form (`formal/rewrites.md`), not built: a runtime prepend (the elements moved up as one block, `g`'s copied in front) and the parser's admission |
+| L3 | `np += [p]` of a 24-byte `Piece` view as its bytes | −19 % | 5.53 → 4.10 ms | **BUILT**: `(R-FlatCopy)`'s emitted clause, 7.99 → 6.59 ms on the row as it was (−17.5 %, the hand price) |
+| L4 | `slice_runs` holds `d.pieces`' header across its loop | — | 4.10 → 3.43 ms (−16 %) | `(R-Header)` for a PARAMETER's vector across a call that writes no store (`buf_slice_text` writes its work text only): X2's unbuilt half, a callee summary or `(R-Alias)`'s versioned store compare |
+
+**Where it lands.**  All four: **3.43 ms, 2.70×**.  Without L1, about 3.65 ms (≈ 2.87×).
+L3 and L4 are exactly the emitted forms, so they land at their price, as L3 did.  The
+hand-priced files are the emitted `invert` with each edit applied by script
+(`hand_price.sh` with the package's `LOFT_NATIVE_RUSTC_ARGS`); the edits are the four
+`python3` replacements recorded in the commit that built L3.
+
 ### pluginabi `check_request` — the decode it shares, and the texts
 
 `(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  **`(R-ViewReturn)` built** (211d5055e):

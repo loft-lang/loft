@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A record that owns no heap is copied as its bytes at the site (2026-10-16)
+
+- **`(R-FlatCopy)`'s emitted clause** — `OpCopyRecord` from a variable, of a record type that
+  owns no heap and keeping its source (a minted push slot's fresh-destination mark admitted),
+  is emitted as a constant-width copy: between the two record addresses where the block holds
+  both (`(R-RecPtr)` now counts such a copy as a use its address serves, so a minted slot
+  holds its address for its window), through `Stores::copy_flat_record` otherwise
+  (`hoist::flat_copy`, `ref_ops::emit_flat_copy`, native, `LOFT_NO_FLAT_COPY`).  zttext
+  `invert` 7.99 → 6.59 ms (−17.5 %); fires in ten programs.  Guard
+  `a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  The rest of `invert`'s way under
+  3× is priced in `bench/portal/analysis/over-9x.md` (`price_invert.py`).
+
 ### `h[q, r] = T{…}` in one probe; a hash keyed by integer parts rebuilt without its key description (2026-10-16)
 
 - **`(R-KeyedEntry)`'s subscript clause** — a keyed literal assignment into a hash keyed by one
