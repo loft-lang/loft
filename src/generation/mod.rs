@@ -1025,6 +1025,11 @@ pub struct Output<'a> {
     /// (`@FR-R-PushRec`'s heap clause off): the bisect step for a wrong or stale handle in an
     /// appended record whose fields own heap.  `LOFT_POISON_CLAIM=1` is the falsifier.
     pub heap_record_push_disabled: bool,
+    /// `LOFT_NO_FIELD_MINT=1` (or the runtime's own `LOFT_NO_PLAIN_FIELD_APPEND=1`) — a
+    /// straight-line append to a struct's plain vector field keeps its `OpNewRecord` /
+    /// `OpFinishRecord` templates (`@FR-R-FieldMint` off): the bisect step for a wrong
+    /// element out of `r.f += [x]` outside a loop.
+    pub field_mint_disabled: bool,
     /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
     /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
     /// step for a wrong element or scalar read in a loop that declares a vector per pass.
@@ -2361,6 +2366,8 @@ impl<'a> Output<'a> {
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
             heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
                 .is_ok_and(|v| v != "0"),
+            field_mint_disabled: std::env::var("LOFT_NO_FIELD_MINT").is_ok_and(|v| v != "0")
+                || std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_some(),
             rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
             group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
             hoist_owned: hoist::HoistOwned::default(),

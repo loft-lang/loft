@@ -250,6 +250,46 @@ impl Stores {
         rec
     }
 
+    /// `@FR-R-FieldMint` — [`Self::record_new`]'s plain-field path with the dispatch resolved
+    /// by the emitter: the element slot `vector_append` claims at the vector field `pos`
+    /// bytes into `data`, `size` bytes wide, prefilled with `elem`'s defaults when `PREFILL`
+    /// (`OpNewRecord`; `OpNewRecordNP` when the group writes every field).  The emitter
+    /// admits only what `plain_field_vector` admits at runtime — a struct parent, a plain
+    /// vector field no sibling collection shares — so the slot is the one `record_new`
+    /// answers, a null parent's included.
+    #[inline]
+    pub fn field_vector_append<const PREFILL: bool>(
+        &mut self,
+        data: &DbRef,
+        pos: u32,
+        size: u32,
+        elem: u16,
+    ) -> DbRef {
+        self.records_created += 1;
+        let d = DbRef {
+            store_nr: data.store_nr,
+            rec: data.rec,
+            pos: data.pos + pos,
+        };
+        let slot = vector::vector_append(&d, size, &mut self.allocations);
+        if PREFILL {
+            self.set_default_value(elem, &slot);
+        }
+        slot
+    }
+
+    /// `@FR-R-FieldMint` — [`Self::record_finish`]'s plain-field path: the length bump of the
+    /// vector field `pos` bytes into `data`.
+    #[inline]
+    pub fn field_vector_finish(&mut self, data: &DbRef, pos: u32) {
+        let d = DbRef {
+            store_nr: data.store_nr,
+            rec: data.rec,
+            pos: data.pos + pos,
+        };
+        vector::vector_finish(&d, &mut self.allocations);
+    }
+
     /// Create a fresh record for a collection element / nullable field and return its `DbRef`.
     ///
     /// # Panics
