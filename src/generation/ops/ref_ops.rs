@@ -627,6 +627,50 @@ impl OpEmitter for OpCopyRecordEmitter {
                 write!(ctx.w, " }} }}")?;
                 return Ok(());
             }
+            // `@FR-R-FlatCopy`'s emitted clause (`hoist::flat_copy`) — a copy of a record type
+            // that owns no heap is its bytes.  Where the block holds both records' addresses
+            // (`@FR-R-RecPtr`: a view's, a minted push slot's) the bytes go from one address to
+            // the other, as the address's field writes do; elsewhere
+            // `Stores::copy_flat_record` writes them.  Either way the width is a constant read
+            // off the schema here, and every case the general path treats otherwise (a null
+            // end, a locked destination, and on the store path a traced or checked copy)
+            // takes `OpCopyRecord`.
+            if let Some(size) =
+                super::super::hoist::flat_copy(ctx.output.stores, "OpCopyRecord", args)
+            {
+                let held = |v: &Value| match v.unspan() {
+                    Value::Var(x) => ctx.output.active_rec_ptr(*x).map(str::to_owned),
+                    _ => None,
+                };
+                let ends = (held(src), held(dst));
+                write!(ctx.w, "{{ let __fs: DbRef = ")?;
+                ctx.emit(src)?;
+                write!(ctx.w, "; let __fd: DbRef = ")?;
+                ctx.emit(dst)?;
+                if let (Some(ps), Some(pd)) = ends
+                    && !ctx.output.hoist_verify
+                {
+                    let lock = super::super::rec_ptr_lock(&pd);
+                    write!(
+                        ctx.w,
+                        "; if !{lock} && !{ps}.is_null() && !{pd}.is_null() {{ unsafe {{ std::ptr::copy({ps}, {pd}.cast_mut(), {size}) }} }} else {{ "
+                    )?;
+                } else {
+                    write!(
+                        ctx.w,
+                        "; if !stores.copy_flat_record::<{size}>(&__fs, &__fd) {{ "
+                    )?;
+                }
+                emit_copy_plain(
+                    ctx,
+                    &Value::RawExpr("__fs".to_string()),
+                    &Value::RawExpr("__fd".to_string()),
+                    tp_val,
+                )?;
+                write!(ctx.w, " }} }}")?;
+                crate::rewrite_census::fired("R-FlatCopy", 1);
+                return Ok(());
+            }
             emit_copy_plain(ctx, src, dst, tp_val)?;
         }
         Ok(())

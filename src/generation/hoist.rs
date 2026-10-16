@@ -197,6 +197,31 @@ pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Optio
     (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
 }
 
+/// `@FR-R-FlatCopy`'s emitted clause — `OpCopyRecord(src, dst, tp)` that keeps its source
+/// (no `COPY_FREE_SOURCE`), from a VARIABLE, of a record type that owns no heap: the copy is
+/// the type's bytes, so the emitter writes them (`OpCopyRecordEmitter`), through the two
+/// record addresses where the block holds both (`@FR-R-RecPtr`).  A fresh destination
+/// (`COPY_FRESH_DEST`, a minted push slot) is no case apart: such a type has no claims to
+/// release in it.  The source is never the call whose result the copy binds, because that
+/// bind is what consumes an unresolved fn-ref's borrowed-return marker.  Answers the width.
+#[must_use]
+pub fn flat_copy(stores: &Stores, op: &str, args: &[Value]) -> Option<u16> {
+    if op != "OpCopyRecord" || !crate::keys::flat_copy_enabled() {
+        return None;
+    }
+    let [src, _, tp] = args else {
+        return None;
+    };
+    let Value::Int(n) = tp.unspan() else {
+        return None;
+    };
+    if n & i32::from(crate::keys::COPY_FREE_SOURCE) != 0 || !matches!(src.unspan(), Value::Var(_)) {
+        return None;
+    }
+    let known = u16::try_from(n & i32::from(crate::keys::COPY_TP_MASK)).ok()?;
+    stores.flat_record_type(known).then(|| stores.size(known))
+}
+
 /// `@FR-R-InPlace`'s read clause — `OpReadFile(f, OpCreateStack(t), n, tp)` into a SCALAR
 /// local writes that local and the File record's own cursor fields (`#next`, `#pos`, the
 /// handle number on first use), each in place: nothing is claimed, grown or freed.  A read
@@ -3056,6 +3081,15 @@ fn view_extent_verdict(
                         && matches!(args[1].unspan(), Value::Var(v) if *v == *r)
                         && matches!(args[0].unspan(), Value::Var(s)
                             if owned.is_some_and(|o| o.value_locals.contains(s)))
+                    {
+                        touched = true;
+                    }
+                    // A flat copy INTO or OUT OF the view (`flat_copy`): its bytes stored at,
+                    // or read from, the address.
+                    if args.len() == 3
+                        && (matches!(args[1].unspan(), Value::Var(v) if *v == *r)
+                            || matches!(args[0].unspan(), Value::Var(v) if *v == *r))
+                        && flat_copy(stores, name, args).is_some()
                     {
                         touched = true;
                     }
