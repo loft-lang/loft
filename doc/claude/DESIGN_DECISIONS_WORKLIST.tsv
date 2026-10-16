@@ -29,10 +29,10 @@ C69	code	src/parser/vectors.rs::redundant-null-negation	ok	-
 C70	code	src/startup_cache.rs::fn save_program; src/cache.rs::fn program_cache_paths	ok	-	tests/program_cache_libraries.rs asserts one program image and none per library
 C71	code	src/native_gate.rs::fn native_compilable; src/cache.rs::fn loft_build_fingerprint	ok	-	
 C72	code	src/repl.rs	ok	-	
-C73	code	src/parser/vectors.rs::Both operands of `&&`/`||` are TRUTHINESS positions; src/parser/mod.rs::OpConvBoolFromNull	ok	-	
+C73	code	src/parser/vectors.rs::Both operands of `&&`/`||` are TRUTHINESS positions; src/parser/monomorph.rs::OpConvBoolFromNull	ok	-	
 C74	code	src/parser/vectors.rs::fn reject_shared_mutable_scalar_captures	ok	-	tests/comparisons/closures.loft only names it in a comment; tests/issues.rs exercises it
 C75	code	src/parser/definitions.rs::fn cascade_fn_fields	ok	-	guards: 1867-a-returned-struct-keeps-its-closure-capture, 1877-…-releases-what-it-displaces
-C76	code	src/parser/mod.rs::import multiple names with parentheses	ok	-	
+C76	code	src/parser/imports.rs::import multiple names with parentheses	ok	-	
 C77	code	src/parser/operators.rs::is a binding marker, NOT a general operator	ok	-	
 C78	decline	-	ok	-	a boundary kept by the tree scan in tests/extraction_hygiene.rs; nothing in src/ enforces it
 C79	code	src/scopes/reshape_refusals.rs::pub fn reshape_refusals	ok	-	bare `C79` in parser/mod.rs
@@ -46,7 +46,7 @@ C86	code	src/use_analysis.rs::fn elision_plans; src/scopes/view_walk.rs::fn coll
 C87	code	src/parser/definitions.rs	ok	-	
 C88	code	src/scopes/get_free_vars.rs	ok	-	
 C89	code	src/parser/definitions.rs	ok	-	
-C90	code	src/parser/mod.rs::pub fn null(&mut self, tp: &Type)	ok	-	
+C90	code	src/parser/places.rs::pub fn null(&mut self, tp: &Type)	ok	-	
 C91	code	src/database/equality.rs; src/parser/operators.rs	ok	-	
 C92	code	src/parser/expressions.rs::a compound assign evaluates its place ONCE	ok	-	
 C93	code	src/parser/collections.rs::captured state is READ-ONLY; src/scopes/par_writes.rs	ok	-	
@@ -80,7 +80,7 @@ C120	code	src/generation/non_sentinel.rs::NOT closed, deliberately	ok	-	tests/re
 C121	code	src/use_analysis.rs::fn raise_copy_refusals; src/lease.rs::fn written_verdict	ok	-	entry worded as (H-Copy-Refuse) / (H-Spent) state it: an owned value moves, a copy of what the function does not own is refused
 C122	code	src/generation/hoist.rs::(R-Escape)	ok	-	
 C123	code	src/data.rs::let shadowed_free; src/parser/definitions.rs::both-receiver-deprecated	ok	-	shares its refusal with C95
-C124	code	src/parser/mod.rs	ok	-	
+C124	code	src/parser/hints.rs	ok	-	
 C125	code	src/data.rs::every heap value is one `DbRef` on the stack; src/rust_spelling.rs::every heap value is one `DbRef` in native code	ok	-	
 C126	code	src/parser/definitions.rs::appears in no parameter	ok	-	
 C127	code	src/parser/fit.rs; src/parser/expressions.rs	ok	-	
