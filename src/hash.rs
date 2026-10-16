@@ -1229,6 +1229,9 @@ pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
     if claim == 0 {
         return Vec::new();
     }
+    if claim != 0 {
+        return records(hash_ref, stores);
+    }
     let count = elms(store, claim);
     let width = stride(store, claim);
     let mut slots: Vec<u32> = (0..count)
