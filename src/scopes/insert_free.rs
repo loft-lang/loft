@@ -5,7 +5,7 @@
 //! Placing the releases around a block's VALUE: frees go before a tail that does not read what
 //! they free, into the arms of a branch, and copied text sources are released after the copy.
 
-use super::returns::{collect_return_sources, is_value_return_type};
+use super::returns::{collect_return_sources, is_argument_text_view, is_value_return_type};
 use super::{Scopes, call};
 use crate::data::{Block, Data, Type, Value, v_set};
 use crate::fxhash::FxHashSet as HashSet;
@@ -328,6 +328,9 @@ impl Scopes<'_> {
                             || is_fnref_result)
                         && tail_needs_eval
                         && !expr_ends_in_return(o)
+                        && !(is_text_result
+                            && is_argument_text_view(o, function, data)
+                            && any_text_return_buffer(function, data, self.d_nr).is_none())
                     {
                         if is_text_result
                             && !matches!(o.unspan(), Value::Null)

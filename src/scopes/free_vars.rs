@@ -14,10 +14,10 @@ use super::insert_free::{
     any_text_return_buffer, expr_ends_in_return, free_copied_text_sources, text_return_buffer_for,
 };
 use super::returns::{
-    collect_return_sources, is_heap_return_type, is_value_return_type, last_non_free_result,
-    move_join_hooks_into_arms, return_copies_view_holders, return_copies_whole_local,
-    return_has_non_source_arm, return_has_null_arm, return_moved_holders,
-    returned_var_null_unified,
+    collect_return_sources, is_argument_text_view, is_heap_return_type, is_value_return_type,
+    last_non_free_result, move_join_hooks_into_arms, return_copies_view_holders,
+    return_copies_whole_local, return_has_non_source_arm, return_has_null_arm,
+    return_moved_holders, returned_var_null_unified,
 };
 use super::{Scopes, call};
 use crate::data::{Data, Deps, Type, Value, v_if, v_set};
@@ -799,9 +799,17 @@ impl Scopes<'_> {
             result.push(Value::Return(Box::new(Value::Var(buf))));
             return result;
         }
+        // loft#2032 — a view into an argument's store outlives the frees as well, and with no
+        // buffer to deliver through it is returned as it stands rather than staged into the
+        // residual arm's orphaned `__ret_N` copy below.
+        let expr_is_argument_text_view = is_return
+            && matches!(tp.base(), Type::Text(_))
+            && is_argument_text_view(expr, function, data)
+            && any_text_return_buffer(function, data, self.d_nr).is_none();
         if ls.is_empty()
             || ((matches!(expr, Value::Null | Value::Var(_) | Value::Text(_))
-                || expr_is_null_text_sentinel)
+                || expr_is_null_text_sentinel
+                || expr_is_argument_text_view)
                 && !var_is_place_ref)
         {
             if is_return && !expr_is_terminal {

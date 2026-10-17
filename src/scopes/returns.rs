@@ -12,6 +12,34 @@ use crate::data::{Data, Type, Value};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::variables::Function;
 
+/// Is this text tail a VIEW into memory an ARGUMENT owns — a text field read (`b.label`,
+/// `v[k].t`) or a slice of one or of a text argument (`b.label[1..3]`, `s[2..]`), naming no
+/// variable but arguments and scalar locals?  Such a view survives the frame's scope frees,
+/// which release only what the frame owns, so it is returned as it stands.  Staging it into a
+/// `__ret_N` copy first is what orphaned one `String` per call in a function that holds no
+/// `&text` buffer to deliver through (loft#2032): the ownership oracle reads the tail as a
+/// borrow of an argument and rightly gives it no buffer (`@FR-F-Ret`).
+pub(super) fn is_argument_text_view(expr: &Value, function: &Function, data: &Data) -> bool {
+    let is_view = match expr.unspan() {
+        Value::Call(d, args) => match data.def(*d).name() {
+            "OpGetText" => true,
+            // A slice is a view of its first operand (`State::get_text_sub`), which must itself
+            // be one of these views or a text argument.
+            "OpGetTextSub" => args.first().is_some_and(|a| {
+                is_argument_text_view(a, function, data)
+                    || matches!(a.unspan(), Value::Var(v) if function.is_argument(*v))
+            }),
+            _ => false,
+        },
+        _ => false,
+    };
+    is_view
+        && !expr.any_node(&mut |n| {
+            n.var_named_here()
+                .is_some_and(|v| !function.is_argument(v) && !is_value_return_type(function.tp(v)))
+        })
+}
+
 /// Whether a function's return type holds a plain value (no heap ownership).
 /// Used by the B5-L3 fix in `free_vars` to decide whether saving the tail
 /// expression into a `__ret_N` temp is safe.  Heap-owned types are excluded

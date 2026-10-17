@@ -22,6 +22,9 @@
 //     whose arm returns;
 //   a `parallel { … }` arm whose argument is a formatted string (built in the worker's copy
 //     of the frame, which nothing freed).
+//   a tail that is a VIEW into an argument — a text field, an element's text through an
+//     integer local, a slice of either, `-> text?` — in a frame with a pending free (a
+//     formatted-string work buffer): staged into a copy nothing freed (loft#2032).
 //
 // Axes this file MOVES:  the function kind (named, lambda, generic monomorph, par worker);
 //                        what is returned (a local, a `??` over a capture / a local / a
@@ -51,7 +54,11 @@
 //   equal and the row is INERT. The measurement is a text-buffer census — 99 orphaned buffers
 //   -> 0 — which is not a scored channel, so no falsify signature can confirm or deny this
 //   guard.
+//   The loft#2032 cells (an argument's text view returned): 10 orphaned buffers -> 0, measured
+//   the same way against the release binary built before the fix.
 struct S { name: text? }
+struct Item { n: integer, t: text }
+struct Bag { items: vector<Item>, label: text }
 struct Row { names: vector<text>, values: vector<integer> }
 
 fn text_src(i: integer, tag: text) -> text? { if i == 0 { return null } return tag; }
@@ -98,6 +105,19 @@ fn at(self: Row, name: text) -> integer {
 fn find_idx(names: vector<text>, k: text) -> integer { for i in 0..len(names) { if names[i] == k { return i; } } -1 }
 fn drop_text(t: text) { _ = len(t); }
 
+fn mk_bag() -> Bag {
+  b = Bag { items: [], label: "L" };
+  for k in 1..6 { b.items += [Item { n: k, t: "t{k}" }]; }
+  b
+}
+fn arg_field(b: Bag) -> text { for i in 0..len(b.items) { b.label = "{b.label}{b.items[i].n}"; } b.label }
+fn arg_elem(v: vector<Item>) -> text { for i in 1..len(v) { v[i].t = "{v[i - 1].t}+"; } v[len(v) - 1].t }
+fn arg_slice(b: Bag) -> text { for i in 0..len(b.items) { b.label = "{b.label}{b.items[i].n}"; } b.label[1..3] }
+fn arg_nullable(b: Bag) -> text? { for i in 0..len(b.items) { b.label = "{b.label}{b.items[i].n}"; } b.label }
+fn arg_index_local(b: Bag) -> text? { k = 0; for i in 0..len(b.items) { b.label = "{b.label}{i}"; k = i; } b.items[k].t }
+fn arg_early(b: Bag) -> text { for i in 0..len(b.items) { b.label = "{b.label}{b.items[i].n}"; if i == 2 { return b.label; } } b.label }
+fn local_field(b: Bag) -> text { x = Bag { items: [], label: "X" }; for i in 0..len(b.items) { x.label = "{x.label}{b.items[i].n}"; } x.label }
+
 fn main() {
   cap: text = "alpha";
   pick = fn(n: integer) -> text { return cap ?? "pick-fallback"; };
@@ -133,5 +153,15 @@ fn main() {
       drop_text("B{outer_n}");
     }
   }
+  // loft#2032 — "L" followed by 1..5; element 4 of t1..t5 rewritten from its neighbour is
+  // "t1++++"; a slice [1..3] of "L12345" is "12"; the index local ends on 4 (`t5`); the early
+  // return stops after 1, 2, 3.  The local record's field is the control: owned, so copied.
+  assert(arg_field(mk_bag()) == "L12345", "an argument's text field returned: {arg_field(mk_bag())}");
+  assert(arg_elem(mk_bag().items) == "t1++++", "an argument element's text returned: {arg_elem(mk_bag().items)}");
+  assert(arg_slice(mk_bag()) == "12", "a slice of an argument's text returned: {arg_slice(mk_bag())}");
+  assert((arg_nullable(mk_bag()) ?? "N") == "L12345", "an argument's text returned as `text?`");
+  assert((arg_index_local(mk_bag()) ?? "N") == "t5", "an argument element's text through an integer local");
+  assert(arg_early(mk_bag()) == "L123", "an early return of an argument's text field: {arg_early(mk_bag())}");
+  assert(local_field(mk_bag()) == "X12345", "control — a local record's text field: {local_field(mk_bag())}");
   println("1357 text buffers ok");
 }
