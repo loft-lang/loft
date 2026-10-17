@@ -178,7 +178,11 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                ONE write applies it implicitly, by design: `c += [ … ]` on an ABSENT nullable
                collection instantiates the empty collection first — collections.md
                (Col-Insert-Absent).  Every other position keeps the explicit discharge.
-  (N-Match)    match e { null ⇒ …,  x ⇒ …(x:τ)… }      eliminates τ?, binds the τ arm
+  (N-Match)    match e { null ⇒ …,  x: _ ⇒ …(x:τ)… }   eliminates τ?, binds the τ arm.
+               `x: _` binds at every τ (matching.md (P-Cap) at the arm root); the bare
+               `x ⇒` spells it only where no variant or struct name can stand in the arm —
+               a scalar, text or vector subject — and is a refused misspelling on a
+               struct or enum one (matching.md (M-Unit)).
   (N-Store)    storing  e:τ?  into a  τ  slot without discharge is REJECTED — a WARNING for
                most τ (the null is representable-and-distinct in τ's non-null form), a hard
                ERROR only for narrow widths (u8…u32, § Null-flow below, where the null would
@@ -433,7 +437,9 @@ old auto-`τ?` reading. Design record:
 (N-Domain)  a PARTIAL OPERATION that can yield the reserved null from a REACHABLE input types
             its result τ?  —  ÷0 / %0 (Integer / Float / Single); sqrt(<0), ln·log(≤0),
             asin·acos(∉[-1,1]), pow(neg ^ frac) (Float / Single); v[i] / s[i] OOB (ANY element
-            τ).  Non-null when the input is PROVABLY in-domain (constant / range / guard) — the
+            τ).  For Float / Single the null is the NaN IEEE produces inside that domain —
+            `0.0 / 0.0`, `x % 0.0`, `ln(<0)` — while `x / 0.0` and `ln(0.0)` keep IEEE's
+            infinity (operational.md (E-Uncomp)); the op still types τ? because it can miss.  Non-null when the input is PROVABLY in-domain (constant / range / guard) — the
             same "provably-fits" elision as (N-Arith) / (N-Cast).  Generalises (N-Div) /
             (N-Index) to every type + partial op.  Runtime = null + continue (@C80); the reserved
             null is the VALUE, NEVER a runtime error.
