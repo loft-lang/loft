@@ -31,12 +31,10 @@ pub fn rewrite(data: &mut Data, database: &mut crate::database::Stores, d_nr: u3
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     if code.any_node(&mut |n| matches!(n, Value::Call(d, _) if *d == push_byte)) {
         let ops = Ops::new(data);
-        let whole = code.clone();
         let cx = Cx {
             data,
             d_nr,
             ops: &ops,
-            whole: &whole,
             push_byte,
             byte_at: data.def_nr("t_4text_byte_at"),
             land_int: data.def_nr("OpLandInt"),
@@ -51,7 +49,7 @@ pub fn rewrite(data: &mut Data, database: &mut crate::database::Stores, d_nr: u3
         // The element type each admitted vector clause names, read before the walk mutates:
         // it needs the store registry, the walk only the definitions.
         let mut tps = Vec::new();
-        collect_vector_types(&whole, &cx, database, &mut tps);
+        collect_vector_types(&code, &cx, database, &mut tps);
         visit(&mut code, &cx, &tps);
         // `@FR-R-TextRun` — a run copied only to be read as text is read in place: decided
         // on the copies just guarded.
@@ -66,8 +64,6 @@ struct Cx<'a> {
     data: &'a Data,
     d_nr: u32,
     ops: &'a Ops,
-    /// The body as the scan left it, for the destination's exclusivity.
-    whole: &'a Value,
     push_byte: u32,
     byte_at: u32,
     land_int: u32,
@@ -184,18 +180,11 @@ fn match_copy(v: &Value, cx: &Cx) -> Option<Copy> {
         decline(cx, buf, "the element is not stored as a raw byte");
         return None;
     }
+    // A vector source needs no exclusive destination: the guard reads `len(v)` once, every
+    // index the loop reads lies below it, and a push lands above it — so even when `buf`
+    // IS `v` the loop reads only elements that were there at entry, exactly the span the
+    // slice append snapshots (`Stores::vector_slice` re-reads a source the growth moved).
     let src = if let Some(src) = vector_read(&args[2], i, cx) {
-        let Source::Vector { v, .. } = src else {
-            unreachable!("vector_read answers a vector source")
-        };
-        if v == buf || !crate::vec_copy::exclusive_vector(cx.data, cx.d_nr, cx.whole, buf) {
-            decline(
-                cx,
-                buf,
-                "the destination may share a vector with the source",
-            );
-            return None;
-        }
         src
     } else {
         let read = match compact::call(&args[2], cx.land_int) {

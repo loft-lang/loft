@@ -173,10 +173,13 @@ impl Scan<'_> {
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Int(0)))
                     && matches!(args.get(2).map(Value::unspan), Some(Value::Int(0)))
             }
-            // Appends into the buffer: the values may not read it.
+            // Appends into the buffer: the values may not read it.  `OpSliceVector` is the
+            // `(R-ByteCopy)` append of a span of ANOTHER vector — its source a value too.
             // `OpInsertVector` is not among them: it inserts at an index counted from the
             // buffer's start, which in a twin holds the caller's elements.
-            "OpAppendVector" | "OpAppendTextBytes" | "OpPreAllocVector" if first_is_view => {
+            "OpAppendVector" | "OpAppendTextBytes" | "OpPreAllocVector" | "OpSliceVector"
+                if first_is_view =>
+            {
                 self.written = true;
                 self.operands(&args[1..])
             }
