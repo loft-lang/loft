@@ -193,6 +193,12 @@ git do.
 
 ### Bug fixes
 
+**A view into a collection keeps its old element when the collection is rebuilt by a call.**
+After `e = h[1]; h = load()`, `e` read and wrote the element of the NEW collection for a
+`hash`, `sorted` or `index`, and a `vector` of values with an `OpDrop` read memory already
+released.  `e` is now copied out first and keeps what it had, as it already was for
+`h = [ … ]`; with an `OpDrop` element the rebind is refused, naming the view.
+
 **A `for` over a range whose start may be null no longer warns about its own loop
 variable.**  In `for i in n..5` with `n: integer?`, storing `i` somewhere that holds a plain
 `integer` warned that a null could land there, and at `u8` it was refused.  A null start makes

@@ -1108,11 +1108,16 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
     // a nullable local's reassignment established nothing, so a view into it was neither
     // materialised nor reported: `o: Q? = Q { … }; v = o.p; o = Q { … }; v.a` read a released
     // record on both backends while its dense twin copied `v` out and said so (loft#1442).
+    // @FR-B-Disturb — a COLLECTION local is a container its views point into as much as a
+    // record is.  Rebound from a call it is handed to the callee as its return buffer, which
+    // clears and refills that store in place; asked records-only, the rebind ended no view:
+    // a keyed view read the new collection, and a droppable element was used after its
+    // release (loft#2037).
     let note = |v: u16, out: &mut HashSet<u16>| {
-        if matches!(
-            function.tp(v).base(),
-            Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) && !function.is_compiler_generated(v)
+        let tp = function.tp(v).base();
+        if (matches!(tp, Type::Reference(_, _) | Type::Enum(_, true, _))
+            || crate::data::is_collection(tp))
+            && !function.is_compiler_generated(v)
         {
             out.insert(v);
         }
@@ -1120,6 +1125,18 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
     stmt.walk(&mut |v| match v {
         Value::Call(d, args) if data.def(*d).name() == "OpDatabase" => {
             if let Some(Value::Var(t)) = args.first().map(Value::unspan) {
+                note(*t, &mut out);
+            }
+        }
+        // A whole-container fill replaces the destination's contents in its own store: a keyed
+        // local rebound from a call is `h = null; __lift = f(); OpReplaceKeyed(__lift, h)`, so
+        // the `Set` names nothing and this op is the reassignment (loft#2037).  The written
+        // argument is the one `use_analysis`'s `copy_fills` names for the same two ops.
+        Value::Call(d, args)
+            if matches!(data.def(*d).name(), "OpReplaceKeyed" | "OpReplaceVector") =>
+        {
+            let dest = usize::from(data.def(*d).name() == "OpReplaceKeyed");
+            if let Some(Value::Var(t)) = args.get(dest).map(|a| peel_stack_ref(a, data)) {
                 note(*t, &mut out);
             }
         }
