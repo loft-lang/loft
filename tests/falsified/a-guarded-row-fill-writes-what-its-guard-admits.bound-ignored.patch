@@ -1,0 +1,11 @@
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -3773,7 +3773,7 @@
+             self.indent(w)?;
+             writeln!(
+                 w,
+-                "let __flhi_{s}: i64 = std::cmp::min({end}, ({n}).saturating_sub({base})); let __fill_{s} = __flhi_{s}.saturating_sub({lo}) >= {FILL_MIN_SPAN} && stores.fill_hoisted::<{t}, {verify}>(&{hdr}, &({vec}), {z}_u32, vector::FillSpan {{ base: ({base}), lo: ({lo}), hi: __flhi_{s}, inclusive: false }}, ({val})); //@FR-R-Fill guarded",
++                "let __flhi_{s}: i64 = {end} /* SABOTAGE: the guard's bound ignored */; let __fill_{s} = __flhi_{s}.saturating_sub({lo}) >= {FILL_MIN_SPAN} && stores.fill_hoisted::<{t}, {verify}>(&{hdr}, &({vec}), {z}_u32, vector::FillSpan {{ base: ({base}), lo: ({lo}), hi: __flhi_{s}, inclusive: false }}, ({val})); //@FR-R-Fill guarded",
+                 s = lp.scope,
+                 t = f.rust_type,
+                 z = f.size,
