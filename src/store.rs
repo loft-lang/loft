@@ -1926,6 +1926,9 @@ impl Store {
     /// neighbour still parked is merged when its own turn comes, backward off this block.
     fn flush_parked(&mut self) {
         for words in MIN_FREE_TREE..=PARK_MAX_WORDS {
+            // The count falls with every pop, so the bound is read once: a list longer
+            // than every parked block together is a cycle (loft#2031).
+            let bound = self.parked.count + 1;
             let mut steps = 0u32;
             loop {
                 let rec = self.parked.heads[words as usize];
@@ -1934,7 +1937,7 @@ impl Store {
                 }
                 steps += 1;
                 debug_assert!(
-                    steps <= self.parked.count + 1,
+                    steps <= bound,
                     "the {words}-word list does not end at {rec} (loft#2031)"
                 );
                 self.unpark(rec);
