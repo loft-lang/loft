@@ -540,8 +540,10 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  view, a link — never a local's own fresh store or a work buffer)
                  only to callees of which the same holds at that position, a
                  recursive call answering for itself — binds its header once at
-                 entry, and every read in the body, loops included, serves from it.
-                 Growth of OTHER stores is no concern of a header (its record and
+                 entry, and every read in the body, loops included, serves from it;
+                 in a twin body that already receives the parameter's header (the
+                 twin clause's `__ih_k`) that header IS the binding, never a second
+                 lookup.  Growth of OTHER stores is no concern of a header (its record and
                  length are the vector's own), so a body that builds its result
                  beside the reads keeps them; only a BASE would need the store's
                  memory still, and the clause binds none — a loop inside that is
@@ -2450,10 +2452,12 @@ reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
                  is not a raw byte, and a bound that is any other call keep the loop.
                  THE VECTOR CLAUSE: `for i in lo..hi { buf += [v[off + i] ?? d] }` (or
                  `v[i]`, `i + off`) over a byte vector VARIABLE `v` whose element is
-                 `buf`'s, `off` a literal or a variable, `d` a literal, `buf` EXCLUSIVE
-                 as `(R-VecCopy)` defines it (a record `(R-Place)` claimed for it counts
-                 as minted here) — is ONE slice append of `v[off + lo .. off + hi]`
-                 behind `0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off`.  A raw
+                 `buf`'s, `off` a literal or a variable, `d` a literal — is ONE slice
+                 append of `v[off + lo .. off + hi]` behind `0 <= off && 0 <= lo &&
+                 lo <= hi && hi <= len(v) - off`.  `buf` may be any vector, `v` itself
+                 included: the guard reads `len(v)` once, every index the loop reads
+                 lies below it and every push lands above it, so the loop reads only
+                 elements present at entry — the span the append snapshots.  A raw
                  byte read in range is never null, so `?? d` never fires inside the
                  guard; outside it the loop runs as written (a negative index counts
                  from the end, one past the end reads null and pushes `d`).  An element

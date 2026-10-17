@@ -7,7 +7,7 @@
 // `for k in 0..n { bs += [bytes[a + k] ?? 0] }` — how a binary decoder (cbor's `read_value`)
 // takes a byte string out of its frame — paid a checked element read, a range check, a
 // discharge and a push per byte.  Where the loop is exactly that, over pure bounds, from a byte
-// vector variable into an exclusive byte vector, it is one `OpSliceVector` behind
+// vector variable into any byte vector — the source itself included — it is one `OpSliceVector` behind
 // `0 <= a && 0 <= lo && lo <= hi && hi <= len(bytes) - a`, the loop as written running for
 // every range the guard refuses.  The value never changes: every cell answers the same with
 // `LOFT_NO_BYTE_COPY=1`, and that A/B is the falsifier together with the pin
@@ -101,7 +101,8 @@ fn v8() {
   assert(len(out) == 0, "v8 got {out}");
 }
 
-// the destination is the source: the loop as written (it reads only the elements it started with)
+// the destination is the source: the loop reads only the elements it started with, which is the
+// span the slice snapshots — the growth moves the record, and the copy reads it where it went
 fn v9() {
   b = hw();
   for k in 0..3 { b += [b[k] ?? 0]; }
@@ -148,7 +149,7 @@ fn v15() {
   assert(same(out, [111, 32, 119]), "v15 got {out}");
 }
 
-// a `&` destination may be the source: the loop as written
+// a `&` destination, another vector than the source
 fn into(dst: &vector<u8>, src: vector<u8>) {
   for k in 0..3 { dst += [src[k] ?? 0]; }
 }
@@ -186,8 +187,83 @@ fn v20() {
   assert(same(out, [104, 101, 108]), "v20 got {out}");
 }
 
+// a `&` destination handed the source itself: [104 101 108 108 111 32 119 111 114 108 100]
+// then its bytes 1..4 = 101 108 108
+fn v21() {
+  b = hw();
+  into1(b, b);
+  assert(len(b) == 14 && (b[11] ?? 0) == 101 as u8 && (b[13] ?? 0) == 108 as u8, "v21 got {b}");
+}
+fn into1(dst: &vector<u8>, src: vector<u8>) {
+  for k in 0..3 { dst += [src[1 + k] ?? 0]; }
+}
+
+// a destination a call returned (cbor's `buf = head(…)`): 0xA2, then bytes 6..9
+fn head2() -> vector<u8> { [162 as u8] }
+fn v22() {
+  b = hw(); out = head2();
+  for k in 0..3 { out += [b[6 + k] ?? 0]; }
+  assert(same(out, [162, 119, 111, 114]), "v22 got {out}");
+}
+
+// the source itself, with room to spare: five pushes claim more than five, so the copy of
+// bytes 1..4 = 1 2 3 lands without a growth
+fn v23() {
+  v: vector<u8> = [];
+  for x in 0..5 { v += [(x & 255) as u8]; }
+  for k in 0..3 { v += [v[1 + k] ?? 0]; }
+  assert(same(v, [0, 1, 2, 3, 4, 1, 2, 3]), "v23 got {v}");
+}
+
+// a builder appended through its twin, the destination also its source: `pre(acc, 1, 3)` reads
+// acc as it was — [1 2 3], so bytes 1, 2 and one past the end (the loop's default 0) — and
+// builds [7 2 3 0]; acc ends [1 2 3 7 2 3 0].  Built in acc itself, it would read the 7 it
+// had just pushed and end [1 2 3 7 2 3 7].
+fn pre(b: vector<u8>, a: integer, n: integer) -> vector<u8> {
+  out: vector<u8> = [7 as u8];
+  for k in 0..n { out += [b[a + k] ?? 0]; }
+  out
+}
+fn v24() {
+  acc: vector<u8> = [1 as u8, 2 as u8, 3 as u8];
+  acc += pre(acc, 1, 3);
+  assert(same(acc, [1, 2, 3, 7, 2, 3, 0]), "v24 got {acc}");
+  w: vector<u8> = [5 as u8];
+  w += pre(hw(), 4, 2);
+  assert(same(w, [5, 7, 111, 32]), "v24b got {w}");
+}
+
+// the runtime the clause lowers to, reached by a slice of the destination itself: growing
+// (hw's eleven bytes fill their claim) and fitting (five pushes leave room)
+fn v25() {
+  b = hw();
+  b += b[1..4];
+  assert(same(b, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108]), "v25 got {b}");
+  v: vector<u8> = [];
+  for x in 0..5 { v += [(x & 255) as u8]; }
+  v += v[2..5];
+  assert(same(v, [0, 1, 2, 3, 4, 2, 3, 4]), "v25b got {v}");
+  w: vector<integer> = [10, 20, 30];
+  w += w[0..3];
+  assert(len(w) == 6 && (w[3] ?? 0) == 10 && (w[5] ?? 0) == 30, "v25c got {w}");
+}
+
+// a builder that slices its OWN buffer keeps its own: `dbl()` is [7] then its first byte again,
+// [7 7], so acc ends [1 7 7].  Built in acc as a twin, the slice would read acc's first byte
+// and end [1 7 1].
+fn dbl() -> vector<u8> {
+  out: vector<u8> = [7 as u8];
+  out += out[0..1];
+  out
+}
+fn v26() {
+  acc: vector<u8> = [1 as u8];
+  acc += dbl();
+  assert(same(acc, [1, 7, 7]), "v26 got {acc}");
+}
+
 fn main() {
   v1(); v2(); v3(); v4(); v5(); v6(); v7(); v8(); v9(); v10(); v11(); v12(); v13(); v15();
-  v16(); v17(); v18(); v19(); v20();
+  v16(); v17(); v18(); v19(); v20(); v21(); v22(); v23(); v24(); v25(); v26();
   println("done");
 }

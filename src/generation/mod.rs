@@ -5034,6 +5034,12 @@ impl Output<'_> {
             if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;
             }
+            // A twin body already holds this path's header (`__ih_k`, its caller's): the
+            // same vector, read under the same no-growth guarantee, so the twin's frame
+            // serves it and a second lookup at entry would only repeat it.
+            if self.active_vec_header(&path).is_some() {
+                continue;
+            }
             self.hoist_counter += 1;
             let name = format!("__vh_{}", self.hoist_counter);
             let operand = self.expr_string(&expr)?;
