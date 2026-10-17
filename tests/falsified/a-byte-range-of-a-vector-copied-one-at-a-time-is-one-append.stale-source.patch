@@ -1,0 +1,13 @@
+diff --git a/src/database/structures.rs b/src/database/structures.rs
+index 790c2900e..5ef48738d 100644
+--- a/src/database/structures.rs
++++ b/src/database/structures.rs
+@@ -1831,7 +1831,7 @@ impl Stores {
+         let dest_rec = keys::store(db, &self.allocations).get_u32_raw(db.rec, db.pos);
+         if same_store {
+             let store = keys::mut_store(db, &mut self.allocations);
+-            let o_rec = store.collection_rec(o_db.rec, o_db.pos);
++            let o_rec = o_rec; // SABOTAGE: the record read before the growth
+             store.copy_block(o_rec, from, dest_rec, append_pos as isize, bytes);
+         } else {
+             self.copy_block_cross_store(

@@ -262,8 +262,30 @@ fn v26() {
   assert(same(acc, [1, 7, 7]), "v26 got {acc}");
 }
 
+// a slice of the destination itself where the growth cannot stay in place: `c`'s claim
+// follows `a`'s in their record's store, so `a` grows into a new record and the copy must
+// read it there — [104 101 108 108 111 32 119 111 114 108 100] then bytes 1..4 = 101 108 108
+struct Two { a: vector<u8>, c: vector<u8> }
+fn grow_self(v: &vector<u8>) { v += v[1..4]; }
+
+// the same through a `&` parameter bound to the field: hw then bytes 1..4, and `c` untouched
+fn v28() {
+  t = Two { a: hw(), c: [] };
+  for x in 0..20 { t.c += [(x & 255) as u8]; }
+  grow_self(t.a);
+  assert(same(t.a, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108]), "v28 got {t.a}");
+  assert(len(t.c) == 20 && (t.c[0] ?? 9) == 0 as u8, "v28 c {t.c}");
+}
+fn v27() {
+  t = Two { a: hw(), c: [] };
+  for x in 0..20 { t.c += [(x & 255) as u8]; }
+  t.a += t.a[1..4];
+  assert(same(t.a, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108]), "v27 got {t.a}");
+  assert(len(t.c) == 20 && (t.c[19] ?? 0) == 19 as u8, "v27 c {t.c}");
+}
+
 fn main() {
   v1(); v2(); v3(); v4(); v5(); v6(); v7(); v8(); v9(); v10(); v11(); v12(); v13(); v15();
-  v16(); v17(); v18(); v19(); v20(); v21(); v22(); v23(); v24(); v25(); v26();
+  v16(); v17(); v18(); v19(); v20(); v21(); v22(); v23(); v24(); v25(); v26(); v27(); v28();
   println("done");
 }
