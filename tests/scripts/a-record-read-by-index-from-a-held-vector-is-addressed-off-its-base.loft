@@ -108,18 +108,40 @@ fn or_local(p: const vector<Coord>) -> vector<integer> {
   out
 }
 
-// c7b — a choice whose other branch lives in the store the loop grows: `o` is `out`'s first
-// element and the push after the choice moves `out`'s record, so `lo` may hold no address
-// (the clause asks EVERY branch to be apart from the growth).  a(1,5) → 1, o → 50, a(4,9) → 4.
+// c7b — a choice whose other arm is an element of the vector the loop grows, and moves: `ys`
+// fills the store after `xs`, so a push into `xs` puts it in a new record.  The arm is lifted
+// into a COPY in a store of its own, so `lo` keeps an address beside that growth and reads
+// the copy: a(1,5) → 1, o → 50, a(4,9) → 4.
+struct Two { xs: vector<Coord>, ys: vector<integer> }
 fn mixed(p: const vector<Coord>) -> integer {
-  out: vector<Coord> = [Coord { px: 50, py: 0 }];
+  w = Two { xs: [Coord { px: 50, py: 0 }], ys: [] };
+  for k in 0..20 { w.ys += [k]; }
   t = 0;
   n = len(p);
   for i in 0..n {
     a = p[i]?;
-    o = out[0]?;
+    o = w.xs[0]?;
     lo = if a.py > 4 { a } else { o };
-    out += [Coord { px: i, py: i }];
+    if a.py > 0 { w.xs += [Coord { px: i, py: i }]; }
+    t += lo.px;
+  }
+  t + len(w.xs) * 1000
+}
+
+// c7c — a choice between two elements OF the vector the loop grows and moves: both arms are
+// views of `w.xs` (no lift), so `lo` lives in the store the push moves and may hold no
+// address.  o1 → 50, o2 → 60, o1 → 50.
+fn same_source(p: const vector<Coord>) -> integer {
+  w = Two { xs: [Coord { px: 50, py: 0 }, Coord { px: 60, py: 1 }], ys: [] };
+  for k in 0..20 { w.ys += [k]; }
+  t = 0;
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    o1 = w.xs[0]?;
+    o2 = w.xs[1]?;
+    lo = if a.py > 4 { o1 } else { o2 };
+    if a.py > 0 { w.xs += [Coord { px: i, py: i }]; }
     t += lo.px;
   }
   t
@@ -193,7 +215,8 @@ fn main() {
   assert(bump_local() == 312, "c5b {bump_local()}");
   assert(same(lows(p), [72, 72, 15]), "c6 {lows(p)}");
   assert(same(or_local(p), [1, 50, 4]), "c7 {or_local(p)}");
-  assert(mixed(p) == 55, "c7b {mixed(p)}");
+  assert(mixed(p) == 4055, "c7b {mixed(p)}");
+  assert(same_source(p) == 160, "c7c {same_source(p)}");
   v = [Named { k: 1, nm: "ab" }, Named { k: 2, nm: "cde" }];
   assert(texts(v) == 35, "c8 {texts(v)}");
   c9();
