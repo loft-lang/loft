@@ -17,7 +17,10 @@ All notable changes to the loft language and interpreter.
   record at `8 + IDX * size` and its address the base plus `IDX * size`, out of range the
   binding runs as written (`?`'s zero record resolved as any view's).  IDX may be any
   repeatable expression (`same_read::repeatable`: pure operators and discharges), so
-  `pts[(i + 1) % n ?? 0]?` qualifies.  `LOFT_NO_INDEX_RECPTR`.
+  `pts[(i + 1) % n ?? 0]?` qualifies.  A value record's locals (`(R-ValueRecord)`: Rust
+  tuples) and a coroutine's persistent ones are declined.  It fires in eight census programs
+  (zttext 35, drawing 22, stage 9); every reached bench keeps its hashes.
+  `LOFT_NO_INDEX_RECPTR`.
 - **`(R-RecPtr)`'s choice clause** — `lo = if c { a } else { b }` forks its dep chain;
   `StoreFacts::distinct` now follows the fork, so `lo` keeps an address beside a growth of a
   store every branch is apart from.  An arm the parser lifts is a copy, judged as one.

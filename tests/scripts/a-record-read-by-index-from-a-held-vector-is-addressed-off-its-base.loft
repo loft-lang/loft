@@ -34,6 +34,10 @@
 //   CHANNEL: the VALUE channel on native — the patch makes the scalar clear keep the length.
 //   WITNESS: c9's builder answers 2208 for 908 (each call's buffer keeps the last one's).
 //   HOLDS: leak, panic and free-refusal equal and clean.
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.value-record.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: a compile failure on native — the patch admits a value record's tuple locals.
+//   WITNESS: c11's `pick` assigns a `DbRef` to its `(f64, f64)` temporary (rustc E0308).
+//   HOLDS: the interpreter answers 19 on both trees.
 // The plain clear's foreign-view test mirrors the release-aware clear's and is not load-
 // bearing in any shape the parser emits: a clear of a view is followed by a slice view, which
 // drops the view itself, and a literal rebind mints instead of clearing (struck, the guard
