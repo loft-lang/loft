@@ -120,6 +120,23 @@ pub(crate) fn pure(data: &Data, v: &Value) -> bool {
     }
 }
 
+/// Can `v` be evaluated a second time without changing anything?  [`pure`]'s operators,
+/// with a discharge block (`x ?? d`) admitted around any such expression rather than only a
+/// plain read: the block writes nothing but its own temporary, the same value each time.
+/// `@FR-R-RecPtr`'s index clause names an index this way.
+pub(crate) fn repeatable(data: &Data, v: &Value) -> bool {
+    match v {
+        Value::Span(s) => repeatable(data, &s.1),
+        Value::Call(op, args) => {
+            named(data, *op, &PURE) && args.iter().all(|a| repeatable(data, a))
+        }
+        Value::Block(_) => discharge(v)
+            .is_some_and(|(_, read, _, d)| repeatable(data, read) && repeatable(data, d)),
+        Value::If(c, t, e) => repeatable(data, c) && repeatable(data, t) && repeatable(data, e),
+        other => pure(data, other),
+    }
+}
+
 /// Collect the discharge blocks of `v` that a binding before the statement may replace: not
 /// inside an `if` arm or another statement block.
 fn collect<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {

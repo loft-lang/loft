@@ -38,6 +38,23 @@ impl Output<'_> {
         {
             return write!(w, "{name}");
         }
+        // `@FR-R-RecPtr`'s index clause — the index its prelude named, and the binding block
+        // behind the prelude's in-range test.  The block is taken out of the map first, so
+        // its own emission below is the ordinary one.
+        if !self.held_index_subst.is_empty()
+            && let Some(name) = self
+                .held_index_subst
+                .get(&(std::ptr::from_ref(code) as usize))
+        {
+            return write!(w, "{name}");
+        }
+        if !self.held_index_ncc.is_empty()
+            && let Some(held) = self
+                .held_index_ncc
+                .remove(&(std::ptr::from_ref(code) as usize))
+        {
+            return self.emit_held_index_block(w, code, &held);
+        }
         // @PLN157 § V-ao (`@FR-R-Invariant`) — a chain an enclosing loop memoised emits
         // its memo's use; keyed on the node's address like the pre-eval above, and checked
         // after it so a `_pre_N` that carries the chain keeps its name.
@@ -3468,6 +3485,22 @@ impl Output<'_> {
         wrap_text: bool,
         is_fn_body: bool,
     ) -> std::io::Result<()> {
+        // `@FR-R-RecPtr`'s index clause belongs to the statement that armed it: a block
+        // nested in that statement runs its own statements and must hand the arming back.
+        // Its substitutions are keyed by node and stay visible: the index is read in there.
+        let held = self.held_index_view.take();
+        let r = self.output_block_body(w, block, wrap_text, is_fn_body);
+        self.held_index_view = held;
+        r
+    }
+
+    fn output_block_body(
+        &mut self,
+        w: &mut dyn Write,
+        block: IrBlock,
+        wrap_text: bool,
+        is_fn_body: bool,
+    ) -> std::io::Result<()> {
         // @PLN11 G2/M4 — materialise-at-boundary: native is zero-cost; a
         // store-backed block materialises once, then the intricate `&Block` body
         // (which threads `bl` through patch_hoisted_returns /
@@ -4481,6 +4514,9 @@ impl Output<'_> {
                 .max()
                 .unwrap_or(self.counter);
             self.counter = restore_counter;
+            // `@FR-R-RecPtr`'s index clause — after the pre-evaluations, whose names the
+            // index then reads, and before the statement that reads the prelude.
+            let held_armed = self.begin_held_index(w, v)?;
             self.indent(w)?;
             // Restore counter so the buffer-check pass in output_code_with_subst
             // produces the same counter values as collect_pre_evals did above.
@@ -4735,6 +4771,9 @@ impl Output<'_> {
             }
             if self.bind_record_ptr(w, operators, vnr, Some(block_serial))? {
                 ptr_frames += 1;
+            }
+            if held_armed {
+                self.end_held_index(v);
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }

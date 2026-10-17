@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RecPtr`'s index clause and choice clause, and `@FR-H-ClearRelease`'s scalar clear.
+//
+// `a = pts[i]?` over a vector whose header and element base the frame holds: the index is
+// named once before the statement, and in range the view is the held vector's own record at
+// `8 + i * size` and its address the held base plus `i * size` — where the binding built a
+// `DbRef` through the generic read and resolved the store again for its address.  Past the
+// end, below zero or at a null index the binding runs as written: `?` answers its zero
+// record, whose address is resolved as any view's is.  `lo = if c { a } else { b }` over two
+// such views lives in one of their stores, so it keeps an address beside a growth of another
+// store (the choice clause of `StoreFacts::distinct`).  A buffer of scalars is cleared by a
+// length reset without the run-time walk of the type table that finds out it owns no heap.
+// graphics' `fill_polygon` does all three per scanline.
+//
+// The interpreter applies none of it and is the oracle; every cell asserts hand-computed
+// values.  `LOFT_NO_INDEX_RECPTR=1`, `LOFT_NO_BASE_RECPTR=1`, `LOFT_NO_RECORD_PTR=1`,
+// `LOFT_NO_VECTOR_BASE=1`, `LOFT_HOIST_VERIFY=1` and `LOFT_POISON_CLAIM=1` answer the same.
+// Points: (1,5) (7,2) (4,9).
+
+struct Coord { px: integer, py: integer }
+
+struct Named { k: integer, nm: text }
+
+fn pts() -> vector<Coord> { [Coord { px: 1, py: 5 }, Coord { px: 7, py: 2 }, Coord { px: 4, py: 9 }] }
+
+// c1 — the polygon edge walk: i0 b → 7*3+5+2 = 28; i1 a → 21+2+9 = 32; i2 b → 3+9+5 = 17.
+fn edges(p: const vector<Coord>, y: integer) -> integer {
+  n = len(p);
+  t = 0;
+  for i in 0..n {
+    a = p[i]?;
+    b = p[(i + 1) % n ?? 0]?;
+    lo = if a.py < b.py { a } else { b };
+    t += lo.px * y + a.py + b.py;
+  }
+  t
+}
+
+// c2 — past the end `?` answers its zero record: 15 + 72 + 49 + 0 + 0.
+fn past(p: const vector<Coord>) -> integer {
+  t = 0;
+  for i in 0..len(p) + 2 { a = p[i]?; t += a.px * 10 + a.py; }
+  t
+}
+
+// c3 — a negative index counts from the end: -3 -2 -1 are 0 1 2 → 105 + 702 + 409.
+fn negative(p: const vector<Coord>) -> integer {
+  n = len(p);
+  t = 0;
+  for i in 0..n { a = p[i - n]?; t += a.px * 100 + a.py; }
+  t
+}
+
+// c4 — a null index reads the zero record: 15 + 0 + 49.
+fn null_index(p: const vector<Coord>) -> integer {
+  n = len(p);
+  t = 0;
+  for i in 0..n {
+    ni: integer? = if i == 1 { null } else { i };
+    a = p[ni]?;
+    t += a.px * 10 + a.py;
+  }
+  t
+}
+
+// c5 — a write through the view lands in the element: px 101 107 104.
+fn bump(p: &vector<Coord>) {
+  n = len(p);
+  for i in 0..n { a = p[i]?; a.px += 100; }
+}
+
+// c6 — the choice beside a push into another store: b(7,2) → 72, a(7,2) → 72, b(1,5) → 15.
+fn lows(p: const vector<Coord>) -> vector<integer> {
+  out: vector<integer> = [];
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    b = p[(i + 1) % n ?? 0]?;
+    lo = if a.py < b.py { a } else { b };
+    out += [lo.px * 10 + lo.py];
+  }
+  out
+}
+
+// c7 — a choice whose other branch is a local record: a(1,5) → 1, z → 50, a(4,9) → 4.
+fn or_local(p: const vector<Coord>) -> vector<integer> {
+  out: vector<integer> = [];
+  z = Coord { px: 50, py: 0 };
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    lo = if a.py > 4 { a } else { z };
+    out += [lo.px];
+  }
+  out
+}
+
+// c8 — a text field of a view by index: 1*10+2 + 2*10+3.
+fn texts(v: const vector<Named>) -> integer {
+  n = len(v);
+  t = 0;
+  for i in 0..n { e = v[i]?; t += e.k * 10 + len(e.nm); }
+  t
+}
+
+// c9 — a builder's return buffer of scalars, cleared per call: [0] [0] [0 2] [0 2] [0 2 4]
+// → 100 + 100 + 202 + 202 + 304; and a reused local: 7 + 1 + 2 + 3.
+fn evens(k: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for j in 0..k { if j % 2 == 0 { r += [j]; } }
+  r
+}
+
+fn c9() {
+  t = 0;
+  for k in 1..6 { e = evens(k); t += len(e) * 100 + (e[len(e) - 1] ?? 0); }
+  assert(t == 908, "c9 builder {t}");
+  t2 = 0;
+  buf: vector<integer> = [];
+  for k in 0..4 {
+    buf = [];
+    for j in 0..k { buf += [j * 3]; }
+    t2 += len(buf) + (buf[0] ?? 7);
+  }
+  assert(t2 == 13, "c9 local {t2}");
+}
+
+// c10 — the scalar clear of a slice: the slice empties, its source keeps its bytes.
+fn c10() {
+  big: vector<u8> = [10 as u8, 11 as u8, 12 as u8, 13 as u8, 14 as u8];
+  s: vector<u8> = big[1..4];
+  assert(len(s) == 3 && (s[0] ?? 0) == 11 as u8, "c10 slice {s}");
+  s = [];
+  s += [99 as u8];
+  assert(len(s) == 1 && (s[0] ?? 0) == 99 as u8, "c10 refilled {s}");
+  assert(len(big) == 5 && (big[1] ?? 0) == 11 as u8 && (big[3] ?? 0) == 13 as u8, "c10 source {big}");
+}
+
+fn same(v: vector<integer>, want: vector<integer>) -> boolean {
+  if len(v) != len(want) { return false; }
+  for i in 0..len(v) { if (v[i] ?? -1) != (want[i] ?? -2) { return false; } }
+  true
+}
+
+fn main() {
+  p = pts();
+  assert(edges(p, 3) == 77, "c1 {edges(p, 3)}");
+  assert(past(p) == 136, "c2 {past(p)}");
+  assert(negative(p) == 1216, "c3 {negative(p)}");
+  assert(null_index(p) == 64, "c4 {null_index(p)}");
+  q = pts();
+  bump(q);
+  assert((q[0]?.px) == 101 && (q[1]?.px) == 107 && (q[2]?.px) == 104 && (q[2]?.py) == 9, "c5 {q[0]?.px} {q[1]?.px} {q[2]?.px}");
+  assert(same(lows(p), [72, 72, 15]), "c6 {lows(p)}");
+  assert(same(or_local(p), [1, 50, 4]), "c7 {or_local(p)}");
+  v = [Named { k: 1, nm: "ab" }, Named { k: 2, nm: "cde" }];
+  assert(texts(v) == 35, "c8 {texts(v)}");
+  c9();
+  c10();
+  println("done");
+}

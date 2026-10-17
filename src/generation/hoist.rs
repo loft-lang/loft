@@ -1160,6 +1160,44 @@ impl StoreFacts<'_> {
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
+        self.distinct_at(a, b, 0)
+    }
+
+    /// The dependencies where `x`'s chain forks: a view bound from a choice between views
+    /// (`lo = if c { p } else { q }`) depends on each, and its record is one of theirs.
+    fn fork(&self, x: u16) -> Option<Vec<u16>> {
+        let mut cur = x;
+        let mut seen: HashSet<u16> = HashSet::new();
+        loop {
+            if cur as usize >= self.vars.var_count() || !seen.insert(cur) {
+                return None;
+            }
+            let deps: Vec<u16> = self
+                .vars
+                .tp(cur)
+                .depend()
+                .into_iter()
+                .filter(|d| *d != cur)
+                .collect();
+            match deps.len() {
+                0 => return None,
+                1 => cur = deps[0],
+                _ => return Some(deps),
+            }
+        }
+    }
+
+    fn distinct_at(&self, a: u16, b: u16, depth: u8) -> bool {
+        // A forked chain: apart from `b` when every branch is (`@FR-R-RecPtr`'s choice
+        // clause).  Bounded, as the type's dependency sets are not cycle-free by contract.
+        if depth < 4 {
+            if let Some(ds) = self.fork(a) {
+                return ds.iter().all(|d| self.distinct_at(*d, b, depth + 1));
+            }
+            if let Some(ds) = self.fork(b) {
+                return ds.iter().all(|d| self.distinct_at(a, *d, depth + 1));
+            }
+        }
         let assumed = |a: u16, b: u16| {
             self.assumed
                 .iter()
