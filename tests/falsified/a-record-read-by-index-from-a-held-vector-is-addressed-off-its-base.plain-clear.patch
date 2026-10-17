@@ -1,6 +1,6 @@
 --- a/src/database/mod.rs
 +++ b/src/database/mod.rs
-@@ -2685,7 +2685,7 @@
+@@ -2668,7 +2668,7 @@
              self.allocations[db.store_nr as usize].release_foreign();
              return;
          }
@@ -8,4 +8,4 @@
 +        // SABOTAGE: the scalar clear keeps the length
      }
  
-     pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
+     /// @PLN157 / loft's oldest deferred TODO (`@FR-H-ClearRelease`, formal/heap.md) — the
