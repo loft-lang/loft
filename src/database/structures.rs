@@ -2102,11 +2102,14 @@ impl Stores {
     /// — nothing written — when the destination has no record, no room, or is the watched
     /// store.  The source span must lie below the destination's length when the two are one
     /// record, which both callers guarantee (a whole-vector append refuses that case first).
-    #[inline(always)]
+    // Measured: as a hint `vector_add`'s fits path ran +26 % slower than the inline test it
+    // replaced (the out-of-line call per append); forced inline, +8 %.
     #[expect(
+        clippy::inline_always,
         clippy::too_many_arguments,
-        reason = "the two callers' block coordinates"
+        reason = "measured on vector_add's fits path; the two callers' block coordinates"
     )]
+    #[inline(always)]
     fn append_block_fits(
         &mut self,
         db: &DbRef,
