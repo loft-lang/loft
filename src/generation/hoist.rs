@@ -3694,7 +3694,10 @@ fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
                 matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
                     && matches!(args[1].unspan(), Value::Int(_))
                     && matches!(args[2].unspan(), Value::Int(_))
-            } else if name.starts_with("OpGet") && FILL_FIELD_GETTERS.contains(&name) && args.len() == 2 {
+            } else if name.starts_with("OpGet")
+                && FILL_FIELD_GETTERS.contains(&name)
+                && args.len() == 2
+            {
                 // A scalar field of a record the loop does not write (`self.width`): the
                 // fill's writes land in the vector's own record, never in a field.
                 matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
@@ -6032,7 +6035,8 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let base = match index.unspan() {
         Value::Var(x) if *x == loop_var => None,
         Value::Call(d, args)
-            if matches!(data.def(*d).name(), "OpAddInt" | "OpAddIntNullable") && args.len() == 2 =>
+            if matches!(data.def(*d).name(), "OpAddInt" | "OpAddIntNullable")
+                && args.len() == 2 =>
         {
             let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == loop_var);
             if is_var(&args[0]) && simple_invariant(&args[1], data, &banned) {

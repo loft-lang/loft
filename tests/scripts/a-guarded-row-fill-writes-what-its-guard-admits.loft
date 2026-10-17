@@ -11,6 +11,12 @@
 // The interpreter applies no rewrite and is the oracle.  Each cell sums `(i + 1) * d[i]` over
 // a 10 x 3 canvas of zeros, hand-computed.  `LOFT_NO_GUARDED_FILL=1`, `LOFT_NO_FILL_HOIST=1`,
 // `LOFT_HOIST_VERIFY=1` and `LOFT_POISON_CLAIM=1` answer the same.
+//
+// @falsified-by: tests/falsified/a-guarded-row-fill-writes-what-its-guard-admits.bound-ignored.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch fills the whole range, ignoring N.
+//   WITNESS: g3 answers 1288 for 468 (2..24 written where the guard admits 2..14).
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// The span floor (eight) moves time only; struck, every cell answers the same.
 
 struct Cv { w: integer, h: integer, data: vector<integer> }
 

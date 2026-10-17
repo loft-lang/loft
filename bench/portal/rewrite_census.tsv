@@ -767,7 +767,8 @@ drawing	873da7f9a	R-DischargeInto	1
 drawing	873da7f9a	R-ElemFirst	9
 drawing	873da7f9a	R-ExitVector	3
 drawing	873da7f9a	R-FieldAppend	24
-drawing	873da7f9a	R-Fill	4
+drawing	873da7f9a	R-Fill	8
+drawing	873da7f9a	R-Fill/guarded	4
 drawing	873da7f9a	R-FlatCopy	10
 drawing	873da7f9a	R-FnHeader	13
 drawing	873da7f9a	R-FormatAppend	45
@@ -952,7 +953,8 @@ graphics	873da7f9a	R-Counter	158
 graphics	873da7f9a	R-DischargeInto	1
 graphics	873da7f9a	R-ExitVector	3
 graphics	873da7f9a	R-FieldAppend	7
-graphics	873da7f9a	R-Fill	2
+graphics	873da7f9a	R-Fill	6
+graphics	873da7f9a	R-Fill/guarded	4
 graphics	873da7f9a	R-FlatCopy	2
 graphics	873da7f9a	R-FnHeader	6
 graphics	873da7f9a	R-FormatAppend	37
@@ -1980,7 +1982,8 @@ stage	873da7f9a	R-Counter	187
 stage	873da7f9a	R-DischargeInto	1
 stage	873da7f9a	R-ExitVector	3
 stage	873da7f9a	R-FieldAppend	16
-stage	873da7f9a	R-Fill	2
+stage	873da7f9a	R-Fill	6
+stage	873da7f9a	R-Fill/guarded	4
 stage	873da7f9a	R-FlatCopy	6
 stage	873da7f9a	R-FnHeader	4
 stage	873da7f9a	R-FormatAppend	39
@@ -2040,7 +2043,8 @@ text2d	873da7f9a	R-Counter	182
 text2d	873da7f9a	R-DischargeInto	1
 text2d	873da7f9a	R-ExitVector	3
 text2d	873da7f9a	R-FieldAppend	7
-text2d	873da7f9a	R-Fill	2
+text2d	873da7f9a	R-Fill	6
+text2d	873da7f9a	R-Fill/guarded	4
 text2d	873da7f9a	R-FlatCopy	2
 text2d	873da7f9a	R-FnHeader	4
 text2d	873da7f9a	R-FormatAppend	37

@@ -31,6 +31,11 @@ All notable changes to the loft language and interpreter.
   rebind left a dependency of `s` on itself, which `vector_needs_db` read as a backing: the
   slice minted no store, the interpreter read `s` as null and native named a variable it
   never declared.  A self-dependency now names no backing.  The `s = other` half is open.
+- **`(R-Fill)`'s guarded clause** — `t = base + i; if t < N { v[t] = c }` (graphics' `hline`)
+  is the fill of `lo..min(hi, N - base)` for a span of eight or more; the fill is now tried
+  before the overflow and nest guards, whose plain copy of the loop ran in its place (the
+  plain `(R-Fill)` sat in that `else` too).  `LOFT_NO_GUARDED_FILL`.  `fill_polygon`
+  1.36 → 1.02 ms (−25 %, ≈ 3.5×), `fill_rect` −14 %, `fill_triangle` −5 to −21 % (noisy).
 - graphics, interleaved and pinned, hash equal: `fill_polygon` 1.84 → 1.35 ms (−27 %, ≈ 4.7×);
   the index clause −12 %, the choice clause −10 %, the plain clear −7 %; every other graphics
   row keeps its hash.  Guard

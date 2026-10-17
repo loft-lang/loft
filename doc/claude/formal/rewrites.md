@@ -2969,7 +2969,14 @@ store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
                  invariant — runs as ONE range test and one slice fill when every
                  index lands in [0, len) with no overflow on the way and the range is
                  non-empty; otherwise the per-element loop runs, unchanged.  The
-                 counters are left where the loop leaves them.
+                 counters are left where the loop leaves them.  THE GUARDED CLAUSE:
+                 a body `t = base + i; if t < N { v[t] = c }`, t the body's own local
+                 and N invariant, writes exactly the indexes below N; as t grows with
+                 i, that is the fill of `lo..min(hi, N - base)`, taken when that span
+                 holds at least FILL_MIN_SPAN elements.  The counters still end where
+                 the whole range leaves them: the guard skips writes, not rounds.
+                 The fill is tried before a guard that emits a second copy of the loop
+                 (R-GuardedChain, R-BoundedNest), so both copies are its fallback.
 ```
 
 **In words.** @PLN157 § V-ae.  The elements the fill writes are exactly the elements the
@@ -2983,7 +2990,10 @@ that reads the vector, a value that depends on the loop variable, a strided inde
 second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 `LOFT_HOIST_VERIFY=1` (the fill re-derives the header) and the count sabotage recorded in
 `tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
-loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
+loop.  The guarded clause's span floor is a measurement, not a rule: every span through the
+fill made graphics' `fill_triangle` slower (an empty one pays the fill's setup and then the
+loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
+`hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
 
 ### A nest whose arithmetic cannot fault runs plain
 

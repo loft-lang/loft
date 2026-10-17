@@ -867,6 +867,12 @@ loop the idiom should have taken.
 only, generation time):** N4's leaf rule made transitive — a function whose every user
 callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry and buffer
 guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
+**`LOFT_NO_GUARDED_FILL=1`** (`@FR-R-Fill`'s guarded clause, default-ON, generation time,
+`--native` only) keeps the loop for a body `t = base + i; if t < N { v[t] = c }` — with it
+off, the loop is the slice fill of `lo..min(hi, N - base)` when that span holds eight or
+more elements, the loop running for every span the fill declines (graphics `fill_polygon`
+−25 %, `fill_rect` −14 %; graphics' `hline` is the loop).  First bisect step for a wrong
+pixel out of a guarded row loop on native.
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
 
