@@ -11,8 +11,11 @@
 // `s = other_vector` after the slice is loft#2038's open half and is not here.  Values are
 // hand-computed; every cell asserts them.
 //
-// @falsified-by: tests/falsified/a-slice-bound-before-its-local-is-emptied-holds-the-slice.self-dependency.patch
-//   (scored below)
+// @falsified-by: tests/falsified/a-slice-bound-before-its-local-is-emptied-holds-the-slice.self-dependency.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the VALUE channel on the interpreter, a compile failure on native — the patch
+//   reads `s`'s dependency on itself as a backing again.
+//   WITNESS: a1 reads the slice as [] for [11,12]; native names `var_s`, never declared.
+//   HOLDS: leak, panic and free-refusal equal and clean.
 
 fn mk() -> vector<integer> { [7, 8] }
 fn a1() { big = [10, 11, 12, 13]; s: vector<integer> = big[1..3]; t = "{s}"; s = []; assert(t == "[11,12]" && len(s) == 0, "a1 {t} {s}"); }
