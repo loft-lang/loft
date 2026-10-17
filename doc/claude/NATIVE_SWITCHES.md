@@ -302,6 +302,14 @@ add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `
 variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
 every use.  An address derived from the element's `DbRef` instead of the index measured
 +46 % SLOWER and is not what ships.
+**`LOFT_NO_INDEX_RECPTR=1`** (`@FR-R-RecPtr`'s index clause, default-ON, generation time,
+`--native` only) makes `r = v[IDX]?` over a vector whose header and base the frame holds read
+its element through `get_vector_hoisted` and resolve the store for its address again — with it
+off, IDX is named once before the statement and, in range, the view is the held record at
+`8 + IDX * size` and its address the held base plus `IDX * size`, the binding running as
+written out of range (graphics `fill_polygon` −12 % alone).  First bisect step for a wrong
+field read through a `v[i]?` view on native; `LOFT_HOIST_VERIFY=1` checks the in-range read
+against the runtime's own.
 **`LOFT_NO_NESTED_FIELD=1`** (`@FR-R-RecPtr`'s path clause, default-ON, generation time,
 `--native` only) makes a scalar field reached through INLINE sub-records (`v.pos.x`) rebuild
 its `DbRef` and resolve the store again — with it off, such a field of a record view is read

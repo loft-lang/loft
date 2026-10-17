@@ -10,6 +10,29 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### graphics `fill_polygon`: records read by index off the held base (2026-10-17)
+
+- **`(R-RecPtr)`'s index clause** — `r = v[IDX]?` over a vector whose header and element
+  base the frame holds names IDX once before the statement; in range the view is the held
+  record at `8 + IDX * size` and its address the base plus `IDX * size`, out of range the
+  binding runs as written (`?`'s zero record resolved as any view's).  IDX may be any
+  repeatable expression (`same_read::repeatable`: pure operators and discharges), so
+  `pts[(i + 1) % n ?? 0]?` qualifies.  `LOFT_NO_INDEX_RECPTR`.
+- **`(R-RecPtr)`'s choice clause** — `lo = if c { a } else { b }` forks its dep chain;
+  `StoreFacts::distinct` now follows the fork, so `lo` keeps an address beside a growth of a
+  store every branch is apart from.  An arm the parser lifts is a copy, judged as one.
+- **The scalar clear** — `OpClearVector` on a local whose element type is scalar emits
+  `Stores::clear_vector_plain` (a foreign view dropped, else the length reset) instead of the
+  release-aware clear, which found out at run time, per call, that nothing owns heap.
+- **A slice bound before `s = []` holds the slice (loft#2038, half)** — the first pass's
+  rebind left a dependency of `s` on itself, which `vector_needs_db` read as a backing: the
+  slice minted no store, the interpreter read `s` as null and native named a variable it
+  never declared.  A self-dependency now names no backing.  The `s = other` half is open.
+- graphics, interleaved and pinned, hash equal: `fill_polygon` 1.84 → 1.35 ms (−27 %, ≈ 4.7×);
+  the index clause −12 %, the choice clause −10 %, the plain clear −7 %; every other graphics
+  row keeps its hash.  Guard
+  `a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft`.
+
 ### A warm build keeps a `const` parameter `const` (loft#2034)
 
 The cached IR image stored no `value_const` for a variable, so a program whose library was

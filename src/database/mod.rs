@@ -2656,6 +2656,21 @@ impl Stores {
         self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
     }
 
+    /// [`Self::clear_vector_release`] for a vector whose element owns no heap, which the
+    /// emitter knows from the type (`@FR-H-ClearRelease`): a foreign view dropped as there,
+    /// otherwise the length reset that clear arrives at after asking the type table.
+    #[inline]
+    pub fn clear_vector_plain(&mut self, db: &crate::keys::DbRef) {
+        if !db.is_null()
+            && (db.store_nr as usize) < self.allocations.len()
+            && self.allocations[db.store_nr as usize].is_foreign()
+        {
+            self.allocations[db.store_nr as usize].release_foreign();
+            return;
+        }
+        crate::vector::clear_vector(db, &mut self.allocations);
+    }
+
     /// @PLN157 / loft's oldest deferred TODO (`@FR-H-ClearRelease`, formal/heap.md) — the
     /// clear a REUSED vector owes: `vector::clear_vector` is a LENGTH RESET, sound
     /// wherever the vector's store dies right after (every use it was written for) and
@@ -2673,21 +2688,6 @@ impl Stores {
     /// The gate is the ELEMENT TYPE, read from the layout (`owns_heap`), so there is no
     /// predicate to drift: scalar and no-heap elements pay exactly the old reset.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    /// [`Self::clear_vector_release`] for a vector whose element owns no heap, which the
-    /// emitter knows from the type (`@FR-H-ClearRelease`): a foreign view dropped as there,
-    /// otherwise the length reset that clear arrives at after asking the type table.
-    #[inline]
-    pub fn clear_vector_plain(&mut self, db: &crate::keys::DbRef) {
-        if !db.is_null()
-            && (db.store_nr as usize) < self.allocations.len()
-            && self.allocations[db.store_nr as usize].is_foreign()
-        {
-            self.allocations[db.store_nr as usize].release_foreign();
-            return;
-        }
-        crate::vector::clear_vector(db, &mut self.allocations);
-    }
-
     pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
         // @PLN174 F4b — a local bound to a VIEW of foreign bytes: the clear drops the view
         // and the store is an ordinary, writable, empty one again, so the rebind or the

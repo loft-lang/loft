@@ -19,6 +19,28 @@
 // values.  `LOFT_NO_INDEX_RECPTR=1`, `LOFT_NO_BASE_RECPTR=1`, `LOFT_NO_RECORD_PTR=1`,
 // `LOFT_NO_VECTOR_BASE=1`, `LOFT_HOIST_VERIFY=1` and `LOFT_POISON_CLAIM=1` answer the same.
 // Points: (1,5) (7,2) (4,9).
+//
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.index-address.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch takes the address of the NEXT element.
+//   WITNESS: c1 answers 49 for 77.
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.self-dependency.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   CHANNEL: the PANIC channel on the interpreter, a compile failure on native — the patch
+//   reads `s`'s dependency on itself as a backing again (loft#2038's fixed half).
+//   WITNESS: c10's slice mints no store: the interpreter panics in `keys.rs` reading it,
+//   native names `var_s`, which it never declared.
+//   HOLDS: leak and free-refusal equal and clean.
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.plain-clear.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch makes the scalar clear keep the length.
+//   WITNESS: c9's builder answers 2208 for 908 (each call's buffer keeps the last one's).
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// The plain clear's foreign-view test mirrors the release-aware clear's and is not load-
+// bearing in any shape the parser emits: a clear of a view is followed by a slice view, which
+// drops the view itself, and a literal rebind mints instead of clearing (struck, the guard
+// answers the same).
+// The choice clause has no witnessable sabotage: a choice whose arm is read after its
+// container is disturbed is LIFTED by the parser into a copy in a store of its own (c7b,
+// c7c), so a choice whose arms stay views never has a branch in a store the loop grows.
 
 struct Coord { px: integer, py: integer }
 
@@ -155,6 +177,21 @@ fn texts(v: const vector<Named>) -> integer {
   t
 }
 
+// c11 — a function returning a small record by value (`(R-ValueRecord)`) holds its locals
+// as Rust tuples, not `DbRef`s: the clause declines there.  (2,4) → 6, (4,8) → 12, past the
+// end the zero record (1,0) → 1.
+struct P2 { x: float, y: float }
+fn pick(v: const vector<P2>, i: integer) -> P2 {
+  a = v[i]?;
+  P2 { x: a.x + 1.0, y: a.y * 2.0 }
+}
+fn c11() {
+  v = [P2 { x: 1.0, y: 2.0 }, P2 { x: 3.0, y: 4.0 }];
+  t = 0.0;
+  for i in 0..3 { q = pick(v, i); t += q.x + q.y; }
+  assert(t == 19.0, "c11 {t}");
+}
+
 // c9 — a builder's return buffer of scalars, cleared per call: [0] [0] [0 2] [0 2] [0 2 4]
 // → 100 + 100 + 202 + 202 + 304; and a reused local: 7 + 1 + 2 + 3.
 fn evens(k: integer) -> vector<integer> {
@@ -221,5 +258,6 @@ fn main() {
   assert(texts(v) == 35, "c8 {texts(v)}");
   c9();
   c10();
+  c11();
   println("done");
 }

@@ -207,6 +207,10 @@ pc_a.py < pc_b.py { pc_a } else { pc_b }` read through the chosen held address i
 with no `DbRef` and no second `rec_ptr` (the out-of-range arm must read the `?` fallback's
 zero record, which the hand form did not): −29 %.  Together 1.83 → 1.10 ms (−40 %, ≈ 3.9×).
 `fill_triangle` (2.87×) and `fill_rect` (2.52×) share `hline` and are already under 3×.
+BUILT: (c) as `(R-RecPtr)`'s index clause in its sound form — the index named once, the
+binding as written past the end (−12 % where the unchecked hand form priced −29 %: the
+fallback stays in the loop); (b) as the choice clause (−10 %); (a) as the scalar clear (−7 %).
+1.84 → 1.35 ms (≈ 4.7×).  What is left is `hline`'s per-pixel store (~21 % of the row).
 
 **X3 on `flow_layout_full`, PRICED in part** (six interleaved rounds, hashes equal, 10.92 ms at
 `c7f19c25a`).  Each run of `slice_runs` pays for its text three times: `buf_slice_text` pushes

@@ -1246,7 +1246,21 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  holds (R-Base), the address is `base + idx * size` when `idx` is
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
-                 resolved.  THE TEXT CLAUSE: under the base clause, a TEXT field of r
+                 resolved.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
+                 `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
+                 header AND element base the frame holds, with IDX a repeatable
+                 expression (pure operators and discharges): IDX is evaluated once,
+                 before the statement, and when it is in range of the header's length
+                 r is the vector's own record at `8 + IDX * size` and its address
+                 `base + IDX * size`; out of range — past the end, below zero, null —
+                 the binding runs as written, reading the named index, and the record
+                 `?` builds is resolved as any view's.  That record lives in a store of
+                 its own, so no text field of r is served by the base's span.  THE
+                 CHOICE CLAUSE: a view bound from a choice between views — `lo = if c
+                 { a } else { b }`, whose dep chain FORKS — lives in one of its
+                 branches' stores, so it is apart from a store when every branch is;
+                 an arm the parser lifts into `__lift_N` is a copy in a store of its
+                 own and is judged as one.  THE TEXT CLAUSE: under the base clause, a TEXT field of r
                  (`OpGetText(r, off)`) is a fusable read too — its record number one
                  load at the address, the text sliced off the store span derived
                  beside the base (R-Base's text clause), since a record element's

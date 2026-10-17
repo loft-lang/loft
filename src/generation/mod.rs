@@ -692,10 +692,6 @@ pub struct ByteRead<'a> {
     pub base: String,
 }
 
-/// Use this to drive Rust code generation from a compiled loft program.
-/// It bundles the read-only compile-time data with the mutable emission state
-/// so that individual emits functions don't need to pass both separately.
-#[allow(clippy::struct_excessive_bools)]
 /// `@FR-R-RecPtr`'s index clause — one `v[i]?` binding served from a held header and base:
 /// the prelude's index and in-range names, and what the binding and the address read.
 #[derive(Clone)]
@@ -711,6 +707,10 @@ pub struct HeldIndex {
     pub vector: String,
 }
 
+/// Use this to drive Rust code generation from a compiled loft program.
+/// It bundles the read-only compile-time data with the mutable emission state
+/// so that individual emits functions don't need to pass both separately.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Output<'a> {
     pub data: &'a Data,
     pub stores: &'a Stores,
@@ -5877,7 +5877,16 @@ impl Output<'_> {
     fn held_index_binding<'v>(
         &self,
         stmt: &'v Value,
-    ) -> Option<(u16, u16, &'v Value, &'v Value, &'v Value, u32, String, String)> {
+    ) -> Option<(
+        u16,
+        u16,
+        &'v Value,
+        &'v Value,
+        &'v Value,
+        u32,
+        String,
+        String,
+    )> {
         if self.index_rec_ptr_disabled || self.base_rec_ptr_disabled || self.record_ptr_disabled {
             return None;
         }
@@ -5927,12 +5936,25 @@ impl Output<'_> {
         let path = hoist::vector_path(self.data, &rargs[0])?;
         let header = self.active_vec_header(&path)?.to_owned();
         let base = self.active_vec_base(&path)?.to_owned();
+        // A coroutine's persistent locals live in the state machine, and a value record's
+        // (`(R-ValueRecord)`) are Rust tuples: neither is the `DbRef` the binding builds.
         if self.coroutine_persistent_fields.contains_key(r)
             || self.coroutine_persistent_fields.contains_key(t)
+            || self.value_record_locals.contains_key(r)
+            || self.value_record_locals.contains_key(t)
         {
             return None;
         }
-        Some((*r, *t, &rargs[0], &rargs[2], init, u32::try_from(*size).ok()?, header, base))
+        Some((
+            *r,
+            *t,
+            &rargs[0],
+            &rargs[2],
+            init,
+            u32::try_from(*size).ok()?,
+            header,
+            base,
+        ))
     }
 
     /// `@FR-R-RecPtr`'s index clause, before statement `stmt` is emitted: name its index and
@@ -5990,8 +6012,10 @@ impl Output<'_> {
     /// After the statement that armed the index clause: its substitutions go with it.
     pub(super) fn end_held_index(&mut self, stmt: &Value) {
         if let Some((_, _, _, idx, block, ..)) = self.held_index_binding(stmt) {
-            self.held_index_subst.remove(&(std::ptr::from_ref(idx) as usize));
-            self.held_index_ncc.remove(&(std::ptr::from_ref(block) as usize));
+            self.held_index_subst
+                .remove(&(std::ptr::from_ref(idx) as usize));
+            self.held_index_ncc
+                .remove(&(std::ptr::from_ref(block) as usize));
         }
         self.held_index_view = None;
     }

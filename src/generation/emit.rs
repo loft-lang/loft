@@ -3474,7 +3474,6 @@ impl Output<'_> {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
     /// carry a narrow-integer cast — see [`block_tail_cast`].
@@ -3494,6 +3493,7 @@ impl Output<'_> {
         r
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_block_body(
         &mut self,
         w: &mut dyn Write,
