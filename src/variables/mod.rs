@@ -162,6 +162,9 @@ pub(crate) struct VarSnapshot<'a> {
     pub copy_bound: bool,
     /// A construction work-ref still names its store (loft#1522), so no rebind frees it.
     pub buffer_witnessed: bool,
+    /// `const` before the type (loft#2034): the literal hoist's alias gate, the use analysis
+    /// and library placement read it after parsing.
+    pub value_const: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
     /// A rebound parameter's entry witness (@PLN87 P2.1), `u16::MAX` for none.
@@ -192,6 +195,7 @@ pub(crate) struct RestoredVar {
     pub user_appended: bool,
     pub copy_bound: bool,
     pub buffer_witnessed: bool,
+    pub value_const: bool,
     pub owner_witness: u16,
     pub rebind_orig: u16,
     pub scope: u16,
@@ -958,6 +962,7 @@ impl Function {
             user_appended: v.user_appended,
             copy_bound: v.copy_bound,
             buffer_witnessed: self.is_buffer_witnessed(i as u16),
+            value_const: v.value_const,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
             rebind_orig: self.rebind_orig(i as u16).unwrap_or(u16::MAX),
             scope: v.scope,
@@ -1032,6 +1037,7 @@ impl Function {
                 user_named: r.user_named,
                 user_appended: r.user_appended,
                 copy_bound: r.copy_bound,
+                value_const: r.value_const,
                 scope: r.scope,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
@@ -1044,7 +1050,6 @@ impl Function {
                 write_source: (0, 0),
                 defined: false,
                 const_binding: false,
-                value_const: false,
                 amp_link: false,
                 amp_linked_by: u16::MAX,
                 amp_linked_many: false,

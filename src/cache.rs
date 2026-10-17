@@ -93,7 +93,11 @@ use sha2::{Digest, Sha256};
 /// 18 — `Variable` carries `buffer_witnessed`, `rebind_orig` and `scope` (stride 45 → 62), and
 /// the image is the CLOSED program (loft#1858): a warm load without `rebind_orig` freed the
 /// store a caller handed a rebound parameter.
-const CACHE_FORMAT_VERSION: u8 = 18;
+///
+/// 19 — `Variable` carries `value_const` (byte 62, stride unchanged, loft#2034): a warm load
+/// without it read a `const` parameter as writable, and the literal hoist's alias gate
+/// declined what a cold parse of the same program admitted.
+const CACHE_FORMAT_VERSION: u8 = 19;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

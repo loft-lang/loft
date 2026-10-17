@@ -823,6 +823,7 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             user_appended: vr.field_bool(stores, ds::VAR_USER_APPENDED),
             copy_bound: vr.field_bool(stores, ds::VAR_COPY_BOUND),
             buffer_witnessed: vr.field_bool(stores, ds::VAR_BUFFER_WITNESSED),
+            value_const: vr.field_bool(stores, ds::VAR_VALUE_CONST),
             owner_witness: vr.field_int(stores, ds::VAR_OWNER_WITNESS) as u16,
             rebind_orig: vr.field_int(stores, ds::VAR_REBIND_ORIG) as u16,
             scope: vr.field_int(stores, ds::VAR_SCOPE) as u16,

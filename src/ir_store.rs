@@ -364,6 +364,7 @@ fn write_var_snapshot(stores: &mut Stores, r: &Record, v: &VarSnapshot) {
     r.set_field_bool(stores, ds::VAR_USER_APPENDED, v.user_appended);
     r.set_field_bool(stores, ds::VAR_COPY_BOUND, v.copy_bound);
     r.set_field_bool(stores, ds::VAR_BUFFER_WITNESSED, v.buffer_witnessed);
+    r.set_field_bool(stores, ds::VAR_VALUE_CONST, v.value_const);
     r.set_field_int(stores, ds::VAR_OWNER_WITNESS, i64::from(v.owner_witness));
     r.set_field_int(stores, ds::VAR_REBIND_ORIG, i64::from(v.rebind_orig));
     r.set_field_int(stores, ds::VAR_SCOPE, i64::from(v.scope));

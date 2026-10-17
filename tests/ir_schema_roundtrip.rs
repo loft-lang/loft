@@ -374,3 +374,42 @@ fn corpus_store_codec_round_trips_body() {
     );
     eprintln!("corpus_store_codec_round_trips: {checked} scripts store-round-tripped");
 }
+
+/// loft#2034 — a `const` parameter is still `const` after a cache load.  The literal hoist's
+/// alias gate, the use analysis and library placement read `is_value_const` after parsing, so
+/// a codec that drops it makes a warm build emit differently from a cold one.  The re-encode
+/// comparisons above cannot see a flag the encoder never writes: this asks the decoded table.
+#[test]
+fn a_const_parameter_survives_both_codecs() {
+    let (stdlib_data, stdlib_db) = parsed_default();
+    let mut p = loft::parser::Parser::new();
+    p.data = stdlib_data;
+    p.database = stdlib_db;
+    p.parse_str(
+        "struct S { a: integer }\nfn f(sp: const S, q: S) -> integer { sp.a + q.a }\nfn main() { println(\"{f(S { a: 1 }, S { a: 2 })}\"); }\n",
+        "<value-const>",
+        false,
+    );
+    let flags = |data: &loft::data::Data| {
+        let vars = data.def(data.def_nr("n_f")).variables();
+        (
+            vars.is_value_const(vars.var("sp")),
+            vars.is_value_const(vars.var("q")),
+        )
+    };
+    assert_eq!(
+        flags(&p.data),
+        (true, false),
+        "the parse marks only `sp` const"
+    );
+    let mut stores = loft::database::Stores::new();
+    let root = loft::ir_store::materialize_data(&mut stores, &p.data);
+    let back = loft::ir_read::read_data(&stores, root);
+    assert_eq!(
+        flags(&back),
+        (true, false),
+        "the store codec (the cache) keeps `const`"
+    );
+    let json = data_from_json(&data_to_json(&p.data)).expect("decode");
+    assert_eq!(flags(&json), (true, false), "the JSON codec keeps `const`");
+}

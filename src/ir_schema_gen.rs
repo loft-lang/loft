@@ -668,6 +668,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t77, "user_appended", t4);
     db.field(t77, "copy_bound", t4);
     db.field(t77, "buffer_witnessed", t4);
+    db.field(t77, "value_const", t4);
     db.field(t77, "owner_witness", 0);
     db.field(t77, "rebind_orig", 0);
     db.field(t77, "scope", 0);

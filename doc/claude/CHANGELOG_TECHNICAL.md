@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A warm build keeps a `const` parameter `const` (loft#2034)
+
+The cached IR image stored no `value_const` for a variable, so a program whose library was
+loaded from the cache read `sp: const FrondSpec` as writable: the literal hoist's alias gate
+declined drawing's `fd_sides` build-once guard that a cold parse admitted, and the two
+emissions of one program differed (the rewrite census reports it as a non-deterministic
+emitter).  The `Variable` record carries the flag (cache format 19); the use analysis and
+library placement, which read it too, now answer the same warm as cold.  Guard
+`ir_schema_roundtrip::a_const_parameter_survives_both_codecs` (falsified: the store write
+struck).
+
 ### cbor `encode`: the map key run is one slice append (2026-10-17)
 
 - **`(R-ByteCopy)`'s vector clause takes any destination** — the source itself included.
