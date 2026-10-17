@@ -5613,7 +5613,8 @@ the verify switch.
                  view of B (a local whose dependencies reach it, an alias the body
                  binds of it) is a clear, mint or length reset before the body's first
                  write to B; an append into it (OpAppendVector, OpAppendTextBytes,
-                 OpPreAllocVector, an OpPush kind) whose values do not read it; the
+                 OpPreAllocVector, OpSliceVector, an OpPush kind) whose values — a
+                 slice's source among them — do not read it; the
                  self-replace of B by its own view; a call handing it on to an
                  admitted callee as that callee's buffer; or its value flowing out as
                  the result.  Anything else — a length read, an index, a walk, B as an

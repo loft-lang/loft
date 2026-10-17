@@ -21,6 +21,20 @@
 //   CHANNEL: the VALUE channel (an assertion) on both backends.
 //   WITNESS: under the sabotage v5's length reads 3 for 5.
 //   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+// @falsified-by: tests/falsified/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.twin-reads-buffer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch makes `(R-AppendTwin)`'s scan admit a
+//   view of the buffer read as an operand; the interpreter has no twin.
+//   WITNESS: v26 reads [1 7 1] for [1 7 7]; v29's builder alone reads [1 7 8 9 1 7 8].
+//   HOLDS: leak, panic and free-refusal equal and clean.  The `OpSliceVector` arm's own
+//   operand test is not separately reachable: every producer of the op reads its source
+//   first (`(R-ByteCopy)`'s guard reads `len(v)`, a slice's prelude its `slice_len`), so this
+//   scan rule is the one that declines.
+// @falsified-by: tests/falsified/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.stale-source.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch makes `Stores::vector_slice` read
+//   the source's record as it was before the destination grew.
+//   WITNESS: v28 reads bytes 1..3 of the slice as 0 0 0 (the moved record's park link) for
+//   101 108 108.
+//   HOLDS: leak, panic and free-refusal equal and clean.
 
 struct D { v: vector<u8>, next: integer }
 
@@ -234,11 +248,13 @@ fn v24() {
 }
 
 // the runtime the clause lowers to, reached by a slice of the destination itself: growing
-// (hw's eleven bytes fill their claim) and fitting (five pushes leave room)
+// (hw's eleven bytes sit in a sixteen-byte claim; b's store has free space after it, so the
+// nine more grow it in place — v28 is the growth that moves) and fitting (five pushes leave
+// room)
 fn v25() {
   b = hw();
-  b += b[1..4];
-  assert(same(b, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108]), "v25 got {b}");
+  b += b[1..10];
+  assert(same(b, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108, 111, 32, 119, 111, 114, 108]), "v25 got {b}");
   v: vector<u8> = [];
   for x in 0..5 { v += [(x & 255) as u8]; }
   v += v[2..5];
@@ -262,30 +278,51 @@ fn v26() {
   assert(same(acc, [1, 7, 7]), "v26 got {acc}");
 }
 
-// a slice of the destination itself where the growth cannot stay in place: `c`'s claim
-// follows `a`'s in their record's store, so `a` grows into a new record and the copy must
-// read it there — [104 101 108 108 111 32 119 111 114 108 100] then bytes 1..4 = 101 108 108
+// a slice of a field of itself: [104 101 108 108 111 32 119 111 114 108 100] then bytes
+// 1..10 = 101 108 108 111 32 119 111 114 108.  At a field the slice is the fresh vector a
+// bind would make (`(Slice-Value)`), appended whole.
 struct Two { a: vector<u8>, c: vector<u8> }
-fn grow_self(v: &vector<u8>) { v += v[1..4]; }
+fn grow_self(v: &vector<u8>) { v += v[1..10]; }
 
-// the same through a `&` parameter bound to the field: hw then bytes 1..4, and `c` untouched
+// the same through a `&` parameter bound to the field — here the slice IS `vector_slice` of
+// the destination itself, and the growth cannot stay in place: `c`'s claim follows `a`'s in
+// their record's store, so `a` moves to a new record and the copy must read the source there
+// (the old record is a parked free block whose first data bytes hold a free-list link).
+// Expected as v27, and `c` untouched.
 fn v28() {
   t = Two { a: hw(), c: [] };
   for x in 0..20 { t.c += [(x & 255) as u8]; }
   grow_self(t.a);
-  assert(same(t.a, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108]), "v28 got {t.a}");
+  assert(same(t.a, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108, 111, 32, 119, 111, 114, 108]), "v28 got {t.a}");
   assert(len(t.c) == 20 && (t.c[0] ?? 9) == 0 as u8, "v28 c {t.c}");
 }
 fn v27() {
   t = Two { a: hw(), c: [] };
   for x in 0..20 { t.c += [(x & 255) as u8]; }
-  t.a += t.a[1..4];
-  assert(same(t.a, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108]), "v27 got {t.a}");
+  t.a += t.a[1..10];
+  assert(same(t.a, [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 101, 108, 108, 111, 32, 119, 111, 114, 108]), "v27 got {t.a}");
   assert(len(t.c) == 20 && (t.c[19] ?? 0) == 19 as u8, "v27 c {t.c}");
+}
+
+// cbor's builder shape: `out` is a call result, so it lives in the function's return buffer,
+// and the loop copies a run of `out` into itself.  As an append twin built in acc, `out[k]`
+// would read acc's own first bytes — [1 7 8] for [7 8 9] — so the body declines the twin:
+// acc ends [1 7 8 9 7 8 9].
+fn mk3() -> vector<u8> { [7 as u8, 8 as u8, 9 as u8] }
+fn dup3() -> vector<u8> {
+  out = mk3();
+  for k in 0..3 { out += [out[k] ?? 0]; }
+  out
+}
+fn v29() {
+  acc: vector<u8> = [1 as u8];
+  acc += dup3();
+  assert(same(acc, [1, 7, 8, 9, 7, 8, 9]), "v29 got {acc}");
 }
 
 fn main() {
   v1(); v2(); v3(); v4(); v5(); v6(); v7(); v8(); v9(); v10(); v11(); v12(); v13(); v15();
   v16(); v17(); v18(); v19(); v20(); v21(); v22(); v23(); v24(); v25(); v26(); v27(); v28();
+  v29();
   println("done");
 }
