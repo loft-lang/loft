@@ -11450,7 +11450,8 @@ extern crate loft;"
                 writeln!(w, "}}")?;
             } else if instrument {
                 // Emit shadow call stack instrumentation before the block body.
-                // The CallGuard drop ensures cr_call_pop on all exit paths (including early return).
+                // The guard's drop ensures cr_call_pop on all exit paths (including early return):
+                // `NamedCallGuard` beside the named push, `CallGuard` beside the lean one (loft#2009).
                 // We emit the push/guard as a prefix inside the block's opening `{`.
                 // P199 — prepend the `&mut Stores` derivation from the
                 // `&UnsafeCell<Stores>` parameter so templates and inner
@@ -11575,7 +11576,7 @@ extern crate loft;"
                         };
                     format!(
                         "\n  cr_call_push(\"{loft_name}\", {file_expr}, {loft_line});\n  \
-                         let _call_guard = codegen_runtime::CallGuard;"
+                         let _call_guard = codegen_runtime::NamedCallGuard;"
                     )
                 } else {
                     format!(
