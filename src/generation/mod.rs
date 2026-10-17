@@ -692,6 +692,12 @@ pub struct ByteRead<'a> {
     pub base: String,
 }
 
+/// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes.  Measured on graphics'
+/// rows (interleaved, hashes equal): every span through the fill made `fill_triangle` 10 %
+/// SLOWER, an empty span paying the fill's setup and then the loop; spans from 1 took it
+/// −18 %, from 8 −27 %, from 32 −8 %.
+const FILL_MIN_SPAN: i64 = 8;
+
 /// `@FR-R-RecPtr`'s index clause — one `v[i]?` binding served from a held header and base:
 /// the prelude's index and in-range names, and what the binding and the address read.
 #[derive(Clone)]
@@ -974,6 +980,9 @@ pub struct Output<'a> {
     /// and BASE the frame holds reads its element through `get_vector_hoisted` and resolves
     /// its address from the store again (`@FR-R-RecPtr`'s index clause off).
     pub index_rec_ptr_disabled: bool,
+    /// `LOFT_NO_GUARDED_FILL=1` — `t = base + i; if t < N { v[t] = c }` keeps its loop
+    /// (`@FR-R-Fill`'s guarded clause off).
+    pub guarded_fill_disabled: bool,
     /// `@FR-R-RecPtr`'s index clause, per statement: the index node to emit as its prelude's
     /// `__ix_N`, the binding block to emit behind `__in_N`, and the view whose address the
     /// clause serves — each keyed as the pre-eval substitution is, by node address.
@@ -2325,6 +2334,7 @@ impl<'a> Output<'a> {
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
+            guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             held_index_subst: HashMap::new(),
             held_index_ncc: HashMap::new(),
             held_index_view: None,
@@ -3727,6 +3737,9 @@ impl Output<'_> {
         let Some(f) = hoist::fill_loop(lp, self.data) else {
             return Ok(false);
         };
+        if f.bound.is_some() && self.guarded_fill_disabled {
+            return Ok(false);
+        }
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
@@ -3745,6 +3758,28 @@ impl Output<'_> {
         let hi = self.expr_string(f.hi)?;
         let val = self.expr_string(f.val)?;
         let verify = if self.hoist_verify { "true" } else { "false" };
+        if let Some(bound) = f.bound {
+            // `@FR-R-Fill`'s guarded clause — the index grows with the loop variable, so the
+            // guard `base + i < N` holds exactly below `N - base`: the loop is the fill of
+            // `lo..min(hi, N - base)`.  A span under FILL_MIN_SPAN keeps the loop, which
+            // costs less there than the fill's setup (`fill_triangle`'s short rows).
+            crate::rewrite_census::fired("R-Fill/guarded", 1);
+            let n = self.expr_string(bound)?;
+            let end = if f.inclusive {
+                format!("({hi}).saturating_add(1)")
+            } else {
+                format!("({hi})")
+            };
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let __flhi_{s}: i64 = std::cmp::min({end}, ({n}).saturating_sub({base})); let __fill_{s} = __flhi_{s}.saturating_sub({lo}) >= {FILL_MIN_SPAN} && stores.fill_hoisted::<{t}, {verify}>(&{hdr}, &({vec}), {z}_u32, vector::FillSpan {{ base: ({base}), lo: ({lo}), hi: __flhi_{s}, inclusive: false }}, ({val})); //@FR-R-Fill guarded",
+                s = lp.scope,
+                t = f.rust_type,
+                z = f.size,
+            )?;
+            return Ok(true);
+        }
         self.indent(w)?;
         writeln!(
             w,

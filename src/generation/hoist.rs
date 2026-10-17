@@ -3666,6 +3666,9 @@ pub struct FillLoop<'a> {
     pub index_var: u16,
     pub next_var: Option<u16>,
     pub val: &'a Value,
+    /// The guarded clause's bound N: the body was `t = base + i; if t < N { v[t] = val }`,
+    /// so the loop writes exactly the indexes below N.
+    pub bound: Option<&'a Value>,
 }
 
 /// Is `v` an INVARIANT scalar expression the fill may evaluate once — a variable other
@@ -3673,6 +3676,9 @@ pub struct FillLoop<'a> {
 /// scalar read off such a variable?  Anything else (a call, a `??` block, an element read,
 /// a conversion) keeps the per-element loop: the fill evaluates the expression once and
 /// the fallback once more, so it must be pure and free of the loop's counters.
+/// The two-operand scalar field reads `simple_invariant` admits (`OpGetInt(r, off)`).
+const FILL_FIELD_GETTERS: [&str; 4] = ["OpGetInt", "OpGetLong", "OpGetFloat", "OpGetSingle"];
+
 fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
     match v.unspan() {
         Value::Var(x) => !banned.contains(x),
@@ -3688,6 +3694,11 @@ fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
                 matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
                     && matches!(args[1].unspan(), Value::Int(_))
                     && matches!(args[2].unspan(), Value::Int(_))
+            } else if name.starts_with("OpGet") && FILL_FIELD_GETTERS.contains(&name) && args.len() == 2 {
+                // A scalar field of a record the loop does not write (`self.width`): the
+                // fill's writes land in the vector's own record, never in a field.
+                matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
+                    && matches!(args[1].unspan(), Value::Int(_))
             } else {
                 false
             }
@@ -5915,14 +5926,51 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         .iter()
         .filter(|o| !matches!(o.unspan(), Value::Line(_)))
         .collect();
-    if stmts.len() != 1 {
-        return decline(&format!(
-            "the body has {} statements: {}",
-            stmts.len(),
-            kinds(&body.operators)
-        ));
-    }
-    let Value::Call(setter, wargs) = stmts[0].unspan() else {
+    // `@FR-R-Fill`'s guarded clause: `t = <index>; if t < N { <the setter at v[t]> }`, with
+    // `t` the body's own local.  The setter's index is then `t`, and the index proper is
+    // what `t` was bound to.
+    let mut guarded: Option<(u16, &'a Value, &'a Value)> = None;
+    let setter_stmt: &'a Value = match stmts.as_slice() {
+        [one] => one,
+        [bind, test] => {
+            let (Value::Set(t, bound_idx), Value::If(cond, then, other)) =
+                (bind.unspan(), test.unspan())
+            else {
+                return decline("the two statements are not `t = index; if t < N { … }`");
+            };
+            let Value::Call(lt, largs) = cond.unspan() else {
+                return decline("the guard is not a comparison");
+            };
+            if data.def(*lt).name() != "OpLtInt"
+                || largs.len() != 2
+                || !matches!(largs[0].unspan(), Value::Var(x) if x == t)
+                || !matches!(other.unspan(), Value::Null)
+            {
+                return decline("the guard is not `t < N` with no else");
+            }
+            let inner: Vec<&Value> = match then.unspan() {
+                Value::Block(b) => b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect(),
+                other => vec![other],
+            };
+            let [only] = inner.as_slice() else {
+                return decline("the guarded arm is not one statement");
+            };
+            guarded = Some((*t, &**bound_idx, &largs[1]));
+            only
+        }
+        _ => {
+            return decline(&format!(
+                "the body has {} statements: {}",
+                stmts.len(),
+                kinds(&body.operators)
+            ));
+        }
+    };
+    let Value::Call(setter, wargs) = setter_stmt.unspan() else {
         return decline("the body is not a call");
     };
     let Some((_, rust_type)) = FUSABLE_SETTERS
@@ -5968,10 +6016,24 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         banned.push(nx);
     }
     banned.push(path.0);
-    // The index: the loop variable, or `invariant + variable` either way round.
+    let index: &Value = match guarded {
+        Some((t, bound_idx, _)) => {
+            if !matches!(index.unspan(), Value::Var(x) if *x == t) {
+                return decline("the guarded setter's index is not the bound local");
+            }
+            banned.push(t);
+            bound_idx
+        }
+        None => index,
+    };
+    // The index: the loop variable, or `invariant + variable` either way round.  The
+    // nullable add answers null on overflow, where the fill's own checked add refuses and
+    // the loop runs: the same writes.
     let base = match index.unspan() {
         Value::Var(x) if *x == loop_var => None,
-        Value::Call(d, args) if data.def(*d).name() == "OpAddInt" && args.len() == 2 => {
+        Value::Call(d, args)
+            if matches!(data.def(*d).name(), "OpAddInt" | "OpAddIntNullable") && args.len() == 2 =>
+        {
             let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == loop_var);
             if is_var(&args[0]) && simple_invariant(&args[1], data, &banned) {
                 Some(&args[1])
@@ -5989,6 +6051,11 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     if !simple_invariant(hi, data, &banned) {
         return decline("the range's end is not a simple invariant");
     }
+    let bound = match guarded {
+        Some((_, _, n)) if simple_invariant(n, data, &banned) => Some(n),
+        Some(_) => return decline("the guard's bound is not a simple invariant"),
+        None => None,
+    };
     Some(FillLoop {
         path,
         vector,
@@ -6000,6 +6067,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         index_var: seed_index,
         next_var,
         val,
+        bound,
     })
 }
 

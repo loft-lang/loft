@@ -991,6 +991,18 @@ impl Output<'_> {
                 // reservation written after them stands in the arm that does not run, and
                 // a window must be one local both copies push through.
                 let window = self.push_reserve(w, lp)?;
+                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
+                // runs the slice fill first; the per-element loop below is its fallback for
+                // every range the fill declines (a negative or partial index, an overflow,
+                // an empty range), and the counters are left as the loop would leave them.
+                // BEFORE the guards below, for the reservation's reason: each emits a whole
+                // copy of the loop ahead of its `else`, and a fill tried after them stood in
+                // the arm that runs only when the guard fails.
+                let fill = self.fill_fast_path(w, lp)?;
+                if fill {
+                    self.indent(w)?;
+                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
+                }
                 // `(R-BoundedNest)`'s reduction clause — a loop that is one integer accumulate
                 // of a vector's elements sums what it can PLAIN first, per block under a bound
                 // taken from the data, and the checked loop below resumes where that stopped.
@@ -1006,15 +1018,6 @@ impl Output<'_> {
                 } else {
                     self.chain_fast_path(w, lp)?
                 };
-                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
-                // runs the slice fill first; the per-element loop below is its fallback for
-                // every range the fill declines (a negative or partial index, an overflow,
-                // an empty range), and the counters are left as the loop would leave them.
-                let fill = self.fill_fast_path(w, lp)?;
-                if fill {
-                    self.indent(w)?;
-                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
-                }
                 // @PLN157 § V-am (`@FR-R-PushFill`) — one push of an invariant is one fill
                 // of the tail, the per-element loop its fallback exactly as the fill's.
                 let pushed = self.push_fast_path(w, lp)?;
@@ -1070,9 +1073,6 @@ impl Output<'_> {
                 if pushed {
                     self.push_fast_path_tail(w, lp)?;
                 }
-                if fill {
-                    self.fill_fast_path_tail(w, lp)?;
-                }
                 if nested {
                     write!(w, "\n}} /* checked nest */")?;
                 }
@@ -1084,6 +1084,9 @@ impl Output<'_> {
                         write!(w, "\n}} /* checked chains */")?;
                     }
                     super::ChainGuard::None => {}
+                }
+                if fill {
+                    self.fill_fast_path_tail(w, lp)?;
                 }
                 // The window closes after EVERY copy of the loop: the record's length is
                 // written once, whichever arm ran.
