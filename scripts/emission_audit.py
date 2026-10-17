@@ -55,6 +55,10 @@ BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\(
 # R-RecPtr's base clause: the loop variable of `for e in v` takes its address from the element
 # base the loop holds — the header and the base it names must both be live, on one path.
 BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ vector::held_elem_ptr\((__vb_\d+), var_\w+ as usize \* \d+(?: \+ \d+)?, (?:true|false)\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
+# `@FR-R-RecPtr`'s index clause: the prelude names the index and its range test against a
+# header; the address reads that test.  A multi-line index ends its prelude on the test's line.
+INDEX_PRELUDE = re.compile(r"let (__in_\d+): bool = \((__ix_\d+) as u64\) < u64::from\(([\w.]+)\.len\); //@FR-R-RecPtr index clause")
+BIND_RECPTR_INDEX = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if (__in_\d+) \{ unsafe \{ vector::held_elem_ptr\((__[vi]b_\d+), (__ix_\d+) as usize \* \d+, (?:true|false)\) \} \} else \{ vector::rec_ptr\(&\((.+?)\), &stores\.allocations\) \}; //@FR-R-RecPtr record view address for (\S+?), from the held base by index")
 USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
 # R-PushFill's window clause: a push WINDOW is opened on a live push header and is a second
@@ -97,6 +101,7 @@ def audit(text, quiet=False):
     depth = 0
     holders = []  # live holders, innermost last
     dbrefs = {}  # `__vd_N` -> the path it was bound from
+    index_headers = {}  # `__in_N` -> the header its range test reads
     for nr, raw in enumerate(text.splitlines(), 1):
         line = STRING.sub('""', raw)
         m = FN_HEAD.match(line)
@@ -105,6 +110,7 @@ def audit(text, quiet=False):
             depth = 0
             holders = []
             dbrefs = {}
+            index_headers = {}
             # a twin's inputs are holders for the whole body, path unknown
             # (a base input `__ib_k` is the twin clause of R-Base: a holder like the rest)
             for param in re.findall(r"(__i[shb]_\d+): ", m.group(2)):
@@ -136,6 +142,25 @@ def audit(text, quiet=False):
         md = BIND_DBREF.match(code.rstrip())
         if md:
             dbrefs[md.group(1)] = md.group(2)
+            continue
+        mip = INDEX_PRELUDE.search(line)
+        if mip:
+            index_headers[mip.group(1)] = mip.group(3)
+        mri = BIND_RECPTR_INDEX.match(line)
+        if mri:
+            hdr_name = index_headers.get(mri.group(2))
+            hdr = live(hdr_name) if hdr_name else None
+            base = live(mri.group(3)) if mri.group(3).startswith("__vb") else None
+            if hdr_name is None:
+                violations.append(f"{fn}:{nr}: R-RecPtr — {mri.group(1)} reads {mri.group(2)}, which no index prelude set")
+            elif mri.group(3).startswith("__vb") and (hdr is None or base is None):
+                violations.append(f"{fn}:{nr}: R-RecPtr — {mri.group(1)} takes its address from {hdr_name} / {mri.group(3)}, which is not live here")
+            elif hdr is not None and base is not None and hdr.path != base.path:
+                violations.append(f"{fn}:{nr}: R-RecPtr — {mri.group(1)} pairs header {hdr_name} (`{hdr.path}`) with base {mri.group(3)} (`{base.path}`)")
+            holders.append(Holder(mri.group(1), "recptr", f"rec:{mri.group(6)}", depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
             continue
         mrb = BIND_RECPTR_BASE.match(line)
         if mrb:
