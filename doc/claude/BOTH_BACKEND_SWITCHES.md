@@ -585,6 +585,15 @@ had).  First bisect step for a wrong element or a size change out of such an app
 with it off, an append of no-heap elements into a destination record that already has room,
 distinct from the source, is one block copy and one length write.  First bisect step for a
 wrong element or length out of such an append.
+**`LOFT_NO_SLICE_BLOCK=1`** (runtime, BOTH backends) makes `Stores::vector_slice` — the
+`OpSliceVector` a slice append, a slice bind and `(R-ByteCopy)` lower to — snapshot the span
+into a temporary and append that again.  With it off, the span is copied store to store in
+one block: into the destination's spare room when it has some, otherwise after growing it,
+re-reading the source's record after the growth because a slice of the destination itself
+(`b += b[1..10]`, or `v += v[1..10]` through a `&` parameter) moves with it.  First bisect step for a wrong element
+or length out of a slice append; guard
+`tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v25, and v28
+for the move).
 
 **`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON)
 routes a record appended to a plain vector FIELD of a plain struct — `self.items += [x]`, the

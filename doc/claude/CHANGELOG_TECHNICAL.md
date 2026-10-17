@@ -10,6 +10,30 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### cbor `encode`: the map key run is one slice append (2026-10-17)
+
+- **`(R-ByteCopy)`'s vector clause takes any destination** — the source itself included.
+  The guard reads `len(v)` once, every index the loop reads lies below it, and a push lands
+  above it, so the exclusive-destination test it carried declined `encode_map`'s key loop
+  for nothing.
+- **`Stores::vector_slice` copies in one block** without the temporary it built per call:
+  into the destination's spare room (the same test `vector_add`'s fits path makes, now one
+  helper), otherwise after growing it — re-reading the source's record afterwards, since a
+  slice of the destination moves with it.  `LOFT_NO_SLICE_BLOCK=1` restores the snapshot.
+- **`(R-AppendTwin)` admits `OpSliceVector`** as an append into the buffer: without it
+  `encode__ap` stopped being generated and the copy back into the caller's buffer took most
+  of the gain.  Its source is still scanned as an operand.
+- **`(R-Header)`'s function clause reuses a twin's header** — a body that already receives
+  the parameter's header (`__ih_k`) no longer looks it up again (`key_lt`).
+- **`(Slice-Value)` at a field and through `&`** — `t.a += t.a[1..4]` and `v += v[1..3]` on a
+  `&vector` parameter were refused at compile time; both now take the fresh vector a bind
+  would make, on both backends.
+- The cbor lane, interleaved and pinned, hash equal: `encode` 8.04 → 7.26 ms (−9.7 %);
+  `encode_bytes` and `decode` unchanged (decode's timing moved ±2 % with code layout; its
+  instruction count did not).  Guard
+  `a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v21–v29), pins
+  `byte_copy`, `slice_copy`, `fn_header`, `twin_base`, `vec_copy`.
+
 ### A field append outside a loop goes straight to its field (2026-10-16)
 
 - **`(R-FieldAppend)`** — a straight-line `r.f += [x]` on a struct's plain vector field (no

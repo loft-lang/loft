@@ -186,6 +186,15 @@ value's store.  BUILT as `(R-TextBorrow)`'s tested clause (`LOFT_NO_TESTED_BORRO
 borrows under the run-time store compare and copies otherwise — 396.5 → 356.9 µs (−10 %,
 ≈ 4.65×), `encode` −2.6 %; the row has left the cut.
 
+**X9 on cbor `encode`, BUILT** (interleaved, pinned, hashes equal): the map encoder's emit loop
+copies each key's bytes out of `keybuf` one at a time (`out += [keybuf[koff + i] ?? 0]`), and
+`(R-ByteCopy)` declined it only for an exclusive-destination test the clause does not need.
+With the test dropped, `Stores::vector_slice` made a block copy without its per-call
+temporary, `(R-AppendTwin)` admitting the slice append (without it `encode__ap` stopped being
+generated) and `key_lt` taking the header its twin caller already holds: 8.04 → 7.26 ms
+(−9.7 %); `decode` and `encode_bytes` level (by instruction count — their time moves ±2 % with
+code layout alone).  What is left of the row is the O(n²) rank loop, the twin's algorithm too.
+
 **X3 on `flow_layout_full`, PRICED in part** (six interleaved rounds, hashes equal, 10.92 ms at
 `c7f19c25a`).  Each run of `slice_runs` pays for its text three times: `buf_slice_text` pushes
 the characters into the caller's work `String`, the bind `s = buf_slice_text(…)` copies that
@@ -291,7 +300,7 @@ before it; the slowest row goes first; a step with no price is priced before it 
    ~45 % of `reload_and_record`), which waits on the walk's decision.
 9. **`binary_read`** — X8 is built (1.47 → 0.84 ms); X13 is declined, so what is left is
    the push and the buffered take per value.
-10. **cbor `encode` (5.57×)** — X9, on what X2 left of the row.
+10. **cbor `encode`** — X9 BUILT (−9.7 %); re-measure the row in the next portal run.
 11. **`invert` (6.44×)** — price X10 on `insert_text` (4.84×, the row with the largest
     share of it), build.
 12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
