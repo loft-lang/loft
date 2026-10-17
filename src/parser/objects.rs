@@ -4675,7 +4675,10 @@ impl Parser {
         // a round yields is never null: the loop variable takes the bound's type without its
         // `?` (loft#2036).  The counter above keeps `in_type`, whose null is its not-started
         // state.
-        let elm_type = in_type.peel_optional().0.clone();
+        let elm_type = match in_type {
+            Type::Optional(inner) => *inner,
+            plain => plain,
+        };
         *expr = Value::Iter(
             u16::MAX,
             Box::new(iter_init),

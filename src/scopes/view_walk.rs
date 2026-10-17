@@ -1114,9 +1114,10 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
     // a keyed view read the new collection, and a droppable element was used after its
     // release (loft#2037).
     let note = |v: u16, out: &mut HashSet<u16>| {
-        let tp = function.tp(v).base();
-        if (matches!(tp, Type::Reference(_, _) | Type::Enum(_, true, _))
-            || crate::data::is_collection(tp))
+        if (matches!(
+            function.tp(v).base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _)
+        ) || crate::data::is_collection(function.tp(v).base()))
             && !function.is_compiler_generated(v)
         {
             out.insert(v);
