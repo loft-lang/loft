@@ -190,3 +190,35 @@ fn harness_can_see_the_code() {
          noisy:\n{noisy}\nquiet:\n{quiet}"
     );
 }
+
+/// loft#2025 — a match arm's ROOT CAPTURE (`w: Circle { r } => …`) holds the variant the
+/// pattern fixed, so a field access through it is checked by the arm: no warning, the write
+/// lands, and a message that does fire names `w`, never the capture's own `w#1`.
+#[test]
+fn a_root_capture_inside_its_arm_is_settled() {
+    let out = diagnostics(
+        "capture",
+        "enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }\n\
+         fn main() {\n\
+           s = Shape.Circle { r: 1 };\n\
+           match s {\n\
+             w: Circle { r } => { w.r = 10; }\n\
+             _ => {}\n\
+           }\n\
+           println(\"{s.r ?? 0}\");\n\
+         }\n",
+        &[],
+    );
+    assert!(
+        !out.contains(CODE),
+        "the arm settled the variant for its capture:\n{out}"
+    );
+    assert!(
+        !out.contains("w#1"),
+        "a diagnostic names the spelled binding:\n{out}"
+    );
+    assert!(
+        out.contains("10"),
+        "the write through the capture lands:\n{out}"
+    );
+}

@@ -6419,7 +6419,8 @@ impl Parser {
             }
             // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
             // beside the pattern's own names; `other: _ => …` is the catch-all that binds it.
-            self.root_capture(&subject_val, &subject_type, &mut hoisted_bindings);
+            let root_capture =
+                self.root_capture(&subject_val, &subject_type, &mut hoisted_bindings);
             let Some(first_ident) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -6502,6 +6503,11 @@ impl Parser {
             }
             if self.data.def_type(variant_def_nr) == DefType::EnumValue {
                 self.check_visibility("variant", variant_def_nr, usize::MAX);
+                // loft#2025 — the capture holds this variant for the arm's body: the pattern
+                // is the check a field access through it would otherwise ask for.
+                if let Some(v) = root_capture {
+                    self.capture_variant.insert(v, variant_def_nr);
+                }
             }
 
             // for plain struct match, the pattern name must match the struct type.
@@ -7589,12 +7595,15 @@ impl Parser {
     /// source.  Consumes `name:`; anything else is left for the variant parse.  A BARE lowercase
     /// name at the root stays what `@FR-M-Unit` makes it — a misspelled variant, refused — so a
     /// typo never turns into a catch-all (a-match-arm-names-a-variant-that-exists.loft).
-    fn root_capture(&mut self, subject_val: &Value, subject_type: &Type, hoisted: &mut Vec<Value>) {
-        let Some(name) = self.lexer.peek_named_arg() else {
-            return;
-        };
+    fn root_capture(
+        &mut self,
+        subject_val: &Value,
+        subject_type: &Type,
+        hoisted: &mut Vec<Value>,
+    ) -> Option<u16> {
+        let name = self.lexer.peek_named_arg()?;
         if !Self::is_binding_name(&name) {
-            return;
+            return None;
         }
         self.lexer.has_identifier();
         self.lexer.token(":");
@@ -7626,6 +7635,7 @@ impl Parser {
                 }
             }
         }
+        (v != u16::MAX).then_some(v)
     }
 
     /// The `{ field, field: pattern, … }` of a plain-struct pattern: a bare field binds a new
@@ -18427,22 +18437,34 @@ impl Parser {
         };
     }
 
-    fn chain_site_set_shape(ret: &Type, tail: &mut Value, w: u16) {
+    fn chain_site_set_shape(ret: &Type, tail: &mut Value, w: u16, data: &crate::data::Data) {
         match tail {
-            Value::Span(b) => Self::chain_site_set_shape(ret, &mut b.1, w),
-            Value::Return(inner) => Self::chain_site_set_shape(ret, inner, w),
+            Value::Span(b) => Self::chain_site_set_shape(ret, &mut b.1, w, data),
+            Value::Return(inner) => Self::chain_site_set_shape(ret, inner, w, data),
             // Argument lifting wraps the site call in `Insert([lifts…,
             // call])`; descend to the call so its value still surfaces.
             Value::Insert(ops) => {
                 if let Some(last) = ops.last_mut() {
-                    Self::chain_site_set_shape(ret, last, w);
+                    Self::chain_site_set_shape(ret, last, w, data);
                 }
             }
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last_mut() {
-                    Self::chain_site_set_shape(ret, last, w);
+                    Self::chain_site_set_shape(ret, last, w, data);
                 }
             }
+            // loft#2016 — the chain `{ w = call(…, w); w }` reads the call as a DELIVERY into
+            // `w`, and the `Set` is then the same-store no-op it is for one.  A callee whose
+            // return BORROWS a visible parameter (`fn id(p: S) -> S { p }`, published as
+            // `S["p"]`) delivers nothing on that path: the value that comes back is the
+            // ARGUMENT's store, so the no-op `Set` aliases `w` to it and the site's own free of
+            // the lifted argument that follows the chain releases what `w` now names (`@FR-F-Ret`:
+            // the returned whole value is owned by the caller, never a view).  Left as the bare
+            // call, the site takes the shape every other call result no binding holds takes
+            // (`scopes/free_vars.rs`, the `__ret_tail_N` wrap): a first bind from the call,
+            // which copies a borrowed result and adopts a fresh one by the callee's own
+            // ownership facts, exactly as the body-tail spelling of the same call already does.
+            Value::Call(d, _) if data.def(*d).returns_borrowed_view() => {}
             Value::Call(_, _) => {
                 let block_tp = match ret {
                     Type::Reference(td, _) => Type::Reference(*td, Deps::frame1(w)),
@@ -19440,7 +19462,7 @@ impl Parser {
                             && !signature_only
                             && let Some(tail) = body.last_mut()
                         {
-                            Self::chain_site_set_shape(&ret, tail, *v);
+                            Self::chain_site_set_shape(&ret, tail, *v, &self.data);
                         }
                     }
                     RetPromotion::Rename {
@@ -19473,7 +19495,7 @@ impl Parser {
                         // their NRVO / unify wiring untouched (wrapping there
                         // broke if-arm emission).
                         if chain_site && let Some(tail) = body.last_mut() {
-                            Self::chain_site_set_shape(&ret, tail, *v);
+                            Self::chain_site_set_shape(&ret, tail, *v, &self.data);
                         }
                     }
                     RetPromotion::Bind {
@@ -19492,7 +19514,7 @@ impl Parser {
                             // A bare-call site tail needs its value made
                             // explicit (see `chain_site_set_shape`).
                             if let Some(tail) = body.last_mut() {
-                                Self::chain_site_set_shape(&ret, tail, buf_var);
+                                Self::chain_site_set_shape(&ret, tail, buf_var, &self.data);
                             }
                         } else if let Some(tail) = body.last_mut() {
                             // Named local: keep its own store; deliver a COPY

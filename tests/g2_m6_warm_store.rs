@@ -4,9 +4,10 @@
 //! @PLN11 G2/M6 — warm-cache store-backed codegen, end-to-end.
 //!
 //! With the program cache on and `LOFT_CODEGEN_STORE`, a warm cache hit loads the
-//! bundle as a *skeleton* (def table only — `open_program_store` /
-//! `read_data_skeleton`) and codegen reads each function body straight from the
-//! mmap'd store via `def_body_node`, skipping `read_data`'s body reconstruction.
+//! bundle as a store (`open_program_store`: the whole `Data` read from the mapped
+//! store) and codegen reads the function body it generates straight from that
+//! store via `def_body_node`; the body-less skeleton load is a measurement only
+//! (loft#2012).
 //! Output must be byte-identical to native.
 
 use loft::file_access as fa;
@@ -117,4 +118,62 @@ fn warm_store_keeps_wildcard_import_bindings() {
     assert_eq!(out_native, out_warm, "the warm load lost an imported name");
 
     let _ = fa::remove_dir_all(&dir);
+}
+
+/// loft#2012 — the warm store-backed run answers as the cold one does where codegen reads
+/// ANOTHER definition's body: a user function named like a stdlib native keeps its own body
+/// (the body-less skeleton dispatched it to the native and panicked on the argument shape).
+#[test]
+fn warm_store_keeps_a_user_fn_named_like_a_native() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_m6_dispatch_{pid}.loft"));
+    fa::write(
+        &script,
+        "struct Box { n: integer, s: text }\n\
+         fn field(b: Box) -> integer { b.n + 1 }\n\
+         fn main() { print(\"{field(Box { n: 15, s: \"\" })}\\n\"); }\n",
+    )
+    .expect("write script");
+    let cache = tmp.join(format!("loft_m6_dispatch_cache_{pid}"));
+    let _ = fa::remove_dir_all(&cache);
+    let (ok_cold, out_cold) = run(&script, Some(&cache), false);
+    assert!(ok_cold && out_cold.contains("16"), "cold: {out_cold}");
+    let (ok_m6, out_m6) = run(&script, Some(&cache), true);
+    assert!(ok_m6, "warm store run failed: {out_m6}");
+    assert_eq!(
+        out_cold, out_m6,
+        "the warm store run dispatched `field` elsewhere"
+    );
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache);
+}
+
+/// loft#2012 — and a caller's copy of a callee's borrowed return (`fn first(p: vector<S>)
+/// -> S { p[0] }`) is decided from the callee's body: over an empty one the warm run adopted
+/// the view and a write through the result reached the caller's vector (`99` for `7`).
+#[test]
+fn warm_store_copies_a_borrowed_return_like_the_cold_run() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_m6_borrow_{pid}.loft"));
+    fa::write(
+        &script,
+        "struct S { a: integer }\n\
+         fn first(p: vector<S>) -> S { p[0] }\n\
+         fn main() { q = [S { a: 7 }]; first(q).a = 99; println(\"{q[0].a}\"); }\n",
+    )
+    .expect("write script");
+    let cache = tmp.join(format!("loft_m6_borrow_cache_{pid}"));
+    let _ = fa::remove_dir_all(&cache);
+    let (ok_cold, out_cold) = run(&script, Some(&cache), false);
+    assert!(ok_cold && out_cold.trim() == "7", "cold: {out_cold}");
+    let (ok_m6, out_m6) = run(&script, Some(&cache), true);
+    assert!(ok_m6, "warm store run failed: {out_m6}");
+    assert_eq!(
+        out_cold, out_m6,
+        "the warm store run wrote through a borrowed return"
+    );
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache);
 }

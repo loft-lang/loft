@@ -68,11 +68,11 @@ fn test_vector_generics() {
 //
 // Each bound guarantees EXACTLY the operations in this table, and no more —
 // a `+` under `Numeric` is refused as surely as one under no bound at all.
-// Each names the FEWEST operators it needs, because the rest are derived:
-// `>`, `<=` and `>=` all come from `<`, and `!=` comes from `==`.
+// Each names the FEWEST methods it needs, because the operators are derived:
+// `<`, `<=`, `>` and `>=` all read `compare`, and `!=` comes from `==`.
 //
-//   Ordered    — declares `<`; gives you `<`, `<=`, `>`, `>=`
-//   Equatable  — declares `==`; gives you `==` and `!=`
+//   Ordered    — declares `compare`; gives you `<`, `<=`, `>`, `>=`
+//   Equatable  — declares nothing; every type has `==` and `!=`
 //   Addable      — `+` only.  NOT `-`
 //   Numeric      — `*` and the UNARY `-a`.  NOT `+`, NOT `/`
 //   Subtractable — the BINARY `a - b`
@@ -146,8 +146,9 @@ fn test_combined_bounds() {
 //
 // `compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has
 // one, so `self.cents.compare(other.cents)` is the whole body for one field.
-// `Equatable` is met by every type, because `==` compares what two values hold —
-// a struct field by field — unless the type defines `operator equals`.
+// `Equatable` is met by every type: `==` always compares what two values hold — a
+// struct field by field — and no type can redefine it; a comparison of your own is a
+// named method.
 //
 // The same definition serves the bare operator: once `Money` has `compare`, both
 // `a < b` and `<T: Ordered>` work on it.  Miss one and the error names it —

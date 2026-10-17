@@ -30,7 +30,7 @@ const EXPECTED: &[(&str, bool)] = &[
     // c11: a discharged view returned through the buffer is a leaf — DECLINED since 932209dc4:
     // the `?` default is a build whose exit release is guarded by a store-identity test
     // against the result, and that answer turns on the path (loft#2014 is the way back)
-    ("n_cell_at", false),
+    ("n_cell_at", true), // c11: a discharged view returned through the buffer is a leaf (loft#2014 restored)
     ("n_mk_cond", false), // c7: the arms build INTO one shared buffer local and the tail
     // RETURNS that local — an owned tail, which the value form would have to mint (declines)
     ("n_mk_inner", true), // c8: read field-wise inside an admitted caller's own build
@@ -52,9 +52,9 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_half5", true),    // t5: the join local is its buffer — a forward (E-1)
     // t6: a selecting tail (a view of a `const` parameter) — DECLINED since 932209dc4, as
     // c11: its `?` default is a build the result may hold (loft#2014)
-    ("n_sel", false),
+    ("n_sel", true), // t6: a selecting tail (a view of a `const` parameter)
     // DECLINED since 932209dc4 (loft#2014) — t7: a selecting tail with an early return
-    ("n_ctrl", false),
+    ("n_ctrl", true),       // t7: a selecting tail with an early return
     ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
     ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
     ("n_pt10", true),       // t10: a discharge's default, widened beside the nullable tuple
@@ -65,9 +65,9 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     // temp — a value local since `(R-ValueLocal)` made call-bound lifts eligible
     // (2026-09-25); the copy FROM it materialises the tuple into the destination
     // DECLINED since 932209dc4 (loft#2014) — t13: its result is handed to `disc`'s nullable tuple parameter
-    ("n_pt13", false),
+    ("n_pt13", true), // t13: its result is handed to `disc`'s nullable tuple parameter
     // DECLINED since 932209dc4 (loft#2014) — t13: a nullable tuple parameter discharged with a build — no view is
-    ("n_disc", false),
+    ("n_disc", true), // t13: a nullable tuple parameter discharged with a build
     // read and no store minted, so the join the record form made is two tuples (loft#1993)
     ("i_2Pt_n_gpick", true), // t14: a generic instance's statement-join selecting tail
     ("i_4Coin_n_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
@@ -196,12 +196,11 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
         .nth(1)
         .and_then(|s| s.split("\nfn ").next())
         .expect("n_half_chord emitted");
-    // DECLINED since 932209dc4 (loft#2014): the selecting callee keeps its record, so the
-    // call site keeps the borrow bracket its tuple would have made redundant.  The
-    // restoration flips this back to `!hc.contains(…)`.
+    // The selecting callee returns its tuple again (loft#2014 restored), so the call site has
+    // no borrow bracket: a tuple is in no store to protect.
     assert!(
-        hc.contains("n_protect_store_frees"),
-        "a selecting callee on the record road keeps its borrow bracket (loft#2014)"
+        !hc.contains("n_protect_store_frees"),
+        "a selecting callee's tuple makes the borrow bracket redundant"
     );
     // The join buffers of a branch that binds a TUPLE are dead: minted by nothing, freed by
     // nothing (t4); a branch that keeps a record arm still mints its buffer (t5).
@@ -362,26 +361,26 @@ const NULLABLE_EXPECTED: &[(&str, Option<&str>)] = &[
     ("n_n2", Some("(i64, bool)")), // an early `return null`
     // a tail joining `null` with a build — DECLINED since 932209dc4: the build's exit release
     // is guarded by a store-identity test against the result (loft#2014)
-    ("n_n3", None),
+    ("n_n3", Some("(i64, bool)")), // a tail joining `null` with a build
     // DECLINED since 932209dc4 (loft#2014) — a present record with a null field
-    ("n_n4", None),
+    ("n_n4", Some("(i64, i64, bool)")), // a present record with a null field
     ("n_n5", Some("(i64, f64, i64, bool)")), // a nested inline record
     // DECLINED since 932209dc4 (loft#2014) — float and boolean fields
-    ("n_n6", None),
+    ("n_n6", Some("(f64, bool, bool)")), // float and boolean fields
     // DECLINED since 932209dc4 (loft#2014) — a method
-    ("t_1S_bump", None),
-    ("n_n8", Some("(i64, bool)")), // recursion through its own result
+    ("t_1S_bump", Some("(i64, bool)")), // a method
+    ("n_n8", Some("(i64, bool)")),      // recursion through its own result
     // DECLINED since 932209dc4 (loft#2014) — a forwarding tail
-    ("n_n9f", None),
+    ("n_n9f", Some("(i64, bool)")), // a forwarding tail
     // DECLINED since 932209dc4 (loft#2014) — a forwarding `return`
-    ("n_n9r", None),
+    ("n_n9r", Some("(i64, bool)")), // a forwarding `return`
     // DECLINED since 932209dc4 (loft#2014) — bound into a local declared `null`
-    ("n_n12", None),
+    ("n_n12", Some("(i64, bool)")), // bound into a local declared `null`
     ("n_whole", Some("(i64, bool)")), // a dense tuple parameter, WIDENED
-    ("n_fwdr", Some("(i64, bool)")),  // a dense call forwarded beside `return null`
+    ("n_fwdr", Some("(i64, bool)")), // a dense call forwarded beside `return null`
     // DECLINED since 932209dc4 (loft#2014) — passed on whole and pushed: written where present
-    ("n_n10", None),
-    ("n_n11", None), // a `??` with a record default
+    ("n_n10", Some("(i64, bool)")), // passed on whole and pushed: the tuple is materialised into the push
+    ("n_n11", None),                // a `??` with a record default
 ];
 
 /// The return type `rust` declares for `name`, when it is a tuple.
@@ -434,28 +433,27 @@ const JOIN_EXPECTED: &[(&str, Option<&str>)] = &[
     ("n_j2", Some("(i64, bool)")), // a nullable view handed back
     // a nullable view beside a build — DECLINED since 932209dc4 (the join's store-identity
     // guard turns on the path; loft#2014)
-    ("n_j3", None),
+    ("n_j3", Some("(i64, bool)")), // a nullable view beside a build
     ("n_j4", Some("(i64, bool)")), // a nullable view beside `null`
     // DECLINED since 932209dc4 (loft#2014) — a `-> S` call beside a build
-    ("n_j5", None),
+    ("n_j5", Some("(i64, bool)")),
     // DECLINED since 932209dc4 (loft#2014) — a `-> S` call beside `null`
-    ("n_j6", None),
+    ("n_j6", Some("(i64, bool)")),
     // DECLINED since 932209dc4 (loft#2014) — a `-> S` call beside a `-> S?` call
-    ("n_j7", None),
+    ("n_j7", Some("(i64, bool)")),
     // DECLINED since 932209dc4 (loft#2014) — a dense local beside a build
-    ("n_j8", None),
+    ("n_j8", Some("(i64, bool)")),
     // DECLINED since 932209dc4 (loft#2014) — nested: a parameter, a call, `null`
-    ("n_j9", None),
+    ("n_j9", Some("(i64, bool)")),
     // DECLINED since 932209dc4 (loft#2014) — three arms
-    ("n_j10", None),
+    ("n_j10", Some("(i64, bool)")),
     // DECLINED since 932209dc4 (loft#2014) — a local bound on two paths
-    ("n_j11", None),
+    ("n_j11", Some("(i64, bool)")),
     ("n_j12", Some("(i64, bool)")), // a copy of a nullable parameter
     ("n_j13", Some("(i64, bool)")), // `null` beside a join of a view and a build
-    // DECLINED since 932209dc4 (loft#2014) — four fields
-    ("n_j14", None),
+    ("n_j14", None),                // four fields: declines on its own, not on the identity test
     // DECLINED since 932209dc4 (loft#2014) — a nullable view beside a `-> S` call
-    ("n_j15", None),
+    ("n_j15", Some("(i64, bool)")),
     ("n_j20", Some("(i64, bool)")), // a view local of a vector element
     ("n_j21", Some("(i64, i64, bool)")), // a view local of a keyed lookup
     ("n_d1", None),                 // an owned local at an arm: the record road
@@ -476,9 +474,8 @@ fn a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple() {
     }
     // A local of a function that returns no record, bound from a `-> S` call on one path
     // and a `-> S?` call on another, holds the nullable tuple; the dense bind is widened.
-    // DECLINED since 932209dc4 (loft#2014): the makers it joins keep their buffers, so `h`
-    // holds a record and no bind is widened.  The restoration flips these back to
-    // `var_h: (i64, bool)` and `let __wd = n_g(cell`.
+    // loft#2014 restored: the makers it joins return their tuples, so `h` is the widened
+    // tuple `(i64, bool)` and the dense maker's result is widened at the bind.
     for name in ["n_j16", "n_j17"] {
         let body = rust
             .split(&format!("\nfn {name}("))
@@ -486,12 +483,12 @@ fn a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         let body = body.split("\nfn ").next().unwrap_or(body);
         assert!(
-            body.contains("var_h: DbRef"),
-            "{name}: its local `h` holds a record on the declined road (loft#2014)"
+            body.contains("var_h: (i64, bool)"),
+            "{name}: its local `h` is the widened tuple"
         );
         assert!(
-            !body.contains("let __wd = n_g(cell"),
-            "{name}: no bind is widened on the declined road (loft#2014)"
+            body.contains("let __wd = n_g(cell"),
+            "{name}: the dense maker's result is widened at the bind"
         );
     }
     let off = std::env::temp_dir().join("loft_value_record_join_off.rs");
@@ -544,7 +541,7 @@ const PARAM_EXPECTED: &[(&str, &str)] = &[
     ),
     ("t_1S_add", "(self: (i64,), o: (i64, bool)) -> i64"),
     // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
-    ("n_q11", "(a: DbRef, __retbuf: DbRef) -> DbRef"),
+    ("n_q11", "(a: (i64, bool)) -> (i64, bool)"),
     (
         "n_q12",
         "(p: (i64, bool), q: (i64, bool), c: u8) -> (i64, bool)",
@@ -597,9 +594,9 @@ const STORE_EXPECTED: &[(&str, &str)] = &[
     ("n_id3", "(p: (i64, bool)) -> (i64, bool)"),
     ("n_w3", "(c: u8) -> (i64, bool)"),
     // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
-    ("n_w4", "(p: DbRef, c: u8, __retbuf: DbRef) -> DbRef"),
+    ("n_w4", "(p: (i64, bool), c: u8) -> (i64, bool)"),
     // DECLINED since 932209dc4 (loft#2014)
-    ("n_w5", "(p: DbRef, n: i64, __retbuf: DbRef) -> DbRef"),
+    ("n_w5", "(p: (i64, bool), n: i64) -> (i64, bool)"),
     ("n_w6", "(p: (i64, bool), c: u8) -> (i64, bool)"),
     ("n_id7", "(p: (i64, bool)) -> (i64, bool)"),
     ("n_twice", "(p: (i64, bool)) -> (i64, bool)"),

@@ -894,6 +894,7 @@ fn in_place_at_0(name: &str) -> bool {
                 | "OpClearVector"
                 | "OpRemoveVector"
                 | "OpKeepVectorRange"
+                | "OpPrependVector"
                 | "OpAppendTextBytes"
                 | "OpAppendVector"
                 | "OpReplaceVector"

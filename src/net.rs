@@ -389,7 +389,7 @@ pub(crate) fn http_get_within(
     connect: std::time::Duration,
     whole: std::time::Duration,
 ) -> Result<Vec<u8>, Miss> {
-    // @PLAN12 Phase 6.11 — support `file://` URLs for offline
+    // Support `file://` URLs for offline
     // mirrors + bundle-import-served indexes.  Same contract as the
     // HTTP path: return the raw bytes at the URL.
     if let Some(path) = url.strip_prefix("file://") {

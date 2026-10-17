@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @observes: LOFT_NO_CLEAR_RELEASE — it counts the live records the stores hold after the calls, which the clear-release policy decides.
 //
 // `@FR-R-WorkBuffer`'s result clause — a function that binds a call's `vector<τ>` result and
 // only READS it where it stands (its length, its elements, their fields) does not own the

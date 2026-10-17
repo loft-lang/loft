@@ -4,12 +4,11 @@
 // @TITLE: Library system — importing and using external loft modules.
 // A library is a `.loft` file you can share across projects. Place it in a
 // `lib/` directory and import it at the top of your file. `use name;` gives you
-// the `name::` prefix, which reaches everything the library defines. `use name::*;`
+// the `name::` prefix, which reaches every `pub` item the library defines. `use name::*;`
 // also brings every `pub` name into your own namespace, so you can write them bare;
 // `use name::(a, b);` brings in just those.
-// A definition without `pub` is reachable only through the prefix. So `pub` is
-// about the BARE spelling rather than about secrecy: leaving it off keeps a name
-// out of your namespace and out of any import, but `name::thing` still finds it.
+// A definition without `pub` is the library's own: neither the bare name nor
+// `name::thing` reaches it from outside. `pub` is the library's surface.
 // A name you import is yours to use, not to hand on: a file that imports YOURS does
 // not receive it. Write `pub use name::*;` to pass the names on as well.
 // `use` statements must come before any `fn` or `struct` definition in your
@@ -28,7 +27,7 @@ use testlib::*;
 // ## Calling Library Methods
 // Methods defined in the library are called on the value directly — no prefix
 // on the call site. A `pub` free function is callable bare as well; the prefix is
-// how you reach one that is not `pub`, and how you say which library you meant.
+// how you say which library you meant.
 // ## Extending a Library Type
 // You can add new methods to a library type from your own file. Write the
 // `self` parameter type with the `::` separator and the compiler treats the
@@ -138,7 +137,7 @@ fn main() {
   // arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes
   // a group. Multiple names must be parenthesised — the flat `use lib::Name,
   // Other` is refused ("import multiple names with parentheses"). Only `pub`
-  // definitions can be named this way; the rest stay reachable as `lib::name`.
+  // definitions can be named this way; the rest are not reachable at all.
   //
   // Taking only what you name is the stronger position, because it makes you
   // immune to the library GROWING a name. A wildcard import and your own definition
@@ -153,10 +152,8 @@ fn main() {
   // **`use` must appear before all definitions.** If you write a function
   // first and then a `use`, the compiler reports a syntax error.
   //
-  // **`pub` decides the bare spelling.** Only `pub` definitions come in bare or
-  // can be named by an import; the rest are still reachable as `lib::name`. A
-  // library therefore has no hidden half — `pub` says which names are ready to
-  // be written without ceremony, not which ones exist.
+  // **`pub` decides the surface.** Only `pub` definitions come in bare, can be named
+  // by an import, or answer to `lib::name`; a library's non-`pub` items are its own.
   //
   // **Native extensions.** A library can be pure `.loft`, or ship a Rust crate
   // beside it: declare `[library] native = "..."` in `loft.toml` and loft builds

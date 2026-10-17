@@ -89,6 +89,20 @@ tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
 `(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
 34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+**`LOFT_NO_ZERO_COUNT=1`** (`@FR-R-ZeroCount`, on the closed program, BOTH backends) keeps
+`len(t) > 0` and every other comparison of a text's character count with the zero boundary
+counting characters — with it off, each reads the byte count (`size(t)`), which answers the
+same: a text has no characters exactly when it has no bytes.  The first bisect step for a
+wrong emptiness answer; `len(t) == 1` and `len(t) > 1` are never folded.
+**`LOFT_NO_LITERAL_HOST=1`** (`(R-MoveLast)`'s host clause, `@FR-R-MoveLast`, decided in the
+scope pass after the forwarded results, BOTH backends) keeps a record literal bound to a local
+(`cur = Cur { src: toks, pos: 0 }`) minting a store of its own and deep-copying the vector
+local its field takes, though that local is dead after it.  With it off, the literal is claimed
+in the vector's store (`OpPlaceRecord(toks, …)` where `OpDatabase` stood), the field takes the
+vector by a handle move (`OpMoveVector`) and the literal's exit free becomes
+`OpFreeRefIfDistinct(cur, owner)` before the owner's own.  It is the first bisect step for an
+EMPTY vector field of a local literal, or a vector local that reads empty after one;
+`LOFT_TRACE_PLACE=1` names each admission and decline (`[literal-host]`).
 **`LOFT_NO_RETURN_FIELD=1`** (`(R-ReturnField)`, `@FR-R-ReturnField`, decided in the scope
 pass after the exit vector, BOTH backends) keeps the parser's copy at an exit that returns a
 FIELD of an owned record local (`p = mk(n); return p.a`, or `v = p.a; return v`): the return
@@ -391,7 +405,11 @@ the leaf inliner):** each removes work the IR shows is redundant, and each has i
 its trace.  **`LOFT_NO_FORWARD_WALK=1`** keeps `for x in v` an iterator where the body cannot
 resize `v` (`@FR-R-ForwardWalk`); **`LOFT_NO_SAME_READ=1`** keeps both of two equal discharged
 reads in one statement (`@FR-R-SameRead`), and **`LOFT_NO_MATCH_READ=1`** alone its match
-clause, so each arm test of a slice `match` reads the subject again; **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
+clause, so each arm test of a slice `match` reads the subject again, and
+**`LOFT_NO_SEQUENCE_READ=1`** alone its sequence clause, so a store read the next statements
+repeat across a fresh record's fill is read again each time; **`LOFT_NO_SELF_REPLACE=1`**
+keeps the delivery of a buffer's own view into that buffer at every exit
+(`@FR-R-SelfReplace`, trace `LOFT_TRACE_SELF_REPLACE=1`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
 record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
 a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
 **`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local

@@ -3557,8 +3557,8 @@ pub fn n_hash_sorted(cell: &std::cell::UnsafeCell<Stores>, h: DbRef, tp: i64) ->
     stores.build_hash_sorted_vec(&h, tp as u16)
 }
 
-/// Raw bucket-walk sibling of `n_hash_sorted` for `for e in h par(...)` —
-/// skips the key sort because the parallel queue has no use for hash order.
+/// Slot-order sibling of `n_hash_sorted` for `for e in h par(...)` and
+/// `for e in unordered(h)` — skips the key sort (`@FR-Col-Unordered`).
 /// Bytecode equivalent: `n_hash_unsorted` in `src/native.rs`.
 pub fn n_hash_unsorted(cell: &std::cell::UnsafeCell<Stores>, h: DbRef, tp: i64) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
@@ -4218,7 +4218,10 @@ pub fn n_struct_from_jsonvalue(
     let bytes = u32::from(stores.size(struct_kt));
     let words = bytes.div_ceil(8) + 1;
     let result = stores.database(words.max(2));
+    let seen = stores.last_json_errors.len();
     crate::native::populate_struct_from_jsonvalue(stores, &result, struct_kt, &v);
+    let errs = stores.last_json_errors[seen..].to_vec();
+    stores.set_parse_errors(&result, struct_kt, errs);
     result
 }
 

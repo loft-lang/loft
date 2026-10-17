@@ -1,6 +1,7 @@
 # Coroutines — lazy loop yields (CL-9)
 
-The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), whose Known Limitations table lists CL-9.
+The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), whose Known Limitations table lists CL-9.  Its timeline is
+[COROUTINE_LAZY_YIELDS-history.md](COROUTINE_LAZY_YIELDS-history.md).
 
 ## Design: lazy loop yields (CL-9)
 

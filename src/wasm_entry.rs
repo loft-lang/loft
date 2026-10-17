@@ -22,7 +22,7 @@ const DEFAULT_FILES: &[(&str, &str)] = crate::stdlib_sources::STDLIB_SOURCES;
 /// Library files embedded in the WASM build so `use <name>;` resolves in the
 /// browser sandbox without a native cdylib.
 const BUNDLED_LIB_FILES: &[(&str, &str)] = &[
-    // Post-Stage B (5b, 2026-05-31): graphics + shapes sourced from
+    // graphics + shapes are sourced from
     // fixture clones of loft-libs-graphics (see scripts/sync-fixtures.sh
     // PINNED_REFS); monorepo lib/{graphics,shapes}/ are gone.
     (
@@ -59,7 +59,7 @@ const BUNDLED_LIB_FILES: &[(&str, &str)] = &[
     // `src/native.rs` under `cfg(all(target_arch="wasm32",
     // feature="wasm"))` and route through `host_*` JS bridges in
     // this file.
-    // Post-Stage B (2026-05-31): web sourced from the fixture clone
+    // web is sourced from the fixture clone
     // of loft-libs-net (see scripts/sync-fixtures.sh PINNED_REFS).
     (
         "web.loft",
@@ -82,7 +82,7 @@ const BUNDLED_LIB_FILES: &[(&str, &str)] = &[
         "assets.loft",
         include_str!("../tests/fixtures/libs/assets/src/assets.loft"),
     ),
-    // @PLN18 phase 07 — the browser kernel's loft surface: the SAME lib
+    // The browser kernel's loft surface: the SAME lib
     // source the native kernel uses (the script is the contract).
     (
         "engine_host.loft",
@@ -319,11 +319,11 @@ pub fn resume_frame() -> String {
             let still_running = session.state.resume();
             if still_running {
                 // Carry whatever the program printed DURING this frame.  A running
-                // session used to answer the bare `{"running":true}`, so everything a
-                // long-lived program said reached the page only when it stopped — and a
-                // game does not stop.  A program reporting that it could not load its
-                // assets therefore said so into a buffer nobody read until never, which
-                // is the same silence as a missing host method one layer up.
+                // session answering the bare `{"running":true}` would hold everything a
+                // long-lived program said until it stopped — and a game does not stop,
+                // so a program reporting that it could not load its assets would say so
+                // into a buffer nobody reads, the same silence as a missing host method
+                // one layer up.
                 //
                 // `output_take` CLEARS as it reads, so this is the only copy: the page
                 // appends it rather than replacing, or draining here would lose

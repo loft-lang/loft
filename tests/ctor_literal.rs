@@ -124,7 +124,11 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
 #[test]
 fn the_refill_clause_keeps_the_designed_loop_records() {
     let out = loft(
-        &["--native-release", "--native-emit", "/dev/null"],
+        &[
+            "--native-release",
+            "--native-emit",
+            loft::platform::null_sink(),
+        ],
         REFILL,
         &[("LOFT_TRACE_LOOP_RECORD", "1")],
     );
@@ -152,7 +156,11 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
         "{lines:#?}"
     );
     let off = loft(
-        &["--native-release", "--native-emit", "/dev/null"],
+        &[
+            "--native-release",
+            "--native-emit",
+            loft::platform::null_sink(),
+        ],
         REFILL,
         &[
             ("LOFT_TRACE_LOOP_RECORD", "1"),

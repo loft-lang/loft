@@ -1,8 +1,8 @@
 diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 2549d53a..2bec898e 100644
+index 451f243a..2ef1a6ef 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -14740,13 +14740,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+@@ -15636,13 +15636,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
              // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
              // was freed by nobody, one record per call on `--native` alone, in a concrete
              // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
@@ -17,12 +17,12 @@ index 2549d53a..2bec898e 100644
 +            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
                  return None;
              }
-             // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
+             // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index 6429ffc8..2a4def0d 100644
+index 633bb252..5a61c887 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1155,15 +1155,6 @@ impl Scopes<'_> {
+@@ -1114,15 +1114,6 @@ impl Scopes<'_> {
          if to_scope == 1 {
              let free_distinct = data.def_nr("OpFreeRefIfDistinct");
              for (param, orig) in function.rebind_params() {
@@ -39,10 +39,10 @@ index 6429ffc8..2a4def0d 100644
                      free_distinct,
                      vec![Value::Var(param), Value::Var(orig)],
 diff --git a/src/use_analysis.rs b/src/use_analysis.rs
-index d20a2628..b7c3937f 100644
+index f92bc5c9..b504904a 100644
 --- a/src/use_analysis.rs
 +++ b/src/use_analysis.rs
-@@ -8056,77 +8056,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
+@@ -7846,77 +7846,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
          func.is_argument(v)
              && !matches!(func.tp(v), Type::RefVar(_))
              && !func.name(v).starts_with("__")

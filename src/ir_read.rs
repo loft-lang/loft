@@ -576,12 +576,20 @@ pub fn open_bundle(path: &str) -> std::io::Result<(Data, Vec<SchemaType>)> {
 }
 
 /// @PLN11 G2/M6 — warm-cache store-backed load.  Mmap the bundle into a
-/// standalone [`Stores`], reconstruct only the def **table**
-/// ([`read_data_skeleton`] — bodies stay in the store), and return the store +
-/// the `definitions`-vector root so codegen reads each body via
-/// [`def_body_node`].  Skips reconstructing the body `Value` trees (the bulk of
-/// the IR) — the warm-load win.  The returned `Stores` must outlive codegen
-/// (it backs the bodies).
+/// standalone [`Stores`], read the whole [`Data`] from it, and return the store +
+/// the `definitions`-vector root so codegen reads the body it GENERATES via
+/// [`def_body_node`].  The returned `Stores` must outlive codegen (it backs that
+/// body).
+///
+/// loft#2012 — every body is read, never the def table alone ([`read_data_skeleton`]
+/// leaves every body in the store, the warm-load saving of skipping the body trees).
+/// Codegen reads the body it generates from the store, but every decision it makes about
+/// ANOTHER definition asks that definition's native body — whether a call reaches a user
+/// function or a native of the same name, whether a callee's return is a borrow the
+/// caller must copy — and over an empty body those answer wrong (a panic, or a view
+/// adopted where a copy was owed, silently).  With 700-odd readers of a definition's
+/// body the sound form is the full read; the skeleton is the measurement
+/// [`read_data_skeleton`] is, not codegen's input.
 ///
 /// # Errors
 /// `NotFound` on a missing / non-store / corrupt bundle (a clean cache miss).
@@ -604,7 +612,7 @@ pub fn open_program_store(path: &str) -> std::io::Result<(Stores, DbRef, Data, V
         pos: root.pos + ds::BUNDLE_DATA,
         ..root
     };
-    let data = read_data_skeleton(&stores, data_root);
+    let data = read_data(&stores, data_root);
     let schema = read_schema(&stores, Record::new(root), ds::BUNDLE_TYPES);
     Ok((stores, data_root, data, schema))
 }
@@ -1466,7 +1474,7 @@ mod tests {
         }
     }
 
-    /// @PLN11 arc D step D1 — `ir_store::save_data` / `open_data`:
+    /// `ir_store::save_data` / `open_data`:
     /// save the stdlib to a `.store` file, load it back (mmap, no re-parse),
     /// and confirm bit-for-bit equality.  Also checks that opening a missing
     /// file is a clean `NotFound` (the cache-miss path the caller falls back on).

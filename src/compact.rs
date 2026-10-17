@@ -77,6 +77,8 @@ pub(crate) struct Ops {
     vector_len: u32,
     length_vector: u32,
     keep_range: u32,
+    prepend: u32,
+    not: u32,
 }
 
 impl Ops {
@@ -101,6 +103,8 @@ impl Ops {
             vector_len: data.def_nr("t_6vector_len"),
             length_vector: data.def_nr("OpLengthVector"),
             keep_range: data.def_nr("OpKeepVectorRange"),
+            prepend: data.def_nr("OpPrependVector"),
+            not: data.def_nr("OpNot"),
         }
     }
 }
@@ -121,13 +125,23 @@ struct Rebuild {
     /// block's end): that free is moved into the fallback arm beside the statements that fill
     /// the snapshot, so the fast arm never names a slot it never initialised.
     deferred_free: Option<u16>,
+    /// The local form's `vdb = null` when it opens the rebind: kept AHEAD of the guard, so
+    /// the slot a later free names is initialised on the fast arm too.
+    pre: Option<Value>,
     /// The vector place: a local, or a field chain over one.
     place: Value,
-    /// The element type the `OpFinishRecord` names.
+    /// The element type the rebind's append names.
     elem_tp: i32,
-    lo: Value,
-    hi: Value,
+    form: Form,
     t: u16,
+}
+
+/// Which of `(R-Compact)`'s forms a rebuild is.
+enum Form {
+    /// `for i in lo..hi { t += [V[i]?] }; V = t` — the run `[lo, hi)` kept in place.
+    Keep { lo: Value, hi: Value },
+    /// `t += g; t += V; V = t` — `g`'s elements put in front of V's, in place.
+    Prepend { g: Value },
 }
 
 fn visit(v: &mut Value, cx: &mut Cx) {
@@ -153,7 +167,7 @@ fn visit_list(ls: &mut Vec<Value>, cx: &mut Cx) {
         let sig = significant(&ls[i..]);
         if !sig.is_empty()
             && sig[0].0 == 0
-            && let Some(r) = match_rebuild(&sig, cx)
+            && let Some(r) = match_rebuild(&sig, cx).or_else(|| match_prepend(&sig, cx))
         {
             // `span` counts significant statements; take the list up to the last of them.
             let end = i + sig[r.span - 1].0 + 1;
@@ -186,7 +200,12 @@ fn visit_list(ls: &mut Vec<Value>, cx: &mut Cx) {
             if let Some(j) = later_free {
                 taken.push(ls.remove(j - (end - i)));
             }
+            let pre = r.pre.clone();
             ls.insert(i, guarded(r, taken, cx));
+            if let Some(init) = pre {
+                ls.insert(i, init);
+                i += 1;
+            }
             i += 1;
             continue;
         }
@@ -198,6 +217,10 @@ fn visit_list(ls: &mut Vec<Value>, cx: &mut Cx) {
 /// `if 0 <= lo && lo <= hi && hi <= len(V) { keep } else { the statements as written }`.
 fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
     let ops = cx.ops;
+    let (lo, hi) = match r.form {
+        Form::Keep { lo, hi } => (lo, hi),
+        Form::Prepend { g } => return prepended(r.place, g, r.elem_tp, r.t, original, cx),
+    };
     crate::rewrite_census::fired("R-Compact", 1);
     if crate::keys::trace_compact() {
         eprintln!(
@@ -215,21 +238,39 @@ fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
         _ => None,
     };
     let mut tests: Vec<Value> = Vec::new();
-    tests.extend(not_null(&r.lo));
-    tests.extend(not_null(&r.hi));
-    tests.push(le(Value::Int(0), r.lo.clone()));
-    tests.push(le(r.lo.clone(), r.hi.clone()));
-    tests.push(le(r.hi.clone(), len));
+    tests.extend(not_null(&lo));
+    tests.extend(not_null(&hi));
+    tests.push(le(Value::Int(0), lo.clone()));
+    tests.push(le(lo.clone(), hi.clone()));
+    tests.push(le(hi.clone(), len));
     // `a && b && c` as the parser spells it: `if a { if b { c } else { false } } else { false }`.
     let mut cond = tests.pop().expect("at least three tests");
     while let Some(t) = tests.pop() {
         cond = v_if(t, cond, Value::Boolean(false));
     }
-    let keep = Value::Call(
-        ops.keep_range,
-        vec![r.place, Value::Int(r.elem_tp), r.lo, r.hi],
-    );
+    let keep = Value::Call(ops.keep_range, vec![r.place, Value::Int(r.elem_tp), lo, hi]);
     v_if(cond, Value::Insert(vec![keep]), Value::Insert(original))
+}
+
+/// `if !OpPrependVector(V, g, tp) { the statements as written }` — the op answers false,
+/// having done nothing, for the vectors it does not serve (a null or absent V, a linked
+/// element type).
+fn prepended(place: Value, g: Value, elem_tp: i32, t: u16, original: Vec<Value>, cx: &Cx) -> Value {
+    let ops = cx.ops;
+    crate::rewrite_census::fired("R-Compact/prepend", 1);
+    if crate::keys::trace_compact() {
+        eprintln!(
+            "[compact] fn={} t={} ADMITTED: the rebuild is one in-place prepend",
+            cx.data.def(cx.d_nr).name(),
+            cx.data.def(cx.d_nr).variables().name(t)
+        );
+    }
+    let done = Value::Call(ops.prepend, vec![place, g, Value::Int(elem_tp)]);
+    v_if(
+        Value::Call(ops.not, vec![done]),
+        Value::Insert(original),
+        Value::Null,
+    )
 }
 
 // ── the matcher ─────────────────────────────────────────────────────────────────────────
@@ -459,7 +500,7 @@ fn match_rebind(
     t: u16,
     place: &Value,
     ops: &Ops,
-) -> Option<(usize, i32, Option<u16>)> {
+) -> Option<(usize, i32, Option<u16>, Option<Value>)> {
     // Field form: `rhs = null; OpAppendVector(rhs, t, tp); OpClearVector(V);
     // OpAppendVector(V, rhs, tp)`, the snapshot's `OpFreeRef(rhs)` right after (then it is
     // part of the span) or wherever the scan put it (then it stays, and the init the fast
@@ -483,9 +524,9 @@ fn match_rebind(
             .and_then(|(_, v)| call(v, ops.free_ref))
             .is_some_and(|fr| var(&fr[0]) == Some(*rhs));
         return Some(if freed_here {
-            (5, elem_tp, None)
+            (5, elem_tp, None, None)
         } else {
-            (4, elem_tp, Some(*rhs))
+            (4, elem_tp, Some(*rhs), None)
         });
     }
     // Direct field form: `OpClearVector(V); OpAppendVector(V, t, tp)` — the parser takes it
@@ -498,13 +539,19 @@ fn match_rebind(
         && let Some(elem_tp) = int(a.get(2)?)
         && elem_tp > 0
     {
-        return Some((2, elem_tp, None));
+        return Some((2, elem_tp, None, None));
     }
-    // Local form: `OpDatabase(vdb2, _); V = OpGetField(vdb2, 0, _); OpSetInt4(vdb2, 0, 0);
-    // OpAppendVector(V, t, tp)`.
+    // Local form: `[vdb2 = null;] OpDatabase(vdb2, _); V = OpGetField(vdb2, 0, _);
+    // OpSetInt4(vdb2, 0, 0); OpAppendVector(V, t, tp)` — the null init present where the
+    // scan did not hoist it to the function's top (straight-line code).
     let v = var(place)?;
-    let (v2, _) = match_decl(s, ops)?;
-    if v2 != v {
+    let init = match s.first()?.1.unspan() {
+        Value::Set(x, nul) if matches!(nul.unspan(), Value::Null) => Some(*x),
+        _ => None,
+    };
+    let s = if init.is_some() { &s[1..] } else { s };
+    let (v2, vdb2) = match_decl(s, ops)?;
+    if v2 != v || init.is_some_and(|x| x != vdb2) {
         return None;
     }
     let a = call(s.get(3)?.1, ops.append_vector)?;
@@ -512,7 +559,8 @@ fn match_rebind(
         return None;
     }
     let elem_tp = int(a.get(2)?)?;
-    (elem_tp > 0).then_some((4, elem_tp, None))
+    let pre = init.map(|x| Value::Set(x, Box::new(Value::Null)));
+    (elem_tp > 0).then_some((4 + usize::from(pre.is_some()), elem_tp, None, pre))
 }
 
 /// How many nodes name variable `x` — in EVERY spelling: a `Var`, and the variants that
@@ -543,7 +591,7 @@ fn match_rebuild(s: &[(usize, &Value)], cx: &Cx) -> Option<Rebuild> {
     let (t, vdb) = match_decl(s, ops)?;
     let (i, lo, hi, body) = match_loop(s.get(3)?.1, ops)?;
     let place = match_record_append(body, t, i, ops)?;
-    let (rebind, elem_tp, deferred_free) = match_rebind(&s[4..], t, &place, ops)?;
+    let (rebind, elem_tp, deferred_free, pre) = match_rebind(&s[4..], t, &place, ops)?;
     let span = 4 + rebind;
     // The bounds are pure and read nothing the loop or the rebuild writes.
     let forbidden = [t, vdb, i];
@@ -566,10 +614,54 @@ fn match_rebuild(s: &[(usize, &Value)], cx: &Cx) -> Option<Rebuild> {
     Some(Rebuild {
         span,
         deferred_free,
+        pre,
         place,
         elem_tp,
-        lo,
-        hi,
+        form: Form::Keep { lo, hi },
+        t,
+    })
+}
+
+/// The prepend form: the declaration `t = []`, `OpAppendVector(t, g, tp)` from a local `g`,
+/// `OpAppendVector(t, V, tp)` from the place, and the rebind `V = t` — with `t` mentioned
+/// nowhere else in the function, and `g` neither `t` nor a root of the place.
+fn match_prepend(s: &[(usize, &Value)], cx: &Cx) -> Option<Rebuild> {
+    let ops = cx.ops;
+    let (t, vdb) = match_decl(s, ops)?;
+    let first = call(s.get(3)?.1, ops.append_vector)?;
+    let second = call(s.get(4)?.1, ops.append_vector)?;
+    if var(&first[0])? != t || var(&second[0])? != t {
+        return None;
+    }
+    let g = var(&first[1])?;
+    let place = second[1].unspan().clone();
+    let tp = int(first.get(2)?)?;
+    if g == t || g == vdb || !is_place(&place, ops) || int(second.get(2)?)? != tp || tp <= 0 {
+        return None;
+    }
+    // `g` may BE the place (a vector prepended to itself: the runtime appends it to itself
+    // before the rotation); it may not be a root of a longer place.
+    if mentions(&place, t) > 0 || (mentions(&place, g) > 0 && var(&place) != Some(g)) {
+        trace_decline(cx, t, "the place names the local or the prepended vector");
+        return None;
+    }
+    let (rebind, elem_tp, deferred_free, pre) = match_rebind(&s[5..], t, &place, ops)?;
+    if elem_tp != tp {
+        return None;
+    }
+    let span = 5 + rebind;
+    let inside: usize = s[..span].iter().map(|(_, v)| mentions(v, t)).sum();
+    if mentions(cx.whole, t) != inside {
+        trace_decline(cx, t, "the local is read or written outside the prepend");
+        return None;
+    }
+    Some(Rebuild {
+        span,
+        deferred_free,
+        pre,
+        place,
+        elem_tp,
+        form: Form::Prepend { g: Value::Var(g) },
         t,
     })
 }

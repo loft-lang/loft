@@ -759,7 +759,17 @@ mod tests {
     #[test]
     #[allow(clippy::many_single_char_names)] // a/b/c/d are the four geometric records
     fn claim_at_carves_a_mid_block_region() {
+        // Parked (`@FR-H-Park`), A, B and C stay three free blocks: `claim_at` takes B off
+        // its list, and the split it leaves is the one the coalesced block gives.
+        for park in [false, true] {
+            claim_at_carves_a_mid_block_region_with(park);
+        }
+    }
+
+    #[allow(clippy::many_single_char_names)] // a/b/c/d are the four geometric records
+    fn claim_at_carves_a_mid_block_region_with(park: bool) {
         let mut s = Store::new_in_use(64);
+        s.set_park(park);
         let a = s.claim(3);
         let b = s.claim(4);
         let c = s.claim(5);
@@ -777,11 +787,19 @@ mod tests {
         s.delete(c);
         s.delete(b);
         s.delete(a);
-        assert_eq!(
-            hdr(&s, a),
-            -((d - a) as i32),
-            "a..d coalesced into one free block"
-        );
+        if park {
+            assert_eq!(
+                (hdr(&s, a), hdr(&s, b), hdr(&s, c)),
+                (-3, -4, -5),
+                "a, b and c parked apart"
+            );
+        } else {
+            assert_eq!(
+                hdr(&s, a),
+                -((d - a) as i32),
+                "a..d coalesced into one free block"
+            );
+        }
 
         // Re-claim b's exact slot. Full 3-way split: [a,b) free | [b,b+4) | [b+4,d) free.
         let got = s.claim_at(b, 4);

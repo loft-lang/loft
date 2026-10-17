@@ -2016,7 +2016,7 @@ pub enum Placement {
     /// memory-mapped file.
     Process,
     /// A server somewhere else holds the library; calls cross a socket and the
-    /// call arena travels as bytes on it (@PLN119 arc E).
+    /// call arena travels as bytes on it.
     ///
     /// The library declares that it is MEANT to run this way; WHERE is
     /// deployment, and comes from the environment

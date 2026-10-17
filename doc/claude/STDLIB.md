@@ -686,9 +686,9 @@ return response.to_json_pretty();
 | Expression | Description |
 |---|---|
 | `"{value:j}"` | Serialise any struct/enum/vector to JSON text |
-| `Type.parse(text)` | Parse JSON or loft-native text into a struct (P54 step 5 will require `Type.parse(JsonValue)` for structs) |
+| `Type.parse(text)` | Parse JSON or loft-native text into a struct; `Type.parse(JsonValue)` is the staged form |
 | `vector<T>.parse(text)` | Parse a JSON array into an iterable vector |
-| `record#errors` | The errors of the `Type.parse(text)` call that built `record`, as a `vector<text>` with one entry per error; empty after a success, unchanged by a read, and carried with the whole value (@C148) |
+| `record#errors` | The errors of the `Type.parse(…)` call that built `record`, as a `vector<text>` with one entry per value that did not fit — the one-step `Type.parse(text)` and the staged `Type.parse(json_parse(text))` form alike, every mismatch, the misfit field left at its default; empty after a success, unchanged by a read, and carried with the whole value (@C148) |
 
 <!-- from tests/reference/json-values.loft -->
 ```loft

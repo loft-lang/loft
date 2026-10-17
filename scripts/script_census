@@ -76,6 +76,8 @@ struct Lex {
   depth: integer,      // open `$(` groups inside a double-quoted bash literal
   argv_next: boolean,  // the next literal is argv (`[`, an argv call, a continuation)
   prev: character,
+  escaped: boolean,    // the previous character was an unescaped backslash
+  was_escaped: boolean, // …and the one before it (what `skip_step` reads for this character)
 }
 
 fn flush(self: Lex) {
@@ -87,7 +89,7 @@ fn skip_step(self: Lex, c: character, lang: text) -> boolean {
   if self.depth > 0 {
     if c == ')' { self.depth -= 1; }
     else if c == '(' && self.prev == '$' { self.depth += 1; }
-  } else if c == self.quote && self.prev != '\\' {
+  } else if c == self.quote && !self.was_escaped {
     self.quote = ' ';
   } else if lang == "sh" && c == '(' && self.prev == '$' && self.quote == '"' {
     self.depth = 1;
@@ -96,9 +98,14 @@ fn skip_step(self: Lex, c: character, lang: text) -> boolean {
 }
 
 fn step(self: Lex, c: character, lang: text) {
+  // A backslash escapes the character after it, and only that one: `\\"` is an escaped
+  // backslash and then a closing quote (reading `prev` alone swallowed the rest of the
+  // line on three lines of the tree; finding 002's re-measure found it).
+  self.was_escaped = self.escaped;
+  self.escaped = c == '\\' && !self.was_escaped;
   if self.quote != ' ' && !self.counting {
     if self.skip_step(c, lang) { self.prev = c; return; }
-  } else if self.quote != ' ' && c == self.quote && self.prev != '\\' {
+  } else if self.quote != ' ' && c == self.quote && !self.was_escaped {
     self.flush();
     self.quote = ' ';
     self.counting = false;
@@ -135,7 +142,7 @@ fn step(self: Lex, c: character, lang: text) {
 fn tokens(line: text, lang: text) -> vector<text> {
   lex = Lex { result: [], cur: "", quote: ' ', counting: false, depth: 0,
               argv_next: lang == "py" && (line.starts_with("\"") || line.starts_with("'")),
-              prev: ' ' };
+              prev: ' ', escaped: false, was_escaped: false };
   for c in line { lex.step(c, lang); }
   lex.flush();
   lex.result

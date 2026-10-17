@@ -832,44 +832,44 @@ differently and only a cell could ever have caught the claim.
 
 | chapter source | reviewed through | commit |
 |---|---|---|
-| `default` | 2026-10-01 | `a80e26737` |
+| `default` | 2026-10-16 | `46ec215e0` |
 | `doc/00-vs-python.html` | 2026-10-01 | `a80e26737` |
 | `doc/00-vs-rust.html` | 2026-10-01 | `0c1e2c840` |
 | `doc/install.html` | 2026-10-01 | `0c1e2c840` |
 | `doc/roadmap.html` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/01-keywords.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/02-text.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/03-integer.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/04-boolean.loft` | 2026-10-01 | `0c1e2c840` |
+| `tests/docs/03-integer.loft` | 2026-10-16 | `3de09bdee` |
+| `tests/docs/04-boolean.loft` | 2026-10-16 | `3de09bdee` |
 | `tests/docs/05-float.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/06-function.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/07-vector.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/08-struct.loft` | 2026-10-01 | `0c1e2c840` |
+| `tests/docs/08-struct.loft` | 2026-10-16 | `763fc6179` |
 | `tests/docs/09-enum.loft` | 2026-09-29 | `ffb66a58b` |
 | `tests/docs/10-sorted.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/11-index.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/12-hash.loft` | 2026-09-01 | `e9643ff6` |
 | `tests/docs/13-file.loft` | 2026-09-01 | `e9643ff6` |
-| `tests/docs/15-lexer.loft` | 2026-09-01 | `e9643ff6` |
-| `tests/docs/16-parser.loft` | 2026-10-01 | `a80e26737` |
-| `tests/docs/17-libraries.loft` | 2026-10-01 | `0c1e2c840` |
+| `tests/docs/15-lexer.loft` | 2026-10-16 | `c39a5f995` |
+| `tests/docs/16-parser.loft` | 2026-10-16 | `c39a5f995` |
+| `tests/docs/17-libraries.loft` | 2026-10-16 | `49e0cad5d` |
 | `tests/docs/18-locks.loft` | 2026-09-01 | `e9643ff6` |
 | `tests/docs/19-threading.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/20-logging.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/22-time.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/23-safety.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/24-json.loft` | 2026-09-03 | `b1ccf0e9` |
-| `tests/docs/25-generics.loft` | 2026-10-01 | `a80e26737` |
+| `tests/docs/24-json.loft` | 2026-10-16 | `49e0cad5d` |
+| `tests/docs/25-generics.loft` | 2026-10-16 | `49e0cad5d` |
 | `tests/docs/26-closures.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/27-coroutines.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/28-tuples.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/29-match.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/30-formatting.loft` | 2026-10-01 | `0c1e2c840` |
+| `tests/docs/29-match.loft` | 2026-10-16 | `763fc6179` |
+| `tests/docs/30-formatting.loft` | 2026-10-16 | `3de09bdee` |
 | `tests/docs/31-ref-forward.loft` | 2026-10-01 | `f29effbf3` |
-| `tests/docs/33-features.loft` | 2026-10-01 | `0c1e2c840` |
+| `tests/docs/33-features.loft` | 2026-10-16 | `231a813a9` |
 | `tests/docs/34-running.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/35-testing.loft` | 2026-10-01 | `0c1e2c840` |
-| `tests/docs/36-debugging.loft` | 2026-09-03 | `b1ccf0e9` |
+| `tests/docs/36-debugging.loft` | 2026-10-16 | `b194678c7` |
 | `tests/docs/37-projects.loft` | 2026-10-01 | `0c1e2c840` |
 | `tests/docs/38-call-it-yourself.loft` | 2026-10-01 | `0c1e2c840` |
 

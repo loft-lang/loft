@@ -39,6 +39,7 @@
 1081-a-join-bound-to-a-returned-local.loft
 108-path-helpers.loft
 1092-lexer-revert-restores-the-cursor.loft
+10-match.loft
 113-fread-inferred-size.loft
 114-file-sync.loft
 115-snapshot-roundtrip.loft
@@ -46,6 +47,7 @@
 117-deep-stack.loft
 119-keyed-local-reassign.loft
 11-vectors.loft
+124-vector-amortised-growth.loft
 125-native-text-arg.loft
 126-store-release-keeps-everything.loft
 129-lazy-bind.loft
@@ -56,11 +58,14 @@
 129-lazy-sql-range.loft
 129-lazy-sql-schema.loft
 12-collections.loft
+131-keyed-nested-struct-uaf.loft
+132-vector-elemset-inline-literal-uaf.loft
 134-persist-copy-key-order.loft
 134-persist-copy-query.loft
 134-trie-paged-layout.loft
 136-persist-copy-box-query.loft
 136-persist-copy-morton-order.loft
+138-vector-of-vector-single.loft
 13-map-filter-reduce.loft
 146-keyed-rekey-through-view.loft
 148-view-liveness-across-reshape.loft

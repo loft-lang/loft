@@ -107,3 +107,31 @@ fn a_get_or_insert_binds_its_lookup_once() {
     let (out, err, ok) = loft_file(GET_OR_INSERT, &[("LOFT_NO_SAME_READ", "1")]);
     assert!(ok && out.trim_end().ends_with("ok"), "{out}\n{err}");
 }
+
+const SEQUENCE: &str = "tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft";
+
+/// The sequence clause binds `place`'s three counts across the box's push and `moved`'s count
+/// up to the assignment that ends its sum's run; `rewrite` (a write into a record the block did
+/// not mint) and `grow` (a vector's length) keep their reads.
+#[test]
+fn a_count_a_run_of_statements_repeats_is_made_once() {
+    let (_, err, ok) = loft_file(SEQUENCE, &[("LOFT_TRACE_SAME_READ", "1")]);
+    assert!(ok, "the cells failed:\n{err}");
+    let mut bound: Vec<&str> = err
+        .lines()
+        .filter_map(|l| l.strip_prefix("same-read: "))
+        .filter(|l| l.contains("a sequence of statements"))
+        .collect();
+    bound.sort_unstable();
+    assert_eq!(
+        bound,
+        [
+            "n_moved binds 1 computation(s) a sequence of statements repeats",
+            "n_place binds 1 computation(s) a sequence of statements repeats",
+        ]
+    );
+    for off in ["LOFT_NO_SEQUENCE_READ", "LOFT_NO_SAME_READ"] {
+        let (out, err, ok) = loft_file(SEQUENCE, &[(off, "1")]);
+        assert!(ok && out.trim_end().ends_with("ok"), "{off}: {out}\n{err}");
+    }
+}

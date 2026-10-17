@@ -3157,8 +3157,17 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         self.dest_counter += 1;
         let site = self.dest_counter;
+        // `@FR-R-KeyedEntry`'s subscript clause: the entry under the key overwritten in place of
+        // removed and claimed again, and the literal's key-field writes dropped.
+        let entry_keys =
+            super::keyed_entry::subscript_keys(self.stores, ks.tp, &ks.setters(self.data))
+                .filter(|k| k.len() == ks.keys.len());
         self.indent(w)?;
-        writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
+        if entry_keys.is_some() {
+            writeln!(w, "{{ //@FR-R-KeyedEntry subscript clause")?;
+        } else {
+            writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
+        }
         let mut writes: Vec<Value> = Vec::new();
         let mut nth = 0usize;
         for op in &ks.body {
@@ -3192,7 +3201,16 @@ impl Output<'_> {
                     nth += 1;
                 }
             }
-            writes.push(Value::Call(*d, staged));
+            let key_write = entry_keys.as_ref().is_some_and(|k| {
+                matches!(args.get(1).map(Value::unspan), Some(Value::Int(o))
+                    if u16::try_from(*o).is_ok_and(|o| k.contains(&o)))
+            });
+            if !key_write {
+                writes.push(Value::Call(*d, staged));
+            }
+        }
+        if entry_keys.is_some() {
+            return self.output_keyed_entry_subscript(w, ks, site, &writes);
         }
         let key_types: Vec<i8> = self
             .stores
@@ -3231,6 +3249,44 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(w, "}}")?;
         crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-KeyedEntry`'s subscript clause, the tail of [`Self::output_keyed_place`]: the
+    /// entry under the subscript's integer parts answered (found, or filed with the parts
+    /// written), then the literal's other field writes into it.
+    fn output_keyed_entry_subscript(
+        &mut self,
+        w: &mut dyn Write,
+        ks: &super::keyed_place::Site<'_>,
+        site: usize,
+        writes: &[Value],
+    ) -> std::io::Result<()> {
+        let mut parts = String::from("&[");
+        for (i, key) in ks.keys.iter().enumerate() {
+            if i > 0 {
+                parts.push_str(", ");
+            }
+            parts.push('(');
+            parts.push_str(&self.expr_string(key)?);
+            parts.push_str(") as i64");
+        }
+        parts.push(']');
+        let coll = self.expr_string(ks.coll)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let __kp{site} = stores.keyed_entry_ints(&({coll}), {}_u16, {parts});",
+            ks.tp
+        )?;
+        for wr in writes {
+            self.indent(w)?;
+            self.output_code_inner(w, wr)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-KeyedEntry/subscript", 1);
         Ok(())
     }
 

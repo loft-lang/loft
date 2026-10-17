@@ -77,7 +77,8 @@ of which wrote the belief down in its own comment. When a register entry names a
 the next search is for other places that hold it.
 
 **And a citation gap is a finding, not a dead end.** If the site you are about to edit enforces
-a rule and cites none — `src/fill.rs` carries zero `@FR-` tags, so no `rule_tags.py sites` query
+a rule and cites none — `src/fill.rs` carries no `@FR-` tag of its own (the one it holds,
+`@FR-R-FastTable`, is stamped by `src/create.rs`), so no `rule_tags.py sites` query
 reaches the free it performs — say so in the fix. A rule the enforcing site does not name is a
 rule the next reader cannot find from the code. (`fill.rs` is `@generated` from the `#rust`
 templates in `default/*.loft`, so the citation, like the fix, belongs in the template.)
@@ -134,7 +135,8 @@ byte-identical before/after diff, and an EMPTY diff is the proof.**
    sub-step; if the diff is non-empty and you didn't intend it, that line is the
    bug — bisect by sub-step, don't push through. Your corpus proves the branches
    you touched; **`scripts/introspect_diff.sh` is the corpus-WIDE gate** (every
-   tests/scripts + tests/docs + examples file, per-file verdict — DEBUG_INTROSPECT.md
+   corpus file (tests/scripts, tests/docs, examples and `../loft-suite`;
+   `scripts/corpus_files.sh` is the one list), per-file verdict — DEBUG_INTROSPECT.md
    § Introspection CLI: "verified by this and by nothing weaker"). Run it before
    calling the refactor done.
 
@@ -208,7 +210,7 @@ one with no dep at all. Each cost a wrong answer that no test could see.
 So before writing *"is this an X?"* over the IR, ask whether X has a second spelling — a `Value`
 VARIANT beside an op call, a TYPE fact beside a node shape, an absence beside a presence. Match
 the notion, not the spelling, and put both in ONE predicate. `python3
-scripts/ir_walker_audit.py spellings` asks it for the projection notion; the mode is ~30 lines and the shape generalises to any notion whose two spellings can be
+scripts/ir_walker_audit.py spellings` asks it for the projection notion; the shape generalises to any notion whose two spellings can be
 named. `… optional` asks it one TYPE FORMER over — who resolves a shape by naming `Type`
 variants and so cannot see the same shape wrapped in `τ?`, plus which callers peel with
 `.base()` first. Re-run either rather than reading a count off this page. Full treatment, with what each instance cost:
@@ -256,9 +258,9 @@ a projection that is not a call has none.
 
 The variants that carry a var number outside a `Value::Var` node are the ones to check against
 any "does this mention / project from variable X?" walker: `TupleGet`, `TuplePut`, `CallRef`,
-`FnRef`, `FnRefDnr`, `Set`, `Iter`. `scopes::dominance_walk` names three of them and is the
-model; the two Plan-57 gates beside it name none and are clean only because the corpus never
-puts a holder there.
+`FnRef`, `FnRefDnr`, `Set`, `Iter`. `scopes::dominance_walk` (`src/scopes/confinement.rs`) is
+the model: check any new "mentions variable X" walker against the variant list above, not
+against a count read here.
 
 So when adding or auditing such a matcher, ask: **is there a second spelling of this notion?**
 If the answer is yes, match the node kind, and put both spellings in one predicate rather than
@@ -266,7 +268,7 @@ adding the missing arm at the site that happened to break.
 
 ## Before the push — the order of a lowering change, and what each build is for
 
-A release build of the crate is 20–40 min here and a dev build minutes
+A release build of the crate is the costliest rung (CI_BUDGET.md has the measured costs) and a dev build minutes
 ([CI_BUDGET.md § the ladder](../../../doc/claude/CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder)),
 so each build must answer a question nothing cheaper can.  The full order is
 [CODEGEN_METHOD.md § The order of a lowering change](../../../doc/claude/CODEGEN_METHOD.md#the-order-of-a-lowering-change-and-what-each-build-is-for);

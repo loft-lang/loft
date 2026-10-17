@@ -610,7 +610,7 @@ does not belong on a PR, however cheap it is.**
 nextest runs `NEXTEST_TEST_THREADS` tests side by side, and a test that sizes an inner pool
 from the core count multiplies that: six native corpus chunks at 24 `rustc` each in
 `heavy-wide`, beside a 24-slot pool and a drop-gate chunk's 24 spawned `loft`s, was **184
-contending threads**, and the box hung (2026-10-15).  So every test that spawns workers
+contending threads**, and the box hung.  So every test that spawns workers
 carries `threads-required` in `.config/nextest.toml` and sizes its pool from
 `common::lanes::lanes(cap)`, which answers the same number under nextest
 (`UNDER_NEXTEST`) and the cores by hand; `native::pool_tests_declare_their_lanes_to_nextest`

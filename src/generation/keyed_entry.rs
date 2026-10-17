@@ -45,6 +45,65 @@ const SETTERS: &[&str] = &[
     "OpSetSingle",
 ];
 
+/// `@FR-R-KeyedEntry`'s SUBSCRIPT clause — `coll[k₁, …] = T{…}`, the `(R-InPlaceLiteral)`
+/// keyed site whose literal writes its fields with `writes` (each `(setter, byte offset)`):
+/// the offsets of the hash's key parts when the entry under the key may be OVERWRITTEN in
+/// place of removed and claimed again.
+///
+/// Admitted when that overwrite IS the replace: `tp` a `hash` keyed by one to four `integer`
+/// / `long` parts, whose element owns no heap (nothing an overwrite would strand) and is no
+/// member of a linked group (a group's dedup decides per member), and whose every field that
+/// is not a key part is a plain value written by the literal through a scalar setter — so an
+/// overwrite leaves nothing of the old entry.  A key part needs no write: the entry carries
+/// the subscript's key whether it was found or filed, which is what the plain form's
+/// `set_key` leaves.
+#[must_use]
+pub fn subscript_keys(stores: &Stores, tp: u16, writes: &[(&str, u16)]) -> Option<Vec<u16>> {
+    if !enabled() || !writes.iter().all(|(op, _)| SETTERS.contains(op)) {
+        return None;
+    }
+    let t = stores.types.get(tp as usize)?;
+    let Parts::Hash(c, _) = t.parts else {
+        return None;
+    };
+    if t.keys.is_empty()
+        || t.keys.len() > 4
+        || !t
+            .keys
+            .iter()
+            .all(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2))
+        || stores.is_linked(c)
+        || stores.owns_heap(c)
+    {
+        return None;
+    }
+    let key_pos: Vec<u16> = t.keys.iter().map(|k| k.position).collect();
+    let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+        &stores.types.get(c as usize)?.parts
+    else {
+        return None;
+    };
+    let plain = |f: &crate::database::Field| {
+        key_pos.contains(&f.position)
+            || (stores.types.get(f.content as usize).is_some_and(|t| {
+                matches!(
+                    t.parts,
+                    Parts::Base
+                        | Parts::Enum(_)
+                        | Parts::Byte(..)
+                        | Parts::Short(..)
+                        | Parts::Int(..)
+                        | Parts::ShortRaw(..)
+                        | Parts::IntRaw(..)
+                )
+            }) && writes.iter().any(|(_, o)| *o == f.position))
+    };
+    if fields.is_empty() || !fields.iter().all(plain) {
+        return None;
+    }
+    Some(key_pos)
+}
+
 /// An admitted insert: statements `first ..= last` of a block are `B = OpNewRecord(coll, tp,
 /// fld)`, the literal's field writes through `B`, and `OpFinishRecord(coll, B, tp, fld)`.
 pub struct Site<'a> {

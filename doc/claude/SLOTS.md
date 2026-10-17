@@ -267,3 +267,5 @@ to keep locals from overlapping the argument + return-address region.
 | `src/variables/mod.rs` | `set_stack_pos` assertion, `Function` struct |
 | `src/scopes.rs` | `scan_set` (Insert flattening), `inline_struct_return` (P122 lift) |
 | `src/stack.rs` | `size_code` (eval stack size), `loop_position` |
+
+The record behind this doc is [SLOTS-history.md](SLOTS-history.md).

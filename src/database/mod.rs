@@ -1899,19 +1899,35 @@ impl Stores {
     /// suffix avoids substring-collision with the substitutor —
     /// see `raise_runtime` for the explanation.
     #[must_use]
+    #[inline]
     pub fn vec_get_or_raise_runtime(
         &mut self,
         db: &crate::keys::DbRef,
         size: u32,
         index: i64,
     ) -> crate::keys::DbRef {
-        let len = crate::vector::length_vector(db, &self.allocations);
-        if self.index_or_raise_runtime(index, len).is_none() {
-            // `nullref`, the one value spelling of absence (`DbRef::or_null`,
-            // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
-            return crate::keys::DbRef::NULL_REPORTED;
+        // One header read; the in-range path is address arithmetic, inlined into the emitted
+        // read, and `elem_index` is the in-range test `index_or_raise_runtime` applies, so
+        // only an index it would raise on reaches the outlined raise (`@FR-R-Cold`).
+        let (v_rec, len) = crate::vector::rec_and_len(db, &self.allocations);
+        if let Some(f) = crate::vector::elem_index(index, len) {
+            return crate::keys::DbRef {
+                store_nr: db.store_nr,
+                rec: v_rec,
+                pos: crate::vector::checked_vec_pos(f, size),
+            };
         }
-        crate::vector::get_vector(db, size, index, &self.allocations)
+        self.vec_get_raise_cold(index, len)
+    }
+
+    /// The out-of-range half of `vec_get_or_raise_runtime`: the raise, and `nullref`.
+    #[cold]
+    #[inline(never)]
+    fn vec_get_raise_cold(&mut self, index: i64, len: u32) -> crate::keys::DbRef {
+        let _ = self.index_or_raise_runtime(index, len);
+        // `nullref`, the one value spelling of absence (`DbRef::or_null`,
+        // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
+        crate::keys::DbRef::NULL_REPORTED
     }
 
     /// @FR-H-Index — the native half of the one normalisation, for a vector of `len`

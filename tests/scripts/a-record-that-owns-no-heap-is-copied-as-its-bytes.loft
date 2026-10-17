@@ -1,0 +1,72 @@
+// `@FR-R-FlatCopy`'s emitted clause — a copy of a record whose type owns no heap, from a
+// variable, is the type's bytes: written address to address where the block holds both
+// records (an appended view into the push slot the loop's window minted), and through the
+// store otherwise.  Every field arrives, nothing of the destination's old value is left, the
+// source is unchanged, and a null source still writes the absent element.
+//
+// Expected values are hand-computed.  P is 24 bytes (three integers); N carries a narrow field.
+//
+// @falsified-by: tests/falsified/a-record-that-owns-no-heap-is-copied-as-its-bytes.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch copies 8 bytes short through the two
+//   addresses, so the reversed records lose their last field and f1's sum falls short.  The
+//   interpreter copies through its own path and cannot move.
+struct P { a: integer, b: integer, c: integer }
+struct N { x: integer, k: u8, y: integer }
+
+fn reversed(v: const vector<P>) -> vector<P> {
+  out: vector<P> = [];
+  for i in 0..len(v) {
+    p = v[len(v) - 1 - i]?;
+    out += [p];
+  }
+  out
+}
+
+fn sum3(v: const vector<P>) -> integer {
+  t = 0;
+  for p in v { t += p.a * 100 + p.b * 10 + p.c; }
+  t
+}
+
+fn main() {
+  v: vector<P> = [];
+  for i in 0..50 { v += [P { a: i, b: i % 7, c: 3 }]; }
+  // f1 — the appended view, through the window: 50 records reversed, every field kept.
+  //   sum of a·100 = 100·1225 = 122500; b over i % 7 for 0..49 = 7·21 + 0 = 147 → 1470;
+  //   c = 3 · 50 = 150.  Total 124120, and the first record is the last one in.
+  r = reversed(v);
+  f = r[0]?;
+  assert(len(r) == 50 && sum3(r) == 124120 && f.a == 49 && f.b == 0 && f.c == 3,
+         "f1 {len(r)} {sum3(r)} {f.a} {f.b} {f.c}");
+  // f2 — the source is unchanged by the copy.
+  assert(sum3(v) == 124120 && (v[0]?).a == 0, "f2 {sum3(v)}");
+  // f3 — an element overwritten by another of the same vector: v[3] takes v[40]'s fields,
+  //   (40, 5, 3) for (3, 3, 3), so the sum moves by (40 - 3)·100 + (5 - 3)·10 = 3720.
+  v[3] = v[40];
+  e = v[3]?;
+  assert(e.a == 40 && e.b == 5 && e.c == 3 && sum3(v) == 127840, "f3 {e.a} {e.b} {sum3(v)}");
+  // f4 — an element copied onto itself is left as it is.
+  v[7] = v[7];
+  assert((v[7]?).a == 7 && sum3(v) == 127840, "f4 {(v[7]?).a} {sum3(v)}");
+  // f5 — an appended copy is the destination's own record: writing it leaves the record it
+  //   was copied from alone (r[0] came from v[49]).  A local bound from an element is not a
+  //   copy but a view (`@FR-B-View`), so it is no witness here.
+  r[0] = P { a: 777, b: 1, c: 1 };
+  assert((r[0]?).a == 777 && (v[49]?).a == 49 && (v[49]?).b == 0, "f5 {(r[0]?).a} {(v[49]?).a}");
+  // f6 — a record with a narrow field, appended through a window: 30 records, k = i & 255.
+  //   x sum = 0 + … + 29 = 435; k sum = 435; y = 2·x → 870.
+  ns: vector<N> = [];
+  for i in 0..30 { ns += [N { x: i, k: (i & 255) as u8, y: 2 * i }]; }
+  nr: vector<N> = [];
+  for n in ns { m = n; nr += [m]; }
+  sx = 0; sk = 0; sy = 0;
+  for n in nr { sx += n.x; sk += n.k as integer; sy += n.y; }
+  assert(len(nr) == 30 && sx == 435 && sk == 435 && sy == 870, "f6 {len(nr)} {sx} {sk} {sy}");
+  // f7 — a null source appended to a vector of a nullable record: the element is absent.
+  maybe: vector<P?> = [];
+  q: P? = null;
+  maybe += [q];
+  maybe += [v[1]];
+  assert(len(maybe) == 2 && maybe[0] == null && (maybe[1]?).a == 1, "f7 {len(maybe)}");
+  println("ok");
+}

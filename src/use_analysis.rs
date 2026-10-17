@@ -6478,6 +6478,28 @@ impl VariantWatch<'_> {
     }
 }
 
+/// Is every whole-value bind of `v` in `body` a bare `null` (the literal, or the sentinel the
+/// parser spells a heap `null` as) — a local that never held a copy (loft#2026)?
+fn bound_only_to_null(body: &Value, v: u16, data: &Data) -> bool {
+    let sentinel = data.def_nr("OpNullRefSentinel");
+    let mut binds = 0u32;
+    let mut all_null = true;
+    body.any_node(&mut |n| {
+        if let Value::Set(w, rhs) = n
+            && *w == v
+        {
+            binds += 1;
+            all_null &= match rhs.unspan() {
+                Value::Null => true,
+                Value::Call(d, args) => *d == sentinel && args.is_empty(),
+                _ => false,
+            };
+        }
+        false
+    });
+    binds > 0 && all_null
+}
+
 /// Advise when two members of one linked collection GROUP are appended to in the same block
 /// (loft#1227).
 ///
@@ -6855,6 +6877,16 @@ pub fn warn_dead_stores(
             // was >0 there and `test_used` (uses==0) stayed silent — the two lints are disjoint
             // structurally. (`uses` is not maintained in the post-scopes `def.variables`.)
             if !(reads == 0 && write_targets > 0) {
+                continue;
+            }
+            // loft#2026 — a NULLABLE local bound only to `null` holds no copy: a write through
+            // it is dropped at run time and the log says so, and the copy this lint explains
+            // never happened.  The `else` arm of a discharge is the compile-time cure (@F126).
+            // Nullable only: a dense keyed or value-struct copy lowers as a null bind and a
+            // fill op, and that copy IS the one the lint is for.
+            if matches!(func.tp(v), crate::data::Type::Optional(_))
+                && bound_only_to_null(&def.code, v, data)
+            {
                 continue;
             }
             // A dead store requires the var to OWN its store (a copy). A Borrowed/Join var

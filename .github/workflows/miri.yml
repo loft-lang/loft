@@ -1377,7 +1377,13 @@ jobs:
       # The sibling `a_delegating_producer_binds_its_companion_cleanly` PASSES here
       # and so is deliberately NOT skipped — a skip for a green test would cost
       # coverage and buy nothing.
+      # The GENERATED Rust is compiled by the `rustc` the native pipeline spawns, which is the
+      # default toolchain unless told otherwise: under a matrix toolchain it could not read the
+      # rlib that toolchain had just built (E0463) and fell back to a cached stable one that
+      # predated the tree (`E0425 op_pow_int`).  One toolchain for the build and the pipeline.
       - name: Test (ubuntu, ${{ matrix.toolchain }})
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.tc.outputs.toolchain }}
         run: >
           cargo +${{ steps.tc.outputs.toolchain }} test --release --no-fail-fast
           --lib --test issues --test wrap --test strings --test frame_vars
@@ -1421,6 +1427,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The suite's programs guard decisions too (@PLN193): without it every decision whose
+      # only guard moved there with the corpus reads as unguarded.
+      - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold

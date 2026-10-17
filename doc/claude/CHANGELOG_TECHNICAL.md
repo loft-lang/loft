@@ -10,6 +10,116 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A content swap carries the parked blocks (loft#2031)
+
+`Store::swap_contents` exchanged the memory, the claims, the free tree and the lazy phase
+of two stores but left each store's `(H-Park)` lists and set behind, so after a rebind that
+exchanges stores a store's set named live records of the content it received: a delete
+parked one of them twice, and the flush walked a list whose links were that record's bytes
+for ever — hex_body 0.3.6's planar-rig test spun on `--native` while the interpreter
+passed it.  The lists and the set move with the memory (`park` with them); two debug
+assertions name a double park and a list that does not end.  Guard
+`store::tests::a_content_swap_carries_the_parked_blocks`.
+
+### A division by zero is silent: C80's one-warning clause is dropped (loft#2027)
+
+C80 and `(E-Report)` promised a Warn-level log line on an unguarded division by zero at run
+time; no site emitted it on either backend.  The owner dropped the clause (2026-10-16): the
+null is the whole signal, as for overflow, an out-of-range index and an absent deref; the
+compile-time `divide-by-constant-zero` warning and `--dev-soft-halt` are unchanged.  Register,
+rule, stdlib comment and the history record say so.
+
+### Both parse forms name every mismatch on the record (loft#2028)
+
+`record#errors` holds one entry per value that did not fit, whichever form built the record:
+the one-step `U.parse(text)` stopped at its first mismatch and filed that one, the staged
+`U.parse(json_parse(text))` listed every mismatch in `json_errors()` and filed none.  The text
+read collects every misfit (`read_into`/`read_array`/`read_struct` carry a `Vec<WalkErr>`), a
+value that did not fit leaves its field at the type's default while the values around it
+are read, and a misfit vector element keeps its slot (null for a leaf, the defaults for a
+record) — what the staged walk already wrote; the staged wrappers
+(`n_struct_from_jsonvalue`, both backends) file the walk's entries on the record.  C148's
+entry says so; the owner's decision (2026-10-16).  Guard
+`tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft`; chapter 24
+and the suite's vector cell follow the rule (a misfit element no longer empties the vector).
+
+### `**` on two integers answers an integer (loft#2024)
+
+Only the single and float powers existed, so `3 ** 20` widened to a `single` and printed
+3486784500 for 3486784401 with nothing said.  `OpPowInt` (`ops::op_pow_int`) answers the exact
+integer: null for a negative exponent and null past the range, as `*` answers null past the
+range; `pow(self: integer, v2: integer) -> integer?` is its method.  The operator table is
+regenerated (`src/fill.rs`, `src/op_layout.rs`).  Guard:
+`tests/scripts/2024-an-integer-power-answers-an-integer.loft`, both backends.
+
+### A match arm's root capture is settled for `variant-field-unchecked` (loft#2025)
+
+`w: Circle { r } => { w.r = 10 }` warned that the access does not check the variant, naming
+the capture `w#1`.  The parser records the variant an arm's root capture holds
+(`Parser::capture_variant`) and `guard_variant_receiver` returns the access unchanged for it;
+a message that fires names the spelled binding.  `tests/variant_field.rs` pins it.
+
+### `lost-write` is quiet for a local bound only to `null` (loft#2026)
+
+`p: P? = null; p.x = 5` was diagnosed as a copy whose mutation is lost; nothing was copied,
+and the write is dropped at run time with its own log line.  `warn_dead_stores` skips a local
+every whole-value bind of which is a bare `null` (`bound_only_to_null`).
+`tests/dead_code_lint.rs` pins it.
+
+### A moot store-identity test no longer declines the value form (loft#2014)
+
+`(R-ValueRecord)` declined six pinned returns since 932209dc4: the exit release of a `?`
+default's build is guarded by a store-identity test against the result, and
+`identity_turns_on_path` read that as path-dependent.  Where the test's other operand is a
+value local or the work-ref of a build the value form converts, nothing is released on any
+path, so the test is served (`release_uses`'s `moot`); the pins return to the register form.
+
+### The Windows-rules harness holds the per-script run lock (loft#2018)
+
+`tests/windows_rules.rs` ran `#cwd` scripts from the repository root beside the corpus
+runners, which run the same file from the same directory in other nextest processes, and
+`116-file-append-log` lost its size assertion to the other run's writes.  It now takes
+`common::source_run_lock`, the cross-process lock keyed by the file's path that `wrap` and
+`native` already hold.
+
+### The warm store-backed load reads every body (loft#2012)
+
+`LOFT_CODEGEN_STORE=1`'s warm run loaded the bundle as a body-less skeleton and read only the
+generated body from the mapped store; every decision codegen makes about another definition
+(a call's user-or-native dispatch, a callee's return ownership) asked that definition's native
+body and answered wrong over an empty one — a panic or a silently adopted view on 76 corpus
+files.  `open_program_store` now reads the whole `Data`; `read_data_skeleton` stays as the
+timing measurement it also is.
+
+### A returned branch arm that borrows a lifted argument copies what it hands up (loft#2021)
+
+`if c { id(g(3)) } else { null }` as a function's value, with `fn id(p: S) -> S { p }`: the
+arm's call borrowed the argument lifted into a frame temp, the branch was bound whole to the
+return temp, and the value handed up was a view of the temp the frame frees at exit — the
+poison word under `LOFT_POISON=1`, and for the dense twin (`-> S`, else a build) the next
+call's record plainly, on both backends once the record road is taken.  The same blindness
+loft#2016 closed for the body-tail and mid-return spellings, one level up.
+`Scopes::bind_return_temp` now writes a branch out per arm (`sink_return_branch`, the spelling
+a parser-level `r = if …` already takes) where an arm's call borrows a local this frame owns (a lifted argument; a borrow of a
+parameter is the caller's store and the caller's bind copies it, as before),
+so each arm's bind is the call bind that copies a borrowed result; and the interpreter's
+call-bind copy arm accepts the promoted return buffer as its destination, where it had excluded
+every argument.  Guard:
+`tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft`.
+
+### A nullable local rebound from its own field frees the store it built (loft#2017)
+
+`x: Node? = Node { … }; x = x.next` leaked the first record on both backends once the literal
+was built in `x` (loft#1989, `(N-Road)`): the rebind gives `x` a dep list naming itself, and
+`Function::is_independent` read a lone self-dep as the owned-keyed marker for every kind, so
+the in-place build was admitted with no site left to release the displaced store.  On a record
+local that self-dep is the self-projection rebind — a view of the displaced store — and now
+reads as not owning, which routes the literal onto the work-reference road a foreign dep
+(`x = p.inner`) already takes.  The guard
+`tests/scripts/2017-a-nullable-local-rebound-from-its-own-field-frees-the-store-it-built.loft`
+crosses the plain rebind, an arm, a `= null` after it, two hops and the `(O-Witness)` walker
+with the dense, two-statement and foreign-field controls.
+
 ### The three red shards of the joined branch (2026-10-15)
 
 Three classes of red on `tuxedo-pr1988-next`, each older than the corpus move and each from
@@ -379,6 +489,34 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   default, so the operator's own lowering stays on the channel that discounts it.
 - Still open, tracked as loft#1990: `(R-ValueRecord)` declines a `-> S?` whose result joins
   a built record with a dense view.
+### A warm run says which views were copied out; `make warm-diff` asks whether it answers as a cold one (2026-10-15)
+
+- `scripts/warm_diff.sh` runs every corpus file through the cold reference, the cold save,
+  the warm bundle load and the two `LOFT_CODEGEN_STORE=1` lanes in a private cache and
+  compares exit code, stdout and stderr: nothing under cargo exercises the cache, so a warm
+  run that differed was a user's to find.  Its first run over 2466 files: 46 warm runs silent
+  where the cold run printed an `advice:` naming a view copied out of its container (the
+  scope pass notes them, and a warm load runs no scope pass; loft#2013), and 73 answering WRONG under
+  `LOFT_CODEGEN_STORE` (loft#2012: the copy decisions read callees' bodies natively, and the
+  skeleton leaves them empty).  The manifest now carries the views as `mview` lines and both
+  warm paths (the bundle load and the native fast path) replay them; the switch stays an
+  experiment.  Cell `a_warm_run_says_which_views_were_copied_out`; STARTUP_CACHE.md § Does a
+  warm run answer as a cold one.
+
+### A warm start no longer reads the stdlib sources (2026-10-15)
+
+- Every run read and hashed `default/*.loft` twice — for the program bundle's stdlib key
+  (`startup_cache::stdlib_key_hex`) and for the compiled stdlib's dispatch check
+  (`compiled_stdlib::mark`): 240 kB through SHA-256 and a second hash, 4.5 ms of a 21 ms
+  warm `hello` (@PLN179 finding 001).  `cache::stdlib_fingerprint` keeps both answers in a
+  stamp beside the cache (each file's size and nanosecond mtime, the directory as given, the
+  build inputs the key folds in; one stamp per configuration, named by its header's hash),
+  so a warm run spends eight `stat`s on the question: `stdlib_key` 2.9 → 0.1 ms, the
+  compiled-stdlib mark 1.6 → 0.2 ms.  Any difference reads the sources and rewrites the
+  stamp; a stamp that does not parse or cannot be written costs the fast path only.
+  `LOFT_TIMING=1` prints the warm start's parts (`warm_load stdlib_key= manifest= bundle=`).
+  Unit cell `stdlib_fingerprint_follows_the_sources_through_its_stamp`.
+
 ### A registry dependency fires its type and builder triggers (2026-10-15)
 
 - `Parser::trigger_map` derived a declared dependency's triggers from a sibling, a `path =`
@@ -422,6 +560,180 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   file, a free function does, so the author chooses the few worth a bare name and the shared
   namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
   cells `tests/builder_trigger.rs` on both backends.
+### An appended record that owns heap is minted without its prefill (2026-10-16)
+
+- **`(R-CompleteWrite)`'s fresh-copy clause** — a whole-record `OpCopyRecord` into a minted
+  element covers a HEAP-OWNING element type too when the copy is flagged `COPY_FRESH_DEST`
+  for that type: a fresh copy releases nothing in its destination and writes every byte and
+  handle anew (or zeroes every byte for a null source), so the prefill is read by nothing
+  (`hoist::group_covers_type`, native, `LOFT_NO_COMPLETE_WRITE`).  dryopea `truncate_to`
+  78.3 → 73.4 µs (−6.1 %; with `(H-Park)` 87.8 → 73.4, −16 %).  Guard
+  `a-fresh-copy-into-a-minted-slot-needs-no-prefill.loft` (falsified: an unflagged copy
+  admitted panics on native), pin `tests/complete_write.rs` (`n_add_n` now skips).
+
+### A freed small block is the next claim of its size (2026-10-16)
+
+- **`(H-Park)`, the allocator's small-block free list** — a delete of a block of 2 to 16
+  words parks it on a list for its exact size (a free block by header and footer, doubly
+  linked through the tree node's link half-words, confirmed by a set of starts) and a claim
+  of that size pops it before the tree; a claim the tree and the wilderness cannot hold
+  flushes the lists through the exact delete before it sweeps or grows.  Runtime, both
+  backends, `LOFT_NO_PARK`.  dryopea `truncate_to` 87.8 → 76.4 µs (−13 %), `panel_build`
+  4.51 → 4.07 ms (−10 %), every hash equal.  `fl_tree_contains` — the confirmation each
+  backward merge asks — is one descent by the tree's key instead of a walk of both subtrees.
+  The allocator's layout rules moved from `formal/heap.md` to `formal/allocator.md`.
+
+### A parameter's vector holds its header where every writer is apart (2026-10-16)
+
+- **`(R-Header)`'s apart clause, its parameter half** — in a loop the header gate declines, a
+  by-value parameter's vector (bare or a field path, `d.pieces`) keeps its header and base when
+  every variable the body names outside a read ends at a store this call minted (not an
+  argument), a local only ever minted, or a pair `(R-Alias)`'s versioned copy tested apart; a
+  field projection read in place and an argument handed to a callee that writes no store are
+  reads (`apart::apart_headers`, `StoreFacts::apart_from_argument`, native,
+  `LOFT_NO_APART_PARAM`).  `distinct_version` also versions a declined loop whose movers end
+  at the return buffer (`Output::grows_buffer`).  zttext `invert` 4.51 → 3.75 ms (−17 %);
+  twelve programs in the census.  Guard
+  `a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft`, pin
+  `tests/apart_param.rs`.
+
+### A vector prepended to is rebuilt in place (2026-10-16)
+
+- **`(R-Compact)`'s prepend form** — `t = []; t += g; t += V; V = t`, `g` a local, becomes
+  `if !OpPrependVector(V, g, tp) { the statements as written }` (`compact::match_prepend`,
+  both backends, `LOFT_NO_COMPACT`): `Stores::prepend_vector` appends `g` as `OpAppendVector`
+  does and rotates the record's elements so `g`'s stand first; a null or absent `V` or a
+  linked element type keeps the statements.  The op reshapes `V`, so a live view of it is
+  materialised (`scopes::disturbance`).  The rebind's local form also accepts its `vdb =
+  null` in the list, kept ahead of the guard.  New op: `index/target_surface.json`
+  regenerated.  zttext `invert` 6.48 → 4.48 ms (−31 %).  Guard
+  `a-vector-prepended-to-is-rebuilt-in-place.loft`.
+
+### A record that owns no heap is copied as its bytes at the site (2026-10-16)
+
+- **`(R-FlatCopy)`'s emitted clause** — `OpCopyRecord` from a variable, of a record type that
+  owns no heap and keeping its source (a minted push slot's fresh-destination mark admitted),
+  is emitted as a constant-width copy: between the two record addresses where the block holds
+  both (`(R-RecPtr)` now counts such a copy as a use its address serves, so a minted slot
+  holds its address for its window), through `Stores::copy_flat_record` otherwise
+  (`hoist::flat_copy`, `ref_ops::emit_flat_copy`, native, `LOFT_NO_FLAT_COPY`).  zttext
+  `invert` 7.99 → 6.59 ms (−17.5 %); fires in ten programs.  Guard
+  `a-record-that-owns-no-heap-is-copied-as-its-bytes.loft`.  The rest of `invert`'s way under
+  3× is priced in `bench/portal/analysis/over-9x.md` (`price_invert.py`).
+
+### `h[q, r] = T{…}` in one probe; a hash keyed by integer parts rebuilt without its key description (2026-10-16)
+
+- **`(R-KeyedEntry)`'s subscript clause** — a keyed literal assignment into a hash keyed by one
+  to four integer parts, of a heap-free element whose literal writes every field that is not a
+  key part, asks `Stores::keyed_entry_ints` for the entry under the subscript (`hash::entry_ints`,
+  one walk: found, or filed with every part written) and writes the literal's other fields into
+  it, in place of `keyed_place_begin`'s lookup, removal and claim and `keyed_place_finish`'s
+  second probe (`keyed_entry::subscript_keys`, native, `LOFT_NO_KEYED_ENTRY`).
+  `hash::entry_long` is now `entry_ints` over one part.  Guard
+  `a-hash-written-by-a-compound-subscript-keeps-every-entry.loft`.
+- **Runtime, both backends** — `hash::rehash_into` files each entry of a table keyed by integer
+  parts from the parts read straight off it (`rehash_ints`, `keys::ints_hash`), the new table's
+  count and seed read once; `arena::alloc_at` answers the slot's address with its index and
+  zeroes only a slot reused off the free list (a slot at the append cursor lies in a chunk
+  zero-filled when claimed).  dryopea `mapfile_to_painted` 4.76× → 2.81× (1.71 → 1.01 ms per call); `hash_fill` 3.02× → 2.58×.
+
+### `for e in unordered(h)`: a hash walked without its key sort; a format string's `{for}` takes the snapshot (2026-10-16)
+
+- **`(Col-Unordered)`, @C151** — `unordered(c)` in a `for` / comprehension / format-walk header
+  (`Parser::parse_unordered_source`, beside `rev(…)`) makes a hash's walk take the SLOT-order
+  snapshot (`n_hash_unsorted` → `hash::records_by_slot`) instead of the key-sorted one.  Slot
+  order is the arena index each entry was handed out at: fixed by the inserts and removes,
+  independent of the per-hash, per-run seed, kept by a copy.  The `par` walk takes the same
+  snapshot, so it no longer follows the seed either.  Other collection kinds walk as before; a
+  range or a text is refused.  The decision (key order stays the default, no rewrite walks a
+  hash in another order) is @C151; the twins walk their hashes in key order too (`by_key`,
+  bench 17).  Guards `a-hash-walked-unordered-repeats-its-order.loft`,
+  `unordered-takes-a-collection.loft`.
+- **loft#2019** — `Parser::iter_for` (a format string's `{for e in h …}`) never took the keyed
+  snapshot, so it walked the hash's own table as one and the store stopped on a corrupt
+  reference on both backends.  It now calls `keyed_snapshot` like the `for` statement and the
+  comprehension.  Guard `a-hash-walked-in-a-format-string-is-in-key-order.loft`.
+
+### A buffer's own view is not delivered into it, a count a run of statements repeats is made once (2026-10-16)
+
+- **`(R-SelfReplace)`** — `OpReplaceVector(B, x)` after `x = OpGetField(B, 0, …)` is dropped
+  when nothing after the binding assigns, re-points or frees `x` or `B`
+  (`self_replace::rewrite_program`, both backends, `LOFT_NO_SELF_REPLACE`).  Guard
+  `a-vector-delivered-into-its-own-buffer-is-not-copied.loft`, pin `tests/self_replace.rs`.
+- **`(R-SameRead)`'s sequence clause** — a pure store read with a scalar result that later
+  statements repeat, with only pure assignments and a minted record's field writes between, is
+  bound once (`same_read::bind_sequences`, both backends, `LOFT_NO_SEQUENCE_READ`).  Guard
+  `a-count-a-run-of-statements-repeats-is-made-once.loft`, pin `tests/same_read.rs`.
+  Together: `flow_layout_full` −6.6 % (out of the 5× cut), zttext `materialise` −23.9 %.
+
+### `arguments/parse` 7.3× → 3.8× by seven rewrites, and a match binding that borrows under a store test (2026-10-15)
+
+- **`(R-SameRead)`'s match clause** — a slice `match` binds the subject's length and each
+  integer computation of one element two arm tests make once, before the first test
+  (`same_read::bind_match_reads`, both backends, `LOFT_NO_MATCH_READ`).  Guard
+  `a-slice-match-reads-its-subject-once.loft`.
+- **`(R-MoveLast)`'s host clause** — a record literal holding a vector that is dead after it
+  is claimed in that vector's store and takes the vector's handle instead of a deep copy
+  (`literal_host::rewrite`, both backends, `LOFT_NO_LITERAL_HOST`).  Guard
+  `a-literal-takes-a-dead-vector-into-its-store.loft`.
+- **`(R-ZeroCount)`** — `len(t)` compared against the zero boundary reads the byte count, not
+  the character count (`zero_count::rewrite_program`, both backends, `LOFT_NO_ZERO_COUNT`).
+  Guard `a-zero-length-test-counts-no-characters.loft`.
+- **`(R-RecPtr)`'s text clause** — a text field of a held vector's record element is read
+  through the element's address and the store's text span (`vector::rec_text`, native,
+  `LOFT_NO_TEXT_FIELD`).  Guard `a-text-field-of-a-held-element-reads-through-its-address.loft`.
+- **`(R-Cold)`'s one-read clause** — a checked element read resolves the store, the element
+  record and the length once (`vector::rec_and_len`); `vec_get_or_raise_runtime` answers an
+  in-range index inline and outlines the raise, `length_vector` is `#[inline(always)]`, and
+  `get_vector_hoisted`'s end-of-walk half is outlined (`get_vector_cold`).  Runtime, no switch
+  (a layout discipline).  Guard `a-checked-element-read-answers-from-one-header-read.loft`;
+  `chunk_lookup` −14.6 %, `slope_path_with_undo` −15.6 %, `resolve_move` −11.1 % beside it.
+- **`(R-Header)`'s text clause** — a loop the header gate declines only for its text sets
+  holds its headers: a text set changes no vector's record or length.  It may grow the store,
+  so a base is kept only for a vector proven apart from every text set's root, and a loop that
+  also pushes declines (`hoist::hoistable`'s second verdict under `HoistTiers::text_set`,
+  native, `LOFT_NO_TEXT_SET_HEADER`).  `x.f = null` writes the static null text instead of
+  copying it into a `String` (`Output::text_value_unborrowed`).  Guard
+  `a-loop-holds-its-header-across-a-text-write.loft`, pin `tests/text_set_header.rs`.
+- **`(R-Alias)`'s versioned clause counts a walked path for its parameter, and
+  `(R-TextBorrow)`'s versioned clause** — `for e in v` over a parameter that appends to the
+  result now versions on `v`'s store, and inside the copy a text walk borrows its element
+  when every writer names a frame-minted store or the return buffer
+  (`hoist::versioned_text_walks`, `Output::versioned_borrow`, `Output::param_root`, native,
+  `LOFT_NO_DISTINCT_VERSION` / `LOFT_NO_TEXT_BORROW`).  Guard
+  `a-walk-borrows-its-word-in-the-versioned-copy.loft`, pin `tests/versioned_text_walk.rs`;
+  `tween/value` −9.0 % beside it.
+
+- **`(R-TextBorrow)`'s tested clause** — a statement-bound text local whose scope also writes
+  the return buffer borrows its parameter's text under a run-time compare of the two stores,
+  copying when they coincide (`hoist::borrowed_store_texts`'s `tested`, native,
+  `LOFT_NO_TESTED_BORROW`).  Guard `a-match-binding-borrows-its-text-while-the-stores-differ.loft`,
+  pin `tests/tested_text_borrow.rs`; cbor `encode_bytes` −10 %.
+
+- **`(R-TextBorrow)`'s call clause** — a text local bound to a call whose result is its own
+  work text borrows that text, and a store write reads it in place (`hoist::own_call_work`,
+  native, `LOFT_NO_CALL_TEXT_BORROW`).  Guard `a-call-text-is-borrowed-from-its-work-buffer.loft`,
+  pin `tests/call_text_borrow.rs`; `flow_layout_full` −5.9 %.
+
+### A keyed insert writes its entry, a decoded text is read where it lies, a record of texts is released by plan (2026-10-14)
+
+- **`(R-KeyedEntry)`** — an integer-keyed hash insert of a heap-free element answers the entry
+  its key names in one probe and overwrites a repeated key in place (`generation::keyed_entry`,
+  `Stores::keyed_entry_long`, native, `LOFT_NO_KEYED_ENTRY`).  Guard
+  `a-keyed-insert-writes-the-entry-its-key-names.loft`.
+- **`(R-SameRead)`'s get-or-insert clause** — `if !h[k] { h += […] }; b = h[k]` looks the key
+  up once (`same_read::bind_get_or_insert`, both backends).  Guard
+  `a-lookup-a-get-or-insert-repeats-is-made-once.loft`.  `field_add_cell` 7.68× → 4.54× with
+  the clause above; loft#2008 (a keyed literal read its destination after the insert) fixed in
+  `snapshot_read_destination`.
+- **`(R-DecodeView)` instance 1** — a decoded value's texts and byte strings are views into the
+  input frame (C141): `<f>__dv` twins (`generation::decode_view`, native,
+  `LOFT_NO_DECODE_VIEW`).  Guard `a-decoded-text-is-read-where-it-lies.loft`; `check_request`
+  7.55× → 5.07×.
+- **The release plan** — a record whose heap is texts and vectors of text-owning elements is
+  released by its type's plan instead of the type walk (`Stores::release_by_plan`, runtime,
+  both backends, `LOFT_NO_RELEASE_PLAN`).  Guard `a-record-of-texts-is-released-by-its-plan.loft`;
+  `panel_build` 7.44× → 6.00×.
 
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 

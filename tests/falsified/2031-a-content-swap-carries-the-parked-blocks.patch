@@ -1,0 +1,17 @@
+diff --git b/src/store.rs a/src/store.rs
+index 5a561c281..f4924aa33 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -3095,12 +3085,6 @@ impl Store {
+         std::mem::swap(&mut a.lazy, &mut b.lazy);
+         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
+         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+-        // `@FR-H-Park` — the parked blocks are positions in the memory that moves, so the
+-        // lists and the set move with it (loft#2031: left behind, a store's set named live
+-        // records of the content it received, a delete parked one of them twice, and the
+-        // flush walked a list whose links were that record's bytes — for ever).
+-        std::mem::swap(&mut a.park, &mut b.park);
+-        std::mem::swap(&mut a.parked, &mut b.parked);
+         std::mem::swap(&mut a.known_type, &mut b.known_type);
+         std::mem::swap(&mut a.parse_errors, &mut b.parse_errors);
+         std::mem::swap(&mut a.parse_type, &mut b.parse_type);

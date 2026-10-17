@@ -830,6 +830,11 @@ pub struct Output<'a> {
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
     pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `@FR-R-RecPtr`'s text clause — the text span (`__ts_N`) derived beside the held base a
+    /// `__pa_N` address was taken from, keyed by that address's name: a text field read of
+    /// the view slices off it ([`Self::rec_ptr_text_read`]).  An address from anywhere else
+    /// has no entry and its text reads resolve the store.
+    pub rec_ptr_spans: HashMap<String, String>,
     /// `@FR-R-RecPtr`'s mint clause — the open mint WINDOWS, innermost last: `(block serial,
     /// the index of the element's finish, the element variable)`.  A window's address frame
     /// is dropped once the statement at that index has been emitted
@@ -1084,6 +1089,9 @@ pub struct Output<'a> {
     /// and base resolves the store per element again (`@FR-R-Base`'s text clause off); the
     /// bisect step for a wrong or stale text read out of `v[i]` on native.
     pub text_base_disabled: bool,
+    /// `LOFT_NO_TEXT_FIELD=1` — `@FR-R-RecPtr`'s text clause off: a text FIELD of a held
+    /// iteration's record view resolves the store at each read, as before the clause.
+    pub text_field_disabled: bool,
     /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
     /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
     /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
@@ -1094,9 +1102,21 @@ pub struct Output<'a> {
     /// [`Output::borrowed_text_locals`] ([`hoist::borrowed_store_texts`]): every `Set` of
     /// one binds its `&str` slot.
     pub borrowed_store_locals: HashSet<u16>,
+    /// `@FR-R-TextBorrow`'s tested clause — the [`Output::borrowed_store_locals`] whose scope
+    /// writes the return buffer, with the parameters their reads are rooted in: each bind
+    /// borrows while those parameters' stores are not the buffer's and copies into its
+    /// `__own_` backing `String` otherwise ([`hoist::StoreTextBorrows::tested`]).
+    pub tested_store_texts: HashMap<u16, Vec<u16>>,
+    /// `@FR-R-TextBorrow`'s format and call clauses — the borrowed locals whose bytes are the
+    /// frame's own work texts, never a store's ([`hoist::StoreTextBorrows::work`]).
+    pub work_text_locals: HashSet<u16>,
     /// `@FR-R-SliceBorrow` — how many of [`Output::borrowed_store_locals`] are bound from a
     /// value slice of a parameter, for the rewrite census; rebuilt per function.
     pub slice_borrow_count: usize,
+    /// `@FR-R-TextBorrow`'s versioned clause — the walk variables that borrow their element in
+    /// `@FR-R-Alias`'s versioned copy only, each with the parameter the copy must have tested
+    /// apart from the return buffer ([`hoist::versioned_text_walks`]); rebuilt per function.
+    pub versioned_text_walks: HashMap<u16, (u16, hoist::TextBorrow)>,
     /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
@@ -2267,6 +2287,7 @@ impl<'a> Output<'a> {
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
+            rec_ptr_spans: HashMap::new(),
             ptr_windows: Vec::new(),
             mint_window_disabled: std::env::var("LOFT_NO_MINT_WINDOW").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
@@ -2358,9 +2379,13 @@ impl<'a> Output<'a> {
             split_table_aliases: BTreeMap::new(),
             split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
             text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
+            text_field_disabled: std::env::var("LOFT_NO_TEXT_FIELD").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
+            tested_store_texts: HashMap::new(),
+            work_text_locals: HashSet::new(),
             slice_borrow_count: 0,
+            versioned_text_walks: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
@@ -2882,6 +2907,8 @@ impl Output<'_> {
             .copied()
             .collect();
         self.borrowed_store_locals.clear();
+        self.tested_store_texts.clear();
+        self.work_text_locals.clear();
         self.slice_borrow_count = 0;
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
@@ -2896,8 +2923,15 @@ impl Output<'_> {
             let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
+            self.tested_store_texts = store.tested;
+            self.work_text_locals = store.work;
             self.slice_borrow_count = store.slices.len();
             walks
+        };
+        self.versioned_text_walks = if self.text_borrow_disabled || self.distinct_version_disabled {
+            HashMap::new()
+        } else {
+            hoist::versioned_text_walks(self.data, def_nr, &sliced, &self.split_tables)
         };
         self.char_walks = if self.char_walk_disabled {
             BTreeMap::new()
@@ -2983,6 +3017,7 @@ impl Output<'_> {
         self.vec_headers.clear();
         self.vec_bases.clear();
         self.rec_ptrs.clear();
+        self.rec_ptr_spans.clear();
         self.vec_bounds.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
@@ -4324,6 +4359,28 @@ impl Output<'_> {
             .find_map(|j| self.vec_headers[j].get(path).cloned())
     }
 
+    /// Does `lp`'s body grow one of `bufs` — a push, reservation or mint whose root's dep chain
+    /// ends at one?  A loop the header gate DECLINES holds no push to count, and its apart
+    /// clause may still gain a parameter's vector once the buffer is tested apart.
+    fn grows_buffer(&self, lp: &crate::data::Block, bufs: &[u16]) -> bool {
+        let vars = self.data.def(self.def_nr).variables();
+        hoist::mover_roots(&lp.operators, self.data, self.stores, vars)
+            .iter()
+            .any(|&m| {
+                let mut cur = m;
+                for _ in 0..vars.var_count() {
+                    if bufs.contains(&cur) {
+                        return true;
+                    }
+                    match vars.tp(cur).depend().as_slice() {
+                        [d] if *d != cur => cur = *d,
+                        _ => return false,
+                    }
+                }
+                false
+            })
+    }
+
     /// `@FR-R-Alias`'s versioned clause — when `lp` pushes into this function's return buffer
     /// and keeps fewer headers than it would if each parameter's store were apart from the
     /// buffer's (`StoreFacts::distinct` cannot prove that statically: a caller may hand a
@@ -4385,6 +4442,7 @@ impl Output<'_> {
             .chain(plain.mint_pushes.iter())
             .all(|(p, _)| !bufs.contains(&p.0))
             && !plain.movers.iter().any(|m| bufs.contains(m))
+            && !self.grows_buffer(lp, &bufs)
         {
             return None;
         }
@@ -4399,16 +4457,27 @@ impl Output<'_> {
         // holds (the function clause, an outer loop) would gain the copy no more than an
         // element base, which measured LESS than the duplicated loop costs (graphics'
         // `polygon_crossings`, +8 % on `fill_polygon`).
-        let mut gained: Vec<u16> = versioned
-            .vectors
-            .iter()
-            .filter(|(p, _)| {
-                params.contains(&p.0)
-                    && !plain.vectors.iter().any(|(q, _)| q == p)
-                    && self.active_vec_header(p).is_none()
-            })
-            .map(|(p, _)| p.0)
-            .collect();
+        // A path's root counts through its dep chain: `for e in v` walks a hidden local bound
+        // to the parameter `v`, whose header the copy holds once `v` is tested apart.
+        let mut gained: Vec<u16> = Vec::new();
+        for (p, _) in &versioned.vectors {
+            if !plain.vectors.iter().any(|(q, _)| q == p)
+                && self.active_vec_header(p).is_none()
+                && let Some(r) = self.param_root(p.0, &params)
+                && !gained.contains(&r)
+            {
+                gained.push(r);
+            }
+        }
+        // `@FR-R-TextBorrow`'s versioned clause — the walk this loop IS borrows its element
+        // in the copy: a gain the header count does not see.
+        if let Some(Value::Set(w, _)) = lp.operators.first().map(Value::unspan)
+            && let Some((r, _)) = self.versioned_text_walks.get(w)
+            && params.contains(r)
+            && !gained.contains(r)
+        {
+            gained.push(*r);
+        }
         // `@FR-R-RecPtr` under the same assumption: a record VIEW of a parameter's element,
         // read field by field in the loop, takes its address only when the buffer's growth is
         // proven to leave the parameter's store alone — a gain of its own, which the header
@@ -4436,6 +4505,23 @@ impl Output<'_> {
         Some((tests, pairs))
     }
 
+    /// The member of `params` that `v`'s dep chain ends at, through single-dep views (sixteen
+    /// steps at most), or `None` when it branches, ends elsewhere, or runs longer.
+    fn param_root(&self, v: u16, params: &[u16]) -> Option<u16> {
+        let vars = self.data.def(self.def_nr).variables();
+        let mut cur = v;
+        for _ in 0..16 {
+            if params.contains(&cur) {
+                return Some(cur);
+            }
+            let [d] = vars.tp(cur).depend()[..] else {
+                return None;
+            };
+            cur = d;
+        }
+        None
+    }
+
     /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
     /// declines as things stand and admits once the `assumed` pairs — each parameter against
     /// the return buffer and the names it goes by — hold apart.
@@ -4448,21 +4534,7 @@ impl Output<'_> {
         if self.record_ptr_disabled || self.distinct_growth_disabled {
             return Vec::new();
         }
-        let vars = self.data.def(self.def_nr).variables();
-        let root = |v: u16| -> Option<u16> {
-            let mut cur = v;
-            for _ in 0..16 {
-                if params.contains(&cur) {
-                    return Some(cur);
-                }
-                let deps: Vec<u16> = vars.tp(cur).depend().clone();
-                let [d] = deps[..] else {
-                    return None;
-                };
-                cur = d;
-            }
-            None
-        };
+        let root = |v: u16| self.param_root(v, params);
         // Every statement list inside the loop — the loop's own, where a `for` binds its
         // element, and each block's — with each statement that binds a view of a parameter.
         let mut sites: Vec<(Vec<Value>, usize, u16)> = Vec::new();
@@ -5368,6 +5440,29 @@ impl Output<'_> {
         ))
     }
 
+    /// `@FR-R-RecPtr`'s text clause — the expression reading TEXT field `fld` of record view
+    /// `v` through its held address and the text span beside the base it came from, or
+    /// `None` when the view holds no address or its address has no span.
+    pub fn rec_ptr_text_read(&mut self, v: u16, fld: i64) -> Option<String> {
+        let ptr = self.active_rec_ptr(v)?.to_owned();
+        let span = self.rec_ptr_spans.get(&ptr)?.clone();
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(v)).ok()?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        Some(format!(
+            "unsafe {{ vector::rec_text::<{}>({ptr}, {span}, &({operand}), ({fld}_i64) as u32, &stores.allocations) }}",
+            self.hoist_verify
+        ))
+    }
+
+    /// The text span a held iteration's address may slice its view's texts off: the
+    /// `__ts_N` bound beside a FRAME's base `__vb_N` — a twin's input base carries none —
+    /// unless this clause or `(R-Base)`'s text clause is switched off.
+    fn held_text_span(&self, base: &str) -> Option<String> {
+        (!self.text_base_disabled && !self.text_field_disabled && base.starts_with("__vb_"))
+            .then(|| base.replacen("__vb_", "__ts_", 1))
+    }
+
     /// `@FR-R-RecPtr` — after statement `at` of a block was emitted: if it bound a plain
     /// record VIEW whose address the rest of the block may share ([`hoist::record_view_ptr`]),
     /// emit `let __pa_N = vector::rec_ptr(&var_r, …);` as the next statement and push a frame
@@ -5439,6 +5534,20 @@ impl Output<'_> {
                 }
             }
             (v, _) => v,
+        };
+        // `@FR-R-RecPtr`'s text clause — a view whose only served use is a TEXT field read
+        // still takes an address when the binding is a held iteration with a text span beside
+        // its base: every other condition of the verdict held (`NO_FUSABLE_USE` is its last).
+        let verdict = match verdict {
+            Err(hoist::NO_FUSABLE_USE)
+                if hoist::reads_text_field(&stmts[at + 1..], *r, self.data)
+                    && self
+                        .held_iteration_base(&stmts[at])
+                        .is_some_and(|(_, base, ..)| self.held_text_span(&base).is_some()) =>
+            {
+                Ok(*r)
+            }
+            v => v,
         };
         let r = match verdict {
             Ok(r) => r,
@@ -5618,6 +5727,11 @@ impl Output<'_> {
                 "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ vector::held_elem_ptr({base}, var_{index} as usize * {size}{plus}, {verify}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base",
                 verify = self.hoist_verify
             )?;
+            // A record element's texts are records of its vector's store: the span beside
+            // the base serves the view's text fields (`rec_ptr_text_read`).
+            if let Some(span) = self.held_text_span(&base) {
+                self.rec_ptr_spans.insert(name.clone(), span);
+            }
             self.indent(w)?;
             writeln!(w, "let {lock}: bool = {header}.locked;")?;
         } else if let Some((win, size)) = stmt.and_then(|s| self.windowed_mint_of(s)) {
@@ -5699,6 +5813,8 @@ impl Output<'_> {
             record_push: !self.record_push_disabled,
             heap_push: !self.heap_record_push_disabled,
             rebound_movers: !self.rebound_mover_disabled,
+            // Never here: only `hoist::hoistable`'s header verdict admits a text set.
+            text_set: false,
         }
     }
 
@@ -6316,7 +6432,21 @@ impl Output<'_> {
         let vars = self.data.def(self.def_nr).variables();
         // `@FR-N-Shape` — `.base()`: a `text?` variable is the same slot, its null the sentinel.
         matches!(vars.tp(v).base(), Type::Text(_))
-            && (vars.is_argument(v) || self.borrowed_text_locals.contains_key(&v))
+            && (vars.is_argument(v)
+                || self.borrowed_text_locals.contains_key(&v)
+                || self.versioned_borrow(v).is_some())
+    }
+
+    /// `@FR-R-TextBorrow`'s versioned clause — `v`'s borrow while the copy that assumes its
+    /// parameter apart from the return buffer is being emitted, and `None` everywhere else
+    /// (the plain copy, and any code outside the loop).
+    #[must_use]
+    pub fn versioned_borrow(&self, v: u16) -> Option<&hoist::TextBorrow> {
+        let (root, borrow) = self.versioned_text_walks.get(&v)?;
+        self.assumed_distinct
+            .iter()
+            .any(|&(p, _)| p == *root)
+            .then_some(borrow)
     }
 
     /// The complement of [`Output::text_borrowed`] over text variables: `v` is a text
@@ -6332,12 +6462,22 @@ impl Output<'_> {
 
     /// A text VALUE that borrows no store memory, so a store write may read its bytes where
     /// they are instead of copying them first (`OpSetText`'s claim can move the store a
-    /// borrowed text points into): a literal, an owned text local, or a block that answers
-    /// one — the synthesised text a decoder builds into its work string.
+    /// borrowed text points into): a literal, a local borrowing the frame's own work text, the
+    /// null text (`OpConvTextFromNull`, the static
+    /// `STRING_NULL` bytes — `x.f = null` copied them into a `String` per write), an owned text
+    /// local, or a block that answers one — the synthesised text a decoder builds into its
+    /// work string.  Anything else answers no and is copied: a copy is never wrong.
     #[must_use]
     pub fn text_value_unborrowed(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Text(_) => true,
+            // A local borrowing the frame's own work text: no store holds its bytes.
+            Value::Var(w) if self.work_text_locals.contains(w) => true,
+            Value::Call(d, args) => {
+                args.is_empty()
+                    && (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name() == "OpConvTextFromNull"
+            }
             Value::Var(w) => self.text_owned(*w),
             Value::Block(b) => b
                 .operators

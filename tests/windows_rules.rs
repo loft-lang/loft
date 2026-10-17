@@ -20,10 +20,17 @@
 //!   same two (a held file, `PATH`), on both backends; without the switch it passes 8 of 8, as
 //!   Linux did.  The current guard fails 5 of 9 under the switch.
 
+mod common;
+
 use loft::file_access as fa;
 
 fn run_under_the_emulated_host(script: &str) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // loft#2018 — a `#cwd` script writes fixed names into the repository root, and the corpus
+    // runners (`wrap`, `native`) run the same file from the same directory in other nextest
+    // processes: hold the run lock they hold, keyed by the file's path, so two runs of one
+    // script never interleave their writes (`116-file-append-log` lost its size assertion).
+    let _run_lock = common::source_run_lock(&root.join("tests/scripts").join(script));
     for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .current_dir(root)

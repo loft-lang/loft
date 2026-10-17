@@ -3452,7 +3452,7 @@ One asymmetry to know: `f += value` is a statement and reports nothing. If the p
 
 = Lexer
 
-The lexer library breaks a text into tokens so your program can understand its structure. Tokens are the smallest meaningful pieces: numbers, names (like variable and function names), operators, and quoted strings. You tell the lexer which multi-character sequences count as one token and which words are reserved keywords, and it handles the rest.
+(`lexer` is a piece of the loft-in-loft front end that lives in loft's own `lib/`, \@F120; it is not a registry library yet, so a program outside this tree cannot `use` it.) The lexer library breaks a text into tokens so your program can understand its structure. Tokens are the smallest meaningful pieces: numbers, names (like variable and function names), operators, and quoted strings. You tell the lexer which multi-character sequences count as one token and which words are reserved keywords, and it handles the rest.
 
 === Setting Up the Lexer
 
@@ -3565,7 +3565,7 @@ Loft string literals can embed expressions with `{expr}`. The lexer exposes a pr
 
 = Parser
 
-The 'parser' library lets a Loft program read and validate other Loft source code at runtime. This is useful when you want to:
+(`parser` is a piece of the loft-in-loft front end that lives in loft's own `lib/`, \@F121; it is not a registry library yet, so a program outside this tree cannot `use` it.) The 'parser' library lets a Loft program read and validate other Loft source code at runtime. This is useful when you want to:
 
 - validate configuration files written in the Loft syntax
 - build tools that inspect or transform Loft source
@@ -3742,7 +3742,7 @@ Each construct in the list at the top of this page answers a non-zero count here
 
 = Libraries
 
-A library is a `.loft` file you can share across projects. Place it in a `lib/` directory and import it at the top of your file. `use name;` gives you the `name::` prefix, which reaches everything the library defines. `use name::\*;` also brings every `pub` name into your own namespace, so you can write them bare; `use name::(a, b);` brings in just those. A definition without `pub` is reachable only through the prefix. So `pub` is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but `name::thing` still finds it. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write `pub use name::\*;` to pass the names on as well. `use` statements must come before any `fn` or `struct` definition in your file. Putting a `use` after a definition is a syntax error.
+A library is a `.loft` file you can share across projects. Place it in a `lib/` directory and import it at the top of your file. `use name;` gives you the `name::` prefix, which reaches every `pub` item the library defines. `use name::\*;` also brings every `pub` name into your own namespace, so you can write them bare; `use name::(a, b);` brings in just those. A definition without `pub` is the library's own: neither the bare name nor `name::thing` reaches it from outside. `pub` is the library's surface. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write `pub use name::\*;` to pass the names on as well. `use` statements must come before any `fn` or `struct` definition in your file. Putting a `use` after a definition is a syntax error.
 
 ```rust
 use testlib::*;
@@ -3758,7 +3758,7 @@ A library struct is constructed like any other. For a `pub` type the prefix is o
 
 === Calling Library Methods
 
-Methods defined in the library are called on the value directly — no prefix on the call site. A `pub` free function is callable bare as well; the prefix is how you reach one that is not `pub`, and how you say which library you meant.
+Methods defined in the library are called on the value directly — no prefix on the call site. A `pub` free function is callable bare as well; the prefix is how you say which library you meant.
 
 === Extending a Library Type
 
@@ -3906,7 +3906,7 @@ If the running loft is older than the stated minimum, loading the library produc
 
 === Wildcard and Selective Imports
 
-A bare `use lib;` brings in only the `lib::` prefix, and `use lib::\*` brings in every `pub` name. The selective forms give you a say in WHICH names arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes a group. Multiple names must be parenthesised — the flat `use lib::Name, Other` is refused ("import multiple names with parentheses"). Only `pub` definitions can be named this way; the rest stay reachable as `lib::name`.
+A bare `use lib;` brings in only the `lib::` prefix, and `use lib::\*` brings in every `pub` name. The selective forms give you a say in WHICH names arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes a group. Multiple names must be parenthesised — the flat `use lib::Name, Other` is refused ("import multiple names with parentheses"). Only `pub` definitions can be named this way; the rest are not reachable at all.
 
 Taking only what you name is the stronger position, because it makes you immune to the library GROWING a name. A wildcard import and your own definition of a name the library exports are a conflict, and it is refused naming both sites; under a selective import every name you did not ask for stays yours.
 
@@ -3916,7 +3916,7 @@ Taking only what you name is the stronger position, because it makes you immune 
 
 \*\*`use` must appear before all definitions.\*\* If you write a function first and then a `use`, the compiler reports a syntax error.
 
-\*\*`pub` decides the bare spelling.\*\* Only `pub` definitions come in bare or can be named by an import; the rest are still reachable as `lib::name`. A library therefore has no hidden half — `pub` says which names are ready to be written without ceremony, not which ones exist.
+\*\*`pub` decides the surface.\*\* Only `pub` definitions come in bare, can be named by an import, or answer to `lib::name`; a library's non-`pub` items are its own.
 
 \*\*Native extensions.\*\* A library can be pure `.loft`, or ship a Rust crate beside it: declare `\[library\] native = "..."` in `loft.toml` and loft builds and links it for you. See doc/claude/PACKAGES.md in the loft repository for the build + binding model.
 
@@ -5013,7 +5013,7 @@ Both parse forms report. 'json\_errors()' holds the LAST parse's diagnostics and
 if json_errors() != "" { log_warn(json_errors()); }
 ```
 
-'record\#errors' answers for the 'Type.parse(text)' that built that record, as a vector\<text\> with one entry per error. Each parsed record keeps its own:
+'record\#errors' answers for the 'Type.parse(…)' that built that record, as a vector\<text\> with one entry per value that did not fit — every mismatch, whether the one-step 'Type.parse(text)' or the staged 'Type.parse(json\_parse(text))' built it; a field whose value did not fit holds the type's default, the rest is read. Each parsed record keeps its own:
 
 ```
 for e in user#errors { log_warn(e); }
@@ -5100,6 +5100,14 @@ A type-mismatched field leaves the record at its DECLARED default — `id` is pl
   assert(json_errors() != "", "the mismatch was reported: [{json_errors()}]");
 ```
 
+…and EVERY mismatch is named, on the record: `id` and `name` both, in either form.
+
+```rust
+  assert(len(bad#errors) == 2, "both mismatches on the record: {bad#errors}");
+  staged = User.parse(json_parse(`{{"id":"not_a_number","name":42}}`));
+  assert(len(staged#errors) == 2, "the staged form names both too: {staged#errors}");
+```
+
 …and the next parse replaces it, so a good parse reads clean.
 
 ```rust
@@ -5117,11 +5125,13 @@ A type-mismatched field leaves the record at its DECLARED default — `id` is pl
   assert(total == 60, "vector sum: {total}");
 ```
 
-An array is all-or-nothing: one element the declaration cannot take abandons the whole vector, where a struct keeps its other fields.
+An element the declaration cannot take keeps its slot at the defaults, and the elements around it are read — as a struct keeps its other fields; `\#errors` names it.
 
 ```rust
   spoiled = vector<Score>.parse(`[{{"value":"x"}},{{"value":2}}]`);
-  assert(len(spoiled) == 0, "one bad element empties the vector: {len(spoiled)}");
+  assert(len(spoiled) == 2, "one bad element keeps its slot: {len(spoiled)}");
+  assert(spoiled[0].value == 0 && spoiled[1].value == 2, "the fitting element is read: {spoiled}");
+  assert(len(spoiled#errors) == 1, "the mismatch is named: {spoiled#errors}");
 ```
 
 ```rust
@@ -5301,11 +5311,11 @@ A CONSTANT index is trusted, and an empty vector is where that trust runs out: `
 
 By default, you can only assign and return T — no arithmetic, and no comparison either: `a == b` on an unbounded T is refused. To use an operator on T, add an interface bound.
 
-Each bound guarantees EXACTLY the operations in this table, and no more — a `+` under `Numeric` is refused as surely as one under no bound at all. Each names the FEWEST operators it needs, because the rest are derived: `\>`, `\<=` and `\>=` all come from `\<`, and `!=` comes from `==`.
+Each bound guarantees EXACTLY the operations in this table, and no more — a `+` under `Numeric` is refused as surely as one under no bound at all. Each names the FEWEST methods it needs, because the operators are derived: `\<`, `\<=`, `\>` and `\>=` all read `compare`, and `!=` comes from `==`.
 
 ```
-Ordered    — declares `<`; gives you `<`, `<=`, `>`, `>=`
-Equatable  — declares `==`; gives you `==` and `!=`
+Ordered    — declares `compare`; gives you `<`, `<=`, `>`, `>=`
+Equatable  — declares nothing; every type has `==` and `!=`
 Addable      — `+` only.  NOT `-`
 Numeric      — `*` and the UNARY `-a`.  NOT `+`, NOT `/`
 Subtractable — the BINARY `a - b`
@@ -5384,7 +5394,7 @@ Printable    operator to_text(self: T) -> text
 Walkable     fn children(self: T) -> vector<T>
 ```
 
-`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type, because `==` compares what two values hold — a struct field by field — unless the type defines `operator equals`.
+`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type: `==` always compares what two values hold — a struct field by field — and no type can redefine it; a comparison of your own is a named method.
 
 The same definition serves the bare operator: once `Money` has `compare`, both `a \< b` and `\<T: Ordered\>` work on it.  Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing `operator compare(self: Money, other: Money) -\> Ordering`" — at the CALL site, because that is where the concrete type is known.
 
@@ -8026,6 +8036,12 @@ pub fn log(self: single, v2: single) -> single?
 ```
 
 Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).
+
+```rust
+pub fn pow(self: integer, v2: integer) -> integer?
+```
+
+Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 \*\* 20` is 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the answer does not fit an integer (`pow(2, 63)`), as `\*` answers null past the range.
 
 ```rust
 pub fn pow(self: single, v2: single) -> single?

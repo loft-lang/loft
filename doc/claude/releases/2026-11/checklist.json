@@ -1,0 +1,67 @@
+{
+  "M-close-plans": {
+    "at": "2026-10-16 15:41",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "close-shipped-plans.sh --range v2026.10.0..HEAD --dry-run: directives name plans#178 and #183, both already closed"
+  },
+  "M-doc-review": {
+    "at": "2026-10-16 21:13",
+    "commit": "708405784386ff58128624f0db09d16fc25aec8e",
+    "note": "PLANNING.md brought under DOC_CONTRACT in the code-free PR https://github.com/loft-lang/loft/pull/2029 (branch tuxedo-doc-review-planning on main, auto-merge armed): 913 -> 220 lines, ~30 completed items moved verbatim to PLANNING-history.md, CLAUDE.md index entry reworded, docs-lint baseline re-pinned; the open sketches left are CO1's three unwritten generator cells, A2, A12 (blockers as facts) and game_client"
+  },
+  "M-doc-validation-mid": {
+    "at": "2026-10-16 17:56",
+    "commit": "6b80c93b18a1481119be61948c138e3c6fd2c76d",
+    "note": "read at 6b80c93b1 (the pre-tag pass starts from it). Part 1: make libcatalogue && make libraries-review - 51 libraries moved since their watermark, every one with 0 pub fn lines changed, dismissed per LIBRARY_DOC_REVIEW.md and watermarks bumped; reads clean. Part 2: gendoc regenerated on the runner (derive.yml 38925036203, no diff after); scripts/doc_review.py 267/267 sections cleared, the 47 that moved re-read (default/*.loft hunks since a80e26737 against their bodies; chapters 03 04 08 15 16 17 24 25 29 30 33 36 probed on the interpreter - 17-libraries, 25-generics, 24-json corrected; LOFT.md's new sections against today's probes). Part 3: make features-review SINCE=v2026.10.0 - 20 @F entries re-read, every example run, 11 issues corrected on loft-lang/features (#2 #5 #6 #11 #16 #47 #100 #120 #121 #124 #126), index/features.json fetched and the shadow regenerated (be2617a26); defects met filed as loft#2024..2028"
+  },
+  "M-docs-review": {
+    "at": "2026-10-16 19:34",
+    "commit": "9b38efb1ac6da2d3e9fc9677a530c2ea20472d0f",
+    "note": "steps 1-4 read by a reviewer session (doc-quality skill), step 8 by make clippy-review at 9d9794e2b. Fixed: two dead test paths (TESTING.md, DEBUG.md), a section on tests/generated/default.rs that nothing writes, TUPLES.md's test plan naming files that never existed, three history companions with no inbound link, (H-RootExtent) pasted twice in formal/heap.md. Found, for M-doc-review: PLANNING.md keeps ~30 completed items in place (T1.1-T1.11, CO1.x, L1) - the candidate; USER_DOCS/WINDOWS/WINDOWS_SESSION cite deleted files inside landed narrative; BOTH_BACKEND_SWITCHES/PERFORMANCE/INTERFACES/OCAML_BAR carry dated prose. Code links: 2406 cited paths, 285 misses, all but the fixed ones in record docs, library-local paths, planned files or examples. clippy-review: 323 attributes, 59 lints; dead 41, partly dead 15, live 259, unmeasured 8; 106 of 302 item attributes unjustified (scratchpad clippy-review.txt names each)"
+  },
+  "M-falsify-receipts": {
+    "at": "2026-10-16 15:56",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make falsify-review 2026-10-16: worklist 0 of 1059 unscored; 117 receipts the census cannot classify (108 read '@falsified-at: hand-measured'), absent from --check - the inflow to bring under the instrument"
+  },
+  "M-file-sizes": {
+    "at": "2026-10-16 15:48",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make file-sizes 2026-10-16: 18 docs over 1000 (2 read as several subjects: DESIGN_DECISIONS-history, PERFORMANCE-history), 117 code files over 1200 (86 several subjects; top parser/mod.rs 27205, control.rs 23123); last release's scopes.rs split stayed down (no scopes/ file in the list)"
+  },
+  "M-file-split": {
+    "at": "2026-10-16 22:55",
+    "commit": "9e74d94389c6b1f23732e445c48b34ba6a697835",
+    "note": "src/parser/mod.rs split into 21 parts + 6 test files in 9e74d9438 (pick at 0e51a2eff: 27209 lines, split value 25181; mod.rs now 3305): a pure move verified by token multiset (nothing removed; additions = headers, part docs, use/impl/mod lines, pub(super)), cargo check + both clippy legs green, docs-lint baseline re-pinned in the commit (131 moved, 0 new, 4059). PR: loft3 joins the branch and opens it on the owner's ask (link to add at the pre-tag pass). Second pick (control.rs) not taken this cycle; passes/packages/monomorph/generics/admission-tests parts stay over the bar for the next pick"
+  },
+  "M-ignores": {
+    "at": "2026-10-16 16:00",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "every #[ignore] reason names a job that exists (miri.yml release-gate-sweeps runs each named test; ci.yml Differential oracle, leak-scan, front-end allocation pins; receipts.yml) and the sweeps job was GREEN on the 2026-10-16 nightly; skip lists: NATIVE_SKIP, LIB_PKGS/LIB_TESTS_NATIVE_SKIP, LIB_TESTS_SKIP, ignored_scripts all empty; SCRIPTS_NATIVE_SKIP's one entry (75-native-stub) re-justified with its removal condition"
+  },
+  "M-libs": {
+    "at": "2026-10-16 20:19",
+    "commit": "98e778d989b43f6d8ae9b3cca28e25c6949eae4a",
+    "note": "revalidate-libs run 38943370117 on 98e778d98: every one of the 45 library legs green (interpret + native). The earlier run 38940514632 read E0514 in every native suite - the legs ran loft --native with the runner image's rustc against the rlib the build job compiled with rustup's stable; the legs now install the same stable (98e778d98), which also cures the chronic 9-of-14 revalidate-libs red. Still red in the run: the unreleased-work job - loft-libs-core branches 174-f5-crypto-foreign (2 ahead) and 174-f6-cbor-spans (3 ahead), @PLN174's finished library halves from 2026-09-28, 20 commits behind main; the rebase conflicts on crypto.loft's contract for base64_to_bytes (main: an ordinary vector; the branch: a read-only foreign view), a design pick for the owner - PR after the pick, or delete"
+  },
+  "M-liveness": {
+    "at": "2026-10-16 15:53",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make release-liveness 2026-10-16: one STALE rationale (SCRIPTS_NATIVE_SKIP cited closed #1841) re-justified in bb4da4cbe; chronic reds: consumer-main-health (dryopea x14, moros/crawler x8 - consumers' own), browser-threads par on Web Workers x7 (a speedup threshold on a shared runner), revalidate-libs gate x9 (E0514 stale rlibs - cache key fixed in bb4da4cbe), lib-main-health loft-libs-game x7 (green on 10-16); NEVER RUN: M-doc-review, M-doc-validation-mid (both running this pass), M-windows-parity, M-vscode"
+  },
+  "M-monthly-bugs": {
+    "at": "2026-10-16 15:44",
+    "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
+    "note": "make bug-review 2026-10-16: narrow-int/width is the one RISING class (8.5% in the newest band, +2.2pp over its peak); Parser::nstore_unwrap_report reads NO EFFECT on null/sentinel (10.8% -> 18.6%, 15.1% minus PLN153's own finds) - premise to re-open; owns/proxy/N-Road keystones paid off; contract pressure 9.4% strained in 2026-10, 4 unjudged"
+  },
+  "M-ops-census": {
+    "at": "2026-10-16 16:33",
+    "commit": "b3c430a5c56e10a7434320f9ca0de0da6c2dbd19",
+    "note": "make ops-census 2026-10-16: 343 declared / 315 emitted / 28 UNEXERCISED / 0 orphan (2192 of 2570 .loft files produced bytecode). Last cycle read 11 unexercised; the census now reads lambda bodies (57f603646) and six orphans were retired (2ca397a4e), so the 28 are the honest denominator: control-flow and literal-width ops the hoist rewrites (OpGoto/GotoFalse, OpConstShort/Tiny, OpVarNarrow), LOFT_STORE_TAG-gated ops, and sixteen emitter sites no corpus program reaches (OpReverseVector, OpInsertVector, OpKeepRange, OpHashAdd, OpEvacuate, OpFillKeyed, OpSetRef/GetRef, OpSizeStruct/Scalar, OpNeContent, the fn-ref stack ops) - each a test gap to close or a blind spot to name, read per release"
+  },
+  "M-perf-pass": {
+    "at": "2026-10-16 19:46",
+    "commit": "72055d28b1a6d8eb54e5e0156a4fcbff08eccc1c",
+    "note": "make speed at 72055d28b (box shared with loft3's build, load 7-12): 87 timed, 48 drifted beyond 25%, 18 SLOWER - the one past 3x is html_asyncify::html_asyncify_program_resumes_to_completion 0.80 -> 4.91 units, 3.2 s alone twice (still ~4x, +3 s: under the speed gate's 3x AND +5 s rule, the pin is stale rather than the test slow); the rest 1.3-2.4x are browser/engine-host tests under contention; 16 annotated tests no longer slow. Pins NOT blessed on a shared box. Portal read (PERF_PORTAL.md, laptop 2026-10-15 at cbe54eaa2): shipped median 2.00x, 82 of 162 within 2x, 44 over 3x; keyed is the slow class (median 3.26x, 16 of 22 over 3x: reload_and_record 6.86x), then parallel 2.54x, native-boundary 2.51x, call 2.49x; the over-3x library rows name their cause each (pack_instances 7.55x, insert_text 7.14x, check_request 7.97x, flow_layout_full 6.91x). The bar is gated by native_ratio.sh in make ci; no open D-perf deviation blocks"
+  }
+}

@@ -62,8 +62,23 @@ for p in $POOLS; do
   [ "$p" = "$SPEEDUP_AT" ] && break
 done
 sp="$(pct "${PAR[$BASE]}" "${PAR[$SPEEDUP_AT]}")"
+# A speedup under the bar is re-measured alone before it fails, as the speed gate does
+# (scripts/test_speed_gate.py): contention on a shared runner does not repeat, a dispatch
+# that cannot scale does.  Each re-measurement takes a fresh pair — both legs, so a slow
+# base cannot pass a slow parallel run.
+attempt=0
+while [ "$sp" -lt "$MIN_SPEEDUP_PCT" ] && [ $attempt -lt "${SPEEDUP_RETRIES:-2}" ]; do
+  attempt=$(( attempt + 1 ))
+  echo "  ${SPEEDUP_AT}-worker speedup ${sp}% < ${MIN_SPEEDUP_PCT}% — re-measuring (attempt $attempt)"
+  for p in $BASE $SPEEDUP_AT; do
+    r="$(runP $p)"; echo "  $r"
+    echo "$r" | grep -q 'success=true' || { echo "FAIL: P=$p unsuccessful"; exit 1; }
+    PAR[$p]="$(echo "$r" | grep -oP 'par_ms=\K\d+')"
+  done
+  sp="$(pct "${PAR[$BASE]}" "${PAR[$SPEEDUP_AT]}")"
+done
 [ "$sp" -ge "$MIN_SPEEDUP_PCT" ] \
-  || { echo "FAIL: ${SPEEDUP_AT}-worker speedup ${sp}% < ${MIN_SPEEDUP_PCT}%"; fail=1; }
+  || { echo "FAIL: ${SPEEDUP_AT}-worker speedup ${sp}% < ${MIN_SPEEDUP_PCT}% (after $attempt re-measurement(s))"; fail=1; }
 if [ $fail -eq 0 ]; then
   curve=""
   for p in $POOLS; do curve="$curve ${p}w=${PAR[$p]}ms($(pct "${PAR[$BASE]}" "${PAR[$p]}")%)"; done

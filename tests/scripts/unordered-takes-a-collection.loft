@@ -1,0 +1,12 @@
+// `@FR-Col-Unordered` — `unordered(…)` wraps a collection.  A range already walks in its own
+// order and a text's order is its meaning, so both are refused, each with one diagnostic.
+//
+// @falsified-by: tests/falsified/unordered-takes-a-collection.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the EXPECTATION channel on both backends — the patch drops both refusals, so the
+//   range walks 1, 2 and the text walks its characters.
+// @EXPECT_ERROR: unordered() takes a collection, not a range
+// @EXPECT_ERROR: unordered() must wrap a collection
+fn main() {
+  for x in unordered(1..3) { println("{x}"); }
+  for c in unordered("abc") { println("{c}"); }
+}

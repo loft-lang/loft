@@ -1780,6 +1780,23 @@ pub fn apart_headers_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APART_HEADERS"))
 }
 
+/// `LOFT_NO_APART_PARAM=1` — a PARAMETER's vector in a loop the header gate declines takes no
+/// header again (`@FR-R-Header`'s apart clause, its parameter half, off): the first bisect step
+/// for a stale element or length read from a parameter's vector in a loop that also grows the
+/// return buffer or calls a writer.
+pub fn apart_param_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APART_PARAM"))
+}
+
+/// `LOFT_NO_TEXT_SET_HEADER=1` — a text set in a loop body declines the loop's header hold
+/// again (`@FR-R-Header`'s text clause off): the first bisect step for a stale length or
+/// element read in a loop that writes a text field or element.
+pub fn text_set_header_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_SET_HEADER"))
+}
+
 /// `LOFT_NO_FILE_HOLD=1` — every scalar read of a file goes through its `File` record
 /// (`@FR-R-FileHold` off): the first bisect step for a wrong `f#next` or `f#index` after a
 /// loop that reads `f`, or a value read from the wrong offset inside one.
@@ -1877,6 +1894,24 @@ pub fn forward_result_enabled() -> bool {
 pub fn exit_vector_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
+}
+
+/// `LOFT_NO_LITERAL_HOST=1` (scope pass, BOTH backends): a record literal whose vector field
+/// takes an owned local at its last use keeps its own store and the deep copy, instead of
+/// being claimed in the vector's store and taking it by a handle move — `@FR-R-MoveLast`'s
+/// host clause, the first bisect step for an emptied or freed vector field of a local literal.
+pub fn literal_host_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_HOST"))
+}
+
+/// `LOFT_NO_ZERO_COUNT=1` (closed program, BOTH backends): `len(t) > 0` and the other
+/// comparisons of a text's character count against the zero boundary keep counting
+/// characters, instead of reading the byte count — `@FR-R-ZeroCount`'s A/B, and the first
+/// bisect step for a wrong emptiness answer.
+pub fn zero_count_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ZERO_COUNT"))
 }
 
 /// `LOFT_NO_RETURN_FIELD=1` (scope pass, BOTH backends): the returned field of an owned local
@@ -3867,6 +3902,18 @@ pub fn hash(rec: &DbRef, stores: &[Store], keys: &[Key], seed: u64) -> u64 {
 pub fn long_hash(value: i64, seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
     hasher.write_i64(value);
+    hasher.finish()
+}
+
+/// [`key_hash`] of a key whose every part is an integer value — the same digest, for a
+/// caller that holds the parts and not `Content`s of them (`hash::entry_ints`).
+#[inline]
+#[must_use]
+pub fn ints_hash(values: &[i64], seed: u64) -> u64 {
+    let mut hasher = seeded_hasher(seed);
+    for v in values {
+        hasher.write_i64(*v);
+    }
     hasher.finish()
 }
 

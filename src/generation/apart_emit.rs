@@ -11,7 +11,7 @@
 //! The statement hook takes a construction run (several statements) and every statement the
 //! expression hook takes; the expression hook takes an element read, write and length, a bind,
 //! a free and a `return`.  A twin and a region are emitted with the vector hoists off, so no
-//! loop plans a header, a base or an address on a variable that is no longer a record.
+//! loop plans a header, a base or an address on a variable the apart value replaced.
 use std::io::Write;
 
 use super::apart_value::{self, ApLayout, Construction, Elem, Roles};

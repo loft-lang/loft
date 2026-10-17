@@ -312,6 +312,11 @@ fn the_store_census_drops() {
         i_on < i_off,
         "interpret: {i_on} mints pooled, {i_off} without"
     );
+    // 2026-10-16: re-measured on the tree that joins the x86-64 perf cut (157-native-4x,
+    // laptop-superinstructions) with loft#2016, #2017 and #2021: 183/295 → 237/349 on the
+    // interpreter, native unchanged.  The three fixes are not the movers — the count is the
+    // same with the branch-sink narrowed to frame-owned borrows and with it wide — so the
+    // rise is the joined rewrites' (`make interp-gap` is the report that attributes it).
     let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
@@ -325,7 +330,7 @@ fn the_store_census_drops() {
         // (`@FR-H-SwapRebind`) and a complete-literal callee refills the store it released
         // (`@FR-R-RefillBuffer`): 159/261 → 104/210 on native, the interpreter unchanged;
         // `LOFT_NO_REFILL_BUFFER=1` gives back the old pair.
-        (183, 295, 104, 210),
+        (237, 349, 104, 210),
         "mints (interpret on, off, native on, off)"
     );
 }

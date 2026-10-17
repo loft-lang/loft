@@ -1,0 +1,338 @@
+diff --git b/default/06_json.loft a/default/06_json.loft
+index f9e69651c..60af5d88a 100644
+--- b/default/06_json.loft
++++ a/default/06_json.loft
+@@ -228,10 +228,9 @@ pub fn json_object(fields: const vector<JsonField>) -> JsonValue;
+ pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue;
+ #impure(host_io)
+ 
+-// @C148 — what `record#errors` reads: the errors of the `Type.parse(…)` call that built the
+-// record — the one-step text form or the staged `JsonValue` form alike — one element per
+-// value that did not fit, as a vector the caller owns.  A record no parse built, and one a
+-// parse built without error, answer an empty vector.
++// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built the
++// record, one element per error, as a vector the caller owns.  A record no parse built, and
++// one a parse built without error, answer an empty vector.
+ fn parse_errors_of(r: const reference) -> vector<text>;
+ #rust"stores.parse_errors_vector(&(@r))"
+ 
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 1e4c484df..e137bea4f 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -4218,10 +4218,7 @@ pub fn n_struct_from_jsonvalue(
+     let bytes = u32::from(stores.size(struct_kt));
+     let words = bytes.div_ceil(8) + 1;
+     let result = stores.database(words.max(2));
+-    let seen = stores.last_json_errors.len();
+     crate::native::populate_struct_from_jsonvalue(stores, &result, struct_kt, &v);
+-    let errs = stores.last_json_errors[seen..].to_vec();
+-    stores.set_parse_errors(&result, struct_kt, errs);
+     result
+ }
+ 
+diff --git b/src/database/format.rs a/src/database/format.rs
+index d933776a3..c9227a9e4 100644
+--- b/src/database/format.rs
++++ a/src/database/format.rs
+@@ -19,9 +19,8 @@ use std::fmt::{Debug, Formatter, Write as _};
+ enum TextErr {
+     /// The text is not a well-formed document.
+     Malformed(String),
+-    /// The document is well-formed and some of its values do not fit their types: one
+-    /// message per such value, in document order (loft#2028).
+-    Misfit(Vec<String>),
++    /// The document is well-formed and one of its values does not fit its type.
++    Misfit(String),
+ }
+ 
+ fn format_walk_err(text: &str, at: usize, path: &[String]) -> String {
+@@ -487,8 +486,7 @@ impl Stores {
+     /// format `tests/data_structures.rs::record` asserts.
+     fn try_parse_unified(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), String> {
+         self.read_text(text, tp, result).map_err(|e| match e {
+-            TextErr::Malformed(msg) => msg,
+-            TextErr::Misfit(msgs) => msgs.join("|"),
++            TextErr::Malformed(msg) | TextErr::Misfit(msg) => msg,
+         })
+     }
+ 
+@@ -498,20 +496,13 @@ impl Stores {
+     /// its program an untouched record restores it ([`Self::record_from_text`]).
+     fn read_text(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
+         let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
+-        let mut failed = Vec::new();
++        let mut failed = None;
+         self.read_into(&mut rd, &mut failed, value_at, tp, tp, u16::MAX, result, 0)
+             .and_then(|()| rd.finish())
+             .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
+-        if failed.is_empty() {
+-            Ok(())
+-        } else {
+-            Err(TextErr::Misfit(
+-                failed
+-                    .iter()
+-                    .map(|e| format_walk_err(text, e.at, &e.path))
+-                    .collect(),
+-            ))
+-        }
++        failed.map_or(Ok(()), |e| {
++            Err(TextErr::Misfit(format_walk_err(text, e.at, &e.path)))
++        })
+     }
+ 
+     /// The store a `T.parse` fills: one record of `tp` holding the type's final defaults,
+@@ -535,30 +526,31 @@ impl Stores {
+     }
+ 
+     /// `T.parse(text)` for both backends: a new store holding the `tp` that `text`
+-    /// describes, with the read's errors — every value that did not fit, or none — filed
+-    /// under the record's `#errors` and under `json_errors()` (@C148, loft#2028).
++    /// describes, with the read's one error — or none — filed under the record's
++    /// `#errors` and under `json_errors()`.
+     ///
+     /// The record is written while the text is read, so a document that turns out not to
+     /// be well-formed has already written what came before its fault.  A program must
+     /// not see that: such a document answers the type's defaults, as if nothing of it
+     /// had been read, so the half-written store is released and a new one made.  A
+-    /// well-formed document with values that do not fit their fields keeps every value
+-    /// that does; a field whose value did not fit holds the type's default, and
+-    /// `#errors` names each such value — as the staged `T.parse(JsonValue)` form reads it.
++    /// well-formed document with a value that does not fit its field keeps what was
++    /// written before that value, and nothing after it.
+     pub fn record_from_text(&mut self, text: &str, tp: u16) -> DbRef {
+         self.last_json_errors.clear();
+         let mut into = self.text_target(tp);
+-        let errs = match self.read_text(text, tp, &into) {
+-            Ok(()) => Vec::new(),
+-            Err(TextErr::Misfit(msgs)) => msgs,
++        let err = match self.read_text(text, tp, &into) {
++            Ok(()) => None,
++            Err(TextErr::Misfit(msg)) => Some(msg),
+             Err(TextErr::Malformed(msg)) => {
+                 self.free(&into);
+                 into = self.text_target(tp);
+-                vec![msg]
++                Some(msg)
+             }
+         };
+-        self.last_json_errors.extend(errs.iter().cloned());
+-        self.set_parse_errors(&into, tp, errs);
++        if let Some(e) = &err {
++            self.last_json_errors.push(e.clone());
++        }
++        self.set_parse_errors(&into, tp, err);
+         into
+     }
+ 
+@@ -591,12 +583,11 @@ impl Stores {
+         self.text_vector(&errors)
+     }
+ 
+-    /// Record what the parse that just filled `into`'s store with a `tp` reported: `errs`
+-    /// are its errors, one per value that did not fit, empty for a parse that succeeded
+-    /// (@C148).  Both forms file here — the text read and the `JsonValue` walk.
+-    pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, errs: Vec<String>) {
++    /// Record what the parse that just filled `into`'s store with a `tp` reported: `err` is
++    /// its one error, or `None` for a parse that succeeded.
++    pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, err: Option<String>) {
+         let store = &mut self.allocations[into.store_nr as usize];
+-        store.parse_errors = errs;
++        store.parse_errors = err.into_iter().collect();
+         store.parse_type = tp;
+     }
+ 
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index 4c6fae104..a3a77ace2 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -2333,16 +2333,15 @@ impl Stores {
+     /// does not have, which that walk refuses.
+     ///
+     /// `value_at` is where the value is expected in the text, `at` the offset an error in
+-    /// it reports (its field's key, [`Self::walk_parsed_into`]).  Every value that does
+-    /// not fit lands in `failed`, in document order, and leaves its slot as the defaults
+-    /// wrote it; the values around it are read and written as if it fit (@C148,
+-    /// loft#2028: `#errors` names every mismatch, in both parse forms).  A document that
+-    /// is not well-formed is refused whole (`Err`), wherever the fault is.
++    /// it reports (its field's key, [`Self::walk_parsed_into`]).  The first value that
++    /// does not fit lands in `failed` and nothing is written after it — but the rest of
++    /// the document is still read, because a document that is not well-formed is refused
++    /// whole (`Err`), wherever the fault is.
+     #[allow(clippy::too_many_arguments)] // the walk's dispatch, as `walk_parsed_into`
+     pub(super) fn read_into(
+         &mut self,
+         rd: &mut crate::json::JParser,
+-        failed: &mut Vec<WalkErr>,
++        failed: &mut Option<WalkErr>,
+         value_at: usize,
+         tp: u16,
+         rec_tp: u16,
+@@ -2351,6 +2350,9 @@ impl Stores {
+         at: usize,
+     ) -> Result<(), crate::json::Fault> {
+         use crate::json::Opening;
++        if failed.is_some() {
++            return rd.parse_value(value_at).map(drop);
++        }
+         let (content, record) = match &self.types[tp as usize].parts {
+             Parts::Sorted(c, _)
+             | Parts::Vector(c)
+@@ -2381,9 +2383,7 @@ impl Stores {
+                 self.walk_parsed_into(&value, tp, rec_tp, field, to, &mut path, at)
+             }
+         };
+-        if let Err(e) = walked {
+-            failed.push(e);
+-        }
++        *failed = walked.err();
+         Ok(())
+     }
+ 
+@@ -2393,7 +2393,7 @@ impl Stores {
+     fn read_array(
+         &mut self,
+         rd: &mut crate::json::JParser,
+-        failed: &mut Vec<WalkErr>,
++        failed: &mut Option<WalkErr>,
+         tp: u16,
+         content: u16,
+         rec_tp: u16,
+@@ -2408,23 +2408,16 @@ impl Stores {
+         self.set_default_value(tp, &slot);
+         let mut idx = 0usize;
+         while let Some(value_at) = next {
+-            let res = self.record_new(to, rec_tp, field);
+-            let seen = failed.len();
+-            self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
+-            // An element that did not fit keeps its slot, so the elements after it keep
+-            // their positions: a leaf holds null — what the `JsonValue` walk writes for
+-            // it — and a record keeps the fields that fit beside the defaults of those
+-            // that did not (its own `read_struct` wrote them).
+-            // The element ITSELF did not fit when an error's path is empty before this
+-            // index is put in front of it; an error deeper down left the element written.
+-            let misfit = failed[seen..].iter().any(|e| e.path.is_empty());
+-            for e in &mut failed[seen..] {
+-                e.path.insert(0, format!("[{idx}]"));
+-            }
+-            if misfit {
+-                self.set_default_value_nullable(content, true, Absent::Final, &res);
+-            }
+-            self.record_finish(to, &res, rec_tp, field);
++            if failed.is_some() {
++                rd.parse_value(value_at)?;
++            } else {
++                let res = self.record_new(to, rec_tp, field);
++                self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
++                match failed {
++                    Some(e) => e.path.insert(0, format!("[{idx}]")),
++                    None => self.record_finish(to, &res, rec_tp, field),
++                }
++            }
+             next = rd.next_item(start)?;
+             idx += 1;
+         }
+@@ -2439,7 +2432,7 @@ impl Stores {
+     fn read_struct(
+         &mut self,
+         rd: &mut crate::json::JParser,
+-        failed: &mut Vec<WalkErr>,
++        failed: &mut Option<WalkErr>,
+         tp: u16,
+         rec_tp: u16,
+         field: u16,
+@@ -2462,14 +2455,17 @@ impl Stores {
+         let mut found_more: Vec<u16> = Vec::new();
+         while more {
+             let (name, key_at, value_at) = rd.member(start)?;
+-            let hit = self
+-                .record_fields(tp)
+-                .iter()
+-                .position(|f| f.name == name)
+-                .map(|f_nr| {
+-                    let f = &self.record_fields(tp)[f_nr];
+-                    (f_nr as u16, f.content, f.position)
+-                });
++            let hit = if failed.is_some() {
++                None
++            } else {
++                self.record_fields(tp)
++                    .iter()
++                    .position(|f| f.name == name)
++                    .map(|f_nr| {
++                        let f = &self.record_fields(tp)[f_nr];
++                        (f_nr as u16, f.content, f.position)
++                    })
++            };
+             if let Some((f_nr, f_content, position)) = hit {
+                 // A collection field is reached through the record and its field number
+                 // (`record_new`); any other through its own slot.
+@@ -2482,28 +2478,20 @@ impl Stores {
+                 } else {
+                     *to
+                 };
+-                let seen = failed.len();
+                 self.read_into(rd, failed, value_at, f_content, tp, f_nr, &target, key_at)?;
+-                // The member's value ITSELF did not fit when an error's path is empty
+-                // before its name goes in front: the field is then ABSENT, so the pass
+-                // below writes its default.  An error deeper down (an element, a nested
+-                // field) left this field written, with the values around the misfit.
+-                let misfit = failed[seen..].iter().any(|e| e.path.is_empty());
+-                for e in &mut failed[seen..] {
+-                    e.path.insert(0, name.clone());
+-                }
+-                if misfit {
+-                    // absent: the default pass writes it
+-                } else if f_nr < 64 {
+-                    found |= 1 << f_nr;
+-                } else {
+-                    found_more.push(f_nr);
++                match failed {
++                    Some(e) => e.path.insert(0, name),
++                    None if f_nr < 64 => found |= 1 << f_nr,
++                    None => found_more.push(f_nr),
+                 }
+             } else {
+                 rd.parse_value(value_at)?;
+             }
+             more = rd.next_member(start)?;
+         }
++        if failed.is_some() {
++            return Ok(());
++        }
+         let base = DbRef {
+             store_nr: to.store_nr,
+             rec,
+diff --git b/src/native.rs a/src/native.rs
+index a5b8d864b..f4c23d02d 100644
+--- b/src/native.rs
++++ a/src/native.rs
+@@ -3457,12 +3457,7 @@ fn n_struct_from_jsonvalue(stores: &mut Stores, stack: &mut DbRef) {
+     let bytes = u32::from(stores.size(struct_kt));
+     let words = bytes.div_ceil(8) + 1;
+     let result = stores.database(words.max(2));
+-    // @C148 — the walk's mismatches are this value's `#errors`, as the text form's are
+-    // (loft#2028); `json_errors()` keeps them too.
+-    let seen = stores.last_json_errors.len();
+     populate_struct_from_jsonvalue(stores, &result, struct_kt, &src);
+-    let errs = stores.last_json_errors[seen..].to_vec();
+-    stores.set_parse_errors(&result, struct_kt, errs);
+     stores.put(stack, result);
+ }
+ 
+diff --git b/src/store.rs a/src/store.rs
+index acbf72096..03e57d386 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -557,9 +557,8 @@ pub struct Store {
+     /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
+     /// is the one place they have to be right.
+     pub known_type: u16,
+-    /// @C148 — what `record#errors` reads: the errors of the `Type.parse(…)` call that built this
+-    /// store's root — the text read or the `JsonValue` walk, one element per value that did
+-    /// not fit — empty for a store no parse built.  CONTENT, like
++    /// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built this
++    /// store's root, one element per error, empty for a store no parse built.  CONTENT, like
+     /// [`Store::known_type`]: [`Store::init`] empties it, [`Store::swap_contents`] moves it
+     /// with the records, and a write of the whole root takes the incoming value's
+     /// (`Stores::deliver_parse_errors`).

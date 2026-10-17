@@ -50,19 +50,6 @@ pub fn export_set(data: &Data) -> HashSet<u32> {
         .collect()
 }
 
-/// A hash that is the same on every toolchain: these values are written into a COMMITTED file,
-/// and `DefaultHasher` promises stability only within one Rust release.
-fn stable_hash(parts: &[&[u8]]) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    for p in parts {
-        h.update((p.len() as u64).to_le_bytes());
-        h.update(p);
-    }
-    let d = h.finalize();
-    u64::from_le_bytes([d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]])
-}
-
 /// The fingerprint of the first `n` types of `stores`, or `None` when it has fewer.  The same
 /// facts `native_lib`'s whole-table fingerprint hashes (name, size, alignment), over a prefix.
 fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
@@ -78,18 +65,7 @@ fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
         facts.push(f);
     }
     let parts: Vec<&[u8]> = facts.iter().map(Vec::as_slice).collect();
-    Some(stable_hash(&parts))
-}
-
-/// The hash of the standard-library source a program loads: every `default/*.loft` file's name
-/// and content (`cache::collect_stdlib_sources`, the input the program cache keys on too).
-fn source_hash(sources: &[(String, String)]) -> u64 {
-    let mut parts: Vec<&[u8]> = Vec::with_capacity(sources.len() * 2);
-    for (name, content) in sources {
-        parts.push(name.as_bytes());
-        parts.push(content.as_bytes());
-    }
-    stable_hash(&parts)
+    Some(crate::cache::stable_hash(&parts))
 }
 
 /// The compiled standard library as source to build inside this crate: the library artifact
@@ -159,7 +135,7 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
          /// The hash of the `default/*.loft` source these bodies were compiled from.\n\
          pub(crate) const SOURCE_HASH: u64 = {};\n",
         prefix_fingerprint(stores, n).unwrap_or(0),
-        source_hash(sources)
+        crate::cache::source_hash(sources)
     );
     out
 }
@@ -192,7 +168,8 @@ pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
         || generated::BRIDGES.is_empty()
         || prefix_fingerprint(stores, generated::PREFIX_TYPES)
             != Some(generated::PREFIX_FINGERPRINT)
-        || source_hash(&crate::cache::collect_stdlib_sources(default_dir)) != generated::SOURCE_HASH
+        || crate::cache::stdlib_fingerprint(default_dir)
+            .is_none_or(|(_, h)| h != generated::SOURCE_HASH)
     {
         return 0;
     }

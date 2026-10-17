@@ -11,7 +11,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 
 **Position: 8 of 284 scripts ported, 8 of them twinned on 15 declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `lib_process` suite — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).
 
-## T0 — already loft — the twin harness's first subjects (10 files, 1405 lines)
+## T0 — already loft — the twin harness's first subjects (10 files, 1397 lines)
 
 | script | lang | lines | tools | py modules | callers | contract | status |
 |---|---|---|---|---|---|---|---|
@@ -21,8 +21,8 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/check_contract_goldens` | loft | 111 |  |  | make,script | gate | — |
 | `scripts/kernel_ratio` | loft | 44 |  |  | make | report | — |
 | `scripts/opl_points` | loft | 97 |  |  | script | report | — |
-| `scripts/rule_predicate_audit` | loft | 213 |  |  | script | report | — |
-| `scripts/script_census` | loft | 443 |  |  | make | report | — |
+| `scripts/rule_predicate_audit` | loft | 198 |  |  | script | report | — |
+| `scripts/script_census` | loft | 450 |  |  | make | report | — |
 | `scripts/script_reasons` | loft | 111 |  |  | make | report | — |
 | `scripts/wasm_bundle_stamp` | loft | 24 |  |  | make | report | — |
 

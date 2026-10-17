@@ -1,9 +1,9 @@
 diff --git a/src/data.rs b/src/data.rs
-index c3bff5d31..81084b66f 100644
+index 6f36bd9a..5388f331 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -5307,15 +5307,15 @@ impl Data {
- 
+@@ -6209,15 +6209,15 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
+ impl Data {
      /// map a vector's content `Type` to a narrow
      /// database element type-nr when the content is a `Type::Integer`
 -    /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)
@@ -22,7 +22,7 @@ index c3bff5d31..81084b66f 100644
      ///
      /// The caller falls back to the default wide storage (the
      /// content's own `known_type`, or the plain-`integer` slot) when
-@@ -5400,10 +5400,6 @@ impl Data {
+@@ -6314,10 +6314,6 @@ impl Data {
      /// renderer read two 2-byte elements as one 8-byte slot (loft#624 nested,
      /// the named remainder of the plan-58 / loft#437 / #457 / #483 family —
      /// `doc/claude/plans/nested-narrow-width/`).
@@ -34,10 +34,10 @@ index c3bff5d31..81084b66f 100644
          &self,
          content: &Type,
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 150fc986d..583be452e 100644
+index 97976c1c..23a1e58a 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -609,18 +609,11 @@ impl Parser {
+@@ -817,18 +817,11 @@ impl Parser {
                      // own counter: `e#remove` reads it to decide which way to rewind
                      // the cursor, and without it a `rev()` loop rewound FORWARD and
                      // skipped the next element (loft#903).
@@ -62,10 +62,10 @@ index 150fc986d..583be452e 100644
                          // Start at length; the first step gives len-1 (last element).
                          *code = v_set(
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index f21fbcfa9..f9ce8604f 100644
+index ab66a0d6..6371729a 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
-@@ -938,21 +938,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -1252,21 +1252,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
          vec_tp: &Type,
      ) -> bool {
          if field == "remove" {
@@ -87,7 +87,7 @@ index f21fbcfa9..f9ce8604f 100644
              self.lexer.token("(");
              let (tps, ls) = self.parse_parameters();
              let mut cd = ls[0].clone();
-@@ -1547,12 +1532,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -2160,12 +2145,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
              td => td,
          };
          let known = self.data.def(elm_td).known_type();

@@ -14,9 +14,9 @@ with what takes each under the line.
 last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
 `0d40d53d0`): 185 routines, 74 over the bar, three classes with a median over it (alloc-temp,
-record-field, keyed).  It is the only file measured whole at a recent tree: `results/laptop.tsv`
-(x86-64) holds fresh rows (`f7f23c5b5`) for every row it had at 4.3× or worse and for the
-regressions below, and older ones for everything else; § 0 ends with that host's cut.  A row leaves this file when the latest run of EVERY host puts it under the bar; a
+record-field, keyed).  `results/laptop.tsv` (x86-64) is measured whole at `cbe54eaa2`: 160
+routines, 81 over the bar, 46 over 3×, 11 over 5× — every lane that builds on that box (drawing,
+graphics, text2d, stage and assets do not: X11); § 0 ends with that host's cut.  A row leaves this file when the latest run of EVERY host puts it under the bar; a
 unit leaves when it is built, and its record goes to its analysis file's § Built.
 
 | what is known about the row | rows | next action |
@@ -101,12 +101,12 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Fourteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
-this box; the rows below re-measured at `53b8b8172`, every hash equal to its twin's); `map_json` (2.68×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.59×, S3) and
-`field_add_cell` (4.54×, X5 a and c) have left the cut, and `insert_text`
-reads on either side of the line from one run to the next.  The three `tuple_link_*` rows the file
-still carries are of routines the bench no longer has.  Where each one's time
-goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
+Eleven rows read over 5× in `results/laptop.tsv` (the full run at `cbe54eaa2`, every hash
+equal to its twin's); `map_json` (2.85×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.24×,
+S3), `field_add_cell` (4.63×, X5 a and c), `arguments/parse` (3.76×, X7) and `binary_read`
+(4.23×, X8) have left the cut.  The table below is the cut as it was ordered; the re-profile
+under it (`1ed832afe`) is where each remaining row's time goes now, and supersedes
+[rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
 for the row at its figure, and a figure marked *est.* was read off a profile and never
 hand-priced (such a figure has paid about two thirds, same section).
 
@@ -114,7 +114,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 |--:|---|---|---|
 | 4.97 | `check_request` (7.55 before `(R-DecodeView)`) | the decode's result store minted and freed per call; the key bindings copied (S6) | on the line |
 | 6.01 | `panel_build` (7.44 before the release plan) | the claims and frees themselves (the store allocator ~26 % of the row), then the text formatting | no figure |
-| 7.34 | `arguments/parse` | X7 | the cursor match BUILT — `(R-SameRead)`'s match clause: the subject's length and each integer computation of one element two arm tests make, bound once before the first test (`same_read::bind_match_reads`, `LOFT_NO_MATCH_READ`).  Then counted by callgrind (per parse, loft ~200 k instructions, the twin ~23.7 k; IPC 4.4 against 3.7, so the gap is work, not stalls): `find_long_opt` 51 k (25 %: each `fo.long_name` resolved through the store, the record and the text — a TEXT FIELD of a vector's record element, which `(R-Base)`'s text clause does not serve — and `len(name) > 0` counted by `char_count`, 6 k); `classify`'s own 56 k (the tokens' texts claimed and copied where the twin borrows, `opt_kind`'s scans); `cur = Cur { src: toks, pos: 0 }` 18 k (9 %) — the token vector DEEP-COPIED into the cursor record, though `toks` is dead after it: `(R-MoveLast)` relocates only within one store and `classify`'s result lives in its own; `parse`'s loops over `results` 31 k (a checked element read and a length per iteration of the reset `while`, and of the required-option walk); each matched text copied twice into its result (a `String`, then `set_str`: ~97 `malloc`/`free` pairs, 7 k) | `arguments/parse` | the match clause measured: 25.23 → 24.01 ms native (−4.9 %, 86 % of its −5.7 % hand price), interpreted −0.8 %, hash equal | price, largest first: the dead token vector moved into the cursor record (a literal whose field takes a dead local built in its own store, built in THAT store); a text field of a held vector's element read through the held base; the reset loop as a counted walk |
+| 7.34 | `arguments/parse` | X7 | the cursor match BUILT — `(R-SameRead)`'s match clause: the subject's length and each integer computation of one element two arm tests make, bound once before the first test (`same_read::bind_match_reads`, `LOFT_NO_MATCH_READ`).  Then counted by callgrind (per parse, loft ~200 k instructions, the twin ~23.7 k; IPC 4.4 against 3.7, so the gap is work, not stalls): `find_long_opt` 51 k (25 %: each `fo.long_name` resolved through the store, the record and the text — a TEXT FIELD of a vector's record element, which `(R-Base)`'s text clause does not serve — and `len(name) > 0` counted by `char_count`, 6 k); `classify`'s own 56 k (the tokens' texts claimed and copied where the twin borrows, `opt_kind`'s scans); `cur = Cur { src: toks, pos: 0 }` 18 k (9 %) — the token vector DEEP-COPIED into the cursor record, though `toks` is dead after it: `(R-MoveLast)` relocates only within one store and `classify`'s result lives in its own; `parse`'s loops over `results` 31 k (a checked element read and a length per iteration of the reset `while`, and of the required-option walk); each matched text copied twice into its result (a `String`, then `set_str`: ~97 `malloc`/`free` pairs, 7 k) | `arguments/parse` | the match clause measured: 25.23 → 24.01 ms native (−4.9 %, 86 % of its −5.7 % hand price), interpreted −0.8 %, hash equal; the dead token vector moved into the cursor record PRICED: −9.1 % (24.14 → 21.94 ms, six interleaved rounds, hash equal) with `Cur`'s record claimed in the token vector's store, its `src` slot taking the vector's handle (no element copied) and `Cur`'s own free dropped (its store is the tokens', freed once); then BUILT as `(R-MoveLast)`'s host clause (`literal_host::rewrite`, `LOFT_NO_LITERAL_HOST`): 24.04 → 22.08 ms native (−8.2 %, about 90 % of the hand price), interpreted −0.9 %, hash equal; `find_long_opt`'s text field PRICED (five interleaved rounds, hash equal): `fo.long_name` read through the held base and the store's text span — the field's record number one load at `base + i × 20 + 4`, the text sliced off the span (`vector::text_at`) instead of resolving the store, the record and the text per element — 22.09 → 19.61 ms (−11.2 %); `len(fo2.long_name) > 0` as a byte test (not null, not empty) instead of `t_4text_len`'s character count, a further −6.3 % (→ 18.32 ms); reading the field once where the prefix loop reads it twice, nothing more; then BUILT: `(R-RecPtr)`'s text clause (`vector::rec_text`, `LOFT_NO_TEXT_FIELD`, native) 22.09 → 18.64 ms alone (−15.6 %), `(R-ZeroCount)` (`src/zero_count.rs`, `LOFT_NO_ZERO_COUNT`, both backends) → 20.50 ms alone (−7.2 %), together → 16.92 ms (−23.4 %, past the −17 % hand price: the fold and the clause serve the library's other walks too); interpreted −1.6 % on layout-pinned builds, hash equal | RE-PROFILED at `69085c245` (callgrind, per parse: loft 133 k instructions, the twin 23.4 k; 16.9 against 3.47 ms, 4.9×): the CHECKED ELEMENT READ leads — `vec_get_or_raise_runtime` 21.6 k (16 %, 120 calls at 180 instructions each: it reads the length, then `get_vector` reads the header and the length again), and with `get_vector` and `length_vector` called from other sites the three helpers are 26 % of the row; `parse`'s reset loop 15.8 k (12 %: 40 checked reads per parse, and `self.results[ri] = null` allocates a `String` for the null text before `refill_str`); `find_long_opt` 18.6 k (14 %, its compares); `classify`'s `argv` walk 8 k (6 %: a parameter's vector, not held, each word copied into a `String`); `opt_kind`'s full scan 5.3 k (4 %, the library's own code).  The checked read as one header read PRICED (a runtime A/B, the same emitted Rust against two rlibs, five interleaved rounds, hash equal): `vec_get_or_raise_runtime` resolving the store, the element record and the length once (`get_vector` too), the in-range path inline and the raise outlined (`@FR-R-Cold`) — 16.89 → 15.60 ms (−7.6 %, instructions 280 → 248 M); with `length_vector` forced inline as well (LLVM declined its `#[inline]`), 14.96 ms (−11.4 %), the binary 0.13 % larger.  Then BUILT — `(R-Cold)`'s one-read clause (`vector::rec_and_len`, the runtime, both backends): 16.92 → 14.67 ms (−13.3 %, past the price, once `get_vector_hoisted`'s end-of-walk half was outlined too — inline, it made `mesh_aabb` 68 % slower); on six other lanes, against the same emitted Rust, `chunk_lookup` −14.6 %, `slope_path_with_undo` −15.6 %, `resolve_move` −11.1 %, `replace` −18 %, and nothing slower beyond 5 % at equal or fewer instructions (layout); the interpreter −5.6 % instructions on this row.  The reset loop (`while ri < self.results.len() { self.results[ri] = null; ri += 1 }`) PRICED (six interleaved rounds, hash equal), 14.64 ms at the tip: the null text written as the constant it is, not copied into a `String` first (`text_value_unborrowed` does not name the null constant) −2.0 %; the walk counted over a header held across the text sets — the vector's record and length, which a text set into an element cannot change, its store resolved once — −3.7 %; both −8.7 % (13.37 ms), the allocation costing more once the walk is cheap.  `(R-Header)` declines this loop over its text set (X2), which can grow the store and so move the BASE, never the header.  Then BUILT: `(R-Header)`'s text clause (`LOFT_NO_TEXT_SET_HEADER`, native) and the null text borrowed (`text_value_unborrowed`) — 14.70 → 13.72 ms (−6.7 %, three quarters of the price: each pass still resolves its element's store and checks the write's index); the clause fires in 3 loops of `arguments` and nowhere else the census reaches.  `classify`'s `argv` walk PRICED (six interleaved rounds, hash equal, 13.68 ms at the tip): each word borrowed from the store instead of copied into a `String` −2.9 %; `argv`'s header held −2.3 %; both −6.1 % (12.85 ms).  Neither is admitted now for one reason: `argv` is a parameter and the loop pushes into the return buffer, which a caller may hand in sharing `argv`'s store — then a push could move the borrowed bytes and the held elements.  Both hold exactly when `argv`'s store is none the loop writes, which one run-time compare of store numbers decides (`(R-Alias)`'s versioned clause, X2).  Then BUILT in `(R-Alias)`'s versioned copy: the copy now counts a walked path for the parameter its dep chain ends at (`argv`'s header and base kept there), and `(R-TextBorrow)`'s versioned clause borrows the word — 13.68 → 12.94 ms (−5.4 %), hash equal; `tween`'s `value`, never targeted, −9.0 % from the same counting.  RE-PROFILED at `19cb78861` (callgrind, per parse: loft 106.5 k instructions, the twin 23.4 k — was 140 k; 12.92 against 3.47 ms, 3.7×; the twin runs the same algorithms and the same `memcmp` total): `find_long_opt` 17.9 k (17 %, near its floor in this layout — a held address, the text's record number, a bounds-checked slice and the compare per option, where the twin's `String` is inline); store claims ~11 k (10 %: `claim` and `claim_best_fit` for each token's record and text, which the twin keeps in a `Vec` and borrows); `opt_kind`'s full scan 6.6 k (6 %, the library's algorithm, the twin's too); `find_short_opt` 6.2 k (6 %: `"{fch}" == fso.short_name` formats the loop-invariant character into a `String` per option, ~3 % of the row); the cursor match's text bindings copied into `String`s ~4 k (4 %); the reset loop 4.9 k (4.6 %: `refill_str` of the null text per element); the required-option walk 3.7 k (3.5 %, unheld: its error exit declines the gate); each held walk's read one past its end through `get_vector_cold` 1.9 k (1.75 %: 27 walk ends per parse at 69 instructions, an answer `elem_index` gives inline).  The store claims PRICED and DROPPED (a runtime A/B, six interleaved rounds, hash equal): per parse 15 claims at ~430 instructions each — the free-tree descent and the wilderness test ~1.5 k, `claim_block`'s split and the remainder's `fl_insert` ~2.3 k, `claim`'s own bookkeeping ~1.1 k, `finish_claim`'s switch reads and zero fill ~0.4 k — so even a free claim is under 6 % of the row's instructions.  A wilderness bump in `claim` (no tracked free block: the claim is the wilderness's front, the writes `claim_best_fit` and `claim_block` make) took 55 % of the claims, claim instructions 12.75 → 9.88 M, and the row 12.99 → 12.90 ms (−0.7 %).  The rest is `clear_vector_release` resetting the token store and claiming its vector record again per parse (3.5 k, 3.3 %).  `find_short_opt`'s `"{fch}"` PRICED and DROPPED (six interleaved rounds, hash equal, 13.05 ms at the tip): the format already reuses a work `String` (cleared, one character pushed per option, one heap allocation per call for the first push); built once before the loop −1.4 %, and encoded into a four-byte stack buffer instead of the `String` −3.6 % (12.58 ms) — the lone-character format's heap buffer is the larger half.  Under the bar, as are what is left of the profile's named rows; the row stands at 3.7× |
 | 6.86 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
 | 6.64 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.44 | `invert` | X10 | ≈ 4× (*est.*) |
@@ -127,6 +127,96 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.52 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
 | 5.09 | `forms_upto` | X12 | no figure |
 
+**Re-profiled at `1ed832afe`** (the portal run of that commit; callgrind, each routine counted
+alone with `--toggle-collect`).  Eleven rows over 5×, with the share of the row each lever
+addresses and the cut it needs to reach 5×:
+
+| × | row | where the time goes | lever | cut to 5× |
+|--:|---|---|---|--:|
+| 6.86 | `reload_and_record` | the key-ordered walk of four hashes ~33 % (sort 14 %, `step_ordered` 8 %, `entries`, `OpStep`); the compound-key probe ~32 % (`hash::find` 15 %, `key_compare` 7 %, `int_key_part`, `Stores::find`) — the twin walks its `HashMap` unordered | the walk's decision (§ 6) | −27 % |
+| 6.53 | `mapfile_to_painted` | keyed INSERTS: `keys::hash` 13 %, `hash::find` 6 %, `arena::alloc` 4 %, `probe_for_insert`, `rehash_into`; the ordered walk ~6 % | none priced that reaches the line | −23 % |
+| 6.27 | `invert` | copies ~48 % (`memcpy` 24 %, `copy_claims`, `copy_block`, `OpCopyRecord`) | X10 | −20 % |
+| 6.15 | `truncate_to` | each history push copies and releases a record of plain vectors (`copy_plain_vectors`, `copy_block`, `release_plain_vectors` ~15 %); the allocator ~15 % | the allocator, then the move of the dead entry | −19 % |
+| 5.94 | `panel_build` | the allocator ~35 %: ~160 k claims and ~115 k frees per run at ~250 instructions each, where the twin's `malloc`/`free` are ~3 % | the allocator | −16 % |
+| 5.63 | cbor `encode` | `key_lt` 20 % — the canonical key order compares keys byte by byte through checked reads, where the twin compares two slices | a slice compare | −11 % |
+| 5.61 | `flow_layout_full` | generated code: `slice_runs` 26 %, `place_line` 10 %, `next_line` 6 %, `seg` 5 % | X3 (unpriced) | −11 % |
+| 5.17 | `insert_text` | copies ~70 % (`memcpy` 27 %, `copy_block` 20 %, `OpCopyRecord` 18 %): `return Doc { buf: nb, pieces: np }` deep-copies two dead locals into the caller's store | X10 | −3 % |
+| 5.17 | cbor `encode_bytes` | the byte runs appended (`encode__ap` 22 %, `head__ap` 9 %, `append_bytes` 8 %, `vector_replace` 7 %) | X9 | −3 % |
+| 5.09 | `forms_upto` | generated 54 % (`forms_upto__rg` 36 %, `form_closes` 18 %); the allocator ~9 % | the allocator | −2 % |
+| 5.06 | `check_request` | `read_value__dv__d` 17 %, `store_mut` 7 %, the allocator ~8 % | the allocator | −1 % |
+
+The allocator is the one lever five rows share: `Store::claim` and `delete` at ~250 instructions
+each (the free tree's descent, a split and the remainder's insert, the claim set) on stores
+that have freed blocks; `arguments/parse`'s claims (wilderness, few) priced at −0.7 % and say
+nothing of these.
+
+**The allocator's small-block free list PRICED** (a runtime A/B: each bench's emitted source
+compiled against the tip's `libloft.rlib` and the probe's, six interleaved rounds, every hash
+equal).  The probe parks a freed block of at most 16 words on a list for its exact size, its
+header left positive so no neighbour coalesces into it, and a claim of that size pops one
+before the tree is asked.  `panel_build` 4.45 → 3.78 ms (−15.2 %, ≈ 5.04× — on the line),
+`truncate_to` −12.8 %, `map_json` −4 %; `encode_bytes` −2.9 %, `flow_layout_full` −2.4 %,
+`forms_upto` −1.8 %, `arguments/parse` −1.2 %; `check_request`, `invert`, `insert_text`, cbor
+`encode`, `resolve_move` and `slope_path_with_undo` within ±1 %.  A 64-word bound priced the
+same; peak memory level (10.8 → 10.9 MB on lane 17).  The build is more than the probe: a
+parked block is a third block state (neither claimed nor in the tree), which every walk of a
+store's blocks must know — the coalescing sweep, `claims_rebuild`, `usage`, an image's save,
+`LOFT_POISON`'s scribble and `LOFT_STRICT_STORES` — and the lists must be flushed into the tree
+before a claim grows the store, or freed space is never merged.
+
+**cbor `encode`'s slice compare PRICED and DROPPED** (six interleaved rounds, hashes equal): `key_lt`
+answering two in-range key spans with one slice compare (`a < b` over the held buffer, the
+loop kept for a span past the end, where it reads a missing byte as 0) — `key_lt` 13.56 → 8.84 M
+instructions (`memcmp` included), the map encoder 51.7 → 47.0 M, the row's TIME level (8.46 →
+8.47 ms): the keys are a few bytes, so the call costs what the loop did.  What is left of the
+row is the rank loops themselves (`encode_map__ap` 22 % of the map encoder: `koff[j] ?? 0`,
+`klen[j] ?? 0` per pair) and the twin's O(n²) is the same algorithm.
+
+**X9 on cbor `encode_bytes`, PRICED: the bytes are already one block copy** (`(R-ByteCopy)`: the
+per-byte loop's in-range fast path is `Stores::append_text_bytes`); what each `CText` arm pays
+is the match BINDING — `CText { value }` copies the record's 256-byte text into a `String`
+(`get_str(…).to_string()`, a `malloc`, a copy, a `free`) before the block copy reads it.  The
+binding borrowed instead (`&str` off the store, as `(R-TextBorrow)` binds a walk's element):
+403.5 → 349 µs (−13.5 %, ≈ 4.5× — under the line), `encode` −1.4 %, six interleaved rounds,
+hashes equal.  This is S6's match-binding clause; its soundness condition is the borrow's: no
+statement of the arm may grow or rewrite the store the text lives in.  Here the arm writes the
+return buffer only, and the matched value is a parameter — the versioned clause's test
+(`(R-Alias)`: the parameter's store is not the buffer's), or a proof the arm writes none of the
+value's store.  BUILT as `(R-TextBorrow)`'s tested clause (`LOFT_NO_TESTED_BORROW`, native): the bind
+borrows under the run-time store compare and copies otherwise — 396.5 → 356.9 µs (−10 %,
+≈ 4.65×), `encode` −2.6 %; the row has left the cut.
+
+**X3 on `flow_layout_full`, PRICED in part** (six interleaved rounds, hashes equal, 10.92 ms at
+`c7f19c25a`).  Each run of `slice_runs` pays for its text three times: `buf_slice_text` pushes
+the characters into the caller's work `String`, the bind `s = buf_slice_text(…)` copies that
+into a local `String` (`.to_string()`), and the run's field set copies it into the runs store.
+The local borrowed from the work buffer instead (`Str::str()`; the work text is the call's own
+and only `set_str` reads it): 10.92 → 10.00 ms (−8.4 %, ≈ 5.14× — just over the line),
+`insert_text` and `invert` level.  The mechanism is general: a call's text result in a work
+buffer, bound to a local read only as a text value, needs no copy — the format clause of
+`(R-TextBorrow)` for a call.  The rest of X3 — a run that IS a view of the character buffer, as
+the twin's `&[char]` is — needs a type change (a `text` over a `vector<character>` slice, or a
+measure over characters) and has no hand form.  The borrow BUILT as `(R-TextBorrow)`'s call
+clause (`LOFT_NO_CALL_TEXT_BORROW`, native), the run's field set reading the work text in
+place too: 10.90 → 10.25 ms (−5.9 %, ≈ 5.28× — still over the line); the hand form and the
+build run the same 659 M instructions, the gap between their times is layout.
+
+**`place_line` PRICED** (six interleaved rounds, hashes equal, 10.26 ms at `0bc13b3c4`).  Two
+thirds of what runs under it is its two `slice_runs` calls per token (126 M instructions
+each of 374 M), and those are mostly the result buffer's bookkeeping, not the cut: the refill
+protocol (`refill_keep_open`/`close`, `OpDatabaseRefill`, `clear_vector`) ~50 M, each run's
+record mint and finish ~40 M, and `return runs` calling `vector_replace` on the buffer's own
+vector — a no-op that pays `deliver_vector_parse_errors` and two slot reads before its
+identity test — 17 M.  P1, the self-replace dropped (`runs` is the buffer's own field):
+9.86 ms (−3.9 %).  P2, `len(r.str)` counted once per run where `place_line` counts the same
+unchanged text three times: 10.13 ms (−1.3 %).  Both: 9.55 ms (−6.9 %, ≈ 4.92× — under the
+line).  P1 is general (any result built in its buffer and returned); P2 is a pure count of a
+text no statement between writes, which `(R-SameRead)` binds only within one statement.
+BUILT, both backends, as `(R-SelfReplace)` (`LOFT_NO_SELF_REPLACE`) and `(R-SameRead)`'s
+sequence clause (`LOFT_NO_SEQUENCE_READ`): 9.70 → 9.06 ms (−6.6 %, ≈ 4.93×; 985 → 923 M
+instructions), zttext `materialise` −23.9 %, `insert_text` level in instructions (its +8 % in
+time is layout); the row has left the cut.
+
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
 between 3.5× and 6.9×.
@@ -135,7 +225,7 @@ between 3.5× and 6.9×.
 |---|---|---|---|---|
 | X1 | BUILT, in the runtime and for one family of records: a record that owns plain vectors and nothing else is copied and released by the list of those fields (`Stores::plain_vectors_of`), where `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` asked each field's type what it is.  Both backends; a record with any other owner (a text, a vector of records that own heap) still takes the walk | `truncate_to` (8.17× → 6.03×, −26 %); `panel_build` is level — its records own texts | measured | nothing more of this kind on `panel_build`: its release driven by the type's flattened heap slots (texts deleted in a loop, a collection's own walk called per slot) priced at −3 % of the row and was dropped — the walk's descent is not where that row's release spends |
 | S1c | BUILT — `(R-WorkBuffer)`'s result clause: a call's vector result that a function only reads is filled into the caller's buffer, so `token_width`'s runs buffer (and `place_line`'s three) outlive the call and `slice_runs` refills kept elements | `flow_layout_full` (7.92× → 6.23×, −21 %; priced −19 % on the emission before it); a switch A/B of lanes 16 and 18, where the clause also fires, is level | measured | X2 next on this row |
-| X2 | BUILT for a store the frame owns — `(R-Header)`'s apart clause: a vector the loop only reads, in a store this activation minted or a work buffer the caller lends, and which nothing in the loop is handed, keeps its header and base whatever the loop calls (no callee verdict is asked).  NOT built: the same for a PARAMETER's vectors, which a callee can be handed by another route — `(R-Alias)`'s versioned clause with a run-time test | cbor `encode` (−20 %, the hand price: `ranks`, `koff`, `klen`, `keybuf`); `flow_layout_full` level (its headers were held already or root in a parameter); `arguments/parse` and `rig_world_frame3` unmoved — their unheld vectors are fields of a parameter record | measured | nothing more on `arguments/parse`: PRICED and dropped.  Its declines are a text set through an existing address (`self.results[i] = word`, `OpSetTextReplace`) and a free on an exit path; with the gate admitting both — a ceiling, since neither is sound as the gate's other readers stand — the row moves −5.3 % (25.45 → 24.10 ms, 21 → 15 unheld reads), the text set alone −4.5 %.  What is left of its vector runtime is single reads outside any loop |
+| X2 | BUILT for a store the frame owns — `(R-Header)`'s apart clause: a vector the loop only reads, in a store this activation minted or a work buffer the caller lends, and which nothing in the loop is handed, keeps its header and base whatever the loop calls (no callee verdict is asked).  BUILT for a PARAMETER's vectors too — the clause's parameter half: every writer of the loop proven apart from the parameter, the return buffer by `(R-Alias)`'s versioned run-time test (`invert` −17 %, twelve programs in the census) | cbor `encode` (−20 %, the hand price: `ranks`, `koff`, `klen`, `keybuf`); `flow_layout_full` level (its headers were held already or root in a parameter); `arguments/parse` and `rig_world_frame3` unmoved — their unheld vectors are fields of a parameter record | measured | nothing more on `arguments/parse`: PRICED and dropped.  Its declines are a text set through an existing address (`self.results[i] = word`, `OpSetTextReplace`) and a free on an exit path; with the gate admitting both — a ceiling, since neither is sound as the gate's other readers stand — the row moves −5.3 % (25.45 → 24.10 ms, 21 → 15 unheld reads), the text set alone −4.5 %.  What is left of its vector runtime is single reads outside any loop |
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 % before S1c) | *est.* only | after X2: re-profile, then price |
 | X4 | BUILT — `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | `check_request` is profiled (rustc-vs-twin.md § Re-profiled: claims 32 %, spread); `(R-DecodeView)` (decided, C141) next, S8 after its decision |
 | X5 | keyed inserts and walks: **a** BUILT — the second lookup of a get-or-insert (`if !h[k] { h += […] }; b = h[k]` looked the key up twice on a hit) is `(R-SameRead)`'s get-or-insert clause, an ENGINE cure rather than the library edit first planned: a loft rewrite of a library for speed is the last resort after code generation (LIBRARY_AUTHORING.md § The library contract, rule 7), and the idiom is everyone's; **b** C7; **c** BUILT for an integer-keyed hash of a heap-free element — `(R-KeyedEntry)`: one probe answers the entry the key names, a repeated key is overwritten in place (no claim, no release) and a new one is filed under the index its claim answered (no `arena::index_of`); an element that owns heap, a text key and the other keyed kinds keep the claim per entry; **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (c: 22.95 → 15.08 ms, −34 %; a: 15.04 → 13.63 ms, −9.4 % of the −12.7 % priced), `build_index` (c: 10.11 → 7.50 ms, −26 %; b 8 %), `collect_dirty_inputs` (c: −10 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, c built; d unpriced, and P4 needs a range proof | `field_add_cell` is left with the table's growth (~15 %, a re-hash of every entry from its record) and the new keys' arena claims; d next |
@@ -145,7 +235,7 @@ between 3.5× and 6.9×.
 | X8 | BUILT — `(R-FileHold)`: a loop that names one `File` and nothing else that can hold one, and names it only to read scalars, moves the cursor in a guard local and writes the record when the loop is left; `(R-InlineLeaf)`'s reader clause puts a one-statement reader (`read_one_i16(bf)`) in the loop | `binary_read` | 1.47 → 0.84 ms, the hand price ([x8/price_binary_read.py](x8/price_binary_read.py)), hash unchanged | [formal/rewrites.md](../../../doc/claude/formal/rewrites.md) |
 | X13 | the cursor kept in the HANDLE while one is open | — | DECLINED: each `File` record keeps its own position (`formal/heap.md` § The built-in `File`, loft#2005), so a read must ask its record where to start; the hold (X8) is what removes that per value inside a loop | — |
 | X9 | cbor's byte runs copied as a block; `read_value__d` (17 % of `encode`'s row) | cbor `encode` | *est.* ~10 % | after X2 |
-| X10 | a record whose source is dead is moved, not deep-copied: `(R-Compact)`'s prepend and identity forms, `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | `insert_text` (**60 %**; 4.84× now, under the cut), `invert` (36 %) | named in § 4, no price | hand-price on `insert_text`.  The largest single share on this list; it stands here by its row's ratio, as the cut is ordered |
+| X10 | a record whose source is dead is moved, not deep-copied: `(R-Compact)`'s prepend and identity forms, `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | `insert_text` (**60 %**; 4.84× now, under the cut), `invert` | PRICED on `invert` (over-9x.md § zttext `invert`): the prepend in place −24 %, the buffer handed through a chain exit −6 % (the profile's copy share overstated it: callgrind counts `rep movsb` per byte run) | the prepend form is BUILT (`OpPrependVector`, `invert` −31 %), and the per-piece record copy beside it (`(R-FlatCopy)`'s emitted clause, −17.5 %); the chain exit is left |
 | X11 | `graphics`, `drawing`, `text2d`, `stage` and `assets` build on this box again: they resolve dependencies (`mesh3d` 0.1.2 through `drawing`'s lock file, `shapes`) that lack the `pub` fields @C140 requires, and `main`'s own compiler refuses them the same way | `fill_polygon`, and those five libraries' census rows | library work | bump the pins, then re-measure the lane |
 | S3 | § 3 | `rig_world_frame3` 2.59× | BUILT (and S2: `mat4_mul` 0.57×) | — |
 | X12 | `forms_upto`'s remaining claims attributed (`(R-CtorLiteral)` and the refill clause are built) | `forms_upto` (claim and release 24 %) | no step | read `forms_upto__rg` and `form_closes` by line |
@@ -161,7 +251,8 @@ before it; the slowest row goes first; a step with no price is priced before it 
    `encode` and left this row level.  Re-profiled: generated 43 % (`slice_runs` 22 %), claim
    and release 26 %, vector runtime 18 %; the 14 % that was text formatting is gone
    (`Str::to_string`, § 3 S13).  The run's text borrowed from its call's buffer, never copied
-   to a local, prices at −3.4 % and is dropped.  Next: price X3.
+   to a local, prices at −3.4 % and is dropped.  X3's call-text borrow and `place_line`'s two
+   levers are built since (≈ 4.93×): the row has left the cut.
 4. **`check_request` (5.07×)** — `(R-DecodeView)` instance 1 is BUILT: 2.55 → 1.67 ms
    (−34 %, 80 % of the −46 % hand price).  The row is on the line; what is left is flat —
    the store `decode` mints and frees per call (~10 %), the entries vector's build, and the
@@ -173,9 +264,19 @@ before it; the slowest row goes first; a step with no price is priced before it 
    keys' arena claims.
 6. **`panel_build`** — S9 is sized and its release half built: the release plan,
    7.44× → 6.00×.  What is left is the frees and claims themselves.
-7. **`arguments/parse` (7.34×)** — X7: the match clause is built (−4.9 %); next, price the dead
-   token vector moved into the cursor record (9 % of the instructions), then the text field
-   read through the held base (`find_long_opt`, 25 %).
+7. **`arguments/parse` — LEFT the cut (3.76× at `cbe54eaa2`)** — X7: the match clause is built (−4.9 %), and so is the
+   dead token vector moved into the cursor record (`(R-MoveLast)`'s host clause, −8.2 %);
+   the text field read through the held base and `len(t) > 0` as a byte test are built too
+   (−23.4 % together).  Re-profiled: the checked element read (`vec_get_or_raise_runtime`,
+   `get_vector`, `length_vector`) is 26 % of the row, the reset loop 12 %, the token copies
+   of `argv` 6 %.  The checked read as one header read, `length_vector` inlined, PRICED at
+   −11.4 %, and BUILT at −13.3 % (16.92 → 14.67 ms).  The reset loop PRICED at −8.7 % (the null
+   text uncopied, the walk counted over a held header), and BUILT at −6.7 % (14.70 → 13.72 ms);
+   `classify`'s `argv` walk PRICED at −6.1 % and BUILT at −5.4 % (13.68 → 12.94 ms) in the
+   versioned copy.  Re-profiled at 106.5 k instructions per parse (the twin 23.4 k):
+   `find_long_opt` 17 % near its floor, store claims 10 %, `opt_kind` 6 %, `find_short_opt`'s
+   per-option format 3 %.  The claims PRICED and dropped (a wilderness bump −0.7 %), and the
+   invariant format too (−3.6 % at best, a stack buffer); the row stands at 3.7×.
 8. **`mapfile_to_painted` (6.86×), `reload_and_record` (6.64×)** — X5 d: P3 first, P4 with
    its range proof.  Re-profiled: the key-ordered walk's sort is 22 % of `reload_and_record`
    and 9 % of `mapfile_to_painted`; the generic compound-key probe (`find`, `key_hash`,
@@ -362,6 +463,11 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
   much of it was read: its half-written store is released (`Stores::record_from_text`).  A
   value under an enum, and a value whose shape its type does not have, is still read as a
   `Parsed` and written by the walk that says what each type accepts.
+- **A hash's walk order**: DECIDED (@C151) — `for e in h` keeps key order and no rewrite walks
+  a hash in another order behind the program's back; a program that needs no order writes
+  `for e in unordered(h)` (slot order, fixed from run to run, no sort).  The twins walk a hash
+  in key order too (`by_key`), so `reload_and_record`'s and `mapfile_to_painted`'s walks
+  compare like with like.
 - **Keyed store format**: DECIDED and built — a hash's bucket count is a power of two (@C146);
   `index` is a B+tree of key parts and record numbers (@C147).  `sorted`'s random insert stays
   as it is (declined).
@@ -402,7 +508,18 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   arguments of the package's own compile (`LOFT_NATIVE_RUSTC_ARGS`; the script's header has
   the commands).  Needed by every bench whose library ships a cdylib (`server`, `pluginabi`
   through crypto, `web`, `ssh`).
-- No script attributes a profile's samples to one routine of a lane (rules.md § Change 6).
+- No script attributes a profile's samples to one routine of a lane (rules.md § Change 6);
+  callgrind does, by instructions: `valgrind --tool=callgrind --toggle-collect='*<symbol>'
+  <bin> --n 1` counts only what runs under that routine's function, so the function list of
+  the run IS the routine's profile.  Toggle on the routine's own symbol (`nm -C <bin>`): the
+  bench's `bench_*` drivers are usually inlined into `main` and collect nothing.
+- A profile of the RUNTIME by line needs an rlib with line tables:
+  `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cargo build --release --lib --target-dir
+  <dir outside /tmp>`, then the package's rustc arguments file with `--extern loft=`,
+  `dependency=`, `loft_ffi=` and the `ring` path pointed at that directory, and
+  `hand_price.sh <rs> <bin> <args>` — the same code (equal instruction counts), now
+  attributed to `store.rs` lines.  A RUNTIME change is priced the same way: one emitted
+  source compiled against a saved copy of the tip's `libloft.rlib` and against the probe's.
   On Linux the method is `perf` samples windowed by time (rustc-vs-twin.md § Method notes).
   On macOS, `sample <pid>` over a `--native-release --names` build gives the call tree;
   a routine's share is its `n_bench_<row>` (or op helper) subtree.  `--names` disables

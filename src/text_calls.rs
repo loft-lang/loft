@@ -41,7 +41,7 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
             // @PLN10 Phase 1 — always-non-null `#rust`-template producers.
             | "n_ymd_days_ago"
             | "n_store_memory"
-            // @PLN129 arc C — always-non-null: "" IS the healthy answer.
+            // Always-non-null: "" IS the healthy answer.
             | "n_store_lazy_error"
             // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
             | "n_struct_to_json"
@@ -72,15 +72,15 @@ pub(crate) fn is_cdylib_text_call(def: &crate::data::Definition) -> bool {
     !def.native().is_empty() && matches!(def.returned(), Type::Text(_))
 }
 
-/// @PLN24 arc D — a **`#c` binding** returning text: a C `char *` brought back
+/// A **`#c` binding** returning text: a C `char *` brought back
 /// as a loft `text`.
 ///
 /// Routed exactly like [`is_cdylib_text_call`] (`n_set_bridge_dest` +
 /// `gen_cdylib_text_dest_call`), and for the same reason: a body-less external
 /// declaration has no `_dest` sibling to call and no promoted work buffer of its
 /// own, so the destination has to be handed over as a separate step. Disjoint
-/// from both neighbours — a `#c` definition carries no `native` symbol (arc A
-/// leaves it empty so the Rust dispatch path cannot claim it) and no `default/`
+/// from both neighbours — a `#c` definition carries no `native` symbol (it is
+/// left empty so the Rust dispatch path cannot claim it) and no `default/`
 /// declaration carries a `c_sig`.
 pub(crate) fn is_c_text_call(def: &crate::data::Definition) -> bool {
     // `.base()` peels `Optional`: a `text?` return uses the same owned-text ABI,
@@ -89,7 +89,7 @@ pub(crate) fn is_c_text_call(def: &crate::data::Definition) -> bool {
     !def.c_sig.is_empty() && matches!(def.returned().base(), Type::Text(_))
 }
 
-/// @P283 — Op-name rewrite for `RefVar(Text)` destinations.
+/// Op-name rewrite for `RefVar(Text)` destinations.
 ///
 /// `text_return` (`src/parser/control.rs:2919`) promotes the work-text
 /// buffer of any text-returning function from a local `Type::Text(_)`

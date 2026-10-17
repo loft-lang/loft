@@ -5590,7 +5590,7 @@ impl Parser {
                 // miss is provable the cast is refused (a known `Rect` has no `as Circle`, above);
                 // where it is not, a miss answers the variant with every field at its default
                 // (`(D-Rec)`) — never null, so the result stays non-null — and the cast WARNS,
-                // as an unguarded division does, unless it is checked directly: inside
+                // as a division by a constant zero does, unless it is checked directly: inside
                 // `if s is Circle { … }`, or spelled `as Circle?` for null on a miss.
                 if !nullable_cast && let Some(disc) = self.variant_cast_disc(ctp, &rt) {
                     let proven = self

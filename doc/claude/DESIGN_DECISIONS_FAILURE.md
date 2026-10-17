@@ -44,8 +44,11 @@ unimplemented native refused at compile time and at startup (`tests/exit_codes.r
 
 **Decision.** A calculation that cannot produce a value — division by zero, integer overflow, an
 out-of-bounds index, a deref of an absent value — yields null and execution continues, identically
-in development, test and production.  It is silent except for one warning on an unguarded division
-by zero; tests observe faults through the debug log.  `panic` and `assert` are not calculations:
+in development, test and production.  It is silent: the null is the whole signal, for a division
+by zero as for every other fault (the one run-time warning this entry once promised was never
+emitted and is dropped — owner, 2026-10-16, loft#2027); a divisor that is a constant zero is a
+compile-time warning (`divide-by-constant-zero`), and `--dev-soft-halt` names each fault in
+development.  Tests observe faults through the debug log.  `panic` and `assert` are not calculations:
 they halt in development and tests and log-and-continue in production (@C66).  Startup failures still
 stop (@C67).  **Why.** As in a spreadsheet, one bad cell never stops the others: degradation stays
 local, with no unwinding or cleanup blocks to get wrong.
@@ -126,9 +129,12 @@ value is null belongs to the program's own inspection (`??`, a test) or the log.
 
 ## C148 — A parsed value carries its own parse errors, wherever the whole value goes
 
-**Decision.** `x#errors` is a `vector<text>` with one entry per error of the `Type.parse(text)`
-call (or the `text as T` cast) that built the value `x` holds — a record, a struct-enum or a
-vector — and reading it changes nothing.  The entries are part of that value: they go with it
+**Decision.** `x#errors` is a `vector<text>` with one entry per value that did not fit in the
+`Type.parse(…)` call (or the `text as T` cast) that built the value `x` holds — a record, a
+struct-enum or a vector — whichever form built it: the one-step `Type.parse(text)` and the
+staged `Type.parse(json_parse(text))` both name EVERY mismatch there, and a value that did not
+fit leaves its field at the type's default while the values around it are kept (owner,
+2026-10-16, loft#2028).  Reading it changes nothing.  The entries are part of that value: they go with it
 when the WHOLE value is bound, rebound, passed, returned from a function or copied to another
 variable, whichever way the compiler delivers it (a move, an exchange of stores, a copy).  A
 value built any other way has none, and neither has a part copied out of a parsed value or a
@@ -140,8 +146,7 @@ on `b` once `b` was parsed, and it was one text the read cleared, so the loop a 
 writes walked characters and a second read answered nothing.  And a delivery that copies must
 answer as one that moves does, or the answer would follow an optimisation.
 
-**Revisit when.** The parse collects more than its first error (the shape already holds
-several), or a consumer needs the errors of a value stored inside another.  Decided 2026-10-12
+**Revisit when.** A consumer needs the errors of a value stored inside another.  Decided 2026-10-12
 (owner) — [record](DESIGN_DECISIONS-history.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes).
 **Holds at:** `@C148` — `./scripts/idx tag:@C148`: the store's content (`Store::parse_errors`,
 emptied by `Store::init`, exchanged by `Store::swap_contents`), `Stores::deliver_parse_errors`

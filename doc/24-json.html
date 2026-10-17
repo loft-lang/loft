@@ -64,7 +64,7 @@ r = Reading.parse(`{{}}`)     // r.id == 0, r.drift == null
 <p>Both parse forms report. <code>json_errors()</code> holds the LAST parse's diagnostics and is replaced by the next parse, so a successful parse leaves it empty. It is a TEXT, not a collection — several diagnostics are joined with <code>|</code> — so ask <code>json_errors() != ""</code>, not <code>len(...) &gt; 0</code>, and never loop over it.</p>
 <pre><code>if json_errors() != "" { log_warn(json_errors()); }
 </code></pre>
-<p><code>record#errors</code> answers for the <code>Type.parse(text)</code> that built that record, as a vector&lt;text&gt; with one entry per error. Each parsed record keeps its own:</p>
+<p><code>record#errors</code> answers for the <code>Type.parse(…)</code> that built that record, as a vector&lt;text&gt; with one entry per value that did not fit — every mismatch, whether the one-step <code>Type.parse(text)</code> or the staged <code>Type.parse(json_parse(text))</code> built it; a field whose value did not fit holds the type's default, the rest is read. Each parsed record keeps its own:</p>
 <pre><code>for e in user#errors { log_warn(e); }
 </code></pre>
 <p>The two parse spellings differ in WHICH HALF of the answer they give, and that is the reason to choose between them:</p>
@@ -110,6 +110,10 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
 <pre><code>  bad = <span class="en">User</span>.<span class="fn-call">parse</span>(`{{<span class="st">"id"</span>:<span class="st">"not_a_number"</span>,<span class="st">"name"</span>:<span class="nm">42</span>}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bad.id == <span class="nm">0</span>, <span class="st">"type-mismatched id keeps its default: {bad.id}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-json.html">json_errors</a></span>() != <span class="st">""</span>, <span class="st">"the mismatch was reported: [{json_errors()}]"</span>);</code></pre>
+<p>…and EVERY mismatch is named, on the record: <code>id</code> and <code>name</code> both, in either form.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(bad#errors) == <span class="nm">2</span>, <span class="st">"both mismatches on the record: {bad#errors}"</span>);
+  staged = <span class="en">User</span>.<span class="fn-call">parse</span>(<span class="fn-call"><a href="stdlib-json.html">json_parse</a></span>(`{{<span class="st">"id"</span>:<span class="st">"not_a_number"</span>,<span class="st">"name"</span>:<span class="nm">42</span>}}`));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(staged#errors) == <span class="nm">2</span>, <span class="st">"the staged form names both too: {staged#errors}"</span>);</code></pre>
 <p>…and the next parse replaces it, so a good parse reads clean.</p>
 <pre><code>  fine = <span class="en">User</span>.<span class="fn-call">parse</span>(`{{<span class="st">"id"</span>:<span class="nm">2</span>,<span class="st">"name"</span>:<span class="st">"n"</span>,<span class="st">"email"</span>:<span class="st">"e"</span>}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fine.id == <span class="nm">2</span>, <span class="st">"the good parse landed"</span>);
@@ -120,9 +124,11 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
     total += s.value;
   }
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">60</span>, <span class="st">"vector sum: {total}"</span>);</code></pre>
-<p>An array is all-or-nothing: one element the declaration cannot take abandons the whole vector, where a struct keeps its other fields.</p>
+<p>An element the declaration cannot take keeps its slot at the defaults, and the elements around it are read — as a struct keeps its other fields; <code>#errors</code> names it.</p>
 <pre><code>  spoiled = <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Score</span>&gt;.<span class="fn-call">parse</span>(`[{{<span class="st">"value"</span>:<span class="st">"x"</span>}},{{<span class="st">"value"</span>:<span class="nm">2</span>}}]`);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(spoiled) == <span class="nm">0</span>, <span class="st">"one bad element empties the vector: {len(spoiled)}"</span>);</code></pre>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(spoiled) == <span class="nm">2</span>, <span class="st">"one bad element keeps its slot: {len(spoiled)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(spoiled[<span class="nm">0</span>].value == <span class="nm">0</span> &amp;&amp; spoiled[<span class="nm">1</span>].value == <span class="nm">2</span>, <span class="st">"the fitting element is read: {spoiled}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(spoiled#errors) == <span class="nm">1</span>, <span class="st">"the mismatch is named: {spoiled#errors}"</span>);</code></pre>
 <pre><code>  c = <span class="en">Contact</span>.<span class="fn-call">parse</span>(`{{<span class="st">"name"</span>:<span class="st">"Carol"</span>,<span class="st">"address"</span>:{{<span class="st">"city"</span>:<span class="st">"Amsterdam"</span>,<span class="st">"zip"</span>:<span class="st">"1012"</span>}}}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.name == <span class="st">"Carol"</span>, <span class="st">"nested name"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.address.city == <span class="st">"Amsterdam"</span>, <span class="st">"nested city: {c.address.city}"</span>);
@@ -259,8 +265,11 @@ struct Catalogue { all: vector&lt;Item&gt;, by_key: hash&lt;Item[key]&gt; }
 //
 //   if json_errors() != "" { log_warn(json_errors()); }
 //
-// 'record#errors' answers for the 'Type.parse(text)' that built that record, as a
-// vector&lt;text&gt; with one entry per error. Each parsed record keeps its own:
+// 'record#errors' answers for the 'Type.parse(…)' that built that record, as a
+// vector&lt;text&gt; with one entry per value that did not fit — every mismatch, whether the
+// one-step 'Type.parse(text)' or the staged 'Type.parse(json_parse(text))' built it; a
+// field whose value did not fit holds the type's default, the rest is read. Each parsed
+// record keeps its own:
 //
 //   for e in user#errors { log_warn(e); }
 //
@@ -331,6 +340,10 @@ fn main() {
   bad = User.parse(`{{"id":"not_a_number","name":42}}`);
   assert(bad.id == 0, "type-mismatched id keeps its default: {bad.id}");
   assert(json_errors() != "", "the mismatch was reported: [{json_errors()}]");
+  // …and EVERY mismatch is named, on the record: `id` and `name` both, in either form.
+  assert(len(bad#errors) == 2, "both mismatches on the record: {bad#errors}");
+  staged = User.parse(json_parse(`{{"id":"not_a_number","name":42}}`));
+  assert(len(staged#errors) == 2, "the staged form names both too: {staged#errors}");
   // …and the next parse replaces it, so a good parse reads clean.
   fine = User.parse(`{{"id":2,"name":"n","email":"e"}}`);
   assert(fine.id == 2, "the good parse landed");
@@ -342,10 +355,12 @@ fn main() {
     total += s.value;
   }
   assert(total == 60, "vector sum: {total}");
-  // An array is all-or-nothing: one element the declaration cannot take
-  // abandons the whole vector, where a struct keeps its other fields.
+  // An element the declaration cannot take keeps its slot at the defaults, and the
+  // elements around it are read — as a struct keeps its other fields; `#errors` names it.
   spoiled = vector&lt;Score&gt;.parse(`[{{"value":"x"}},{{"value":2}}]`);
-  assert(len(spoiled) == 0, "one bad element empties the vector: {len(spoiled)}");
+  assert(len(spoiled) == 2, "one bad element keeps its slot: {len(spoiled)}");
+  assert(spoiled[0].value == 0 &amp;&amp; spoiled[1].value == 2, "the fitting element is read: {spoiled}");
+  assert(len(spoiled#errors) == 1, "the mismatch is named: {spoiled#errors}");
 
   c = Contact.parse(`{{"name":"Carol","address":{{"city":"Amsterdam","zip":"1012"}}}}`);
   assert(c.name == "Carol", "nested name");

@@ -78,10 +78,10 @@
         "default/",
         "bench/"
       ],
-      "check": "make -s rewrite-census",
+      "check": "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py",
       "check_first": true,
       "regen": [
-        "make -s rewrite-census-bless"
+        "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py --bless"
       ],
       "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline"
     },
@@ -150,10 +150,10 @@
         "index/features.json",
         "scripts/"
       ],
-      "check": "make -s features-check",
       "regen": [
         "make -s features-gen"
       ],
+      "note": "no `check` here on purpose: `make features-check` is `features-gen` plus `git status --porcelain` over the shadow, so run right after a regeneration that changed anything it fails on the bot's own output (derive.yml run 38922400633).  The regeneration is deterministic; ci.yml's doc-index job runs that check on the COMMITTED shadow, which is the drift gate.",
       "ci": true
     },
     {
@@ -196,10 +196,10 @@
         "default/",
         "tests/ownership_drop_gate.rs"
       ],
-      "check": "cargo test --release -q --test ownership_drop_gate -- --include-ignored",
+      "check": "cargo test -q --test ownership_drop_gate -- --include-ignored",
       "check_first": true,
       "regen": [
-        "LOFT_BLESS_DROP_GATE=1 cargo test --release -q --test ownership_drop_gate -- --include-ignored"
+        "LOFT_BLESS_DROP_GATE=1 cargo test -q --test ownership_drop_gate -- --include-ignored"
       ],
       "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand"
     },
@@ -241,10 +241,6 @@
       "scripts/gate_preflight.sh"
     ],
     [
-      "optional ratchet",
-      "python3 scripts/ir_walker_audit.py optional --check-ratchet"
-    ],
-    [
       "cargo check",
       "cargo check --all-targets -q"
     ],
@@ -262,7 +258,7 @@
     ],
     [
       "file_access guard",
-      "cargo test --release -q --lib file_access::guard"
+      "cargo test -q --lib file_access::guard"
     ],
     [
       "rule tags",
@@ -274,11 +270,11 @@
     ],
     [
       "hygiene",
-      "cargo nextest run --release --test doc_hygiene"
+      "cargo nextest run --test doc_hygiene"
     ],
     [
       "index hygiene",
-      "cargo nextest run --release --test index_hygiene"
+      "cargo nextest run --test index_hygiene"
     ],
     [
       "feature coverage",

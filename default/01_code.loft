@@ -494,6 +494,17 @@ pub fn log(self: single, v2: single) -> single? {
 }
 #pure
 
+fn OpPowInt(v1: integer, v2: integer) -> integer;
+#cold
+#rust"ops::op_pow_int(@v1, @v2)"
+/// Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 ** 20` is
+/// 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the
+/// answer does not fit an integer (`pow(2, 63)`), as `*` answers null past the range.
+pub fn pow(self: integer, v2: integer) -> integer? {
+  OpPowInt(self, v2)
+}
+#pure
+
 fn OpPowSingle(v1: single, v2: single) -> single;
 #cold
 #rust"@v1.powf(@v2)"
@@ -724,7 +735,7 @@ fn OpMinFloat(v1: float, v2: float) -> float;
 fn OpMulFloat(v1: float, v2: float) -> float;
 #hot
 #rust"@v1 * @v2"
-// C80 / E-Report: an unguarded zero divisor CONTINUES and logs a Warn — it never
+// C80 / E-Report: a zero divisor CONTINUES, silent — the null is the signal, and it never
 // traps, so the spreadsheet model still degrades one value and lets the rest of the
 // program compute.  The VALUE is IEEE, and NaN is the one float null (`doc/23-safety`:
 // "NaN (Not a Number) is null"): `0.0 / 0.0` is null, `1.0 / 0.0` is `inf` — a
@@ -1444,6 +1455,15 @@ fn OpKeepVectorRange(r: vector, tp: const u16, lo: integer, hi: integer);
 #cold
 #rust"s.database.keep_vector_range(&@r, @tp, @lo, @hi)"
 #impure(parent_write)
+// `@FR-R-Compact`'s prepend form — the vector becomes `g`'s elements followed by its own, in
+// its own record: what `t = []; t += g; t += r; r = t` leaves, without copying every element
+// of `r` twice.  `g`'s elements are copied in as `OpAppendVector` copies them, then the
+// record's elements are rotated to put them in front.  `tp` is the ELEMENT type, as for
+// OpAppendVector.  Answers false, having done nothing, for a null or absent `r` or a linked
+// element type: the rewrite that emits it keeps the written-out statements as the fallback.
+fn OpPrependVector(r: vector, g: vector, tp: const u16) -> boolean;
+#rust"s.database.prepend_vector(&@r, &@g, @tp)"
+#impure(parent_write)
 // Append the bytes [lo, hi) of a text to a byte vector as ONE copy — what
 // `for i in lo..hi { v += [t.byte_at(i) as u8] }` builds (`@FR-R-ByteCopy`).
 // The caller has proven 0 <= lo <= hi <= size(t); a null vector takes nothing.
@@ -1559,10 +1579,10 @@ fn OpHashRemove(data: reference, rec: reference, tp: const u16);
 // by design — walks + sorts all records per call.  See CAVEATS.md C60.
 fn hash_sorted(h: reference, tp: integer) -> reference;
 #impure(parent_write)
-// Raw bucket-walk sibling of `hash_sorted` for `for e in h par(...)`.
-// Same fresh vector<reference<T>> scratch, but in storage order — skips the
-// key sort because the parallel queue has no use for a hash's order.  The
-// parser desugars the par form of `for e in h` into this call.
+// Slot-order sibling of `hash_sorted` for `for e in h par(...)` and
+// `for e in unordered(h)` (@FR-Col-Unordered).  Same fresh vector<reference<T>>
+// scratch, but in slot order — skips the key sort, because neither walk has a use
+// for key order.  The parser desugars both forms of `for e in h` into this call.
 fn hash_unsorted(h: reference, tp: integer) -> reference;
 #pure
 // @PLN48 — iterate a spatial/radix collection in its NATURAL key order (the tree's

@@ -478,17 +478,6 @@ the record it points at, not a place of the holder's.
                  places an ELEMENT of that very collection, so it holds.  A field
                  vector, a user-struct root and a placed buffer are not store roots
                  and carry no such claim.
-  (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
-                 `OpDatabase` mints holds NOTHING ELSE: every record in it was
-                 claimed for that collection — its elements, and whatever they own.
-                 The collection's extent IS the store's extent, so a point at which
-                 the collection is wholly dead is a point at which the store is, and
-                 releasing it there is one store reset rather than a free per
-                 element.  What would break the rule is a record placed into the
-                 store from outside; the one mechanism that places (R-MoveAppend)
-                 places an ELEMENT of that very collection, so it holds.  A field
-                 vector, a user-struct root and a placed buffer are not store roots
-                 and carry no such claim.
   (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
                  elements own.  `clear_vector` is a length reset — sound wherever
                  the vector's store dies straight after (every use it was written
@@ -533,84 +522,10 @@ the record it points at, not a place of the holder's.
                  nothing and skips the walk; any slot the list cannot read takes
                  the walk.
 
-  (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
-                 header word and the HIGH half of its LAST word (the tree node's color
-                 rides bit 31 of its RIGHT link, so the half-word is clear at every
-                 tracked size; a one-word block's footer shares its header's word).  A
-                 record delete then coalesces BACKWARD in O(1): the footer at the freed
-                 block's left edge NAMES a candidate predecessor, its header must agree,
-                 and the free TREE must hold that exact block — claimed data can spell a
-                 false footer and header, and the tree cannot lie (falsified: without the
-                 tree confirmation, a fabricated footer+header pair merges a freed block
-                 into the middle of a live claim).  A one-word predecessor is untracked
-                 and unconfirmable: it is left, and the lazy O(blocks) sweep stays armed
-                 for exactly that case.  Footers live in FREE space only — a persisted
-                 image is unchanged, and an image written before footers existed is
-                 re-footed by the open walk.
-  (H-Wilderness) inside one store, the free block that ENDS the store (the wilderness)
-                 is held beside the free tree rather than in it, and every tree
-                 operation treats it as the node it would have been: a block of at
-                 least the tree's minimum size that ends the store is recorded as the
-                 wilderness instead of inserted, removing it clears the record, and a
-                 best-fit take weighs it against the smallest fitting node by the
-                 tree's own (size, position) order — the wilderness has the highest
-                 position of any free block, so a node of equal size precedes it.
-                 The block every claim takes, and so the store's layout, is therefore
-                 the one the tree alone would give; what changes is that a claim from
-                 the tail and a delete into it cost no tree delete, insert or
-                 rebalance.  At most one wilderness exists, it never overlaps a claim,
-                 and the open walk (and every re-tiling) re-derives it.
-  (H-Carve)      inside one store, a best-fit claim of n words from a tree node of b
-                 words with b − n ≥ n puts the (b − n)-word remainder IN THE NODE'S
-                 PLACE — the node's links, its color, its parent's pointer — instead of
-                 deleting the node and inserting the remainder.  The node is the
-                 SMALLEST of at least n words by the tree's (size, position) order, so
-                 every node before it is smaller than n: a remainder of at least n
-                 words still follows that predecessor, and being smaller than b it
-                 still precedes the successor.  The tree's key set is the one the
-                 delete and insert leave, so every later claim takes the same block
-                 and the layout is unchanged; what changes is that the claim costs no
-                 tree delete, insert or rebalance.  A remainder under n words, or
-                 under the tree's minimum, takes the delete and the insert.
-  (H-LazyFree)   inside one store, a delete of a SMALL block (at most 64 words) during
-                 the store's LAZY phase merges with its free neighbours in O(1) as the
-                 exact delete does — forward by header, backward by a footer CONFIRMED
-                 by the phase's record of lazily freed block starts (claimed data can
-                 spell a footer, and that record cannot lie) — and inserts the merged
-                 block into no tree; a block that ends the store becomes the wilderness.
-                 A larger block (a vector rung, a hash table) is tracked at its delete
-                 as ever, the tree's insert being nothing beside the block's own copy.
-                 So a claim in the phase finds what the tree holds (the wilderness, the
-                 large blocks, the remainders claims leave) or an untracked block the
-                 chain walk meets, and a scratch freed each round leaves the layout as
-                 it found it.  The count the phase is judged by is the untracked words
-                 held NOW: a claim, a resize or a merge that consumes such a block takes
-                 it off, and a tree rebuild clears the record whole.  The phase ends at the
-                 first claim once the untracked words reach a floor (256) AND a fifth of
-                 the extent written so far, whatever the wilderness holds: ONE sweep
-                 merges every free block and rebuilds the tree, and from then on each
-                 delete is tracked at its site as before; an explicit reclaim ends it
-                 the same way.  A fresh or reset store starts the phase again; a store
-                 bound to a file never enters it, because a file is read, reclaimed and
-                 paged by its layout.  Every block is still free or claimed by its
-                 header, so the usage walk, an image and the open walk read the same
-                 store; what changes is WHEN the tree learns of a free.  A store built
-                 once and released whole never pays for its deletes, a tree whose dead
-                 words stay a small share of its live ones stays lazy however big it
-                 grows, and a vector ladder — dead about half of what it wrote — sweeps
-                 within its first rungs, so the working set never doubles.  Below the
-                 bound a claim the wilderness cannot hold grows the store, or takes an
-                 untracked block the chain walk meets on its way to growing.
-  (H-ScanIndex)  a claim the tree and the wilderness cannot serve takes the FIRST free
-                 block in address order that holds it, or grows the store from its tail
-                 block.  The store's indexes answer it — the lowest lazily freed block
-                 (`H-LazyFree`) that holds the claim, a tail whose free footer an index
-                 confirms — and the block chain where they cannot: the same block.
-  (H-ReadSurface) a store opened from a file only to be READ — a cached stdlib or program
-                 image — writes nothing into the file: its free-block tree and footers
-                 (`H-FreeFooter`, `H-Wilderness`) are left unbuilt, since a read surface
-                 claims and frees nothing.  The file's mapping is shared by every process
-                 that opens it, so a rebuild in place is a write another start reads.
+  How ONE store places its blocks — the free footers, the wilderness, the carve, the lazy
+  phase, the scan index, a read surface, parked blocks — is allocator.md: layout rules no
+  program can observe, kept apart from the store steps above.
+
   (H-SwapIn)     the deep copy of a store's ROOT record into the root of another store
                  that holds nothing else, the source store given up after it (the copy's
                  free-source form — the rebind `x = f(…, x, …)` from a callee that minted

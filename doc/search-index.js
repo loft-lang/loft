@@ -67,6 +67,7 @@ const SEARCH_INDEX=[
 {name:"atan2",kind:"fn",url:"stdlib-math.html"},
 {name:"log",kind:"fn",url:"stdlib-math.html"},
 {name:"pow",kind:"fn",url:"stdlib-math.html"},
+{name:"pow",kind:"fn",url:"stdlib-math.html"},
 {name:"abs",kind:"fn",url:"stdlib-math.html"},
 {name:"PI",kind:"const",url:"stdlib-math.html"},
 {name:"E",kind:"const",url:"stdlib-math.html"},

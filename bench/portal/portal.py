@@ -107,7 +107,7 @@ def measure(argv):
     # still this machine's latest, so they are kept; a hash disagreement exits before any
     # row is written, and leaves nothing to merge.
     if os.path.exists(fresh) and os.path.getsize(fresh) > 0:
-        merge_run(fresh)
+        merge_run(fresh, whole_benches="--routine" not in argv)
     if os.path.exists(builds):
         merge_builds(builds)
         os.remove(builds)
@@ -151,10 +151,13 @@ def merge_builds(fresh):
     print(f"saved {os.path.relpath(out, ROOT)}: {len(rows)} build step(s) measured, {len(kept)} kept")
 
 
-def merge_run(fresh):
+def merge_run(fresh, whole_benches=False):
     """Merge one `stats.py --tsv` run into this machine's results file (the half of
     [`measure`] `scripts/perf_check.py --record` shares): the rows it measured replace
-    theirs, every other row is kept."""
+    theirs, every other row is kept.  With `whole_benches` (a run that measured every
+    routine of each bench it reached, so no `--routine` filter) a bench the run reached
+    replaces ALL its rows: a routine the bench no longer defines leaves the file, where
+    kept it would stand on the page at its last figure for good."""
     os.makedirs(RESULTS, exist_ok=True)
     out = os.path.join(RESULTS, f"{host_key()}.tsv")
     meta, rows = read_run(fresh)
@@ -167,7 +170,9 @@ def merge_run(fresh):
     if os.path.exists(out):
         _, old = read_run(out)
         redone = {(r["bench"], r["routine"]) for r in rows}
-        kept = [r for r in old if (r["bench"], r["routine"]) not in redone]
+        reached = {r["bench"] for r in rows} if whole_benches else set()
+        kept = [r for r in old
+                if (r["bench"], r["routine"]) not in redone and r["bench"] not in reached]
     merged = sorted(kept + rows, key=lambda r: (r["bench"], r["routine"]))
     keys = ["bench", "routine"] + sorted({k for r in merged for k in r} - {"bench", "routine"})
     with open(out, "w") as f:

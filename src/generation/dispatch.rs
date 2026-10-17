@@ -130,6 +130,7 @@ impl Output<'_> {
         if !self.in_coroutine_body
             && !self.declared.contains(&var)
             && self.borrowed_text_locals.contains_key(&var)
+            && !self.borrowed_store_locals.contains(&var)
             && matches!(to.unspan(), Value::Call(..))
         {
             let name = sanitize(self.data.def(self.def_nr).variables().name(var));
@@ -141,13 +142,56 @@ impl Output<'_> {
         // a parameter's text: every binding is a literal, a borrowed variable or the read
         // itself, each of which emits as a `&str`, so the slot is one.
         if !self.in_coroutine_body && self.borrowed_store_locals.contains(&var) {
-            let name = sanitize(self.data.def(self.def_nr).variables().name(var));
+            let variables = self.data.def(self.def_nr).variables();
+            let name = sanitize(variables.name(var));
+            // The tested clause: a bind of a store read borrows while each root parameter's
+            // store is not the return buffer's, and copies into `__own_` otherwise.
+            let tested = self
+                .tested_store_texts
+                .get(&var)
+                .zip(super::hoist::retbuf_var(self.data, self.def_nr))
+                .filter(|_| !matches!(to.unspan(), Value::Text(_) | Value::Null | Value::Var(_)))
+                .map(|(roots, rb)| {
+                    roots
+                        .iter()
+                        .map(|&p| {
+                            format!(
+                                "var_{}.store_nr != var_{}.store_nr",
+                                sanitize(variables.name(p)),
+                                sanitize(variables.name(rb))
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ")
+                });
             if self.declared.insert(var) {
+                if self.tested_store_texts.contains_key(&var) {
+                    write!(w, "let mut __own_{name}: String = String::new(); ")?;
+                }
                 write!(w, "let mut var_{name}: &str = ")?;
             } else {
                 write!(w, "var_{name} = ")?;
             }
-            return self.output_code_inner(w, to);
+            let Some(test) = tested else {
+                // `@FR-R-TextBorrow`'s call clause: a user call answers a `Str` over the work
+                // text it filled; the slot is its `&str`.
+                if matches!(to.unspan(), Value::Call(d, _)
+                    if (*d as usize) < self.data.definitions.len()
+                        && !matches!(self.data.def(*d).code(), Value::Null))
+                {
+                    write!(w, "(")?;
+                    self.output_code_inner(w, to)?;
+                    return write!(w, ").str()");
+                }
+                return self.output_code_inner(w, to);
+            };
+            write!(w, "{{ let __t: &str = ")?;
+            self.output_code_inner(w, to)?;
+            crate::rewrite_census::fired("R-TextBorrow/tested", 1);
+            return write!(
+                w,
+                "; if {test} {{ __t }} else {{ __own_{name} = __t.to_string(); unsafe {{ &*(__own_{name}.as_str() as *const str) }} }} }}"
+            );
         }
         // `@FR-R-CharWalk` — the step of `for c in T` takes an ASCII byte other than NUL in
         // one move: `c` is the byte, `#index` the byte's offset, `#next` one past it — what

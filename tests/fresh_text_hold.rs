@@ -19,6 +19,7 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_NO_FRESH_TEXT_SET")
+        .env_remove("LOFT_NO_TEXT_SET_HEADER")
         .env_remove("LOFT_HOIST_VERIFY")
         .env_remove("LOFT_TRACE_HOIST_DECLINE");
     for (k, v) in env {
@@ -53,17 +54,26 @@ fn a_fresh_elements_text_keeps_the_hold_and_a_shared_store_refuses_it() {
     let declines = |env: &[(&str, &str)]| -> Vec<String> {
         let mut e = vec![("LOFT_TRACE_HOIST_DECLINE", "1")];
         e.extend_from_slice(env);
-        let out = loft(&["--native-release", "--native-emit", "/dev/null"], &e);
+        let out = loft(
+            &[
+                "--native-release",
+                "--native-emit",
+                loft::platform::null_sink(),
+            ],
+            &e,
+        );
         String::from_utf8_lossy(&out.stderr)
             .lines()
             .filter(|l| l.starts_with("hoist: n_build loop") || l.starts_with("hoist: n_main loop"))
             .map(str::to_string)
             .collect()
     };
-    // On: only h4 declines — a text written into an EXISTING element of the
-    // read vector's store is no fresh mint.  h1's `build` and h3 hold; h2, minting into `d.out`
-    // while reading `d.src`, is refused by the mint's own aliasing decision and declines nowhere
-    // here.
+    // On, with `@FR-R-Header`'s text clause off: only h4 declines — a text written into an
+    // EXISTING element of the read vector's store is no fresh mint.  h1's `build` and h3 hold;
+    // h2, minting into `d.out` while reading `d.src`, is refused by the mint's own aliasing
+    // decision and declines nowhere here.  With the text clause on, h4 holds its headers too
+    // (without a base: it grows the store it reads), so nothing declines
+    // (`tests/text_set_header.rs` pins that clause on its own cells).
     let src = loft::file_access::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))
         .expect("read the cells");
     let h4 = src
@@ -72,10 +82,15 @@ fn a_fresh_elements_text_keeps_the_hold_and_a_shared_store_refuses_it() {
         .expect("h4's loop")
         + 1;
     let at = format!(".loft:{h4}:");
-    let on = declines(&[]);
+    let on = declines(&[("LOFT_NO_TEXT_SET_HEADER", "1")]);
     assert!(
         !on.is_empty() && on.iter().all(|l| l.contains(&at)),
         "only h4's write (line {h4}) declines: {on:#?}"
+    );
+    let with_text = declines(&[]);
+    assert!(
+        with_text.is_empty(),
+        "the text clause holds h4 as well: {with_text:#?}"
     );
     // Off: the fresh-element text writes block their loops again, `build`'s among them.
     let off = declines(&[("LOFT_NO_FRESH_TEXT_SET", "1")]);

@@ -13,8 +13,17 @@ Usage:  test_duration_gate.py <junit.xml> [--profile ci]
 The limit is read from the profile's `slow-timeout.period`, the one home for it.  A test that
 nextest retried is judged on its slowest attempt: a first try that ran long and a retry that
 passed quickly is exactly the shape this gate exists to catch.
+
+A test is judged on its OWN work.  The first test to need a native cdylib on a cold runner
+builds it while holding the global build lock — the graphics cdylib is ~95 s — and the
+timing ledger (`LOFT_TIMING_LEDGER=<dir>`, a `lockheld … miss <secs> <test>` row) says which
+test paid and how long; that wait is a shared build every later test gets for free, not the
+test's cost, so it is taken off before the budget is applied and named beside the number.
+Measured: `crystal_editor_gl_matches_gold` read 306 s and 317 s on two cold runners, 97 s of
+each holding the lock for the graphics build, and under 300 s wherever the cdylib was warm.
 """
 
+import os
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -48,6 +57,23 @@ def attempts(case: ET.Element):
                 yield float(t)
 
 
+def build_waits(ledger_dir: str | None) -> dict[str, float]:
+    """Seconds each test spent holding the build lock for a cache MISS: the ledger's
+    `lockheld <name> miss <secs> <test>` rows, summed per test (the last column)."""
+    waits: dict[str, float] = {}
+    if not ledger_dir or not Path(ledger_dir).is_dir():
+        return waits
+    for f in Path(ledger_dir).glob("timing-*.tsv"):
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            cols = line.split("\t")
+            if len(cols) >= 5 and cols[0] == "lockheld" and cols[2] == "miss" and cols[3]:
+                try:
+                    waits[cols[4]] = waits.get(cols[4], 0.0) + float(cols[3])
+                except ValueError:
+                    pass
+    return waits
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     profile = "ci"
@@ -62,23 +88,34 @@ def main() -> int:
     limit = profile_limit_seconds(profile)
     budget = limit / 2
     cases = ET.parse(junit).getroot().iter("testcase")
+    waits = build_waits(os.environ.get("LOFT_TIMING_LEDGER"))
     total = 0
     over = []
+    waited = []
     for case in cases:
         total += 1
         worst = max(attempts(case))
-        if worst > budget:
-            over.append((worst, f"{case.get('classname', '?')} {case.get('name', '?')}"))
+        name = case.get("name", "?")
+        wait = waits.get(name, 0.0)
+        label = f"{case.get('classname', '?')} {name}"
+        if worst > budget and worst - wait <= budget:
+            waited.append((worst, wait, label))
+        elif worst > budget:
+            over.append((worst, wait, label))
     if total == 0:
         sys.exit(f"test_duration_gate: {junit} lists no test cases — nothing was measured")
+    for t, w, name in waited:
+        print(f"test duration gate: {name} ran {t:.1f} s, {w:.1f} s of it holding the build lock for a "
+              f"cold cdylib — its own {t - w:.1f} s is under the {budget:.0f} s budget")
     if not over:
         print(f"test duration gate: {total} tests, none over {budget:.0f} s (half the {limit:.0f} s limit)")
         return 0
     print(f"test duration gate: {len(over)} of {total} tests ran longer than {budget:.0f} s, half the "
           f"{limit:.0f} s per-test limit.  Make each one cheaper — split it, parallelise it, cache "
           f"its work — and never raise the limit:")
-    for t, name in sorted(over, reverse=True):
-        print(f"  {t:8.1f} s  {name}")
+    for t, w, name in sorted(over, reverse=True):
+        wait = f"  ({w:.1f} s of it a shared cdylib build; {t - w:.1f} s its own)" if w else ""
+        print(f"  {t:8.1f} s  {name}{wait}")
     return 1
 
 

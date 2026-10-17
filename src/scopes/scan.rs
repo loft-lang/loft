@@ -936,7 +936,7 @@ impl Scopes<'_> {
                         // backends.  Its `var_scope` entry is written when
                         // the body first assigns it, which for a set inside
                         // an `if` reads as INNER-scoped and would route a
-                        // valid witness into the @P378(a) branch below.
+                        // valid witness into the inner-scoped-witness branch below.
                         let av_scope = self.var_scope.get(&av).copied().unwrap_or(u16::MAX);
                         let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
                         // A buffer is never its own witness.  The pairing exists to
@@ -968,7 +968,7 @@ impl Scopes<'_> {
                             self.paired_witness.entry(av).or_insert(v);
                         } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope
                         {
-                            // @P378(a) — witness `v` is INNER-scoped (e.g.
+                            // Witness `v` is INNER-scoped (e.g.
                             // a loop body) while the `__ref_N` buffer `av`
                             // is OUTER (function).  The buffer is reserved
                             // once but `v` (which adopts the buffer's

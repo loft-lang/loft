@@ -838,15 +838,18 @@ if json_errors() != "" { log_warn(json_errors()); }   // the JSON surface: one t
 for e in user#errors { log_warn(e); }                 // the record surface: a vector<text>
 ```
 
-`x#errors` is a `vector<text>` with one entry per error of the parse that built the value `x`
-holds, empty after a parse that succeeded: test it with `len(x#errors) > 0`.  Reading it
+`x#errors` is a `vector<text>` with one entry per value that did not fit in the parse that
+built the value `x` holds — every mismatch, in both parse forms — empty after a parse that
+succeeded: test it with `len(x#errors) > 0`.  A value that did not fit leaves its field at
+the type's default; the values around it are read.  Reading it
 changes nothing, and each of `user`, `scores` and `shape` above answers for its own parse
 (@C148).  The errors go where the WHOLE value goes — bound, rebound, passed, returned from a
 function, copied to another variable.  A value built any other way has none, and neither has a
 part copied out of a parsed value or a parsed value stored into a field or an element.  Ask a
 variable: `f()#errors` does not parse, and a variable that is neither a record nor a vector is
-refused.  The surface is the one-step `Type.parse(text)` and the `text as T` cast; the staged
-`Type.parse(json_parse(text))` reports through `json_errors()`.  Guards:
+refused.  The one-step `Type.parse(text)`, the `text as T` cast and the staged
+`Type.parse(json_parse(text))` all fill it; `json_errors()` carries the same mismatches as one
+text.  Guards:
 `loft-suite/attic/scripts/a-record-errors-read-answers-for-its-own-parse.loft`,
 `loft-suite/attic/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
 

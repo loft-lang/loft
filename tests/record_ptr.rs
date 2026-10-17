@@ -172,7 +172,11 @@ fn the_switches_restore_the_store_reads() {
 fn the_declines_are_the_designed_ones() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = loft(
-        &["--native-emit", "/dev/null", src.to_str().unwrap()],
+        &[
+            "--native-emit",
+            loft::platform::null_sink(),
+            src.to_str().unwrap(),
+        ],
         &[("LOFT_TRACE_RECPTR", "1")],
     );
     let trace = String::from_utf8_lossy(&out.stderr);

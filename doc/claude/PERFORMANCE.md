@@ -610,6 +610,12 @@ at 1–2 %, taken only because the code was already open, did not.  When a row's
 FLAT — nothing over about 5 % — that is the finding to record: the row is bound by a class
 (DESIGN.md § V-an's table for `parse`), and the unit is the class, not a spot.
 
+The same holds across ROWS: the slowest routines carry the cleaner upgrades, and a row
+already near its Rust twin (≲ 2.5×) is hard to analyse — its cost is spread thin and a
+10–20 % move there is as often the machine's library or layout as the code.  Such a row is
+not taken as a unit of its own; it moves when a slow row's fix lands the shared mechanism
+(the allocator, the copy, the text paths) it runs on.
+
 ### Wide before deep
 
 **The owner's direction for the perf stream: WIDE, not deep.** Optimisation stays
@@ -743,7 +749,12 @@ and guarded by a COUNT, never by a time (@PLN166).
 
 - **By phase.**  `LOFT_TIMING=1` prints `parse_default`, `parse_user`, `scopes`, `lints` and
   `front_end`; the four phases sum to `front_end` (pinned by
-  `tests/compile_scaling.rs::loft_timing_phases_sum_to_the_front_end`).
+  `tests/compile_scaling.rs::loft_timing_phases_sum_to_the_front_end`).  On a warm start a
+  `warm_load` line splits `parse_default` into the stdlib fingerprint (`stdlib_key`, a stamp
+  of the sources' sizes and mtimes — `cache::stdlib_fingerprint` — never a read of them while
+  nothing moved), the drift manifest (`manifest`) and the bundle's materialisation (`bundle`:
+  the mmap'd store copied into the definition table, the one cost a warm start still pays
+  per definition), and `compiled stdlib: … (N us)` is the dispatch mark.
 - **Where a slower test's time went.**  With `LOFT_TIMING_LEDGER=<dir>` every loft process
   appends rows to `<dir>/timing-<pid>.tsv`: its phases (`parse_default`, `parse_user`,
   `scopes`, `lints`, `byte_code`, `native_emit`, `run`), the program's own native compile

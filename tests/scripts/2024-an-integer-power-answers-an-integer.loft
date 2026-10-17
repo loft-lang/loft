@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN INTEGER POWER ANSWERS AN INTEGER (loft#2024).  `**` on two integers answered a `single`:
+// `3 ** 20` printed 3486784500 for 3486784401 and nothing said so, because only the single
+// and float powers existed and the integers were widened.  `OpPowInt` answers the exact
+// integer, null for a negative exponent (no integer answers it) and null past the range, as
+// `*` answers null past the range.  Every cell is hand-computed, both backends.
+//
+// @falsified-at: 476c0328b — interpret and native: `3 ** 20` answered 3486784500 for
+//   3486784401 and `c: integer = 2 ** 10` was refused as a single -> exact and typed
+// @falsified-by: tests/falsified/2024-an-integer-power-answers-an-integer.patch — the integer
+//   power removed again from the stdlib, the runtime and the operator table; scored by hand on
+//   the fixing commit's parent, both backends; the `--patch` run is the runner's.
+// CHANNEL: a compile refusal — with no integer power `**` widens to a single, and
+//   `c: integer = a ** b` is refused as a type change before any cell runs.
+// ARMED: none — the refusal and the rounded value need no instrument.
+// WITNESS: on the patched tree both backends stop at `cannot change type from integer to
+//   single` on `c: integer = a ** b`; with the annotation dropped, `3 ** 20` prints 3486784500.
+// HOLDS: the float cell (`2.0 ** 10.0 == 1024.0`) and the exit code of a refused program.
+
+fn main() {
+  a = 3;
+  b = 20;
+  c: integer = a ** b;
+  assert(c == 3486784401, "3 ** 20 {c}");
+  assert(2 ** 40 == 1099511627776, "2 ** 40 {2 ** 40}");
+  assert(7 ** 2 == 49, "7 ** 2 {7 ** 2}");
+  assert(5 ** 0 == 1 && 0 ** 0 == 1 && 0 ** 5 == 0, "zero powers");
+  assert((-2) ** 3 == -8 && (-2) ** 2 == 4, "negative base {(-2) ** 3} {(-2) ** 2}");
+  assert(2 ** 62 == 4611686018427387904, "2 ** 62 {2 ** 62}");
+  big: integer? = 2 ** 63;
+  assert(big == null, "2 ** 63 overflows to null");
+  neg: integer? = 2 ** -1;
+  assert(neg == null, "a negative exponent is null");
+  f = 2.0 ** 10.0;
+  assert(f == 1024.0, "the float power keeps its road {f}");
+  println("ok");
+}

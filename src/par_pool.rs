@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[cfg(all(feature = "threading", not(feature = "wasm")))]
 use std::thread;
 
-// ── Plan-06 phase 1 step 4.5 — shared run_parallel_* template ─────────────────
+// ── shared run_parallel_* template ──────────────────────────────────────────────
 //
 // The run_parallel_* variants share a uniform shape:
 //
@@ -64,7 +64,7 @@ where
     R: Send,
     F: Fn(usize, usize, WorkerStores) -> R + Sync,
 {
-    // Plan-06 phase 1.5 — use rayon's global work-stealing pool
+    // Use rayon's global work-stealing pool
     // instead of `std::thread::scope` per-call.  Per-call cost drops
     // from ~200 µs (thread spawn × N) to ~5 µs (task submission ×
     // N).  Nested par submits onto the same pool — no thread-count
@@ -188,7 +188,7 @@ impl WorkerTrace {
     }
 }
 
-/// Plan-06 phase 3b.1 — merge per-thread batches into one ordered vector.
+/// Merge per-thread batches into one ordered vector.
 ///
 /// Each `parallel_workers` call returns a `Vec<(start, batch)>` where every
 /// batch's `i`-th element belongs at row `start + i` of the result.  This
@@ -196,8 +196,7 @@ impl WorkerTrace {
 /// `default` and returns it.
 ///
 /// Used by `run_parallel_raw`, `run_parallel_text`, `run_parallel_int`, and
-/// the codegen-runtime `run_native_workers_*` triple — five sites that
-/// previously inlined the same 5-line loop.
+/// the codegen-runtime `run_native_workers_*` triple: five sites, one loop.
 ///
 /// `R: Clone` because `vec![default; n_rows]` clones the seed once per row.
 /// For owning types (`String`, `Vec<…>`) the default is typically empty.
@@ -226,7 +225,7 @@ pub(crate) fn merge_batches<R: Clone>(
 ///   with real workers.  Before the pool is installed (or when the host is not
 ///   cross-origin-isolated so the page never built one), the global pool has a
 ///   single thread and `f` runs sequentially on the caller: the never-break
-///   sequential fallback (@PLN117 arc D).  Same bounds as `ThreadPool::install`,
+///   sequential fallback.  Same bounds as `ThreadPool::install`,
 ///   so it is a drop-in at every call site.
 #[cfg(feature = "threading")]
 pub(crate) fn with_pool<R, F>(f: F) -> R

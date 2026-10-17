@@ -1,0 +1,84 @@
+// `@FR-R-SameRead`'s sequence clause — a pure computation that reads a store, evaluated by one
+// statement and again by the next few, is bound once before the first when nothing between can
+// change it: between stand only assignments to locals it does not read and the field writes
+// of a record the block just minted, and it reads only plain values and flat records of
+// another type.  Both backends (an IR rewrite); every cell asserts the VALUES a hand
+// computation gives, with `LOFT_NO_SEQUENCE_READ=1` the A/B.
+//
+// Bound: q1 (`place_line`'s shape — a box pushed between three counts of one run text), q4
+// (the count only: the local the sum reads is assigned between).  Kept: q2 (the read text is
+// replaced between, a write into a record not minted), q3 (the read vector grows between).
+//
+// @falsified-by: tests/falsified/a-count-a-run-of-statements-repeats-is-made-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch lets a field write into a record
+//   the block did not mint stand between two counts, so q2 counts the text it replaced
+//   (`q2 102,102;100,100;`).  The type condition is defensive: the read a minted record's
+//   append can change is a collection's length, a call (`t_6vector_len`) the clause does not
+//   admit — q3 holds it.
+struct Run { str: text, style: integer }
+struct Box { ks: integer, ke: integer, style: integer }
+
+fn place(rs: vector<Run>, base: integer) -> text {
+  boxes: vector<Box> = [];
+  roff = base;
+  ce = 0;
+  for rj in 0..len(rs) {
+    r = rs[rj]?;
+    boxes += [ Box { ks: roff, ke: roff + len(r.str), style: r.style } ];
+    ce = roff + len(r.str);
+    roff += len(r.str);
+  }
+  t = "";
+  for b in boxes { t += "{b.ks}-{b.ke}/{b.style};"; }
+  "{t}ce={ce}"
+}
+
+fn rewrite(rs: vector<Run>, w: Run) -> text {
+  t = "";
+  for rj in 0..len(rs) {
+    r = rs[rj]?;
+    a = 100 + len(r.str);
+    r.str = w.str;
+    b = 100 + len(r.str);
+    t += "{a},{b};";
+  }
+  t
+}
+
+fn grow(rs: vector<Run>) -> text {
+  a = len(rs) * 10 + 1;
+  rs += [ Run { str: "new", style: 9 } ];
+  b = len(rs) * 10 + 1;
+  "{a},{b}"
+}
+
+fn moved(rs: vector<Run>) -> text {
+  t = "";
+  roff = 0;
+  for rj in 0..len(rs) {
+    r = rs[rj]?;
+    a = roff + len(r.str);
+    roff = 50;
+    b = roff + len(r.str);
+    t += "{a},{b};";
+  }
+  t
+}
+
+fn main() {
+  // q1 — "ab" (2), "héé" (3 characters, 5 bytes), "" from 10: boxes 10-12, 12-15, 15-15.
+  q1 = place([Run { str: "ab", style: 1 }, Run { str: "héé", style: 2 }, Run { str: "", style: 3 }], 10);
+  assert(q1 == "10-12/1;12-15/2;15-15/3;ce=15", "q1 {q1}");
+  // q2 — the text is replaced by "abcde" between the two counts: 102 then 105, 100 then 105.
+  q2 = rewrite([Run { str: "hi", style: 1 }, Run { str: "", style: 2 }], Run { str: "abcde", style: 0 });
+  assert(q2 == "102,105;100,105;", "q2 {q2}");
+  // q3 — the vector the count reads grows between: 21 then 31 (a vector's length is a call
+  // the clause does not admit, so this cell holds whatever the type condition says).
+  v: vector<Run> = [Run { str: "a", style: 1 }, Run { str: "b", style: 2 }];
+  q3 = grow(v);
+  assert(q3 == "21,31" && len(v) == 3, "q3 {q3}");
+  // q4 — a local the computation reads is assigned between: 0+4 then 50+4, 50+1 then 50+1.
+  q4 = moved([Run { str: "four", style: 1 }, Run { str: "é", style: 2 }]);
+  assert(q4 == "4,54;51,51;", "q4 {q4}");
+  println("ok");
+}

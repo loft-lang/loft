@@ -152,7 +152,11 @@ fn the_switch_restores_the_per_pass_free_and_fresh_store() {
 fn the_declines_are_the_designed_ones() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = loft(
-        &["--native-emit", "/dev/null", src.to_str().unwrap()],
+        &[
+            "--native-emit",
+            loft::platform::null_sink(),
+            src.to_str().unwrap(),
+        ],
         &[("LOFT_TRACE_LOOP_RECORD", "1")],
     );
     let trace = String::from_utf8_lossy(&out.stderr);

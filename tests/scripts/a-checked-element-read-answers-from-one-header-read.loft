@@ -1,0 +1,71 @@
+// A checked element read `v[i]` answers from ONE read of the vector's header: the element
+// record and the length come out of the same lookup (`vector::rec_and_len`), which both
+// `get_vector` (both backends) and `--native`'s checked read (`vec_get_or_raise_runtime`)
+// share, with the in-range path inline and the raise outlined (`@FR-R-Cold`).  The index
+// rule it must keep is `@FR-H-Index`: a non-negative index counts from the front, a negative
+// one from the end, and anything still outside `[0, len)` is null.  Every cell asserts the
+// VALUES a hand computation gives.
+//
+// Cells: c1 an integer field vector read at the front, the back, from the end and past both
+// ends; c2 an empty vector, past every end; c3 record elements, a field of each; c4 a text
+// element from the end; c5 a write through a checked read, read back; c6 a vector read after
+// it grew (its records moved); c7 the reset-loop shape, a text write per index up to the
+// length; c8 the lengths themselves.  The `??` reads of c1–c4 go through `get_vector`; the
+// writes of c5 and c7 through `--native`'s checked read.
+//
+// @falsified-by: tests/falsified/a-checked-element-read-answers-from-one-header-read.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the patch is the native checked read's)
+//   CHANNEL: the VALUE channel on native — the patch answers one element short, so `b.xs[-1] = 7`
+//   writes element 1 and c5 reads `10,7,30`.
+
+struct Item { n: integer, t: text }
+struct Bag { xs: vector<integer>, names: vector<text>, rs: vector<Item> }
+
+fn at(b: Bag, i: integer) -> integer { b.xs[i] ?? -999 }
+fn item_n(b: Bag, i: integer) -> integer { b.rs[i].n ?? -999 }
+fn item_t(b: Bag, i: integer) -> text { b.rs[i].t ?? "none" }
+fn name(b: Bag, i: integer) -> text { b.names[i] ?? "none" }
+
+fn reset(b: Bag) -> integer {
+  ri = 0;
+  while ri < b.names.len() {
+    b.names[ri] = "r{ri}";
+    ri += 1;
+  }
+  ri
+}
+
+fn main() {
+  b = Bag { xs: [10, 20, 30], names: ["ab", "", "café"],
+            rs: [Item { n: 1, t: "one" }, Item { n: 2, t: "two" }] };
+  // c1 — indices 0, 2, -1, -3 address 10, 30, 30, 10; 3 and -4 are past the ends, and so is
+  // the most negative index (no overflow on `index + len`).
+  c1 = "{at(b, 0)},{at(b, 2)},{at(b, -1)},{at(b, -3)},{at(b, 3)},{at(b, -4)},{at(b, -9223372036854775807)}";
+  assert(c1 == "10,30,30,10,-999,-999,-999", "c1 {c1}");
+  // c2 — an empty vector has no element at 0 or -1.
+  e = Bag { xs: [], names: [], rs: [] };
+  c2 = "{at(e, 0)},{at(e, -1)},{item_n(e, 0)},{name(e, 0)}";
+  assert(c2 == "-999,-999,-999,none", "c2 {c2}");
+  // c3 — element 1 and element -1 are the same record: n 2, t "two"; -2 is the first.
+  c3 = "{item_n(b, 1)},{item_t(b, -1)},{item_n(b, -2)},{item_t(b, 2)}";
+  assert(c3 == "2,two,1,none", "c3 {c3}");
+  // c4 — -1 is "café", -2 the empty text, -3 "ab", -4 nothing.
+  c4 = "{name(b, -1)}|{name(b, -2)}|{name(b, -3)}|{name(b, -4)}";
+  assert(c4 == "café||ab|none", "c4 {c4}");
+  // c5 — the middle element set to 99 through `[1]`, the last to 7 through `[-1]`.
+  b.xs[1] = 99;
+  b.xs[-1] = 7;
+  c5 = "{at(b, 0)},{at(b, 1)},{at(b, 2)}";
+  assert(c5 == "10,99,7", "c5 {c5}");
+  // c6 — 40 more elements 100..139 appended one at a time: the last is 139, element 3 is 100,
+  // and 43 is past the end.
+  for k in 0..40 { b.xs += [100 + k]; }
+  c6 = "{at(b, -1)},{at(b, 3)},{at(b, 42)},{at(b, 43)},{len(b.xs)}";
+  assert(c6 == "139,100,139,-999,43", "c6 {c6}");
+  // c7 — three names, each rewritten to "r<index>".
+  c7 = "{reset(b)}:{name(b, 0)},{name(b, 1)},{name(b, 2)}";
+  assert(c7 == "3:r0,r1,r2", "c7 {c7}");
+  // c8 — the lengths: 43 integers, 3 names, 2 records; the empty bag's 0, 0, 0.
+  c8 = "{len(b.xs)},{len(b.names)},{len(b.rs)},{len(e.xs)},{len(e.names)},{len(e.rs)}";
+  assert(c8 == "43,3,2,0,0,0", "c8 {c8}");
+  println("ok");
+}

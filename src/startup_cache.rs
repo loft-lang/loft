@@ -99,11 +99,7 @@ pub fn save_stdlib_cache(_p: &Parser, _default_dir: &str) {}
 /// renamed `default/` file changes it.  `None` when `default/` cannot be read.
 #[cfg(feature = "mmap")]
 fn stdlib_key_hex(default_dir: &str) -> Option<String> {
-    let srcs = crate::cache::collect_stdlib_sources(default_dir);
-    if srcs.is_empty() {
-        return None;
-    }
-    Some(hex32(&crate::cache::stdlib_cache_key(default_dir, &srcs)))
+    crate::cache::stdlib_fingerprint(default_dir).map(|(key, _)| hex32(&key))
 }
 
 #[cfg(feature = "mmap")]
@@ -160,6 +156,11 @@ struct ManifestState {
     /// warns — the same program reports differently on its second run, and a library's CI
     /// (`LOFT_DENY_WARNINGS`) turns on whether anyone had run the build before.
     diagnostics: Vec<crate::diagnostics::DiagEntry>,
+    /// The views the scope pass copied out of their containers, replayed like the diagnostics:
+    /// the `advice:` lines `copy_manifest::report_materialised_views` prints come from the
+    /// pass a warm load does not run, so without these a program said on its first run what
+    /// it never said again.
+    materialised: Vec<(String, String, String)>,
     /// Def-table index where USER definitions start (the stdlib def count when
     /// the user-file parse began).  A warm load restores stdlib + user defs in
     /// one table, so without this boundary the no-`main` test-fn fallback sees
@@ -309,6 +310,20 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         diagnostics.push(crate::diagnostics::DiagEntry::decode_from_cache(rest)?);
         next = lines.next();
     }
+    // Optional `mview <binding>\t<container>\t<function>` headers: the views the scope pass
+    // copied out (`copy_manifest::materialised_rows`); an identifier holds no tab.  One that
+    // does not split fails the manifest, for the reason the `diag` lines do.
+    let mut materialised = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("mview ")) {
+        let mut parts = rest.splitn(3, '\t');
+        let (Some(var), Some(container), Some(function)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return manifest_miss(&format!("an mview line that does not split: {rest:?}"));
+        };
+        materialised.push((var.to_string(), container.to_string(), function.to_string()));
+        next = lines.next();
+    }
     // #444 — optional `wbroute <loft_sym> <crate> <bridge_fn>` headers: the
     // `[wasm.bridge].routes` map.  The three tokens are a `#native` symbol, a
     // crate name, and a bridge fn — none contains a space — so `splitn(3)` is
@@ -355,6 +370,7 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         auto_native_libs,
         native_ctx,
         diagnostics,
+        materialised,
         user_def_start,
         wasm_bridge_routes,
         wasm_bridge_packages,
@@ -422,10 +438,16 @@ pub fn warm_load_program(
     store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
-    let Some(state) = stdlib_key_hex(default_dir).and_then(|k| manifest_state(&manifest, &k))
-    else {
+    // `LOFT_TIMING`: the two halves of a warm start that are not the parse — hashing the
+    // stdlib sources for the key, and materialising the bundle (@PLN179 finding 001).
+    let t_key = std::time::Instant::now();
+    let key = stdlib_key_hex(default_dir);
+    let key_ms = t_key.elapsed().as_secs_f64() * 1000.0;
+    let t_manifest = std::time::Instant::now();
+    let Some(state) = key.and_then(|k| manifest_state(&manifest, &k)) else {
         return warm_miss("no manifest, or its build, stdlib or a source changed");
     };
+    let manifest_ms = t_manifest.elapsed().as_secs_f64() * 1000.0;
     // loft#1684 — the marks in the bundle were decided under the cold run's context; a
     // different one would mark differently.  And every auto-native artifact the marks
     // dispatch to must still be on disk (a sweep or `make rebuild-native-cdylibs` may have
@@ -467,6 +489,7 @@ pub fn warm_load_program(
     // bundle, reconstruct only the def table (bodies stay in the store), and
     // hand the store back so codegen reads bodies straight from it — skipping
     // read_data's body rebuild.  Otherwise full read_data (the M2/M5 default).
+    let t_load = std::time::Instant::now();
     let loaded = if std::env::var_os("LOFT_CODEGEN_STORE").is_some() {
         match crate::ir_read::open_program_store(&bundle_s) {
             Ok((stores, root, data, schema)) => {
@@ -486,6 +509,12 @@ pub fn warm_load_program(
             Err(_) => false,
         }
     };
+    if crate::keys::env_set("LOFT_TIMING") {
+        eprintln!(
+            "LOFT_TIMING warm_load stdlib_key={key_ms:.2}ms manifest={manifest_ms:.2}ms bundle={:.2}ms",
+            t_load.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     if !loaded {
         return warm_miss("the bundle did not load");
     }
@@ -541,6 +570,7 @@ pub fn warm_load_program(
     for e in state.diagnostics {
         p.diagnostics.restore_from_cache(e);
     }
+    crate::copy_manifest::restore_materialised(state.materialised);
     p.native_lib_regs = state.native_lib_regs;
     // #444 — restore the `[wasm.bridge]` state the IR bundle does not carry.
     // `--html` codegen keys the host-import-extern skip AND the routed-call on
@@ -654,6 +684,9 @@ pub fn save_program(
     for e in p.diagnostics.entries() {
         let _ = writeln!(lines, "diag {}", e.encode_for_cache());
     }
+    for (var, container, function) in crate::copy_manifest::materialised_rows() {
+        let _ = writeln!(lines, "mview {var}\t{container}\t{function}");
+    }
     // #444 — persist the `[wasm.bridge]` state so a warm load reconstructs the
     // route table `--html` codegen reads (the IR bundle stores only the def
     // table).  Routes are sorted for a byte-stable manifest; the read side
@@ -718,6 +751,8 @@ pub struct NativeHit {
     pub program_relative: bool,
     /// What the cold parse said, replayed so this run says it too.
     pub diagnostics: Vec<crate::diagnostics::DiagEntry>,
+    /// The views the cold run's scope pass copied out, for the same reason.
+    pub materialised: Vec<(String, String, String)>,
 }
 
 /// @PLN166 B3 — the source-keyed native fast path.  `Some` when the binary built from
@@ -758,8 +793,8 @@ pub fn native_fast_path(
     let binary = std::path::PathBuf::from(lines.next()?.strip_prefix("bin ")?);
     // The manifest the binary was built beside.  The manifest is SHARED with every other
     // mode: an `--interpret` run of an edited source rewrites it for the new source, and
-    // without this line the next native run validated the new source against it and
-    // exec'd the old source's binary — a silent answer from code that no longer exists.
+    // without this line the next native run would validate the new source against it and
+    // exec the old source's binary — a silent answer from code that is gone.
     let built_beside = lines.next()?.strip_prefix("man ")?.to_string();
     // A line this build does not know is a sidecar this build did not write.
     if lines.next().is_some() {
@@ -781,6 +816,7 @@ pub fn native_fast_path(
         binary,
         program_relative: state.program_relative,
         diagnostics: state.diagnostics,
+        materialised: state.materialised,
     })
 }
 

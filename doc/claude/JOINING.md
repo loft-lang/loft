@@ -33,7 +33,15 @@ scripts/join.py verify           # the cheap checks a gate or a PR stops on: pre
                                  #   the hygiene tests, feature coverage, the PR's doc gate
 scripts/join.py guards           # the tests/scripts guards the join brought in, both backends
 scripts/join.py run [SRC …]      # all five, stopping at the first decision; then the gate
+scripts/after.py join            # what the joined diff calls for and nothing more, timed:
+                                 #   `make after-join`; `make after-fix` is the same after a fix
 ```
+
+`scripts/after.py` is the bounded form of `rederive` + `verify` + `guards`: it reads the
+changed files from git, runs only the steps they call for on the dev binary, prints each
+step's reason and seconds, and reports what needs a release build or a runner as the
+dispatch it needs (`--dispatch` sends them once the branch is pushed).  `--dry-run` shows
+the plan.  A join runs no test binaries unless `--tests`: the gate runs them on the sha.
 
 A SRC is a ref or `name=<sha>`; with none, every `origin/*` branch that moved in the last two
 days and has commits this tree lacks.  The survey classes each commit by the ladder below, in
@@ -49,6 +57,15 @@ whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 same when an earlier pending commit of its source changes one of its files.  A partial revert
 is the case: this tree never had what it removes, and skipping it leaves the reverted change
 in.  A commit that really is here comes out empty when picked, and `apply` drops it.
+
+**Every step is bounded at twenty minutes**, and the bound is kept by not building what the
+runner builds.  `rederive` re-measures the ratchets with the dev binary (the census counts
+admissions, which no profile changes) and leaves every `ci` artefact to `derive.yml` unless
+`--with-ci` is passed; `verify` runs its test rows in the dev profile and asks the optional
+ratchet once (the pre-flight already does).  A release build of the crate is the cost that
+breaks the bound, and every release-build check here is one the PR's gate repeats on the
+exact sha: that gate is the release-build verdict.  The measurement that set the bound is in
+[JOINING-history.md](JOINING-history.md).
 
 `apply` resolves a conflict itself only in a derived artefact (either side, re-derived later)
 and in an append-only changelog (both sides); a conflict in anything else STOPS with the file

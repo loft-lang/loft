@@ -14,9 +14,10 @@ use super::insert_free::{
     any_text_return_buffer, expr_ends_in_return, free_copied_text_sources, text_return_buffer_for,
 };
 use super::returns::{
-    collect_return_sources, is_heap_return_type, is_value_return_type, move_join_hooks_into_arms,
-    return_copies_view_holders, return_copies_whole_local, return_has_non_source_arm,
-    return_has_null_arm, return_moved_holders, returned_var_null_unified,
+    collect_return_sources, is_heap_return_type, is_value_return_type, last_non_free_result,
+    move_join_hooks_into_arms, return_copies_view_holders, return_copies_whole_local,
+    return_has_non_source_arm, return_has_null_arm, return_moved_holders,
+    returned_var_null_unified,
 };
 use super::{Scopes, call};
 use crate::data::{Data, Deps, Type, Value, v_if, v_set};
@@ -690,7 +691,7 @@ impl Scopes<'_> {
                 "OpFreeRefIfDistinct"
             });
             let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             let distinct = data.def_nr("OpDistinctStore");
             let join_arm_dropped = &join_arm_dropped;
             for &src in &null_arm_record_sources {
@@ -844,7 +845,7 @@ impl Scopes<'_> {
             self.var_scope.insert(tmp, self.scope);
             self.var_order.push(tmp);
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             free_copied_text_sources(&mut result, expr, &ls, function, data);
             result.extend(ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
@@ -890,7 +891,7 @@ impl Scopes<'_> {
             self.var_scope.insert(tmp, self.scope);
             self.var_order.push(tmp);
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             result.extend(ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
@@ -945,7 +946,7 @@ impl Scopes<'_> {
                 }
             }
             let mut result = Vec::with_capacity(ls.len() + 2);
-            result.push(v_set(tmp, expr.clone()));
+            result.extend(self.bind_return_temp(tmp, expr, function, data));
             result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
@@ -1242,7 +1243,7 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
-                    ls[0] = v_set(tmp, expr.clone());
+                    ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
                     ls.push(Value::Return(Box::new(Value::Var(tmp))));
                 } else if ret_var != u16::MAX {
                     ls.push(Value::Return(Box::new(Value::Var(ret_var))));
@@ -1304,7 +1305,7 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
-                    ls[0] = v_set(tmp, expr.clone());
+                    ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
                     ls.push(Value::Return(Box::new(Value::Var(tmp))));
                 } else {
                     ls.push(Value::Return(Box::new(Value::Null)));
@@ -1383,4 +1384,165 @@ pub(super) struct Delivered {
     /// loft#1628 — the local a return copies out and the holders that may hold its record, whose
     /// hooks run only where they hold a DIFFERENT record.  See [`return_moved_holders`].
     pub(super) moved_out: Option<(u16, Vec<u16>)>,
+}
+
+impl Scopes<'_> {
+    /// Bind the value a return hands up to its `__ret_N` temp, as the one `Set` the first-bind
+    /// dispatch reads.
+    ///
+    /// loft#2016 — an argument lifted at the site (`return f(g(k))`: `g(k)` into `__lift_1`)
+    /// wraps the call in `Insert([Set(__lift_1, …), call])`, and bound WHOLE the temp's first
+    /// bind is of an `Insert`, which no arm of either backend's call-bind dispatch names: the
+    /// result was adopted as a plain alias, and a callee returning its parameter
+    /// (`fn id(p: S) -> S { p }`) handed the temp the lifted argument's store, freed right after
+    /// by the site's own `OpFreeRef(__lift_1)`.  The body-tail spelling of the same call never
+    /// had the wrapper (its lifts are hoisted to statement level before the bind), so its bind
+    /// copied the borrow and adopted a mint by the callee's own facts (`@FR-F-Ret`).  Hoisting
+    /// the leading ops out here gives the mid-body return that same shape: the lifts run in the
+    /// same order, one statement earlier.
+    ///
+    /// loft#2021 — a value BRANCH bound whole is the same blindness one level up: the arm's
+    /// tail is that call, the branch's bind adopts whatever the arm yields, and the value handed
+    /// up was a view of the lifted temp.  Where an arm's callee may hand back a caller's store
+    /// the branch is written out per arm (`sink_set_into_arms`, the spelling a parser-level
+    /// `r = if …` already takes), so each arm's bind IS the call bind that copies a borrowed
+    /// result — `(O-Complete)`: the fact per binding and per path.  A branch no arm of which
+    /// borrows keeps the whole-value bind it had.
+    fn bind_return_temp(
+        &self,
+        tmp: u16,
+        expr: &Value,
+        function: &Function,
+        data: &Data,
+    ) -> Vec<Value> {
+        if Self::is_value_branch(expr)
+            && branch_arm_borrows_a_frame_local(expr, self.d_nr, function, data)
+            && let Some(sunk) = sink_return_branch(tmp, expr, data)
+        {
+            // The sentinel first, so every arm's bind is a reassignment over a known slot:
+            // the interpreter's reassignment path is where a call result that may be a
+            // caller's store is copied (`state/codegen.rs`, `owned_ref`), and the second arm
+            // in program order is a reassignment whatever the first did.
+            return vec![v_set(tmp, Value::Null), sunk];
+        }
+        let mut e = expr;
+        while let Value::Span(b) = e {
+            e = &b.1;
+        }
+        if let Value::Insert(ops) = e
+            && let Some((last, lifts)) = ops.split_last()
+            && !lifts.is_empty()
+            && matches!(last.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
+        {
+            let mut out: Vec<Value> = lifts.to_vec();
+            out.push(v_set(tmp, last.clone()));
+            return out;
+        }
+        vec![v_set(tmp, expr.clone())]
+    }
+}
+
+/// Does an arm of this value branch end in a call whose result the oracle reads as a BORROW
+/// (or a join of a borrow and a mint) of a local THIS frame owns — a lifted argument, a local
+/// built here — so that handing the branch up whole would hand up a view of a store the frame
+/// frees at exit (loft#2021)?  A borrow of a PARAMETER is the caller's own store and the
+/// caller's bind copies it (`@FR-F-Ret` at the call-bind, as before); a borrow whose base the
+/// oracle cannot name is taken as the frame's, which costs a copy and never a dangling view.
+/// Seen through the wrappers `is_value_branch` sees through; a `??` chain is an arm of its own.
+fn branch_arm_borrows_a_frame_local(
+    node: &Value,
+    d_nr: u32,
+    function: &Function,
+    data: &Data,
+) -> bool {
+    match node.unspan() {
+        Value::If(_, t, f) => {
+            branch_arm_borrows_a_frame_local(t, d_nr, function, data)
+                || branch_arm_borrows_a_frame_local(f, d_nr, function, data)
+        }
+        Value::Block(bl) if bl.name == "ncc" => false,
+        // At a return site the arms already carry their scope-exit frees AFTER the value
+        // they yield, so the tail is the last op that is not one of those.
+        Value::Block(bl) => last_non_free_result(&bl.operators, data)
+            .is_some_and(|l| branch_arm_borrows_a_frame_local(l, d_nr, function, data)),
+        Value::Insert(ops) => last_non_free_result(ops, data)
+            .is_some_and(|l| branch_arm_borrows_a_frame_local(l, d_nr, function, data)),
+        Value::Call(fn_nr, _) => {
+            let def = data.def(*fn_nr);
+            def.is_loft_defined()
+                && matches!(
+                    def.returned().peel_optional().0,
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                )
+                && match crate::use_analysis::ownership_of(data, d_nr, node) {
+                    crate::use_analysis::Own::Borrowed { base }
+                    | crate::use_analysis::Own::Join { base } => {
+                        base == u16::MAX
+                            || ((base as usize) < function.count() as usize
+                                && !function.is_argument(base))
+                    }
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+/// The return-site twin of `Scopes::sink_set_into_arms`: write `tmp = <branch>` out as a
+/// statement branch whose every arm binds `tmp` to the value it yields.  The arms reach this
+/// site with their scope-exit frees already placed after the value (`last_non_free_result`),
+/// which the scan-time sink never meets, so the Set wraps that value and the frees stay where
+/// they are, after it.  Only the arm shapes a plain bind can take — a call, a variable, a null
+/// — are written out; any other arm declines the whole sink and the branch keeps its one bind.
+fn sink_return_branch(tmp: u16, expr: &Value, data: &Data) -> Option<Value> {
+    fn sinkable(node: &Value, data: &Data) -> bool {
+        match node.unspan() {
+            Value::Null | Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _) => true,
+            Value::If(_, t, f) => sinkable(t, data) && sinkable(f, data),
+            Value::Block(bl) if bl.name == "ncc" || bl.name == "Object" => false,
+            // Through `base()` as every shape test is asked (@FR-N-Shape): a `Void`/`Null`
+            // result is never wrapped, but the ratchet counts the spelling, not the case.
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Null) => {
+                last_non_free_result(&bl.operators, data).is_some_and(|l| sinkable(l, data))
+            }
+            Value::Insert(ops) => {
+                last_non_free_result(ops, data).is_some_and(|l| sinkable(l, data))
+            }
+            _ => false,
+        }
+    }
+    fn value_index(ops: &[Value], data: &Data) -> Option<usize> {
+        let tail = last_non_free_result(ops, data)?;
+        ops.iter().rposition(|op| std::ptr::eq(op, tail))
+    }
+    fn sink(node: &mut Value, tmp: u16, data: &Data) {
+        match node {
+            Value::Span(b) => sink(&mut b.1, tmp, data),
+            Value::If(_, t, f) => {
+                sink(t, tmp, data);
+                sink(f, tmp, data);
+            }
+            Value::Block(bl) => {
+                if let Some(i) = value_index(&bl.operators, data) {
+                    sink(&mut bl.operators[i], tmp, data);
+                }
+                bl.result = Type::Void;
+            }
+            Value::Insert(ops) => {
+                if let Some(i) = value_index(ops, data) {
+                    sink(&mut ops[i], tmp, data);
+                }
+            }
+            tail => {
+                let t = std::mem::replace(tail, Value::Null);
+                *tail = Value::Set(tmp, Box::new(t));
+            }
+        }
+    }
+    if !sinkable(expr, data) {
+        return None;
+    }
+    let mut out = expr.clone();
+    sink(&mut out, tmp, data);
+    Some(out)
 }

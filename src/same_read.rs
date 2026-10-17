@@ -476,12 +476,318 @@ fn rewrite_in(
     if gi > 0 && trace() {
         eprintln!("same-read: {fname} binds {gi} get-or-insert lookup(s)");
     }
+    let (out, sq) = if sequence_off() {
+        (out, 0)
+    } else {
+        bind_sequences(data, vars, *scope, &out)
+    };
+    if sq > 0 && trace() {
+        eprintln!("same-read: {fname} binds {sq} computation(s) a sequence of statements repeats");
+    }
     *operators = out;
     let m = bind_match_reads(data, vars, block);
     if m > 0 && trace() {
         eprintln!("same-read: {fname} binds {m} read(s) a slice match's patterns share");
     }
-    n + g + gi + m
+    n + g + gi + sq + m
+}
+
+// ─── THE SEQUENCE CLAUSE ───────────────────────────────────────────────────────────────
+
+fn sequence_off() -> bool {
+    crate::env_once!(std::env::var("LOFT_NO_SEQUENCE_READ").is_ok_and(|v| v != "0"))
+}
+
+/// A text's two counts spelled as stdlib calls (`OpLengthText` and `OpSizeText`, the
+/// operator spellings, are pure operators already): each answers from the text alone.
+fn text_count(data: &Data, op: u32) -> bool {
+    matches!(data.def(op).name(), "t_4text_len" | "t_4text_size")
+}
+
+/// [`pure`], with a text's count admitted.
+fn seq_pure(data: &Data, v: &Value) -> bool {
+    match v.unspan() {
+        Value::Call(op, args) if text_count(data, *op) || named(data, *op, &PURE) => {
+            args.iter().all(|a| seq_pure(data, a))
+        }
+        _ => pure(data, v),
+    }
+}
+
+/// The pure computations of `v` that read a store, outermost first — [`computed`]'s walk,
+/// with a text's count admitted.  One that reads nothing but locals is left to the backends,
+/// which merge it themselves; a store read they cannot carry across the writes between.
+fn seq_computed<'a>(data: &Data, v: &'a Value, out: &mut Vec<&'a Value>) {
+    if let Value::Call(_, args) = v.unspan() {
+        let step = args.len() == 2
+            && args.iter().any(|a| matches!(a.unspan(), Value::Var(_)))
+            && args
+                .iter()
+                .any(|a| matches!(a.unspan(), Value::Int(_) | Value::Long(_)));
+        let reads =
+            v.any_node(&mut |n| matches!(n, Value::Call(op, _) if named(data, *op, &READS)));
+        if seq_pure(data, v) && !step && reads {
+            out.push(v);
+        }
+        for a in args {
+            seq_computed(data, a, out);
+        }
+    }
+}
+
+/// The field writes the clause sees through: one value into one field of the record named
+/// by the first argument.  A reference write (`OpSetRef`) is not among them.
+const FIELD_SETS: [&str; 13] = [
+    "OpSetEnum",
+    "OpSetBoolean",
+    "OpSetInt",
+    "OpSetCharacter",
+    "OpSetSingle",
+    "OpSetFloat",
+    "OpSetByte",
+    "OpSetByteNullable",
+    "OpSetShort",
+    "OpSetInt4",
+    "OpSetInt4Raw",
+    "OpSetShortRaw",
+    "OpSetText",
+];
+
+/// One statement of a sequence, when the clause can see what it does.
+enum Step<'a> {
+    /// A source position: nothing.
+    Line,
+    /// `v = <value>`, the value pure.
+    Assign(u16, &'a Value),
+    /// A field write into record `e`, its operands pure.
+    Fill(u16, &'a [Value]),
+    /// `OpFinishRecord(V, e, …)`: record `e` completed in its collection.
+    Finish(u16),
+}
+
+fn step<'a>(data: &Data, s: &'a Value) -> Option<Step<'a>> {
+    match s.unspan() {
+        Value::Line(_) => Some(Step::Line),
+        Value::Set(v, val) if seq_pure(data, val) => Some(Step::Assign(*v, val)),
+        Value::Call(op, args) => {
+            let name = data.def(*op).name();
+            let var = |i: usize| match args.get(i).map(Value::unspan) {
+                Some(Value::Var(e)) => Some(*e),
+                _ => None,
+            };
+            if name == "OpFinishRecord" && args.iter().all(|a| seq_pure(data, a)) {
+                return var(1).map(Step::Finish);
+            }
+            if FIELD_SETS.contains(&name)
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
+                && args[1..].iter().all(|a| seq_pure(data, a))
+            {
+                return var(0).map(|e| Step::Fill(e, &args[1..]));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// The record type a local names, when it names one.
+fn record_of(tp: &crate::data::Type) -> Option<u32> {
+    match tp.base() {
+        crate::data::Type::Reference(d, _) => Some(*d),
+        _ => None,
+    }
+}
+
+/// Is `tp` a value no record write can change — a scalar or a text — answering `true` for
+/// these, `false` for anything else?
+fn plain_value(tp: &crate::data::Type) -> bool {
+    use crate::data::Type;
+    matches!(
+        tp.base(),
+        Type::Integer(..)
+            | Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Text(_)
+    )
+}
+
+/// Can no write into a fresh record of type `minted` change what a read through local `l`
+/// answers?  `l` holds a plain value, or names a record of ANOTHER type whose fields are all
+/// plain values: nothing reached from it is a collection that a record joins, and the record
+/// itself is not the fresh one (that has type `minted`).  Any other local answers no.
+fn untouched(data: &Data, vars: &crate::variables::Function, l: u16, minted: &[u32]) -> bool {
+    let tp = vars.tp(l);
+    if plain_value(tp) {
+        return true;
+    }
+    let Some(d) = record_of(tp) else {
+        return false;
+    };
+    !minted.contains(&d)
+        && data.def_type(d) == DefType::Struct
+        && data
+            .def(d)
+            .attributes()
+            .iter()
+            .all(|a| plain_value(&a.typedef))
+}
+
+/// THE SEQUENCE CLAUSE over one block's statements: a pure computation that reads a store,
+/// evaluated by a statement and again by later ones, is bound once before the first when
+/// nothing between can change it.  Between them may stand only assignments of pure values to
+/// locals the computation does not read, and writes into a record this block minted
+/// (`e = OpNewRecord(…)` earlier in the block, `e` not assigned since), together with its
+/// `OpFinishRecord`; every local the computation reads holds a plain value or names a flat
+/// record of another type ([`untouched`]).  An assignment to a local the computation reads may
+/// be the last statement that uses it: its value is evaluated before the assignment.
+/// Moving the evaluation to before the first statement crosses nothing: that statement's
+/// other operands are pure, and its own write comes after them.
+fn bind_sequences(
+    data: &Data,
+    vars: &mut crate::variables::Function,
+    scope: u16,
+    ops: &[Value],
+) -> (Vec<Value>, usize) {
+    let mut ops = ops.to_vec();
+    let mut bindings: Vec<(usize, Value)> = Vec::new();
+    // The records minted in this block before each statement, with their types.
+    let mut fresh: Vec<(u16, u32)> = Vec::new();
+    for i in 0..ops.len() {
+        let mut cands: Vec<Value> = Vec::new();
+        match step(data, &ops[i]) {
+            Some(Step::Assign(v, val)) if !fresh.iter().any(|(e, _)| *e == v) => {
+                let mut c = Vec::new();
+                seq_computed(data, val, &mut c);
+                cands.extend(c.into_iter().cloned());
+            }
+            Some(Step::Fill(e, rest)) if fresh.iter().any(|(f, _)| *f == e) => {
+                let mut c = Vec::new();
+                for r in rest {
+                    seq_computed(data, r, &mut c);
+                }
+                cands.extend(c.into_iter().cloned());
+            }
+            _ => {}
+        }
+        let minted: Vec<u32> = fresh.iter().map(|(_, d)| *d).collect();
+        let mut kept: Vec<Value> = Vec::new();
+        for cand in cands {
+            if kept.iter().any(|held| evaluates(held, &cand)) {
+                continue;
+            }
+            let Value::Call(op, _) = cand.unspan() else {
+                continue;
+            };
+            let tp = data.def(*op).returned().clone();
+            if !matches!(
+                tp.base(),
+                crate::data::Type::Integer(..)
+                    | crate::data::Type::Float
+                    | crate::data::Type::Single
+                    | crate::data::Type::Boolean
+            ) {
+                continue;
+            }
+            let mut reads: Vec<u16> = Vec::new();
+            cand.walk(&mut |n| {
+                if let Value::Var(l) = n {
+                    reads.push(*l);
+                }
+            });
+            if !reads.iter().all(|l| untouched(data, vars, *l, &minted)) {
+                continue;
+            }
+            // The first statement's own write: a local the computation reads ends the run.
+            if matches!(step(data, &ops[i]), Some(Step::Assign(v, _)) if reads.contains(&v)) {
+                continue;
+            }
+            let live: Vec<u16> = fresh.iter().map(|(e, _)| *e).collect();
+            let users = run_users(data, &ops[i + 1..], &cand, &reads, live);
+            if users.is_empty() {
+                continue;
+            }
+            let t = vars.add_unique("same_read", &tp, scope);
+            for k in std::iter::once(i).chain(users.into_iter().map(|j| i + 1 + j)) {
+                let n = replace_in_step(&mut ops[k], &cand, t);
+                debug_assert!(n > 0);
+            }
+            bindings.push((i, Value::Set(t, Box::new(cand.clone()))));
+            kept.push(cand);
+        }
+        // What this statement leaves minted for the ones after it.
+        if let Value::Set(e, val) = ops[i].unspan()
+            && matches!(val.unspan(), Value::Call(op, _) if data.def(*op).name() == "OpNewRecord")
+            && let Some(d) = record_of(vars.tp(*e))
+        {
+            fresh.retain(|(f, _)| f != e);
+            fresh.push((*e, d));
+        } else {
+            ops[i].walk(&mut |n| {
+                if let Value::Set(v, _) = n {
+                    fresh.retain(|(f, _)| f != v);
+                }
+            });
+        }
+    }
+    let bound = bindings.len();
+    let mut out = Vec::with_capacity(ops.len() + bound);
+    let mut b = bindings.into_iter().peekable();
+    for (i, s) in ops.into_iter().enumerate() {
+        while let Some((_, set)) = b.next_if(|(at, _)| *at == i) {
+            out.push(set);
+        }
+        out.push(s);
+    }
+    (out, bound)
+}
+
+/// The statements of `after` that evaluate `cand` again before anything can change it, as
+/// indexes into `after`: the run ends at the first statement the clause cannot see through, a
+/// field write into a record not in `live` (the block's minted records), or an assignment to a
+/// local in `reads` (which may itself be the run's last user).
+fn run_users(
+    data: &Data,
+    after: &[Value],
+    cand: &Value,
+    reads: &[u16],
+    mut live: Vec<u16>,
+) -> Vec<usize> {
+    let mut users: Vec<usize> = Vec::new();
+    for (j, s) in after.iter().enumerate() {
+        match step(data, s) {
+            Some(Step::Line) => {}
+            Some(Step::Assign(v, val)) => {
+                if evaluates(val, cand) {
+                    users.push(j);
+                }
+                if reads.contains(&v) {
+                    break;
+                }
+                live.retain(|e| *e != v);
+            }
+            Some(Step::Fill(e, rest)) if live.contains(&e) => {
+                if rest.iter().any(|r| evaluates(r, cand)) {
+                    users.push(j);
+                }
+            }
+            Some(Step::Finish(e)) if live.contains(&e) => {}
+            _ => break,
+        }
+    }
+    users
+}
+
+/// Replace `e` by local `t` in the values of statement `s` (an assignment's value, a field
+/// write's operands); answers how many.
+fn replace_in_step(s: &mut Value, e: &Value, t: u16) -> usize {
+    match s {
+        Value::Span(b) => replace_in_step(&mut b.1, e, t),
+        Value::Set(_, v) => replace_expr(v, e, t),
+        Value::Call(_, args) => args[1..].iter_mut().map(|a| replace_expr(a, e, t)).sum(),
+        _ => 0,
+    }
 }
 
 // ─── THE MATCH CLAUSE ──────────────────────────────────────────────────────────────────
@@ -796,17 +1102,22 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         if def.def_type != DefType::Function || matches!(def.code(), Value::Null) {
             continue;
         }
-        // Two discharged reads (the statement clause) or an `if` (the guard clause).
+        // Two discharged reads (the statement clause), an `if` (the guard clause) or two
+        // store reads (the sequence clause).
         let mut found = 0usize;
+        let mut reads = 0usize;
         let mut guard = false;
         def.code().any_node(&mut |n| {
             if discharge(n).is_some() {
                 found += 1;
             }
+            if matches!(n, Value::Call(op, _) if named(data, *op, &READS)) {
+                reads += 1;
+            }
             guard |= matches!(n, Value::If(..));
-            found >= 2 || guard
+            found >= 2 || guard || reads >= 2
         });
-        if found < 2 && !guard {
+        if found < 2 && !guard && reads < 2 {
             continue;
         }
         let fname = def.name().to_string();

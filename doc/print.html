@@ -1373,7 +1373,7 @@
 </section>
 <section class="print-section" id="15-lexer">
 <h1>Lexer</h1>
-<p>The lexer library breaks a text into tokens so your program can understand its structure. Tokens are the smallest meaningful pieces: numbers, names (like variable and function names), operators, and quoted strings. You tell the lexer which multi-character sequences count as one token and which words are reserved keywords, and it handles the rest.</p>
+<p>(<code>lexer</code> is a piece of the loft-in-loft front end that lives in loft's own <code>lib/</code>, @F120; it is not a registry library yet, so a program outside this tree cannot <code>use</code> it.) The lexer library breaks a text into tokens so your program can understand its structure. Tokens are the smallest meaningful pieces: numbers, names (like variable and function names), operators, and quoted strings. You tell the lexer which multi-character sequences count as one token and which words are reserved keywords, and it handles the rest.</p>
 <h2 id="setting-up-the-lexer">Setting Up the Lexer</h2>
 <p>Create a <code>lexer::Lexer</code> and register your language's rules before you parse anything. <code>set_tokens</code> ensures operators like <code>+=</code> or <code>&gt;&gt;</code> are scanned as one token instead of two separate characters. <code>set_keywords</code> prevents reserved words from being treated as ordinary names — the lexer will report them exactly as written so your parser can treat them specially.</p>
 <pre><code><span class="kw">use</span> lexer;
@@ -1444,7 +1444,7 @@
 </section>
 <section class="print-section" id="16-parser">
 <h1>Parser</h1>
-<p>The <code>parser</code> library lets a Loft program read and validate other Loft source code at runtime. This is useful when you want to:</p>
+<p>(<code>parser</code> is a piece of the loft-in-loft front end that lives in loft's own <code>lib/</code>, @F121; it is not a registry library yet, so a program outside this tree cannot <code>use</code> it.) The <code>parser</code> library lets a Loft program read and validate other Loft source code at runtime. This is useful when you want to:</p>
 <ul>
 <li>validate configuration files written in the Loft syntax</li>
 <li>build tools that inspect or transform Loft source</li>
@@ -1539,14 +1539,14 @@ if parser::parse("user_code", snippet) &gt; 0 {
 </section>
 <section class="print-section" id="17-libraries">
 <h1>Libraries</h1>
-<p>A library is a <code>.loft</code> file you can share across projects. Place it in a <code>lib/</code> directory and import it at the top of your file. <code>use name;</code> gives you the <code>name::</code> prefix, which reaches everything the library defines. <code>use name::*;</code> also brings every <code>pub</code> name into your own namespace, so you can write them bare; <code>use name::(a, b);</code> brings in just those. A definition without <code>pub</code> is reachable only through the prefix. So <code>pub</code> is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but <code>name::thing</code> still finds it. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write <code>pub use name::*;</code> to pass the names on as well. <code>use</code> statements must come before any <code>fn</code> or <code>struct</code> definition in your file. Putting a <code>use</code> after a definition is a syntax error.</p>
+<p>A library is a <code>.loft</code> file you can share across projects. Place it in a <code>lib/</code> directory and import it at the top of your file. <code>use name;</code> gives you the <code>name::</code> prefix, which reaches every <code>pub</code> item the library defines. <code>use name::*;</code> also brings every <code>pub</code> name into your own namespace, so you can write them bare; <code>use name::(a, b);</code> brings in just those. A definition without <code>pub</code> is the library's own: neither the bare name nor <code>name::thing</code> reaches it from outside. <code>pub</code> is the library's surface. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write <code>pub use name::*;</code> to pass the names on as well. <code>use</code> statements must come before any <code>fn</code> or <code>struct</code> definition in your file. Putting a <code>use</code> after a definition is a syntax error.</p>
 <pre><code><span class="kw">use</span> testlib::*;</code></pre>
 <h2 id="constants-and-enums">Constants and Enums</h2>
 <p>A library constant reads like one of your own, and so does an enum variant. You can compare, order, and convert enum values exactly as you would with enums defined in the same file. The <code>libname::</code> prefix is always available and is what disambiguates a variant name two enums share.</p>
 <h2 id="struct-construction-and-field-access">Struct Construction and Field Access</h2>
 <p>A library struct is constructed like any other. For a <code>pub</code> type the prefix is optional — <code>testlib::Point {…}</code> and <code>Point {…}</code> build the same value — and it is what you reach for when a name of your own would otherwise win. Field access never takes a prefix.</p>
 <h2 id="calling-library-methods">Calling Library Methods</h2>
-<p>Methods defined in the library are called on the value directly — no prefix on the call site. A <code>pub</code> free function is callable bare as well; the prefix is how you reach one that is not <code>pub</code>, and how you say which library you meant.</p>
+<p>Methods defined in the library are called on the value directly — no prefix on the call site. A <code>pub</code> free function is callable bare as well; the prefix is how you say which library you meant.</p>
 <h2 id="extending-a-library-type">Extending a Library Type</h2>
 <p>You can add new methods to a library type from your own file. Write the <code>self</code> parameter type with the <code>::</code> separator and the compiler treats the function as a method on that type.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">shifted</span>(self: testlib::<span class="en">Point</span>, dx: <span class="ty"><a href="stdlib-types.html">float</a></span>, dy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; testlib::<span class="en">Point</span> {
@@ -1623,12 +1623,12 @@ entry = "src/mylib.loft"   override the default entry path
 </code></pre>
 <p>If the running loft is older than the stated minimum, loading the library produces a fatal compile error describing the version mismatch. If no manifest is present, the default entry <code>src/&lt;name&gt;.loft</code> is used.</p>
 <h2 id="wildcard-and-selective-imports">Wildcard and Selective Imports</h2>
-<p>A bare <code>use lib;</code> brings in only the <code>lib::</code> prefix, and <code>use lib::*</code> brings in every <code>pub</code> name. The selective forms give you a say in WHICH names arrive: <code>use lib::Name</code> takes one, and <code>use lib::(Name, Other)</code> takes a group. Multiple names must be parenthesised — the flat <code>use lib::Name, Other</code> is refused ("import multiple names with parentheses"). Only <code>pub</code> definitions can be named this way; the rest stay reachable as <code>lib::name</code>.</p>
+<p>A bare <code>use lib;</code> brings in only the <code>lib::</code> prefix, and <code>use lib::*</code> brings in every <code>pub</code> name. The selective forms give you a say in WHICH names arrive: <code>use lib::Name</code> takes one, and <code>use lib::(Name, Other)</code> takes a group. Multiple names must be parenthesised — the flat <code>use lib::Name, Other</code> is refused ("import multiple names with parentheses"). Only <code>pub</code> definitions can be named this way; the rest are not reachable at all.</p>
 <p>Taking only what you name is the stronger position, because it makes you immune to the library GROWING a name. A wildcard import and your own definition of a name the library exports are a conflict, and it is refused naming both sites; under a selective import every name you did not ask for stays yours.</p>
 <p><code>use lib as short;</code> gives you the qualifier under another name — <code>short::name</code> — and, like a bare <code>use lib;</code>, brings nothing in bare. Single names alias too: <code>use lib::Name as N</code>, or <code>use lib::(Name as N, other)</code>.</p>
 <h2 id="limitations">Limitations</h2>
 <p><strong>`use` must appear before all definitions.</strong> If you write a function first and then a <code>use</code>, the compiler reports a syntax error.</p>
-<p><strong>`pub` decides the bare spelling.</strong> Only <code>pub</code> definitions come in bare or can be named by an import; the rest are still reachable as <code>lib::name</code>. A library therefore has no hidden half — <code>pub</code> says which names are ready to be written without ceremony, not which ones exist.</p>
+<p><strong>`pub` decides the surface.</strong> Only <code>pub</code> definitions come in bare, can be named by an import, or answer to <code>lib::name</code>; a library's non-<code>pub</code> items are its own.</p>
 <p><strong>Native extensions.</strong> A library can be pure <code>.loft</code>, or ship a Rust crate beside it: declare <code>[library] native = "..."</code> in <code>loft.toml</code> and loft builds and links it for you. See doc/claude/PACKAGES.md in the loft repository for the build + binding model.</p>
 <pre><code>}</code></pre>
 </section>
@@ -2205,7 +2205,7 @@ r = Reading.parse(`{{}}`)     // r.id == 0, r.drift == null
 <p>Both parse forms report. <code>json_errors()</code> holds the LAST parse's diagnostics and is replaced by the next parse, so a successful parse leaves it empty. It is a TEXT, not a collection — several diagnostics are joined with <code>|</code> — so ask <code>json_errors() != ""</code>, not <code>len(...) &gt; 0</code>, and never loop over it.</p>
 <pre><code>if json_errors() != "" { log_warn(json_errors()); }
 </code></pre>
-<p><code>record#errors</code> answers for the <code>Type.parse(text)</code> that built that record, as a vector&lt;text&gt; with one entry per error. Each parsed record keeps its own:</p>
+<p><code>record#errors</code> answers for the <code>Type.parse(…)</code> that built that record, as a vector&lt;text&gt; with one entry per value that did not fit — every mismatch, whether the one-step <code>Type.parse(text)</code> or the staged <code>Type.parse(json_parse(text))</code> built it; a field whose value did not fit holds the type's default, the rest is read. Each parsed record keeps its own:</p>
 <pre><code>for e in user#errors { log_warn(e); }
 </code></pre>
 <p>The two parse spellings differ in WHICH HALF of the answer they give, and that is the reason to choose between them:</p>
@@ -2251,6 +2251,10 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
 <pre><code>  bad = <span class="en">User</span>.<span class="fn-call">parse</span>(`{{<span class="st">"id"</span>:<span class="st">"not_a_number"</span>,<span class="st">"name"</span>:<span class="nm">42</span>}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bad.id == <span class="nm">0</span>, <span class="st">"type-mismatched id keeps its default: {bad.id}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-json.html">json_errors</a></span>() != <span class="st">""</span>, <span class="st">"the mismatch was reported: [{json_errors()}]"</span>);</code></pre>
+<p>…and EVERY mismatch is named, on the record: <code>id</code> and <code>name</code> both, in either form.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(bad#errors) == <span class="nm">2</span>, <span class="st">"both mismatches on the record: {bad#errors}"</span>);
+  staged = <span class="en">User</span>.<span class="fn-call">parse</span>(<span class="fn-call"><a href="stdlib-json.html">json_parse</a></span>(`{{<span class="st">"id"</span>:<span class="st">"not_a_number"</span>,<span class="st">"name"</span>:<span class="nm">42</span>}}`));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(staged#errors) == <span class="nm">2</span>, <span class="st">"the staged form names both too: {staged#errors}"</span>);</code></pre>
 <p>…and the next parse replaces it, so a good parse reads clean.</p>
 <pre><code>  fine = <span class="en">User</span>.<span class="fn-call">parse</span>(`{{<span class="st">"id"</span>:<span class="nm">2</span>,<span class="st">"name"</span>:<span class="st">"n"</span>,<span class="st">"email"</span>:<span class="st">"e"</span>}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fine.id == <span class="nm">2</span>, <span class="st">"the good parse landed"</span>);
@@ -2261,9 +2265,11 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
     total += s.value;
   }
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">60</span>, <span class="st">"vector sum: {total}"</span>);</code></pre>
-<p>An array is all-or-nothing: one element the declaration cannot take abandons the whole vector, where a struct keeps its other fields.</p>
+<p>An element the declaration cannot take keeps its slot at the defaults, and the elements around it are read — as a struct keeps its other fields; <code>#errors</code> names it.</p>
 <pre><code>  spoiled = <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Score</span>&gt;.<span class="fn-call">parse</span>(`[{{<span class="st">"value"</span>:<span class="st">"x"</span>}},{{<span class="st">"value"</span>:<span class="nm">2</span>}}]`);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(spoiled) == <span class="nm">0</span>, <span class="st">"one bad element empties the vector: {len(spoiled)}"</span>);</code></pre>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(spoiled) == <span class="nm">2</span>, <span class="st">"one bad element keeps its slot: {len(spoiled)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(spoiled[<span class="nm">0</span>].value == <span class="nm">0</span> &amp;&amp; spoiled[<span class="nm">1</span>].value == <span class="nm">2</span>, <span class="st">"the fitting element is read: {spoiled}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(spoiled#errors) == <span class="nm">1</span>, <span class="st">"the mismatch is named: {spoiled#errors}"</span>);</code></pre>
 <pre><code>  c = <span class="en">Contact</span>.<span class="fn-call">parse</span>(`{{<span class="st">"name"</span>:<span class="st">"Carol"</span>,<span class="st">"address"</span>:{{<span class="st">"city"</span>:<span class="st">"Amsterdam"</span>,<span class="st">"zip"</span>:<span class="st">"1012"</span>}}}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.name == <span class="st">"Carol"</span>, <span class="st">"nested name"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.address.city == <span class="st">"Amsterdam"</span>, <span class="st">"nested city: {c.address.city}"</span>);
@@ -2365,9 +2371,9 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
 }</code></pre>
 <h2 id="bounded-generics-with-interfaces">Bounded generics with interfaces</h2>
 <p>By default, you can only assign and return T — no arithmetic, and no comparison either: <code>a == b</code> on an unbounded T is refused. To use an operator on T, add an interface bound.</p>
-<p>Each bound guarantees EXACTLY the operations in this table, and no more — a <code>+</code> under <code>Numeric</code> is refused as surely as one under no bound at all. Each names the FEWEST operators it needs, because the rest are derived: <code>&gt;</code>, <code>&lt;=</code> and <code>&gt;=</code> all come from <code>&lt;</code>, and <code>!=</code> comes from <code>==</code>.</p>
-<pre><code>Ordered    — declares `&lt;`; gives you `&lt;`, `&lt;=`, `&gt;`, `&gt;=`
-Equatable  — declares `==`; gives you `==` and `!=`
+<p>Each bound guarantees EXACTLY the operations in this table, and no more — a <code>+</code> under <code>Numeric</code> is refused as surely as one under no bound at all. Each names the FEWEST methods it needs, because the operators are derived: <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> all read <code>compare</code>, and <code>!=</code> comes from <code>==</code>.</p>
+<pre><code>Ordered    — declares `compare`; gives you `&lt;`, `&lt;=`, `&gt;`, `&gt;=`
+Equatable  — declares nothing; every type has `==` and `!=`
 Addable      — `+` only.  NOT `-`
 Numeric      — `*` and the UNARY `-a`.  NOT `+`, NOT `/`
 Subtractable — the BINARY `a - b`
@@ -2428,7 +2434,7 @@ Scalable     fn scale(self: T, factor: integer) -&gt; integer
 Printable    operator to_text(self: T) -&gt; text
 Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
-<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type, because <code>==</code> compares what two values hold — a struct field by field — unless the type defines <code>operator equals</code>.</p>
+<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type: <code>==</code> always compares what two values hold — a struct field by field — and no type can redefine it; a comparison of your own is a named method.</p>
 <p>The same definition serves the bare operator: once <code>Money</code> has <code>compare</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it.  Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing <code>operator compare(self: Money, other: Money) -&gt; Ordering</code>" — at the CALL site, because that is where the concrete type is known.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Money</span> { cents: <span class="ty"><a href="stdlib-types.html">integer</a></span> }
 <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span> { self.cents.<span class="fn-call">compare</span>(other.cents) }
@@ -4160,6 +4166,10 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">log</a></span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, v2: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>
 <p>Logarithm in the base given second: <code>log(8.0, 2.0)</code> is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: <span class="ty"><a href="stdlib-types.html">integer</a></span>, v2: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>?</code></pre>
+<p>Raises the integer to the power given second: <code>pow(3, 4)</code> is 81, and <code>3 ** 20</code> is 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the answer does not fit an integer (<code>pow(2, 63)</code>), as <code>*</code> answers null past the range.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>, v2: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span>?</code></pre>

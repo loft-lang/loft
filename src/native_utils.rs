@@ -1582,8 +1582,8 @@ pub(crate) fn publish_cached_binary(
         let _ = crate::file_access::remove_file(&staged);
     }
     // Bound the directory AFTER the publish and never touching the entry just written.
-    // Sweeping first deleted the very binary a concurrent run had already accepted as
-    // usable, leaving it to exec a path that no longer existed.
+    // Sweeping first would delete the very binary a concurrent run has already accepted
+    // as usable, leaving it to exec a path that does not exist.
     sweep_cached_binaries(cache_dir, cached_binary, source_stem, NATIVE_CACHE_KEEP);
 }
 
@@ -1650,10 +1650,17 @@ pub(crate) fn sweep_cached_binaries(
 
 /// Collect crate names → rlib paths from a deps directory
 /// (e.g. `libfoo-<hash>.rlib` → `("foo", "/path/to/libfoo-<hash>.rlib")`).
+///
+/// A deps directory can hold TWO rlibs of one crate — a restored build cache beside the
+/// build just made, or two toolchains' builds — and directory order chose between them,
+/// so a nightly-toolchain leg linked main's week-old `libloft` and the generated Rust
+/// named an op it did not have (`E0425 op_pow_int`).  The newest file by modification
+/// time is the one the build that is running produced.
 pub(crate) fn rlibs_in_dir(
     dir: &std::path::Path,
 ) -> std::collections::HashMap<String, std::path::PathBuf> {
-    let mut map = std::collections::HashMap::new();
+    let mut map: std::collections::HashMap<String, (std::path::PathBuf, std::time::SystemTime)> =
+        std::collections::HashMap::new();
     if let Ok(entries) = crate::file_access::read_dir(dir) {
         for entry in entries {
             if entry
@@ -1662,15 +1669,24 @@ pub(crate) fn rlibs_in_dir(
             {
                 let path = entry.os_spelling();
                 let fname = entry.file_name().unwrap_or_default();
-                if let Some(rest) = fname.strip_prefix("lib") {
-                    if let Some(dash_pos) = rest.rfind('-') {
-                        map.insert(rest[..dash_pos].to_string(), path);
+                if let Some(rest) = fname.strip_prefix("lib")
+                    && let Some(dash_pos) = rest.rfind('-')
+                {
+                    let modified = crate::file_access::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    let name = rest[..dash_pos].to_string();
+                    match map.get(&name) {
+                        Some((_, seen)) if *seen >= modified => {}
+                        _ => {
+                            map.insert(name, (path, modified));
+                        }
                     }
                 }
             }
         }
     }
-    map
+    map.into_iter().map(|(k, (p, _))| (k, p)).collect()
 }
 
 /// Whether the host-native backend links `#native` packages by C-ABI (their

@@ -1,0 +1,108 @@
+diff --git a/default/01_code.loft b/default/01_code.loft
+index f005296f8..290c24486 100644
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -494,17 +494,6 @@ pub fn log(self: single, v2: single) -> single? {
+ }
+ #pure
+ 
+-fn OpPowInt(v1: integer, v2: integer) -> integer;
+-#cold
+-#rust"ops::op_pow_int(@v1, @v2)"
+-/// Raises the integer to the power given second: `pow(3, 4)` is 81, and `3 ** 20` is
+-/// 3486784401 exactly.  Null when the exponent is negative (no integer answers it) or the
+-/// answer does not fit an integer (`pow(2, 63)`), as `*` answers null past the range.
+-pub fn pow(self: integer, v2: integer) -> integer? {
+-  OpPowInt(self, v2)
+-}
+-#pure
+-
+ fn OpPowSingle(v1: single, v2: single) -> single;
+ #cold
+ #rust"@v1.powf(@v2)"
+diff --git a/src/fill.rs b/src/fill.rs
+index 1c5dbefd9..7a093bb86 100644
+--- a/src/fill.rs
++++ b/src/fill.rs
+@@ -296,7 +296,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
+     rem_single_nullable::<false>,
+     math_func_single::<false>,
+     math_func2_single::<false>,
+-    pow_int::<false>,
+     pow_single::<false>,
+     format_single::<false>,
+     format_stack_single::<false>,
+@@ -645,7 +644,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
+     rem_single_nullable::<true>,
+     math_func_single::<true>,
+     math_func2_single::<true>,
+-    pow_int::<true>,
+     pow_single::<true>,
+     format_single::<true>,
+     format_stack_single::<true>,
+@@ -994,7 +992,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
+     rem_single_nullable_r,
+     math_func_single_r,
+     math_func2_single_r,
+-    pow_int_r,
+     pow_single_r,
+     format_single_r,
+     format_stack_single_r,
+@@ -2396,20 +2393,6 @@ fn math_func2_single_r(s: &mut State, r: Regs) -> Regs {
+     s.regs_out()
+ }
+ 
+-#[inline(always)]
+-fn pow_int<const F: bool>(s: &mut State) {
+-    let v_v2 = s.get_stack_m::<F, i64>();
+-    let v_v1 = s.get_stack_m::<F, i64>();
+-    let new_value = ops::op_pow_int(v_v1, v_v2);
+-    s.put_stack_m::<F, _>(new_value);
+-}
+-
+-fn pow_int_r(s: &mut State, r: Regs) -> Regs {
+-    s.regs_in(r);
+-    pow_int::<true>(s);
+-    s.regs_out()
+-}
+-
+ #[inline(always)]
+ fn pow_single<const F: bool>(s: &mut State) {
+     let v_v2 = s.get_stack_m::<F, f32>();
+diff --git a/src/op_layout.rs b/src/op_layout.rs
+index 752547dfc..0d5cf93ad 100644
+--- a/src/op_layout.rs
++++ b/src/op_layout.rs
+@@ -277,7 +277,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
+     "OpRemSingleNullable",
+     "OpMathFuncSingle",
+     "OpMathFunc2Single",
+-    "OpPowInt",
+     "OpPowSingle",
+     "OpFormatSingle",
+     "OpFormatStackSingle",
+diff --git a/src/ops.rs b/src/ops.rs
+index a9c8f84bd..516ea4d6c 100644
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -353,20 +353,6 @@ pub fn op_mul_long(v1: i64, v2: i64) -> i64 {
+     }
+ }
+ 
+-/// Integer power (loft#2024): null in, null out; a negative exponent has no integer answer and
+-/// is null; past the range it answers null as `*` does, noting the overflow.
+-#[inline]
+-#[must_use]
+-pub fn op_pow_int(v1: i64, v2: i64) -> i64 {
+-    if v1 == i64::MIN || v2 == i64::MIN || v2 < 0 {
+-        return i64::MIN;
+-    }
+-    match u32::try_from(v2) {
+-        Ok(e) => checked_long!(v1.checked_pow(e), "**", v1, v2),
+-        Err(_) => checked_long!(None, "**", v1, v2),
+-    }
+-}
+-
+ /// @C94 — integer `/` truncates toward zero.
+ #[inline]
+ #[must_use]

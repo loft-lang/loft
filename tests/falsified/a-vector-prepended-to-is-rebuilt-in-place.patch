@@ -1,0 +1,13 @@
+diff --git b/src/database/search.rs a/src/database/search.rs
+index b248cffe0..f5b3527df 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -1178,7 +1178,7 @@ impl Stores {
+                 after as usize * size,
+             )
+         };
+-        elements.rotate_right((after - before) as usize * size);
++        elements.rotate_left((after - before) as usize * size);
+         true
+     }
+ 

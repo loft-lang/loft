@@ -1,0 +1,171 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2016 — `@FR-F-Ret`: the returned whole value is owned by the caller, never a view.
+// A mid-body `return f(g(k))` is a CHAIN SITE: the parser spells it `{ w = f(…, w); w }` over
+// the function's one return buffer `w`, reading the call as a delivery into `w`, so the `Set`
+// is the same-store no-op it is for a delivering callee.  A callee that returns a borrow of
+// its parameter (`fn id(p: S) -> S { p }`, published as `S["p"]`) delivers nothing on that
+// path: what comes back is the ARGUMENT's store, the no-op `Set` aliased `w` to it, and the
+// site's own free of the lifted argument (`g(k)`'s record) that follows the chain released
+// what `w` handed up — a freed record, read as the caller's result.  Plainly the bytes were
+// still there (w1); under `LOFT_POISON=1` the field read the poison word, and the dense twin
+// (`-> S`, w4) answered its other arm's record without any poison.
+//
+// Such a site now keeps the bare call, and takes the shape every call result no binding holds
+// takes at a return (`__ret_tail_N = call; frees; return __ret_tail_N`): a first bind from the
+// call, which copies a borrowed result and adopts a fresh one by the callee's own ownership
+// facts — the shape the body-tail spelling of the same call (c1) always had.
+//
+// Every value is computed by hand.  The interpreter is the oracle; `LOFT_POISON=1`,
+// `LOFT_STRICT_STORES=1` and `LOFT_LEAK_CHECK=1` must answer identically on both backends.
+//
+// @falsified-by: tests/falsified/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.patch
+//   — the chain shape made again for a borrow-returning callee (`chain_site_set_shape`'s
+//   borrow clause removed) and the return temp bound to the whole `Insert` again
+//   (`bind_return_temp` not peeling the lifts), on both backends.
+//   CHANNEL: interpret 1 assertion failure -> 0 (w4, plainly: `w4 record 5`; under
+//   `LOFT_POISON=1` w1 first, reading the poison word); native panic -> clean (`SIGABRT caught
+//   … crash outside interpreter`, plainly: the freed record's store is released twice).
+//   WITNESS: on the patched tree `--interpret` stops at `w4 record 5`, `LOFT_POISON=1
+//   --interpret` at `w1 record -2401053088876216593`, and `--native` aborts before any
+//   assertion.
+//   ARMED: none — both channels move without a switch; `LOFT_POISON=1` additionally moves
+//   w1/w2/w3/w5 on the interpreter, which pass by luck without it.
+//   HOLDS: every control cell (c1–c4) on both trees, and the whole probe matrix the fix was
+//   written against (21 cells: callee kind, site, argument kind, depth, caller type, a loop).
+//   Scored by its author on the fixing commit's parent (the matrix above, both binaries);
+//   the `--patch` scoring run is owed on a runner.
+
+struct S { a: integer }
+
+fn g(n: integer) -> S { S { a: n } }
+
+fn id2(p: S) -> S { p }
+
+fn mk(p: S) -> S { S { a: p.a + 1 } }
+
+fn j(p: S, c: boolean) -> S {
+  if c {
+    p
+  } else {
+    S { a: 5 }
+  }
+}
+
+// w1 — the issue's shape: a mid-body return of a borrow-returning callee over a lifted argument.
+fn w1(k: integer) -> S? {
+  if k > 0 {
+    return id2(g(k));
+  }
+  null
+}
+
+// w2 — the callee joins its parameter with a build; both arms.
+fn w2(k: integer, c: boolean) -> S? {
+  if k > 0 {
+    return j(g(k), c);
+  }
+  null
+}
+
+// w3 — two hops.
+fn w3(k: integer) -> S? {
+  if k > 0 {
+    return id2(id2(g(k)));
+  }
+  null
+}
+
+// w4 — the dense twin: answered the tail arm's record (5) for every k > 0 without poison.
+fn w4(k: integer) -> S {
+  if k > 0 {
+    return id2(g(k));
+  }
+  S { a: 5 }
+}
+
+// w5 — the same site reached from a loop.
+fn w5(k: integer) -> S? {
+  if k > 0 {
+    return id2(g(k));
+  }
+  null
+}
+
+// c1 — control: the body-tail spelling, which always copied.
+fn c1(k: integer) -> S? {
+  id2(g(k))
+}
+
+// c2 — control: the argument is the caller's own parameter; nothing is freed at the site.
+fn c2(p: S, k: integer) -> S? {
+  if k > 0 {
+    return id2(p);
+  }
+  null
+}
+
+// c3 — control: the argument is a local of the frame.
+fn c3(k: integer) -> S? {
+  x = S { a: k };
+  if k > 0 {
+    return id2(x);
+  }
+  null
+}
+
+// c4 — control: a callee that BUILDS delivers into the buffer; the chain stays.
+fn c4(k: integer) -> S? {
+  if k > 0 {
+    return mk(g(k));
+  }
+  null
+}
+
+fn main() {
+  a1 = w1(8);
+  b1 = w1(-1);
+  assert((a1.a ?? -1) == 8 && a1 != null, "w1 record {a1.a ?? -1}");
+  assert(b1 == null, "w1 null");
+
+  a2 = w2(8, true);
+  b2 = w2(8, false);
+  c2v = w2(-1, true);
+  assert((a2.a ?? -1) == 8 && a2 != null, "w2 borrow arm {a2.a ?? -1}");
+  assert((b2.a ?? -1) == 5 && b2 != null, "w2 build arm {b2.a ?? -1}");
+  assert(c2v == null, "w2 null");
+
+  a3 = w3(8);
+  assert((a3.a ?? -1) == 8 && a3 != null, "w3 {a3.a ?? -1}");
+
+  a4 = w4(8);
+  b4 = w4(-1);
+  assert(a4.a == 8, "w4 record {a4.a}");
+  assert(b4.a == 5, "w4 tail {b4.a}");
+
+  t = 0;
+  for i in 1..5 {
+    v = w5(i * 3);
+    t += v.a ?? 0;
+  }
+  assert(t == 30, "w5 {t}");
+
+  e1 = c1(8);
+  assert((e1.a ?? -1) == 8 && e1 != null, "c1 {e1.a ?? -1}");
+
+  x = S { a: 8 };
+  e2 = c2(x, 1);
+  f2 = c2(x, -1);
+  assert((e2.a ?? -1) == 8 && e2 != null && f2 == null, "c2 {e2.a ?? -1}");
+  assert(x.a == 8, "c2 source");
+
+  e3 = c3(8);
+  f3 = c3(-1);
+  assert((e3.a ?? -1) == 8 && e3 != null && f3 == null, "c3 {e3.a ?? -1}");
+
+  e4 = c4(8);
+  f4 = c4(-1);
+  assert((e4.a ?? -1) == 9 && e4 != null && f4 == null, "c4 {e4.a ?? -1}");
+  println("ok");
+}

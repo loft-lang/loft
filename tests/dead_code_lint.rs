@@ -1147,3 +1147,28 @@ fn a_rebound_parameter_written_after_the_rebind_is_not_a_lost_write() {
         );
     }
 }
+
+/// loft#2026 — a field write through a local bound only to `null` is dropped at run time
+/// (the `write_dropped` log line says so); nothing was copied, so `lost-write` must not
+/// explain it as a copy.
+#[test]
+fn a_write_through_a_null_bound_local_is_not_a_lost_write() {
+    let path = std::env::temp_dir().join(format!("loft_2026_{}.loft", std::process::id()));
+    fa::write(
+        &path,
+        "struct P { x: integer }\nfn main() {\n  p: P? = null;\n  p.x = 5;\n  println(\"done\");\n}\n",
+    )
+    .expect("write probe");
+    let (out, err, _) = run_env("--interpret", &path, &[]);
+    let _ = fa::remove_file(&path);
+    assert_eq!(
+        dead_stores(&err),
+        0,
+        "no lost-write for a null-bound local:\n{err}"
+    );
+    assert!(
+        !err.contains("lost-write"),
+        "no lost-write for a null-bound local:\n{err}"
+    );
+    assert!(out.contains("done"), "the program runs on:\n{out}{err}");
+}

@@ -1,0 +1,69 @@
+// `@FR-R-ZeroCount` — a text's character count compared against the zero boundary reads its
+// byte count instead: a text has no characters exactly when it has no bytes, the absent text
+// included.  Every cell asserts the VALUES a hand computation gives; `LOFT_NO_ZERO_COUNT=1`
+// must answer the same.
+//
+// Admitted: c1 (`> 0`, `== 0`, `!= 0`, `0 <`, `<= 0`, `< 0`, `>= 0` over an empty, an absent,
+// an ASCII and a multi-byte text), c2 (the boundary at 1: `>= 1`, `< 1`), c3 (a field's text,
+// the walk shape of `find_long_opt`).  Left alone, the count kept: c4 (`== 1` and `> 1`, which
+// a byte count answers differently for `é`, one character in two bytes, and `日本`, two in six).
+//
+// @falsified-by: tests/falsified/a-zero-length-test-counts-no-characters.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch admits `len(t) == 1`, which a byte
+//   count answers false for `é` (two bytes): c4 reads `0,10,10,0`.
+
+struct Opt { name: text, n: integer }
+
+fn c1(t: text?) -> integer {
+  r = 0;
+  if len(t) > 0 { r += 1 }
+  if len(t) == 0 { r += 10 }
+  if len(t) != 0 { r += 100 }
+  if 0 < len(t) { r += 1000 }
+  if len(t) <= 0 { r += 10000 }
+  if len(t) < 0 { r += 100000 }
+  if len(t) >= 0 { r += 1000000 }
+  r
+}
+
+fn c2(t: text?) -> integer {
+  r = 0;
+  if len(t) >= 1 { r += 1 }
+  if len(t) < 1 { r += 10 }
+  r
+}
+
+fn c3(opts: vector<Opt>, prefix: text) -> integer {
+  hits = 0;
+  for o in opts {
+    if o.name.len() > 0 && o.name.starts_with(prefix) { hits += o.n }
+  }
+  hits
+}
+
+fn c4(t: text) -> integer {
+  r = 0;
+  if len(t) == 1 { r += 1 }
+  if len(t) > 1 { r += 10 }
+  r
+}
+
+fn main() {
+  // c1 — non-empty: > 0, != 0, 0 <, >= 0 = 1 + 100 + 1000 + 1000000; empty or absent:
+  // == 0, <= 0, >= 0 = 10 + 10000 + 1000000.
+  e: text? = null;
+  c1s = "{c1("ab")},{c1("")},{c1(e)},{c1("é")}";
+  assert(c1s == "1001101,1010010,1010010,1001101", "c1 {c1s}");
+  // c2 — >= 1 for a non-empty text, < 1 for an empty or absent one.
+  c2s = "{c2("x")},{c2("")},{c2(e)},{c2("日本")}";
+  assert(c2s == "1,10,10,1", "c2 {c2s}");
+  // c3 — names "", "verbose", "version", "é": the prefix "ver" hits n 2 and 4; "" hits every
+  // non-empty name, 2 + 4 + 8.
+  opts = [Opt { name: "", n: 1 }, Opt { name: "verbose", n: 2 }, Opt { name: "version", n: 4 },
+          Opt { name: "é", n: 8 }];
+  assert(c3(opts, "ver") == 6 && c3(opts, "") == 14, "c3 {c3(opts, "ver")},{c3(opts, "")}");
+  // c4 — "é" is one character (== 1), "日本" two (> 1), "ab" two: the counts, not the bytes.
+  c4s = "{c4("é")},{c4("日本")},{c4("ab")},{c4("")}";
+  assert(c4s == "1,10,10,0", "c4 {c4s}");
+  println("ok");
+}

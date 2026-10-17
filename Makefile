@@ -1005,7 +1005,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: perf-portal perf-portal-render perf-check perf-trend perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: after-join after-fix perf-portal perf-portal-render perf-check perf-trend perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -1039,6 +1039,12 @@ libraries-review:  ## Library review aid: which libraries owe a review + which o
 # rising class is worth one generalization is the judgement, and stays an agent task.
 #   make bug-review                       # fetch from gh and report
 #   make bug-review ARGS="--bands 6"      # finer slicing on a busy cycle
+after-join:  ## After a join: only the steps the joined diff calls for, timed (scripts/after.py join $(ARGS))
+	@python3 scripts/after.py join $(ARGS)
+
+after-fix:  ## After a fix: only the steps the diff since the last green run calls for, timed (ARGS="--since REF" "--dispatch")
+	@python3 scripts/after.py fix $(ARGS)
+
 work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge, status:planned, next-release)
 	@bash scripts/work-issues.sh $(ARGS)
 
@@ -2847,6 +2853,11 @@ rule-coverage:  ## What share of the formal rules carry a code annotation, and a
 .PHONY: rule-worklist
 rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
 	@python3 scripts/rule_tags.py worklist $(ARGS)
+
+.PHONY: warm-diff
+warm-diff:  ## Does a program run the SAME from its cache as from its sources? Every corpus file through the cold, warm and skeleton lanes (a report; ARGS="--only 14")
+	@cargo build --release --bin loft -q
+	@scripts/warm_diff.sh $(ARGS)
 
 .PHONY: script-census
 script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)

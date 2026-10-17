@@ -844,9 +844,9 @@ impl NarrowIntKind {
     /// This is the ONE home for the width→Part decision, and it is deliberately keyed on
     /// the same [`NarrowIntKind`] the read and write ops come from: a slot's Part and its
     /// ops then cannot name different encodings, because there is only one choice and all
-    /// three read it.  FIVE call sites used to re-derive this from the width — the struct
-    /// field, the two element paths, and both halves of the native generator — and the
-    /// 4-byte arm of each was `database.int(…)` flat, so an unsigned 4-byte slot was
+    /// three read it.  The five call sites — the struct field, the two element paths, and
+    /// both halves of the native generator — share it, because a site deriving the Part from
+    /// the width alone answers `database.int(…)` flat at 4 bytes, so an unsigned 4-byte slot is
     /// WRITTEN by `OpSetInt4Raw` (unsigned, `u32::MAX` for absence) and read back through
     /// `Parts::Int` (sign-extending, `i32::MIN` for absence).  Every schema-driven route
     /// — the record render, `to_json`, the store round-trip, and every keyed lookup —

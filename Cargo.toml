@@ -140,7 +140,7 @@ ureq               = { version = "2", optional = true }
 rustls             = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "logging", "tls12"] }
 webpki-roots       = { version = "0.26", optional = true }
 rustls-native-certs = { version = "0.8", optional = true }
-zip                = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+zip                = { version = "9", optional = true, default-features = false, features = ["deflate"] }
 tar                = { version = "0.4", optional = true }
 flate2             = { version = "1", optional = true }
 sha2               = { version = "0.10" }
@@ -197,6 +197,17 @@ debug = 1
 # tests like `p122_gl_collision_struct_api` from ~67s to a few seconds.
 # Test code itself stays at opt-level=0 so test compile time is
 # unaffected (the test binaries themselves use [profile.test] above).
+# The PROBE profile: dev without codegen's optimisation passes, built into its own target
+# directory (`make after-fix`, the probe matrix, the guard runs — an interpreter probe runs
+# for milliseconds and a `--native` run compiles the program with rustc regardless).  Dev and
+# release are untouched: nothing shipped is built with it.  Measured on the plan's rig.
+[profile.probe]
+inherits = "dev"
+opt-level = 0
+
+[profile.probe.package.loft]
+debug-assertions = false
+
 [profile.dev]
 opt-level = 1
 # Line tables only — equal to `[profile.test]` above so the two profiles share

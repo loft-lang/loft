@@ -18,10 +18,8 @@
 /// with no leading `cell` argument.  Strictly better than `Cell` for
 /// these fns: zero unused parameter, zero borrow churn.
 ///
-/// Phase 01 retired the `LegacyStores` variant in step 1.7 — every
-/// runtime fn now uses either `Cell` or `None`.  Earlier drafts of this
-/// module had a `LegacyStores` variant for pre-P199.A `&mut Stores`
-/// helpers; phase 01 migrated all 11 entries to `Cell` (8) or `None` (3).
+/// Every runtime fn uses either `Cell` or `None`; there is no variant
+/// for a bare `&mut Stores` helper.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Abi {
     Cell,
@@ -52,11 +50,9 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     RuntimeFn { name: "n_set_store_lock",           abi: Abi::Cell },
     RuntimeFn { name: "n_protect_store_frees",      abi: Abi::Cell },
     RuntimeFn { name: "n_unprotect_store_frees",    abi: Abi::Cell },
-    // @PLAN12 phase 3.5a (2026-05-24) — n_rand / n_rand_seed /
-    // n_rand_indices all drained to lib/random/native/.  The full
-    // drain became possible after the `loft::native_call` helpers
-    // shipped (LoftStore forwarding for store-allocating cdylib
-    // returns).  Native codegen routes these through
+    // n_rand / n_rand_seed / n_rand_indices live in lib/random/native/
+    // (the `loft::native_call` helpers forward LoftStore for
+    // store-allocating cdylib returns).  Native codegen routes these through
     // `native_symbol_crates` from random's [native.functions] manifest;
     // the interpreter routes via dlopen.  Single RNG state in the
     // cdylib; no compiler-crate fallback.
@@ -105,10 +101,8 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     RuntimeFn { name: "t_9JsonValue_as_text",         abi: Abi::Cell },
     RuntimeFn { name: "t_9JsonValue_as_long",         abi: Abi::Cell },
     RuntimeFn { name: "t_9JsonValue_kind",            abi: Abi::Cell },
-    // Remaining JSON natives (P54 / P268 follow-up — wired
-    // 2026-05-13 to close the unimplemented set so any loft
-    // program can call json_* under --native, not just the
-    // viewer's tag-page subset).
+    // The remaining JSON natives, so any loft program can call json_*
+    // under --native, not just the viewer's tag-page subset.
     RuntimeFn { name: "t_9JsonValue_as_number",       abi: Abi::Cell },
     RuntimeFn { name: "t_9JsonValue_as_bool",         abi: Abi::Cell },
     RuntimeFn { name: "t_9JsonValue_keys",            abi: Abi::Cell },
@@ -145,7 +139,7 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     RuntimeFn { name: "n_broadcast",                  abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_idle",                abi: Abi::Cell },
     RuntimeFn { name: "n_clients",                    abi: Abi::Cell },
-    // @PLN119 arc F — the same four under the names the loft surface uses now
+    // The same four under the names the loft surface uses now
     // that its public functions are WRAPPERS (a function that already carries a
     // native symbol cannot be placed).  The old names stay: this table is keyed
     // by loft def name, and a library elsewhere may still spell them the old way.

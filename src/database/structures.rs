@@ -2333,15 +2333,16 @@ impl Stores {
     /// does not have, which that walk refuses.
     ///
     /// `value_at` is where the value is expected in the text, `at` the offset an error in
-    /// it reports (its field's key, [`Self::walk_parsed_into`]).  The first value that
-    /// does not fit lands in `failed` and nothing is written after it — but the rest of
-    /// the document is still read, because a document that is not well-formed is refused
-    /// whole (`Err`), wherever the fault is.
+    /// it reports (its field's key, [`Self::walk_parsed_into`]).  Every value that does
+    /// not fit lands in `failed`, in document order, and leaves its slot as the defaults
+    /// wrote it; the values around it are read and written as if it fit (@C148,
+    /// loft#2028: `#errors` names every mismatch, in both parse forms).  A document that
+    /// is not well-formed is refused whole (`Err`), wherever the fault is.
     #[allow(clippy::too_many_arguments)] // the walk's dispatch, as `walk_parsed_into`
     pub(super) fn read_into(
         &mut self,
         rd: &mut crate::json::JParser,
-        failed: &mut Option<WalkErr>,
+        failed: &mut Vec<WalkErr>,
         value_at: usize,
         tp: u16,
         rec_tp: u16,
@@ -2350,9 +2351,6 @@ impl Stores {
         at: usize,
     ) -> Result<(), crate::json::Fault> {
         use crate::json::Opening;
-        if failed.is_some() {
-            return rd.parse_value(value_at).map(drop);
-        }
         let (content, record) = match &self.types[tp as usize].parts {
             Parts::Sorted(c, _)
             | Parts::Vector(c)
@@ -2383,7 +2381,9 @@ impl Stores {
                 self.walk_parsed_into(&value, tp, rec_tp, field, to, &mut path, at)
             }
         };
-        *failed = walked.err();
+        if let Err(e) = walked {
+            failed.push(e);
+        }
         Ok(())
     }
 
@@ -2393,7 +2393,7 @@ impl Stores {
     fn read_array(
         &mut self,
         rd: &mut crate::json::JParser,
-        failed: &mut Option<WalkErr>,
+        failed: &mut Vec<WalkErr>,
         tp: u16,
         content: u16,
         rec_tp: u16,
@@ -2408,16 +2408,23 @@ impl Stores {
         self.set_default_value(tp, &slot);
         let mut idx = 0usize;
         while let Some(value_at) = next {
-            if failed.is_some() {
-                rd.parse_value(value_at)?;
-            } else {
-                let res = self.record_new(to, rec_tp, field);
-                self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
-                match failed {
-                    Some(e) => e.path.insert(0, format!("[{idx}]")),
-                    None => self.record_finish(to, &res, rec_tp, field),
-                }
+            let res = self.record_new(to, rec_tp, field);
+            let seen = failed.len();
+            self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
+            // An element that did not fit keeps its slot, so the elements after it keep
+            // their positions: a leaf holds null — what the `JsonValue` walk writes for
+            // it — and a record keeps the fields that fit beside the defaults of those
+            // that did not (its own `read_struct` wrote them).
+            // The element ITSELF did not fit when an error's path is empty before this
+            // index is put in front of it; an error deeper down left the element written.
+            let misfit = failed[seen..].iter().any(|e| e.path.is_empty());
+            for e in &mut failed[seen..] {
+                e.path.insert(0, format!("[{idx}]"));
             }
+            if misfit {
+                self.set_default_value_nullable(content, true, Absent::Final, &res);
+            }
+            self.record_finish(to, &res, rec_tp, field);
             next = rd.next_item(start)?;
             idx += 1;
         }
@@ -2432,7 +2439,7 @@ impl Stores {
     fn read_struct(
         &mut self,
         rd: &mut crate::json::JParser,
-        failed: &mut Option<WalkErr>,
+        failed: &mut Vec<WalkErr>,
         tp: u16,
         rec_tp: u16,
         field: u16,
@@ -2455,17 +2462,14 @@ impl Stores {
         let mut found_more: Vec<u16> = Vec::new();
         while more {
             let (name, key_at, value_at) = rd.member(start)?;
-            let hit = if failed.is_some() {
-                None
-            } else {
-                self.record_fields(tp)
-                    .iter()
-                    .position(|f| f.name == name)
-                    .map(|f_nr| {
-                        let f = &self.record_fields(tp)[f_nr];
-                        (f_nr as u16, f.content, f.position)
-                    })
-            };
+            let hit = self
+                .record_fields(tp)
+                .iter()
+                .position(|f| f.name == name)
+                .map(|f_nr| {
+                    let f = &self.record_fields(tp)[f_nr];
+                    (f_nr as u16, f.content, f.position)
+                });
             if let Some((f_nr, f_content, position)) = hit {
                 // A collection field is reached through the record and its field number
                 // (`record_new`); any other through its own slot.
@@ -2478,19 +2482,27 @@ impl Stores {
                 } else {
                     *to
                 };
+                let seen = failed.len();
                 self.read_into(rd, failed, value_at, f_content, tp, f_nr, &target, key_at)?;
-                match failed {
-                    Some(e) => e.path.insert(0, name),
-                    None if f_nr < 64 => found |= 1 << f_nr,
-                    None => found_more.push(f_nr),
+                // The member's value ITSELF did not fit when an error's path is empty
+                // before its name goes in front: the field is then ABSENT, so the pass
+                // below writes its default.  An error deeper down (an element, a nested
+                // field) left this field written, with the values around the misfit.
+                let misfit = failed[seen..].iter().any(|e| e.path.is_empty());
+                for e in &mut failed[seen..] {
+                    e.path.insert(0, name.clone());
+                }
+                if misfit {
+                    // absent: the default pass writes it
+                } else if f_nr < 64 {
+                    found |= 1 << f_nr;
+                } else {
+                    found_more.push(f_nr);
                 }
             } else {
                 rd.parse_value(value_at)?;
             }
             more = rd.next_member(start)?;
-        }
-        if failed.is_some() {
-            return Ok(());
         }
         let base = DbRef {
             store_nr: to.store_nr,
@@ -3630,6 +3642,40 @@ impl Stores {
             rec: db.rec,
             pos: db.pos + fld,
         }
+    }
+
+    /// `@FR-R-FlatCopy`'s emitted clause: the copy of a record that owns no heap, `N` bytes,
+    /// for a site whose type the emitter read off the schema — `OpCopyRecord`'s flat path
+    /// without its per-copy type lookups, and with the width a constant, so the copy is a few
+    /// moves rather than a call.  `false` where that path would not have been a plain byte
+    /// copy (a null end, a locked or foreign destination, a store whose shadow tags travel
+    /// with its bytes, a copy the instruments trace or check), and nothing was done: the
+    /// caller takes `OpCopyRecord`.  A record copied onto itself is done.
+    #[inline]
+    pub fn copy_flat_record<const N: usize>(&mut self, from: &DbRef, to: &DbRef) -> bool {
+        if from.store_nr == u16::MAX
+            || to.store_nr == u16::MAX
+            || from.rec == 0
+            || to.rec == 0
+            || Store::is_foreign_rec(to.rec)
+            || crate::keys::trace_copy()
+            || self.copy_check_enabled()
+        {
+            return false;
+        }
+        let dst = &self.allocations[to.store_nr as usize];
+        if dst.is_locked() || dst.shadow_armed() {
+            return false;
+        }
+        if from != to {
+            let s = vector::rec_ptr(from, &self.allocations);
+            let d = vector::rec_ptr(to, &self.allocations).cast_mut();
+            // SAFETY: both are records of live stores (checked non-null above), each at least
+            // `N` bytes wide — the width of the type the emitter read the site's copy off —
+            // and `ptr::copy` admits an overlap.
+            unsafe { std::ptr::copy(s, d, N) };
+        }
+        true
     }
 
     pub fn copy_block(&mut self, from: &DbRef, to: &DbRef, len: u32) {

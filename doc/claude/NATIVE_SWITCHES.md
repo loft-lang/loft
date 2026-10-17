@@ -14,7 +14,8 @@ Each entry names its `LOFT_NO_*` switch (the first bisect step: the before-half 
 one binary), its falsifier (usually `LOFT_HOIST_VERIFY=1`, which emits the checking form) and
 its `LOFT_TRACE_*` switch (which names each admission and decline).  The rules the rewrites
 enforce live in [formal/rewrites.md](formal/rewrites.md) (`@FR-R-…`); the emitter's design is
-[NATIVE.md](NATIVE.md) and [PERFORMANCE.md](PERFORMANCE.md) § Design.
+[NATIVE.md](NATIVE.md) and [PERFORMANCE.md](PERFORMANCE.md) § Design.  The dated measurements
+moved out of this doc are [NATIVE_SWITCHES-history.md](NATIVE_SWITCHES-history.md).
 
 ## Vector headers, pushes and mints
 
@@ -120,6 +121,25 @@ loop's header hold again — with it off, a loop that appends records with text 
 reading another vector keeps that vector's header.  First bisect step for a wrong element read
 in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**`LOFT_NO_CALL_TEXT_BORROW=1`** (`@FR-R-TextBorrow`'s call clause, default-ON, generation
+time) makes a text local bound to a call that fills a work buffer copy the call's text into a
+`String` again — with it off, the local borrows the work text, and a text set reads it in
+place.  First bisect step for a wrong text read from such a local on native; `LOFT_POISON=1`
+is the falsifier.
+
+**`LOFT_NO_TESTED_BORROW=1`** (`@FR-R-TextBorrow`'s tested clause, default-ON, generation
+time) makes a text a `match` arm or a statement binds out of a parameter's record copy itself
+again where its scope also writes the return buffer — with it off, such a bind borrows the
+record's bytes while a run-time compare finds the parameter's store and the buffer's apart.
+First bisect step for a wrong text read from a match binding on native; `LOFT_POISON=1` is the
+falsifier.
+
+**`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
+makes a loop that writes a text field or element decline its header hold again — with it off,
+such a loop holds the headers of the vectors it reads, and an element base only for a vector
+whose store no text set in it writes.  First bisect step for a stale length or element read in
+a loop that assigns texts; `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1` are the falsifiers.
+
 **`LOFT_NO_APART_HEADERS=1`** (`@FR-R-Header`'s apart clause, default-ON) makes a loop the
 header gate declines hold no header at all again.  By default such a loop still keeps the
 header and element base of each vector it only READS — its length, its elements, their
@@ -130,6 +150,12 @@ inside the loop, or read in a generator's loop keeps the per-access form.  The f
 step for a stale element or length read from a vector the loop only reads, beside a call
 that writes or a push to another vector; `LOFT_HOIST_VERIFY=1` re-derives every such header
 at every read, and `LOFT_TRACE_HOIST_DECLINE=1` names the vectors each declined loop keeps.
+**`LOFT_NO_APART_PARAM=1`** (`@FR-R-Header`'s apart clause, its parameter half, default-ON)
+makes a PARAMETER's vector in such a loop take no header again.  By default it keeps one
+where every store the loop writes or grows is proven apart from the parameter's — a store
+this call minted, or the return buffer inside R-Alias's versioned copy — and the vector is
+only read, or handed to a callee that writes no store.  The first bisect step for a stale
+element or length read from a parameter's vector in a loop that grows the return buffer.
 
 ## Text walks
 
@@ -185,10 +211,12 @@ only) empties a text with a fresh `String` again — with it off, `s = ""` on a 
 local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
 `materialise` −59 %) — and is the first bisect step for a text that reads leftover content
 after it was emptied.
-**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, RUNTIME, `--native` only) copies a
+**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time, `--native` only) copies a
 record that owns no heap through the full release-and-walk path again — with it off, such a
-copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %) — and is
-the first bisect step for a wrong value or a leak right after a record copy.
+copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %), and the
+emitter writes such a copy from a variable as its bytes, address to address where the block
+holds both — and is the first bisect step for a wrong value or a leak right after a record
+copy.
 **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
 makes `for c in text` take every character through the step as written again — with it
 off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
@@ -256,6 +284,14 @@ rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loo
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
+`--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
+store, the record and the text at each read again — with it off, the view's address from
+the held base serves the read: the field's record number one load through it, the text
+sliced off the store span beside the base (`vector::rec_text`).  The first bisect step for a
+wrong or stale text field read in a walk on native; `LOFT_HOIST_VERIFY=1` compares every
+such read with the store's, and `LOFT_NO_TEXT_BASE=1` (`(R-Base)`'s text clause) switches it
+off too.
 **`LOFT_NO_BASE_RECPTR=1`** (`@FR-R-RecPtr`'s base clause, default-ON, generation time,
 `--native` only) makes the loop variable of `for e in v` resolve the store for its address
 again — with it off, the address is the loop's held element base plus index times size
@@ -475,7 +511,8 @@ checks every plain operator.
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores
 differ, keeping the parameter's headers and its element views' record addresses there
-(`fill_polygon` 8.1× → 5.4×) — and is the first bisect step for a wrong value read from a
+(`fill_polygon` 8.1× → 5.4×), and borrowing a walk's text element instead of copying it
+(`@FR-R-TextBorrow`'s versioned clause) — and is the first bisect step for a wrong value read from a
 parameter inside a loop that appends to the result on native.  `LOFT_TRACE_RECPTR=1` names
 each address the copy binds.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
@@ -760,10 +797,11 @@ and written, and the subscript's key links it — and is the first bisect step f
 key or count after a keyed literal assignment on native.
 **`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
 hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
-repeated key — with it on, one probe answers the entry the key names and the literal's staged
-values are written into it — and is the first bisect step for a wrong value or count after a
-keyed insert on native; `LOFT_KEYED_VERIFY=1` checks every answered entry against the general
-lookup.
+repeated key, and makes `h[a, b] = T{…}` on a hash keyed by integer parts take
+`LOFT_NO_KEYED_IN_PLACE`'s removal and claim again — with it on, one probe answers the entry the
+key names and the literal's staged values are written into it — and is the first bisect step
+for a wrong value or count after a keyed insert or keyed literal assignment on native;
+`LOFT_KEYED_VERIFY=1` checks every answered entry against the general lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
 is the first bisect step for a freed, leaked or wrong lookup result on native;

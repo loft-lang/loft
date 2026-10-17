@@ -200,6 +200,31 @@ pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Optio
     (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
 }
 
+/// `@FR-R-FlatCopy`'s emitted clause — `OpCopyRecord(src, dst, tp)` that keeps its source
+/// (no `COPY_FREE_SOURCE`), from a VARIABLE, of a record type that owns no heap: the copy is
+/// the type's bytes, so the emitter writes them (`OpCopyRecordEmitter`), through the two
+/// record addresses where the block holds both (`@FR-R-RecPtr`).  A fresh destination
+/// (`COPY_FRESH_DEST`, a minted push slot) is no case apart: such a type has no claims to
+/// release in it.  The source is never the call whose result the copy binds, because that
+/// bind is what consumes an unresolved fn-ref's borrowed-return marker.  Answers the width.
+#[must_use]
+pub fn flat_copy(stores: &Stores, op: &str, args: &[Value]) -> Option<u16> {
+    if op != "OpCopyRecord" || !crate::keys::flat_copy_enabled() {
+        return None;
+    }
+    let [src, _, tp] = args else {
+        return None;
+    };
+    let Value::Int(n) = tp.unspan() else {
+        return None;
+    };
+    if n & i32::from(crate::keys::COPY_FREE_SOURCE) != 0 || !matches!(src.unspan(), Value::Var(_)) {
+        return None;
+    }
+    let known = u16::try_from(n & i32::from(crate::keys::COPY_TP_MASK)).ok()?;
+    stores.flat_record_type(known).then(|| stores.size(known))
+}
+
 /// `@FR-R-InPlace`'s read clause — `OpReadFile(f, OpCreateStack(t), n, tp)` into a SCALAR
 /// local writes that local and the File record's own cursor fields (`#next`, `#pos`, the
 /// handle number on first use), each in place: nothing is claimed, grown or freed.  A read
@@ -316,7 +341,7 @@ pub fn hoistable_vectors(
         in_place: allow_in_place,
         ..HoistTiers::default()
     };
-    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None) {
+    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None, true) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -392,6 +417,12 @@ pub struct HoistTiers {
     /// `(R-Mint)`'s rebound clause — a mover the body REBINDS to a fresh buffer or element
     /// slot takes no holder instead of declining the loop (`LOFT_NO_REBOUND_MOVER` off).
     pub rebound_movers: bool,
+    /// `(R-Header)`'s text clause — a text set (`OpSetText`, `OpSetTextReplace`) admitted.
+    /// Set ONLY by [`hoistable`] for the loop's header verdict, never by the emitter's
+    /// [`Output`](super::Output) tiers: a text set claims and frees text records, which moves
+    /// no vector's record or length but may grow its store, so a reader of the gate that
+    /// holds an ADDRESS (a record view's pointer, a push header) must keep declining it.
+    pub text_set: bool,
 }
 
 /// For the decline trace: descend `op`'s statement lists to the innermost statement that
@@ -479,6 +510,9 @@ fn innermost_blocking<'a>(
 /// in a loop whose store writes are all in place, so the two cannot disagree about which
 /// loops qualify.
 /// Enforces `@FR-R-InPlace` as the ONE gate `@FR-R-Header` and `@FR-R-Scalar` stand behind.
+// The seven parameters are `blocks_header_hoist`'s context and whether this verdict is the
+// final one (a verdict asked again under the text clause traces only its second answer).
+#[allow(clippy::too_many_arguments)]
 fn body_blocks_hoist(
     body: &Block,
     data: &Data,
@@ -487,9 +521,10 @@ fn body_blocks_hoist(
     cache: &mut HashMap<u32, bool>,
     tiers: HoistTiers,
     owned: Option<&HoistOwned>,
+    traced: bool,
 ) -> bool {
     let mut fresh: HashSet<u16> = HashSet::new();
-    let trace = std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
+    let trace = traced && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
     body.operators.iter().any(|op| {
         let blocks = blocks_header_hoist(
             op,
@@ -1101,6 +1136,27 @@ impl StoreFacts<'_> {
         self.fresh(t)
     }
 
+    /// `@FR-R-Header`'s parameter clause: is the store `w` names provably apart from the
+    /// store of ARGUMENT `p`?  Only where `w`'s chain ends at a store this activation minted
+    /// that is no argument itself — a hidden vector buffer is an argument a caller may have
+    /// claimed in `p`'s store (`(R-Place)`) — or where a run-time test proved the pair apart
+    /// (`assumed`, `@FR-R-Alias`'s versioned copy).
+    #[must_use]
+    pub fn apart_from_argument(&self, p: u16, w: u16) -> bool {
+        let assumed = |a: u16, b: u16| {
+            self.assumed
+                .iter()
+                .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
+        };
+        if assumed(p, w) {
+            return true;
+        }
+        let Some(t) = self.terminal(w) else {
+            return false;
+        };
+        assumed(p, t) || (t != p && !self.vars.is_argument(t) && self.fresh(t))
+    }
+
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
@@ -1146,7 +1202,7 @@ pub fn placed_locals(code: &Value, data: &Data) -> HashSet<u16> {
 /// they grow — in first-appearance order.  Exactly the ops [`blocks_header_hoist`] lets
 /// through under the push and mint tiers, so a caller that proves every root apart from a
 /// store may open those tiers.
-fn mover_roots(
+pub(super) fn mover_roots(
     stmts: &[Value],
     data: &Data,
     stores: &Stores,
@@ -1179,7 +1235,14 @@ fn mover_roots(
 /// and the element base of each vector it only reads in a store nothing in it is handed
 /// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
 /// gate's verdict about the whole body, and this rests on the one store's mentions alone.
-fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts>) -> LoopHoist {
+fn apart_hoist(
+    body: &Block,
+    data: &Data,
+    def_nr: u32,
+    facts: Option<&StoreFacts>,
+    cache: &mut HashMap<u32, bool>,
+    owned: Option<&HoistOwned>,
+) -> LoopHoist {
     let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
         return LoopHoist::default();
     };
@@ -1189,6 +1252,11 @@ fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts
         facts,
         &|t| work_buffer_arg(data, def_nr, t),
         vector_candidates(body, data, def_nr),
+        super::apart::Callees {
+            cache,
+            owned,
+            code: data.def(def_nr).code(),
+        },
     );
     crate::rewrite_census::fired("R-Header/apart", vectors.len());
     if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
@@ -1243,9 +1311,39 @@ pub fn hoistable(
     owned: Option<&HoistOwned>,
     facts: Option<&StoreFacts>,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
-        return apart_hoist(body, data, def_nr, facts);
-    }
+    // `(R-Header)`'s text clause: a loop the gate declines is asked again with its text sets
+    // admitted, so a loop that hoisted without the clause hoists exactly as it did.
+    let clause = crate::keys::text_set_header_enabled();
+    let text_grown = if !body_blocks_hoist(
+        body,
+        data,
+        Some(stores),
+        def_nr,
+        cache,
+        tiers,
+        owned,
+        !clause,
+    ) {
+        None
+    } else if clause
+        && !body_blocks_hoist(
+            body,
+            data,
+            Some(stores),
+            def_nr,
+            cache,
+            HoistTiers {
+                text_set: true,
+                ..tiers
+            },
+            owned,
+            true,
+        )
+    {
+        Some(text_set_roots(body, data))
+    } else {
+        return apart_hoist(body, data, def_nr, facts, cache, owned);
+    };
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
         scalars: Vec::new(),
@@ -1433,6 +1531,25 @@ pub fn hoistable(
         }
         out.movers = movers;
     }
+    // A loop admitted through its text sets grows the stores they claim in.  It may not also
+    // push, mint or reserve: a push header carries what the store's buffer looked like, and
+    // the clause is stated for a loop that grows through text alone.  Its bases are kept only
+    // for vectors proven apart from every store a text set writes — none when a target's
+    // root is unknown.
+    if let Some(roots) = &text_grown {
+        if !out.movers.is_empty() || !pushes.is_empty() || !mints.is_empty() {
+            if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+                eprintln!(
+                    "hoist: {} loop {} declined: it writes a text and also pushes, mints or reserves",
+                    data.def(def_nr).name(),
+                    body.scope
+                );
+            }
+            return apart_hoist(body, data, def_nr, facts, cache, owned);
+        }
+        crate::rewrite_census::fired("R-Header/text", 1);
+        out.movers = roots.clone().unwrap_or_default();
+    }
     if !pushes.is_empty() || !mints.is_empty() {
         let rebound_movers: Vec<u16> = pushes
             .iter()
@@ -1448,7 +1565,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return apart_hoist(body, data, def_nr, facts);
+                return apart_hoist(body, data, def_nr, facts, cache, owned);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1464,7 +1581,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return apart_hoist(body, data, def_nr, facts);
+                return apart_hoist(body, data, def_nr, facts, cache, owned);
             }
             let any_retbuf = pushes
                 .iter()
@@ -1497,7 +1614,8 @@ pub fn hoistable(
     // templates (an element that is no struct — a vector of vectors — or a tier switched
     // off) appends through the runtime and grows its store all the same, and a base bound
     // for a sibling field of the same record would address the buffer that growth freed.
-    out.growth_free = out.pushes.is_empty() && mints.is_empty() && !dropped_mover;
+    out.growth_free =
+        out.pushes.is_empty() && mints.is_empty() && !dropped_mover && text_grown.is_none();
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
@@ -2989,17 +3107,7 @@ fn view_extent_verdict(
                     {
                         touched = true;
                     }
-                    // A copy INTO the view FROM a value local — a builder's tuple delivered
-                    // into an appended element — lowers to one typed setter per field
-                    // (`OpCopyRecordEmitter`), each served by the address like a direct
-                    // write; a copy from a store record stays a block copy and asks no
-                    // address.
-                    if name == "OpCopyRecord"
-                        && args.len() == 3
-                        && matches!(args[1].unspan(), Value::Var(v) if *v == *r)
-                        && matches!(args[0].unspan(), Value::Var(s)
-                            if owned.is_some_and(|o| o.value_locals.contains(s)))
-                    {
+                    if copy_serves_view(stores, name, args, *r, owned) {
                         touched = true;
                     }
                     if args.iter().enumerate().any(|(i, a)| {
@@ -3018,9 +3126,53 @@ fn view_extent_verdict(
         return Err("the remainder rebinds the view");
     }
     if !touched {
-        return Err("no fusable field read or write of the view");
+        return Err(NO_FUSABLE_USE);
     }
     Ok(())
+}
+
+/// Is `name(args)` a record copy the view `r`'s address serves?  A copy INTO the view FROM a
+/// value local — a builder's tuple delivered into an appended element — lowers to one typed
+/// setter per field (`OpCopyRecordEmitter`), each served like a direct write; a flat copy
+/// INTO or OUT OF the view ([`flat_copy`]) stores its bytes at, or reads them from, the
+/// address.  Any other copy from a store record asks the store, not the address.
+fn copy_serves_view(
+    stores: &Stores,
+    name: &str,
+    args: &[Value],
+    r: u16,
+    owned: Option<&HoistOwned>,
+) -> bool {
+    if name != "OpCopyRecord" || args.len() != 3 {
+        return false;
+    }
+    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == r);
+    let from_value_local = is_r(&args[1])
+        && matches!(args[0].unspan(), Value::Var(s)
+            if owned.is_some_and(|o| o.value_locals.contains(s)));
+    from_value_local
+        || ((is_r(&args[1]) || is_r(&args[0])) && flat_copy(stores, name, args).is_some())
+}
+
+/// [`record_view_ptr`]'s LAST decline — every other condition held, and no statement of the
+/// remainder reads or writes a field the address serves.  The emitter's text clause admits
+/// such a view when its address comes from a held base with a text span beside it and the
+/// remainder reads a TEXT field of it (`Output::bind_record_ptr`).
+pub const NO_FUSABLE_USE: &str = "no fusable field read or write of the view";
+
+/// Does `rest` read a text field of view `r` directly — `OpGetText(r, fld)` with a literal
+/// field offset, the spelling `vector::rec_text` serves?
+#[must_use]
+pub fn reads_text_field(rest: &[Value], r: u16, data: &Data) -> bool {
+    rest.iter().any(|op| {
+        op.any_node(&mut |n| {
+            matches!(n, Value::Call(g, a)
+                if (*g as usize) < data.definitions.len()
+                    && data.def(*g).name() == "OpGetText"
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == r)
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(_))))
+        })
+    })
 }
 
 /// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached
@@ -3988,6 +4140,120 @@ pub fn borrowed_text_walks(
     out
 }
 
+/// `@FR-R-TextBorrow`'s versioned clause — the loop variables of text walks that borrow
+/// their element in `@FR-R-Alias`'s versioned copy only: [`borrowed_text_walks`] declined
+/// the walk for writing a store, every writer in its rest names a store this frame minted
+/// or the hidden return buffer (or a local bound from it), and the walked vector's dep chain
+/// ends at a PARAMETER.  The copy runs only when that parameter's store is not the return
+/// buffer's, so no write of the loop can grow, free or rewrite the store the element's bytes
+/// live in — the walk clause's own condition, proven by the copy's run-time test instead of
+/// by the absence of writes.  Answers each loop variable with that parameter and the borrow.
+#[must_use]
+pub fn versioned_text_walks(
+    data: &Data,
+    def_nr: u32,
+    sliced: &BTreeSet<u16>,
+    tables: &BTreeMap<u16, SplitTable>,
+) -> HashMap<u16, (u16, TextBorrow)> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
+    let mut out = HashMap::new();
+    let Some(rb) = retbuf_var(data, def_nr) else {
+        return out;
+    };
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    let minted = frame_minted_locals(data, vars, body, &[rb]);
+    // The parameter a variable's dep chain ends at, through single-dep views.
+    let root = |v: u16| -> Option<u16> {
+        let mut cur = v;
+        for _ in 0..16 {
+            if vars.is_argument(cur) {
+                return Some(cur);
+            }
+            let [d] = vars.tp(cur).depend()[..] else {
+                return None;
+            };
+            cur = d;
+        }
+        None
+    };
+    let mut cache: HashMap<u32, bool> = HashMap::new();
+    let mut active: HashSet<u32> = HashSet::new();
+    body.any_node(&mut |n| {
+        let Value::Loop(lp) = n else {
+            return false;
+        };
+        if lp.name != "For loop" || lp.operators.is_empty() {
+            return false;
+        }
+        let Some((p, _index, vec, read)) = text_walk_head(&lp.operators[0], data) else {
+            return false;
+        };
+        if sliced.contains(&vec) || !matches!(vars.tp(p).base(), Type::Text(_)) {
+            return false;
+        }
+        let rest: Vec<Value> = lp.operators[1..]
+            .iter()
+            .map(|s| as_emitted_by_tables(s, tables, data))
+            .collect();
+        if !rest.iter().any(|s| may_write_store(s, data, &mut cache)) {
+            return false; // the walk clause's own: no copy needed
+        }
+        let verdict = match root(vec) {
+            Some(r) if r != rb && crate::data::is_dbref(vars.tp(r).base()) => {
+                if let Some(why) = lp.operators[1..]
+                    .iter()
+                    .find_map(|s| text_escapes(s, p, data))
+                {
+                    Err(why)
+                } else if let Some(why) = rest.iter().find_map(|s| {
+                    foreign_store_writer(s, data, &minted, &mut cache, &mut active, Some(vars))
+                }) {
+                    Err(why)
+                } else {
+                    Ok(r)
+                }
+            }
+            _ => Err("the walked vector is no parameter's"),
+        };
+        match verdict {
+            Ok(r) => {
+                if trace {
+                    eprintln!(
+                        "[text-borrow] {}: `{}` borrows its element in the copy versioned on `{}`",
+                        def.name(),
+                        vars.name(p),
+                        vars.name(r)
+                    );
+                }
+                out.insert(
+                    p,
+                    (
+                        r,
+                        TextBorrow {
+                            read: Some(read.clone()),
+                        },
+                    ),
+                );
+            }
+            Err(why) if trace => {
+                eprintln!(
+                    "[text-borrow] {}: `{}` no versioned borrow — {why}",
+                    def.name(),
+                    vars.name(p)
+                );
+            }
+            Err(_) => {}
+        }
+        false
+    });
+    out
+}
+
 /// `@FR-R-TextBorrow`'s discharge clause — the `__ncc_N` temps of this function that hold a
 /// split TABLE's element read for a `?` / `??` discharge (`parts[i]?`, `parts[i] ?? d`),
 /// where every mention of the temp is a text-value read: the temp BORROWS the slice the
@@ -4086,6 +4352,14 @@ pub struct StoreTextBorrows {
     /// `@FR-R-SliceBorrow` — the admitted locals with a value slice among their bindings,
     /// counted apart for the rewrite census.
     pub slices: HashSet<u16>,
+    /// The tested clause — admitted locals whose scope also writes the hidden RETURN BUFFER,
+    /// each with the parameters its reads are rooted in: the borrow holds only while each of
+    /// those parameters' stores is not the buffer's, which the bind tests at run time and
+    /// copies otherwise.
+    pub tested: HashMap<u16, Vec<u16>>,
+    /// The admitted locals that borrow only the frame's own work texts (a format's, a call's)
+    /// or literals: no store holds their bytes, so a store write may read them in place.
+    pub work: HashSet<u16>,
 }
 
 /// `@FR-R-TextBorrow`'s store-read clause — the text variables of this function that BORROW
@@ -4188,7 +4462,9 @@ pub fn borrowed_store_texts(
     // in the body — so only the bind's next run rewrites it.  The format must not read the
     // local it binds (its old value would still borrow the text being rewritten) and no
     // other variable may be bound from the local (the copy would outlive that rewrite).
-    let fmt_own = |to: &Value| own_format_work(body, to, data).is_some();
+    let fmt_own = |to: &Value| {
+        own_format_work(body, to, data).is_some() || own_call_work(body, to, data).is_some()
+    };
     let mut fmt_bound: HashSet<u16> = HashSet::new();
     body.any_node(&mut |n| {
         if let Value::Set(v, to) = n
@@ -4233,6 +4509,7 @@ pub fn borrowed_store_texts(
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
             Value::Block(_) => fmt_own(to),
+            Value::Call(..) if fmt_own(to) => true,
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4265,7 +4542,11 @@ pub fn borrowed_store_texts(
         }
     }
     // The store condition, over each borrow's scope.
-    let minted = frame_minted_locals(data, vars, body);
+    let minted = frame_minted_locals(data, vars, body, &[]);
+    let minted_rb = (tested_borrow_enabled())
+        .then(|| retbuf_var(data, def_nr))
+        .flatten()
+        .map(|rb| frame_minted_locals(data, vars, body, &[rb]));
     let mut cache: HashMap<u32, bool> = HashMap::new();
     let mut active: HashSet<u32> = HashSet::new();
     for v in temps
@@ -4280,6 +4561,7 @@ pub fn borrowed_store_texts(
                 matches!(to.unspan(), Value::Text(_)) || fmt_own(to)
             })
         {
+            out.work.insert(v);
             continue;
         }
         // `@FR-R-SliceBorrow` — a slice of a plain parameter names no store either: its
@@ -4292,19 +4574,61 @@ pub fn borrowed_store_texts(
             continue;
         }
         let scope = mention_scope(body, v);
-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
+            // The tested clause: a local whose only other writers name the return buffer
+            // (or a callee's buffer it is handed) borrows while its parameters' stores are
+            // not the buffer's — a run-time test at each bind, a copy where it fails.
+            if let Some(m) = minted_rb.as_ref()
+                && locals.contains(&v)
+            {
+                let narrow = tested_scope(body, v, data);
+                let tested = match foreign_store_writer(
+                    narrow,
+                    data,
+                    m,
+                    &mut cache,
+                    &mut active,
+                    Some(vars),
+                ) {
+                    Some(w2) => Err(w2),
+                    None => param_roots_of(body, v, data, vars)
+                        .ok_or("a binding not rooted in a parameter"),
+                };
+                match tested {
+                    Ok(roots) => {
+                        out.tested.insert(v, roots);
+                        continue;
+                    }
+                    Err(w2) if trace => eprintln!(
+                        "[text-borrow] {}: `{}` not tested either — {w2} (over {})",
+                        def.name(),
+                        vars.name(v),
+                        match narrow {
+                            Value::Block(b) => b.name,
+                            _ => "the body",
+                        }
+                    ),
+                    Err(_) => {}
+                }
+            }
             temps.remove(&v);
             locals.remove(&v);
             why.insert(v, w);
         }
     }
     // A local whose source was just refused has lost its borrow's source: repeat the
-    // binding test until nothing moves.
+    // binding test until nothing moves.  A TESTED local is no source: its bind may answer
+    // its own copy, which the next bind overwrites.
     loop {
-        let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
+        let admitted: HashSet<u16> = temps
+            .union(&locals)
+            .copied()
+            .filter(|v| !out.tested.contains_key(v))
+            .collect();
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
             Value::Block(_) => fmt_own(to),
+            Value::Call(..) if fmt_own(to) => true,
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4328,6 +4652,8 @@ pub fn borrowed_store_texts(
             why.insert(v, "bound from a text that does not borrow");
         }
     }
+    out.tested.retain(|v, _| locals.contains(v));
+    out.work.retain(|v| locals.contains(v) || temps.contains(v));
     // `@FR-R-SliceBorrow` — the admitted locals with a slice among their bindings, for the
     // census and the trace.
     let slices: HashSet<u16> = locals
@@ -4343,8 +4669,10 @@ pub fn borrowed_store_texts(
         for v in temps.iter().chain(locals.iter()) {
             let what = if slices.contains(v) {
                 "a slice of a parameter's text"
+            } else if out.tested.contains_key(v) {
+                "a parameter's text while its store is not the return buffer's"
             } else if fmt_bound.contains(v) {
-                "a format's work text"
+                "a format's or a call's work text"
             } else {
                 "a parameter's text"
             };
@@ -4420,6 +4748,103 @@ fn own_format_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
     (mentions(body) == mentions(to) + bookkeeping).then_some(work)
 }
 
+/// `@FR-R-TextBorrow`'s call clause — the work text of the call `to` when the call's result
+/// IS that work text and the text is the call's OWN: `to` calls a user function with one
+/// hidden `&text` work buffer whose every return (and tail) is that buffer, the caller hands
+/// it a `default ref` block over its own work local, and nothing else in `body` names that
+/// local but its declaration and release (the format clause's bookkeeping).  Only another
+/// run of this call rewrites the text, so a local bound to it may borrow it as the format
+/// clause's local borrows its format.  `LOFT_NO_CALL_TEXT_BORROW=1` turns the clause off.
+fn own_call_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| !std::env::var("LOFT_NO_CALL_TEXT_BORROW").is_ok_and(|v| v != "0")) {
+        return None;
+    }
+    let Value::Call(d, args) = to.unspan() else {
+        return None;
+    };
+    if (*d as usize) >= data.definitions.len() {
+        return None;
+    }
+    let callee = data.def(*d);
+    if matches!(callee.code(), Value::Null)
+        || !matches!(callee.returned().base(), Type::Text(_))
+        || callee.text_work_buffers() != 1
+    {
+        return None;
+    }
+    let wi = callee.attributes().iter().position(|a| {
+        a.hidden && matches!(a.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+    })?;
+    let out = callee.variables().var(&callee.attributes()[wi].name);
+    if out == u16::MAX {
+        return None;
+    }
+    // Every return of the callee answers its work buffer.
+    let is_out = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == out);
+    if callee
+        .code()
+        .any_node(&mut |n| matches!(n, Value::Return(r) if !is_out(r)))
+    {
+        return None;
+    }
+    if let Value::Block(top) = callee.code().unspan()
+        && let Some(tail) = top.operators.last()
+        && !matches!(tail.unspan(), Value::Return(_))
+        && !is_out(tail)
+    {
+        return None;
+    }
+    // The caller's work local, handed through a `default ref` block.
+    let Value::Block(b) = args.get(wi)?.unspan() else {
+        return None;
+    };
+    if b.name != "default ref" {
+        return None;
+    }
+    let work = match b.operators.first().map(Value::unspan) {
+        Some(Value::Set(w, init)) if matches!(init.unspan(), Value::Text(_)) => *w,
+        _ => return None,
+    };
+    let mentions = |node: &Value| {
+        let mut c = 0usize;
+        node.any_node(&mut |n| {
+            if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == work) {
+                c += 1;
+            }
+            false
+        });
+        c
+    };
+    // The declaration among the outermost statements, and EVERY release of the work local:
+    // an early exit releases it before its `return`, and a release emits no code on native
+    // (the work `String` lives to the frame's end), so none ends the borrow's text early.
+    let declared = match body.unspan() {
+        Value::Block(top) => top
+            .operators
+            .iter()
+            .filter(|st| {
+                matches!(st.unspan(), Value::Set(w, init)
+                    if *w == work && matches!(init.unspan(), Value::Text(_)))
+            })
+            .count(),
+        _ => 0,
+    };
+    let mut released = 0usize;
+    body.any_node(&mut |n| {
+        if let Value::Call(f, a) = n
+            && (*f as usize) < data.definitions.len()
+            && data.def(*f).name() == "OpFreeText"
+            && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(w) if *w == work))
+        {
+            released += 1;
+        }
+        false
+    });
+    let bookkeeping = declared + released;
+    (mentions(body) == mentions(to) + bookkeeping).then_some(work)
+}
+
 /// Is every binding of `v` in `body` one that `ok` accepts (a null declaration aside)?
 fn text_bound_only_by(body: &Value, v: u16, ok: &dyn Fn(&Value) -> bool) -> bool {
     !body.any_node(&mut |n| {
@@ -4479,9 +4904,10 @@ fn frame_minted_locals(
     data: &Data,
     vars: &crate::variables::Function,
     body: &Value,
+    seeds: &[u16],
 ) -> HashSet<u16> {
     let mut set: HashSet<u16> = (0..vars.count())
-        .filter(|&v| !vars.is_argument(v) && names_a_store(vars.tp(v)))
+        .filter(|&v| (!vars.is_argument(v) || seeds.contains(&v)) && names_a_store(vars.tp(v)))
         .collect();
     body.any_node(&mut |n| {
         if let Value::Call(d, args) = n
@@ -4489,12 +4915,20 @@ fn frame_minted_locals(
         {
             let def = data.def(*d);
             let slot_write = matches!(def.name(), "OpDatabase" | "OpDatabaseNP");
+            // A callee's hidden RETURN BUFFER is handed by slot so the callee can build into
+            // it; the store it builds in is that buffer's own (a fresh one from a null slot),
+            // so the local stays minted.  What the callee writes elsewhere is the writer
+            // test's question (`callee_writes_only_its_buffer`).
+            let buffer_at = (!matches!(def.code(), Value::Null))
+                .then(|| def.hidden_return_buffer_attr())
+                .flatten();
             for (i, a) in args.iter().enumerate() {
                 if let Value::Var(x) = a.unspan() {
-                    let by_slot = def.attributes().get(i).is_some_and(|at| {
-                        (at.constant && !(slot_write && i == 0))
-                            || matches!(at.typedef.base(), Type::RefVar(_))
-                    });
+                    let by_slot = Some(i) != buffer_at
+                        && def.attributes().get(i).is_some_and(|at| {
+                            (at.constant && !(slot_write && i == 0))
+                                || matches!(at.typedef.base(), Type::RefVar(_))
+                        });
                     if by_slot {
                         set.remove(x);
                     }
@@ -4541,8 +4975,85 @@ fn minted_expr(e: &Value, data: &Data, minted: &HashSet<u16>) -> bool {
         {
             args.first().is_some_and(|a| minted_expr(a, data, minted))
         }
+        // A user call that builds into its hidden return buffer answers that buffer: the
+        // value is in whatever store the buffer argument names.
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && !matches!(data.def(*d).code(), Value::Null) =>
+        {
+            data.def(*d)
+                .hidden_return_buffer_attr()
+                .and_then(|i| args.get(i))
+                .is_some_and(|a| minted_expr(a, data, minted))
+        }
         _ => false,
     }
+}
+
+/// The tested clause's scope of text local `v`: the innermost block holding every mention of
+/// `v` but its LITERAL binds, whose result is no text — the body when none is.  A literal
+/// bind holds static bytes no write can move, so the borrow lives from a store-read bind to
+/// the uses after it; and a block whose value is not a text cannot hand the borrow out (a
+/// text leaving otherwise is an escape `text_escapes` refuses).
+fn tested_scope<'a>(body: &'a Value, v: u16, data: &Data) -> &'a Value {
+    // A literal bind, the null text's bind and the text's release (`OpFreeText`, no code for
+    // a borrow) are not mentions the borrow lives across.
+    fn count(node: &Value, v: u16, data: &Data) -> usize {
+        let mut c = 0usize;
+        let mut skip = 0usize;
+        node.any_node(&mut |n| {
+            match n {
+                Value::Set(x, to)
+                    if *x == v
+                        && (matches!(to.unspan(), Value::Text(_) | Value::Null)
+                            || call_named(to, data, "OpConvTextFromNull").is_some()) =>
+                {
+                    skip += 1;
+                }
+                Value::Call(_, args)
+                    if call_named(n, data, "OpFreeText").is_some()
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
+                {
+                    skip += 1;
+                }
+                Value::Var(x) | Value::Set(x, _) if *x == v => c += 1,
+                _ => {}
+            }
+            false
+        });
+        // A skipped release's operand is a `Var` the walk counted on its own.
+        c.saturating_sub(skip)
+    }
+    fn size(node: &Value) -> usize {
+        let mut s = 0usize;
+        node.any_node(&mut |_| {
+            s += 1;
+            false
+        });
+        s
+    }
+    fn walk<'a>(
+        node: &'a Value,
+        v: u16,
+        data: &Data,
+        total: usize,
+        best: &mut Option<(&'a Value, usize)>,
+    ) {
+        if let Value::Block(b) = node
+            && !matches!(b.result.base(), Type::Text(_))
+            && count(node, v, data) == total
+        {
+            let s = size(node);
+            if best.is_none_or(|(_, bs)| s < bs) {
+                *best = Some((node, s));
+            }
+        }
+        node.for_each_child(&mut |c| walk(c, v, data, total, best));
+    }
+    let total = count(body, v, data);
+    let mut best: Option<(&Value, usize)> = None;
+    walk(body, v, data, total, &mut best);
+    best.map_or(body, |(b, _)| b)
 }
 
 /// The innermost statement block (a `void` block) holding every mention of `v` — the body
@@ -4619,19 +5130,112 @@ fn collect_void_blocks<'a>(node: &'a Value, out: &mut Vec<&'a Value>) {
     }
 }
 
+/// `LOFT_NO_TESTED_BORROW=1` — `@FR-R-TextBorrow`'s tested clause off: a text local whose
+/// scope writes the return buffer copies again.
+fn tested_borrow_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_TESTED_BORROW").is_ok_and(|v| v != "0"))
+}
+
+/// The parameters text local `v`'s reads are rooted in — every binding a text literal, a
+/// plain text parameter (the caller's `&str`, no store) or `OpGetText(R, f)` with `R` a
+/// projection of a parameter — or `None` when a binding is anything else.
+fn param_roots_of(
+    body: &Value,
+    v: u16,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Option<Vec<u16>> {
+    fn root(r: &Value, data: &Data, vars: &crate::variables::Function) -> Option<u16> {
+        match r.unspan() {
+            Value::Var(p) if vars.is_argument(*p) => Some(*p),
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                root(args.first()?, data, vars)
+            }
+            _ => None,
+        }
+    }
+    let mut roots: Vec<u16> = Vec::new();
+    let mut ok = true;
+    body.any_node(&mut |n| {
+        if let Value::Set(x, to) = n
+            && *x == v
+        {
+            match to.unspan() {
+                Value::Text(_) | Value::Null => {}
+                Value::Var(s) if vars.is_argument(*s) => {}
+                _ => match call_named(to, data, "OpGetText")
+                    .and_then(|a| a.first())
+                    .and_then(|r| root(r, data, vars))
+                {
+                    Some(p) if !roots.contains(&p) => roots.push(p),
+                    Some(_) => {}
+                    None => ok = false,
+                },
+            }
+        }
+        false
+    });
+    (ok && !roots.is_empty()).then_some(roots)
+}
+
+thread_local! {
+    static BUFFER_WRITERS_OPEN: std::cell::RefCell<HashSet<u32>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+/// The tested clause's callee — does user function `d` write no store but the hidden return
+/// buffer it is handed, and is that buffer, at this call, a store in `minted`?  Its own body
+/// answers by [`foreign_store_writer`] with its buffer seeded as minted; a call back into a
+/// body under check answers yes.
+fn callee_writes_only_its_buffer(
+    d: u32,
+    args: &[Value],
+    data: &Data,
+    minted: &HashSet<u16>,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let def = data.def(d);
+    let Some(attr) = def.hidden_return_buffer_attr() else {
+        return false;
+    };
+    if !matches!(args.get(attr).map(Value::unspan), Some(Value::Var(x)) if minted.contains(x)) {
+        return false;
+    }
+    let Some(rb) = retbuf_var(data, d) else {
+        return false;
+    };
+    // A recursive call answers yes while its own body is being checked: the property is
+    // that every write lands in the buffer handed in, so a write that breaks it is in a
+    // body this walk reads (the greatest fixpoint, as `in_place_only_writer` assumes none).
+    if !BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().insert(d)) {
+        return true;
+    }
+    let cvars = def.variables();
+    let inner = frame_minted_locals(data, cvars, def.code(), &[rb]);
+    let clean =
+        foreign_store_writer(def.code(), data, &inner, cache, active, Some(cvars)).is_none();
+    BUFFER_WRITERS_OPEN.with(|o| o.borrow_mut().remove(&d));
+    clean
+}
+
 /// The first reason running `node` might grow, free or rewrite a text block of a store the
 /// frame did NOT mint — or `None` when every store writer names only `minted` stores or sets
 /// a scalar in place.  A native writer must NAME what it writes: a store operand, or a slot
 /// operand spelled as a variable (`OpDatabase(v, tp)`), each one minted; a writer that names
 /// none (a generator's resume, a store-minting cast), or takes an operand of another kind (a
 /// fn-ref, a tuple), is refused.  A user callee may run only if it writes no store, or writes
-/// one only in place.
+/// one only in place.  Given the variable table, the address of a TEXT local
+/// (`OpCreateStack`, the slot a callee formats into) is no writer either: it names the frame's
+/// own `String`, never store memory — the same allowance the header gate makes.
 fn foreign_store_writer(
     node: &Value,
     data: &Data,
     minted: &HashSet<u16>,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    vars: Option<&crate::variables::Function>,
 ) -> Option<&'static str> {
     let mut why = None;
     node.any_node(&mut |n| match n {
@@ -4653,13 +5257,22 @@ fn foreign_store_writer(
             if !matches!(def.code(), Value::Null) {
                 if call_writes_store(*d, data, cache, active, None)
                     && !in_place_only_writer(*d, data, cache, active, None)
+                    && !(vars.is_some()
+                        && callee_writes_only_its_buffer(*d, args, data, minted, cache, active))
                 {
                     why = Some("a callee that writes a store in its scope");
                     return true;
                 }
                 return false;
             }
-            if native_op_is_store_free(def) || IN_PLACE_SET_OPS.contains(&name) {
+            // Given the variable table, `OpPutRef` is no writer either: it binds a reference
+            // LOCAL (the slot rule has already taken that local out of `minted`, so a write
+            // through it later is judged as one through a store it may name).
+            if native_op_is_store_free(def)
+                || IN_PLACE_SET_OPS.contains(&name)
+                || text_stack_ref(name, args, vars)
+                || (vars.is_some() && name == "OpPutRef")
+            {
                 return false;
             }
             let mut named = false;
@@ -4680,6 +5293,10 @@ fn foreign_store_writer(
                         named = true;
                     }
                 } else if names_a_store(&at.typedef) {
+                    // `OpAppendVector`'s source is READ (copied from), never written.
+                    if name == "OpAppendVector" && i == 1 {
+                        continue;
+                    }
                     if !minted_expr(a, data, minted) {
                         why = Some("a writer to a store the frame did not mint in its scope");
                         return true;
@@ -7226,6 +7843,53 @@ fn fresh_text_set(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
         && matches!(args[0].unspan(), Value::Var(e) if fresh.contains(e))
 }
 
+/// The text-set operators `(R-Header)`'s text clause admits: each writes one text slot of
+/// the record it is given, claiming the new text's record and freeing the old one in that
+/// record's store.  Neither changes a vector's record or length, so a held header survives.
+fn is_text_set(name: &str) -> bool {
+    matches!(name, "OpSetText" | "OpSetTextReplace")
+}
+
+/// The ROOT variable of every text set in `body` — the store each one grows — or `None` when
+/// one's target has a root this cannot name.  A target is a variable or a projection of
+/// one (an element, a field), whose store is its root's (`StoreFacts::distinct` reads the
+/// root's dep chain).
+fn text_set_roots(body: &Block, data: &Data) -> Option<Vec<u16>> {
+    fn root(v: &Value, data: &Data) -> Option<u16> {
+        match v.unspan() {
+            Value::Var(r) => Some(*r),
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpGetVector" | "OpGetVectorNullable" | "OpGetField"
+                    ) =>
+            {
+                root(args.first()?, data)
+            }
+            _ => None,
+        }
+    }
+    let mut roots: Vec<u16> = Vec::new();
+    let mut known = true;
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && is_text_set(data.def(*d).name())
+            {
+                match args.first().and_then(|t| root(t, data)) {
+                    Some(r) if !roots.contains(&r) => roots.push(r),
+                    Some(_) => {}
+                    None => known = false,
+                }
+            }
+            false
+        });
+    }
+    known.then_some(roots)
+}
+
 /// `LOFT_NO_FRESH_TEXT_SET=1` — a text written into a just-minted element blocks the loop's
 /// header hold again.
 fn fresh_text_set_enabled() -> bool {
@@ -7395,6 +8059,8 @@ fn blocks_header_hoist(
                 || fresh_delivery
                 || record_copy
                 || fresh_copy
+                // `(R-Header)`'s text clause: the target and value still walk below.
+                || (known && tiers.text_set && is_text_set(data.def(*d).name()))
             {
                 false
             } else if call_writes_store(*d, data, cache, active, owned) {
@@ -7415,7 +8081,7 @@ fn blocks_header_hoist(
     })
 }
 
-fn call_writes_store(
+pub(super) fn call_writes_store(
     d_nr: u32,
     data: &Data,
     cache: &mut HashMap<u32, bool>,
@@ -9403,14 +10069,23 @@ fn group_covers_type(
                             Some(Value::Var(u)) if *u == target)) => {}
             // A WHOLE-record copy into the element (`self.items += [p]`, `p` a value of the
             // element type delivered field by field) writes every field: it covers the type
-            // when the element owns no heap.  A heap-owning element keeps the prefill — the
-            // copy's fresh-destination path trusts the zeroed handles the prefill wrote.
+            // when the element owns no heap.  A heap-owning element is covered too when the
+            // copy is flagged FRESH (`keys::COPY_FRESH_DEST`) for this very type: such a copy
+            // never reads its destination — no `remove_claims`, then `copy_block` over every
+            // byte and fresh handles from `copy_claims`, or every byte zeroed for a null
+            // source (`Stores::copy_null_into`) — so the prefill's zeroed handles are read by
+            // nothing.  Unflagged, the copy releases what the destination holds, and only the
+            // prefill makes that nothing.
             Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpCopyRecord"
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
             {
-                return !stores.owns_heap(tp);
+                let fresh_same_type = matches!(args.get(2).map(Value::unspan),
+                    Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
+                        n & crate::keys::COPY_FRESH_DEST != 0
+                            && n & crate::keys::COPY_TP_MASK == tp));
+                return fresh_same_type || !stores.owns_heap(tp);
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
@@ -12882,7 +13557,9 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                         .map_or(u16::MAX, |a| cvars.var(&a.name));
                     let empty = HashSet::new();
                     let offs = view_offs.get(tp).unwrap_or(&empty);
-                    if v == u16::MAX || !local_uses_ok(cdef.code(), v, &c, &served, offs, None) {
+                    if v == u16::MAX
+                        || !local_uses_ok(cdef.code(), v, &c, &served, offs, None, &HashSet::new())
+                    {
                         declined_params.push((caller, *idx));
                     }
                 }
@@ -16374,7 +17051,8 @@ pub fn value_locals_in(
                             vars.name(*v)
                         );
                     }
-                    local_uses_ok(body, *v, &c, &served, offs, phantom).then_some((*v, d))
+                    local_uses_ok(body, *v, &c, &served, offs, phantom, &leaves.objects)
+                        .then_some((*v, d))
                 })
                 .collect();
             let stable = kept.len() == cands.len();
@@ -16471,6 +17149,7 @@ fn local_uses_ok(
     served: &HashSet<usize>,
     view_offs: &HashSet<i64>,
     phantom: Option<&HashSet<usize>>,
+    value_objects: &HashSet<usize>,
 ) -> bool {
     let (data, admitted, params) = (c.data, c.admitted, c.params);
     // The layout this local carries, when the walk already holds it as a candidate: a
@@ -16579,7 +17258,21 @@ fn local_uses_ok(
                         served.contains(&(std::ptr::from_ref(a) as usize))
                             || served.contains(&(std::ptr::from_ref(a.unspan()) as usize))
                     });
-                accounted += release_uses(body, name, args, v, copies || src_served);
+                // loft#2014 — a store-identity test whose OTHER operand is a value local, or
+                // the work-ref of a build the value form converts, releases nothing on either
+                // path: neither value is in a store, so the guard is moot rather than
+                // path-dependent, and the test is served.
+                // Never for a record that owns a DROP hook: its release is observable
+                // (`(H-Drop)`), and the guard is what times it — the drop gate's
+                // `q_default_param_var_ret` ran the hook before a read when it was moot.
+                let droppable = |w: u16| {
+                    data.type_owns_droppable_anywhere(data.def(c.def_nr).variables().tp(w))
+                };
+                let moot = |w: u16| {
+                    !droppable(w)
+                        && (c.locals.contains_key(&w) || converted_build_ref(body, value_objects, w))
+                };
+                accounted += release_uses(body, name, args, v, copies || src_served, &moot);
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
                 // one): the tuple's range is materialised into the destination.  A bind
                 // that VIEWS the sub-record (`q = w.pos`) is no copy and is not here.
@@ -16629,12 +17322,30 @@ fn is_presence_test(name: &str, args: &[Value], local: u16) -> bool {
 /// side of a store-identity test — but not a test whose answer turns on the path
 /// ([`identity_turns_on_path`]).  `settled`: the caller already decided the first operand's
 /// use (a copy it declines, or a source it served as a leaf read).
-fn release_uses(body: &Value, name: &str, args: &[Value], v: u16, settled: bool) -> u32 {
+fn release_uses(
+    body: &Value,
+    name: &str,
+    args: &[Value],
+    v: u16,
+    settled: bool,
+    moot: &dyn Fn(u16) -> bool,
+) -> u32 {
     let arg_is_v =
         |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
     let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
     if identity && identity_turns_on_path(body, args) {
-        return 0;
+        // loft#2014 — unless every other operand is a value local or a converted build:
+        // then nothing is released on any path and the constant "distinct" is right.
+        let others: Vec<u16> = args
+            .iter()
+            .filter_map(|a| match a.unspan() {
+                Value::Var(w) if *w != v => Some(*w),
+                _ => None,
+            })
+            .collect();
+        if others.is_empty() || !others.iter().all(|&w| moot(w)) {
+            return 0;
+        }
     }
     let first = arg_is_v(0)
         && !settled
@@ -16643,6 +17354,24 @@ fn release_uses(body: &Value, name: &str, args: &[Value], v: u16, settled: bool)
             "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
         );
     u32::from(first) + u32::from(identity && arg_is_v(1))
+}
+
+/// Is local `w` the work-ref an `Object` build the value form converts (`objects`, by the
+/// block's address) ends in — the build's own slot, which under the value form is a tuple
+/// leaf in no store (loft#2014)?
+fn converted_build_ref(body: &Value, objects: &HashSet<usize>, w: u16) -> bool {
+    let mut found = false;
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "Object"
+            && objects.contains(&(std::ptr::from_ref(&**bl) as usize))
+            && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+        {
+            found = true;
+        }
+        found
+    });
+    found
 }
 
 /// A store-identity test answers "distinct" for every value local — it is in no store.  Between

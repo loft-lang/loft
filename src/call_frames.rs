@@ -31,14 +31,13 @@ thread_local! {
 ///
 /// Read by `cr_stack_overflow`, which exits the process for an ordinary overflow
 /// and unwinds for this one, and by the panic hook, which stays silent for a
-/// fault that is about to be reported through arc C's channel instead.
+/// fault that is about to be reported through the driver's own channel instead.
 #[must_use]
 pub fn in_lazy_driver() -> bool {
     IN_LAZY_DRIVER.with(std::cell::Cell::get)
 }
 
-/// Mark this thread as running (or no longer running) a lazy driver — the window
-/// [`in_lazy_driver`] answers for.
+/// Mark whether this thread runs a lazy driver — the window [`in_lazy_driver`] answers for.
 pub fn set_in_lazy_driver(inside: bool) {
     IN_LAZY_DRIVER.with(|f| f.set(inside));
 }
@@ -161,7 +160,7 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
         }
     });
     CALL_DEPTH.set(depth + 1);
-    // @PLAN49 T1 — refresh the shared breadcrumb at every native fn
+    // Refresh the shared breadcrumb at every native fn
     // entry so a watchdog-fired hard-kill identifies the most recent
     // loft fn we entered.  Single combined call.  When the timeout
     // is not armed, the body is just one relaxed atomic load + branch
@@ -327,7 +326,7 @@ thread_local! {
 
 /// The library index of the static call in flight — the only way a
 /// `Call = fn(&mut Stores, &mut DbRef)` handler learns WHICH binding it is
-/// serving. Read by the `#c` dispatcher (@PLN24 arc B) for the same reason the
+/// serving. Read by the `#c` dispatcher for the same reason the
 /// native auto-dispatcher reads it.
 #[must_use]
 pub fn current_lib_idx() -> u16 {
@@ -339,7 +338,7 @@ pub fn set_current_lib_idx(idx: u16) {
     CURRENT_LIB_IDX.with(|c| c.set(idx));
 }
 
-/// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance step.
+/// One eval-TOS / frame-reserve advance step.
 ///
 /// When `aligned`, round `size` up to 8 (the max alignment on the
 /// stack) so successive pushes stay 8-aligned and every typed write
