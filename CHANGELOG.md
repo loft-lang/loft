@@ -111,6 +111,12 @@ naming the two types); `len(user#errors) > 0` already written keeps its meaning.
 `"{user#errors}"` prints the vector, `["line 1:1 path:"]`, where it printed the bare text:
 write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is refused.
 
+**A `spatial` slice is iterated, not bound.**  `b = xs[(0, 0)..(2, 2)]` (and the open
+`xs[(x, y)..]` and capped `xs[(x, y)..:n]` forms) is refused, as the same line on a `sorted`,
+`index` or `trie` already was: write `for p in xs[(0, 0)..(2, 2)] { … }`, or
+`[for p in xs[(0, 0)..(2, 2)] { p }]` for a vector.  Bound as a value it compiled and held one
+meaningless record, so a program that did this was answering wrong.
+
 ### New
 
 **A library can offer a few functions by their bare name.**  A library that auto-loads

@@ -3219,6 +3219,17 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let uncapped = Value::Long(crate::database::SLICE_UNCAPPED);
             (Value::Int(0), vec![Value::Int(0); max_axes], uncapped)
         };
+        // @FR-Slice-KeyedIter — the third keyed kind, refused like the other two: a slice
+        // bound as a value answered one bogus record on both backends (loft#2035).
+        if !self.first_pass && !self.iterable_context {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a spatial slice is a `for`-loop iterator, not a value — iterate it \
+                 directly (`for x in xs[(x1, y1)..(x2, y2)] {{ … }}`) or materialise a vector \
+                 with a comprehension (`[for x in xs[(x1, y1)..(x2, y2)] {{ x }}]`)"
+            );
+        }
         if !self.first_pass {
             let tp = self.get_type(typedef);
             let fn_nr = self.data.def_nr("n_spatial_range");
