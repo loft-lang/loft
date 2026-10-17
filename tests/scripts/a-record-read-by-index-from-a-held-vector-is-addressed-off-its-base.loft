@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: is stored into the index of the non-null type
 //
 // `@FR-R-RecPtr`'s index clause and choice clause, and `@FR-H-ClearRelease`'s scalar clear.
 //
@@ -53,7 +54,8 @@ fn negative(p: const vector<Coord>) -> integer {
   t
 }
 
-// c4 — a null index reads the zero record: 15 + 0 + 49.
+// c4 — a null index reads the zero record: 15 + 0 + 49 (the warning is the point: the index
+// is null on purpose).
 fn null_index(p: const vector<Coord>) -> integer {
   n = len(p);
   t = 0;
@@ -69,6 +71,15 @@ fn null_index(p: const vector<Coord>) -> integer {
 fn bump(p: &vector<Coord>) {
   n = len(p);
   for i in 0..n { a = p[i]?; a.px += 100; }
+}
+
+// c5b — the same write through a view of a LOCAL's element, where the clause holds the
+// header: 101 + 107 + 104.
+fn bump_local() -> integer {
+  q = pts();
+  n = len(q);
+  for i in 0..n { a = q[i]?; a.px += 100; }
+  (q[0]?.px) + (q[1]?.px) + (q[2]?.px)
 }
 
 // c6 — the choice beside a push into another store: b(7,2) → 72, a(7,2) → 72, b(1,5) → 15.
@@ -95,6 +106,23 @@ fn or_local(p: const vector<Coord>) -> vector<integer> {
     out += [lo.px];
   }
   out
+}
+
+// c7b — a choice whose other branch lives in the store the loop grows: `o` is `out`'s first
+// element and the push after the choice moves `out`'s record, so `lo` may hold no address
+// (the clause asks EVERY branch to be apart from the growth).  a(1,5) → 1, o → 50, a(4,9) → 4.
+fn mixed(p: const vector<Coord>) -> integer {
+  out: vector<Coord> = [Coord { px: 50, py: 0 }];
+  t = 0;
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    o = out[0]?;
+    lo = if a.py > 4 { a } else { o };
+    out += [Coord { px: i, py: i }];
+    t += lo.px;
+  }
+  t
 }
 
 // c8 — a text field of a view by index: 1*10+2 + 2*10+3.
@@ -127,7 +155,10 @@ fn c9() {
   assert(t2 == 13, "c9 local {t2}");
 }
 
-// c10 — the scalar clear of a slice: the slice empties, its source keeps its bytes.
+// c10 — the scalar clear of a slice: the slice empties, its source keeps its bytes.  Bound
+// before `s = []`, the slice once minted no store of its own (the first pass's rebind left a
+// dependency of `s` on itself, read as a backing): the interpreter read it as null and native
+// named a variable it never declared.
 fn c10() {
   big: vector<u8> = [10 as u8, 11 as u8, 12 as u8, 13 as u8, 14 as u8];
   s: vector<u8> = big[1..4];
@@ -136,6 +167,12 @@ fn c10() {
   s += [99 as u8];
   assert(len(s) == 1 && (s[0] ?? 0) == 99 as u8, "c10 refilled {s}");
   assert(len(big) == 5 && (big[1] ?? 0) == 11 as u8 && (big[3] ?? 0) == 13 as u8, "c10 source {big}");
+  // A second slice into the same local clears the first — a view of `big` — before copying:
+  // the view is dropped, never written, so `big` keeps 10 11 and `w` reads 10 11.
+  w: vector<u8> = big[1..4];
+  w = big[0..2];
+  assert(len(w) == 2 && (w[0] ?? 0) == 10 as u8 && (w[1] ?? 0) == 11 as u8, "c10 reslice {w}");
+  assert(len(big) == 5 && (big[0] ?? 0) == 10 as u8 && (big[1] ?? 0) == 11 as u8, "c10 source after reslice {big}");
 }
 
 fn same(v: vector<integer>, want: vector<integer>) -> boolean {
@@ -153,8 +190,10 @@ fn main() {
   q = pts();
   bump(q);
   assert((q[0]?.px) == 101 && (q[1]?.px) == 107 && (q[2]?.px) == 104 && (q[2]?.py) == 9, "c5 {q[0]?.px} {q[1]?.px} {q[2]?.px}");
+  assert(bump_local() == 312, "c5b {bump_local()}");
   assert(same(lows(p), [72, 72, 15]), "c6 {lows(p)}");
   assert(same(or_local(p), [1, 50, 4]), "c7 {or_local(p)}");
+  assert(mixed(p) == 55, "c7b {mixed(p)}");
   v = [Named { k: 1, nm: "ab" }, Named { k: 2, nm: "cde" }];
   assert(texts(v) == 35, "c8 {texts(v)}");
   c9();

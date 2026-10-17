@@ -5138,7 +5138,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         is_var
             && *in_t != Type::Void
             && !self.keyed_local(vec)
-            && self.vars.tp(vec).depend().is_empty()
+            // A dependency on ITSELF names no backing: the first pass's `v = []` leaves one
+            // (the literal is built in `v`), and read as a backing it made a slice bound before
+            // that rebind mint nothing — the interpreter read the local as null, native named a
+            // variable it never declared.
+            && self.vars.tp(vec).depend().iter().all(|d| *d == vec)
             && !matches!(self.vars.tp(vec), Type::RefVar(_))
             // Argument vectors already have a caller-provided backing store; do not
             // allocate a local __vdb_N store that would be freed before the return.

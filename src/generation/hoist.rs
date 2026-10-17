@@ -1187,15 +1187,30 @@ impl StoreFacts<'_> {
         }
     }
 
+    /// A branch of a fork whose chain names no store: an inline reference with no
+    /// dependency is a view of SOMETHING the type did not record — an `if` arm lifted into
+    /// `__lift_N` is one — and no proof can be read off it.
+    fn unrecorded(&self, d: u16) -> bool {
+        if self.fork(d).is_some() {
+            return false;
+        }
+        self.terminal(d).is_none_or(|t| self.vars.is_inline_ref(t))
+    }
+
     fn distinct_at(&self, a: u16, b: u16, depth: u8) -> bool {
         // A forked chain: apart from `b` when every branch is (`@FR-R-RecPtr`'s choice
-        // clause).  Bounded, as the type's dependency sets are not cycle-free by contract.
+        // clause), and each branch names the store it lives in.  Bounded, as the type's
+        // dependency sets are not cycle-free by contract.
         if depth < 4 {
             if let Some(ds) = self.fork(a) {
-                return ds.iter().all(|d| self.distinct_at(*d, b, depth + 1));
+                return ds
+                    .iter()
+                    .all(|d| !self.unrecorded(*d) && self.distinct_at(*d, b, depth + 1));
             }
             if let Some(ds) = self.fork(b) {
-                return ds.iter().all(|d| self.distinct_at(a, *d, depth + 1));
+                return ds
+                    .iter()
+                    .all(|d| !self.unrecorded(*d) && self.distinct_at(a, *d, depth + 1));
             }
         }
         let assumed = |a: u16, b: u16| {
