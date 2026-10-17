@@ -32,6 +32,10 @@
 #   worklist       the rule-led walk's queue, ordered by the defects a walk of each rule is
 #                  expected to find (its chapter's historical yield × how exposed the rule is);
 #                  `--all` lists every candidate, the default the top 30
+#   pairs          the rule PAIRS a rule's own text names (`(Other)` or `@FR-Other` inside its
+#                  rules-block entry) where both rules are guarded yet no one guard file names
+#                  both — the composition the formal text promises and no test was written
+#                  for; `--chapter <name>` narrows it, `--all` lists every pair (default 40)
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
 #   claims         the LIMITATION sentences of the hand-written reference docs (LOFT*.md,
@@ -160,6 +164,26 @@ def defined_rules():
         fenced = "\n".join(_fenced_lines(open(path, encoding="utf-8").read()))
         for name in set(DEF_INLINE.findall(fenced)):
             out[name].append(os.path.basename(path))
+    return out
+
+
+def rule_bodies(rules):
+    """{tag: text} — each rule's rules-block entry, from its `(Name)` line to the next one.
+
+    Working chapters only: a `-history` companion records what a rule USED to say, and a pair
+    named there is not a composition the rules promise today.
+    """
+    out = collections.defaultdict(str)
+    for path in sorted(glob.glob(FORMAL + "/*.md")):
+        if path.endswith("-history.md"):
+            continue
+        cur = None
+        for line in _fenced_lines(open(path, encoding="utf-8").read()):
+            m = DEF_INLINE.match(line)
+            if m and m.group(1) in rules:
+                cur, line = m.group(1), line[m.end():]
+            if cur:
+                out[cur] += line + "\n"
     return out
 
 
@@ -1045,6 +1069,48 @@ def main():
         return 0
 
     cites = citations()
+
+    if cmd == "pairs":
+        # The combination question the per-rule tiers cannot ask.  A rule guarded alone and its
+        # neighbour guarded alone say nothing about the two together, and the formal text is
+        # where a composition is PROMISED: a rule's entry naming another rule.  The pair is
+        # read from the rules, never from the author's list, so it names compositions nobody
+        # thought to test.  "Names both" is the same proxy the guard tier is — a file that
+        # exercises a pair without citing it reads as a gap, so read a row as a question.
+        mention = re.compile(r"\(([A-Z][A-Za-z0-9-]{1,40})\)|@FR-([A-Z][A-Za-z0-9-]{1,40})")
+        pairs = set()
+        for a, text in rule_bodies(rules).items():
+            for m in mention.finditer(text):
+                b = m.group(1) or m.group(2)
+                if b in rules and b != a:
+                    pairs.add(tuple(sorted((a, b))))
+        files = collections.defaultdict(set)
+        for tag, where in citations_in(GUARD_DIRS, GUARD_EXTS).items():
+            if tag in rules:
+                files[tag] = {f for f, _n in where}
+
+        def chapter(tag):
+            return sorted(rules[tag])[0].removesuffix(".md")
+
+        both = [p for p in sorted(pairs) if files[p[0]] and files[p[1]]]
+        gaps = [p for p in both if not files[p[0]] & files[p[1]]]
+        want = sys.argv[sys.argv.index("--chapter") + 1] if "--chapter" in sys.argv else None
+        if want:
+            gaps = [p for p in gaps if want in (chapter(p[0]), chapter(p[1]))]
+        print(f"{len(pairs)} rule pairs the formal text names; {len(both)} with both rules "
+              f"guarded; {len(gaps)} that no guard file names together"
+              + (f" (touching {want})" if want else ""))
+        per = collections.Counter(chapter(a) for a, _b in gaps)
+        print("  " + "  ".join(f"{ch} {n}" for ch, n in per.most_common()))
+        shown = gaps if "--all" in sys.argv else gaps[:40]
+        for a, b in shown:
+            print(f"  @FR-{a:<24} @FR-{b:<24} {chapter(a)} / {chapter(b)}")
+        if len(shown) < len(gaps):
+            print(f"  … {len(gaps) - len(shown)} more (--all)")
+        print("\nA pair NAMED by no guard, which is not the same as one no guard exercises: "
+              "build the\ncomposition, hand-compute it, and cite both rules in the cell that "
+              "answers it.")
+        return 0
 
     if cmd == "sites":
         if len(sys.argv) < 3:

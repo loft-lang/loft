@@ -2850,6 +2850,10 @@ linkcheck-external:
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
 
+.PHONY: rule-pairs
+rule-pairs:  ## The rule pairs the formal text names that no guard file names together
+	@python3 scripts/rule_tags.py pairs $(ARGS)
+
 .PHONY: rule-worklist
 rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
 	@python3 scripts/rule_tags.py worklist $(ARGS)

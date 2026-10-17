@@ -371,6 +371,13 @@ evidence someone looked, not as proof the rule is defended.
    notion, the READ twin of a write. A root you cannot enumerate siblings for is a root you have
    not found yet.
 
+   **The other RULES are siblings too.**  A rule's entry that names another rule promises a
+   composition, and a guard of each alone says nothing about the two together.
+   `make rule-pairs` (`rule_tags.py pairs`) lists the pairs the formal text names where both
+   rules are guarded and no one guard file names both — read from the rules, so it names
+   pairings nobody thought to test.  It is the same naming proxy the guard tier is: a row is a
+   composition to build and hand-compute, and the cell that answers it cites both rules.
+
    **Order them shallowest first** — a cell a programmer reaches without knowing the language
    has edges, before one reached by composing four features nobody would naturally combine. A
    shallow cell that fails is the finding; a deep cell that fails is a note. ⚠ That is an
