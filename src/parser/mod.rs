@@ -2971,6 +2971,11 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
         || name == "OpNewRecord"
         || name == "OpAppendCopy"
         || name == "OpAppendVector"
+        // A span appended in one block (`r += src[a..b]`, `(R-ByteCopy)`) and a range kept in
+        // place (`r = r[a..b]`) write their first argument as the append and clear above do.
+        || name == "OpSliceVector"
+        || name == "OpAppendTextBytes"
+        || name == "OpKeepRange"
         || name == "OpAppendText"
         || name == "OpAppendCharacter"
         || name == "OpClearVector"

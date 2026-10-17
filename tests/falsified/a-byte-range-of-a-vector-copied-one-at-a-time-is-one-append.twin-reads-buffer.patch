@@ -1,0 +1,15 @@
+diff --git a/src/generation/append_twin.rs b/src/generation/append_twin.rs
+index 17a0a19bf..7c589fd3a 100644
+--- a/src/generation/append_twin.rs
++++ b/src/generation/append_twin.rs
+@@ -177,6 +177,10 @@ impl Scan<'_> {
+             // `(R-ByteCopy)` append of a span of ANOTHER vector — its source a value too.
+             // `OpInsertVector` is not among them: it inserts at an index counted from the
+             // buffer's start, which in a twin holds the caller's elements.
++            "OpSliceVector" if first_is_view => {
++                self.written = true; // SABOTAGE: the source may read the buffer
++                true
++            }
+             "OpAppendVector" | "OpAppendTextBytes" | "OpPreAllocVector" | "OpSliceVector"
+                 if first_is_view =>
+             {

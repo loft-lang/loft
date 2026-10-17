@@ -5498,9 +5498,12 @@ use a separate collection or add after the loop"
             *code = Value::Insert(vec![code.clone(), clear, append]);
             return Type::Void;
         }
+        // A `&vector` parameter appends a slice as a local does (`@FR-Slice-Value`); its `=`
+        // is a whole-value write-back and keeps the routes above.
         if materialisable_iter_shape
             && let Some(elm_tp) = iter_elm_tp.clone()
-            && matches!(f_type, Type::Unknown(_) | Type::Vector(_, _))
+            && (matches!(f_type, Type::Unknown(_) | Type::Vector(_, _))
+                || (op == "+=" && matches!(f_type.peel_link(), Type::Vector(_, _))))
             && var_nr != u16::MAX
             && matches!(op, "=" | "+=")
         {
@@ -5820,6 +5823,12 @@ use a separate collection or add after the loop"
             && crate::parser::vectors::is_collection(f_type.peel_link())
         {
             let dest = f_type.peel_link().clone();
+            // `@FR-Slice-Value` — a vector slice is a value wherever a vector is expected, and
+            // a `+=` source is such a place at every destination kind: `t.a += t.a[1..4]` and
+            // `p += p[1..4]` through a `&` parameter take the fresh vector a bind would make.
+            if let Some(vt) = self.iterator_as_vector(code, &s_type, &dest) {
+                s_type = vt;
+            }
             let kind = self.append_source(&dest, &s_type);
             // A keyed destination has no route for the WHOLE collection at any place kind, and
             // the two place kinds fail differently — which is why neither one alone settles it.
