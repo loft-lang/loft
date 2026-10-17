@@ -299,6 +299,8 @@ pub(crate) const VAR_USER_APPENDED: u32 = 59;
 pub(crate) const VAR_COPY_BOUND: u32 = 60;
 /// loft#1522 — a construction work-ref still names its store; the displacement free reads it.
 pub(crate) const VAR_BUFFER_WITNESSED: u32 = 61;
+/// loft#2034 — `const` before the type; the literal hoist's alias gate reads it.
+pub(crate) const VAR_VALUE_CONST: u32 = 62;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -1499,6 +1501,7 @@ mod tests {
         assert_eq!(pos(ids.variable, "rebind_orig"), VAR_REBIND_ORIG);
         assert_eq!(pos(ids.variable, "scope"), VAR_SCOPE);
         assert_eq!(pos(ids.variable, "buffer_witnessed"), VAR_BUFFER_WITNESSED);
+        assert_eq!(pos(ids.variable, "value_const"), VAR_VALUE_CONST);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);
