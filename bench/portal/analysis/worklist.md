@@ -195,6 +195,19 @@ generated) and `key_lt` taking the header its twin caller already holds: 8.04 �
 (−9.7 %); `decode` and `encode_bytes` level (by instruction count — their time moves ±2 % with
 code layout alone).  What is left of the row is the O(n²) rank loop, the twin's algorithm too.
 
+**graphics `fill_polygon` (6.45×, re-measured at `46d145499`), PRICED** (hand forms of the
+emitted Rust, three interleaved rounds each, hashes equal; 1.83 ms against Rust's 0.29 ms).
+By loft line: the two point reads per edge ~30 %, the per-scanline `polygon_crossings` call
+~22 %, `hline`'s per-pixel store ~21 %, the crossing push ~12 %.  Three steps, each on the last:
+(a) the return buffer's entry clear — emitted twice, each a `clear_vector_release` that walks
+the element type — as one plain length reset for a scalar element: −4 %; (b) `pc_ty = if
+pc_a.py < pc_b.py { pc_a } else { pc_b }` read through the chosen held address instead of
+`stores.store(&db).get_int` (`(R-RecPtr)` following a conditional alias of two record views):
+−13 %; (c) `pc_pts[i]?` taken as `base + i·16` off the held element base when `i` is in range,
+with no `DbRef` and no second `rec_ptr` (the out-of-range arm must read the `?` fallback's
+zero record, which the hand form did not): −29 %.  Together 1.83 → 1.10 ms (−40 %, ≈ 3.9×).
+`fill_triangle` (2.87×) and `fill_rect` (2.52×) share `hline` and are already under 3×.
+
 **X3 on `flow_layout_full`, PRICED in part** (six interleaved rounds, hashes equal, 10.92 ms at
 `c7f19c25a`).  Each run of `slice_runs` pays for its text three times: `buf_slice_text` pushes
 the characters into the caller's work `String`, the bind `s = buf_slice_text(…)` copies that
