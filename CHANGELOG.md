@@ -193,6 +193,11 @@ git do.
 
 ### Bug fixes
 
+**A `for` over a range whose start may be null no longer warns about its own loop
+variable.**  In `for i in n..5` with `n: integer?`, storing `i` somewhere that holds a plain
+`integer` warned that a null could land there, and at `u8` it was refused.  A null start makes
+the loop run no rounds, so `i` is never null and the store is fine; it now compiles cleanly.
+
 **A program in a browser page learns that its server is gone.**  `engine_host::run_client`
 returns once the server connection closes, after the disconnect event (`kind` 2) has reached
 `on_event`.  It did so in a desktop program and never in a browser page: a page whose server

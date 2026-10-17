@@ -4671,17 +4671,22 @@ impl Parser {
             iter_prelude.push(init_ivar);
             Value::Insert(iter_prelude)
         };
+        // @FR-I-RangeNull — a null bound empties the range before the first round, so the value
+        // a round yields is never null: the loop variable takes the bound's type without its
+        // `?` (loft#2036).  The counter above keeps `in_type`, whose null is its not-started
+        // state.
+        let elm_type = in_type.peel_optional().0.clone();
         *expr = Value::Iter(
             u16::MAX,
             Box::new(iter_init),
-            Box::new(v_block(ls, in_type.clone(), "Iter range")),
+            Box::new(v_block(ls, elm_type.clone(), "Iter range")),
             Box::new(Value::Null),
         );
         if reverse {
             self.lexer.token(")");
             self.reverse_iterator = false;
         }
-        Type::Iterator(Box::new(in_type), Box::new(Type::Null))
+        Type::Iterator(Box::new(elm_type), Box::new(Type::Null))
     }
 
     /// `@FR-I-For` — record on the current loop every PLACE a loop source reads: a variable,
