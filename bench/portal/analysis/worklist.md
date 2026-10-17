@@ -210,7 +210,11 @@ zero record, which the hand form did not): −29 %.  Together 1.83 → 1.10 ms (
 BUILT: (c) as `(R-RecPtr)`'s index clause in its sound form — the index named once, the
 binding as written past the end (−12 % where the unchecked hand form priced −29 %: the
 fallback stays in the loop); (b) as the choice clause (−10 %); (a) as the scalar clear (−7 %).
-1.84 → 1.35 ms (≈ 4.7×).  What is left is `hline`'s per-pixel store (~21 % of the row).
+1.84 → 1.35 ms (≈ 4.7×).  Then `hline`'s per-pixel store BUILT as `(R-Fill)`'s guarded clause
+(the fill of `lo..min(hi, N - base)`, spans of eight or more), the fill now tried before the
+chain guard whose plain copy of the loop had run in its place: 1.36 → 1.02 ms.  `bench/stats.py`
+at `0ba7bce2b`: `fill_polygon` 3.53× (6.45× before the arc), `fill_triangle` 2.23×, `fill_rect`
+1.91× — the row has left the cut.
 
 **X3 on `flow_layout_full`, PRICED in part** (six interleaved rounds, hashes equal, 10.92 ms at
 `c7f19c25a`).  Each run of `slice_runs` pays for its text three times: `buf_slice_text` pushes
