@@ -99,7 +99,46 @@ format decision (§ 6).
    (`anim_of`, `check_request`) and relational range facts (`fill_rect`).
 5. Price the rest: `invert`, `sphere`, `map_json`, `arguments/parse`, `rand_indices`.
 
-### The same cut on the x86-64 laptop — the steps, slowest row first
+### The laptop rows at 4.5× and over, toward 3× (measured at `2cf6c15ca`)
+
+`bench/stats.py`, calibrated: `check_request` 5.05×, `flow_layout_full` 4.83×, cbor `encode`
+4.69×; `pluginabi/request` 4.42× shares the decoder and the encoder.  `stage/pack_instances`
+measures 2.08× now; its committed 4.97× predates the `mesh_to_floats` fix.  The profiles are
+callgrind runs of single-row copies of each bench, loft's `--native-release` emission against
+its twin, with the hashes equal.  A price is cycles per op, three interleaved pinned rounds,
+of a LIBRARY-level form of the change in a scratch copy of the package.  It is the ceiling for
+the compiler rule that would make the natural spelling do the same.
+
+| row | loft / twin per op | where loft's excess goes | priced | after |
+|---|---|---|---|---|
+| `flow_layout_full` | 154 M / 22.5 M instr | `slice_runs` 59 % inclusive: 64 k calls per layout, each a vector, a `Run` record and a 1–2 character text, where the twin pushes a `&[char]` slice | F1 −10.6 %, F1+F2 −39.7 % | **≈ 2.9×** |
+| cbor `encode` | 113.5 M / 26.3 M instr | each of 20 keys per encode built in a vector of its own and copied into `keybuf` (`vector_add`); 13 stores created per encode, one per local vector of each `encode_map` call; the rank loop | E1 −15.5 % | ≈ 3.96× |
+| `check_request` | 11.6 k / 2.3 k instr per check | one decode per check (loft already shares it between the two questions, the twin decodes twice); per check: leaf reads 2.0 k, four span texts 1.4 k, three entry records 1.0 k, the decode's store 1.0 k, frees 0.8 k, record placement 0.6 k | none | — |
+
+- **F1 — an unread field is not built.**  `place_line`'s height loop asks `slice_runs` for runs
+  and reads only `.style`; every run's text is built and dropped.  The rule: a callee whose
+  result field no caller reads is specialised without that field's construction, as the
+  `__dv` / `__rg` variants already specialise by caller demand.  −10.6 % cycles (−18 % instr).
+- **F2 — a vector a callee builds and the caller walks once is streamed.**  `token_width` and
+  `place_line`'s box loop walk `slice_runs`' result once, straight away.  Inlined and fused, no
+  vector or `Run` record is made, and the run's text goes straight to `measure`.  −32.5 %
+  cycles on top of F1.  The text itself stays: `measure` is `fn(text, Style)`.  X3 (run views)
+  would remove it too, but 3× does not need it.
+- **E1 — a bound call result appended whole is appended in place.**  `k = encode(key);
+  koff += [len(keybuf)]; klen += [len(k)]; keybuf += k` → the key encoded by `encode__ap`
+  straight into `keybuf`, its length taken as the growth.  −15.5 % cycles (−14.3 % instr).
+  Next on the row, unpriced: the 13 stores per encode (~10 % by the profile: creating and
+  freeing a store is ~600–800 instructions), then the rank and emit loops (key-pair compare
+  ~90 instructions against the twin's ~36; the slice compare was priced and dropped).  E1 and
+  the stores reach ≈ 3.5×.  3× needs a third lever not yet found.
+- **`check_request` needs −42 % of its cycles.**  The decode's store is minted and freed per
+  call (`n_decode__dv` hands `read_value` a null buffer), and each map entry's key and value
+  temporaries are records freed after the copy.  Lending the decode's store across calls
+  (R-Reuse through a function boundary) and building entries in place are each ~15–20 % by the
+  profile, ≈ 3.5× together.  Below 3× needs the decode to build only what is read, which is
+  `(R-DecodeView)` carried from texts to entries (C141's direction, not yet decided for this
+  half).
+
 
 Eleven rows read over 5× in `results/laptop.tsv` (the full run at `cbe54eaa2`, every hash
 equal to its twin's); `map_json` (2.85×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.24×,
