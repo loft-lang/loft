@@ -64,6 +64,16 @@ field is refused at the declaration.  Cells in `admission_escape_suite_rejects_e
 and `a_scalar_field_has_no_append_right`.  Recorded on the issue for the owner: a library
 mutator (`m.items.clear()`) admitted by `(Cap-Call)` on a host field with no field grant.
 
+### D-cap-6 — a `#read` field leaked through content `==` — CLOSED (2026-10-18, loft#2053)
+
+D-cap-4 recorded the reads of a render, a JSON form, a `match` binding and a copy; content
+equality reads every field of both operands too, and recorded nothing, so a loop of
+`p == P { name: p.name, hidden: c }` recovered a field `p.hidden` was refused for (41, under a
+profile with no grant); `!=`, a vector `==` and a nested `o.inner == …` the same.  The
+comparison now records each operand as a whole-value read, a struct literal operand excepted
+(its field expressions are read at their own `.field` sites).  Cells:
+`loft-suite/rules/capabilities/Cap-Read/an-equality-reveals-a-private-field.loft`.
+
 ### D-cap-4 — a `#read` field leaked through a whole-value read, and a built value's read was refused — CLOSED (2026-10-07, loft#1929)
 
 `(Cap-Read)` was recorded at the `.field` site only, so rendering the struct (`"{p}"`, `:j`) and

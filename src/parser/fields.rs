@@ -3902,6 +3902,18 @@ impl Parser {
         }
     }
 
+    /// A sandboxed CONTENT comparison — `==` / `!=` read every field of both operands, so a
+    /// `#read`-linked member reached through one that is not the script's own is a read: a
+    /// loop of `p == P { …, hidden: c }` recovered a field `p.hidden` was refused for
+    /// (loft#2053).  A struct literal operand is built here, and its own field expressions are
+    /// recorded at their `.field` sites; any other operand is judged as a whole-value read.
+    pub(crate) fn sandbox_read_compared(&mut self, tp: &Type, subject: &Value) {
+        if matches!(subject.unspan(), Value::Block(b) if b.name == "Object") {
+            return;
+        }
+        self.sandbox_read_whole(tp, subject);
+    }
+
     fn collect_read_links(
         &self,
         tp: &Type,

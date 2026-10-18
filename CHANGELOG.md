@@ -205,6 +205,10 @@ git do.
 
 ### Bug fixes
 
+**A sandboxed script can no longer read a private field by comparing.**  A field linked
+`secret#read` was refused when read, printed or matched, but `p == P { …, hidden: c }` in a loop
+found its value.  Comparing host data with `==` or `!=` now needs the same grant as reading it.
+
 **The `avoidable-copy` advice no longer reports a move as a copy.**  Putting a value with an
 `OpDrop` into a struct or vector moves it, and the advice said it "could not be moved" because
 it was "still used after this point" — even when the only other use was on a branch that did not

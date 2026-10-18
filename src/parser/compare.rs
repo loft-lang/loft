@@ -664,6 +664,12 @@ impl Parser {
             // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
             // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
             // a keyed collection by its records, an enum value by its variant and then fields.
+            // `@FR-Cap-Read` — a content comparison reads every field of both operands.
+            if matches!(op, "==" | "!=") && list.len() == 2 && types.len() == 2 {
+                for (operand, tp) in list.iter().zip(types) {
+                    self.sandbox_read_compared(tp, operand);
+                }
+            }
             if matches!(op, "==" | "!=")
                 && list.len() == 2
                 && let Some(tp) = self.content_eq_type(types)
