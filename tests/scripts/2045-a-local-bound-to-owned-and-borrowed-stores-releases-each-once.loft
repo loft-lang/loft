@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2045, loft#2041, loft#2049, loft#2050, `@FR-O-Witness` / `@FR-O-Complete` — a record
+// local whose binds MIX a store of its own and a view releases each store it owns exactly
+// once, at the right time, whatever order the binds come in and however the scope pass splits
+// the local.  The owner
+// witness answers that per run, by store identity, so every bind must be classified right:
+//
+// - a bind of a store a COMPILER TEMP holds — an element of a call's result held by the call's
+//   work-ref, a `??` result held by its subject or its default's work-ref — is a view of that
+//   temp, never a store of the local's own (g1: the witness released the call's buffer a second
+//   time, a use-after-free; g2-g4: the bind hid the mix, so the call's store was never freed);
+// - a bind that READS A FIELD of a call's record result is the local's own store, and the temp
+//   the call is lifted into hands that store to the witness rather than freeing it at the end
+//   of the arm or loop body it ran in (g5, g6, loft#2049: the local read the freed record after
+//   the arm);
+// - a call whose result a witnessed local adopts never takes a pooled return buffer: the witness
+//   releases what it adopts, and the next pass would refill the freed store (g7: the second
+//   loop's split copy of the local is assigned once, so the pool admitted its buffer, loft#2050).
+//
+// Every value is hand-computed: an `Hx` weighs h * 100 + m, a `Bt` its id.  Each cell runs
+// twice, so a store freed by the first run and reused by the second shows.  The interpreter
+// and native answer the same, with no leak under `LOFT_STRICT_STORES=1` and no fault under
+// `LOFT_POISON=1`.  A POISON-GATE GUARD: g1, g5 and g7 read a freed store whose bytes are still
+// in place, so their values pass without `LOFT_POISON=1`, and only the poison sweep (or strict
+// stores) reads that half; g2-g4 are leaks, read by the leak check.
+//
+// @falsified-by: tests/falsified/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+//   CHANNEL: the PANIC on both backends under `LOFT_POISON=1` — g1 reads the poison pattern in
+//     the call buffer the witness freed.  Scored cell by cell on the control, every cell but
+//     the controls moves on both backends: g1 panics, g2a/g2b/g3/g4 leak one store each
+//     (`NEVER FREED`), g5 (arm taken), g6 and g7 report `USE AFTER FREE` under strict stores.
+//   WITNESS: native under `LOFT_POISON=1`: *g5 the arm taken* and *g6 a loop body* fail
+//     their asserts on the control, the field read from the poisoned `W` record.  Unpoisoned,
+//     every cell's value passes on the control too.
+//   HOLDS: g5 (arm not taken) and g8 pass on both trees.
+
+struct Hx { h: integer, m: integer }
+struct W { x: Hx, y: integer }
+struct E { q: integer, prev: Hx }
+struct S { es: vector<E> }
+struct Bt { id: integer }
+enum Sh { Sq { side: integer }, Ci { r: integer } }
+
+fn old_hx() -> vector<Hx> { [Hx { h: 7, m: 9 }, Hx { h: 8, m: 10 }] }
+fn mk(i: integer) -> Hx { Hx { h: 40 + i, m: 41 + i } }
+fn mkw(i: integer) -> W { W { x: Hx { h: 50 + i, m: 52 + i }, y: 0 } }
+fn maybe(a: integer) -> Bt? { if a < 0 { return null; } Bt { id: a } }
+fn msh(a: integer) -> Sh? { if a < 0 { return null; } Sq { side: a } }
+fn sv(s: Sh) -> integer { match s { Sq { side } => side, Ci { r } => r * 1000 } }
+fn wt(p: Hx) -> integer { p.h * 100 + p.m }
+
+// g1 — one name in two sibling loops: an element of a call's vector, then a parameter's.
+// Entries 0, 1 (7/9, 8/10) are cleared; 10 + 1/2 and 11 + 3/4 stay:
+// 10 * 10000 + 102 + 11 * 10000 + 304 = 210 406.
+fn g1(s: S, one: vector<Hx>) {
+  for i in 0..2 { pv = old_hx()[i]; s.es += [E { q: i, prev: pv }]; }
+  s.es = [];
+  for i in 0..2 { pv = one[i]; s.es += [E { q: 10 + i, prev: pv }]; }
+}
+
+// g2 — a call's result, then a `??` that takes its default (1 + 99) or its subject (1 + 3).
+fn g2a() -> integer {
+  m = maybe(1);
+  t = if m == null { 0 } else { m.id };
+  m = maybe(-1) ?? Bt { id: 99 };
+  (t + m.id)?
+}
+fn g2b() -> integer {
+  m = maybe(1);
+  t = if m == null { 0 } else { m.id };
+  m = maybe(3) ?? Bt { id: 99 };
+  (t + m.id)?
+}
+
+// g3 — a loop of `??` rebinds after a call (1 + 5 + 99 + 7), then a call again (+ 4) = 116.
+fn g3() -> integer {
+  m = maybe(1);
+  t = if m == null { 0 } else { m.id };
+  for a in [5, -1, 7] { m = maybe(a) ?? Bt { id: 99 }; t += m.id; }
+  m = maybe(4);
+  (t + m.id)?
+}
+
+// g4 — the same for a record enum: 1 + 5 + 9000 + 7 = 9013.
+fn g4() -> integer {
+  s = msh(1);
+  t = if s == null { 0 } else { sv(s) };
+  for a in [5, -1, 7] { s = msh(a) ?? Ci { r: 9 }; t += sv(s?); }
+  t
+}
+
+// g5 — a view, then a field of a call's record in an arm: 51/53 when taken, 1/2 when not.
+fn g5(one: vector<Hx>, c: boolean) -> integer {
+  pv = one[0];
+  if c { pv = mkw(1).x; }
+  wt(pv)
+}
+
+// g6 — the same in a loop body: 102 + 5052 + 5153 + 5254 = 15 561.
+fn g6(one: vector<Hx>) -> integer {
+  pv = one[0];
+  t = 0;
+  for i in 0..3 { t += wt(pv); pv = mkw(i).x; }
+  t + wt(pv)
+}
+
+// g7 — a view in one loop, a call's record in the next: 102 + 304 + 4041 + 4142 = 8589.
+fn g7(one: vector<Hx>) -> integer {
+  t = 0;
+  for i in 0..2 { pv = one[i]; t += wt(pv); }
+  for j in 0..2 { pv = mk(j); t += wt(pv); }
+  t
+}
+
+// g8 — the controls: binds that are all the local's own (4142 + 4243), all views (102 + 304).
+fn g8(one: vector<Hx>) -> integer {
+  a = mk(1);
+  t = wt(a);
+  a = mk(2);
+  t += wt(a);
+  b = one[0];
+  t = t * 10000 + wt(b);
+  b = one[1];
+  t + wt(b)
+}
+
+fn main() {
+  one: vector<Hx> = [Hx { h: 1, m: 2 }, Hx { h: 3, m: 4 }];
+  for _rep in 0..2 {
+    s = S { es: [] };
+    g1(s, one);
+    w = 0;
+    for e in s.es { w += e.q * 10000 + wt(e.prev); }
+    assert(w == 210406 && len(s.es) == 2, "g1 two sibling loops: {w} {len(s.es)}");
+    assert(g2a() == 100, "g2 the default taken: {g2a()}");
+    assert(g2b() == 4, "g2 the subject taken: {g2b()}");
+    assert(g3() == 116, "g3 a loop of rebinds: {g3()}");
+    assert(g4() == 9013, "g4 a record enum: {g4()}");
+    assert(g5(one, true) == 5153, "g5 the arm taken: {g5(one, true)}");
+    assert(g5(one, false) == 102, "g5 the arm not taken: {g5(one, false)}");
+    assert(g6(one) == 15561, "g6 a loop body: {g6(one)}");
+    assert(g7(one) == 8589, "g7 two sibling loops: {g7(one)}");
+    assert(g8(one) == 83850406, "g8 the controls: {g8(one)}");
+  }
+  println("done");
+}

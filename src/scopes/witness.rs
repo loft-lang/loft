@@ -487,6 +487,9 @@ pub(super) fn witness_set_kind(
     own: &mut impl FnMut(&Value) -> crate::use_analysis::Own,
 ) -> WitnessSet {
     let reads = value.reads_var(v) || value.reads_var(ov);
+    if held_by_compiler_temp(value, function, data) {
+        return WitnessSet::Other;
+    }
     let mints = match value.unspan() {
         Value::Var(src) => {
             *src != v
@@ -538,6 +541,47 @@ pub(super) fn witness_set_kind(
         WitnessSet::MintReading
     } else {
         WitnessSet::Mint
+    }
+}
+
+/// Does every store `value` can deliver belong to a COMPILER TEMP — a call's work-ref or
+/// buffer (`__ref_N`, `__ref_p2_N`, `__rref_N`, `__vdb_N`) or a `??` subject (`__ncc_N`) — reached
+/// through projections, block tails and both arms of a branch?  Such a temp releases its own
+/// store at its own scope exit (`@FR-O-Buffer`: by store identity against the call's buffer),
+/// so a binding of it is a VIEW of that temp, never a store the local owns: read as a mint,
+/// the witness adopted the temp's store and released it a second time (loft#2045), and read
+/// as a mint beside a real one it hid the mix the witness exists for (loft#2041).
+fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> bool {
+    match value.unspan() {
+        Value::Var(r) => {
+            (*r as usize) < function.count() as usize
+                && function.is_compiler_generated(*r)
+                && ["__ref_", "__rref_", "__vdb_", "__ncc_"]
+                    .iter()
+                    .any(|p| function.name(*r).starts_with(p))
+        }
+        Value::Block(b) => b
+            .operators
+            .last()
+            .is_some_and(|t| held_by_compiler_temp(t, function, data)),
+        Value::Insert(ops) => ops
+            .last()
+            .is_some_and(|t| held_by_compiler_temp(t, function, data)),
+        Value::If(_, a, b) => {
+            (crate::use_analysis::holds_no_store(data, a)
+                || held_by_compiler_temp(a, function, data))
+                && (crate::use_analysis::holds_no_store(data, b)
+                    || held_by_compiler_temp(b, function, data))
+                && !(crate::use_analysis::holds_no_store(data, a)
+                    && crate::use_analysis::holds_no_store(data, b))
+        }
+        Value::Call(d, args) => {
+            data.op_sets().projections.contains(d)
+                && args
+                    .first()
+                    .is_some_and(|a| held_by_compiler_temp(a, function, data))
+        }
+        _ => false,
     }
 }
 

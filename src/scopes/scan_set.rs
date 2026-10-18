@@ -133,6 +133,34 @@ impl Scopes<'_> {
                 if per_path_stops(function, data, v, *src) == Some(v))
     }
 
+    /// `@FR-O-Owner`, `@FR-O-Witness` — a witnessed local that MINTS by reading a field of a
+    /// call's result (`pv = mkw(i).x`) holds a view into the store the scan lifted that call
+    /// into, and its witness adopts that store.  The lift then owns nothing: its scope-exit
+    /// free would release the store a second time, at the end of the arm or loop body the
+    /// call ran in, while the local still reads it.  The store is handed to the witness as a
+    /// consuming copy hands a lift's store to its op (`free_transferred`), and the call's
+    /// buffer is unpaired, so the callee mints the store the witness adopts and the buffer
+    /// never enters the reuse pool, whose store the callee would refill under the witness.
+    fn transfer_lift_to_witness(&mut self, set_value: &Value, data: &Data) {
+        let projections = &data.op_sets().projections;
+        let mut root = set_value.unspan();
+        while let Value::Call(d, args) = root
+            && projections.contains(d)
+            && let Some(base) = args.first()
+        {
+            root = base.unspan();
+        }
+        let Value::Var(tmp) = root else {
+            return;
+        };
+        if std::ptr::eq(root, set_value.unspan()) || !self.lift_vars.contains(tmp) {
+            return;
+        }
+        self.free_transferred.insert(*tmp);
+        self.witness_buffer.remove(tmp);
+        self.paired_witness.retain(|_, w| w != tmp);
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn scan_set(
         &mut self,
@@ -1905,6 +1933,7 @@ impl Scopes<'_> {
                 // a mint that reads the local does.  Every copy into a witnessed local lands in
                 // a fresh store (`(O-Witness)`), so the identity guard declines nothing here.
                 WitnessSet::Mint | WitnessSet::MintReading => {
+                    self.transfer_lift_to_witness(&set_value, data);
                     witness_ops.push(guarded_release);
                     witness_ops.push(witness_points_at(w, v, data));
                 }
