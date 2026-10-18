@@ -1007,7 +1007,7 @@ fn split_at_yield(ops: &[Value]) -> Option<(Vec<Value>, Vec<Value>)> {
 /// }
 /// ```
 /// Returns `init_expr` when matched.
-fn detect_yield_from(val: &Value) -> Option<Value> {
+fn detect_yield_from(val: &Value, data: &crate::data::Data) -> Option<Value> {
     let Value::Block(bl) = val.unspan() else {
         return None;
     };
@@ -1023,6 +1023,17 @@ fn detect_yield_from(val: &Value) -> Option<Value> {
     let Value::Set(sub_var, init_expr) = bl.operators[0].unspan() else {
         return None;
     };
+    // @FR-G-Delegate — the owned form (`self.sub_N` holds the sub-generator) is for a FRESH one,
+    // a call of a generator function: a HELD handle (`h = two(5); yield from h`, or a parameter) already names
+    // a coroutine in the store's table, and handed to the owned slot it was a `DbRef` where a
+    // `Box<dyn LoftCoroutine>` is due (E0308), and a parameter's `OpCoroutineRetain(h)` hold
+    // was emitted as a factory call of that name (E0425, loft#2060).  It lowers as the
+    // desugared loop — `next(h)` and a yield per item — which pulls through the handle.
+    if !matches!(init_expr.unspan(), Value::Call(d, _)
+        if matches!(data.def(*d).returned(), crate::data::Type::Iterator(..)))
+    {
+        return None;
+    }
     let Value::Loop(lp) = bl.operators[1].unspan() else {
         return None;
     };
@@ -1079,7 +1090,7 @@ fn collect_segments(
                 pre: std::mem::take(&mut pre),
                 val: *inner.clone(),
             });
-        } else if let Some(init) = detect_yield_from(inner_op) {
+        } else if let Some(init) = detect_yield_from(inner_op, data) {
             segments.push(YieldSegment::YieldFrom {
                 pre: std::mem::take(&mut pre),
                 init,
@@ -1336,9 +1347,12 @@ fn written_scalar_params(
             }
             _ => None,
         };
+        // A RECORD parameter too (loft#2061): `r = &b` on a `b: Box` is the same `*mut DbRef`
+        // into one advance's frame, and the per-state shadow is immutable besides (E0596).
         if let Some(p) = hit
             && vars.is_argument(p)
-            && crate::data::is_scalar(vars.tp(p))
+            && (crate::data::is_scalar(vars.tp(p))
+                || matches!(vars.tp(p).base(), Type::Reference(..)))
         {
             out.insert(p);
         }
@@ -1349,9 +1363,9 @@ fn written_scalar_params(
     out
 }
 
-/// loft#1899 — the scalar LINK locals of a generator body (`c = &x`, a `&` to a scalar, a
-/// text, a fn-ref or a value enum: the `*mut T` a local link holds), each with its field's
-/// name and its Rust pointer type.  A compiler temp is left out: no author's `&` names one.
+/// loft#1899 — the LINK locals of a generator body (`c = &x`, a `&` to a scalar, a text, a
+/// fn-ref, a value enum or a record (loft#2061): the `*mut T` a local link holds), each with
+/// its field's name and its Rust pointer type.  A compiler temp is left out: no author's `&` names one.
 /// The field name avoids every name already on the struct.
 fn link_locals(
     vars: &crate::variables::Function,
@@ -1376,6 +1390,7 @@ fn link_locals(
                 | Type::Text(_)
                 | Type::Function(..)
                 | Type::Enum(_, false, _)
+                | Type::Reference(..)
         ) {
             continue;
         }

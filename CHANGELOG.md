@@ -211,6 +211,11 @@ git do.
 
 ### Bug fixes
 
+**Two generator shapes compile with `--native`.**  `yield from h` where `h` is a generator you
+already hold (a local you took values from, or a parameter), and a `&` link to a record
+parameter inside a generator (`r = &b; … yield r.n`), failed in rustc.  Both now build and answer
+what the interpreter answers.
+
 **Generics accept a plain enum where `==` is required, and see a recursive enum's own field.**
 `fn same<T: Equatable>(a: T, b: T)` refused a plain `enum Col { Red, Green }`; and inside
 `fn f<T>(l: Lst<T>)`, matching `Cons { t }` on `enum Lst<T> { Nil, Cons { h: T, t:
