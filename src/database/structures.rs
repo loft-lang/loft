@@ -28,6 +28,13 @@ fn exact_copy_claim_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_EXACT_COPY_CLAIM").is_none())
 }
+/// `LOFT_NO_SLICE_BLOCK=1` gives `r += src[lo..hi]` its snapshot form again — the span
+/// copied into a heap buffer and written back — the first bisect step for a wrong element
+/// out of a slice append.
+fn slice_block_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_SLICE_BLOCK").is_none())
+}
 fn vadd_fits_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_VADD_FITS").is_none_or(|v| v == "0"))
@@ -248,6 +255,46 @@ impl Stores {
             .set_u32_raw(slot.rec, slot.pos, rec.rec);
         self.set_default_value(elem_tp, &rec);
         rec
+    }
+
+    /// `@FR-R-FieldAppend` — [`Self::record_new`]'s plain-field path with the dispatch resolved
+    /// by the emitter: the element slot `vector_append` claims at the vector field `pos`
+    /// bytes into `data`, `size` bytes wide, prefilled with `elem`'s defaults when `PREFILL`
+    /// (`OpNewRecord`; `OpNewRecordNP` when the group writes every field).  The emitter
+    /// admits only what `plain_field_vector` admits at runtime — a struct parent, a plain
+    /// vector field no sibling collection shares — so the slot is the one `record_new`
+    /// answers, a null parent's included.
+    #[inline]
+    pub fn field_vector_append<const PREFILL: bool>(
+        &mut self,
+        data: &DbRef,
+        pos: u32,
+        size: u32,
+        elem: u16,
+    ) -> DbRef {
+        self.records_created += 1;
+        let d = DbRef {
+            store_nr: data.store_nr,
+            rec: data.rec,
+            pos: data.pos + pos,
+        };
+        let slot = vector::vector_append(&d, size, &mut self.allocations);
+        if PREFILL {
+            self.set_default_value(elem, &slot);
+        }
+        slot
+    }
+
+    /// `@FR-R-FieldAppend` — [`Self::record_finish`]'s plain-field path: the length bump of the
+    /// vector field `pos` bytes into `data`.
+    #[inline]
+    pub fn field_vector_finish(&mut self, data: &DbRef, pos: u32) {
+        let d = DbRef {
+            store_nr: data.store_nr,
+            rec: data.rec,
+            pos: data.pos + pos,
+        };
+        vector::vector_finish(&d, &mut self.allocations);
     }
 
     /// Create a fresh record for a collection element / nullable field and return its `DbRef`.
@@ -1686,11 +1733,14 @@ impl Stores {
     /// materialisation for a scalar element kind, where the per-element loop minted a record
     /// per element.  The bounds arrive clamped (the slice prelude's `slice_lo` / `slice_hi`),
     /// and are clamped again here so a stale prelude cannot read past the source.  The
-    /// source span is taken through [`Store::bytes_of`], so a FOREIGN store's bytes (a
-    /// mapped file) copy exactly as an owned record's; the one intermediate buffer keeps
-    /// the source and destination borrows apart (the same store, or the same vector).  A
-    /// linked or heap-owning element kind is refused: its elements are records to deep-copy,
-    /// which the loop form does.
+    /// span is copied as one block straight from the source record — no intermediate
+    /// buffer: into the destination's spare capacity when it fits, else after the growth,
+    /// with a source in the SAME store re-read from its field slot (a growth may relocate
+    /// it, and does when it IS the destination: `v += v[a..b]`).  The span lies below the
+    /// source's length at entry and the new slots above the destination's, so the two never
+    /// overlap.  A FOREIGN source (a mapped file) is read where its bytes are; one in the
+    /// destination's own store keeps the snapshot form.  A linked or heap-owning element
+    /// kind is refused: its elements are records to deep-copy, which the loop form does.
     ///
     /// # Panics
     /// When `known` is a linked or heap-owning element type — the parser never emits the op
@@ -1711,16 +1761,43 @@ impl Stores {
             return;
         }
         let size = u32::from(self.size(known));
-        let span: Vec<u8> = {
+        let o_rec = keys::store(o_db, &self.allocations).collection_rec(o_db.rec, o_db.pos);
+        if o_rec == 0 {
+            return;
+        }
+        let same_store = db.store_nr == o_db.store_nr;
+        if !slice_block_enabled() || (same_store && Store::is_foreign_rec(o_rec)) {
             let store = keys::store(o_db, &self.allocations);
-            let o_rec = store.collection_rec(o_db.rec, o_db.pos);
-            if o_rec == 0 {
-                return;
-            }
             let from = lo as usize * size as usize;
-            store.bytes_of(o_rec)[from..from + n as usize * size as usize].to_vec()
-        };
-        self.append_span(db, &span, n, size);
+            let span = store.bytes_of(o_rec)[from..from + n as usize * size as usize].to_vec();
+            self.append_span(db, &span, n, size);
+            return;
+        }
+        let from = 8 + isize::try_from(u64::try_from(lo).unwrap_or(0) * u64::from(size))
+            .unwrap_or(isize::MAX);
+        let bytes = isize::try_from(u64::from(n) * u64::from(size)).unwrap_or(isize::MAX);
+        let d_rec = keys::store(db, &self.allocations).collection_rec(db.rec, db.pos);
+        if self.append_block_fits(db, d_rec, o_db, o_rec, from, n, size) {
+            return;
+        }
+        let append_pos = vector::vector_append(db, size, &mut self.allocations).pos;
+        self.vector_set_size(db, n, size);
+        let dest_rec = keys::store(db, &self.allocations).get_u32_raw(db.rec, db.pos);
+        if same_store {
+            let store = keys::mut_store(db, &mut self.allocations);
+            let o_rec = store.collection_rec(o_db.rec, o_db.pos);
+            store.copy_block(o_rec, from, dest_rec, append_pos as isize, bytes);
+        } else {
+            self.copy_block_cross_store(
+                o_db.store_nr,
+                o_rec,
+                from,
+                db.store_nr,
+                dest_rec,
+                append_pos as isize,
+                bytes,
+            );
+        }
     }
 
     /// Append `n` elements of `size` bytes, held as raw bytes in `span`, to the vector `db`.
@@ -2012,24 +2089,57 @@ impl Stores {
             return false;
         }
         let o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+        let d_rec = keys::store(db, &self.allocations).collection_rec(db.rec, db.pos);
+        if db.store_nr == o_db.store_nr && d_rec == o_rec {
+            return false;
+        }
+        self.append_block_fits(db, d_rec, o_db, o_rec, 8, o_length, size)
+    }
+
+    /// Append `n` elements of `size` bytes, read from byte `from` of the source record
+    /// `o_rec` (in `o_db`'s store), to the vector `db` — whose record is `d_rec` — when that
+    /// record has the room: one block copy and the length written, no claim.  Answers false
+    /// — nothing written — when the destination has no record, no room, or is the watched
+    /// store.  The source span must lie below the destination's length when the two are one
+    /// record, which both callers guarantee (a whole-vector append refuses that case first).
+    // Measured: as a hint `vector_add`'s fits path ran +26 % slower than the inline test it
+    // replaced (the out-of-line call per append); forced inline, +8 %.
+    #[expect(
+        clippy::inline_always,
+        clippy::too_many_arguments,
+        reason = "measured on vector_add's fits path; the two callers' block coordinates"
+    )]
+    #[inline(always)]
+    fn append_block_fits(
+        &mut self,
+        db: &DbRef,
+        d_rec: u32,
+        o_db: &DbRef,
+        o_rec: u32,
+        from: isize,
+        n: u32,
+        size: u32,
+    ) -> bool {
+        if size == 0 || !vadd_fits_enabled() || crate::keys::watch_store() == Some(db.store_nr) {
+            return false;
+        }
         let store = keys::store(db, &self.allocations);
-        let d_rec = store.collection_rec(db.rec, db.pos);
-        if d_rec == 0 || (db.store_nr == o_db.store_nr && d_rec == o_rec) {
+        if d_rec == 0 || Store::is_foreign_rec(d_rec) {
             return false;
         }
         let length = store.get_u32_raw(d_rec, 4);
-        let Some(needed) = length.checked_add(o_length) else {
+        let Some(needed) = length.checked_add(n) else {
             return false;
         };
         if needed > vector::append_capacity(store, db, d_rec, size) {
             return false;
         }
         let to = 8 + isize::try_from(u64::from(length) * u64::from(size)).unwrap_or(isize::MAX);
-        let bytes = isize::try_from(u64::from(o_length) * u64::from(size)).unwrap_or(isize::MAX);
+        let bytes = isize::try_from(u64::from(n) * u64::from(size)).unwrap_or(isize::MAX);
         if db.store_nr == o_db.store_nr {
-            keys::mut_store(db, &mut self.allocations).copy_block(o_rec, 8, d_rec, to, bytes);
+            keys::mut_store(db, &mut self.allocations).copy_block(o_rec, from, d_rec, to, bytes);
         } else {
-            self.copy_block_cross_store(o_db.store_nr, o_rec, 8, db.store_nr, d_rec, to, bytes);
+            self.copy_block_cross_store(o_db.store_nr, o_rec, from, db.store_nr, d_rec, to, bytes);
         }
         keys::mut_store(db, &mut self.allocations).set_u32_raw(d_rec, 4, needed);
         true

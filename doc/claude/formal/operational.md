@@ -170,7 +170,12 @@ comparison, `??`) evaluates both operands under E-Left.
                 exact complement of `==` for every type, a type's own `OpEq` included,
                 with each operand evaluated once; a type's own `OpNe` replaces the
                 complement.  Against the `null` literal `==` is the presence test, and two
-                nullable operands are equal when both are absent.
+                nullable operands are equal when both are absent.  Two vectors of
+                DIFFERENT element types compare element by element in the same way when
+                each element pair has a `==` without an `as` — the integer widths,
+                `float` and `single` by value, nested vectors when their elements do — and
+                are refused otherwise (`character` against `integer`, `boolean`, `text`,
+                an enum).
   (E-Eq-Key)    a keyed collection's key comparison and key hash agree with `==` on the
                 key's type: two keys are one entry exactly when `==` answers true.
 ```
@@ -263,6 +268,19 @@ order** — NaN cannot occur (it is represented as null, D-op-null-1), so exactl
                      `MIN / -1`, whose quotient does not fit, AND `MIN % -1`, whose
                      remainder would be 0: the pair is one operation whose quotient
                      overflows, so both halves are null, on both backends.)
+```
+
+```
+  (E-Concat)  `+` JOINS into a text when one operand is text and the other is text or a
+              character, or when both are characters: `'a' + 'b'` is "ab", `'a' + "cd"` is
+              "acd", `"cd" + 'a'` is "cda".  A CHARACTER with an INTEGER is arithmetic on
+              the code point and answers an integer, whichever side the character is on:
+              `'a' + 1` and `1 + 'a'` are both 98, and `c += 1` on a character place is
+              refused because that integer does not fit it — `(c + 1) as character` is the
+              next letter.  A character with any other operand (a float, a boolean, a
+              record) is refused at compile time and names interpolation, `"{c}{x}"`, as the
+              spelling that puts the two side by side.  Once a run has joined (a text on the
+              left), every later `+` joins: `'a' + 'b' + 1` is "ab1".
 ```
 
 **In words.** Integer `/` drops the fractional part toward zero rather than flooring toward

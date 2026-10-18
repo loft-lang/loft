@@ -182,3 +182,42 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
     );
     assert_eq!(outs[0], outs[1], "the two backends must print the same");
 }
+
+const FOREIGN: &str = "tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft";
+
+/// Guarded copies (`OpEqRef` of the answer and the place) in `func` of the foreign-exit guard.
+fn foreign_copies(func: &str, env: &[(&str, &str)]) -> usize {
+    let mut cmd = loft();
+    cmd.env_remove("LOFT_NO_PLACE_FOREIGN_EXIT")
+        .arg("introspect")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(FOREIGN));
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let start = text
+        .find(&format!("fn n_{func}("))
+        .unwrap_or_else(|| panic!("{func}'s IR"));
+    let rest = &text[start..];
+    rest[..rest.find("}#block(1)").expect("closing block")]
+        .matches("OpEqRef(")
+        .count()
+}
+
+#[test]
+fn a_callee_answering_a_constant_is_placed_and_its_answer_copied_in() {
+    // `names` and `wrote_first` answer a constant on some exit: f1, f2 and f5's two literals in
+    // `main`, and `panel`'s local built in the return buffer.  `pick` and `from_src` answer a
+    // parameter, which the callee already delivers into its buffer: placed without a guard.
+    assert_eq!(foreign_copies("main", &[]), 4, "main");
+    assert_eq!(foreign_copies("panel", &[]), 1, "panel");
+    let off = [("LOFT_NO_PLACE_FOREIGN_EXIT", "1")];
+    assert_eq!(foreign_copies("main", &off), 0, "main, switch off");
+    assert_eq!(foreign_copies("panel", &off), 0, "panel, switch off");
+}

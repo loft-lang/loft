@@ -2173,6 +2173,9 @@ impl Parser {
 
     /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
     const CONTENT_EQ_PENDING: i32 = i32::MIN;
+    /// A `sizeof` whose operand is a bare type variable: `OpSizeofRef(SIZEOF_PENDING, holder)`,
+    /// sized at each monomorph from the type the holder is bound to (`resolve_pending_sizeof`).
+    const SIZEOF_PENDING: i32 = i32::MIN + 1;
 
     /// The marker a format hole over a bound type variable carries until its instance lowers
     /// it (`append_data`, `@FR-G-Mono`).
@@ -2968,6 +2971,11 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
         || name == "OpNewRecord"
         || name == "OpAppendCopy"
         || name == "OpAppendVector"
+        // A span appended in one block (`r += src[a..b]`, `(R-ByteCopy)`) and a range kept in
+        // place (`r = r[a..b]`) write their first argument as the append and clear above do.
+        || name == "OpSliceVector"
+        || name == "OpAppendTextBytes"
+        || name == "OpKeepRange"
         || name == "OpAppendText"
         || name == "OpAppendCharacter"
         || name == "OpClearVector"

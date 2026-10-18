@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2044, `@C137` — a record copied into a FIELD of an element a literal is building, from
+// a source that is null at run time, leaves that field the default of its type: the
+// destination was just created.  An element minted without the default prefill (`--native`'s
+// record push in a loop, and an append whose literal writes every field) held whatever its
+// slot held before, and the copy's null arm kept it: a cleared vector's refilled entries read
+// the old entries' values.
+//
+// Every cell fills a vector of its own local, clears it and refills it from a source read past
+// its end, so the slots a missing default would leave hold distinctive old values (7, 9, "old");
+// a local, because a vector reached through a parameter takes the prefilling append.  The cells
+// vary the mint (a loop's push, a straight-line append), the field's type (plain, owning a
+// text), the depth of the field (one, two), where the value comes from (a local, a call) and,
+// as the control, an EXISTING element's field, which keeps what it held.  Each value is
+// hand-computed: a non-null `integer` field's default is 0, a `text` field's reads `null`.
+// The interpreter and native answer the same, and so do `LOFT_NO_COMPLETE_WRITE=1`,
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1`.  Each loop's local has a
+// name of its own: one name for a call's element and a parameter's is loft#2045.
+//
+// @falsified-by: tests/falsified/2044-a-null-record-copied-into-a-fresh-field-is-its-default.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the ASSERTIONS on native — the patch drops the fresh-field marks, so the copy has
+//     no null arm and the loop's push mints its element without the prefill.
+//   WITNESS: *p1 a loop's push: 3331520* where 3 330 102 is due: the two defaulted entries read
+//     the cleared entries' 7 and 9 (709 each).
+//   HOLDS: leak, panic and free-refusal equal and clean on both backends.
+
+struct Hx { h: integer, m: integer }
+struct Ht { h: integer, t: text }
+struct In { a: integer, prev: Hx }
+struct E { q: integer, prev: Hx }
+struct Et { q: integer, prev: Ht }
+struct En { q: integer, inner: In }
+struct S { es: vector<E>, ts: vector<Et>, en: vector<En> }
+
+fn old_hx() -> vector<Hx> { [Hx { h: 7, m: 9 }, Hx { h: 7, m: 9 }, Hx { h: 7, m: 9 }] }
+
+fn one_hx() -> vector<Hx> { [Hx { h: 1, m: 2 }] }
+
+// Sum of h * 100 + m over the entries, with the entry count — 0 for every defaulted entry.
+fn weigh(s: const S) -> integer {
+  t = len(s.es) * 1000000;
+  for e in s.es { t += e.q * 10000 + e.prev.h * 100 + e.prev.m; }
+  t
+}
+
+// p1 — a loop's push: entries 10, 11, 12 from [1/2] read past its end → 1/2, then defaults.
+// 3 000 000 + (10 + 11 + 12) * 10 000 + 102 = 3 330 102.
+fn p1(one: vector<Hx>) {
+  s = S { es: [], ts: [], en: [] };
+  for i in 0..3 { pv = old_hx()[i]; s.es += [E { q: i, prev: pv }]; }
+  s.es = [];
+  for i in 0..3 { pw = one[i]; s.es += [E { q: 10 + i, prev: pw }]; }
+  assert(weigh(s) == 3330102, "p1 a loop's push: {weigh(s)}");
+}
+
+// p2 — straight-line appends: entries 22 (1/2) and 23 (past the end).
+// 2 000 000 + 45 * 10 000 + 102 = 2 450 102.
+fn p2(one: vector<Hx>) {
+  s = S { es: [], ts: [], en: [] };
+  s.es = [];
+  s.es += [E { q: 20, prev: old_hx()[0] }];
+  s.es += [E { q: 21, prev: old_hx()[1] }];
+  s.es = [];
+  s.es += [E { q: 22, prev: one[0] }];
+  s.es += [E { q: 23, prev: one[5] }];
+  assert(weigh(s) == 2450102, "p2 straight-line appends: {weigh(s)}");
+}
+
+// p3 — the field's record owns a text: the defaulted entries read h 0 and a null text.
+fn p3() {
+  s = S { es: [], ts: [], en: [] };
+  for i in 0..3 { pv = [Ht { h: 7, t: "old" }, Ht { h: 7, t: "old" }, Ht { h: 7, t: "old" }][i]; s.ts += [Et { q: i, prev: pv }]; }
+  s.ts = [];
+  onet: vector<Ht> = [Ht { h: 1, t: "new" }];
+  for i in 0..3 { pw = onet[i]; s.ts += [Et { q: 30 + i, prev: pw }]; }
+  assert(len(s.ts) == 3, "p3 entries: {len(s.ts)}");
+  assert(s.ts[0].prev.h == 1 && s.ts[0].prev.t == "new", "p3 the present entry");
+  assert(s.ts[1].prev.h == 0 && s.ts[1].prev.t == null, "p3 a defaulted entry: {s.ts[1].prev.h} {s.ts[1].prev.t}");
+  assert(s.ts[2].prev.h == 0 && s.ts[2].prev.t == null, "p3 the last entry: {s.ts[2].prev.h}");
+}
+
+// p4 — two fields down: inner.a is written (6), inner.prev defaulted past the end.
+// Per entry a * 1000 + h * 100 + m: 6102 + 6000 + 6000 = 18 102.
+fn p4(one: vector<Hx>) {
+  s = S { es: [], ts: [], en: [] };
+  for i in 0..3 { pv = old_hx()[i]; s.en += [En { q: i, inner: In { a: 5, prev: pv } }]; }
+  s.en = [];
+  for i in 0..3 { pw = one[i]; s.en += [En { q: 50 + i, inner: In { a: 6, prev: pw } }]; }
+  t = 0;
+  for e in s.en { t += e.inner.a * 1000 + e.inner.prev.h * 100 + e.inner.prev.m; }
+  assert(len(s.en) == 3 && t == 18102, "p4 two fields down: {len(s.en)} {t}");
+}
+
+// p5 — an element of a call's vector, read past its end: (63 + 64 + 65) * 10 000 + 102 +
+// 3 000 000 = 4 920 102.
+fn p5() {
+  s = S { es: [], ts: [], en: [] };
+  s.es = [];
+  for i in 0..3 { pv = old_hx()[i]; s.es += [E { q: 60 + i, prev: pv }]; }
+  s.es = [];
+  for i in 0..3 { pw = one_hx()[i]; s.es += [E { q: 63 + i, prev: pw }]; }
+  assert(weigh(s) == 4920102, "p5 the value from a call: {weigh(s)}");
+}
+
+// p6 — the control: an EXISTING element's field assigned a null record keeps what it held.
+// 1 000 000 + 70 * 10 000 + 102 = 1 700 102.
+fn p6(one: vector<Hx>) {
+  s = S { es: [], ts: [], en: [] };
+  s.es = [];
+  s.es += [E { q: 70, prev: one[0] }];
+  s.es[0].prev = one[9];
+  assert(weigh(s) == 1700102, "p6 an existing field keeps its value: {weigh(s)}");
+}
+
+fn main() {
+  one: vector<Hx> = [Hx { h: 1, m: 2 }];
+  for _rep in 0..2 {
+    p1(one);
+    p2(one);
+    p3();
+    p4(one);
+    p5();
+    p6(one);
+  }
+  println("done");
+}

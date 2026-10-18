@@ -1,0 +1,11 @@
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -5774,7 +5774,7 @@
+             // view is.  No text span: that record's texts live in its own store.
+             writeln!(
+                 w,
+-                "let {name}: *const u8 = if {inn} {{ unsafe {{ vector::held_elem_ptr({base}, {ix} as usize * {size}, {verify}) }} }} else {{ vector::rec_ptr(&({operand}), &stores.allocations) }}; //@FR-R-RecPtr record view address for {operand}, from the held base by index",
++                "let {name}: *const u8 = if {inn} {{ unsafe {{ vector::held_elem_ptr({base}, ({ix} as usize + 1) * {size}, {verify}) /* SABOTAGE: the next element */ }} }} else {{ vector::rec_ptr(&({operand}), &stores.allocations) }}; //@FR-R-RecPtr record view address for {operand}, from the held base by index",
+                 verify = self.hoist_verify
+             )?;
+             self.indent(w)?;

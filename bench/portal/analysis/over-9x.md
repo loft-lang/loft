@@ -531,9 +531,13 @@ calls of 300 pushes: 27.2 M instructions, ~4 500 a push).  The allocator is down
 `vector_finish` on the field's vector directly, four interleaved rounds on core 2, hash
 equal): 73.7 → 72.0 µs, **−2.3 %** — the ceiling for dropping the dispatch, as both helpers
 still run.  `(R-PushRec)` gives a literal element this form only in a loop admitted under
-`(R-InPlace)`; a straight-line append (one per call) is outside it.  Not built: small beside
-the copy and the release, which together are half the row at a few hundred instructions per
-block, spread over permission checks, store lookups and shadow tests rather than one spot.
+`(R-InPlace)`; a straight-line append (one per call) is outside it.  The LBR time profile
+(perf, once call chains were allowed again) showed the generic mint at ~19 % of the row's
+TIME: the driver's `e.markers += [...]` is a second straight-line field append on the same
+path.  Both priced: 73.4 → 68.7 µs (−6.5 %).  **Built** as `(R-FieldAppend)`, the offset and
+size resolved by the emitter: `truncate_to` 71.9 → 67.5 µs (−6.1 %), and across lane 17
+`emit_to_material` −12.5 %, `slope_path_with_undo` −8 %, `reload_and_record` −2.6 %,
+`map_json` −2 % (sixteen sites in the lane).
 
 ### pluginabi `check_request` — the decode it shares, and the texts
 

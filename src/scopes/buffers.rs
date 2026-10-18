@@ -151,6 +151,20 @@ pub(super) fn reuse_record_buffers(
             decline(av, "its result local is assigned more than once");
             continue;
         }
+        if !ungated
+            && fed_locals
+                .get(&av)
+                .is_some_and(|vs| vs.iter().any(|&v| function.owner_witness(v).is_some()))
+        {
+            // `@FR-O-Witness` — a witnessed result local hands the store it adopts to its
+            // witness, which releases it at the next rebind that mints and at scope exit by
+            // identity against the store it held, never against this buffer.  Pooled, the
+            // store is released under the buffer, and the next pass's call refills a freed
+            // record.  A split copy of a witnessed local (`pv` bound in two sibling loops)
+            // is assigned once and passes the gate above, so this one is asked on its own.
+            decline(av, "its result local is witnessed");
+            continue;
+        }
         if null_init_at(&bl.operators, av).is_none() {
             decline(av, "no top-level null-init");
             continue;

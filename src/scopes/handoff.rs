@@ -376,7 +376,12 @@ pub(super) fn arm_container_handoffs(code: &Value, function: &Function, data: &D
 
 /// The generator handle an `OpSetDbRef(host, pos, g)` MOVES into a field or an element — `g`
 /// when it is an `iterator` local (loft#1585), `None` for any other store of a pointer.
-fn handle_handoff(d_nr: u32, args: &[Value], function: &Function, data: &Data) -> Option<u16> {
+pub(crate) fn handle_handoff(
+    d_nr: u32,
+    args: &[Value],
+    function: &Function,
+    data: &Data,
+) -> Option<u16> {
     if d_nr != data.def_nr("OpSetDbRef") {
         return None;
     }

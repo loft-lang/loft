@@ -77,6 +77,18 @@ impl Output<'_> {
             }
             // @FR-H-ClearRelease — the release-aware clear: a length reset for no-heap
             // elements and field vectors, the owed heap release for a reused root vector.
+            // A scalar element owns no heap, which the variable's type says here, so the
+            // clear is the reset without the run-time walk of the type table that finds
+            // it out (`polygon_crossings` cleared its buffer that way once per scanline).
+            if let crate::data::Type::Vector(elem, _) =
+                self.data.def(self.def_nr).variables().tp(*nr).peel_link()
+                && crate::data::is_scalar(elem)
+            {
+                return write!(
+                    w,
+                    "if {v_nr}.rec != 0 {{ stores.clear_vector_plain(&{v_nr}); }}"
+                );
+            }
             write!(
                 w,
                 "if {v_nr}.rec != 0 {{ stores.clear_vector_release(&{v_nr}); }}"

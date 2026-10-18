@@ -692,6 +692,27 @@ pub struct ByteRead<'a> {
     pub base: String,
 }
 
+/// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes.  Measured on graphics'
+/// rows (interleaved, hashes equal): every span through the fill made `fill_triangle` 10 %
+/// SLOWER, an empty span paying the fill's setup and then the loop; spans from 1 took it
+/// −18 %, from 8 −27 %, from 32 −8 %.
+const FILL_MIN_SPAN: i64 = 8;
+
+/// `@FR-R-RecPtr`'s index clause — one `v[i]?` binding served from a held header and base:
+/// the prelude's index and in-range names, and what the binding and the address read.
+#[derive(Clone)]
+pub struct HeldIndex {
+    pub ix: String,
+    pub inn: String,
+    pub header: String,
+    pub base: String,
+    pub size: u32,
+    /// The element read's own temporary (`__ncc_N`), set in both arms as the read sets it.
+    pub temp: u16,
+    /// The vector operand, for the verify build's header check.
+    pub vector: String,
+}
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -955,6 +976,19 @@ pub struct Output<'a> {
     /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
     /// clause off).
     pub base_rec_ptr_disabled: bool,
+    /// `LOFT_NO_INDEX_RECPTR=1` — a record view bound from `v[i]?` over a vector whose header
+    /// and BASE the frame holds reads its element through `get_vector_hoisted` and resolves
+    /// its address from the store again (`@FR-R-RecPtr`'s index clause off).
+    pub index_rec_ptr_disabled: bool,
+    /// `LOFT_NO_GUARDED_FILL=1` — `t = base + i; if t < N { v[t] = c }` keeps its loop
+    /// (`@FR-R-Fill`'s guarded clause off).
+    pub guarded_fill_disabled: bool,
+    /// `@FR-R-RecPtr`'s index clause, per statement: the index node to emit as its prelude's
+    /// `__ix_N`, the binding block to emit behind `__in_N`, and the view whose address the
+    /// clause serves — each keyed as the pre-eval substitution is, by node address.
+    pub held_index_subst: HashMap<usize, String>,
+    pub held_index_ncc: HashMap<usize, HeldIndex>,
+    pub held_index_view: Option<(u16, HeldIndex)>,
     /// `LOFT_TRACE_RECPTR=1` — name every record view bound to an address and every
     /// declined binding with its reason.
     pub recptr_trace: bool,
@@ -1025,6 +1059,11 @@ pub struct Output<'a> {
     /// (`@FR-R-PushRec`'s heap clause off): the bisect step for a wrong or stale handle in an
     /// appended record whose fields own heap.  `LOFT_POISON_CLAIM=1` is the falsifier.
     pub heap_record_push_disabled: bool,
+    /// `LOFT_NO_FIELD_APPEND=1` (or the runtime's own `LOFT_NO_PLAIN_FIELD_APPEND=1`) — a
+    /// straight-line append to a struct's plain vector field keeps its `OpNewRecord` /
+    /// `OpFinishRecord` templates (`@FR-R-FieldAppend` off): the bisect step for a wrong
+    /// element out of `r.f += [x]` outside a loop.
+    pub field_append_disabled: bool,
     /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
     /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
     /// step for a wrong element or scalar read in a loop that declares a vector per pass.
@@ -2294,6 +2333,11 @@ impl<'a> Output<'a> {
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
+            index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
+            guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
+            held_index_subst: HashMap::new(),
+            held_index_ncc: HashMap::new(),
+            held_index_view: None,
             param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
                 .is_ok_and(|v| v != "0"),
             header_dbrefs: HashMap::new(),
@@ -2361,6 +2405,8 @@ impl<'a> Output<'a> {
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
             heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
                 .is_ok_and(|v| v != "0"),
+            field_append_disabled: std::env::var("LOFT_NO_FIELD_APPEND").is_ok_and(|v| v != "0")
+                || std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_some(),
             rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
             group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
             hoist_owned: hoist::HoistOwned::default(),
@@ -2791,11 +2837,13 @@ impl Output<'_> {
                 self.value_records.views.get(&def_nr),
             )
         };
-        self.complete_writes = if self.complete_write_disabled {
-            hoist::CompleteWrites::default()
-        } else {
-            hoist::complete_writes(self.data, self.stores, def_nr)
-        };
+        // The fresh-field arms are kept whatever the switch says: they are what a copy owes
+        // a destination just created, not the elision the switch turns off.
+        self.complete_writes = hoist::complete_writes(self.data, self.stores, def_nr);
+        if self.complete_write_disabled {
+            self.complete_writes.db_vars.clear();
+            self.complete_writes.mint_tps.clear();
+        }
         // `@FR-R-RefillText` — a refill twin reads every text slot of its buffer, so a buffer
         // it mints itself keeps the zero-filling mint (a slot holds 0 or a block it owns).
         if let Some(b) = self.refill_twin_buf {
@@ -3691,6 +3739,9 @@ impl Output<'_> {
         let Some(f) = hoist::fill_loop(lp, self.data) else {
             return Ok(false);
         };
+        if f.bound.is_some() && self.guarded_fill_disabled {
+            return Ok(false);
+        }
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
@@ -3709,6 +3760,28 @@ impl Output<'_> {
         let hi = self.expr_string(f.hi)?;
         let val = self.expr_string(f.val)?;
         let verify = if self.hoist_verify { "true" } else { "false" };
+        if let Some(bound) = f.bound {
+            // `@FR-R-Fill`'s guarded clause — the index grows with the loop variable, so the
+            // guard `base + i < N` holds exactly below `N - base`: the loop is the fill of
+            // `lo..min(hi, N - base)`.  A span under FILL_MIN_SPAN keeps the loop, which
+            // costs less there than the fill's setup (`fill_triangle`'s short rows).
+            crate::rewrite_census::fired("R-Fill/guarded", 1);
+            let n = self.expr_string(bound)?;
+            let end = if f.inclusive {
+                format!("({hi}).saturating_add(1)")
+            } else {
+                format!("({hi})")
+            };
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let __flhi_{s}: i64 = std::cmp::min({end}, ({n}).saturating_sub({base})); let __fill_{s} = __flhi_{s}.saturating_sub({lo}) >= {FILL_MIN_SPAN} && stores.fill_hoisted::<{t}, {verify}>(&{hdr}, &({vec}), {z}_u32, vector::FillSpan {{ base: ({base}), lo: ({lo}), hi: __flhi_{s}, inclusive: false }}, ({val})); //@FR-R-Fill guarded",
+                s = lp.scope,
+                t = f.rust_type,
+                z = f.size,
+            )?;
+            return Ok(true);
+        }
         self.indent(w)?;
         writeln!(
             w,
@@ -5027,6 +5100,12 @@ impl Output<'_> {
             if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;
             }
+            // A twin body already holds this path's header (`__ih_k`, its caller's): the
+            // same vector, read under the same no-growth guarantee, so the twin's frame
+            // serves it and a second lookup at entry would only repeat it.
+            if self.active_vec_header(&path).is_some() {
+                continue;
+            }
             self.hoist_counter += 1;
             let name = format!("__vh_{}", self.hoist_counter);
             let operand = self.expr_string(&expr)?;
@@ -5714,7 +5793,33 @@ impl Output<'_> {
         // vector whose header and element BASE this loop holds: the element is at the base
         // plus index times size, with no `DbRef` consulted and no store resolved; past the
         // end the element is the null record, whose address is null.
-        if let Some((header, base, index, size, offset)) =
+        let held_index = match &self.held_index_view {
+            Some((v, held)) if *v == r && stmt.is_some() => Some(held.clone()),
+            _ => None,
+        };
+        if let Some(HeldIndex {
+            ix,
+            inn,
+            header,
+            base,
+            size,
+            ..
+        }) = held_index
+        {
+            // `@FR-R-RecPtr`'s index clause — in range the element sits at the held base plus
+            // index times size; past it the binding built `?`'s own record, resolved as any
+            // view is.  No text span: that record's texts live in its own store.
+            writeln!(
+                w,
+                "let {name}: *const u8 = if {inn} {{ unsafe {{ vector::held_elem_ptr({base}, {ix} as usize * {size}, {verify}) }} }} else {{ vector::rec_ptr(&({operand}), &stores.allocations) }}; //@FR-R-RecPtr record view address for {operand}, from the held base by index",
+                verify = self.hoist_verify
+            )?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {lock}: bool = if {inn} {{ {header}.locked }} else {{ vector::rec_locked(&({operand}), &stores.allocations) }};"
+            )?;
+        } else if let Some((header, base, index, size, offset)) =
             stmt.and_then(|s| self.held_iteration_base(s))
         {
             let plus = if offset == 0 {
@@ -5800,6 +5905,189 @@ impl Output<'_> {
         }
         let index = sanitize(self.data.def(self.def_nr).variables().name(it.index));
         Some((header, base, index, it.size, it.offset))
+    }
+
+    /// `@FR-R-RecPtr`'s index clause — the binding `r = v[i]?`, lowered as
+    /// `r = { t = OpGetVectorNullable(v, size, IDX); if t { t } else { FALLBACK } }`, over a
+    /// vector whose header and element base the frame holds: `(r, t, IDX, block, size, path)`.
+    /// Any index expression; the fallback is whatever `?` builds.
+    fn held_index_binding<'v>(
+        &self,
+        stmt: &'v Value,
+    ) -> Option<(
+        u16,
+        u16,
+        &'v Value,
+        &'v Value,
+        &'v Value,
+        u32,
+        String,
+        String,
+    )> {
+        if self.index_rec_ptr_disabled || self.base_rec_ptr_disabled || self.record_ptr_disabled {
+            return None;
+        }
+        let Value::Set(r, init) = stmt.unspan() else {
+            return None;
+        };
+        let Value::Block(bl) = init.unspan() else {
+            return None;
+        };
+        let [first, second] = bl.operators.as_slice() else {
+            return None;
+        };
+        let Value::Set(t, read) = first.unspan() else {
+            return None;
+        };
+        let Value::Call(rd, rargs) = read.unspan() else {
+            return None;
+        };
+        if (*rd as usize) >= self.data.definitions.len()
+            || self.data.def(*rd).name() != "OpGetVectorNullable"
+            || rargs.len() != 3
+        {
+            return None;
+        }
+        let Value::Int(size) = rargs[1].unspan() else {
+            return None;
+        };
+        // `if t { t } else { FALLBACK }` — the read's own temporary, tested and answered.
+        let Value::If(test, then, _) = second.unspan() else {
+            return None;
+        };
+        let names_t = |v: &Value| matches!(v.unspan(), Value::Var(x) if x == t);
+        if !names_t(then)
+            || !matches!(test.unspan(), Value::Call(cd, cargs)
+                if (*cd as usize) < self.data.definitions.len()
+                    && self.data.def(*cd).name() == "OpConvBoolFromRef"
+                    && cargs.len() == 1 && names_t(&cargs[0]))
+        {
+            return None;
+        }
+        // The prelude evaluates the index before the statement's own pre-evaluations run,
+        // and one of those may still evaluate the binding block whole: only an index whose
+        // evaluation changes nothing may be evaluated by both.
+        if !crate::same_read::repeatable(self.data, &rargs[2]) {
+            return None;
+        }
+        let path = hoist::vector_path(self.data, &rargs[0])?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        // A coroutine's persistent locals live in the state machine, and a value record's
+        // (`(R-ValueRecord)`) are Rust tuples: neither is the `DbRef` the binding builds.
+        if self.coroutine_persistent_fields.contains_key(r)
+            || self.coroutine_persistent_fields.contains_key(t)
+            || self.value_record_locals.contains_key(r)
+            || self.value_record_locals.contains_key(t)
+        {
+            return None;
+        }
+        Some((
+            *r,
+            *t,
+            &rargs[0],
+            &rargs[2],
+            init,
+            u32::try_from(*size).ok()?,
+            header,
+            base,
+        ))
+    }
+
+    /// `@FR-R-RecPtr`'s index clause, before statement `stmt` is emitted: name its index and
+    /// whether it is in range, once, and arm the binding block and the address to read them.
+    /// The index is the first thing the binding evaluates, so naming it first keeps the order
+    /// and evaluates it exactly once.
+    pub(super) fn begin_held_index(
+        &mut self,
+        w: &mut dyn Write,
+        stmt: &Value,
+    ) -> std::io::Result<bool> {
+        // The address arming is this statement's alone: one before it that did not reach its
+        // end does not carry over.
+        self.held_index_view = None;
+        let Some((r, t, vector, idx, block, size, header, base)) = self.held_index_binding(stmt)
+        else {
+            return Ok(false);
+        };
+        self.hoist_counter += 1;
+        let ix = format!("__ix_{}", self.hoist_counter);
+        let inn = format!("__in_{}", self.hoist_counter);
+        // Written out of turn: the statement's names are regenerated by replaying the
+        // counter, so the prelude's own temporaries must not move it.
+        let counter = self.counter;
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, idx)?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        let mut vec_operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut vec_operand, vector)?;
+        let vector = String::from_utf8_lossy(&vec_operand).into_owned();
+        self.counter = counter;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {ix}: i64 = {operand}; let {inn}: bool = ({ix} as u64) < u64::from({header}.len); //@FR-R-RecPtr index clause"
+        )?;
+        let held = HeldIndex {
+            ix: ix.clone(),
+            inn,
+            header,
+            base,
+            size,
+            temp: t,
+            vector,
+        };
+        self.held_index_subst
+            .insert(std::ptr::from_ref(idx) as usize, ix);
+        self.held_index_ncc
+            .insert(std::ptr::from_ref(block) as usize, held.clone());
+        self.held_index_view = Some((r, held));
+        crate::rewrite_census::fired("R-RecPtr/index", 1);
+        Ok(true)
+    }
+
+    /// After the statement that armed the index clause: its substitutions go with it.
+    pub(super) fn end_held_index(&mut self, stmt: &Value) {
+        if let Some((_, _, _, idx, block, ..)) = self.held_index_binding(stmt) {
+            self.held_index_subst
+                .remove(&(std::ptr::from_ref(idx) as usize));
+            self.held_index_ncc
+                .remove(&(std::ptr::from_ref(block) as usize));
+        }
+        self.held_index_view = None;
+    }
+
+    /// `@FR-R-RecPtr`'s index clause, the binding: in range the element is the held vector's
+    /// own record at `8 + index * size` — what `get_vector_hoisted` answers there — and past
+    /// it the block runs as written, its index read from the prelude.
+    pub(super) fn emit_held_index_block(
+        &mut self,
+        w: &mut dyn Write,
+        code: &Value,
+        held: &HeldIndex,
+    ) -> std::io::Result<()> {
+        let t = sanitize(self.data.def(self.def_nr).variables().name(held.temp));
+        let HeldIndex {
+            ix,
+            inn,
+            header,
+            size,
+            vector,
+            ..
+        } = held;
+        if self.hoist_verify {
+            // The verify build asks the runtime's own read, which checks the header is fresh.
+            write!(
+                w,
+                "if {inn} {{ var_{t} = vector::get_vector_hoisted::<true>(&{header}, &({vector}), {size}, {ix}, &stores.allocations); var_{t} }} else "
+            )?;
+        } else {
+            write!(
+                w,
+                "if {inn} {{ var_{t} = DbRef {{ store_nr: {header}.store_nr, rec: {header}.rec, pos: 8 + ({ix} as u32) * {size} }}; var_{t} }} else "
+            )?;
+        }
+        self.output_code_inner(w, code)
     }
 
     /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —
@@ -11450,7 +11738,8 @@ extern crate loft;"
                 writeln!(w, "}}")?;
             } else if instrument {
                 // Emit shadow call stack instrumentation before the block body.
-                // The CallGuard drop ensures cr_call_pop on all exit paths (including early return).
+                // The guard's drop ensures cr_call_pop on all exit paths (including early return):
+                // `NamedCallGuard` beside the named push, `CallGuard` beside the lean one (loft#2009).
                 // We emit the push/guard as a prefix inside the block's opening `{`.
                 // P199 — prepend the `&mut Stores` derivation from the
                 // `&UnsafeCell<Stores>` parameter so templates and inner
@@ -11575,7 +11864,7 @@ extern crate loft;"
                         };
                     format!(
                         "\n  cr_call_push(\"{loft_name}\", {file_expr}, {loft_line});\n  \
-                         let _call_guard = codegen_runtime::CallGuard;"
+                         let _call_guard = codegen_runtime::NamedCallGuard;"
                     )
                 } else {
                     format!(

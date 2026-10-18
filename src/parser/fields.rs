@@ -3219,6 +3219,17 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let uncapped = Value::Long(crate::database::SLICE_UNCAPPED);
             (Value::Int(0), vec![Value::Int(0); max_axes], uncapped)
         };
+        // @FR-Slice-KeyedIter — the third keyed kind, refused like the other two: a slice
+        // bound as a value answered one bogus record on both backends (loft#2035).
+        if !self.first_pass && !self.iterable_context {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a spatial slice is a `for`-loop iterator, not a value — iterate it \
+                 directly (`for x in xs[(x1, y1)..(x2, y2)] {{ … }}`) or materialise a vector \
+                 with a comprehension (`[for x in xs[(x1, y1)..(x2, y2)] {{ x }}]`)"
+            );
+        }
         if !self.first_pass {
             let tp = self.get_type(typedef);
             let fn_nr = self.data.def_nr("n_spatial_range");
@@ -3889,6 +3900,18 @@ impl Parser {
         for t in reads {
             entry.push((t, pos));
         }
+    }
+
+    /// A sandboxed CONTENT comparison — `==` / `!=` read every field of both operands, so a
+    /// `#read`-linked member reached through one that is not the script's own is a read: a
+    /// loop of `p == P { …, hidden: c }` recovered a field `p.hidden` was refused for
+    /// (loft#2053).  A struct literal operand is built here, and its own field expressions are
+    /// recorded at their `.field` sites; any other operand is judged as a whole-value read.
+    pub(crate) fn sandbox_read_compared(&mut self, tp: &Type, subject: &Value) {
+        if matches!(subject.unspan(), Value::Block(b) if b.name == "Object") {
+            return;
+        }
+        self.sandbox_read_whole(tp, subject);
     }
 
     fn collect_read_links(

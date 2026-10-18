@@ -1,0 +1,13 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index b3a004fab..f97a32913 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -3474,7 +3474,7 @@ impl Parser {
+                 .data
+                 .children_of(td)
+                 .filter(|&c| self.data.def_type(c) == DefType::EnumValue)
+-                .any(nullable_field);
++                .any(|_| false);
+         }
+         !nullable_field(td)
+     }

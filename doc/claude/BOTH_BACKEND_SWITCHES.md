@@ -32,7 +32,7 @@ written through and each kept, with the reason.
 **`LOFT_NO_LITERAL_EXIT_BUFFER=1`** (@PLN164 B2, `@FR-R-Place`'s callee clause, parse
 time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
 own again — with it off, every literal exit of a record function writes the `__retbuf`
-the caller handed, through the same null-guarded mint the TAIL literal has used since
+the caller handed (a record enum's variants too, a unit variant included), through the same null-guarded mint the TAIL literal has used since
 @PLN157 § V, so a callee with several literal exits answers ONE store; that includes a
 buffer a CHAIN renamed (`return no_mk()` beside `return Mk { … }`, `parse_circle`'s
 shape), and a literal tail beside chain exits — and is the first bisect step for a wrong
@@ -110,7 +110,9 @@ buffer minted, the field deep-copied into it, the local freed.  With it off, the
 the local's store over at the field's position (`return OpGetField(p, …)` in a
 `return_field_handover` block), the root's own free goes, and every other store free in the
 exit is witnessed against the root — a pooled `__ref_N` the root adopted or an alias `q = p`
-is then skipped, a distinct buffer freed as before.  It is the first bisect step for a wrong
+is then skipped, a distinct buffer freed as before.  A returned VIEW local is admitted only when
+every bind of it is a field of that one root: a `??` bind's dep names its subject and never its
+default, so `pv = maybe(a) ?? T {…}; pv` keeps the copy.  It is the first bisect step for a wrong
 or freed record out of a callee that returns a field of a local, and for a caller reading a
 store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
 (`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
@@ -197,6 +199,13 @@ collection literal's wrapper mint answers the place, so it is placed), for a str
 variant's field read through a variant check, and for a literal's `?` field (the replace is
 what leaves it absent).  `loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft` is
 the literal's guard.
+**`LOFT_NO_PLACE_FOREIGN_EXIT=1`** (`@FR-R-Place`'s foreign-exit clause, parse time, BOTH
+backends) gives a callee one of whose exits answers a global constant, a parameter or a field
+of either its own buffer store again, filled and copied into the field — with it off, the call
+is handed the field and the site copies the answer in only when it is not the field
+(`palette_items_for_tool` answering `HEIGHT_STEP_LABELS`).  The first bisect step for a field
+that holds the wrong one of a callee's answers.
+`tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft` is its guard.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
@@ -239,7 +248,11 @@ wrong element on the branch NOT taken. QUALITY-history.md § Cluster III Route 2
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after
 another carries a hidden `__own_<name>` naming the store it minted while it still holds it;
 the IR releases it by store identity at the rebind or at scope exit, and the local itself is
-never-free (`formal/ownership.md` @FR-O-Witness). **`LOFT_NO_OWNER_WITNESS=1`** emits the
+never-free (`formal/ownership.md` @FR-O-Witness).  A bind of a store a compiler temp holds (an
+element of a call's result, a `??` result) is a view to the witness, the lift temp of a call
+whose field the local reads hands its store to the witness, and a call whose result the local
+adopts never takes a pooled buffer, so every store the witness adopts has one owner.
+**`LOFT_NO_OWNER_WITNESS=1`** emits the
 pre-witness form: the first bisect step for a leak or a wrong answer in a local that is both
 copy-bound and view-bound (a walker `cur: Node? = a; cur = cur.next`), and what the
 `LOFT_NO_JOIN_OWN` positive controls set beside their own switch.
@@ -585,6 +598,15 @@ had).  First bisect step for a wrong element or a size change out of such an app
 with it off, an append of no-heap elements into a destination record that already has room,
 distinct from the source, is one block copy and one length write.  First bisect step for a
 wrong element or length out of such an append.
+**`LOFT_NO_SLICE_BLOCK=1`** (runtime, BOTH backends) makes `Stores::vector_slice` — the
+`OpSliceVector` a slice append, a slice bind and `(R-ByteCopy)` lower to — snapshot the span
+into a temporary and append that again.  With it off, the span is copied store to store in
+one block: into the destination's spare room when it has some, otherwise after growing it,
+re-reading the source's record after the growth because a slice of the destination itself
+(`b += b[1..10]`, or `v += v[1..10]` through a `&` parameter) moves with it.  First bisect step for a wrong element
+or length out of a slice append; guard
+`tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v25, and v28
+for the move).
 
 **`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON)
 routes a record appended to a plain vector FIELD of a plain struct — `self.items += [x]`, the

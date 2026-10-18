@@ -50,7 +50,7 @@ fn is_free(stores: &Stores, db: &DbRef) -> bool {
     stores.allocations[db.store_nr as usize].is_free()
 }
 
-/// `(H-FreeNull)` — `free(nullref)` is a no-op.
+/// `@FR-H-FreeNull` — `free(nullref)` is a no-op.
 ///
 /// The null sentinel is `u16::MAX`, so a free of it must not reach the allocation table.  The
 /// control is the second half: a real store at the same call still frees, so the early return
@@ -79,7 +79,7 @@ fn freeing_null_is_a_no_op() {
     assert!(is_free(&stores, &db), "a real store still frees");
 }
 
-/// `(H-FreeTwice)` — freeing an already-freed store is a FAULT, and the runtime refuses it
+/// `@FR-H-FreeTwice` — freeing an already-freed store is a FAULT, and the runtime refuses it
 /// rather than corrupting the table.
 ///
 /// The refusal is what matters: the second free must not run the release again.

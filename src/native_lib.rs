@@ -237,13 +237,141 @@ fn loft_rmeta_beside(rlib: &std::path::Path) -> Option<std::path::PathBuf> {
             }
         }
     }
+    rmeta_by_metadata_hash(rlib)
+}
+
+/// The `.rmeta` whose metadata header carries the same hash as this stub's — the layout
+/// where cargo writes the rlib UNHASHED (a `cdylib` + `rlib` crate) beside a HASHED
+/// `libloft-<hash>.rmeta`, so neither the sibling name nor an uplift links the two
+/// (loft#2033).  The hash is the crate's own, written into the stub and the full metadata by
+/// the same compile, so this is identity too: a leftover `.rmeta` from another build carries
+/// another hash and is never chosen.
+fn rmeta_by_metadata_hash(rlib: &std::path::Path) -> Option<std::path::PathBuf> {
+    let want = rlib_meta_header(rlib)?.hash?;
+    let dir = rlib.parent()?;
+    crate::file_access::read_dir(dir)
+        .ok()?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| {
+            crate::file_access::has_extension(p, "rmeta")
+                && crate::file_access::file_stem(p)
+                    .is_some_and(|st| st == "libloft" || st.starts_with("libloft-"))
+        })
+        .find(|p| rmeta_meta_header(p).is_some_and(|h| h.hash == Some(want)))
+}
+
+/// What a crate-metadata header says about the compile that wrote it: the crate's metadata
+/// hash (format 11 on; `None` before it) and the rustc version string.  Read from the `rust`
+/// blob rustc writes at the head of every `lib.rmeta` and `.rmeta`: the magic and a format
+/// version, the offsets, from format 11 the 16-byte hash, then the version as a
+/// length-prefixed string.
+#[derive(PartialEq, Eq, Debug)]
+struct MetaHeader {
+    hash: Option<[u8; 16]>,
+    rustc: String,
+}
+
+fn meta_header_of_blob(blob: &[u8]) -> Option<MetaHeader> {
+    const MAGIC: &[u8] = b"rust\0\0\0";
+    let at = blob.windows(MAGIC.len()).position(|w| w == MAGIC)?;
+    let format = *blob.get(at + 7)?;
+    // Format 10 puts the version string right after the root offset; 11 adds a second
+    // offset and the hash before it.
+    let len_at = at + if format >= 11 { 40 } else { 16 };
+    let hash = if format >= 11 {
+        Some(blob.get(at + 24..at + 40)?.try_into().ok()?)
+    } else {
+        None
+    };
+    let len = usize::from(*blob.get(len_at)?);
+    let rustc = std::str::from_utf8(blob.get(len_at + 1..len_at + 1 + len)?).ok()?;
+    rustc.starts_with("rustc ").then(|| MetaHeader {
+        hash,
+        rustc: rustc.to_string(),
+    })
+}
+
+/// The metadata header of an `.rmeta` file: its first few KiB, never the whole file (the full
+/// metadata of loft's own crate is tens of MB).
+fn rmeta_meta_header(rmeta: &std::path::Path) -> Option<MetaHeader> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(4096);
+    crate::file_access::open(rmeta)
+        .ok()?
+        .take(4096)
+        .read_to_end(&mut head)
+        .ok()?;
+    meta_header_of_blob(&head)
+}
+
+/// The metadata header of an rlib's `lib.rmeta` member.  The archive is walked by SEEKING past
+/// each member — a stable rlib opens with a symbol table of several MB, and the rlib itself is
+/// tens of MB — and only the member's first few KiB are read.
+fn rlib_meta_header(rlib: &std::path::Path) -> Option<MetaHeader> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = crate::file_access::open(rlib).ok()?;
+    let mut magic = [0u8; 8];
+    f.read_exact(&mut magic).ok()?;
+    if &magic != b"!<arch>\n" {
+        return None;
+    }
+    let mut header = [0u8; 60];
+    while f.read_exact(&mut header).is_ok() {
+        let name = std::str::from_utf8(&header[0..16]).ok()?.trim_end();
+        let size: u64 = std::str::from_utf8(&header[48..58])
+            .ok()?
+            .trim_end()
+            .parse()
+            .ok()?;
+        if name.strip_suffix('/').unwrap_or(name) == "lib.rmeta" {
+            let mut head = Vec::with_capacity(4096);
+            f.take(size.min(4096)).read_to_end(&mut head).ok()?;
+            return meta_header_of_blob(&head);
+        }
+        f.seek(SeekFrom::Current(i64::try_from(size + size % 2).ok()?))
+            .ok()?;
+    }
     None
+}
+
+/// Was this rlib written by a rustc OTHER than the one that will compile against it?  `false`
+/// whenever either side is unknown, so an unreadable header keeps the old choice.
+fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
+    match (rlib_meta_header(rlib), rustc_version()) {
+        (Some(h), Some(current)) => h.rustc != current,
+        _ => false,
+    }
+}
+
+/// Which of loft's runtime rlibs a build links: the `deps/` copy, then the uplifted one —
+/// UNLESS the `deps/` copy was written by another rustc and the uplifted one by this one.
+///
+/// `deps/` is preferred because a plain `cargo test` rewrites it and leaves the uplift stale
+/// (#304).  But a cargo whose layout no longer writes `deps/` at all (`build/<pkg>/<unit>/out/`)
+/// leaves a `deps/libloft.rlib` that only a restored cache put there, and preferring it would
+/// link an older toolchain's runtime: a rebuild writes the fresh rlib beside it and the next
+/// compile would take the stale one again (loft#2033).  The rustc that wrote
+/// each candidate is read from its metadata, so the choice moves only on that evidence.  Asked by
+/// `native_utils::loft_lib_dir_for`, the lookup every `--native` compile links through.
+pub fn preferred_runtime_rlib(
+    deps: &std::path::Path,
+    uplifted: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let has_deps = crate::file_access::exists(deps);
+    let has_uplifted = crate::file_access::exists(uplifted);
+    if has_deps
+        && !(has_uplifted && rlib_from_other_rustc(deps) && !rlib_from_other_rustc(uplifted))
+    {
+        return Some(deps.to_path_buf());
+    }
+    has_uplifted.then(|| uplifted.to_path_buf())
 }
 
 /// Are these two paths the SAME file?  Hard-link identity first (which is what an uplift
 /// produces, and is free), then content — a copy is as good as a link for this question,
 /// and answering `false` only costs the caller the metadata it was looking for.
-fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     let (Ok(ma), Ok(mb)) = (
         crate::file_access::metadata(a),
         crate::file_access::metadata(b),
@@ -2541,6 +2669,131 @@ mod rmeta_pairing_tests {
         let found = loft_rmeta_beside(&rlib).expect("the sibling");
         assert_eq!(crate::file_access::read(&found).unwrap(), b"sibling");
         let _ = crate::file_access::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod rmeta_identity_tests {
+    use super::{MetaHeader, meta_header_of_blob, rlib_meta_header, rmeta_by_metadata_hash};
+
+    /// A metadata blob in the shape rustc writes: magic, format version, two offsets, the
+    /// 16-byte hash, then the rustc version as a length-prefixed string.
+    fn blob(hash: u8, rustc: &str) -> Vec<u8> {
+        let mut b = b"rust\0\0\0\x0b".to_vec();
+        b.extend_from_slice(&[0u8; 16]);
+        b.extend_from_slice(&[hash; 16]);
+        b.push(u8::try_from(rustc.len()).unwrap());
+        b.extend_from_slice(rustc.as_bytes());
+        b.extend_from_slice(b"\xc1\x00\x04loft");
+        b
+    }
+
+    /// An rlib whose first member is a large symbol table, as a stable rlib's is, then the
+    /// `lib.rmeta` member wrapping `meta` behind an ELF-ish prefix.
+    fn rlib(meta: &[u8]) -> Vec<u8> {
+        let mut out = b"!<arch>\n".to_vec();
+        let mut member = |name: &str, body: &[u8]| {
+            let mut header = vec![b' '; 60];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            let s = body.len().to_string();
+            header[48..48 + s.len()].copy_from_slice(s.as_bytes());
+            header[58] = b'`';
+            header[59] = b'\n';
+            out.extend_from_slice(&header);
+            out.extend_from_slice(body);
+            if body.len() % 2 == 1 {
+                out.push(b'\n');
+            }
+        };
+        member("/", &vec![7u8; 9001]);
+        let mut wrapped = b"\x7fELF-prefix".to_vec();
+        wrapped.extend_from_slice(meta);
+        member("lib.rmeta/", &wrapped);
+        out
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("loft_rmeta_id_{tag}_{}", std::process::id()));
+        let _ = crate::file_access::remove_dir_all(&d);
+        crate::file_access::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn the_header_names_the_hash_and_the_rustc() {
+        let got = meta_header_of_blob(&blob(0x35, "rustc 1.101.0-nightly (4ebd25825 2026-10-15)"));
+        assert_eq!(
+            got,
+            Some(MetaHeader {
+                hash: Some([0x35; 16]),
+                rustc: "rustc 1.101.0-nightly (4ebd25825 2026-10-15)".to_string(),
+            })
+        );
+    }
+
+    /// Format 10 (rustc 1.99) carries no hash and puts the version right after the root
+    /// offset — the layout of the stable rlib measured beside the nightly's format 11.
+    #[test]
+    fn a_format_10_header_names_the_rustc_without_a_hash() {
+        let mut b = b"rust\0\0\0\x0a".to_vec();
+        b.extend_from_slice(&[0xf4, 0xf4, 0x5f, 0x01, 0, 0, 0, 0]);
+        let v = "rustc 1.99.0 (b940084d7 2026-09-28)";
+        b.push(u8::try_from(v.len()).unwrap());
+        b.extend_from_slice(v.as_bytes());
+        b.extend_from_slice(b"\xc1\x02");
+        assert_eq!(
+            meta_header_of_blob(&b),
+            Some(MetaHeader {
+                hash: None,
+                rustc: v.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn the_member_is_found_past_a_symbol_table() {
+        let d = scratch("walk");
+        let p = d.join("libloft.rlib");
+        crate::file_access::write(&p, rlib(&blob(0x11, "rustc 1.99.0 (b940084d7 2026-09-28)")))
+            .unwrap();
+        let h = rlib_meta_header(&p).expect("header read past the symbol table");
+        assert_eq!(h.hash, Some([0x11; 16]));
+        assert_eq!(h.rustc, "rustc 1.99.0 (b940084d7 2026-09-28)");
+        let _ = crate::file_access::remove_dir_all(&d);
+    }
+
+    /// loft#2033 — an unhashed stub beside two hashed `.rmeta` files: the one carrying the
+    /// stub's hash is chosen, the leftover from another build never is.
+    #[test]
+    fn a_hashed_rmeta_pairs_with_the_unhashed_stub_by_identity() {
+        let d = scratch("pair");
+        let stub = d.join("libloft.rlib");
+        crate::file_access::write(
+            &stub,
+            rlib(&blob(0x42, "rustc 1.101.0-nightly (x 2026-10-15)")),
+        )
+        .unwrap();
+        crate::file_access::write(
+            d.join("libloft-aaaa.rmeta"),
+            blob(0x24, "rustc 1.101.0-nightly (x 2026-10-15)"),
+        )
+        .unwrap();
+        crate::file_access::write(
+            d.join("libloft-bbbb.rmeta"),
+            blob(0x42, "rustc 1.101.0-nightly (x 2026-10-15)"),
+        )
+        .unwrap();
+        assert_eq!(
+            rmeta_by_metadata_hash(&stub),
+            Some(d.join("libloft-bbbb.rmeta"))
+        );
+        crate::file_access::remove_file(d.join("libloft-bbbb.rmeta")).unwrap();
+        assert_eq!(
+            rmeta_by_metadata_hash(&stub),
+            None,
+            "an unpaired rmeta is never taken"
+        );
+        let _ = crate::file_access::remove_dir_all(&d);
     }
 }
 

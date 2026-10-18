@@ -26,8 +26,8 @@ pub use crate::runtime_abi::{
 // these are the paths emitted Rust calls them by.
 use crate::call_frames::with_call_frames;
 pub use crate::call_frames::{
-    CallGuard, cr_call_pop, cr_call_push, cr_call_push_lean, cr_call_site, in_lazy_driver,
-    native_call_chain,
+    CallGuard, NamedCallGuard, cr_call_pop, cr_call_push, cr_call_push_lean, cr_call_site,
+    in_lazy_driver, native_call_chain,
 };
 use crate::database::{ShowDb, Stores};
 use crate::keys::{Content, DbRef, Key};

@@ -72,7 +72,11 @@ const SWITCHES: [&str; 5] = [
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.args(args).env("LOFT_TIMEOUT", "300");
+    // These pins count `(R-Mint)`'s field clause and its templates: `(R-FieldAppend)`, which
+    // spells a template mint without a header differently, is off.
+    cmd.args(args)
+        .env("LOFT_TIMEOUT", "300")
+        .env("LOFT_NO_FIELD_APPEND", "1");
     for s in SWITCHES {
         cmd.env_remove(s);
     }

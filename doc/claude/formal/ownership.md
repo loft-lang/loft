@@ -360,7 +360,13 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 projection bound into such a local is always a VIEW: binding.md's
                 materialise clause does not apply to it, and a binding that clause names
                 is never witnessed.  Every copy into it lands in a FRESH store, never in
-                place — the slot may hold a view.
+                place — the slot may hold a view.  A store a COMPILER TEMP holds — an
+                element of a call's result held by the call's work-ref, a `??` result held
+                by its subject or its default's work-ref — is such a view too: the temp
+                releases it.  A store the witness adopts has no other owner (O-Owner): the
+                temp a call is lifted into hands it over when the local reads a field of
+                the call's result, and a call whose result a witnessed local adopts never
+                takes a pooled return buffer.
 ```
 
 **In words.** There is a real oracle, and it is not the dep list. `deps` is a cheap

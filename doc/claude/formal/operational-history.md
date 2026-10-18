@@ -486,3 +486,10 @@ Guard `tests/dev_soft_halt_surfaces_overflow.rs`.
 
 **rules complete for the core, 2 open** — values/null sentinels, left-to-right order, uncomputable→null (@C80) + `??`, state steps; the 2 open are the META deviation D-op-1/2 (differential-not-definitional conformance), inherited by every operational file below
 
+- **`(E-Concat)` written — 2026-10-18 (loft#2046).**  No rule covered `+` with a character, and
+  the code answered by operand side: `'a' + 1` joined into "a1" while `1 + 'a'` added to 98, and
+  the `c += 1` refusal stated the integer answer the binary form did not give.  Owner ruling:
+  *"write the rule and make the code match"* — join only with text or a character, arithmetic
+  with an integer.  Measured before the change: no program in the suite, the attic, loft's tests,
+  the stdlib or 241 library files wrote a character `+` a non-text operand.
+

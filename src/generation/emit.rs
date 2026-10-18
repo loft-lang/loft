@@ -38,6 +38,23 @@ impl Output<'_> {
         {
             return write!(w, "{name}");
         }
+        // `@FR-R-RecPtr`'s index clause — the index its prelude named, and the binding block
+        // behind the prelude's in-range test.  The block is taken out of the map first, so
+        // its own emission below is the ordinary one.
+        if !self.held_index_subst.is_empty()
+            && let Some(name) = self
+                .held_index_subst
+                .get(&(std::ptr::from_ref(code) as usize))
+        {
+            return write!(w, "{name}");
+        }
+        if !self.held_index_ncc.is_empty()
+            && let Some(held) = self
+                .held_index_ncc
+                .remove(&(std::ptr::from_ref(code) as usize))
+        {
+            return self.emit_held_index_block(w, code, &held);
+        }
         // @PLN157 § V-ao (`@FR-R-Invariant`) — a chain an enclosing loop memoised emits
         // its memo's use; keyed on the node's address like the pre-eval above, and checked
         // after it so a `_pre_N` that carries the chain keeps its name.
@@ -974,6 +991,18 @@ impl Output<'_> {
                 // reservation written after them stands in the arm that does not run, and
                 // a window must be one local both copies push through.
                 let window = self.push_reserve(w, lp)?;
+                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
+                // runs the slice fill first; the per-element loop below is its fallback for
+                // every range the fill declines (a negative or partial index, an overflow,
+                // an empty range), and the counters are left as the loop would leave them.
+                // BEFORE the guards below, for the reservation's reason: each emits a whole
+                // copy of the loop ahead of its `else`, and a fill tried after them stood in
+                // the arm that runs only when the guard fails.
+                let fill = self.fill_fast_path(w, lp)?;
+                if fill {
+                    self.indent(w)?;
+                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
+                }
                 // `(R-BoundedNest)`'s reduction clause — a loop that is one integer accumulate
                 // of a vector's elements sums what it can PLAIN first, per block under a bound
                 // taken from the data, and the checked loop below resumes where that stopped.
@@ -989,15 +1018,6 @@ impl Output<'_> {
                 } else {
                     self.chain_fast_path(w, lp)?
                 };
-                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
-                // runs the slice fill first; the per-element loop below is its fallback for
-                // every range the fill declines (a negative or partial index, an overflow,
-                // an empty range), and the counters are left as the loop would leave them.
-                let fill = self.fill_fast_path(w, lp)?;
-                if fill {
-                    self.indent(w)?;
-                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
-                }
                 // @PLN157 § V-am (`@FR-R-PushFill`) — one push of an invariant is one fill
                 // of the tail, the per-element loop its fallback exactly as the fill's.
                 let pushed = self.push_fast_path(w, lp)?;
@@ -1053,9 +1073,6 @@ impl Output<'_> {
                 if pushed {
                     self.push_fast_path_tail(w, lp)?;
                 }
-                if fill {
-                    self.fill_fast_path_tail(w, lp)?;
-                }
                 if nested {
                     write!(w, "\n}} /* checked nest */")?;
                 }
@@ -1067,6 +1084,9 @@ impl Output<'_> {
                         write!(w, "\n}} /* checked chains */")?;
                     }
                     super::ChainGuard::None => {}
+                }
+                if fill {
+                    self.fill_fast_path_tail(w, lp)?;
                 }
                 // The window closes after EVERY copy of the loop: the record's length is
                 // written once, whichever arm ran.
@@ -2299,7 +2319,10 @@ impl Output<'_> {
             | Type::Sorted(_, _, _)
             | Type::Hash(_, _, _)
             | Type::Index(_, _, _)
+            | Type::Iterator(_, _)
             | Type::Enum(_, true, _) => {
+                // A generator's handle is a `DbRef` too (loft#2059: an absent fn-ref of a
+                // generator type answered `()` in its dispatch's fallback arm, E0308).
                 // The canonical heap-ref null is `DbRef::NULL` (`keys.rs`), the
                 // ONE source every backend reads — `is_null()` keys off
                 // `store_nr == u16::MAX` and ignores `pos`, so the historical
@@ -3454,11 +3477,27 @@ impl Output<'_> {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
     /// carry a narrow-integer cast — see [`block_tail_cast`].
     pub(super) fn output_block(
+        &mut self,
+        w: &mut dyn Write,
+        block: IrBlock,
+        wrap_text: bool,
+        is_fn_body: bool,
+    ) -> std::io::Result<()> {
+        // `@FR-R-RecPtr`'s index clause belongs to the statement that armed it: a block
+        // nested in that statement runs its own statements and must hand the arming back.
+        // Its substitutions are keyed by node and stay visible: the index is read in there.
+        let held = self.held_index_view.take();
+        let r = self.output_block_body(w, block, wrap_text, is_fn_body);
+        self.held_index_view = held;
+        r
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn output_block_body(
         &mut self,
         w: &mut dyn Write,
         block: IrBlock,
@@ -4478,6 +4517,9 @@ impl Output<'_> {
                 .max()
                 .unwrap_or(self.counter);
             self.counter = restore_counter;
+            // `@FR-R-RecPtr`'s index clause — after the pre-evaluations, whose names the
+            // index then reads, and before the statement that reads the prelude.
+            let held_armed = self.begin_held_index(w, v)?;
             self.indent(w)?;
             // Restore counter so the buffer-check pass in output_code_with_subst
             // produces the same counter values as collect_pre_evals did above.
@@ -4732,6 +4774,9 @@ impl Output<'_> {
             }
             if self.bind_record_ptr(w, operators, vnr, Some(block_serial))? {
                 ptr_frames += 1;
+            }
+            if held_armed {
+                self.end_held_index(v);
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }

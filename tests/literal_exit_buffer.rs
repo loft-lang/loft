@@ -242,3 +242,42 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
     }
     let _ = fa::remove_file(&out);
 }
+
+const VARIANT_GUARD: &str = "tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft";
+
+/// `(buffer mints, own mints)` of `name` in the variant guard's IR: a literal built into the
+/// handed buffer mints behind `OpDatabase(__retbuf(…))`, one with a store of its own behind
+/// `OpDatabase(__ref_…)`.
+fn variant_mints(env: &[(&str, &str)], name: &str) -> (usize, usize) {
+    let mut cmd = loft();
+    cmd.arg("introspect")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(VARIANT_GUARD));
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let ir = function_ir(&text, name);
+    (
+        ir.matches("OpDatabase(__retbuf(").count(),
+        ir.matches("OpDatabase(__ref_").count(),
+    )
+}
+
+#[test]
+fn a_record_enums_variant_exits_write_the_handed_buffer() {
+    // `hit`: two unit and two data variants, `shape`: a unit, a scalar and a heap variant —
+    // every exit builds into `__retbuf`.  `opt2` omits a `?` field, which only a fresh
+    // record's zero leaves absent, so its exits keep their stores.
+    assert_eq!(variant_mints(&[], "n_hit"), (4, 0), "hit");
+    assert_eq!(variant_mints(&[], "n_shape"), (3, 0), "shape");
+    assert_eq!(variant_mints(&[], "n_opt2"), (0, 3), "opt2");
+    // The switch keeps the tail and gives each mid-body exit its own store again.
+    assert_eq!(variant_mints(OFF, "n_hit"), (1, 3), "hit, switch off");
+    assert_eq!(variant_mints(OFF, "n_shape"), (1, 2), "shape, switch off");
+}

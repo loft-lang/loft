@@ -52,7 +52,10 @@ Uses [operational.md](operational.md)'s `⟨e, σ⟩ → ⟨e', σ'⟩` and [hea
 **In words.** Calling a generator function is **not** a normal call — it does not execute the
 body. It allocates a suspended frame ([heap.md](heap.md)), binds the arguments, sets the resume
 point to the entry, and returns the frame as an `iterator<T>` value. Nothing the body would do
-(a side effect, a `yield`) has happened yet; the first slice runs on the first advance.
+(a side effect, a `yield`) has happened yet; the first slice runs on the first advance.  `g`
+is any callee whose return type is `iterator<T>` — a named generator, a lambda with `yield`, or
+either reached through a `fn(…) -> iterator<T>` value; the frame then binds the lambda's closure
+record with the arguments, so a capture lives as long as the handle.
 
 ```
   (G-NoRefParam)  a generator declares no `&` parameter: refused at its definition, on both

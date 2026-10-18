@@ -4563,6 +4563,23 @@ impl State {
             self.code_add(var_pos);
             return Type::Void;
         }
+        // The same for the free GUARDED by a buffer: a lifted call's temp is released at its
+        // block's exit by `OpFreeRefIfDistinct(tmp, __ref_N)`, and its next bind's pre-build free
+        // released the stale slot again whenever the callee had answered a store other than
+        // the buffer — a store the allocator had by then handed to a live value.  Reset either
+        // way: when the guard declined, the store is the buffer's, which still names it.
+        if stack.data.def(op).name() == "OpFreeRefIfDistinct"
+            && let [Value::Var(v), witness] = parameters
+            && stack.owned_reassigned.contains(v)
+        {
+            let var_pos = stack.var_pos(*v);
+            self.generate(&parameters[0], stack, false);
+            self.generate(witness, stack, false);
+            stack.add_op("OpFreeRefIfDistinct", self);
+            stack.add_op("OpInitRefSentinel", self);
+            self.code_add(var_pos);
+            return Type::Void;
+        }
         // try destination-passing optimisation for text-producing natives.
         if self.try_text_dest_pass(stack, op, parameters) {
             return Type::Void;

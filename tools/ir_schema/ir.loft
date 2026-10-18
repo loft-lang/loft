@@ -211,6 +211,9 @@ struct Variable {
   // loft#1522 — a construction work-ref still names its store, so no rebind frees it; read by
   // `owns_displaced_store`, the displacement free both emitters ask (loft#1858)
   buffer_witnessed: boolean,
+  // loft#2034 — `const` before the type; read after parsing by the literal hoist's alias gate,
+  // the use analysis and library placement, so a warm load must keep it
+  value_const: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

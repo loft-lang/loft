@@ -1,0 +1,110 @@
+// `@FR-R-FieldAppend` — a straight-line append to a struct's plain vector field (`r.f += [x]`
+// where no loop holds a push header for `r.f`) is emitted on the native backend as the
+// field's own append, the field's offset and the element's size resolved by the emitter,
+// instead of `record_new` / `record_finish` resolving them on every call.  Every cell asserts
+// the VALUES and LENGTHS the field ends with; the runner checks the store leak at exit.
+//
+// Predictions, hand-computed: f1 (an element owning a text, its literal complete) reads 3
+// elements, sum 6 and labels "a-b-c"; f2 (a whole-record copy) 2 elements, sum 70; f3 (a
+// field of a field, `o.inner.its`) 4 elements, sum 46; f4 (40 appends from one function,
+// past the 11-element first block) 40 elements, sum of `a` 780, last `b` 78; f5 (an absent
+// element's field) leaves `v` one element long with nothing in it; f6 (a vector<text>
+// field) "x,y"; f7 (an element whose nested struct arrives by copy, which covers its field
+// through the copy's null arm) 2 elements, sum 3 + 4 + 5 + 6 + 1 + 2 = 21.  The
+// interpreter is the oracle.  `LOFT_NO_FIELD_APPEND=1` and `LOFT_POISON_CLAIM=1` must answer
+// identically.
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-field-append-outside-a-loop-lands-in-its-field.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch resolves every admitted field at
+//   offset 0, so f1's appends (`b.items`, 8 bytes in) land in `count`'s word instead.
+//   WITNESS: under the patch native's first failing assertion is f1's.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
+
+struct It { n: integer, label: text }
+struct Bag { items: vector<It>, count: integer }
+struct Hold { its: vector<It> }
+struct Out { tag: integer, inner: Hold }
+struct Pair { a: integer, b: integer }
+struct Pairs { ps: vector<Pair> }
+struct Words { ws: vector<text> }
+struct Boxed { p: Pair, n: integer }
+struct Boxes { bs: vector<Boxed> }
+
+fn add_item(b: &Bag, n: integer, l: text) {
+  b.items += [It { n: n, label: l }];
+  b.count += 1;
+}
+
+fn add_pair(p: &Pairs, x: Pair) {
+  p.ps += [x];
+}
+
+fn add_k(o: &Out, k: integer) {
+  o.inner.its += [It { n: k, label: "k" }];
+}
+
+fn add_it(h: &Hold, k: integer) {
+  h.its += [It { n: k, label: "h" }];
+}
+
+fn add_box(b: &Boxes, p: Pair, n: integer) {
+  b.bs += [Boxed { p: p, n: n }];
+}
+
+fn main() {
+  // f1 — a prefilled element that owns a text.
+  b = Bag { items: [], count: 0 };
+  add_item(b, 1, "a");
+  add_item(b, 2, "b");
+  add_item(b, 3, "c");
+  s1 = 0; l1 = "";
+  for it in b.items { s1 += it.n; l1 += if len(l1) == 0 { it.label } else { "-{it.label}" }; }
+  assert(len(b.items) == 3 && s1 == 6 && l1 == "a-b-c" && b.count == 3, "f1: {s1} {l1}");
+
+  // f2 — a whole-record copy into the slot (no prefill).
+  p = Pairs { ps: [] };
+  add_pair(p, Pair { a: 10, b: 20 });
+  q = Pair { a: 15, b: 25 };
+  add_pair(p, q);
+  q.a = 999;
+  s2 = 0;
+  for x in p.ps { s2 += x.a + x.b; }
+  assert(len(p.ps) == 2 && s2 == 70, "f2: {s2}");
+
+  // f3 — a field of a field.
+  o = Out { tag: 7, inner: Hold { its: [] } };
+  for k in [4, 9, 15, 18] { add_k(o, k); }
+  s3 = 0;
+  for it in o.inner.its { s3 += it.n; }
+  assert(len(o.inner.its) == 4 && s3 == 46 && o.tag == 7, "f3: {s3}");
+
+  // f4 — forty appends from one function: the field's block grows past its first claim.
+  w = Pairs { ps: [] };
+  for k in 0..40 { add_pair(w, Pair { a: k, b: k * 2 }); }
+  s4 = 0;
+  for x in w.ps { s4 += x.a; }
+  assert(len(w.ps) == 40 && s4 == 780 && w.ps[39].b == 78, "f4: {s4}");
+
+  // f5 — the field of an absent element: the append lands nowhere.
+  v: vector<Hold> = [Hold { its: [] }];
+  add_it(v[9], 5);
+  assert(len(v) == 1 && len(v[0].its) == 0, "f5: an append to an absent element's field");
+
+  // f6 — a vector<text> field.
+  ws = Words { ws: [] };
+  ws.ws += ["x"];
+  ws.ws += ["y"];
+  assert(len(ws.ws) == 2 && "{ws.ws[0]},{ws.ws[1]}" == "x,y", "f6");
+
+  // f7 — a nested struct arriving by copy writes its field whole, its null arm the default.
+  bx = Boxes { bs: [] };
+  add_box(bx, Pair { a: 3, b: 4 }, 1);
+  add_box(bx, Pair { a: 5, b: 6 }, 2);
+  s7 = 0;
+  for e in bx.bs { s7 += e.p.a + e.p.b + e.n; }
+  assert(len(bx.bs) == 2 && s7 == 21, "f7: {s7}");
+
+  println("field append ok");
+}

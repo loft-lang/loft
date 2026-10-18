@@ -10,6 +10,181 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A slice first bind holds its slice whatever the local is rebound to later (2026-10-18)
+
+- **loft#2038 (silent-wrong)** — `s: vector<T> = big[a..b]` followed later by `s = other`
+  read the slice empty, or panicked, on the interpreter, and named an undeclared variable on
+  `--native`.  The slice is lowered on the second pass, and asked whether the local already
+  held a backing store from its dependency list, which the first pass accumulates over the
+  whole body: `s = other` had put `other` there, so the mint was skipped.  A statement that
+  starts the local's binding (`binding_starts`) now finds it holding nothing.  Guard:
+  `tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft`.
+
+### A local whose binds mix owned and borrowed stores releases each once (2026-10-18)
+
+- **loft#2045, loft#2041** — the owner witness (`@FR-O-Witness`) decides per run which store a
+  local owns, and it read two kinds of bind as the local's own store when a compiler temp held
+  it: an element of a call's result (held by the call's work-ref) and a `??` result (held by
+  its subject or its default's work-ref).  The first released the call's reused buffer a
+  second time, so a local reused across two loops read freed memory; the second hid the mix,
+  so the store a call bind owned was never released.  Such a bind is now a view.
+- Found by the binding matrix and fixed with it, all on both backends:
+  - #2049: a witnessed local that reads a field of a call's record in an arm or a loop body.
+    The lift temp the call ran in freed the store the witness had adopted, at the arm's end.
+    The temp now hands its store to the witness.
+  - #2050: the second loop's split copy of such a local is assigned once, so the record-buffer
+    pool admitted its call's buffer, and the witness released the pooled store every pass.
+    The pool now declines a buffer whose result local is witnessed.
+  - #2051 (silent-wrong): `(R-ReturnField)` took a `??` bind for a view of its subject and freed the default's
+    store before returning it.  A local view is now admitted only when every bind is a field
+    of its root.
+  - #2052: the interpreter left a lift temp's slot naming its store after a block-exit free
+    guarded by the call's buffer, and the next pass's pre-build free released it again.  That
+    free now resets the slot, as `OpFreeRef`'s already did and native's always does.
+- Guards: `tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft`,
+  `tests/scripts/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.loft`
+  and `tests/scripts/2052-a-lifted-call-result-is-released-once-per-pass.loft`.
+
+### `--native`: a null record copied into a fresh element's field is its default (2026-10-18)
+
+- **loft#2044 (silent-wrong)** — a struct literal appended to a vector whose nested struct
+  field took a record that was null at run time kept the bytes the element's slot held
+  before: a cleared vector's refilled entries read the cleared entries' values.  Native minted
+  the element without the default prefill (the record push of a loop) and the field's copy
+  writes nothing for a null source into a destination it does not know is fresh.  The copy
+  now carries a null arm writing the field type's default — what the prefill writes, so the
+  interpreter's answer and a prefilled element are unchanged (`@C137`).
+- **`(R-CompleteWrite)`** counts such a copy as covering its field when the field's type owns
+  no heap, so `undo_push`'s append drops its prefill: `slope_path_with_undo` 100.4 → 92.2 ns
+  (−8.1 %), hash equal.
+- Found beside it and filed: loft#2045, a record local reused across two loops — once from a
+  call's vector, once from a parameter — frees a store it still reads (both backends; the
+  root of #2041).
+
+### dryopea `truncate_to`: plain-vector records copied and released with each store resolved once, kept reservations answered at once (2026-10-18)
+
+- **The copy between two stores** of a record that owns plain vectors and nothing else
+  (`Stores::copy_plain_vectors`) borrows the source and the destination store once and reads
+  the type's cached plan in place; it copied the plan out and resolved both stores per field.
+  A locked destination, a copy within one store and `LOFT_WATCH_STORE` keep the old path.
+- **The release** (`Stores::remove_claims`) tries the plan before the heap-slot test, which
+  answers nothing the plan does not: an empty vector frees nothing either way.
+- The runtime, both backends; `LOFT_NO_PLAIN_VECTOR_RECORDS` still sends such a record through
+  the walk.  `truncate_to` 222 → 202.6 ns a push (−8.6 %), hash equal.
+- **A reservation the block already holds** (`vector::reserve_more`, `@FR-R-PushFill`) is
+  answered by the claim header, with no `Store::resize`: a buffer refilled each pass holds it
+  from the second pass on.  `truncate_to` → 192.3 ns (−5.3 %).
+
+### hex_recover `forms_upto`: a loop record kept across its nest (2026-10-18)
+
+- **`(R-LoopRecord)`'s nest clause** — a record local declared inside the innermost loop of a
+  nest is kept across the outermost loop: declared before it, minted once, freed once after
+  it.  Kept across the innermost loop only, `forms_upto`'s `ef = form_new(…)` freed and minted
+  its store once per pass of the loop around it, about a thousand store cycles a call.  Native;
+  `LOFT_NO_LOOP_RECORD_NEST`.  `forms_upto` 761 → 638 µs (5.02× → ≈ 4.2×), hash equal.
+
+### dryopea `panel_build`: results built where they are kept (2026-10-18)
+
+- **`(R-Place)`'s callee clause for a record enum** — a function returning a struct-enum
+  whose every exit is a variant literal (`return UhToolButton { tb_id: b.btn_id }`, a unit
+  variant `UhWorld`) builds it into the `__retbuf` its caller handed, as a struct's literal
+  exits do; each exit minted a store of its own and the caller freed it.  The buffer has the
+  enum's size, so any variant fits; a variant with an omitted `?` field keeps its stores (only
+  a fresh record's zero leaves that field absent).  Both backends; `LOFT_NO_LITERAL_EXIT_BUFFER`.
+  `panel_build` 4.05 → 3.85 ms (5.24× → 4.98×), `map_json` 2.81× → 2.62×, every lane 17 hash
+  equal.
+- **`(R-Place)`'s foreign-exit clause** — a call whose vector result goes into a field that
+  exists is handed the field as its buffer even when an exit of the callee answers a global
+  constant, a parameter or a field of either; the site copies that answer in when it is not the
+  field (`if ans != place { clear; append }`).  `palette_items_for_tool` answers
+  `HEIGHT_STEP_LABELS` on two exits and builds on the others: the built lists now live where
+  they are kept.  `(R-ExitVector)`'s record clause admits the construction that hands a field
+  to a call (it reads only fields it wrote).  Both backends; `LOFT_NO_PLACE_FOREIGN_EXIT`.
+  `panel_build` 3.85 → 3.41 ms (4.98× → 4.42×, the −11.3 % hand price), every hash equal.
+- **`(R-AppendTwin)` answers from every exit (loft#2042)** — an append twin stood in for a callee
+  whose exit answered a constant: the twin's caller ignores the answer, so `acc += f(-1)` and
+  `Ints { xs: f(-1) }` lost that exit's value on native.  Admission now asks that every exit
+  answer the buffer.
+
+### graphics `fill_polygon`: records read by index off the held base (2026-10-17)
+
+- **`(R-RecPtr)`'s index clause** — `r = v[IDX]?` over a vector whose header and element
+  base the frame holds names IDX once before the statement; in range the view is the held
+  record at `8 + IDX * size` and its address the base plus `IDX * size`, out of range the
+  binding runs as written (`?`'s zero record resolved as any view's).  IDX may be any
+  repeatable expression (`same_read::repeatable`: pure operators and discharges), so
+  `pts[(i + 1) % n ?? 0]?` qualifies.  A value record's locals (`(R-ValueRecord)`: Rust
+  tuples) and a coroutine's persistent ones are declined.  It fires in eight census programs
+  (zttext 35, drawing 22, stage 9); every reached bench keeps its hashes.
+  `LOFT_NO_INDEX_RECPTR`.
+- **`(R-RecPtr)`'s choice clause** — `lo = if c { a } else { b }` forks its dep chain;
+  `StoreFacts::distinct` now follows the fork, so `lo` keeps an address beside a growth of a
+  store every branch is apart from.  An arm the parser lifts is a copy, judged as one.
+- **The scalar clear** — `OpClearVector` on a local whose element type is scalar emits
+  `Stores::clear_vector_plain` (a foreign view dropped, else the length reset) instead of the
+  release-aware clear, which found out at run time, per call, that nothing owns heap.
+- **A slice bound before `s = []` holds the slice (loft#2038, half)** — the first pass's
+  rebind left a dependency of `s` on itself, which `vector_needs_db` read as a backing: the
+  slice minted no store, the interpreter read `s` as null and native named a variable it
+  never declared.  A self-dependency now names no backing.  The `s = other` half is open.
+- **`(R-Fill)`'s guarded clause** — `t = base + i; if t < N { v[t] = c }` (graphics' `hline`)
+  is the fill of `lo..min(hi, N - base)` for a span of eight or more; the fill is now tried
+  before the overflow and nest guards, whose plain copy of the loop ran in its place (the
+  plain `(R-Fill)` sat in that `else` too).  `LOFT_NO_GUARDED_FILL`.  `fill_polygon`
+  1.36 → 1.02 ms (−25 %, ≈ 3.5×), `fill_rect` −14 %, `fill_triangle` −5 to −21 % (noisy).
+- graphics, interleaved and pinned, hash equal: `fill_polygon` 1.84 → 1.35 ms (−27 %, ≈ 4.7×);
+  the index clause −12 %, the choice clause −10 %, the plain clear −7 %; every other graphics
+  row keeps its hash.  Guard
+  `a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft`.
+
+### A warm build keeps a `const` parameter `const` (loft#2034)
+
+The cached IR image stored no `value_const` for a variable, so a program whose library was
+loaded from the cache read `sp: const FrondSpec` as writable: the literal hoist's alias gate
+declined drawing's `fd_sides` build-once guard that a cold parse admitted, and the two
+emissions of one program differed (the rewrite census reports it as a non-deterministic
+emitter).  The `Variable` record carries the flag (cache format 19); the use analysis and
+library placement, which read it too, now answer the same warm as cold.  Guard
+`ir_schema_roundtrip::a_const_parameter_survives_both_codecs` (falsified: the store write
+struck).
+
+### cbor `encode`: the map key run is one slice append (2026-10-17)
+
+- **`(R-ByteCopy)`'s vector clause takes any destination** — the source itself included.
+  The guard reads `len(v)` once, every index the loop reads lies below it, and a push lands
+  above it, so the exclusive-destination test it carried declined `encode_map`'s key loop
+  for nothing.
+- **`Stores::vector_slice` copies in one block** without the temporary it built per call:
+  into the destination's spare room (the same test `vector_add`'s fits path makes, now one
+  helper), otherwise after growing it — re-reading the source's record afterwards, since a
+  slice of the destination moves with it.  `LOFT_NO_SLICE_BLOCK=1` restores the snapshot.
+- **`(R-AppendTwin)` admits `OpSliceVector`** as an append into the buffer: without it
+  `encode__ap` stopped being generated and the copy back into the caller's buffer took most
+  of the gain.  Its source is still scanned as an operand.
+- **`(R-Header)`'s function clause reuses a twin's header** — a body that already receives
+  the parameter's header (`__ih_k`) no longer looks it up again (`key_lt`).
+- **`(Slice-Value)` at a field and through `&`** — `t.a += t.a[1..4]` and `v += v[1..3]` on a
+  `&vector` parameter were refused at compile time; both now take the fresh vector a bind
+  would make, on both backends.
+- The cbor lane, interleaved and pinned, hash equal: `encode` 8.04 → 7.26 ms (−9.7 %);
+  `encode_bytes` and `decode` unchanged (decode's timing moved ±2 % with code layout; its
+  instruction count did not).  Guard
+  `a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v21–v29), pins
+  `byte_copy`, `slice_copy`, `fn_header`, `twin_base`, `vec_copy`.
+
+### A field append outside a loop goes straight to its field (2026-10-16)
+
+- **`(R-FieldAppend)`** — a straight-line `r.f += [x]` on a struct's plain vector field (no
+  push header holds `r.f`) is emitted as `Stores::field_vector_append::<PREFILL>(r, offset,
+  size, elem)` and `field_vector_finish(r, offset)`: the field's offset and the element's
+  size resolved by the emitter instead of by `record_new` / `record_finish` on every call.
+  The admission is the runtime's own plain-field test made once, so a null parent, a locked
+  store and a growth step behave as before.  Native, `LOFT_NO_FIELD_APPEND`.  Lane 17, four
+  paired rounds, every hash equal: `emit_to_material` −12.5 %, `slope_path_with_undo` −8 %,
+  `truncate_to` −6.1 %, `reload_and_record` −2.6 %, `map_json` −2 %.  Guard
+  `a-field-append-outside-a-loop-lands-in-its-field.loft` (falsified: a wrong field offset),
+  pin `tests/field_append.rs`; the `field_mint` and `record_push` pins run with it off.
+
 ### A content swap carries the parked blocks (loft#2031)
 
 `Store::swap_contents` exchanged the memory, the claims, the free tree and the lazy phase
@@ -560,6 +735,7 @@ suite is checked out by `.github/actions/checkout-suite` (the pin, under `loft-s
   file, a free function does, so the author chooses the few worth a bare name and the shared
   namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
   cells `tests/builder_trigger.rs` on both backends.
+
 ### An appended record that owns heap is minted without its prefill (2026-10-16)
 
 - **`(R-CompleteWrite)`'s fresh-copy clause** — a whole-record `OpCopyRecord` into a minted

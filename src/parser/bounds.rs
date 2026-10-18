@@ -192,10 +192,10 @@ impl Parser {
         match self.data.def_type(concrete_nr) {
             DefType::Struct => true,
             DefType::EnumValue => true,
-            DefType::Enum => matches!(
-                self.data.def(concrete_nr).returned().peel_link(),
-                Type::Enum(_, true, _)
-            ),
+            // A struct-enum compares by content and a plain enum by its variant — both are the
+            // concrete `a == b` the monomorph lowers to, so `(G-Sat-Eq)` holds for every enum;
+            // asked of struct-enums alone it refused `<T: Equatable>` at a plain one (loft#2057).
+            DefType::Enum => true,
             _ => matches!(
                 name,
                 "vector" | "hash" | "sorted" | "index" | "spatial" | "trie"

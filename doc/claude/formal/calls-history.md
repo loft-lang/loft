@@ -1021,3 +1021,8 @@ bind cannot swallow the answer.  All six of D-call-19's cells (whole · element 
 generic and concrete) read 7, and all five of D-call-20's rows read as wanted, including the one
 that used to abort on the H5 two-pass contract.  The fixes and their guards landed in the same PR
 that opened the entries (#1490), and only the register was left behind.
+
+- **(F-Block) at statement start — 2026-10-18 (loft#2040).**  A leading `{` was parsed as a
+  `Void` statement, so `{ { 4 } - 1 }` answered -1.  Owner rulings that day: *"the -1 is a bug
+  each block should return its last expression"*, and *"the `{ a + 10 } b = 5` is a syntax error
+  so a `;` needs to be there"* — the `;` sentence in the rule records the second.

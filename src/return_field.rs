@@ -31,6 +31,7 @@
 //! scope pass on the settled IR, after the exit vector it may compose with.
 use crate::data::{Block, Data, Deps, Type, Value};
 use crate::database::Stores;
+use crate::fxhash::FxHashMap as HashMap;
 use crate::variables::Function;
 
 /// The block a rewritten exit becomes: a hand-over, which no reader of the materialised
@@ -83,8 +84,25 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     let Some(rb) = own_return_buffer(data, d_nr) else {
         return;
     };
+    // Only a materialised exit is rewritten, bare or under its presence test; a body with none
+    // pays for no walk and no bind table.
+    if !def
+        .code
+        .any_node(&mut |n| matches!(n, Value::Block(bl) if bl.name == "materialized_view_return"))
+    {
+        return;
+    }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let def = data.def(d_nr);
+    let mut binds: HashMap<u16, Vec<Option<u16>>> = HashMap::default();
+    code.walk(&mut |n| {
+        if let Value::Set(v, val) = n.unspan() {
+            binds
+                .entry(*v)
+                .or_default()
+                .push(field_path_root(&ops, val));
+        }
+    });
     let mut cx = Cx {
         data,
         database,
@@ -93,6 +111,7 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
         rb,
         name: def.name(),
         fired: 0,
+        binds,
     };
     cx.walk(&mut code);
     let fired = cx.fired;
@@ -118,6 +137,22 @@ struct Cx<'a> {
     rb: u16,
     name: &'a str,
     fired: usize,
+    /// Per local, the root of each value bound to it when that value is a field path, and
+    /// `None` for a bind that is not one.  A local's dep list is one fact for all its binds
+    /// and may name a store only SOME of them view (a `??` binding names its subject, not
+    /// its default), so a local view is admitted on its binds, every one of them.
+    binds: HashMap<u16, Vec<Option<u16>>>,
+}
+
+/// The root local of a field path — `OpGetField(… OpGetField(Var(root), _, _) …, _, _)`.
+fn field_path_root(ops: &Ops, v: &Value) -> Option<u16> {
+    match v.unspan() {
+        Value::Call(d, args) if *d == ops.get_field && args.len() == 3 => match args[0].unspan() {
+            Value::Var(root) => Some(*root),
+            inner => field_path_root(ops, inner),
+        },
+        _ => None,
+    }
 }
 
 /// What the copy's source is: the field path's root local, and the source expression the
@@ -271,22 +306,10 @@ impl Cx<'_> {
                 if *d == self.ops.free_if_distinct && args.first().is_some_and(own))
     }
 
-    /// The root local of a field path — `OpGetField(… OpGetField(Var(root), _, _) …, _, _)`.
-    fn path_root(&self, v: &Value) -> Option<u16> {
-        match v.unspan() {
-            Value::Call(d, args) if *d == self.ops.get_field && args.len() == 3 => {
-                match args[0].unspan() {
-                    Value::Var(root) => Some(*root),
-                    inner => self.path_root(inner),
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// The source's root: a field path's root, or a local view whose ONE dep is such a root.
+    /// The source's root: a field path's root, or a local whose every bind is a field path of
+    /// one root — the local's ONE dep.
     fn source_root(&self, src: &Value) -> Result<u16, &'static str> {
-        if let Some(root) = self.path_root(src) {
+        if let Some(root) = field_path_root(self.ops, src) {
             return Ok(root);
         }
         let Value::Var(v) = src.unspan() else {
@@ -298,6 +321,13 @@ impl Cx<'_> {
         let deps = self.function.tp(*v).depend();
         if deps.len() != 1 || deps[0] >= self.function.count() {
             return Err("the source local does not view one local");
+        }
+        if !self
+            .binds
+            .get(v)
+            .is_some_and(|b| b.iter().all(|r| *r == Some(deps[0])))
+        {
+            return Err("a bind of the source local is not a field of its root");
         }
         Ok(deps[0])
     }

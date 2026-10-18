@@ -1,0 +1,13 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 1f8fda81a..076377eaa 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -1093,7 +1093,7 @@ impl Output<'_> {
+                 for window in window.iter().rev() {
+                     self.push_window_close(w, window)?;
+                 }
+-                for &v in &loop_recs {
++                for &v in loop_recs.iter().filter(|_| false) {
+                     let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+                     writeln!(w, ";")?;
+                     self.indent(w)?;

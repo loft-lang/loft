@@ -5302,6 +5302,22 @@ pub fn post_scope_lints(
     drop_copy_census(data, diags, fallback_file);
 }
 
+/// `@FR-G-Hold` — a program with no hook gives the copy census nothing to judge, but a
+/// generator moved into a field, an element or a tuple member is still spent (`@FR-H-Spent`),
+/// and the walk recorded its reads (`spent::record_all`, loft#2043).
+fn raise_generator_spent_reads(
+    data: &Data,
+    diags: &mut crate::diagnostics::Diagnostics,
+    fallback_file: &str,
+) {
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if matches!(def.def_type, DefType::Function) {
+            raise_spent_reads(data, def, diags, fallback_file);
+        }
+    }
+}
+
 /// Lists every place the program deep-copies a record that has a release to run — the copies the
 /// copy-lease rules decide about (@PLN163): a type without `OpCopy` refuses them, a type with one
 /// runs it on the new structure.
@@ -5426,6 +5442,8 @@ pub fn drop_copy_census(
                 raise_spent_reads(data, def, diags, fallback_file);
             }
         }
+    } else if refuse && data.any_generator_member() {
+        raise_generator_spent_reads(data, diags, fallback_file);
     }
     if census {
         eprintln!(
@@ -8332,6 +8350,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
+        let mut lease_frame: Option<crate::lease::Frame> = None;
         for r in analyze_fn_survival(d_nr, &def.code, &def.variables, data, env_tier(), true).0 {
             // Only survival-split (source-duplicating) copies are user-facing, and only the
             // Avoidable class is the actionable worklist — mirror `report_copies`'s filter.
@@ -8342,6 +8361,20 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             // report: on the program path this lint reads the parser's IR, before the scope
             // pass decides, so it asks the deciding pass for its verdict in preview.
             if r.source != u16::MAX && crate::place_result::admits(data, d_nr, r.source) {
+                continue;
+            }
+            // @FR-H-Move — an owned droppable placed into a structure MOVES, read off the line
+            // whatever follows it; the byte copy here IS that move (its source is not released
+            // a second time), so "still used after this point, so it could not be moved" was
+            // false at every such site — a read in the same literal, a move under one branch
+            // and a read on the other (loft#2039).
+            if r.source != u16::MAX
+                && data.type_owns_droppable_anywhere(def.variables.tp(r.source).base())
+                && lease_frame
+                    .get_or_insert_with(|| crate::lease::Frame::new(data, def))
+                    .written_var_verdict(r.source, crate::lease::Placement::Structure)
+                    == crate::lease::Lease::Move
+            {
                 continue;
             }
             let ty = if r.source == u16::MAX {

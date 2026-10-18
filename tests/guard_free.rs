@@ -86,7 +86,7 @@ fn a_frame_no_registrant_reaches_carries_no_guard_in_the_named_tier() {
         );
         assert!(
             b.contains("cr_call_push(")
-                && b.contains("let _call_guard = codegen_runtime::CallGuard;"),
+                && b.contains("let _call_guard = codegen_runtime::NamedCallGuard;"),
             "{name}: the depth push and its pop stay — the recursion cap is not this rule's"
         );
     }

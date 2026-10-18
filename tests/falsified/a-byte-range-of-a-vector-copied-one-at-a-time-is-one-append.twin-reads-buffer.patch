@@ -1,0 +1,11 @@
+--- a/src/generation/append_twin.rs
++++ b/src/generation/append_twin.rs
+@@ -105,7 +105,7 @@
+ 
+     fn scan_node(&mut self, v: &Value, pos: Pos) -> bool {
+         match v.unspan() {
+-            Value::Var(x) => !self.vb.contains(x) || pos == Pos::Flow,
++            Value::Var(_) => true, // SABOTAGE: a view read as an operand is admitted
+             Value::Set(x, rhs) => {
+                 if let Value::Call(d, a) = rhs.unspan()
+                     && self.name(*d) == "OpRefAlias"

@@ -64,7 +64,10 @@ static FOUND: Mutex<Option<HashMap<Key, Vec<SpentRead>>>> = Mutex::new(None);
 /// Record the spent reads of every function not yet through the scope pass.  Called at the top
 /// of `scopes::check`, while each body is still the parser's.
 pub fn record_all(data: &Data) {
-    if !crate::keys::lease_refuse_enabled() || !data.any_release() {
+    // A generator handle owns its frame (`@FR-G-Hold`) without any hook, so a program that
+    // declares no `OpDrop` can still move one into a field or an element — and read it after.
+    if !crate::keys::lease_refuse_enabled() || !(data.any_release() || data.any_generator_member())
+    {
         return;
     }
     let mut found = Vec::new();
@@ -350,6 +353,19 @@ impl Flow<'_> {
                     }
                 });
             }
+            // `(G-Hold)` — a generator local stored into a field or an element MOVES there; the
+            // handle is written with `OpSetDbRef`, where a record takes `OpCopyRecord`, so the
+            // walk asks the one home that names that store (loft#1585's `handle_handoff`).
+            Value::Call(d, args)
+                if crate::scopes::handle_handoff(*d, args, self.func, self.data).is_some() =>
+            {
+                moved.extend(
+                    self.frame
+                        .spends(&args[2], Placement::Structure)
+                        .into_iter()
+                        .map(|v| (v, line)),
+                );
+            }
             Value::Set(x, rhs) => {
                 refilled.push(*x);
                 if !self.func.is_compiler_generated(*x)
@@ -357,13 +373,20 @@ impl Flow<'_> {
                         .data
                         .type_owns_droppable_anywhere(self.func.tp(*x).base())
                 {
-                    moved.extend(
-                        self.frame
-                            .spends(rhs, Placement::Structure)
-                            .into_iter()
-                            .filter(|v| v != x)
-                            .map(|v| (v, line)),
-                    );
+                    // A stack tuple literal is ONE fresh leaf to the lease walk, so its members
+                    // are asked one by one: `t = (g, 1)` places the generator `g` in a tuple
+                    // member, which `(H-Move)` names among the positions that move.
+                    let members: Vec<&Value> = match rhs.unspan() {
+                        Value::Tuple(ms) => ms.iter().collect(),
+                        _ => vec![&**rhs],
+                    };
+                    for m in members {
+                        for v in self.frame.spends(m, Placement::Structure) {
+                            if v != *x && !moved.iter().any(|(w, _)| *w == v) {
+                                moved.push((v, line));
+                            }
+                        }
+                    }
                 }
             }
             _ => {}

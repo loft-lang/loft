@@ -173,7 +173,11 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
 /// [`n_stack_trace`] reports each frame's `line` as the call site that entered it — the
 /// interpreter's `CallFrame.line`.  One store into this thread's frame array; the lean tier
 /// never emits it.
-#[inline]
+///
+/// Deliberately NOT `#[inline]`, for the reason [`cr_call_push`] gives: only the semantics tier
+/// emits it, and inlined it is compiled again inside the program at that tier's low
+/// optimisation level.  Measured on fib(40) (331 M calls): 15.2 s inlined, 12.8 s called
+/// (loft#2009).  The lean tier never emits it, so its out-of-line form costs that tier nothing.
 pub fn cr_call_site(line: u32) {
     let depth = CALL_DEPTH.get();
     if depth == 0 {
@@ -242,11 +246,29 @@ pub fn cr_call_pop() {
 }
 
 /// RAII guard that pops the shadow call stack on drop, ensuring the stack
-/// stays balanced even when the function returns early.
+/// stays balanced even when the function returns early.  The LEAN tier's guard, beside
+/// [`cr_call_push_lean`]: that tier compiles the program fully optimised, and inlined the pop
+/// is a bare decrement at every return — measured on fib(45) (1.8 G calls) 5.66 s inlined and
+/// 10.57 s with the drop out of line (loft#2009).  The semantics tier uses [`NamedCallGuard`].
 pub struct CallGuard;
 
 impl Drop for CallGuard {
     #[inline]
+    fn drop(&mut self) {
+        cr_call_pop();
+    }
+}
+
+/// The SEMANTICS tier's guard, beside [`cr_call_push`]: the same pop, called rather than inlined.
+/// That tier compiles the program at a low optimisation level, where an inlined drop is
+/// compiled again at every return of every function instead of called in its optimised form
+/// from the release `libloft` — measured on fib(40) (331 M calls) 15.2 s with the drop inlined
+/// and 9.8 s called, 7.5 s together with [`cr_call_site`] out of line (loft#2009).  The two
+/// tiers want opposite answers for one body, so each tier names its own guard and the emitter
+/// picks it (`generation/mod.rs`, where the push is chosen).
+pub struct NamedCallGuard;
+
+impl Drop for NamedCallGuard {
     fn drop(&mut self) {
         cr_call_pop();
     }

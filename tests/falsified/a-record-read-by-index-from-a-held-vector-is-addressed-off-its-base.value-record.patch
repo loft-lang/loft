@@ -1,0 +1,12 @@
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -5940,8 +5940,7 @@
+         // (`(R-ValueRecord)`) are Rust tuples: neither is the `DbRef` the binding builds.
+         if self.coroutine_persistent_fields.contains_key(r)
+             || self.coroutine_persistent_fields.contains_key(t)
+-            || self.value_record_locals.contains_key(r)
+-            || self.value_record_locals.contains_key(t)
++            // SABOTAGE: a value record's tuple taken for a DbRef
+         {
+             return None;
+         }

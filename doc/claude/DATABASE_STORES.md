@@ -361,6 +361,10 @@ store is read-only, its bytes are described by the header contract every vector 
   again; `make_foreign` returns a record the slot held to the free tree; a view of a view
   adds its offset.  An append, an argument, a field or a return copies (`vector_slice`):
   their store holds more than the one vector, and locking it would lock the rest.
+  A slice that STARTS the local's binding finds the local holding nothing and mints its
+  `__vdb_N` there (`Parser::vector_needs_db_at_bind`, which reads `binding_starts`), whatever a
+  later statement binds the local to: the dependency list is the first pass's, accumulated
+  over the whole body, and a later `s = other` already names `other` in it.
   `LOFT_NO_FOREIGN_VIEW=1` copies everywhere.
 * **A library's bytes (F5).**  A cdylib bridge answers a `vector<u8>` with no copy through
   `loft_ffi::LoftStore::foreign_vector_from_owned(Vec<u8>)`: the host adopts the block as a

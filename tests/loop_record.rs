@@ -173,3 +173,51 @@ fn the_declines_are_the_designed_ones() {
         "l16's hand-off to a borrowing callee must decline:\n{trace}"
     );
 }
+
+const NEST: &str = "tests/scripts/a-loop-record-is-kept-across-its-whole-nest.loft";
+
+/// `n_n1` of the nest guard, emitted with `env`.
+fn nest_n1(tag: &str, env: &[(&str, &str)]) -> String {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NEST);
+    let out =
+        std::env::temp_dir().join(format!("loft_loop_record_{}_{tag}.rs", std::process::id()));
+    let mut env: Vec<(&str, &str)> = env.to_vec();
+    env.push(("LOFT_NATIVE_NO_CACHE", "1"));
+    let status = loft(
+        &[
+            "--native-emit",
+            out.to_str().unwrap(),
+            src.to_str().unwrap(),
+        ],
+        &env,
+    );
+    assert!(
+        fa::exists(&out),
+        "no Rust emitted: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
+    body(&rust, "n_n1").to_owned()
+}
+
+#[test]
+fn a_record_in_a_nest_is_kept_across_the_outermost_loop() {
+    // The kept declaration precedes the FIRST loop label of `n1` (the outer `i` loop); under
+    // `LOFT_NO_LOOP_RECORD_NEST=1` it stands between the two loops.
+    let kept = "//@FR-R-LoopRecord kept across iterations";
+    let on = nest_n1("nest_on", &[]);
+    let (decl, first_loop) = (on.find(kept).expect("kept"), on.find("'l").expect("a loop"));
+    assert!(decl < first_loop, "declared before the outer loop:\n{on}");
+    assert_eq!(
+        on.matches("@FR-R-LoopRecord freed after the loop").count(),
+        1,
+        "{on}"
+    );
+    let off = nest_n1("nest_off", &[("LOFT_NO_LOOP_RECORD_NEST", "1")]);
+    let (decl, first_loop) = (
+        off.find(kept).expect("kept"),
+        off.find("'l").expect("a loop"),
+    );
+    assert!(decl > first_loop, "declared inside the outer loop:\n{off}");
+}

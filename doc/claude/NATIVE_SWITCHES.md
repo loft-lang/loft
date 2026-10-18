@@ -302,6 +302,14 @@ add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `
 variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
 every use.  An address derived from the element's `DbRef` instead of the index measured
 +46 % SLOWER and is not what ships.
+**`LOFT_NO_INDEX_RECPTR=1`** (`@FR-R-RecPtr`'s index clause, default-ON, generation time,
+`--native` only) makes `r = v[IDX]?` over a vector whose header and base the frame holds read
+its element through `get_vector_hoisted` and resolve the store for its address again — with it
+off, IDX is named once before the statement and, in range, the view is the held record at
+`8 + IDX * size` and its address the held base plus `IDX * size`, the binding running as
+written out of range (graphics `fill_polygon` −12 % alone).  First bisect step for a wrong
+field read through a `v[i]?` view on native; `LOFT_HOIST_VERIFY=1` checks the in-range read
+against the runtime's own.
 **`LOFT_NO_NESTED_FIELD=1`** (`@FR-R-RecPtr`'s path clause, default-ON, generation time,
 `--native` only) makes a scalar field reached through INLINE sub-records (`v.pos.x`) rebuild
 its `DbRef` and resolve the store again — with it off, such a field of a record view is read
@@ -369,6 +377,12 @@ time, `--native` only) declines again a loop record whose type holds vectors of 
 elements — with it off, such a record keeps its vectors across passes and each literal zero of
 a vector field empties the kept vector in place.  First bisect step for a stale element or a
 store that grows pass by pass out of a record literal with vector fields in a loop.
+
+**`LOFT_NO_LOOP_RECORD_NEST=1`** (`@FR-R-LoopRecord`'s nest clause, default-ON, generation time,
+`--native` only) keeps a loop record across its INNERMOST loop again — with it off, a record
+declared inside a nest is kept across the outermost loop around it and freed once after that
+loop (`forms_upto` 761 → 638 µs).  First bisect step for a leak or a stale field out of a
+record literal inside nested loops.
 
 ## Generators
 
@@ -775,7 +789,9 @@ prefill again — with it off, a literal group the emitter PROVES writes every f
 (declared defaults, sentinels, the variant tag included: the parser's lowering is
 complete by construction) calls a no-prefill `OpDatabaseNP`/`OpNewRecordNP` twin —
 and is the bisect step for a wrong default or sentinel in a literal-built record
-on native.
+on native.  It leaves the null arm of a record copy into a minted element's field
+in place (that arm writes the field's default, `@C137`): the arm is what
+the copy owes a destination just created, not part of the elision.
 **`LOFT_NO_LITERAL_HOIST=1`** (@PLN157 § V-x) makes an invariant loop-body vector
 literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2.0]`
 (or an if-of-literals on a const-param field) under a loop builds ONCE per activation,
@@ -859,6 +875,12 @@ loop the idiom should have taken.
 only, generation time):** N4's leaf rule made transitive — a function whose every user
 callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry and buffer
 guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
+**`LOFT_NO_GUARDED_FILL=1`** (`@FR-R-Fill`'s guarded clause, default-ON, generation time,
+`--native` only) keeps the loop for a body `t = base + i; if t < N { v[t] = c }` — with it
+off, the loop is the slice fill of `lo..min(hi, N - base)` when that span holds eight or
+more elements, the loop running for every span the fill declines (graphics `fill_polygon`
+−25 %, `fill_rect` −14 %; graphics' `hline` is the loop).  First bisect step for a wrong
+pixel out of a guarded row loop on native.
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
 

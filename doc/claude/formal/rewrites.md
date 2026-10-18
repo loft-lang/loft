@@ -540,8 +540,10 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  view, a link — never a local's own fresh store or a work buffer)
                  only to callees of which the same holds at that position, a
                  recursive call answering for itself — binds its header once at
-                 entry, and every read in the body, loops included, serves from it.
-                 Growth of OTHER stores is no concern of a header (its record and
+                 entry, and every read in the body, loops included, serves from it;
+                 in a twin body that already receives the parameter's header (the
+                 twin clause's `__ih_k`) that header IS the binding, never a second
+                 lookup.  Growth of OTHER stores is no concern of a header (its record and
                  length are the vector's own), so a body that builds its result
                  beside the reads keeps them; only a BASE would need the store's
                  memory still, and the clause binds none — a loop inside that is
@@ -772,6 +774,10 @@ now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
                  or nullable type, a second binding, a copy to another local, a
                  return, a capture, a native op taking it otherwise, `par` and
                  `yield` decline.  A free on a `return`/`continue` path stays.
+                 THE NEST CLAUSE: the loop that keeps the record is the OUTERMOST loop
+                 around its declaration — every pass of every loop in the nest reaches
+                 the declaration's mint, which takes the clear arm, so the argument is
+                 the innermost loop's; the one free follows the outermost loop.
                  THE REFILL CLAUSE: a record whose heap is vectors of no-heap elements
                  (`(R-RefillBuffer)`'s refillable shape) is kept too, with its vectors,
                  where every mint heads a literal group that writes every field and every
@@ -1244,7 +1250,21 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  holds (R-Base), the address is `base + idx * size` when `idx` is
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
-                 resolved.  THE TEXT CLAUSE: under the base clause, a TEXT field of r
+                 resolved.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
+                 `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
+                 header AND element base the frame holds, with IDX a repeatable
+                 expression (pure operators and discharges): IDX is evaluated once,
+                 before the statement, and when it is in range of the header's length
+                 r is the vector's own record at `8 + IDX * size` and its address
+                 `base + IDX * size`; out of range — past the end, below zero, null —
+                 the binding runs as written, reading the named index, and the record
+                 `?` builds is resolved as any view's.  That record lives in a store of
+                 its own, so no text field of r is served by the base's span.  THE
+                 CHOICE CLAUSE: a view bound from a choice between views — `lo = if c
+                 { a } else { b }`, whose dep chain FORKS — lives in one of its
+                 branches' stores, so it is apart from a store when every branch is;
+                 an arm the parser lifts into `__lift_N` is a copy in a store of its
+                 own and is judged as one.  THE TEXT CLAUSE: under the base clause, a TEXT field of r
                  (`OpGetText(r, off)`) is a fusable read too — its record number one
                  load at the address, the text sliced off the store span derived
                  beside the base (R-Base's text clause), since a record element's
@@ -1683,6 +1703,23 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  writes its own tag (OpSetEnum(e, 0, variant)) beside the variant's
                  fields — with its slot always zeroed, a narrower variant leaving a
                  wider one's tail unwritten.
+  (R-FieldAppend)  a mint group over a vector FIELD of a struct that no push header
+                 holds — a straight-line `r.f += [x]`, outside any loop (R-PushRec)
+                 admits — whose parent type is a STRUCT and whose field is a plain
+                 vector no sibling collection shares, is emitted as the field's own
+                 append: OpNewRecord is `field_vector_append` at the field's offset
+                 with the element's size (prefilled with the element's defaults
+                 unless (R-CompleteWrite) covers the group), OpFinishRecord the
+                 field's length bump.  The admission is exactly the test
+                 `record_new`'s plain-field path makes on every call, made once by
+                 the emitter, so the slot claimed, its prefill and the finish are
+                 the ones the runtime would have produced — a null parent's
+                 no-op, a locked store's refusal and a growth step included.  A
+                 keyed collection, a linked group member and a `__nullable`
+                 parent are not plain vector fields and keep the templates.
+                 Native; the interpreter's own plain-field path is the oracle.
+                 Switch `LOFT_NO_FIELD_APPEND` (and the runtime's own
+                 `LOFT_NO_PLAIN_FIELD_APPEND`).
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
@@ -2433,10 +2470,12 @@ reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
                  is not a raw byte, and a bound that is any other call keep the loop.
                  THE VECTOR CLAUSE: `for i in lo..hi { buf += [v[off + i] ?? d] }` (or
                  `v[i]`, `i + off`) over a byte vector VARIABLE `v` whose element is
-                 `buf`'s, `off` a literal or a variable, `d` a literal, `buf` EXCLUSIVE
-                 as `(R-VecCopy)` defines it (a record `(R-Place)` claimed for it counts
-                 as minted here) — is ONE slice append of `v[off + lo .. off + hi]`
-                 behind `0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off`.  A raw
+                 `buf`'s, `off` a literal or a variable, `d` a literal — is ONE slice
+                 append of `v[off + lo .. off + hi]` behind `0 <= off && 0 <= lo &&
+                 lo <= hi && hi <= len(v) - off`.  `buf` may be any vector, `v` itself
+                 included: the guard reads `len(v)` once, every index the loop reads
+                 lies below it and every push lands above it, so the loop reads only
+                 elements present at entry — the span the append snapshots.  A raw
                  byte read in range is never null, so `?? d` never fires inside the
                  guard; outside it the loop runs as written (a negative index counts
                  from the end, one past the end reads null and pushes `d`).  An element
@@ -2934,7 +2973,14 @@ store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
                  invariant — runs as ONE range test and one slice fill when every
                  index lands in [0, len) with no overflow on the way and the range is
                  non-empty; otherwise the per-element loop runs, unchanged.  The
-                 counters are left where the loop leaves them.
+                 counters are left where the loop leaves them.  THE GUARDED CLAUSE:
+                 a body `t = base + i; if t < N { v[t] = c }`, t the body's own local
+                 and N invariant, writes exactly the indexes below N; as t grows with
+                 i, that is the fill of `lo..min(hi, N - base)`, taken when that span
+                 holds at least FILL_MIN_SPAN elements.  The counters still end where
+                 the whole range leaves them: the guard skips writes, not rounds.
+                 The fill is tried before a guard that emits a second copy of the loop
+                 (R-GuardedChain, R-BoundedNest), so both copies are its fallback.
 ```
 
 **In words.** @PLN157 § V-ae.  The elements the fill writes are exactly the elements the
@@ -2948,7 +2994,10 @@ that reads the vector, a value that depends on the loop variable, a strided inde
 second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 `LOFT_HOIST_VERIFY=1` (the fill re-derives the header) and the count sabotage recorded in
 `tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
-loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
+loop.  The guarded clause's span floor is a measurement, not a rule: every span through the
+fill made graphics' `fill_triangle` slower (an empty one pays the fill's setup and then the
+loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
+`hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
 
 ### A nest whose arithmetic cannot fault runs plain
 
@@ -3413,10 +3462,21 @@ line in `Output::output_function`'s prelude.
                  handle anew, or zeroes every byte for a null source — so the
                  prefill's zeroed handles are read by nothing.  An UNFLAGGED copy
                  into a heap-owning element releases what the slot holds, and only
-                 the prefill makes that nothing: it keeps it.  An uncovered field — a nested struct arriving by
-                 `OpCopyRecord` into a FIELD, a vector field bound by an append, a
-                 `__nullable` element whose discriminant no `OpSet` names — keeps
-                 the prefill: the check can only DECLINE the elision.  `db_vars`
+                 the prefill makes that nothing: it keeps it.  A record copy into
+                 a FIELD of a minted element (`OpCopyRecord(src, OpGetField(e,
+                 off, Sub), Sub)`, inside the group up to the element's
+                 `OpFinishRecord`) carries a NULL ARM writing `Sub`'s default —
+                 what the prefill writes there, so `@C137`'s just-created
+                 destination holds it whichever mint made the element (loft#2044:
+                 without it, a record push that skipped the prefill kept the
+                 slot's old bytes for a null source).  With that arm the copy
+                 covers its field when `Sub` owns no heap, or when the copy is
+                 flagged FRESH for `Sub`.  An uncovered field — such a copy into
+                 a declared local's field (a later `x.prev = p` writes a record
+                 that exists, and the IR does not tell the two apart), a vector
+                 field bound by an append, a `__nullable` element whose
+                 discriminant no `OpSet` names — keeps the prefill: the check can
+                 only DECLINE the elision.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
                  must).  The interpreter keeps the prefill and is the oracle.
@@ -3770,7 +3830,10 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  S (R-Callee: a buffer may be a record the caller offered), so the
                  result is never minted in a store of its own and the later store into
                  the destination is a relocation within S (R-MoveLast).  The callee
-                 writes that buffer on every exit: a fresh literal built into it, or a
+                 writes that buffer on every exit: a fresh literal built into it — a
+                 struct's, or a record enum's variant (a unit variant too: the buffer
+                 has the enum's size, and a smaller variant leaves bytes nothing reads,
+                 every read going through the variant its discriminant names) — or a
                  CHAIN exit that hands the same buffer to a callee of which this holds
                  (asked recursively; a cycle declines) — a chain function's buffer is
                  the `__ref_N` the chain renamed it to.  When the
@@ -3792,7 +3855,13 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  on a place answers the place, the collection it held released, so it
                  builds where it lives; a callee
                  that on some exit answers a store other than the buffer it was handed
-                 (the destination would hold the writes of the exit not taken); a
+                 and other than one the caller never owns (the destination would hold
+                 the writes of the exit not taken) — THE FOREIGN-EXIT CLAUSE: where
+                 every such exit answers a global constant, a parameter or a field of
+                 either, the call is still handed the place and the site copies the
+                 answer in when it is not the place (`if ans != place { clear(place);
+                 place += ans }`: the copy the unplaced call made, now only on the exit
+                 that answered elsewhere); a
                  `?`/`??` discharge on the result; a destination that does not
                  unconditionally EXIST at the call — a field of a struct-enum VARIANT
                  exists only while the value holds that variant.  A member of a linked
@@ -3885,12 +3954,18 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  heap); the copy and the local's frees go.  A fresh mint writes the
                  type's defaults and the field does not, so the construction must
                  write EVERY leaf field (an embedded record's fields flattened in)
-                 before it reads one.  Declines keep the store and the copy: the
+                 before it reads one; a statement of that construction may name the
+                 local only through fields it already wrote, and the return buffer
+                 not at all — a field handed to a call as its buffer (R-Place, the
+                 compiler's never-freed buffer variable bound to the field) is such a
+                 statement, and a receiver.  Declines keep the store and the copy: the
                  local named outside a receiver position (an argument of a user
                  function, an alias), rebound, freed outside the exit, a second exit,
                  a struct-enum payload, anything else writing the field's bytes.
   (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, its
-                 view-local spelling `v = p.a; return v`, or the natural spelling
+                 view-local spelling `v = p.a; return v` (EVERY bind of `v` a field of that
+                 one local: a `??` bind's dep names its subject and never its default, so
+                 the dep list alone does not say what `v` holds), or the natural spelling
                  `mk(…).a`, whose call the parser lifts into a local — is answered as the local's own
                  store at the field's position, instead of a store minted for the return
                  and the field deep-copied into it.  The parser's copy stands where a view
@@ -5592,10 +5667,14 @@ the verify switch.
                  view of B (a local whose dependencies reach it, an alias the body
                  binds of it) is a clear, mint or length reset before the body's first
                  write to B; an append into it (OpAppendVector, OpAppendTextBytes,
-                 OpPreAllocVector, an OpPush kind) whose values do not read it; the
+                 OpPreAllocVector, OpSliceVector, an OpPush kind) whose values — a
+                 slice's source among them — do not read it; the
                  self-replace of B by its own view; a call handing it on to an
                  admitted callee as that callee's buffer; or its value flowing out as
-                 the result.  Anything else — a length read, an index, a walk, B as an
+                 the result.  EVERY EXIT answers B — a view, a block or both arms of an
+                 `if` ending in one, a call handed B, a match fallthrough's null —
+                 because the twin's caller never reads the answer: an exit answering a
+                 constant (a view-typed local bound to `OpConstRef`) declines.  Anything else — a length read, an index, a walk, B as an
                  ordinary argument, a free, an insert at an index — observes what B
                  held on entry, and declines; so do a fn-ref call, a `par` and a
                  yield.  Admission is a fixpoint over the call graph: a recursive

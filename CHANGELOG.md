@@ -111,6 +111,30 @@ naming the two types); `len(user#errors) > 0` already written keeps its meaning.
 `"{user#errors}"` prints the vector, `["line 1:1 path:"]`, where it printed the bare text:
 write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is refused.
 
+**A `spatial` slice is iterated, not bound.**  `b = xs[(0, 0)..(2, 2)]` (and the open
+`xs[(x, y)..]` and capped `xs[(x, y)..:n]` forms) is refused, as the same line on a `sorted`,
+`index` or `trie` already was: write `for p in xs[(0, 0)..(2, 2)] { … }`, or
+`[for p in xs[(0, 0)..(2, 2)] { p }]` for a vector.  Bound as a value it compiled and held one
+meaningless record, so a program that did this was answering wrong.
+
+**A generator you put into a field, a vector or a tuple is no longer yours to use.**  After
+`v += [g]`, `s = S { g: g }`, `s.g = g` or `t = (g, 1)`, reading `g` is refused — the error
+names `g` and the line it moved at — as it already was for a value with an `OpDrop`.  Before,
+`next(g)` quietly advanced the generator its new holder owned, and answered `null` once that
+holder let it go.  Drive it through the holder instead (`next(v[0])`, `next(s.g)`), or bind a
+new generator to `g` first.
+
+**`+` with a character adds an integer and joins text.**  `'a' + 1` is now `98`, as `1 + 'a'`
+already was; it used to be the text `"a1"`.  `'a' + 'b'` (`"ab"`) and `'a' + "cd"` (`"acd"`) still
+join, and `(c + 1) as character` is the next letter.  A character `+` a float, a boolean or a
+record is refused; write `"{c}{x}"` to put them side by side.
+
+**A type built from a template checks each piece the way a call does.**  `q: Q = "a{n}b"` calls
+`Q`'s `lit` and `hole_int`; a hole whose value does not fit the method's parameter is now refused
+with the error the same call written out gets (it crashed, or reached the method with the wrong
+value), a nullable hole into a non-null parameter warns, and a `lit` that does not take
+`(self: Q, s: text)` is refused instead of silently dropping the literal text.
+
 ### New
 
 **A library can offer a few functions by their bare name.**  A library that auto-loads
@@ -186,6 +210,69 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**A lambda can be a generator.**  `f = fn(x: integer) -> iterator<integer> { yield x; yield x + 1; }`
+and `for v in f(10)` now yield `10 11` on both backends, as a named generator does — also through
+a `fn(…)` parameter or a struct field, with captures, and after the function that made the lambda
+has returned.  It panicked on the interpreter, leaked its yields into an enclosing generator, and
+did not compile with `--native`.
+
+**`==` between vectors of different number types compares their values.**  `vector<u8> [4, 2, 0]
+== vector<integer> [4, 2, 0]` answered `false` — the comparison read bytes, so some unequal pairs
+answered `true` — and now compares element by element: integer widths, `float` and `single` by
+value, nested vectors recursively.  Element types that only meet through an `as` (`character`
+against `integer`, `boolean`, `text`, an enum) are a compile-time error naming both.
+
+**An optional group can stand anywhere in a slice pattern.**  `[Num { n }, (Tag { t })?]`,
+`[Num { n }, (Tag { t })?, End]` and `[a, (Kw { k } Op { o })?, ..rest]` were parse errors — only
+a group at the very start was accepted.  The group takes its elements when they are there (`t` is
+null when not), and what follows must fit what it left.  A field in an alternation branch can be
+renamed (`Tag { t: u }`).
+
+**Two generator shapes compile with `--native`.**  `yield from h` where `h` is a generator you
+already hold (a local you took values from, or a parameter), and a `&` link to a record
+parameter inside a generator (`r = &b; … yield r.n`), failed in rustc.  Both now build and answer
+what the interpreter answers.
+
+**Generics accept a plain enum where `==` is required, and see a recursive enum's own field.**
+`fn same<T: Equatable>(a: T, b: T)` refused a plain `enum Col { Red, Green }`; and inside
+`fn f<T>(l: Lst<T>)`, matching `Cons { t }` on `enum Lst<T> { Nil, Cons { h: T, t:
+vector<Lst<T>> } }` was refused with "variant Cons has no field 't'".  Both compile now.
+
+**Comparing two tuples that hold a struct gives the right answer.**  A function ending in
+`(p, 1) == (P { hidden: 41 }, 1)` answered `false` for equal tuples, and did not compile with
+`--native`.  It now answers `true`, on both backends.
+
+**`sizeof` inside a generic answers the size of the type it was called with.**  In
+`fn g<T>(x: T) -> integer { sizeof(x) }`, `g(5)` answered 0 instead of 8, at every type; and
+`sizeof(T)` was refused.  Both now answer what `sizeof` of a value of that type answers outside
+the generic.
+
+**A sandboxed script can no longer read a private field by comparing.**  A field linked
+`secret#read` was refused when read, printed or matched, but `p == P { …, hidden: c }` in a loop
+found its value.  Comparing host data with `==` or `!=` now needs the same grant as reading it.
+
+**The `avoidable-copy` advice no longer reports a move as a copy.**  Putting a value with an
+`OpDrop` into a struct or vector moves it, and the advice said it "could not be moved" because
+it was "still used after this point" — even when the only other use was on a branch that did not
+move it, or in the same literal.  Those notices are gone; a real copy is still advised.
+
+**A block at the start of a statement gives its value.**  `{ { 4 } - 1 }` is 3, and a function
+ending in `{ … } - 1` returns that; the inner block's value used to be dropped, so `- 1` was a
+statement of its own and the answer was -1 (and `+` or `*` there was refused).  A block that
+ends in a value and stands as a statement now needs a `;` before the next statement, exactly as
+an `if` that ends in a value already did; a block whose last statement has no value needs none.
+
+**A view into a collection keeps its old element when the collection is rebuilt by a call.**
+After `e = h[1]; h = load()`, `e` read and wrote the element of the NEW collection for a
+`hash`, `sorted` or `index`, and a `vector` of values with an `OpDrop` read memory already
+released.  `e` is now copied out first and keeps what it had, as it already was for
+`h = [ … ]`; with an `OpDrop` element the rebind is refused, naming the view.
+
+**A `for` over a range whose start may be null no longer warns about its own loop
+variable.**  In `for i in n..5` with `n: integer?`, storing `i` somewhere that holds a plain
+`integer` warned that a null could land there, and at `u8` it was refused.  A null start makes
+the loop run no rounds, so `i` is never null and the store is fine; it now compiles cleanly.
 
 **A program in a browser page learns that its server is gone.**  `engine_host::run_client`
 returns once the server connection closes, after the disconnect event (`kind` 2) has reached
@@ -275,6 +362,26 @@ text or collections hands its fields back directly.  A `-> S?` did that only whe
 out built the record or answered `null`; one that also handed back an element of a vector, a
 parameter, or the result of a `-> S` function went through a buffer, with a copy and a release
 per call.  It now takes the direct route its `-> S` twin takes.
+
+**A struct copied from a missing record into a new vector entry holds its defaults.**  Under
+`--native`, appending `E { prev: v[i] }` after clearing the vector, where `v[i]` is past the
+end, could leave `prev` holding the values of the entry that was cleared.  It now holds the
+type's defaults, as the interpreter always answered.
+
+**A vector first bound to a slice keeps the slice.**  `s: vector<integer> = big[1..3]`
+followed later by `s = other` read the slice as empty, or stopped the program, and did not
+compile under `--native`.  The slice is now what `s` holds until the rebind.
+
+**A function that returns a `??` result of a record with text returns the right record.**
+`pv = maybe(a) ?? Ht { … }; pv` handed the caller a record already released when the default
+was taken; a later value could read 0.  It now returns the default intact.
+
+**Reusing a local name for different kinds of values no longer releases memory still in use.**
+One name bound to a call's result in one place and to an element of a vector in another — in
+two loops, in an `if` arm, or once through `??` — could release a record the program still
+read, or keep one it should have released, on both backends.  The values usually came out
+right until the memory was reused.  Each binding now releases what it owns once.  A
+call's result read inside a loop on the interpreter is likewise released once per pass.
 
 ---
 

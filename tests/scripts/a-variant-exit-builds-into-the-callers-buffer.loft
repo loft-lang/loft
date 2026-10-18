@@ -1,0 +1,226 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Place`'s callee clause for a RECORD ENUM — a function returning a struct-enum whose
+// every exit is a fresh variant literal (`return Button { id: a }`, a unit variant `World`)
+// builds that variant into the buffer its caller handed, as a struct's literal exits do, so
+// the call answers the caller's store where each exit minted one of its own.  The buffer has
+// the enum's size (the largest variant), so any variant fits; the caller releases what the
+// previous value held before it hands the buffer on, by that value's own variant.
+//
+// The cells vary which variants follow each other through one buffer (a unit after a data
+// variant, a text variant after a vector one, a small after a large), how the caller binds
+// the result (a loop local, two live results, a struct field, an appended element, a chain
+// exit, a recursion), and the exits the clause must decline (one that answers a parameter,
+// a `?` return).  Each value is hand-computed, and each cell runs in a loop so the buffer is
+// refilled.  The interpreter and native answer the same, and so do `LOFT_NO_LITERAL_EXIT_BUFFER=1`,
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1`.  Where each exit builds
+// is pinned by `tests/literal_exit_buffer.rs`; these cells hold the values.
+//
+// @falsified-by: tests/falsified/a-variant-exit-builds-into-the-callers-buffer.variant-fields-unread.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch stops asking each variant for a
+//     `?` field, so `opt2`'s exits build into the reused buffer.
+//   WITNESS: c10b answers 2424 for 13112: the omitted field reads the previous turn's point.
+//   HOLDS: leak, panic and free-refusal equal and clean.
+
+enum Hit { World, Button { id: integer }, Item { idx: integer, label: text }, Nothing }
+
+enum Shape { Dot, Line { len: integer }, Poly { pts: vector<integer>, name: text } }
+
+struct Pt { x: integer, y: integer }
+
+enum Opt { Gone, Has { p: Pt?, n: integer } }
+
+struct Holder { tag: integer, h: Hit }
+
+fn hit(a: integer) -> Hit {
+  if a < 0 { return World; }
+  if a < 10 { return Button { id: a }; }
+  if a < 20 { return Item { idx: a - 10, label: "i{a}" }; }
+  Nothing
+}
+
+fn score(h: Hit) -> integer {
+  match h {
+    World => 1,
+    Button { id } => 10 + id,
+    Item { idx, label } => 100 + idx * 10 + len(label),
+    Nothing => 1000
+  }
+}
+
+// Every exit a literal; the tail a data variant.
+fn shape(a: integer) -> Shape {
+  if a % 3 == 0 { return Dot; }
+  if a % 3 == 1 { return Line { len: a }; }
+  Poly { pts: [a, a + 1, a + 2], name: "p{a}" }
+}
+
+fn weigh(s: Shape) -> integer {
+  match s {
+    Dot => 7,
+    Line { len } => len * 2,
+    Poly { pts, name } => pts[0] + pts[1] + pts[2] + len(name) * 100
+  }
+}
+
+// A chain exit hands the same buffer to `hit`.
+fn hit2(a: integer) -> Hit {
+  if a > 100 { return Nothing; }
+  hit(a)
+}
+
+// One exit answers the parameter: the clause declines, the caller's value is copied.
+fn pick(a: integer, d: Hit) -> Hit {
+  if a < 0 { return d; }
+  Button { id: a }
+}
+
+// A nullable return.
+fn maybe(a: integer) -> Hit? {
+  if a < 0 { return null; }
+  Button { id: a }
+}
+
+// A recursion: each level's call hands a buffer of its own.
+fn deep(n: integer) -> Hit {
+  if n == 0 { return Button { id: 7 }; }
+  r = deep(n - 1);
+  match r {
+    Button { id } => Item { idx: id + n, label: "d" },
+    Item { idx, label } => Button { id: idx + n },
+    _ => Nothing
+  }
+}
+
+// A variant with a nullable record field, absent after present.
+fn opt(a: integer) -> Opt {
+  if a < 0 { return Gone; }
+  if a % 2 == 0 { return Has { p: Pt { x: a, y: a + 1 }, n: a }; }
+  Has { p: null, n: a }
+}
+
+// The same with the field OMITTED: the literal writes nothing there and relies on the fresh
+// record's zero, so a reused buffer would still hold the previous present value.
+fn opt2(a: integer) -> Opt {
+  if a % 2 == 0 { return Has { p: Pt { x: a, y: a + 1 }, n: a }; }
+  Has { n: a }
+}
+
+fn opt_score(o: Opt) -> integer {
+  match o {
+    Gone => 5,
+    Has { p, n } => if p == null { n * 1000 } else { p.x * 10 + p.y + n * 100 }
+  }
+}
+
+fn main() {
+  // c1 — the variants in turn, each call an argument (a fresh buffer): f - 3 runs -3..16.
+  // -3..-1 World (3 × 1) = 3; 0..9 Button (10 × 10 + 45) = 145;
+  // 10..16 Item: idx 0..6 → 100 + idx × 10 + len("i1N") = 103 + idx × 10 → 7 × 103 + 210 = 931.
+  t = 0;
+  for f in 0..20 { t += score(hit(f - 3)); }
+  assert(t == 3 + 145 + 931, "c1 {t}");
+
+  // c2 — the unit tail after a text variant, a text variant after the unit: 18, 25, 19, 30.
+  // Item(8,"i18") 183, Nothing 1000, Item(9,"i19") 193, Nothing 1000.
+  t = 0;
+  for a in [18, 25, 19, 30] { h = hit(a); t += score(h); }
+  assert(t == 183 + 1000 + 193 + 1000, "c2 {t}");
+
+  // c3 — a vector-and-text variant, then smaller ones, through one buffer: a = 0..8.
+  // a%3==0 Dot 7 (a = 0, 3, 6) = 21; a%3==1 Line 2a (1, 4, 7) = 24;
+  // a%3==2 Poly 3a+3 + 200 (2, 5, 8) = 9 + 18 + 27 + 600 = 654.
+  t = 0;
+  for a in 0..9 { s = shape(a); t += weigh(s); }
+  assert(t == 21 + 24 + 654, "c3 {t}");
+
+  // c4 — two results alive at once, each from its own call site.
+  t = 0;
+  for f in 0..5 {
+    x = hit(f);
+    y = hit(f + 10);
+    t += score(x) * 1000 + score(y);
+  }
+  // x: Button f → 10 + f → 10..14, sum 60; y: Item(f, "i1f") → 103 + 10f, sum 515 + 100 = 615.
+  assert(t == 60 * 1000 + 615, "c4 {t}");
+
+  // c5 — the result stored in a struct field and appended to a vector.
+  hs: vector<Holder> = [];
+  for f in 0..4 { hs += [Holder { tag: f, h: hit(f * 6 - 1) }]; }
+  // f*6-1 = -1 World 1, 5 Button 15, 11 Item(1,"i11") 113, 17 Item(7,"i17") 173.
+  t = 0;
+  for e in hs { t += e.tag * 10000 + score(e.h); }
+  assert(t == 60000 + 1 + 15 + 113 + 173, "c5 {t}");
+  vs: vector<Hit> = [];
+  for f in 0..3 { vs += [hit(f * 7)]; }
+  // 0 Button 10, 7 Button 17, 14 Item(4,"i14") 143.
+  t = 0;
+  for e in vs { t += score(e); }
+  assert(t == 10 + 17 + 143, "c5b {t}");
+
+  // c6 — a chain exit beside a literal exit: 5, 200, 15, 101.
+  t = 0;
+  for a in [5, 200, 15, 101] { h = hit2(a); t += score(h); }
+  // Button 15, Nothing 1000, Item(5,"i15") 153, Nothing 1000.
+  assert(t == 15 + 1000 + 153 + 1000, "c6 {t}");
+
+  // c7 — an exit that answers the parameter: the copy is the caller's own.
+  d = hit(12);
+  t = 0;
+  for a in [-1, 3, -2] {
+    r = pick(a, d);
+    t += score(r);
+  }
+  // Item(2,"i12") 123 twice, Button 13.
+  assert(t == 123 + 13 + 123, "c7 {t}");
+  assert(score(d) == 123, "c7 d {score(d)}");
+
+  // c8 — a nullable return.
+  t = 0;
+  for a in [-1, 4, -5, 6] {
+    m = maybe(a);
+    t += if m == null { 1 } else { score(m) };
+  }
+  assert(t == 1 + 14 + 1 + 16, "c8 {t}");
+
+  // c9 — a recursion: deep(0) Button 7; deep(1) Item(8); deep(2) Button 10; deep(3) Item(13).
+  assert(score(deep(0)) == 17, "c9a");
+  assert(score(deep(1)) == 181, "c9b {score(deep(1))}");
+  assert(score(deep(2)) == 20, "c9c {score(deep(2))}");
+  assert(score(deep(3)) == 231, "c9d {score(deep(3))}");
+
+  // c10 — a nullable record field, present then absent through one buffer: 4, 5, -1, 6, 7.
+  // 4: Pt(4,5) → 45 + 400 = 445; 5: absent → 5000; -1 Gone 5; 6: 67 + 600 = 667; 7: 7000.
+  t = 0;
+  for a in [4, 5, -1, 6, 7] { o = opt(a); t += opt_score(o); }
+  assert(t == 445 + 5000 + 5 + 667 + 7000, "c10 {t}");
+  // c10b — omitted, not null: 4, 5, 6, 7 → 445 + 5000 + 667 + 7000.
+  t = 0;
+  for a in [4, 5, 6, 7] { o = opt2(a); t += opt_score(o); }
+  assert(t == 445 + 5000 + 667 + 7000, "c10b {t}");
+
+  // c11 — assigned over an element and a field that hold another variant: vs is
+  // [Button 0, Button 7, Item(4,"i14")], hs[2] holds Item(1,"i11").
+  for f in 0..2 {
+    vs[1] = hit(13 + f);
+    vs[2] = hit(-1);
+    hs[2].h = hit(3 + f);
+  }
+  // vs[1] Item(4,"i14") 143, vs[2] World 1, hs[2].h Button 4 → 14.
+  assert(score(vs[1]) == 143, "c11a {score(vs[1])}");
+  assert(score(vs[2]) == 1, "c11b {score(vs[2])}");
+  assert(score(hs[2].h) == 14, "c11c {score(hs[2].h)}");
+
+  // c12 — a `??` over a nullable result, in a loop: -1 → Button 99 (109), 2 → 12, -3 → 109.
+  t = 0;
+  for a in [-1, 2, -3] {
+    mm = maybe(a) ?? Button { id: 99 };
+    t += score(mm);
+  }
+  assert(t == 109 + 12 + 109, "c12 {t}");
+  if score(hit(15)) > 150 { t += 1; }
+  assert(t == 231, "c12b {t}");
+
+  println("done");
+}

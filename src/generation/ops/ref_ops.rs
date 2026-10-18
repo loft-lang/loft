@@ -523,6 +523,7 @@ impl OpCopyRecordEmitter {
         d: u16,
         dst: &Value,
         tp_val: &Value,
+        fresh: Option<u16>,
     ) -> io::Result<()> {
         let name =
             super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
@@ -550,7 +551,11 @@ impl OpCopyRecordEmitter {
         }
         ctx.output
             .write_tuple_fields(ctx.w, d, to, &format!("var_{name}"))?;
-        if presence.is_some() {
+        if let Some(sub) = fresh.filter(|_| presence.is_some()) {
+            write!(ctx.w, "}} else {{ stores.set_default_value({sub}, &(")?;
+            ctx.emit(to)?;
+            write!(ctx.w, ")); }} ")?;
+        } else if presence.is_some() {
             write!(ctx.w, "}} else {{ stores.copy_null_into(&(")?;
             ctx.emit(to)?;
             write!(ctx.w, "), (")?;
@@ -559,10 +564,66 @@ impl OpCopyRecordEmitter {
         }
         write!(ctx.w, "}}")
     }
+
+    /// `@C137`'s fresh-field arm (loft#2044) — a record copy into a FIELD of an element the
+    /// literal group is building ([`hoist::CompleteWrites::fresh_fields`]): the destination
+    /// was just created, so a null source leaves it the default of `sub`, which is what the
+    /// prefill writes there.  An element minted without the prefill holds whatever its slot
+    /// held, and the copy's own null arm keeps that for a destination it does not know is
+    /// fresh.  A present source takes the copy as before.
+    ///
+    /// [`hoist::CompleteWrites::fresh_fields`]: super::super::hoist::CompleteWrites::fresh_fields
+    fn fresh_field(ctx: &mut EmitCtx<'_, '_>, args: &[Value], sub: u16) -> io::Result<()> {
+        let [src, dst, tp_val] = args else {
+            return Ok(());
+        };
+        if let Value::Var(v) = src.unspan()
+            && let Some(d) = ctx.output.value_record_locals.get(v).copied()
+            && ctx.output.value_records.types.contains_key(&d)
+        {
+            return Self::materialise_local(ctx, *v, d, dst, tp_val, Some(sub));
+        }
+        // A variable is read twice; anything else is bound once, so a call is not repeated.
+        let bound = !matches!(src.unspan(), Value::Var(_));
+        let from = if bound {
+            write!(ctx.w, "{{ let __ns: DbRef = ")?;
+            ctx.emit(src)?;
+            write!(ctx.w, "; ")?;
+            Value::RawExpr("__ns".to_string())
+        } else {
+            write!(ctx.w, "{{ ")?;
+            src.clone()
+        };
+        write!(ctx.w, "if ")?;
+        ctx.emit(&from)?;
+        write!(
+            ctx.w,
+            ".store_nr == u16::MAX {{ stores.set_default_value({sub}, &("
+        )?;
+        ctx.emit(dst)?;
+        write!(ctx.w, ")); }} else {{ ")?;
+        Self::copy(ctx, &[from, dst.clone(), tp_val.clone()])?;
+        write!(ctx.w, " }} }}")
+    }
 }
 
 impl OpEmitter for OpCopyRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(sub) = ctx
+            .output
+            .complete_writes
+            .fresh_fields
+            .get(&(args.as_ptr() as usize))
+            .copied()
+        {
+            return Self::fresh_field(ctx, args, sub);
+        }
+        Self::copy(ctx, args)
+    }
+}
+
+impl OpCopyRecordEmitter {
+    fn copy(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [src, dst, tp_val] = args {
             // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a copy FROM a value local is the
             // tuple MATERIALISED into the destination: one typed field write per element,
@@ -573,7 +634,7 @@ impl OpEmitter for OpCopyRecordEmitter {
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
                 && ctx.output.value_records.types.contains_key(&d)
             {
-                return Self::materialise_local(ctx, *v, d, dst, tp_val);
+                return Self::materialise_local(ctx, *v, d, dst, tp_val, None);
             }
             // A copy FROM a SUB-RECORD of a value local (`Vtx { pos: w.pos, … }`): the
             // range of the tuple the sub-record is, materialised through the same typed

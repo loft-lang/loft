@@ -7,8 +7,10 @@
 //! operator site reaches when the author's own type supplies one.
 
 use super::{
-    DefType, Deps, Level, Parser, Type, Value, diagnostic_format, rename, v_block, v_if, v_set,
+    DefType, Deps, Level, Parser, Type, Value, diagnostic_format, rename, v_block, v_if, v_loop,
+    v_set,
 };
+use crate::data::I32;
 
 impl Parser {
     /// Compare two tuples, element by element — `==`, `!=`, `<`, `<=`, `>`, `>=`.
@@ -107,6 +109,109 @@ impl Parser {
             v_block(prelude, Type::Boolean, "tuple_compare")
         };
         Some(Type::Boolean)
+    }
+
+    /// `@FR-E-Eq`, loft#2062 — do two DIFFERENT vector element types compare by value without an
+    /// `as`?  Numbers do — every integer width, `float` and `single` meet by the listed
+    /// widenings (`@FR-C-Int`, `@FR-C-Num`) — and nested vectors when their elements do.  A
+    /// `character` against an `integer`, a `boolean`, a `text` or an enum needs a cast.
+    fn elements_compare_soundly(a: &Type, b: &Type) -> bool {
+        let numeric = |t: &Type| matches!(t.base(), Type::Integer(_) | Type::Float | Type::Single);
+        match (a.base(), b.base()) {
+            (Type::Vector(x, _), Type::Vector(y, _)) => Self::elements_compare_soundly(x, y),
+            _ => (numeric(a) && numeric(b)) || a.is_equal(b),
+        }
+    }
+
+    /// Do two vector element types share one stored layout, so the content comparison can walk
+    /// both by one schema?  `is_equal` alone says yes for `u8` against `integer` — it ignores the
+    /// range, and with it the WIDTH — so the stored size is asked too, at every nesting level.
+    fn same_element_layout(&mut self, a: &Type, b: &Type) -> bool {
+        match (a.base(), b.base()) {
+            (Type::Vector(x, _), Type::Vector(y, _)) => {
+                let (x, y) = ((**x).clone(), (**y).clone());
+                self.same_element_layout(&x, &y)
+            }
+            _ => a.is_equal(b) && self.element_store_size(a) == self.element_store_size(b),
+        }
+    }
+
+    /// `a == b` over two vectors of different element types: equal lengths, then each pair
+    /// compared with its own `==` (recursing for nested vectors), stopping at the first that
+    /// differs.  An operand that is a local is read in place; any other is bound once.
+    fn mixed_vector_eq(
+        &mut self,
+        list: &[Value],
+        types: &[Type],
+        ea: &Type,
+        eb: &Type,
+        negate: bool,
+    ) -> Value {
+        let mut ops = Vec::new();
+        let side = |s: &mut Self, side_nr: usize, ops: &mut Vec<Value>| -> u16 {
+            if let Value::Var(v) = list[side_nr].unspan() {
+                return *v;
+            }
+            let t = s.create_unique(
+                if side_nr == 0 { "veq_a" } else { "veq_b" },
+                &types[side_nr],
+            );
+            s.vars.defined(t);
+            ops.push(v_set(t, list[side_nr].clone()));
+            t
+        };
+        let lhs = side(self, 0, &mut ops);
+        let rhs = side(self, 1, &mut ops);
+        let res = self.create_unique("veq_r", &Type::Boolean);
+        self.vars.defined(res);
+        let idx = self.create_unique("veq_i", &I32);
+        self.vars.defined(idx);
+        let la = self.cl("OpLengthVector", &[Value::Var(lhs)]);
+        let lb = self.cl("OpLengthVector", &[Value::Var(rhs)]);
+        ops.push(v_set(res, self.cl("OpEqInt", &[la, lb])));
+        ops.push(v_set(idx, Value::Int(0)));
+        // A cursor match in flight offsets `read_slice_elem`'s reads; this is not one.
+        let cursor = self.match_cursor.take();
+        let size_a = Value::Int(self.element_store_size(ea));
+        let size_b = Value::Int(self.element_store_size(eb));
+        let read_a = self.read_slice_elem(lhs, &size_a, ea, Value::Var(idx));
+        let read_b = self.read_slice_elem(rhs, &size_b, eb, Value::Var(idx));
+        self.match_cursor = cursor;
+        // Each pair is bound to a VIEW of its element — an inner vector is the outer one's
+        // storage, and an owned temporary would be freed under it — so a nested comparison reads
+        // the elements in place rather than binding them again.
+        let element = |s: &mut Self, name: &str, tp: &Type| -> u16 {
+            let t = s.create_unique(name, tp);
+            s.vars.defined(t);
+            s.vars.set_skip_free(t);
+            t
+        };
+        let pa = element(self, "veq_x", ea);
+        let pb = element(self, "veq_y", eb);
+        let mut pair = Value::Null;
+        self.call_op(
+            &mut pair,
+            "==",
+            &[Value::Var(pa), Value::Var(pb)],
+            &[ea.clone(), eb.clone()],
+        );
+        let la = self.cl("OpLengthVector", &[Value::Var(lhs)]);
+        let more = self.cl("OpLtInt", &[Value::Var(idx), la]);
+        let go_on = v_if(Value::Var(res), more, Value::Boolean(false));
+        let step = vec![
+            v_if(go_on, Value::Null, Value::Break(0)),
+            v_set(pa, read_a),
+            v_set(pb, read_b),
+            v_set(res, pair),
+            v_set(idx, self.cl("OpAddInt", &[Value::Var(idx), Value::Int(1)])),
+        ];
+        ops.push(v_loop(step, "vector content =="));
+        ops.push(if negate {
+            self.cl("OpNot", &[Value::Var(res)])
+        } else {
+            Value::Var(res)
+        });
+        v_block(ops, Type::Boolean, "vector content ==")
     }
 
     /// The element types of either spelling of a tuple — `None` for any other type.
@@ -664,6 +769,42 @@ impl Parser {
             // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
             // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
             // a keyed collection by its records, an enum value by its variant and then fields.
+            // `@FR-E-Eq` — two vectors of DIFFERENT element types compare element by element with
+            // each pair's own `==`, where the element types convert soundly; a pair that would
+            // need an `as` is refused (loft#2062).  The content comparison walks one element
+            // schema, so a mixed pair handed to it would compare stored bytes, not values.
+            if matches!(op, "==" | "!=")
+                && list.len() == 2
+                && let (Type::Vector(ea, _), Type::Vector(eb, _)) =
+                    (types[0].peel_link(), types[1].peel_link())
+                && !ea.is_unknown()
+                && !eb.is_unknown()
+                && !self.same_element_layout(ea, eb)
+            {
+                let (ea, eb) = ((**ea).clone(), (**eb).clone());
+                if self.first_pass {
+                    return Type::Boolean;
+                }
+                if !Self::elements_compare_soundly(&ea, &eb) {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{op}` compares the elements of a vector<{}> with those of a vector<{}>, \
+                         which convert only with an explicit `as` — convert one side first",
+                        ea.source_name(&self.data),
+                        eb.source_name(&self.data)
+                    );
+                    return Type::Boolean;
+                }
+                *code = self.mixed_vector_eq(list, types, &ea, &eb, op == "!=");
+                return Type::Boolean;
+            }
+            // `@FR-Cap-Read` — a content comparison reads every field of both operands.
+            if matches!(op, "==" | "!=") && list.len() == 2 && types.len() == 2 {
+                for (operand, tp) in list.iter().zip(types) {
+                    self.sandbox_read_compared(tp, operand);
+                }
+            }
             if matches!(op, "==" | "!=")
                 && list.len() == 2
                 && let Some(tp) = self.content_eq_type(types)

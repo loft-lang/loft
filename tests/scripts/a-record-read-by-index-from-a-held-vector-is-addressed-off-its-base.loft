@@ -1,0 +1,267 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: is stored into the index of the non-null type
+//
+// `@FR-R-RecPtr`'s index clause and choice clause, and `@FR-H-ClearRelease`'s scalar clear.
+//
+// `a = pts[i]?` over a vector whose header and element base the frame holds: the index is
+// named once before the statement, and in range the view is the held vector's own record at
+// `8 + i * size` and its address the held base plus `i * size` — where the binding built a
+// `DbRef` through the generic read and resolved the store again for its address.  Past the
+// end, below zero or at a null index the binding runs as written: `?` answers its zero
+// record, whose address is resolved as any view's is.  `lo = if c { a } else { b }` over two
+// such views lives in one of their stores, so it keeps an address beside a growth of another
+// store (the choice clause of `StoreFacts::distinct`).  A buffer of scalars is cleared by a
+// length reset without the run-time walk of the type table that finds out it owns no heap.
+// graphics' `fill_polygon` does all three per scanline.
+//
+// The interpreter applies none of it and is the oracle; every cell asserts hand-computed
+// values.  `LOFT_NO_INDEX_RECPTR=1`, `LOFT_NO_BASE_RECPTR=1`, `LOFT_NO_RECORD_PTR=1`,
+// `LOFT_NO_VECTOR_BASE=1`, `LOFT_HOIST_VERIFY=1` and `LOFT_POISON_CLAIM=1` answer the same.
+// Points: (1,5) (7,2) (4,9).
+//
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.index-address.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch takes the address of the NEXT element.
+//   WITNESS: c1 answers 49 for 77.
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.self-dependency.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   CHANNEL: the PANIC channel on the interpreter, a compile failure on native — the patch
+//   reads `s`'s dependency on itself as a backing again (loft#2038's fixed half).
+//   WITNESS: c10's slice mints no store: the interpreter panics in `keys.rs` reading it,
+//   native names `var_s`, which it never declared.
+//   HOLDS: leak and free-refusal equal and clean.
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.plain-clear.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch makes the scalar clear keep the length.
+//   WITNESS: c9's builder answers 2208 for 908 (each call's buffer keeps the last one's).
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// @falsified-by: tests/falsified/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.value-record.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: a compile failure on native — the patch admits a value record's tuple locals.
+//   WITNESS: c11's `pick` assigns a `DbRef` to its `(f64, f64)` temporary (rustc E0308).
+//   HOLDS: the interpreter answers 19 on both trees.
+// The plain clear's foreign-view test mirrors the release-aware clear's and is not load-
+// bearing in any shape the parser emits: a clear of a view is followed by a slice view, which
+// drops the view itself, and a literal rebind mints instead of clearing (struck, the guard
+// answers the same).
+// The choice clause has no witnessable sabotage: a choice whose arm is read after its
+// container is disturbed is LIFTED by the parser into a copy in a store of its own (c7b,
+// c7c), so a choice whose arms stay views never has a branch in a store the loop grows.
+
+struct Coord { px: integer, py: integer }
+
+struct Named { k: integer, nm: text }
+
+fn pts() -> vector<Coord> { [Coord { px: 1, py: 5 }, Coord { px: 7, py: 2 }, Coord { px: 4, py: 9 }] }
+
+// c1 — the polygon edge walk: i0 b → 7*3+5+2 = 28; i1 a → 21+2+9 = 32; i2 b → 3+9+5 = 17.
+fn edges(p: const vector<Coord>, y: integer) -> integer {
+  n = len(p);
+  t = 0;
+  for i in 0..n {
+    a = p[i]?;
+    b = p[(i + 1) % n ?? 0]?;
+    lo = if a.py < b.py { a } else { b };
+    t += lo.px * y + a.py + b.py;
+  }
+  t
+}
+
+// c2 — past the end `?` answers its zero record: 15 + 72 + 49 + 0 + 0.
+fn past(p: const vector<Coord>) -> integer {
+  t = 0;
+  for i in 0..len(p) + 2 { a = p[i]?; t += a.px * 10 + a.py; }
+  t
+}
+
+// c3 — a negative index counts from the end: -3 -2 -1 are 0 1 2 → 105 + 702 + 409.
+fn negative(p: const vector<Coord>) -> integer {
+  n = len(p);
+  t = 0;
+  for i in 0..n { a = p[i - n]?; t += a.px * 100 + a.py; }
+  t
+}
+
+// c4 — a null index reads the zero record: 15 + 0 + 49 (the warning is the point: the index
+// is null on purpose).
+fn null_index(p: const vector<Coord>) -> integer {
+  n = len(p);
+  t = 0;
+  for i in 0..n {
+    ni: integer? = if i == 1 { null } else { i };
+    a = p[ni]?;
+    t += a.px * 10 + a.py;
+  }
+  t
+}
+
+// c5 — a write through the view lands in the element: px 101 107 104.
+fn bump(p: &vector<Coord>) {
+  n = len(p);
+  for i in 0..n { a = p[i]?; a.px += 100; }
+}
+
+// c5b — the same write through a view of a LOCAL's element, where the clause holds the
+// header: 101 + 107 + 104.
+fn bump_local() -> integer {
+  q = pts();
+  n = len(q);
+  for i in 0..n { a = q[i]?; a.px += 100; }
+  (q[0]?.px) + (q[1]?.px) + (q[2]?.px)
+}
+
+// c6 — the choice beside a push into another store: b(7,2) → 72, a(7,2) → 72, b(1,5) → 15.
+fn lows(p: const vector<Coord>) -> vector<integer> {
+  out: vector<integer> = [];
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    b = p[(i + 1) % n ?? 0]?;
+    lo = if a.py < b.py { a } else { b };
+    out += [lo.px * 10 + lo.py];
+  }
+  out
+}
+
+// c7 — a choice whose other branch is a local record: a(1,5) → 1, z → 50, a(4,9) → 4.
+fn or_local(p: const vector<Coord>) -> vector<integer> {
+  out: vector<integer> = [];
+  z = Coord { px: 50, py: 0 };
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    lo = if a.py > 4 { a } else { z };
+    out += [lo.px];
+  }
+  out
+}
+
+// c7b — a choice whose other arm is an element of the vector the loop grows, and moves: `ys`
+// fills the store after `xs`, so a push into `xs` puts it in a new record.  The arm is lifted
+// into a COPY in a store of its own, so `lo` keeps an address beside that growth and reads
+// the copy: a(1,5) → 1, o → 50, a(4,9) → 4.
+struct Two { xs: vector<Coord>, ys: vector<integer> }
+fn mixed(p: const vector<Coord>) -> integer {
+  w = Two { xs: [Coord { px: 50, py: 0 }], ys: [] };
+  for k in 0..20 { w.ys += [k]; }
+  t = 0;
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    o = w.xs[0]?;
+    lo = if a.py > 4 { a } else { o };
+    if a.py > 0 { w.xs += [Coord { px: i, py: i }]; }
+    t += lo.px;
+  }
+  t + len(w.xs) * 1000
+}
+
+// c7c — a choice between two elements OF the vector the loop grows and moves: both arms are
+// views of `w.xs` (no lift), so `lo` lives in the store the push moves and may hold no
+// address.  o1 → 50, o2 → 60, o1 → 50.
+fn same_source(p: const vector<Coord>) -> integer {
+  w = Two { xs: [Coord { px: 50, py: 0 }, Coord { px: 60, py: 1 }], ys: [] };
+  for k in 0..20 { w.ys += [k]; }
+  t = 0;
+  n = len(p);
+  for i in 0..n {
+    a = p[i]?;
+    o1 = w.xs[0]?;
+    o2 = w.xs[1]?;
+    lo = if a.py > 4 { o1 } else { o2 };
+    if a.py > 0 { w.xs += [Coord { px: i, py: i }]; }
+    t += lo.px;
+  }
+  t
+}
+
+// c8 — a text field of a view by index: 1*10+2 + 2*10+3.
+fn texts(v: const vector<Named>) -> integer {
+  n = len(v);
+  t = 0;
+  for i in 0..n { e = v[i]?; t += e.k * 10 + len(e.nm); }
+  t
+}
+
+// c11 — a function returning a small record by value (`(R-ValueRecord)`) holds its locals
+// as Rust tuples, not `DbRef`s: the clause declines there.  (2,4) → 6, (4,8) → 12, past the
+// end the zero record (1,0) → 1.
+struct P2 { x: float, y: float }
+fn pick(v: const vector<P2>, i: integer) -> P2 {
+  a = v[i]?;
+  P2 { x: a.x + 1.0, y: a.y * 2.0 }
+}
+fn c11() {
+  v = [P2 { x: 1.0, y: 2.0 }, P2 { x: 3.0, y: 4.0 }];
+  t = 0.0;
+  for i in 0..3 { q = pick(v, i); t += q.x + q.y; }
+  assert(t == 19.0, "c11 {t}");
+}
+
+// c9 — a builder's return buffer of scalars, cleared per call: [0] [0] [0 2] [0 2] [0 2 4]
+// → 100 + 100 + 202 + 202 + 304; and a reused local: 7 + 1 + 2 + 3.
+fn evens(k: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for j in 0..k { if j % 2 == 0 { r += [j]; } }
+  r
+}
+
+fn c9() {
+  t = 0;
+  for k in 1..6 { e = evens(k); t += len(e) * 100 + (e[len(e) - 1] ?? 0); }
+  assert(t == 908, "c9 builder {t}");
+  t2 = 0;
+  buf: vector<integer> = [];
+  for k in 0..4 {
+    buf = [];
+    for j in 0..k { buf += [j * 3]; }
+    t2 += len(buf) + (buf[0] ?? 7);
+  }
+  assert(t2 == 13, "c9 local {t2}");
+}
+
+// c10 — the scalar clear of a slice: the slice empties, its source keeps its bytes.  Bound
+// before `s = []`, the slice once minted no store of its own (the first pass's rebind left a
+// dependency of `s` on itself, read as a backing): the interpreter read it as null and native
+// named a variable it never declared.
+fn c10() {
+  big: vector<u8> = [10 as u8, 11 as u8, 12 as u8, 13 as u8, 14 as u8];
+  s: vector<u8> = big[1..4];
+  assert(len(s) == 3 && (s[0] ?? 0) == 11 as u8, "c10 slice {s}");
+  s = [];
+  s += [99 as u8];
+  assert(len(s) == 1 && (s[0] ?? 0) == 99 as u8, "c10 refilled {s}");
+  assert(len(big) == 5 && (big[1] ?? 0) == 11 as u8 && (big[3] ?? 0) == 13 as u8, "c10 source {big}");
+  // A second slice into the same local clears the first — a view of `big` — before copying:
+  // the view is dropped, never written, so `big` keeps 10 11 and `w` reads 10 11.
+  w: vector<u8> = big[1..4];
+  w = big[0..2];
+  assert(len(w) == 2 && (w[0] ?? 0) == 10 as u8 && (w[1] ?? 0) == 11 as u8, "c10 reslice {w}");
+  assert(len(big) == 5 && (big[0] ?? 0) == 10 as u8 && (big[1] ?? 0) == 11 as u8, "c10 source after reslice {big}");
+}
+
+fn same(v: vector<integer>, want: vector<integer>) -> boolean {
+  if len(v) != len(want) { return false; }
+  for i in 0..len(v) { if (v[i] ?? -1) != (want[i] ?? -2) { return false; } }
+  true
+}
+
+fn main() {
+  p = pts();
+  assert(edges(p, 3) == 77, "c1 {edges(p, 3)}");
+  assert(past(p) == 136, "c2 {past(p)}");
+  assert(negative(p) == 1216, "c3 {negative(p)}");
+  assert(null_index(p) == 64, "c4 {null_index(p)}");
+  q = pts();
+  bump(q);
+  assert((q[0]?.px) == 101 && (q[1]?.px) == 107 && (q[2]?.px) == 104 && (q[2]?.py) == 9, "c5 {q[0]?.px} {q[1]?.px} {q[2]?.px}");
+  assert(bump_local() == 312, "c5b {bump_local()}");
+  assert(same(lows(p), [72, 72, 15]), "c6 {lows(p)}");
+  assert(same(or_local(p), [1, 50, 4]), "c7 {or_local(p)}");
+  assert(mixed(p) == 4055, "c7b {mixed(p)}");
+  assert(same_source(p) == 160, "c7c {same_source(p)}");
+  v = [Named { k: 1, nm: "ab" }, Named { k: 2, nm: "cde" }];
+  assert(texts(v) == 35, "c8 {texts(v)}");
+  c9();
+  c10();
+  c11();
+  println("done");
+}

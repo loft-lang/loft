@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Fill`'s guarded clause — a counted loop whose body is `t = base + x; if t < N {
+// v[t] = c }` writes exactly the indexes below N, so it is the slice fill of
+// `lo..min(hi, N - base)`, the loop kept for every span the fill declines (a negative or
+// out-of-range index, an overflow, a span under eight).  graphics' `hline` is this loop; its
+// rows fill a scanline.  The fill is tried BEFORE the loop's overflow guard, whose plain copy
+// of the loop otherwise ran in its place.
+//
+// The interpreter applies no rewrite and is the oracle.  Each cell sums `(i + 1) * d[i]` over
+// a 10 x 3 canvas of zeros, hand-computed.  `LOFT_NO_GUARDED_FILL=1`, `LOFT_NO_FILL_HOIST=1`,
+// `LOFT_HOIST_VERIFY=1` and `LOFT_POISON_CLAIM=1` answer the same.
+//
+// @falsified-by: tests/falsified/a-guarded-row-fill-writes-what-its-guard-admits.bound-ignored.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch fills the whole range, ignoring N.
+//   WITNESS: g3 answers 1288 for 468 (2..24 written where the guard admits 2..14).
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// The span floor (eight) moves time only; struck, every cell answers the same.
+
+struct Cv { w: integer, h: integer, data: vector<integer> }
+
+struct Cf { w: integer, data: vector<float> }
+
+fn cv() -> Cv { Cv { w: 10, h: 3, data: [0; 30] } }
+
+// graphics' `hline`: the guard is the vector's length.
+fn hl(self: Cv, x0: integer, x1: integer, y: integer, col: integer) {
+  d = &self.data;
+  n = len(d);
+  for x in x0..x1 {
+    idx = y * self.w + x;
+    if idx < n { d[idx] = col; }
+  }
+}
+
+// the same with a bound below the length
+fn hlim(self: Cv, x0: integer, x1: integer, y: integer, col: integer, lim: integer) {
+  d = &self.data;
+  for x in x0..x1 {
+    idx = y * self.w + x;
+    if idx < lim { d[idx] = col; }
+  }
+}
+
+fn hlinc(self: Cv, x0: integer, x1: integer, y: integer, col: integer) {
+  d = &self.data;
+  n = len(d);
+  for x in x0..=x1 {
+    idx = y * self.w + x;
+    if idx < n { d[idx] = col; }
+  }
+}
+
+fn hlf(self: Cf, x0: integer, x1: integer, y: integer, col: float) {
+  d = &self.data;
+  n = len(d);
+  for x in x0..x1 {
+    idx = y * self.w + x;
+    if idx < n { d[idx] = col; }
+  }
+}
+
+fn weigh(c: Cv) -> integer {
+  t = 0;
+  for i in 0..len(c.data) { t += (i + 1) * (c.data[i] ?? 0); }
+  t
+}
+
+fn main() {
+  // g1 — a whole row: indexes 10..19 = 5 → 5 * (11 + … + 20).
+  c = cv(); c.hl(0, 10, 1, 5); assert(weigh(c) == 775, "g1 {weigh(c)}");
+  // g2 — the guard trims at the vector's end: 2..29 = 3 → 3 * (3 + … + 30).
+  c = cv(); c.hl(2, 40, 0, 3); assert(weigh(c) == 1386, "g2 {weigh(c)}");
+  // g3 — a bound below the length, the span inside the vector: 2..14 = 4 → 4 * (3 + … + 15)
+  // (a fill of the whole span, 2..24, would land too, and is wrong).
+  c = cv(); c.hlim(2, 25, 0, 4, 15); assert(weigh(c) == 468, "g3 {weigh(c)}");
+  // g4 — a negative base: indexes -10..-1 count from the end, 20..29 = 2 → 2 * (21 + … + 30).
+  c = cv(); c.hl(0, 10, -1, 2); assert(weigh(c) == 510, "g4 {weigh(c)}");
+  // g5 — inclusive: 20..29 = 6.
+  c = cv(); c.hlinc(0, 9, 2, 6); assert(weigh(c) == 1530, "g5 {weigh(c)}");
+  // g6 — an empty range writes nothing.
+  c = cv(); c.hl(7, 3, 1, 9); assert(weigh(c) == 0, "g6 {weigh(c)}");
+  // g7 — a span under eight keeps the loop: 13 14 15 = 8 → 8 * (14 + 15 + 16).
+  c = cv(); c.hl(3, 6, 1, 8); assert(weigh(c) == 360, "g7 {weigh(c)}");
+  // g8 — floats: 0..9 = 1.5 → 1.5 * (1 + … + 10).
+  f = Cf { w: 10, data: [0.0; 30] };
+  f.hlf(0, 10, 0, 1.5);
+  t = 0.0;
+  for i in 0..len(f.data) { t += ((i + 1) as float) * (f.data[i] ?? 0.0); }
+  assert(t == 82.5, "g8 {t}");
+  // g9 — two rows over one canvas, the second partly over the first: row 1 = 5, then
+  // 15..24 = 7 → 5 * (11 + … + 15) + 7 * (16 + … + 25).
+  c = cv(); c.hl(0, 10, 1, 5); c.hl(5, 15, 1, 7);
+  assert(weigh(c) == 5 * 65 + 7 * 205, "g9 {weigh(c)}");
+  println("done");
+}

@@ -3694,10 +3694,39 @@ impl Parser {
             return;
         }
         let d_nr = self.type_method(target, "lit");
-        if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
+        if d_nr == u32::MAX {
             return;
         }
-        list.push(Value::Call(d_nr, vec![Value::Var(var), Value::str(text)]));
+        // @FR-F-Target — `lit` is what makes the type a target, so a `lit` of another shape is
+        // refused here rather than skipped: skipped, every literal run of the template was
+        // dropped and only the holes reached the target (loft#2056).
+        if self.data.attributes(d_nr) != 2 {
+            if !self.first_pass {
+                let nm = self.data.def(target).name().to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "{nm}'s `fn lit` takes {} parameters — a format target's is \
+                     `fn lit(self: {nm}, s: text)`, and every literal run reaches it",
+                    self.data.attributes(d_nr)
+                );
+            }
+            return;
+        }
+        let self_tp = self.vars.tp(var).clone();
+        let mut call = Value::Null;
+        self.call_nr(
+            &mut call,
+            d_nr,
+            &[Value::Var(var), Value::str(text)],
+            &[self_tp, Type::Text(crate::data::Deps::none())],
+            true,
+            &[],
+            None,
+        );
+        if call != Value::Null {
+            list.push(call);
+        }
     }
 
     /// Emit `acc.hole_<kind>(value)` for an interpolated VALUE.
@@ -3722,6 +3751,7 @@ impl Parser {
         // target's own `hole_text` parameter type (`v: text?` takes both, `v: text`
         // takes only the non-null one). Peeling here is what lets a type make SQL
         // NULL a distinct bound value rather than the text "null".
+        let written = tp.clone();
         let (tp, _) = tp.peel_optional();
         let kind = match tp {
             Type::Text(_) => "text".to_string(),
@@ -3782,7 +3812,24 @@ impl Parser {
             }
             return;
         }
-        list.push(Value::Call(d_nr, vec![Value::Var(var), value]));
+        // @FR-F-Target-Kind — a hole IS a call of the target's method, so it is checked and
+        // converted as one: emitted bare, a text into an `integer` parameter crashed the
+        // interpreter and failed rustc, a 300 reached a `u8` parameter, and an `integer?` hole
+        // into an `integer` parameter gave no `(N-Store)` warning (loft#2056).
+        let self_tp = self.vars.tp(var).clone();
+        let mut call = Value::Null;
+        self.call_nr(
+            &mut call,
+            d_nr,
+            &[Value::Var(var), value],
+            &[self_tp, written],
+            true,
+            &[],
+            None,
+        );
+        if call != Value::Null {
+            list.push(call);
+        }
     }
 
     /// @PLN124 H6 — the hole kind a value of type `name` asks for: the type's own
@@ -4671,17 +4718,25 @@ impl Parser {
             iter_prelude.push(init_ivar);
             Value::Insert(iter_prelude)
         };
+        // @FR-I-RangeNull — a null bound empties the range before the first round, so the value
+        // a round yields is never null: the loop variable takes the bound's type without its
+        // `?` (loft#2036).  The counter above keeps `in_type`, whose null is its not-started
+        // state.
+        let elm_type = match in_type {
+            Type::Optional(inner) => *inner,
+            plain => plain,
+        };
         *expr = Value::Iter(
             u16::MAX,
             Box::new(iter_init),
-            Box::new(v_block(ls, in_type.clone(), "Iter range")),
+            Box::new(v_block(ls, elm_type.clone(), "Iter range")),
             Box::new(Value::Null),
         );
         if reverse {
             self.lexer.token(")");
             self.reverse_iterator = false;
         }
-        Type::Iterator(Box::new(in_type), Box::new(Type::Null))
+        Type::Iterator(Box::new(elm_type), Box::new(Type::Null))
     }
 
     /// `@FR-I-For` — record on the current loop every PLACE a loop source reads: a variable,
@@ -6679,6 +6734,14 @@ impl Parser {
             {
                 continue;
             }
+            // @FR-D-NoEnumF — an omitted BARE enum field has no zero to take: its 0 is its null,
+            // so the literal is refused below, and an advice that it "takes the type's zero"
+            // beside that error says the opposite of what happens.  The same test the refusal
+            // makes: a real enum, not a synthetic `__…` one.
+            if matches!(tp.base(), Type::Enum(e, _, _) if !self.data.def(*e).name.starts_with("__"))
+            {
+                continue;
+            }
             // A collection or text field is exempt, and the reason is the FIX rather than the
             // hazard: their zero is the identity — empty — and the only default an author could
             // declare for one (`= []`, `= ""`) IS that zero, so the advice would resolve to a
@@ -7270,13 +7333,20 @@ impl Parser {
                     // bulk copy, with the buffer's mint and free, is gone.  The assignment's
                     // twin is `buffer_is_the_place`; a `?` field keeps the replace, which is
                     // what leaves it absent.
+                    // A callee one of whose exits answers a constant or a parameter is placed
+                    // too, its answer copied in when it is not the field (`place_answer_copy`).
                     if whole == "OpAppendVector"
-                        && let Some(vr) = self.place_buffer_of(&field_ref, value)
+                        && let Some((vr, foreign)) = self.place_buffer_of(&field_ref, value)
                     {
                         self.vars.mark_inline_ref(vr);
                         self.vars.set_skip_free(vr);
                         list.push(v_set(vr, field_ref.clone()));
-                        list.push(value.clone());
+                        if foreign {
+                            let elem = Value::Int(i32::from(elem_tp));
+                            list.extend(self.place_answer_copy(&field_ref, value, vr, &elem));
+                        } else {
+                            list.push(value.clone());
+                        }
                         return Some(field_ref);
                     }
                     list.push(self.cl(

@@ -236,6 +236,21 @@ pub fn reserve_more(db: &DbRef, extra: i64, elem_size: u32, stores: &mut [Store]
     if extra <= 0 {
         return;
     }
+    // A block that already holds the reservation is no work — a buffer refilled each pass
+    // holds it from the second pass on.  Its claim header answers, as `vector_append`'s fit
+    // test does, with no `resize` (which re-reads the header and bumps the generation).
+    if !db.is_null() && db.rec != 0 && db.pos != 0 {
+        let store = keys::store(db, stores);
+        let vec_rec = store.collection_rec(db.rec, db.pos);
+        if vec_rec != 0
+            && !store.read_only
+            && let Ok(count) =
+                u32::try_from(i64::from(store.get_u32_raw(vec_rec, 4)).saturating_add(extra))
+            && *store.addr::<i32>(vec_rec, 0) >= checked_vec_cap(count.max(11), elem_size) as i32
+        {
+            return;
+        }
+    }
     let len = i64::from(vec_header(db, stores).len);
     reserve_vector(db, len.saturating_add(extra), elem_size, stores);
 }

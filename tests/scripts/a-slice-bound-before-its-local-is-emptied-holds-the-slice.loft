@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector local first bound to a slice and later emptied (`s = []`, `s = [x]`) holds the
+// slice until then (loft#2038's fixed half).  The first pass's `s = []` builds the literal in
+// `s` and leaves a dependency of `s` on ITSELF; read on the second pass as a backing, the slice
+// bind minted no store — the interpreter read `s` as null (or empty) and native named a
+// variable it never declared.  A self-dependency names no backing (`vector_needs_db`).  The
+// cells vary the element type (integer, text, u8), the declaration (typed, untyped), what
+// follows (`= []`, `= [x]`, `+=` only), the bind's kind (slice, literal, call) and a loop.
+// `s = other_vector` after the slice is loft#2038's open half and is not here.  Values are
+// hand-computed; every cell asserts them.
+//
+// @falsified-by: tests/falsified/a-slice-bound-before-its-local-is-emptied-holds-the-slice.self-dependency.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the VALUE channel on the interpreter, a compile failure on native — the patch
+//   reads `s`'s dependency on itself as a backing again.
+//   WITNESS: a1 reads the slice as [] for [11,12]; native names `var_s`, never declared.
+//   HOLDS: leak, panic and free-refusal equal and clean.
+
+fn mk() -> vector<integer> { [7, 8] }
+fn a1() { big = [10, 11, 12, 13]; s: vector<integer> = big[1..3]; t = "{s}"; s = []; assert(t == "[11,12]" && len(s) == 0, "a1 {t} {s}"); }
+fn a2() { big = [10, 11, 12, 13]; s: vector<integer> = big[1..3]; t = "{s}"; s = [9]; assert(t == "[11,12]" && "{s}" == "[9]", "a2 {t} {s}"); }
+fn a4() { big = [10, 11, 12, 13]; s: vector<integer> = big[1..3]; s += [9]; assert("{s}" == "[11,12,9]" && "{big}" == "[10,11,12,13]", "a4 {s} {big}"); }
+fn a5() { big = [10, 11, 12, 13]; s = big[1..3]; t = "{s}"; s = []; assert(t == "[11,12]" && len(s) == 0, "a5 untyped {t} {s}"); }
+fn b1() { s: vector<integer> = [5, 6]; t = "{s}"; s = []; assert(t == "[5,6]" && len(s) == 0, "b1 {t} {s}"); }
+fn c1() { s: vector<integer> = mk(); t = "{s}"; s = []; s += [1]; assert(t == "[7,8]" && "{s}" == "[1]", "c1 {t} {s}"); }
+fn d1() { big = ["p", "q", "r"]; s: vector<text> = big[0..2]; t = "{s}"; s = []; assert(t == "[\"p\",\"q\"]" && len(s) == 0, "d1 text {t} {s}"); }
+fn e1() { big: vector<u8> = [10 as u8, 11 as u8, 12 as u8]; s: vector<u8> = big[1..3]; t = "{s}"; s = []; s += [99 as u8]; assert(t == "[11,12]" && "{s}" == "[99]" && "{big}" == "[10,11,12]", "e1 {t} {s} {big}"); }
+fn e2() { big: vector<u8> = [10 as u8, 11 as u8, 12 as u8]; for k in 0..3 { s: vector<u8> = big[k..3]; n = len(s); s = []; assert(n == 3 - k && len(s) == 0, "e2 {k} {n}"); } }
+fn main() { a1(); a2(); a4(); a5(); b1(); c1(); d1(); e1(); e2(); println("done"); }

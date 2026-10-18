@@ -2343,6 +2343,42 @@ impl Parser {
                 }
                 let mut second_code = Value::Null;
                 let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
+                // @FR-E-Concat — a character joins only with text or another character; with an
+                // integer it is arithmetic on the code point, on either side (`1 + 'a'` already
+                // was), so `'a' + 1` is 98 and not "a1" (loft#2046).
+                if eff_type_for_plus == Type::Character && ls.is_empty() {
+                    match tp.base() {
+                        Type::Text(_) | Type::Character | Type::Unknown(_) => {}
+                        Type::Integer(_) => {
+                            let left = std::mem::replace(code, Value::Null);
+                            current_type = self.call_op(
+                                code,
+                                "+",
+                                &[left, second_code],
+                                &[current_type.clone(), tp],
+                            );
+                            let right_fact = std::mem::take(&mut self.operand_fact);
+                            self.operand_fact =
+                                self.check_binary(operator, &left_fact, &right_fact);
+                            continue;
+                        }
+                        other => {
+                            if !self.first_pass {
+                                let shown = self.data.display_type_name(other);
+                                diagnostic!(
+                                    self.lexer,
+                                    Level::Error,
+                                    "`+` joins a character only with text or another character, \
+                                     and adds an integer to its code point; a {shown} is \
+                                     neither — write \"{{c}}{{x}}\" to put them side by side"
+                                );
+                            }
+                            *code = Value::Null;
+                            current_type = Type::Unknown(0);
+                            continue;
+                        }
+                    }
+                }
                 ls.push((second_code, tp));
                 let right_fact = std::mem::take(&mut self.operand_fact);
                 self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);

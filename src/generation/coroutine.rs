@@ -1007,7 +1007,7 @@ fn split_at_yield(ops: &[Value]) -> Option<(Vec<Value>, Vec<Value>)> {
 /// }
 /// ```
 /// Returns `init_expr` when matched.
-fn detect_yield_from(val: &Value) -> Option<Value> {
+fn detect_yield_from(val: &Value, data: &crate::data::Data) -> Option<Value> {
     let Value::Block(bl) = val.unspan() else {
         return None;
     };
@@ -1023,6 +1023,21 @@ fn detect_yield_from(val: &Value) -> Option<Value> {
     let Value::Set(sub_var, init_expr) = bl.operators[0].unspan() else {
         return None;
     };
+    // @FR-G-Delegate — the owned form (`self.sub_N` holds the sub-generator) is for a FRESH one,
+    // a call of a generator function: a HELD handle (`h = two(5); yield from h`, or a parameter) already names
+    // a coroutine in the store's table, and handed to the owned slot it was a `DbRef` where a
+    // `Box<dyn LoftCoroutine>` is due (E0308), and a parameter's `OpCoroutineRetain(h)` hold
+    // was emitted as a factory call of that name (E0425, loft#2060).  It lowers as the
+    // desugared loop — `next(h)` and a yield per item — which pulls through the handle.
+    let Value::Call(sub_fn, _) = init_expr.unspan() else {
+        return None;
+    };
+    if !matches!(
+        data.def(*sub_fn).returned().base(),
+        crate::data::Type::Iterator(..)
+    ) {
+        return None;
+    }
     let Value::Loop(lp) = bl.operators[1].unspan() else {
         return None;
     };
@@ -1079,7 +1094,7 @@ fn collect_segments(
                 pre: std::mem::take(&mut pre),
                 val: *inner.clone(),
             });
-        } else if let Some(init) = detect_yield_from(inner_op) {
+        } else if let Some(init) = detect_yield_from(inner_op, data) {
             segments.push(YieldSegment::YieldFrom {
                 pre: std::mem::take(&mut pre),
                 init,
@@ -1336,9 +1351,12 @@ fn written_scalar_params(
             }
             _ => None,
         };
+        // A RECORD parameter too (loft#2061): `r = &b` on a `b: Box` is the same `*mut DbRef`
+        // into one advance's frame, and the per-state shadow is immutable besides (E0596).
         if let Some(p) = hit
             && vars.is_argument(p)
-            && crate::data::is_scalar(vars.tp(p))
+            && (crate::data::is_scalar(vars.tp(p))
+                || matches!(vars.tp(p).base(), Type::Reference(..)))
         {
             out.insert(p);
         }
@@ -1349,9 +1367,9 @@ fn written_scalar_params(
     out
 }
 
-/// loft#1899 — the scalar LINK locals of a generator body (`c = &x`, a `&` to a scalar, a
-/// text, a fn-ref or a value enum: the `*mut T` a local link holds), each with its field's
-/// name and its Rust pointer type.  A compiler temp is left out: no author's `&` names one.
+/// loft#1899 — the LINK locals of a generator body (`c = &x`, a `&` to a scalar, a text, a
+/// fn-ref, a value enum or a record (loft#2061): the `*mut T` a local link holds), each with
+/// its field's name and its Rust pointer type.  A compiler temp is left out: no author's `&` names one.
 /// The field name avoids every name already on the struct.
 fn link_locals(
     vars: &crate::variables::Function,
@@ -1376,6 +1394,7 @@ fn link_locals(
                 | Type::Text(_)
                 | Type::Function(..)
                 | Type::Enum(_, false, _)
+                | Type::Reference(..)
         ) {
             continue;
         }
@@ -1417,13 +1436,17 @@ fn write_param_shadows(
             "{indent}#[allow(unused_mut)] let mut var_{local} = self.var_{field};"
         )?;
     }
-    for (a_nr, attr) in attrs.iter().enumerate() {
+    for attr in attrs {
         // A parameter the body writes or links is read through its field instead
-        // (`written_scalar_params`): a copy here would hide the field's writes.
-        if u16::try_from(a_nr).is_ok_and(|a| fielded.contains_key(&a)) {
+        // (`written_scalar_params`): a copy here would hide the field's writes.  `fielded` is
+        // keyed by VARIABLE, and an attribute's index is its variable only up to the captures:
+        // a lambda's `__closure` comes after the capture locals, so asked by index it named the
+        // first capture's field and its shadow was skipped (E0425, loft#2059).  A local's field never
+        // takes a parameter's name (`persistent_field_names`), so the name decides.
+        let aname = sanitize(&attr.name);
+        if fielded.values().any(|f| *f == aname) {
             continue;
         }
-        let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
         } else if matches!(attr.typedef.base(), Type::Iterator(_, _)) {
@@ -3044,7 +3067,8 @@ impl Output<'_> {
         // loft#1899 — a parameter the body writes or links is read and written through the
         // field the struct already declares for it, under the parameter's own name.
         for p in written_scalar_params(self.data.def(def_nr), self.data) {
-            if let Some(attr) = attrs.get(usize::from(p)) {
+            let name = self.data.def(def_nr).variables().name(p);
+            if let Some(attr) = attrs.iter().find(|a| a.name == name) {
                 fields.insert(p, sanitize(&attr.name));
             }
         }

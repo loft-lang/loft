@@ -1155,7 +1155,7 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
         write_type(out, v.type_def);
         let _ = write!(
             out,
-            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"deferred_first_bind\":{},\"linked_narrow\":{},\"store_text_link\":{},\"user_named\":{},\"user_appended\":{},\"copy_bound\":{},\"buffer_witnessed\":{},\"owner_witness\":{},\"rebind_orig\":{},\"scope\":{}}}",
+            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"deferred_first_bind\":{},\"linked_narrow\":{},\"store_text_link\":{},\"user_named\":{},\"user_appended\":{},\"copy_bound\":{},\"buffer_witnessed\":{},\"value_const\":{},\"owner_witness\":{},\"rebind_orig\":{},\"scope\":{}}}",
             v.stack_pos,
             v.uses,
             v.argument,
@@ -1172,6 +1172,7 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
             v.user_appended,
             v.copy_bound,
             v.buffer_witnessed,
+            v.value_const,
             v.owner_witness,
             v.rebind_orig,
             v.scope
@@ -1328,6 +1329,11 @@ fn variables_from_parsed(
             user_appended: as_bool(field(it, "user_appended")?)?,
             copy_bound: as_bool(field(it, "copy_bound")?)?,
             buffer_witnessed: as_bool(field(it, "buffer_witnessed")?)?,
+            // loft#2034 — tolerate JSON written before the flag was stored (defaults false).
+            value_const: match field(it, "value_const") {
+                Ok(f) => as_bool(f)?,
+                Err(_) => false,
+            },
             owner_witness: as_u16(field(it, "owner_witness")?)?,
             rebind_orig: as_u16(field(it, "rebind_orig")?)?,
             scope: as_u16(field(it, "scope")?)?,

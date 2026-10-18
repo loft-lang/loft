@@ -60,7 +60,10 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // `(R-FieldAppend)` spells a template field mint differently; these pins count the
+        // templates `(R-PushRec)`'s switch restores.
+        .env("LOFT_NO_FIELD_APPEND", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

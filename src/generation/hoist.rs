@@ -1160,6 +1160,46 @@ impl StoreFacts<'_> {
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
+        self.distinct_at(a, b, 0)
+    }
+
+    /// The dependencies where `x`'s chain forks: a view bound from a choice between views
+    /// (`lo = if c { p } else { q }`) depends on each, and its record is one of theirs.
+    fn fork(&self, x: u16) -> Option<Vec<u16>> {
+        let mut cur = x;
+        let mut seen: HashSet<u16> = HashSet::new();
+        loop {
+            if cur as usize >= self.vars.var_count() || !seen.insert(cur) {
+                return None;
+            }
+            let deps: Vec<u16> = self
+                .vars
+                .tp(cur)
+                .depend()
+                .into_iter()
+                .filter(|d| *d != cur)
+                .collect();
+            match deps.len() {
+                0 => return None,
+                1 => cur = deps[0],
+                _ => return Some(deps),
+            }
+        }
+    }
+
+    fn distinct_at(&self, a: u16, b: u16, depth: u8) -> bool {
+        // A forked chain: apart from `b` when every branch is (`@FR-R-RecPtr`'s choice
+        // clause) — each branch judged as any chain is, an `if` arm lifted into `__lift_N`
+        // being a COPY in a store of its own.  Bounded, as the type's dependency sets are not
+        // cycle-free by contract.
+        if depth < 4 {
+            if let Some(ds) = self.fork(a) {
+                return ds.iter().all(|d| self.distinct_at(*d, b, depth + 1));
+            }
+            if let Some(ds) = self.fork(b) {
+                return ds.iter().all(|d| self.distinct_at(a, *d, depth + 1));
+            }
+        }
         let assumed = |a: u16, b: u16| {
             self.assumed
                 .iter()
@@ -3626,6 +3666,9 @@ pub struct FillLoop<'a> {
     pub index_var: u16,
     pub next_var: Option<u16>,
     pub val: &'a Value,
+    /// The guarded clause's bound N: the body was `t = base + i; if t < N { v[t] = val }`,
+    /// so the loop writes exactly the indexes below N.
+    pub bound: Option<&'a Value>,
 }
 
 /// Is `v` an INVARIANT scalar expression the fill may evaluate once — a variable other
@@ -3633,6 +3676,9 @@ pub struct FillLoop<'a> {
 /// scalar read off such a variable?  Anything else (a call, a `??` block, an element read,
 /// a conversion) keeps the per-element loop: the fill evaluates the expression once and
 /// the fallback once more, so it must be pure and free of the loop's counters.
+/// The two-operand scalar field reads `simple_invariant` admits (`OpGetInt(r, off)`).
+const FILL_FIELD_GETTERS: [&str; 4] = ["OpGetInt", "OpGetLong", "OpGetFloat", "OpGetSingle"];
+
 fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
     match v.unspan() {
         Value::Var(x) => !banned.contains(x),
@@ -3648,6 +3694,14 @@ fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
                 matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
                     && matches!(args[1].unspan(), Value::Int(_))
                     && matches!(args[2].unspan(), Value::Int(_))
+            } else if name.starts_with("OpGet")
+                && FILL_FIELD_GETTERS.contains(&name)
+                && args.len() == 2
+            {
+                // A scalar field of a record the loop does not write (`self.width`): the
+                // fill's writes land in the vector's own record, never in a field.
+                matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
+                    && matches!(args[1].unspan(), Value::Int(_))
             } else {
                 false
             }
@@ -5875,14 +5929,51 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         .iter()
         .filter(|o| !matches!(o.unspan(), Value::Line(_)))
         .collect();
-    if stmts.len() != 1 {
-        return decline(&format!(
-            "the body has {} statements: {}",
-            stmts.len(),
-            kinds(&body.operators)
-        ));
-    }
-    let Value::Call(setter, wargs) = stmts[0].unspan() else {
+    // `@FR-R-Fill`'s guarded clause: `t = <index>; if t < N { <the setter at v[t]> }`, with
+    // `t` the body's own local.  The setter's index is then `t`, and the index proper is
+    // what `t` was bound to.
+    let mut guarded: Option<(u16, &'a Value, &'a Value)> = None;
+    let setter_stmt: &'a Value = match stmts.as_slice() {
+        [one] => one,
+        [bind, test] => {
+            let (Value::Set(t, bound_idx), Value::If(cond, then, other)) =
+                (bind.unspan(), test.unspan())
+            else {
+                return decline("the two statements are not `t = index; if t < N { … }`");
+            };
+            let Value::Call(lt, largs) = cond.unspan() else {
+                return decline("the guard is not a comparison");
+            };
+            if data.def(*lt).name() != "OpLtInt"
+                || largs.len() != 2
+                || !matches!(largs[0].unspan(), Value::Var(x) if x == t)
+                || !matches!(other.unspan(), Value::Null)
+            {
+                return decline("the guard is not `t < N` with no else");
+            }
+            let inner: Vec<&Value> = match then.unspan() {
+                Value::Block(b) => b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect(),
+                other => vec![other],
+            };
+            let [only] = inner.as_slice() else {
+                return decline("the guarded arm is not one statement");
+            };
+            guarded = Some((*t, &**bound_idx, &largs[1]));
+            only
+        }
+        _ => {
+            return decline(&format!(
+                "the body has {} statements: {}",
+                stmts.len(),
+                kinds(&body.operators)
+            ));
+        }
+    };
+    let Value::Call(setter, wargs) = setter_stmt.unspan() else {
         return decline("the body is not a call");
     };
     let Some((_, rust_type)) = FUSABLE_SETTERS
@@ -5928,10 +6019,25 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         banned.push(nx);
     }
     banned.push(path.0);
-    // The index: the loop variable, or `invariant + variable` either way round.
+    let index: &Value = match guarded {
+        Some((t, bound_idx, _)) => {
+            if !matches!(index.unspan(), Value::Var(x) if *x == t) {
+                return decline("the guarded setter's index is not the bound local");
+            }
+            banned.push(t);
+            bound_idx
+        }
+        None => index,
+    };
+    // The index: the loop variable, or `invariant + variable` either way round.  The
+    // nullable add answers null on overflow, where the fill's own checked add refuses and
+    // the loop runs: the same writes.
     let base = match index.unspan() {
         Value::Var(x) if *x == loop_var => None,
-        Value::Call(d, args) if data.def(*d).name() == "OpAddInt" && args.len() == 2 => {
+        Value::Call(d, args)
+            if matches!(data.def(*d).name(), "OpAddInt" | "OpAddIntNullable")
+                && args.len() == 2 =>
+        {
             let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == loop_var);
             if is_var(&args[0]) && simple_invariant(&args[1], data, &banned) {
                 Some(&args[1])
@@ -5949,6 +6055,11 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     if !simple_invariant(hi, data, &banned) {
         return decline("the range's end is not a simple invariant");
     }
+    let bound = match guarded {
+        Some((_, _, n)) if simple_invariant(n, data, &banned) => Some(n),
+        Some(_) => return decline("the guard's bound is not a simple invariant"),
+        None => None,
+    };
     Some(FillLoop {
         path,
         vector,
@@ -5960,6 +6071,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         index_var: seed_index,
         next_var,
         val,
+        bound,
     })
 }
 
@@ -10024,6 +10136,62 @@ pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
 pub struct CompleteWrites {
     pub db_vars: HashSet<u16>,
     pub mint_tps: HashSet<u16>,
+    /// `@C137`'s fresh-field arm: each record copy into a FIELD of a record a literal group
+    /// is building (`OpCopyRecord(src, OpGetField(…e…, off, Sub), Sub)`), by argument-slice
+    /// address, with the type it writes.  The destination was just created, so a null source
+    /// leaves it what the prefill writes — the emitter writes `Sub`'s default in the copy's
+    /// null arm, which a prefilled element already holds and an element minted without the
+    /// prefill does not (loft#2044).  Computed whatever the switches say: it is not an
+    /// optimisation.
+    pub fresh_fields: HashMap<usize, u16>,
+}
+
+/// The variable a field chain `OpGetField(…OpGetField(Var(t), a, _)…, b, _)` is rooted at,
+/// and whether it IS that variable (no field step).
+fn field_chain_root(v: &Value, data: &Data) -> Option<(u16, bool)> {
+    if let Value::Var(t) = v.unspan() {
+        return Some((*t, true));
+    }
+    let args = call_named(v, data, "OpGetField")?;
+    field_chain_root(args.first()?, data).map(|(t, _)| (t, false))
+}
+
+/// A record copy into a field reached from `target`: its argument slice's address and the
+/// type it writes.  A copy flagged FRESH already writes a null source absent
+/// (`Stores::copy_null_into`) and needs no arm of its own.
+fn fresh_field_copy(stmt: &Value, target: u16, data: &Data) -> Option<(usize, u16)> {
+    let args = call_named(stmt, data, "OpCopyRecord")?;
+    let (root, whole) = field_chain_root(args.get(1)?, data)?;
+    let Value::Int(raw) = args.get(2)?.unspan() else {
+        return None;
+    };
+    let raw = u16::try_from(*raw).ok()?;
+    (root == target && !whole && raw & crate::keys::COPY_FRESH_DEST == 0)
+        .then_some((args.as_ptr() as usize, raw & crate::keys::COPY_TP_MASK))
+}
+
+/// The record copies into fields of the element `target` that the MINT at index `at - 1`
+/// builds ([`CompleteWrites::fresh_fields`]): every statement up to the `OpFinishRecord`
+/// that closes the element builds that one record, and nothing outside the literal names
+/// its compiler temporary.  A declared local's literal is not read here: a later
+/// `x.prev = p` writes a record that exists, and the IR does not tell the two apart.
+fn collect_fresh_fields(
+    ops: &[Value],
+    at: usize,
+    target: u16,
+    data: &Data,
+    out: &mut HashMap<usize, u16>,
+) {
+    for stmt in ops.iter().skip(at) {
+        if let Some((addr, sub)) = fresh_field_copy(stmt, target, data) {
+            out.insert(addr, sub);
+        } else if call_named(stmt, data, "OpFinishRecord")
+            .and_then(|a| a.get(1))
+            .is_some_and(|e| matches!(e.unspan(), Value::Var(v) if *v == target))
+        {
+            return;
+        }
+    }
 }
 
 /// Do the statements FOLLOWING index `at` in `ops` cover every field position of `tp`
@@ -10040,6 +10208,7 @@ fn group_covers_type(
     tp: u16,
     data: &Data,
     stores: &Stores,
+    fresh: &HashMap<usize, u16>,
 ) -> bool {
     if (tp as usize) >= stores.types.len() {
         return false;
@@ -10086,6 +10255,36 @@ fn group_covers_type(
                         n & crate::keys::COPY_FRESH_DEST != 0
                             && n & crate::keys::COPY_TP_MASK == tp));
                 return fresh_same_type || !stores.owns_heap(tp);
+            }
+            // A record copy into one of the element's FIELDS writes that field whole: its
+            // null arm writes the field's default (`CompleteWrites::fresh_fields`, the same
+            // scan's members), a present source every byte.  A field type that owns heap is
+            // covered only by a FRESH copy, for the reason the whole-record arm gives.
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpCopyRecord"
+                    && let Some(f) =
+                        args.get(1).and_then(|a| call_named(a, data, "OpGetField"))
+                    && matches!(f.first().map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
+            {
+                let (Some(Value::Int(off)), Some(Value::Int(n))) =
+                    (f.get(1).map(Value::unspan), args.get(2).map(Value::unspan))
+                else {
+                    break;
+                };
+                let (Ok(off), Ok(n)) = (u16::try_from(*off), u16::try_from(*n)) else {
+                    break;
+                };
+                let sub = n & crate::keys::COPY_TP_MASK;
+                let field = fields.iter().find(|fd| fd.position == off);
+                if field.is_none_or(|fd| fd.content != sub)
+                    || (n & crate::keys::COPY_FRESH_DEST == 0
+                        && !fresh.contains_key(&(args.as_ptr() as usize)))
+                    || (stores.owns_heap(sub) && n & crate::keys::COPY_FRESH_DEST == 0)
+                {
+                    break;
+                }
+                written.insert(off);
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
@@ -10294,7 +10493,9 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
                 };
                 admitted += 1;
                 heap_tp = Some(tp);
-                if !refillable(stores, tp) || !group_covers_type(ops, i + 1, b, tp, data, stores) {
+                if !refillable(stores, tp)
+                    || !group_covers_type(ops, i + 1, b, tp, data, stores, &HashMap::new())
+                {
                     ok = false;
                     continue;
                 }
@@ -11091,7 +11292,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             db_declined.insert(*v);
                             continue;
                         };
-                        if group_covers_type(ops, i + 1, *v, tp, data, stores) {
+                        if group_covers_type(ops, i + 1, *v, tp, data, stores, &out.fresh_fields) {
                             out.db_vars.insert(*v);
                         } else {
                             db_declined.insert(*v);
@@ -11108,6 +11309,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                         {
                             continue;
                         }
+                        collect_fresh_fields(ops, i + 1, *e, data, &mut out.fresh_fields);
                         let Some(Value::Int(ptp)) = cargs.get(1).map(Value::unspan) else {
                             continue;
                         };
@@ -11124,7 +11326,17 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                         } else {
                             stores.content(stores.field_type(ptp, fld))
                         };
-                        if etp != u16::MAX && group_covers_type(ops, i + 1, *e, etp, data, stores) {
+                        if etp != u16::MAX
+                            && group_covers_type(
+                                ops,
+                                i + 1,
+                                *e,
+                                etp,
+                                data,
+                                stores,
+                                &out.fresh_fields,
+                            )
+                        {
                             out.mint_tps.insert(ptp);
                         } else {
                             mint_declined.insert(ptp);
@@ -14310,7 +14522,7 @@ fn loop_record_zeros(
                 }
                 mints += 1;
                 if !matches!(args.get(1).map(Value::unspan), Some(Value::Int(t)) if *t == i32::from(tp))
-                    || !group_covers_type(ops, i + 1, v, tp, data, stores)
+                    || !group_covers_type(ops, i + 1, v, tp, data, stores, &HashMap::new())
                 {
                     ok = false;
                     continue;
@@ -14388,25 +14600,34 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
     }
     let trace = std::env::var("LOFT_TRACE_LOOP_RECORD").is_ok();
     let refill_on = !std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0");
-    // Where each candidate is declared: the innermost enclosing loop and the block holding
-    // its `Set(v, null)`.
+    // THE NEST CLAUSE: the record is kept across the OUTERMOST loop around its declaration,
+    // not the innermost — a nest re-entering its inner loop per outer pass otherwise frees and
+    // mints the record once per entry (`forms_upto`: once per `ea`, a thousand times a call).
+    // Every pass of any loop in the nest reaches the declaration's mint, which takes the clear
+    // arm, so the argument is the innermost one's.  `LOFT_NO_LOOP_RECORD_NEST` keeps the
+    // innermost.
+    let nest = !std::env::var("LOFT_NO_LOOP_RECORD_NEST").is_ok_and(|v| v != "0");
+    // Where each candidate is declared: the loop that owns it and the block holding its
+    // `Set(v, null)`.
     let mut decls: HashMap<u16, LoopRecord> = HashMap::new();
     fn walk(
         v: &Value,
         loop_scope: Option<u16>,
         block: Option<u16>,
+        nest: bool,
         f: &mut impl FnMut(&Value, Option<u16>, Option<u16>),
     ) {
         let n = v.unspan();
         f(n, loop_scope, block);
         let (ls, bs) = match n {
+            Value::Loop(lp) if nest && loop_scope.is_some() => (loop_scope, Some(lp.scope)),
             Value::Loop(lp) => (Some(lp.scope), Some(lp.scope)),
             Value::Block(b) => (loop_scope, Some(b.scope)),
             _ => (loop_scope, block),
         };
-        n.for_each_child(&mut |c| walk(c, ls, bs, f));
+        n.for_each_child(&mut |c| walk(c, ls, bs, nest, f));
     }
-    walk(body, None, None, &mut |n, ls, bs| {
+    walk(body, None, None, nest, &mut |n, ls, bs| {
         if let Value::Set(v, rhs) = n
             && matches!(rhs.unspan(), Value::Null)
             && let (Some(loop_scope), Some(decl_block)) = (ls, bs)

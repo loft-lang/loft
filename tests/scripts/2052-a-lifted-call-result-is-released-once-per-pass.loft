@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2052, `@FR-H-FreeAll` — a call result the scope pass lifts into a temp inside a loop body
+// is released once per pass.  The temp's block-exit free is guarded by the call's buffer
+// (`OpFreeRefIfDistinct(tmp, __ref_N)`), and its next bind frees what it displaces first; the
+// interpreter left the slot naming the released store after the guarded free, so on the next
+// pass the displaced free released it again — by then a store the allocator had handed to a
+// live value.  It shows only where the callee answers a store OTHER than the buffer it was
+// handed, which a returned field of an owned local does (`(R-ReturnField)` hands that local's
+// store over), and where the lifted call sits in a nested block of the body: the interpolation
+// of an assert message is one.  `--native` resets the slot after every variable free.
+//
+// Every value is hand-computed: an `Ht` weighs h * 100 + len(t).  Each cell runs three passes.
+// The interpreter and native answer the same, with no leak under `LOFT_STRICT_STORES=1` and no
+// fault under `LOFT_POISON=1`.  A POISON-GATE GUARD: the second free hits a store whose bytes are
+// still in place, so the values pass without `LOFT_POISON=1`, and only the poison sweep (or
+// strict stores) reads that half.
+//
+// @falsified-by: tests/falsified/2052-a-lifted-call-result-is-released-once-per-pass.patch — interpret exit 101 -> 0, interpret panicked -> clean; native INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the PANIC on `--interpret` under `LOFT_POISON=1` — l1's second pass reads the
+//     poison pattern in the store the stale slot released.
+//   WITNESS: `LOFT_STRICT_STORES=1` on the control: `USE AFTER FREE (read) … type=Ht`, the
+//     store released by the pre-build free of the interpolation's temp.
+//   HOLDS: unpoisoned, every value passes on both trees; native is clean on both.
+
+struct Ht { h: integer, t: text }
+struct W2 { x: Ht, y: Ht }
+
+fn mkw(i: integer) -> W2 { W2 { x: Ht { h: 50 + i, t: "fldfl" }, y: Ht { h: 70 + i, t: "yy" } } }
+fn wt(p: Ht) -> integer { p.h * 100 + len(p.t) }
+
+// The returned field of an owned local: 50 + i / "fldfl", or 70 + i / "yy" when `c`.
+fn fld(i: integer) -> Ht {
+  d = mkw(i);
+  v = d.x;
+  v
+}
+fn either(i: integer, c: boolean) -> Ht {
+  d = mkw(i);
+  v = d.x;
+  if c { v = d.y; }
+  v
+}
+
+// l1 — the lifted call in an assert's interpolation, beside another lifted call: 5105, 7202.
+fn l1() -> integer {
+  t = 0;
+  for _p in 0..3 {
+    assert(wt(fld(1)) == 5105, "l1 fld {wt(fld(1))}");
+    assert(wt(either(2, true)) == 7202, "l1 either");
+    t += 1;
+  }
+  t
+}
+
+// l2 — the same calls lifted in a text built inside the body: 3 passes of "5105 5205".
+fn l2() -> integer {
+  n = 0;
+  for p in 0..3 {
+    s = "{wt(fld(1))} {wt(either(2, p < 0))}";
+    if s == "5105 5205" { n += 1; }
+  }
+  n
+}
+
+fn main() {
+  for _rep in 0..2 {
+    assert(l1() == 3, "l1 passes: {l1()}");
+    assert(l2() == 3, "l2 passes: {l2()}");
+  }
+  println("done");
+}

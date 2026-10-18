@@ -543,7 +543,8 @@ expr         ::= for_expr | match_expr | 'continue' | 'break' | 'return' [ expr 
 match_expr   ::= 'match' expr '{' match_arm { ',' match_arm } '}'
 match_arm    ::= pattern { ( '|' | ',' ) pattern } [ 'if' expr ] '=>' expr   // both: enum arms only
 pattern      ::= '_' | 'null' | literal | range | CamelIdent [ '{' field_bind '}' ]
-               | ident                       // whole-subject bind; vector subjects only
+               | ident                       // whole-subject bind; scalar, text and vector subjects
+               | ident ':' pattern           // capture the subject; `x: _` binds at every subject
                | slice_pat
 slice_pat    ::= '[' [ slice_elem { ',' slice_elem } ] ']'
 slice_elem   ::= '_' | ident | literal | CamelIdent [ '{' field_bind '}' ]

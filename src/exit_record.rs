@@ -15,7 +15,9 @@
 //!
 //! A fresh mint writes the type's defaults and the place does not, so the local's
 //! construction must write EVERY leaf field of the type before it reads any: the literal
-//! group right after the mint is scanned for that, and a local built any other way declines.
+//! group right after the mint is scanned for that — a statement in it may name the local
+//! only through a field it already wrote, and the return buffer not at all (the field handed
+//! to a call as its buffer, `@FR-R-Place`) — and a local built any other way declines.
 //! Admission, per candidate: the local is minted once, in the function body's own statement
 //! list; it is only ever a RECEIVER (the first argument of a native op, or of an
 //! `OpGetField` that is itself one); the function has ONE `return`, the exit literal, holding
@@ -113,6 +115,7 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
         match admit(
             data,
             database,
+            function,
             &ops,
             def.code(),
             &body.operators,
@@ -223,6 +226,7 @@ fn exit_copy(node: &Value, local: u16, rb: u16, tp: u16, ops: &Ops) -> Option<(i
 fn admit(
     data: &Data,
     database: &Stores,
+    function: &crate::variables::Function,
     ops: &Ops,
     code: &Value,
     stmts: &[Value],
@@ -284,7 +288,7 @@ fn admit(
         return Err("the field is not the local's type");
     }
     // Every mention of the local is a receiver, and it is bound only by its null init.
-    receivers_only(code, local, ops, data)?;
+    receivers_only(code, local, ops, data, function)?;
     let mut rebinds = 0usize;
     code.walk(&mut |node| {
         if let Value::Set(arg, val) = node.unspan()
@@ -312,7 +316,8 @@ fn admit(
         }
         match group_write(stmt, local, ops, data, database) {
             Some(at) => written.extend(at),
-            None if on_written_field(stmt, local, ops, &written) => {}
+            None if on_written_field(stmt, local, ops, &written)
+                || reads_only_written(stmt, local, rb, ops, &written) => {}
             None => break,
         }
     }
@@ -440,9 +445,41 @@ fn on_written_field(stmt: &Value, local: u16, ops: &Ops, written: &[i32]) -> boo
     rest == 0 && written.contains(&at)
 }
 
+/// Does `stmt` read none of the local's bytes it has not written?  It names the local only as
+/// `OpGetField(local, at)` with `at` written — the field handed to a call as its buffer
+/// (`Set(w, OpGetField(local, at))`, `@FR-R-Place`), and the guarded copy of an answer into it —
+/// and names the return buffer, where the local's place is, not at all.
+fn reads_only_written(stmt: &Value, local: u16, rb: u16, ops: &Ops, written: &[i32]) -> bool {
+    let mut names = 0usize;
+    let mut through_written = 0usize;
+    let mut buffer = false;
+    stmt.walk(&mut |node| {
+        if is_var(node, local) {
+            names += 1;
+        }
+        if is_var(node, rb) {
+            buffer = true;
+        }
+        if let Value::Call(inner, ga) = node.unspan()
+            && *inner == ops.get_field
+            && ga.first().is_some_and(|arg| is_var(arg, local))
+            && int(ga.get(1)).is_some_and(|at| written.contains(&at))
+        {
+            through_written += 1;
+        }
+    });
+    !buffer && names == through_written
+}
+
 /// Every `Var(v)` is the first argument of a native op, or of an `OpGetField` that is itself
 /// the first argument of a native op.
-fn receivers_only(code: &Value, local: u16, ops: &Ops, data: &Data) -> Result<(), &'static str> {
+fn receivers_only(
+    code: &Value,
+    local: u16,
+    ops: &Ops,
+    data: &Data,
+    function: &crate::variables::Function,
+) -> Result<(), &'static str> {
     // Each `Var(v)` must be the direct first argument of a native op; each such op that is an
     // `OpGetField` must in turn be the first argument of a native op other than a copy.
     let mut total = 0usize;
@@ -452,6 +489,18 @@ fn receivers_only(code: &Value, local: u16, ops: &Ops, data: &Data) -> Result<()
     code.walk(&mut |node| {
         if is_var(node, local) {
             total += 1;
+        }
+        // A field handed to a call as its return buffer (`@FR-R-Place`, "the buffer IS the
+        // place"): the compiler's buffer variable, never freed, takes the field's place, and
+        // the call writes it there — after the mint that bound the local to its place.
+        if let Value::Set(w, val) = node.unspan()
+            && function.is_inline_ref(*w)
+            && function.is_compiler_generated(*w)
+            && let Value::Call(inner, ga) = val.unspan()
+            && *inner == ops.get_field
+            && ga.first().is_some_and(|arg| is_var(arg, local))
+        {
+            fields_received += 1;
         }
         let Value::Call(opd, args) = node.unspan() else {
             return;

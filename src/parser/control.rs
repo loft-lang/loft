@@ -3380,6 +3380,10 @@ impl Parser {
     /// literal owns a record nothing else has seen yet, which is the whole reason its
     /// destination may be swapped.
     ///
+    /// A record enum's UNIT variant (`World`) is the same literal under another name: the
+    /// `"EnumUnitLit"` block mints a work-ref, writes the discriminant and closes on `Var(w)`
+    /// (`emit_variant_value`); a data variant is an `"Object"` block already.
+    ///
     /// Peels only `Span` and `Return` on the way in.  A literal reached through an `if`
     /// arm or an inner block is NOT this shape — those tails have a join to deliver and
     /// the multi-arm machinery already owns them — and answering `None` there leaves them
@@ -3389,7 +3393,7 @@ impl Parser {
         loop {
             match node {
                 Value::Return(inner) => node = inner.unspan(),
-                Value::Block(bl) if bl.name == "Object" => {
+                Value::Block(bl) if Self::is_record_literal(bl) => {
                     return match bl.operators.last().map(Value::unspan) {
                         Some(Value::Var(v)) => Some(*v),
                         _ => None,
@@ -3451,14 +3455,28 @@ impl Parser {
     /// synthetic `__nullable<S>` field is SKIPPED there because "absent" is discriminant 0
     /// and it relies on the fresh record being zeroed.  Refuse those; the record form they
     /// have today is correct.
+    ///
+    /// A record enum's buffer is written by a literal of ONE variant, so it is asked of every
+    /// variant's fields.  What a smaller variant leaves behind of a larger one is never read:
+    /// every read of the record goes through the variant its discriminant names.
     pub(crate) fn record_is_fully_written_by_a_literal(&self, buf_var: u16) -> bool {
         let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
             return false;
         };
-        !self.data.def(td).attributes().iter().any(|a| {
-            matches!(&a.typedef, Type::Enum(e, true, _)
-                if self.data.def(*e).name().starts_with("__nullable<"))
-        })
+        let nullable_field = |d: u32| {
+            self.data.def(d).attributes().iter().any(|a| {
+                matches!(&a.typedef, Type::Enum(e, true, _)
+                    if self.data.def(*e).name().starts_with("__nullable<"))
+            })
+        };
+        if self.data.def_type(td) == DefType::Enum {
+            return !self
+                .data
+                .children_of(td)
+                .filter(|&c| self.data.def_type(c) == DefType::EnumValue)
+                .any(nullable_field);
+        }
+        !nullable_field(td)
     }
 
     /// @PLN157 § V — redirect the literal's writes into the caller's buffer.
@@ -3495,7 +3513,10 @@ impl Parser {
         Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
         Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
         self.vars.set_skip_free(work_ref);
-        if crate::keys::rebind_place_enabled() {
+        // `@FR-R-Rebind` hands in a dense RECORD local only (`rebind_place`), never an enum.
+        if crate::keys::rebind_place_enabled()
+            && matches!(self.vars.tp(buf_var).base(), Type::Reference(_, _))
+        {
             self.rebind_safe_literal(&mut l[last], buf_var);
         }
     }
@@ -3815,7 +3836,13 @@ impl Parser {
         v.for_each_child_mut(&mut |c| Self::for_each_return_mut(c, f));
     }
 
-    /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put
+    /// A block a record literal built: a struct's or a data variant's `"Object"`, or a unit
+    /// variant's `"EnumUnitLit"` — each mints its own work-ref and closes on it.
+    fn is_record_literal(bl: &crate::data::Block) -> bool {
+        bl.name == "Object" || bl.name == "EnumUnitLit"
+    }
+
+    /// @PLN157 § V — in the tail's literal block, drop the work-ref's null init and put
     /// its `OpDatabase` behind `guard` (true = the caller already supplied a record).
     fn guard_literal_alloc(tail: &mut Value, work_ref: u16, guard: Value, db_nr: u32) {
         let mut node = tail;
@@ -3823,7 +3850,7 @@ impl Parser {
             match node {
                 Value::Span(b) => node = &mut b.1,
                 Value::Return(inner) => node = inner,
-                Value::Block(bl) if bl.name == "Object" => {
+                Value::Block(bl) if Self::is_record_literal(bl) => {
                     bl.operators.retain(
                         |op| !matches!(op, Value::Set(s, v) if *s == work_ref && **v == Value::Null),
                     );
@@ -8514,7 +8541,13 @@ impl Parser {
     /// Funnelling all reads here is what lets a streamed/accumulating backing (Phase 7)
     /// replace the read without touching the match logic — so do NOT open-code
     /// `OpGetVector` + `get_field` at a slice element site; call this.
-    fn read_slice_elem(&mut self, v: u16, elm_size: &Value, elm_tp: &Type, pos: Value) -> Value {
+    pub(super) fn read_slice_elem(
+        &mut self,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        pos: Value,
+    ) -> Value {
         // @PLN35 PC1 — in CURSOR mode a forward read `v[i]` is relative to the cursor's current
         // `pos`, so it becomes `source[pos + i]`.  Only non-negative literal positions are offset
         // (a negative/tail read has no meaning for a prefix cursor and is rejected upstream).
@@ -9799,6 +9832,7 @@ impl Parser {
         v: u16,
         elm_size: &Value,
         elm_tp: &Type,
+        head_len: i32,
         borrow_src: u16,
         cond: &mut Option<Value>,
         bindings: &mut Vec<Value>,
@@ -9891,17 +9925,118 @@ impl Parser {
         // branch (width 0).  It always matches (`len >= 0`), so the arm never fails and, when the
         // real branches do not match, the cursor stays put and every capture reads null — exactly
         // `(a)?`'s "try a; else bind null, cursor unmoved" contract, expressed as `(a | ε)`.
-        if self.lexer.has_token("?") {
+        let optional = self.lexer.has_token("?");
+        if optional {
             branches.push(Vec::new());
         }
 
-        // Optional `, ..rest` then `]`.
+        // Optional `, ..rest`, or — after an OPTIONAL group — fixed TAIL elements, then `]`.
         let mut rest_name: Option<String> = None;
-        if self.lexer.has_token(",") && self.lexer.has_token("..") {
-            rest_name = self.lexer.has_identifier();
+        let mut tail_conds: Vec<Value> = Vec::new();
+        let mut tail_len: i32 = 0;
+        if self.lexer.has_token(",") {
+            if self.lexer.has_token("..") {
+                rest_name = self.lexer.has_identifier();
+            } else if optional && self.match_cursor.is_none() {
+                tail_len = self.parse_optional_group_tail(
+                    e_nr,
+                    v,
+                    elm_size,
+                    elm_tp,
+                    borrow_src,
+                    &mut tail_conds,
+                    bindings,
+                );
+            } else if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a multi-element alternation `( … | … )` is the whole slice pattern — only \
+                     `, ..rest` may follow it"
+                );
+                self.skip_rest_of_slice();
+                return;
+            }
         }
         self.lexer.token("]");
         let has_rest = rest_name.is_some();
+        if head_len > 0 && !optional {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a multi-element alternation `( … | … )` is the whole slice pattern — it \
+                     cannot follow fixed elements"
+                );
+            }
+            return;
+        }
+
+        // `@FR-P-Opt` mid-slice (loft#2048) — after fixed head elements, or before fixed tail
+        // ones, the group is GREEDY, as `(a)?` is: a branch is taken when its tags match at
+        // the group's position, the first such in order, and the length must then fit what
+        // follows — the tail, read from the end, or the rest.  (The whole-slice form below
+        // includes the length in the branch test; with nothing after the group the two agree.)
+        if head_len > 0 || tail_len > 0 {
+            let mut branch_conds: Vec<Value> = Vec::new();
+            for branch in &branches {
+                let w = branch.len() as i32;
+                let lc = self.cursor_len(v);
+                let mut c =
+                    self.conv_op("<=", Value::Int(head_len + w), lc, I32.clone(), I32.clone());
+                for (j, (disc, _, _)) in branch.iter().enumerate() {
+                    let elem =
+                        self.read_slice_elem(v, elm_size, elm_tp, Value::Int(head_len + j as i32));
+                    let tag = self.elem_tag_int(elem);
+                    let t = self.cl("OpEqInt", &[tag, Value::Int(*disc)]);
+                    c = v_if(c, t, Value::Boolean(false));
+                }
+                branch_conds.push(c);
+            }
+            // The taken branch's length requirement: exactly `head + w + tail`, or at least
+            // `head + w` before a rest.
+            let mut fits = Value::Boolean(false);
+            for (i, branch) in branches.iter().enumerate().rev() {
+                let need = head_len + branch.len() as i32 + tail_len;
+                let lc = self.cursor_len(v);
+                let ok = if has_rest {
+                    self.conv_op("<=", Value::Int(need), lc, I32.clone(), I32.clone())
+                } else {
+                    self.conv_op("==", lc, Value::Int(need), I32.clone(), I32.clone())
+                };
+                fits = v_if(branch_conds[i].clone(), ok, fits);
+            }
+            for tc in tail_conds {
+                fits = v_if(fits, tc, Value::Boolean(false));
+            }
+            *cond = match cond.take() {
+                Some(existing) => Some(v_if(existing, fits, Value::Boolean(false))),
+                None => Some(fits),
+            };
+            self.bind_alternation_captures(
+                &branches,
+                &branch_conds,
+                head_len,
+                v,
+                elm_size,
+                elm_tp,
+                borrow_src,
+                bindings,
+            );
+            if let Some(name) = rest_name {
+                self.bind_alternation_rest(
+                    &name,
+                    &branches,
+                    &branch_conds,
+                    head_len,
+                    v,
+                    elm_size,
+                    elm_tp,
+                    bindings,
+                );
+            }
+            return;
+        }
 
         // Per-branch PURE predicate: length + leading-tag sequence.  With a rest the branch may
         // be a PREFIX (`wᵢ <= len`); without, it must be the whole slice (`len == wᵢ`).
@@ -9932,11 +10067,99 @@ impl Parser {
             None => Some(disjunction),
         };
 
+        self.bind_alternation_captures(
+            &branches,
+            &branch_conds,
+            0,
+            v,
+            elm_size,
+            elm_tp,
+            borrow_src,
+            bindings,
+        );
+        if let Some(name) = rest_name {
+            self.bind_alternation_rest(
+                &name,
+                &branches,
+                &branch_conds,
+                0,
+                v,
+                elm_size,
+                elm_tp,
+                bindings,
+            );
+        }
+    }
+
+    /// The fixed TAIL after an optional group (`[head…, (G)?, t₁, …, tₙ]`, loft#2048): each element
+    /// read from the END (`v[-(n - k)]`) — the length the group leaves is checked by the caller —
+    /// as a bare name binding the element, a `_`, or a variant pattern (`V { f }`, `V | W`).
+    /// Its conditions go to `tail_conds`; returns `n`.  The lexer stops at the `]`.
+    #[allow(clippy::too_many_arguments)]
+    fn parse_optional_group_tail(
+        &mut self,
+        e_nr: u32,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        borrow_src: u16,
+        tail_conds: &mut Vec<Value>,
+        bindings: &mut Vec<Value>,
+    ) -> i32 {
+        let total = self.count_slice_tail_elements();
+        for k in 0..total {
+            let pos = Value::Int(-(total - k));
+            if self.lexer.has_token("_") {
+                // a wildcard: the position only
+            } else if self.lexer.peek_named_arg().is_none()
+                && let LexItem::Identifier(id) = self.lexer.peek().has.clone()
+                && id.chars().next().is_some_and(char::is_lowercase)
+            {
+                self.lexer.has_identifier();
+                let bind_nr = self.pattern_binding(&id, elm_tp);
+                self.vars.defined(bind_nr);
+                let val = self.read_slice_elem(v, elm_size, elm_tp, pos);
+                bindings.push(v_set(bind_nr, val));
+                self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+            } else {
+                let elem = self.read_slice_elem(v, elm_size, elm_tp, pos);
+                self.parse_slice_alternation_element(
+                    e_nr,
+                    &elem,
+                    Some(borrow_src),
+                    bindings,
+                    tail_conds,
+                    false,
+                );
+            }
+            if k + 1 < total {
+                self.lexer.token(",");
+            }
+        }
+        total
+    }
+
+    /// The captures of a multi-element alternation or an optional group (`parse_multi_element_
+    /// alternation`): the names of every branch, each read at its branch's position past the
+    /// `head_len` fixed elements before the group, under that branch's selection — a name only
+    /// some branches bind is `τ?` (`@FR-P-Alt-Diff`, `@FR-P-Opt-Ty`).
+    #[allow(clippy::too_many_arguments)]
+    fn bind_alternation_captures(
+        &mut self,
+        branches: &[Vec<(i32, u32, Vec<(String, usize, Type)>)>],
+        branch_conds: &[Value],
+        head_len: i32,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        borrow_src: u16,
+        bindings: &mut Vec<Value>,
+    ) {
         // Captures: union the names; a name in every branch at a compatible type stays that
         // type, a name in only some promotes to `option<T>`.  Each capture reads at ITS
         // branch's position, guarded by that branch's predicate (untaken → null via else).
         let mut names: Vec<(String, Type)> = Vec::new();
-        for branch in &branches {
+        for branch in branches {
             for (_, _, fields) in branch {
                 for (fname, _, ftype) in fields {
                     if let Some((_, seen)) = names.iter().find(|(n, _)| n == fname) {
@@ -9981,7 +10204,12 @@ impl Parser {
                             .map(|(_, a, _)| (j, *vd, *a))
                     })
                 {
-                    let elem = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(pos as i32));
+                    let elem = self.read_slice_elem(
+                        v,
+                        elm_size,
+                        elm_tp,
+                        Value::Int(head_len + pos as i32),
+                    );
                     let read = self.pattern_field_value(vdef, attr, elem);
                     acc = v_if(branch_conds[bi].clone(), read, acc);
                 }
@@ -9996,38 +10224,51 @@ impl Parser {
             let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
             self.vars.set_type(v_nr, bound_tp);
         }
+    }
 
-        // Step 5: `..rest` picks up after WHICHEVER branch matched.  The runtime cursor
-        // `pos` = the matched branch's width (the pos-advance the contract calls for — here it
-        // only moves forward, never reverts, because a tag branch is a pure test).  `rest`
-        // materialises `v[pos .. len]` from that cursor via the shared `materialize_named_rest`.
-        if let Some(name) = rest_name {
-            let pos_var = self.create_unique("alt_pos", &I32);
-            self.vars.defined(pos_var);
-            // pos = if b0 { w0 } else if b1 { w1 } … else 0 (0 unreachable — cond already gated).
-            let mut pos_acc = Value::Int(0);
-            for (i, bc) in branch_conds.iter().enumerate().rev() {
-                pos_acc = v_if(bc.clone(), Value::Int(branches[i].len() as i32), pos_acc);
-            }
-            bindings.push(v_set(pos_var, pos_acc));
+    /// The `..rest` after a multi-element alternation or an optional group: `v[pos .. len]`,
+    /// `pos` the end of WHICHEVER branch was taken (`head_len + wᵢ`).
+    #[allow(clippy::too_many_arguments)]
+    fn bind_alternation_rest(
+        &mut self,
+        name: &str,
+        branches: &[Vec<(i32, u32, Vec<(String, usize, Type)>)>],
+        branch_conds: &[Value],
+        head_len: i32,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        bindings: &mut Vec<Value>,
+    ) {
+        let pos_var = self.create_unique("alt_pos", &I32);
+        self.vars.defined(pos_var);
+        // pos = if b0 { w0 } else if b1 { w1 } … else 0 (0 unreachable — cond already gated).
+        let mut pos_acc = Value::Int(0);
+        for (i, bc) in branch_conds.iter().enumerate().rev() {
+            pos_acc = v_if(
+                bc.clone(),
+                Value::Int(head_len + branches[i].len() as i32),
+                pos_acc,
+            );
+        }
+        bindings.push(v_set(pos_var, pos_acc));
 
-            let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-            let rest_var = self.pattern_binding(&name, &vec_tp);
-            self.vars.defined(rest_var);
-            if !self.first_pass && rest_var != u16::MAX {
-                let hi_val = self.cursor_len(v);
-                self.materialize_named_rest(
-                    v,
-                    elm_tp,
-                    elm_size,
-                    rest_var,
-                    &vec_tp,
-                    Value::Var(pos_var),
-                    hi_val,
-                    1,
-                    bindings,
-                );
-            }
+        let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
+        let rest_var = self.pattern_binding(name, &vec_tp);
+        self.vars.defined(rest_var);
+        if !self.first_pass && rest_var != u16::MAX {
+            let hi_val = self.cursor_len(v);
+            self.materialize_named_rest(
+                v,
+                elm_tp,
+                elm_size,
+                rest_var,
+                &vec_tp,
+                Value::Var(pos_var),
+                hi_val,
+                1,
+                bindings,
+            );
         }
     }
 
@@ -10124,8 +10365,38 @@ impl Parser {
                     } else {
                         None
                     };
+                    // `f: name` binds the field under another name, and `f: _` does not bind it
+                    // — the spellings a fixed slice element takes (`@FR-P-Cap`); a nested pattern
+                    // after the `:` is the fixed element's form, refused here by name.
+                    let mut bind = Some(fname.clone());
+                    if self.lexer.has_token(":") {
+                        if self.lexer.has_token("_") {
+                            bind = None;
+                        } else if let LexItem::Identifier(id) = self.lexer.peek().has.clone()
+                            && id.chars().next().is_some_and(char::is_lowercase)
+                        {
+                            self.lexer.has_identifier();
+                            bind = Some(id);
+                        } else {
+                            if !self.first_pass {
+                                diagnostic!(
+                                    self.lexer,
+                                    Level::Error,
+                                    "a field of an alternation branch binds a name (`{fname}: x`) \
+                                     or nothing (`{fname}: _`); a nested pattern belongs in a \
+                                     fixed element"
+                                );
+                            }
+                            self.skip_rest_of_slice();
+                            return;
+                        }
+                    }
                     match attr {
-                        Some((idx, ty)) => fields.push((fname, idx, ty)),
+                        Some((idx, ty)) => {
+                            if let Some(b) = bind {
+                                fields.push((b, idx, ty));
+                            }
+                        }
                         None => {
                             if valid && !self.first_pass {
                                 diagnostic!(
@@ -11975,18 +12246,39 @@ impl Parser {
                             self.skip_rest_of_slice();
                         }
                         break;
-                    } else if group_kind == SliceGroupKind::Alt && head.is_empty() {
+                    } else if group_kind == SliceGroupKind::Alt
+                        && (head.is_empty() || self.match_cursor.is_none())
+                    {
                         // @PLN35 Phase 4.3 / 5 — a WHOLE-SLICE MULTI-element alternation
                         // `[ (A B | C) [, ..rest] ]` OR an OPTIONAL group `[ (a)? [, ..rest] ]`
                         // (a degenerate alternation `(a | ε)`).  Predictive dispatch on the leading
                         // tags over a sequence per branch; it builds the arm `cond` itself and
                         // consumes through `]`, so break the element loop and skip the length gate.
                         if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
+                            // A fixed head before an optional group (loft#2048): its bare names
+                            // bind as a repetition's head does — the arm's `cond` gates them.
+                            let head_len = head.len() as i32;
+                            for (i, name) in head.iter().enumerate() {
+                                if name == "_" {
+                                    continue;
+                                }
+                                let bind_nr = self.pattern_binding(name, &elm_tp);
+                                self.vars.defined(bind_nr);
+                                let val = self.read_slice_elem(
+                                    v,
+                                    &elm_size,
+                                    &elm_tp,
+                                    Value::Int(i as i32),
+                                );
+                                bindings.push(v_set(bind_nr, val));
+                                self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
+                            }
                             self.parse_multi_element_alternation(
                                 e_nr,
                                 v,
                                 &elm_size,
                                 &elm_tp,
+                                head_len,
                                 borrow_src,
                                 &mut cond,
                                 &mut bindings,
@@ -21975,7 +22267,24 @@ impl Parser {
                 *val = Value::Int(self.packed_size(&tp, u32::MAX));
             }
         } else if let Some(id) = self.lexer.has_identifier() {
-            let d_nr = self.data.def_nr(&id);
+            // `sizeof(T)` inside a generic: `T` is the type variable, whose placeholder no source
+            // can spell (`T#1`), so the bare name resolved nowhere and was read as an unknown
+            // variable (loft#2054).
+            if self.vars.var(&id) == u16::MAX
+                && self.data.def_nr(&id) == u32::MAX
+                && self.data.is_type_var_spelling(&id)
+                && let Some(tp) = self.parse_type(u32::MAX, &id, false)
+            {
+                found = true;
+                if !self.first_pass {
+                    *val = self.sizeof_value(&tp, u32::MAX);
+                }
+            }
+            let d_nr = if found {
+                u32::MAX
+            } else {
+                self.data.def_nr(&id)
+            };
             if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
                     // Still unresolved after pass 2, so this is not a forward reference:
@@ -21995,7 +22304,7 @@ impl Parser {
                     if !self.first_pass {
                         // `d_nr` is the def of the name the user typed — the alias `i32`, not
                         // the `integer` it collapses to — so its forced `size(N)` applies.
-                        *val = Value::Int(self.packed_size(&tp, d_nr));
+                        *val = self.sizeof_value(&tp, d_nr);
                     }
                 }
             }
@@ -22021,7 +22330,7 @@ impl Parser {
                     // integer is its packed width, a collection its 4-byte field, a tuple its
                     // stored `__tuple<…>` record.  Sized by `type_elm` instead, a `u8` read 8,
                     // a `vector<Point>` its element's size and a keyed collection 0 (loft#1779).
-                    *val = Value::Int(self.packed_size(&tp, u32::MAX));
+                    *val = self.sizeof_value(&tp, u32::MAX);
                 }
             }
         }
@@ -22072,7 +22381,22 @@ impl Parser {
     /// answers, for a type spelled and for an expression's type alike (@F45).  `alias` is the
     /// def of a spelled type name (`i32`, `vector`), whose declared `size(N)` wins; an
     /// expression passes `u32::MAX` and a collection then asks its kind's def the same way.
-    fn packed_size(&mut self, tp: &Type, alias: u32) -> i32 {
+    /// `@FR-G-Mono` — the value a `sizeof` of `tp` lowers to: its packed size, or, for a bare
+    /// type variable (a generic's `T`, store size 0 in the template), a marker each monomorph
+    /// sizes at the type it binds — the template's 0 survived instantiation (loft#2054).
+    fn sizeof_value(&mut self, tp: &Type, alias: u32) -> Value {
+        if let Type::Reference(d, _) = tp.base()
+            && self.data.is_type_var_placeholder(*d)
+        {
+            return Value::Call(
+                self.data.def_nr("OpSizeofRef"),
+                vec![Value::Int(Self::SIZEOF_PENDING), Value::Int(*d as i32)],
+            );
+        }
+        Value::Int(self.packed_size(tp, alias))
+    }
+
+    pub(super) fn packed_size(&mut self, tp: &Type, alias: u32) -> i32 {
         if let Some(n) = self.data.forced_size(alias) {
             return i32::from(n);
         }

@@ -1390,7 +1390,6 @@ const SEARCH_INDEX=[
 {name:"mesh3d::add_camera",kind:"fn",url:"lib-mesh3d-api.html"},
 {name:"mesh3d::add_light",kind:"fn",url:"lib-mesh3d-api.html"},
 {name:"pluginabi",kind:"library",url:"lib-pluginabi.html"},
-{name:"pluginabi guide",kind:"guide",url:"lib-pluginabi-guide.html"},
 {name:"pluginabi::valid_op",kind:"fn",url:"lib-pluginabi-api.html"},
 {name:"pluginabi::takes_arg",kind:"fn",url:"lib-pluginabi-api.html"},
 {name:"pluginabi::request",kind:"fn",url:"lib-pluginabi-api.html"},

@@ -81,12 +81,13 @@ pub(crate) fn loft_lib_dir_for_shaped(
     // lacked the new `loft::rpc` module while generated code referenced it,
     // failing every `--native` compile with E0433).  Keep the ordering aligned
     // with `cache::rlib_candidates` and `native_lib::find_loft_rlib`.
+    // The order itself — and when a stale `deps/` copy yields — is `preferred_runtime_rlib`'s.
     let deps = exe_dir.join("deps");
-    if crate::file_access::exists(deps.join("libloft.rlib")) {
-        return Some(deps);
-    }
-    if crate::file_access::exists(exe_dir.join("libloft.rlib")) {
-        return Some(exe_dir.clone());
+    if let Some(rlib) = loft::native_lib::preferred_runtime_rlib(
+        &deps.join("libloft.rlib"),
+        &exe_dir.join("libloft.rlib"),
+    ) {
+        return rlib.parent().map(std::path::Path::to_path_buf);
     }
     // Installed as <prefix>/bin/loft — look in <prefix>/share/loft/.
     if crate::file_access::file_name(&exe_dir)? == "bin" {
@@ -717,9 +718,28 @@ fn copy_sibling_rmeta(rlib: &std::path::Path, lib_dir: &std::path::Path) -> std:
 /// the fallback engages only when `deps/` is genuinely absent.
 pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let classic = deps_dir_of(lib_dir);
-    if crate::file_access::is_dir(&classic) {
+    let per_unit = per_unit_dep_dirs(lib_dir);
+    // A `deps/` beside a per-unit tree is debris when the rlib being linked IS a per-unit
+    // output (cargo uplifts it as a hard link): a cache restored from an older toolchain put
+    // it there, and searching it resolved loft's dependencies against that toolchain's
+    // rlibs (loft#2033).  Otherwise `deps/` is the layout, as before.
+    let rlib = lib_dir.join("libloft.rlib");
+    let linked_is_per_unit = per_unit
+        .iter()
+        .any(|d| loft::native_lib::same_file(&d.join("libloft.rlib"), &rlib));
+    if crate::file_access::is_dir(&classic) && !linked_is_per_unit {
         return vec![classic];
     }
+    if per_unit.is_empty() {
+        // Name the place it was expected, so the diagnostic stays actionable.
+        return vec![classic];
+    }
+    per_unit
+}
+
+/// The per-unit layout's search dirs: every `<profile>/build/<crate>/<hash>/out/` that holds a
+/// linkable crate, sorted.  Empty under the classic layout.
+fn per_unit_dep_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     // Per-unit: <profile>/build/<crate>/<hash>/out/.  Only directories that actually
     // hold a linkable crate are worth passing — build-script `out` dirs sit in the same
     // tree and carry generated sources, not libraries.
@@ -750,10 +770,6 @@ pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathB
                 }
             }
         }
-    }
-    if dirs.is_empty() {
-        // Name the place it was expected, so the diagnostic stays actionable.
-        return vec![classic];
     }
     dirs.sort();
     dirs
