@@ -14500,25 +14500,34 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
     }
     let trace = std::env::var("LOFT_TRACE_LOOP_RECORD").is_ok();
     let refill_on = !std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0");
-    // Where each candidate is declared: the innermost enclosing loop and the block holding
-    // its `Set(v, null)`.
+    // THE NEST CLAUSE: the record is kept across the OUTERMOST loop around its declaration,
+    // not the innermost — a nest re-entering its inner loop per outer pass otherwise frees and
+    // mints the record once per entry (`forms_upto`: once per `ea`, a thousand times a call).
+    // Every pass of any loop in the nest reaches the declaration's mint, which takes the clear
+    // arm, so the argument is the innermost one's.  `LOFT_NO_LOOP_RECORD_NEST` keeps the
+    // innermost.
+    let nest = !std::env::var("LOFT_NO_LOOP_RECORD_NEST").is_ok_and(|v| v != "0");
+    // Where each candidate is declared: the loop that owns it and the block holding its
+    // `Set(v, null)`.
     let mut decls: HashMap<u16, LoopRecord> = HashMap::new();
     fn walk(
         v: &Value,
         loop_scope: Option<u16>,
         block: Option<u16>,
+        nest: bool,
         f: &mut impl FnMut(&Value, Option<u16>, Option<u16>),
     ) {
         let n = v.unspan();
         f(n, loop_scope, block);
         let (ls, bs) = match n {
+            Value::Loop(lp) if nest && loop_scope.is_some() => (loop_scope, Some(lp.scope)),
             Value::Loop(lp) => (Some(lp.scope), Some(lp.scope)),
             Value::Block(b) => (loop_scope, Some(b.scope)),
             _ => (loop_scope, block),
         };
-        n.for_each_child(&mut |c| walk(c, ls, bs, f));
+        n.for_each_child(&mut |c| walk(c, ls, bs, nest, f));
     }
-    walk(body, None, None, &mut |n, ls, bs| {
+    walk(body, None, None, nest, &mut |n, ls, bs| {
         if let Value::Set(v, rhs) = n
             && matches!(rhs.unspan(), Value::Null)
             && let (Some(loop_scope), Some(decl_block)) = (ls, bs)

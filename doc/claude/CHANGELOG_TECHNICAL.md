@@ -10,6 +10,14 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### hex_recover `forms_upto`: a loop record kept across its nest (2026-10-18)
+
+- **`(R-LoopRecord)`'s nest clause** — a record local declared inside the innermost loop of a
+  nest is kept across the outermost loop: declared before it, minted once, freed once after
+  it.  Kept across the innermost loop only, `forms_upto`'s `ef = form_new(…)` freed and minted
+  its store once per pass of the loop around it, about a thousand store cycles a call.  Native;
+  `LOFT_NO_LOOP_RECORD_NEST`.  `forms_upto` 761 → 638 µs (5.02× → ≈ 4.2×), hash equal.
+
 ### dryopea `panel_build`: results built where they are kept (2026-10-18)
 
 - **`(R-Place)`'s callee clause for a record enum** — a function returning a struct-enum

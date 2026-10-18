@@ -774,6 +774,10 @@ now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
                  or nullable type, a second binding, a copy to another local, a
                  return, a capture, a native op taking it otherwise, `par` and
                  `yield` decline.  A free on a `return`/`continue` path stays.
+                 THE NEST CLAUSE: the loop that keeps the record is the OUTERMOST loop
+                 around its declaration — every pass of every loop in the nest reaches
+                 the declaration's mint, which takes the clear arm, so the argument is
+                 the innermost loop's; the one free follows the outermost loop.
                  THE REFILL CLAUSE: a record whose heap is vectors of no-heap elements
                  (`(R-RefillBuffer)`'s refillable shape) is kept too, with its vectors,
                  where every mint heads a literal group that writes every field and every

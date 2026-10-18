@@ -125,7 +125,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.66 | cbor `encode` (6.70 before X2's owned-store half) | X9 | ≈ 5× (*est.*) |
 | 5.63 | `flow_layout_full` (7.92 before S1c, 6.14 before the text view's own `to_string`) | X3 | ≈ 4.5× (*est.*) |
 | 5.52 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
-| 5.09 | `forms_upto` | X12 | no figure |
+| 4.2 | `forms_upto` (5.02 before the nest clause) | BUILT: `(R-LoopRecord)`'s nest clause — `ef = form_new(…)` kept across the whole loop nest, where the record was freed and minted per pass of the loop around its innermost loop (761 → 638 µs, −16 %, the −17 % hand price).  What is left (callgrind): `form_admissible` ~22 %, the canonical form and its key text ~20 % (576 calls a run), the six appends and two clears of the refill | out of the cut |
 
 **Re-profiled at `1ed832afe`** (the portal run of that commit; callgrind, each routine counted
 alone with `--toggle-collect`).  Eleven rows over 5×, with the share of the row each lever

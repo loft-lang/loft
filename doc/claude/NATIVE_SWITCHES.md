@@ -378,6 +378,12 @@ elements — with it off, such a record keeps its vectors across passes and each
 a vector field empties the kept vector in place.  First bisect step for a stale element or a
 store that grows pass by pass out of a record literal with vector fields in a loop.
 
+**`LOFT_NO_LOOP_RECORD_NEST=1`** (`@FR-R-LoopRecord`'s nest clause, default-ON, generation time,
+`--native` only) keeps a loop record across its INNERMOST loop again — with it off, a record
+declared inside a nest is kept across the outermost loop around it and freed once after that
+loop (`forms_upto` 761 → 638 µs).  First bisect step for a leak or a stale field out of a
+record literal inside nested loops.
+
 ## Generators
 
 **`LOFT_NO_REDESCENT=1`** (default-ON, generation time) sends every generator loop
