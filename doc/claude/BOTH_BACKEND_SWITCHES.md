@@ -32,7 +32,7 @@ written through and each kept, with the reason.
 **`LOFT_NO_LITERAL_EXIT_BUFFER=1`** (@PLN164 B2, `@FR-R-Place`'s callee clause, parse
 time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
 own again — with it off, every literal exit of a record function writes the `__retbuf`
-the caller handed, through the same null-guarded mint the TAIL literal has used since
+the caller handed (a record enum's variants too, a unit variant included), through the same null-guarded mint the TAIL literal has used since
 @PLN157 § V, so a callee with several literal exits answers ONE store; that includes a
 buffer a CHAIN renamed (`return no_mk()` beside `return Mk { … }`, `parse_circle`'s
 shape), and a literal tail beside chain exits — and is the first bisect step for a wrong

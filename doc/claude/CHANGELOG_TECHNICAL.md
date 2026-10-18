@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### dryopea `panel_build`: a record enum's exits build into the caller's buffer (2026-10-18)
+
+- **`(R-Place)`'s callee clause for a record enum** — a function returning a struct-enum
+  whose every exit is a variant literal (`return UhToolButton { tb_id: b.btn_id }`, a unit
+  variant `UhWorld`) builds it into the `__retbuf` its caller handed, as a struct's literal
+  exits do; each exit minted a store of its own and the caller freed it.  The buffer has the
+  enum's size, so any variant fits; a variant with an omitted `?` field keeps its stores (only
+  a fresh record's zero leaves that field absent).  Both backends; `LOFT_NO_LITERAL_EXIT_BUFFER`.
+  `panel_build` 4.05 → 3.85 ms (5.24× → 4.98×), `map_json` 2.81× → 2.62×, every lane 17 hash
+  equal.
+
 ### graphics `fill_polygon`: records read by index off the held base (2026-10-17)
 
 - **`(R-RecPtr)`'s index clause** — `r = v[IDX]?` over a vector whose header and element

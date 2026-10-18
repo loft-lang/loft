@@ -3380,6 +3380,10 @@ impl Parser {
     /// literal owns a record nothing else has seen yet, which is the whole reason its
     /// destination may be swapped.
     ///
+    /// A record enum's UNIT variant (`World`) is the same literal under another name: the
+    /// `"EnumUnitLit"` block mints a work-ref, writes the discriminant and closes on `Var(w)`
+    /// (`emit_variant_value`); a data variant is an `"Object"` block already.
+    ///
     /// Peels only `Span` and `Return` on the way in.  A literal reached through an `if`
     /// arm or an inner block is NOT this shape — those tails have a join to deliver and
     /// the multi-arm machinery already owns them — and answering `None` there leaves them
@@ -3389,7 +3393,7 @@ impl Parser {
         loop {
             match node {
                 Value::Return(inner) => node = inner.unspan(),
-                Value::Block(bl) if bl.name == "Object" => {
+                Value::Block(bl) if Self::is_record_literal(bl) => {
                     return match bl.operators.last().map(Value::unspan) {
                         Some(Value::Var(v)) => Some(*v),
                         _ => None,
@@ -3451,14 +3455,28 @@ impl Parser {
     /// synthetic `__nullable<S>` field is SKIPPED there because "absent" is discriminant 0
     /// and it relies on the fresh record being zeroed.  Refuse those; the record form they
     /// have today is correct.
+    ///
+    /// A record enum's buffer is written by a literal of ONE variant, so it is asked of every
+    /// variant's fields.  What a smaller variant leaves behind of a larger one is never read:
+    /// every read of the record goes through the variant its discriminant names.
     pub(crate) fn record_is_fully_written_by_a_literal(&self, buf_var: u16) -> bool {
         let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
             return false;
         };
-        !self.data.def(td).attributes().iter().any(|a| {
-            matches!(&a.typedef, Type::Enum(e, true, _)
-                if self.data.def(*e).name().starts_with("__nullable<"))
-        })
+        let nullable_field = |d: u32| {
+            self.data.def(d).attributes().iter().any(|a| {
+                matches!(&a.typedef, Type::Enum(e, true, _)
+                    if self.data.def(*e).name().starts_with("__nullable<"))
+            })
+        };
+        if self.data.def_type(td) == DefType::Enum {
+            return !self
+                .data
+                .children_of(td)
+                .filter(|&c| self.data.def_type(c) == DefType::EnumValue)
+                .any(nullable_field);
+        }
+        !nullable_field(td)
     }
 
     /// @PLN157 § V — redirect the literal's writes into the caller's buffer.
@@ -3495,7 +3513,10 @@ impl Parser {
         Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
         Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
         self.vars.set_skip_free(work_ref);
-        if crate::keys::rebind_place_enabled() {
+        // `@FR-R-Rebind` hands in a dense RECORD local only (`rebind_place`), never an enum.
+        if crate::keys::rebind_place_enabled()
+            && matches!(self.vars.tp(buf_var).base(), Type::Reference(_, _))
+        {
             self.rebind_safe_literal(&mut l[last], buf_var);
         }
     }
@@ -3815,7 +3836,13 @@ impl Parser {
         v.for_each_child_mut(&mut |c| Self::for_each_return_mut(c, f));
     }
 
-    /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put
+    /// A block a record literal built: a struct's or a data variant's `"Object"`, or a unit
+    /// variant's `"EnumUnitLit"` — each mints its own work-ref and closes on it.
+    fn is_record_literal(bl: &crate::data::Block) -> bool {
+        bl.name == "Object" || bl.name == "EnumUnitLit"
+    }
+
+    /// @PLN157 § V — in the tail's literal block, drop the work-ref's null init and put
     /// its `OpDatabase` behind `guard` (true = the caller already supplied a record).
     fn guard_literal_alloc(tail: &mut Value, work_ref: u16, guard: Value, db_nr: u32) {
         let mut node = tail;
@@ -3823,7 +3850,7 @@ impl Parser {
             match node {
                 Value::Span(b) => node = &mut b.1,
                 Value::Return(inner) => node = inner,
-                Value::Block(bl) if bl.name == "Object" => {
+                Value::Block(bl) if Self::is_record_literal(bl) => {
                     bl.operators.retain(
                         |op| !matches!(op, Value::Set(s, v) if *s == work_ref && **v == Value::Null),
                     );

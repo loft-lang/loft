@@ -3815,7 +3815,10 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  S (R-Callee: a buffer may be a record the caller offered), so the
                  result is never minted in a store of its own and the later store into
                  the destination is a relocation within S (R-MoveLast).  The callee
-                 writes that buffer on every exit: a fresh literal built into it, or a
+                 writes that buffer on every exit: a fresh literal built into it — a
+                 struct's, or a record enum's variant (a unit variant too: the buffer
+                 has the enum's size, and a smaller variant leaves bytes nothing reads,
+                 every read going through the variant its discriminant names) — or a
                  CHAIN exit that hands the same buffer to a callee of which this holds
                  (asked recursively; a cycle declines) — a chain function's buffer is
                  the `__ref_N` the chain renamed it to.  When the
