@@ -3963,7 +3963,9 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  function, an alias), rebound, freed outside the exit, a second exit,
                  a struct-enum payload, anything else writing the field's bytes.
   (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, its
-                 view-local spelling `v = p.a; return v`, or the natural spelling
+                 view-local spelling `v = p.a; return v` (EVERY bind of `v` a field of that
+                 one local: a `??` bind's dep names its subject and never its default, so
+                 the dep list alone does not say what `v` holds), or the natural spelling
                  `mk(…).a`, whose call the parser lifts into a local — is answered as the local's own
                  store at the field's position, instead of a store minted for the return
                  and the field deep-copied into it.  The parser's copy stands where a view

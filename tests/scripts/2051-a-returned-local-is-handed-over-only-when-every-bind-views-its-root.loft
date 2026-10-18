@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2051, `@FR-R-ReturnField` — an exit that returns a local VIEW of an owned record is
+// handed the root's store as it stands only when EVERY bind of that local is a field of that
+// one root.
+// A local's dep list is one fact for all its binds: a `??` binding names its subject, never
+// its default, so read off the dep list alone the rewrite took `pv = maybe(a) ?? Ht {…}` for a
+// view of the subject, freed the default's store as "not the subject" and returned it (r1, the
+// default arm).  The text field is what brings the exit to this rewrite: a record that owns no
+// heap is the native value form's to answer.
+//
+// Every value is hand-computed: an `Ht` weighs h * 100 + len(t).  Each cell runs twice, so a
+// store freed by the first run and reused by the second shows.  The interpreter and native
+// answer the same, with no leak under `LOFT_STRICT_STORES=1` and no fault under `LOFT_POISON=1`.
+// A POISON-GATE GUARD: the returned store's bytes are still in place after the wrong free, so r1
+// passes without `LOFT_POISON=1`, and only the poison sweep (or strict stores) reads that half.
+// r2 and r3 are the shapes the rewrite still admits, r4 one it declines.
+//
+// @falsified-by: tests/falsified/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.patch — interpret exit 1 -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: an ASSERTION on native; on the interpreter the strict-store report (`USE AFTER
+//     FREE (read) … type=Ht`) and its exit.
+//   WITNESS: native under `LOFT_POISON=1`: *r1 the default: null* — the default's store was
+//     freed before it was returned.  Unpoisoned, the freed store is reused and *r4 the first
+//     root: 0* fails instead.
+//   HOLDS: unpoisoned, r1 (the subject), r2 and r3 pass on both trees.
+
+struct Ht { h: integer, t: text }
+struct W2 { x: Ht, y: Ht }
+
+fn maybe(a: integer) -> Ht? { if a < 0 { return null; } Ht { h: 60 + a, t: "maybemaybe" } }
+fn mkw(i: integer) -> W2 { W2 { x: Ht { h: 50 + i, t: "fldfl" }, y: Ht { h: 70 + i, t: "yy" } } }
+fn wt(p: Ht) -> integer { p.h * 100 + len(p.t) }
+
+// r1 — a `??` bind returned: the subject 61/"maybemaybe" (6110) or the default
+// 99/"dflt-dflt" (9909).
+fn r1(a: integer) -> Ht {
+  pv = maybe(a) ?? Ht { h: 99, t: "dflt-dflt" };
+  pv
+}
+
+// r2 — one bind, a field of an owned record: 51/"fldfl" = 5105.
+fn r2(i: integer) -> Ht {
+  d = mkw(i);
+  v = d.x;
+  v
+}
+
+// r3 — two binds, each a field of the same owned record: 72/"yy" (7202) or 52/"fldfl" (5205).
+fn r3(i: integer, c: boolean) -> Ht {
+  d = mkw(i);
+  v = d.x;
+  if c { v = d.y; }
+  v
+}
+
+// r4 — two binds of two roots, which the rewrite declines: 53/"fldfl" (5305) or 74/"yy" (7402).
+fn r4(i: integer, c: boolean) -> Ht {
+  d = mkw(i);
+  e = mkw(i + 1);
+  v = d.x;
+  if c { v = e.y; }
+  v
+}
+
+fn main() {
+  for _rep in 0..2 {
+    a = wt(r1(1));
+    assert(a == 6110, "r1 the subject: {a}");
+    b = wt(r1(-1));
+    assert(b == 9909, "r1 the default: {b}");
+    c = wt(r2(1));
+    assert(c == 5105, "r2 a field of one root: {c}");
+    d = wt(r3(2, true));
+    assert(d == 7202, "r3 the second field: {d}");
+    e = wt(r3(2, false));
+    assert(e == 5205, "r3 the first field: {e}");
+    f = wt(r4(3, false));
+    assert(f == 5305, "r4 the first root: {f}");
+    g = wt(r4(3, true));
+    assert(g == 7402, "r4 the second root: {g}");
+  }
+  println("done");
+}
