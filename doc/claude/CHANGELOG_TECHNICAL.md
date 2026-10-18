@@ -10,7 +10,7 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
-### dryopea `truncate_to`: a record of plain vectors copied and released with each store resolved once (2026-10-18)
+### dryopea `truncate_to`: plain-vector records copied and released with each store resolved once, kept reservations answered at once (2026-10-18)
 
 - **The copy between two stores** of a record that owns plain vectors and nothing else
   (`Stores::copy_plain_vectors`) borrows the source and the destination store once and reads
@@ -20,6 +20,9 @@ All notable changes to the loft language and interpreter.
   answers nothing the plan does not: an empty vector frees nothing either way.
 - The runtime, both backends; `LOFT_NO_PLAIN_VECTOR_RECORDS` still sends such a record through
   the walk.  `truncate_to` 222 → 202.6 ns a push (−8.6 %), hash equal.
+- **A reservation the block already holds** (`vector::reserve_more`, `@FR-R-PushFill`) is
+  answered by the claim header, with no `Store::resize`: a buffer refilled each pass holds it
+  from the second pass on.  `truncate_to` → 192.3 ns (−5.3 %).
 
 ### hex_recover `forms_upto`: a loop record kept across its nest (2026-10-18)
 
