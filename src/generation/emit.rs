@@ -3357,14 +3357,23 @@ impl Output<'_> {
                 writes.push(Value::Call(*d, staged));
             }
         }
-        let key = key.unwrap_or_else(|| "i64::MIN".to_string());
         let coll = self.expr_string(ke.coll)?;
         self.indent(w)?;
-        writeln!(
-            w,
-            "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
-            ke.parent_tp, ke.field
-        )?;
+        if ke.text_key {
+            let key = key.unwrap_or_else(|| "\"\"".to_string());
+            writeln!(
+                w,
+                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}_u16, {}_u16, &*({key}));",
+                ke.parent_tp, ke.field
+            )?;
+        } else {
+            let key = key.unwrap_or_else(|| "i64::MIN".to_string());
+            writeln!(
+                w,
+                "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
+                ke.parent_tp, ke.field
+            )?;
+        }
         for wr in &writes {
             self.indent(w)?;
             self.output_code_inner(w, wr)?;

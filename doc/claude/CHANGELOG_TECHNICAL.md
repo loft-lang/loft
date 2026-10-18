@@ -10,6 +10,24 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `--native`: a hash keyed by one text is looked up and inserted into with one probe (2026-10-19)
+
+- **`(R-TypedKeyed)`'s text clause** — a lookup in a `hash<T[k]>` whose one key is a `text`
+  is emitted as `OpGetHashText`, the key handed over as the text (`hash::find_str`, the digest
+  `keys::str_hash`): no `Content` built and no type-row dispatch per lookup.
+- **`(R-KeyedEntry)`'s text clause** — `h += [T{k: …, …}]` into such a hash asks the key
+  first (`hash::entry_str`, `Stores::keyed_entry_text`) when the key is the only heap the
+  element owns: an entry already under the key is overwritten without its key, a new one is
+  filed where the probe ended with its key text written.  The plain form built the record,
+  then hashed the key again from it to file it.
+- `hash_text_keys` 4.46× → 3.17× (−27 % by time on the hand price, the lookup half −4 %),
+  `word_count` 3.09× → 2.68×; hashes equal.  Reach (`make rewrite-census`): word count, the
+  keyed lane, `assets`, `hex_fit`, `hex_recover`.  Priced and dropped beside it: lending a
+  decode's result store across calls (`check_request` +25 % cycles — clearing the previous
+  tree claim by claim and claiming again from a reused store costs more than a fresh store's
+  bump claims and a whole-store free).  Guard:
+  `tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft`.
+
 ### A slice first bind holds its slice whatever the local is rebound to later (2026-10-18)
 
 - **loft#2038 (silent-wrong)** — `s: vector<T> = big[a..b]` followed later by `s = other`

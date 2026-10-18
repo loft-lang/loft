@@ -978,6 +978,51 @@ pub fn OpGetHashLong(
     OpGetRecord(cell, data, db_tp, &[crate::keys::Content::Long(key)])
 }
 
+/// [`OpGetHashLong`] for a `hash<T[k]>` whose ONE key is a `text`, the key handed over as
+/// the text (`@FR-R-TypedKeyed`'s text clause).  The same exits as the integer entry:
+/// anything that is not the plain answer is the general entry's, reached with the same key.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+pub fn OpGetHashText(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key: &str,
+) -> DbRef {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if data.rec != 0
+        && !vector::is_absent_collection(&data, &stores.allocations)
+        && let [k] = stores.keys(db_tp as u16)
+        && let Some(found) = crate::hash::find_str(&data, &stores.allocations, k, key)
+        && (found.rec != 0 || !stores.lazy_bound(&data))
+    {
+        if crate::keys::keyed_verify() {
+            let general = stores.find(
+                &data,
+                db_tp as u16,
+                &[crate::keys::Content::Str(crate::keys::Str::new(key))],
+            );
+            assert!(
+                (general.rec, general.pos) == (found.rec, found.pos),
+                "LOFT_KEYED_VERIFY: the typed text lookup answers {}+{} where the general one \
+                 answers {}+{}",
+                found.rec,
+                found.pos,
+                general.rec,
+                general.pos,
+            );
+        }
+        return found.or_null();
+    }
+    OpGetRecord(
+        cell,
+        data,
+        db_tp,
+        &[crate::keys::Content::Str(crate::keys::Str::new(key))],
+    )
+}
+
 /// [`OpGetRecord`]'s lookup: resident first, then the lazy source.  Every miss arm answers
 /// a reference with no record and the caller spells it as a value.
 fn get_record_lookup(

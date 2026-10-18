@@ -96,6 +96,19 @@ impl OpEmitter for OpGetRecordEmitter {
             ctx.output.emit_long_key(&mut *ctx.w, &key_vals[0])?;
             return write!(ctx.w, ")");
         }
+        // The text clause: ONE `text` key, handed over as the text (`hash::find_str`).
+        let typed_text = !ctx.output.typed_keyed_disabled
+            && row.is_some_and(|t| matches!(t.parts, crate::database::Parts::Hash(..)))
+            && key_vals.len() == 1
+            && matches!(key_types.as_slice(), [k] if k.unsigned_abs() == 6);
+        if typed_text {
+            crate::rewrite_census::fired("R-TypedKeyed/text", 1);
+            write!(ctx.w, "OpGetHashText(cell,")?;
+            ctx.emit(&args[0])?;
+            write!(ctx.w, ", {db_tp}_i32, ")?;
+            ctx.output.emit_str_key(&mut *ctx.w, &key_vals[0])?;
+            return write!(ctx.w, ")");
+        }
         write!(ctx.w, "OpGetRecord(cell,")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ", {db_tp}_i32, ")?;

@@ -812,7 +812,8 @@ staged, the record under the key is removed, a fresh one is claimed in the colle
 and written, and the subscript's key links it — and is the first bisect step for a wrong value,
 key or count after a keyed literal assignment on native.
 **`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
-hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
+hash of a heap-free element, or a hash keyed by one `text` that is its element's only heap,
+claim, write and file a fresh entry again, replacing the one under a
 repeated key, and makes `h[a, b] = T{…}` on a hash keyed by integer parts take
 `LOFT_NO_KEYED_IN_PLACE`'s removal and claim again — with it on, one probe answers the entry the
 key names and the literal's staged values are written into it — and is the first bisect step

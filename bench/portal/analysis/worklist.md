@@ -137,7 +137,17 @@ the compiler rule that would make the natural spelling do the same.
   (R-Reuse through a function boundary) and building entries in place are each ~15–20 % by the
   profile, ≈ 3.5× together.  Below 3× needs the decode to build only what is read, which is
   `(R-DecodeView)` carried from texts to entries (C141's direction, not yet decided for this
-  half).
+  half).  PRICED and DROPPED: lending the decode's store across calls (the caller-lent
+  buffer, cleared before each call) — +29 % instructions, +25 % cycles: clearing the previous
+  tree claim by claim and claiming again from a reused store costs more than a fresh store's
+  bump claims and one whole-store free.  The same holds for `encode`'s 13 stores per call.
+- **Library rewrites are not the cure here** (`formal/performance.md` `(Perf-Teach)`): E1, F1
+  and F2 were priced as library forms to measure their ceilings; they reach the rows as
+  compiler rules, or not at all.
+- **`15_stdlib_keyed/hash_text_keys` 4.46× → 3.17×, BUILT** — `(R-TypedKeyed)`'s and
+  `(R-KeyedEntry)`'s text clauses: a lookup in a hash keyed by one `text` hashes the text it
+  is handed (`OpGetHashText`, −4 % of the row), and an insert asks the key first and writes
+  the entry it answers (`keyed_entry_text`, −21 %).  `word_count` 3.09× → 2.68× with it.
 
 
 Eleven rows read over 5× in `results/laptop.tsv` (the full run at `cbe54eaa2`, every hash

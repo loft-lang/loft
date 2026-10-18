@@ -121,7 +121,7 @@ fn a_hash_lookup_by_one_integer_key_takes_the_typed_entry() {
     for (name, typed, general) in [
         ("n_hv", 1, 0),                                // hash<E[id]>, integer
         ("n_iv", 0, 1),                                // index<I[id]>: not a hash
-        ("n_test_158_hash_text_find_or_insert", 0, 6), // text key
+        ("n_test_158_hash_text_find_or_insert", 0, 0), // text key: the text clause below
         ("n_test_158_hash_compound_key", 0, 5),        // two key fields
         ("n_test_158_hash_in_a_group", 3, 0),          // a hash in a group is still a hash
     ] {
@@ -137,6 +137,13 @@ fn a_hash_lookup_by_one_integer_key_takes_the_typed_entry() {
             "{name}: general lookups"
         );
     }
+    // The text clause: a hash with one `text` key takes `OpGetHashText`, the key as the text.
+    let text = body(&rust, "n_test_158_hash_text_find_or_insert");
+    assert_eq!(
+        text.matches("OpGetHashText(").count(),
+        6,
+        "text-key lookups"
+    );
     // `u8` is not a width `find_long` lists; `i32` is, and the index beside it is general.
     let narrow = body(&rust, "n_test_158_hash_narrow_keys");
     assert_eq!(
@@ -152,13 +159,15 @@ fn a_hash_lookup_by_one_integer_key_takes_the_typed_entry() {
 
     let off = emit("general", &[("LOFT_NO_TYPED_KEYED", "1")]);
     assert_eq!(
-        off.matches("OpGetHashLong(").count(),
+        off.matches("OpGetHashLong(").count() + off.matches("OpGetHashText(").count(),
         0,
         "LOFT_NO_TYPED_KEYED=1 emits the general lookup everywhere"
     );
     assert_eq!(
         off.matches("OpGetRecord(").count(),
-        rust.matches("OpGetRecord(").count() + rust.matches("OpGetHashLong(").count(),
+        rust.matches("OpGetRecord(").count()
+            + rust.matches("OpGetHashLong(").count()
+            + rust.matches("OpGetHashText(").count(),
         "and nothing else moved"
     );
 }

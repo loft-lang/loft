@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-KeyedEntry` and `@FR-R-TypedKeyed`, their text clauses — on `--native`, a `hash` keyed by
+// ONE `text` is looked up through `hash::find_str` (the key handed over as the text, hashed as
+// the general entry hashes a `Content::Str`), and `h += [T{k: …, …}]` into it asks the key
+// first: the entry already under it is overwritten, a new one is filed with its key text
+// written where the probe ended.  The overwrite never rewrites the key, so an element whose
+// only heap is that key strands nothing; an element with any other heap field keeps the plain
+// claim-write-file form.
+//
+// What can go wrong is an answer the general entry would not give: a digest that lands in
+// another bucket than the record's own (a lookup misses a present key), a repeated key filed
+// twice (the size grows), a replace that keeps the old fields, a key text stranded or freed
+// twice, or a table rebuilt under the probe.  The cells vary new and repeated keys, a miss,
+// the empty and a non-ASCII key, growth through several rebuilds (300 formatted keys, each
+// inserted twice), an element with a second text field (declined), a hash in a record's field
+// and a walk after the inserts.  Every value is hand-computed.  Both backends answer the same
+// in every state of `LOFT_NO_KEYED_ENTRY` and `LOFT_NO_TYPED_KEYED`, with no leak under
+// `LOFT_STRICT_STORES=1`, and `LOFT_KEYED_VERIFY=1` (each typed answer looked up again
+// through the general entry) passes.
+//
+// @falsified-by: tests/falsified/a-text-keyed-insert-writes-the-entry-its-key-names.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion on --native.  WITNESS: the patch makes the one-probe insert miss
+//     every key it already holds, so t2's repeated key is filed twice: *t2 513* where 712 is
+//     due (the lookup finds the first entry, count 5, and the size reads 3).
+//   HOLDS: t1, t3, t5 and t6 insert only after a miss, and t4's element is declined.
+
+struct W { word: text, count: integer }
+struct ByWord { rows: hash<W[word]> }
+struct W2 { word: text, note: text, n: integer }
+struct ByWord2 { rows: hash<W2[word]> }
+struct Holder { label: integer, db: ByWord }
+
+// t1: new keys then repeats; each word counted.  words: a b a c b a "" é é
+fn t1() -> integer {
+  db = ByWord { rows: [] };
+  for w in ["a", "b", "a", "c", "b", "a", "", "é", "é"] {
+    found = db.rows[w];
+    if found == null { db.rows += [W { word: w, count: 1 }]; } else { found.count += 1; }
+  }
+  // a3 b2 c1 ""1 é2 → 3*10000 + 2*1000 + 1*100 + 1*10 + 2 = 32112, plus size 5 * 100000
+  t = db.rows["a"]?.count * 10000 + db.rows["b"]?.count * 1000 + db.rows["c"]?.count * 100;
+  t += db.rows[""]?.count * 10 + db.rows["é"]?.count;
+  miss = if db.rows["zz"] == null { 1 } else { 0 };
+  t + len(db.rows) * 100000 + miss * 1000000
+}
+
+// t2: a repeated insert replaces: the second literal's count wins (5 then 7 → 7).
+fn t2() -> integer {
+  db = ByWord { rows: [] };
+  db.rows += [W { word: "k", count: 5 }];
+  db.rows += [W { word: "k", count: 7 }];
+  db.rows += [W { word: "j", count: 1 }];
+  db.rows["k"]?.count * 100 + db.rows["j"]?.count * 10 + len(db.rows)
+}
+
+// t3: growth through several rebuilds: 300 keys "w0".."w299", each inserted twice (count 2).
+fn t3() -> integer {
+  db = ByWord { rows: [] };
+  for _r in 0..2 {
+    for i in 0..300 {
+      k = "w{i}";
+      f = db.rows[k];
+      if f == null { db.rows += [W { word: k, count: 1 }]; } else { f.count += 1; }
+    }
+  }
+  t = 0;
+  for i in 0..300 { t += db.rows["w{i}"]?.count; }
+  t * 1000 + len(db.rows)
+}
+
+// t4: an element with a second text field (declined by the text clause): the replace keeps the
+// newest note.  "x" note "one" then "x" note "three": 3 + 5 chars, size 1.
+fn t4() -> integer {
+  db = ByWord2 { rows: [] };
+  db.rows += [W2 { word: "x", note: "one", n: 1 }];
+  db.rows += [W2 { word: "x", note: "three", n: 2 }];
+  len(db.rows["x"]?.note) * 100 + db.rows["x"]?.n * 10 + len(db.rows)
+}
+
+// t5: a hash that is a field of a record field.
+fn t5() -> integer {
+  h = Holder { label: 9, db: ByWord { rows: [] } };
+  for w in ["p", "q", "p"] {
+    f = h.db.rows[w];
+    if f == null { h.db.rows += [W { word: w, count: 1 }]; } else { f.count += 1; }
+  }
+  h.db.rows["p"]?.count * 10 + h.db.rows["q"]?.count + h.label * 100
+}
+
+// t6: the entries a walk sees after inserts and repeats, in key order: a1 b2 c3.
+fn t6() -> integer {
+  db = ByWord { rows: [W { word: "b", count: 2 }, W { word: "c", count: 9 }] };
+  db.rows += [W { word: "a", count: 1 }];
+  db.rows += [W { word: "c", count: 3 }];
+  t = 0;
+  for e in db.rows { t = t * 10 + e.count; }
+  t * 10 + len(db.rows)
+}
+
+fn main() {
+  for _rep in 0..2 {
+    assert(t1() == 1532112, "t1 {t1()}");
+    assert(t2() == 712, "t2 {t2()}");
+    assert(t3() == 600300, "t3 {t3()}");
+    assert(t4() == 521, "t4 {t4()}");
+    assert(t5() == 921, "t5 {t5()}");
+    assert(t6() == 1233, "t6 {t6()}");
+  }
+  println("done");
+}

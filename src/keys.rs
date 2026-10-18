@@ -3916,6 +3916,16 @@ pub fn long_hash(value: i64, seed: u64) -> u64 {
     hasher.finish()
 }
 
+/// [`key_hash`] of a key that is ONE text value — the same digest, for a caller that holds
+/// the text and not a `Content` of it (`hash::find_str`).
+#[inline]
+#[must_use]
+pub fn str_hash(value: &str, seed: u64) -> u64 {
+    let mut hasher = seeded_hasher(seed);
+    hasher.write_str(value);
+    hasher.finish()
+}
+
 /// [`key_hash`] of a key whose every part is an integer value — the same digest, for a
 /// caller that holds the parts and not `Content`s of them (`hash::entry_ints`).
 #[inline]

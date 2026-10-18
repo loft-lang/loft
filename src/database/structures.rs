@@ -463,6 +463,51 @@ impl Stores {
         rec
     }
 
+    /// [`Self::keyed_entry_long`] for a hash whose ONE key is a `text`
+    /// (`@FR-R-KeyedEntry`'s text clause): the entry under `key`, or a fresh one with the key
+    /// text written and filed.  The general path where the table cannot be walked that way.
+    ///
+    /// # Panics
+    /// When `parent_tp` / `field` name no keyed collection with a key — the admission
+    /// (`generation::keyed_entry`) only emits this for a hash keyed by one text — and under
+    /// `LOFT_KEYED_VERIFY=1` when the entry differs from the general lookup's.
+    pub fn keyed_entry_text(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        key: &str,
+    ) -> DbRef {
+        let tp = self.sub_record_type(parent_tp, field);
+        let d = self.field_ref(data, parent_tp, field);
+        if !self.live_scratches.iter().any(|(source, _)| *source == d)
+            && let Some(rec) = crate::hash::entry_str(
+                &d,
+                &mut self.allocations,
+                &self.types[tp as usize].keys,
+                key,
+                data.rec,
+            )
+        {
+            if keys::keyed_verify() {
+                let found = self.find(&d, tp, &[keys::Content::Str(keys::Str::new(key))]);
+                assert!(
+                    (found.rec, found.pos) == (rec.rec, rec.pos),
+                    "LOFT_KEYED_VERIFY: key {key:?} answers {found:?} where the entry is {rec:?}"
+                );
+            }
+            return rec;
+        }
+        let rec = self.record_new(data, parent_tp, field);
+        let k = &self.types[tp as usize].keys[0];
+        let at = rec.pos + u32::from(k.position);
+        let store = self.store_mut(&rec);
+        let text = store.set_str(key);
+        store.set_u32_raw(rec.rec, at, text);
+        self.record_finish(data, &rec, parent_tp, field);
+        rec
+    }
+
     /**
     # Panics
     When the implementation is not yet written

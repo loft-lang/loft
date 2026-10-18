@@ -2768,8 +2768,13 @@ c21 keeps the vector form of it.
                   collection, a miss on a collection a lazy source is bound to — is
                   handed to the general entry with the same key, so there is no case
                   the two can answer differently.  Every other collection kind
-                  (`index`, `sorted`, a vector), a text key, a compound key, and a
-                  width the pre-resolved forms do not list keep the general call.
+                  (`index`, `sorted`, a vector), a compound key, and a width the
+                  pre-resolved forms do not list keep the general call.
+                  The TEXT clause: a single `text` key is emitted as
+                  `OpGetHashText(c, type, k)` with `k` handed over as the text, hashed
+                  as the general entry hashes a `Content::Str` (`keys::str_hash`) and
+                  compared against each entry's key text in place (`hash::find_str`),
+                  under the same exits.
 ```
 
 **In words.** `(R-Escape)` is not needed here — nothing is removed or reshaped, the
@@ -2797,7 +2802,10 @@ below, for an element that owns no heap.
 
 ```
   (R-KeyedEntry)  c += [T{k: e₀, f₁: e₁, …}] where c is a `hash<T[k]>` with ONE key of
-                  `integer` width, T owns no heap, no linked group holds T's records
+                  `integer` width, T owns no heap — or ONE `text` key that is the only
+                  heap T owns, every other field a plain value: the overwrite never
+                  writes the key (the entry found carries the same text, a fresh one has
+                  it written by the probe), so nothing is stranded — no linked group holds T's records
                   (`@FR-Col-Group`), and the literal writes EVERY field of T — the plain
                   claim (`OpNewRecord`), field writes and file (`OpFinishRecord`) — is
                   emitted as: the values e₀ … eₙ evaluated in source order into temps,

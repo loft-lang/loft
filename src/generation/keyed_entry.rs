@@ -17,7 +17,10 @@
 //! key, whose element owns no heap (an overwrite releases nothing, so a replaced text or
 //! vector cannot be stranded) and is no member of a linked group (a group's dedup decides per
 //! member), every field of the element written by the literal (so an overwrite leaves nothing
-//! of the old entry), and the literal's buffer named nowhere else.
+//! of the old entry), and the literal's buffer named nowhere else.  The TEXT clause admits one
+//! `text` key over an element whose every other field is a plain value: the key is the only
+//! heap the element owns, and an overwrite never writes it — the entry found carries the same
+//! text, and a fresh one has it written by `Stores::keyed_entry_text` — so nothing is stranded.
 
 use crate::data::{Data, Value};
 use crate::database::{Parts, Stores};
@@ -112,6 +115,8 @@ pub struct Site<'a> {
     pub field: u16,
     /// The value written to the key field.
     pub key: &'a Value,
+    /// The key is a `text` (the text clause): the entry is answered by `keyed_entry_text`.
+    pub text_key: bool,
     /// The field writes, in program order, the key's included.
     pub writes: Vec<&'a Value>,
     pub last: usize,
@@ -163,8 +168,9 @@ fn rebinds(v: &Value, roots: &[u16]) -> bool {
 }
 
 /// The element type a `hash` field (or a `hash` itself, `field` the whole-parent marker) holds,
-/// with its one key's position, when an overwrite of its entry is a replace.
-fn heap_free_hash(stores: &Stores, parent_tp: u16, field: u16) -> Option<(u16, u16)> {
+/// with its one key's position and whether that key is a `text`, when an overwrite of its entry
+/// is a replace.
+fn heap_free_hash(stores: &Stores, parent_tp: u16, field: u16) -> Option<(u16, u16, bool)> {
     if (parent_tp as usize) >= stores.types.len() || stores.key_owner(parent_tp) != parent_tp {
         return None;
     }
@@ -187,10 +193,58 @@ fn heap_free_hash(stores: &Stores, parent_tp: u16, field: u16) -> Option<(u16, u
     let [k] = &t.keys[..] else {
         return None;
     };
-    if !matches!(k.type_nr.unsigned_abs(), 1 | 2) || stores.is_linked(c) || stores.owns_heap(c) {
+    if stores.is_linked(c) {
         return None;
     }
-    Some((c, k.position))
+    match k.type_nr.unsigned_abs() {
+        1 | 2 if !stores.owns_heap(c) => Some((c, k.position, false)),
+        6 if only_heap_is_key(stores, c, k.position) => Some((c, k.position, true)),
+        _ => None,
+    }
+}
+
+/// Is the field at `key_pos` the only heap element type `c` owns — every other field a plain
+/// value an overwrite replaces whole?
+fn only_heap_is_key(stores: &Stores, c: u16, key_pos: u16) -> bool {
+    let Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+        stores.types.get(c as usize).map(|t| &t.parts)
+    else {
+        return false;
+    };
+    !fields.is_empty()
+        && fields.iter().all(|f| {
+            f.position == key_pos
+                || stores.types.get(f.content as usize).is_some_and(|t| {
+                    matches!(
+                        t.parts,
+                        Parts::Base
+                            | Parts::Enum(_)
+                            | Parts::Byte(..)
+                            | Parts::Short(..)
+                            | Parts::Int(..)
+                            | Parts::ShortRaw(..)
+                            | Parts::IntRaw(..)
+                    )
+                })
+        })
+}
+
+/// Does `op` write a field of the literal: a scalar setter, or the key's text write under the
+/// text clause?
+fn field_setter(op: &str, text_key: bool) -> bool {
+    SETTERS.contains(&op) || (text_key && op == "OpSetText")
+}
+
+/// Is the write `op` at `off` the key's (`Some(true)`), another field's (`Some(false)`), or
+/// one the clause declines (`None`): the key written by anything but its setter, or a text
+/// write to a field that is not the key — every other field is a plain value.
+fn writes_key(op: &str, off: u16, key_pos: u16, text_key: bool) -> Option<bool> {
+    let key_setter = if text_key { "OpSetText" } else { "OpSetInt" };
+    match (off == key_pos, op == key_setter) {
+        (true, true) => Some(true),
+        (false, _) if op != "OpSetText" => Some(false),
+        _ => None,
+    }
 }
 
 /// The insert headed by statement `at` of `ops`, in function `d_nr`, when the clause admits it.
@@ -216,7 +270,7 @@ pub fn site<'a>(
     };
     let parent_tp = u16::try_from(int_of(ptp)?).ok()?;
     let field = u16::try_from(int_of(fld)?).unwrap_or(u16::MAX);
-    let (content, key_pos) = heap_free_hash(stores, parent_tp, field)?;
+    let (content, key_pos, text_key) = heap_free_hash(stores, parent_tp, field)?;
     // The collection is evaluated once for the entry: a pure path, the place the plain form's
     // claim and finish both name.
     super::hoist::vector_path(data, coll)?;
@@ -247,7 +301,7 @@ pub fn site<'a>(
                 break;
             }
             Value::Call(c, a)
-                if SETTERS.contains(&name(data, *c))
+                if field_setter(name(data, *c), text_key)
                     && a.first().is_some_and(|x| is_var(x, buf))
                     && a.iter()
                         .skip(1)
@@ -258,10 +312,7 @@ pub fn site<'a>(
                     return None;
                 }
                 written.push(off);
-                if off == key_pos {
-                    if name(data, *c) != "OpSetInt" {
-                        return None;
-                    }
+                if writes_key(name(data, *c), off, key_pos, text_key)? {
                     key = Some(a.get(2)?);
                 }
                 writes.push(op);
@@ -301,6 +352,7 @@ pub fn site<'a>(
         parent_tp,
         field,
         key,
+        text_key,
         writes,
         last,
     })

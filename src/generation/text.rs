@@ -230,6 +230,13 @@ impl Output<'_> {
         write!(w, "({expr}) as i64")
     }
 
+    /// One `text` key as the `&str` a typed keyed entry takes (`@FR-R-TypedKeyed`'s text
+    /// clause) — what [`Self::emit_content`] wraps in `Content::Str(Str::new(…))`.
+    pub(super) fn emit_str_key(&mut self, w: &mut dyn Write, v: &Value) -> std::io::Result<()> {
+        let expr = self.generate_expr_buf(v)?;
+        write!(w, "&*({expr})")
+    }
+
     /// Use this to emit `OpClearStackText` as a `.clear()` call on the target string variable.
     ///
     /// O7: when the block lookahead (`next_format_count`) indicates ≥ 2 format/append ops
