@@ -10149,13 +10149,11 @@ pub struct CompleteWrites {
 /// The variable a field chain `OpGetField(…OpGetField(Var(t), a, _)…, b, _)` is rooted at,
 /// and whether it IS that variable (no field step).
 fn field_chain_root(v: &Value, data: &Data) -> Option<(u16, bool)> {
-    match v.unspan() {
-        Value::Var(t) => Some((*t, true)),
-        _ => {
-            let args = call_named(v, data, "OpGetField")?;
-            field_chain_root(args.first()?, data).map(|(t, _)| (t, false))
-        }
+    if let Value::Var(t) = v.unspan() {
+        return Some((*t, true));
     }
+    let args = call_named(v, data, "OpGetField")?;
+    field_chain_root(args.first()?, data).map(|(t, _)| (t, false))
 }
 
 /// A record copy into a field reached from `target`: its argument slice's address and the
@@ -10169,7 +10167,7 @@ fn fresh_field_copy(stmt: &Value, target: u16, data: &Data) -> Option<(usize, u1
     };
     let raw = u16::try_from(*raw).ok()?;
     (root == target && !whole && raw & crate::keys::COPY_FRESH_DEST == 0)
-        .then(|| (args.as_ptr() as usize, raw & crate::keys::COPY_TP_MASK))
+        .then_some((args.as_ptr() as usize, raw & crate::keys::COPY_TP_MASK))
 }
 
 /// The record copies into fields of the element `target` that the MINT at index `at - 1`

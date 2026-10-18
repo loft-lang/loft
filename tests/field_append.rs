@@ -18,7 +18,7 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_add_pair", 1, 0, 0), // f2 / f4: a whole-record copy covers a heap-free element
     ("n_add_k", 1, 0, 0),    // f3: a field of a field (`o.inner.its`)
     ("n_add_it", 1, 0, 0),   // f5: the parent may be an absent element
-    ("n_add_box", 1, 0, 0),  // f7: a nested struct arriving by copy: its null arm writes the default
+    ("n_add_box", 1, 0, 0),  // f7: a nested struct by copy: its null arm writes the default
     ("n_main", 0, 2, 0),     // f6: a `vector<text>` field, its element a handle
 ];
 
