@@ -50,6 +50,15 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-24 — CLOSED 2026-10-18 (loft#2048).**  `(P-Opt)` held only for a group at a slice's
+  START (`[(a)?, ..rest]`): after a fixed head, before a fixed tail or last, `(a)?` was a parse
+  error.  The group now stands anywhere: GREEDY, as the rule reads — the first branch whose tags
+  match at the group's position is taken, then the length must fit what follows (a fixed tail,
+  read from the end, or a rest).  Being deterministic, it sits beside a rest as the start form
+  always did; the issue's first draft wrongly proposed refusing that.  A multi-element
+  ALTERNATION stays the whole slice and is refused after fixed elements.  An alternation branch's
+  field takes `f: name` / `f: _` too.  Cells: `loft-suite/rules/matching/P-Opt/2048-*`.
+
 - **D-match-22 — CLOSED 2026-10-06 (@PLN186 step 6).** `(P-Cap)` at the arm root, `whole: Rect
   { w, h } => …`, was refused (*"'whole' is not a variant"*).  The arm head now reads `name:` before
   the pattern (`root_capture`) and binds the subject, hoisted with the other bindings since it is the

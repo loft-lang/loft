@@ -211,6 +211,12 @@ git do.
 
 ### Bug fixes
 
+**An optional group can stand anywhere in a slice pattern.**  `[Num { n }, (Tag { t })?]`,
+`[Num { n }, (Tag { t })?, End]` and `[a, (Kw { k } Op { o })?, ..rest]` were parse errors — only
+a group at the very start was accepted.  The group takes its elements when they are there (`t` is
+null when not), and what follows must fit what it left.  A field in an alternation branch can be
+renamed (`Tag { t: u }`).
+
 **Two generator shapes compile with `--native`.**  `yield from h` where `h` is a generator you
 already hold (a local you took values from, or a parameter), and a `&` link to a record
 parameter inside a generator (`r = &b; … yield r.n`), failed in rustc.  Both now build and answer
