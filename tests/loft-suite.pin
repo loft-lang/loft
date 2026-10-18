@@ -2,4 +2,4 @@
 # `language-suite`).  Pinned like a library: a behaviour change is a loft PR plus a suite PR,
 # and the loft PR bumps this line to the suite commit it needs.  The one non-comment line is
 # the full sha; `git -C ../loft-suite rev-parse HEAD` is what the checkout beside this one has.
-82536501fff546a83acd208bdd252a5c19461a30
+9cf02c31f4dab3de188b04e50ecda8dde768de68
