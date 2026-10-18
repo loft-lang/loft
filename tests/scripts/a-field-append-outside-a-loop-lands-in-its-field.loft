@@ -9,8 +9,8 @@
 // field of a field, `o.inner.its`) 4 elements, sum 46; f4 (40 appends from one function,
 // past the 11-element first block) 40 elements, sum of `a` 780, last `b` 78; f5 (an absent
 // element's field) leaves `v` one element long with nothing in it; f6 (a vector<text>
-// field) "x,y"; f7 (an element whose nested struct arrives by copy, so the slot keeps its
-// prefill) 2 elements, sum 3 + 4 + 5 + 6 + 1 + 2 = 21.  The
+// field) "x,y"; f7 (an element whose nested struct arrives by copy, which covers its field
+// through the copy's null arm) 2 elements, sum 3 + 4 + 5 + 6 + 1 + 2 = 21.  The
 // interpreter is the oracle.  `LOFT_NO_FIELD_APPEND=1` and `LOFT_POISON_CLAIM=1` must answer
 // identically.
 //
@@ -98,7 +98,7 @@ fn main() {
   ws.ws += ["y"];
   assert(len(ws.ws) == 2 && "{ws.ws[0]},{ws.ws[1]}" == "x,y", "f6");
 
-  // f7 — a nested struct arriving by copy leaves the slot's prefill in place.
+  // f7 — a nested struct arriving by copy writes its field whole, its null arm the default.
   bx = Boxes { bs: [] };
   add_box(bx, Pair { a: 3, b: 4 }, 1);
   add_box(bx, Pair { a: 5, b: 6 }, 2);
