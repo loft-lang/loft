@@ -310,7 +310,10 @@ copy; `tests/scripts/164-adopt-first-bind.loft` and `tests/adopt_first_bind.rs` 
 
 **The caller's buffer is pooled for such a callee too (@PLN164 B1b, `@FR-O-Buffer`).**  The
 entry-time record-buffer pool (`@FR-R-Reuse`) enrolls the paired buffer, so the callee is
-handed the CALLER's store from the second call on and fills it.  That makes the callee's
+handed the CALLER's store from the second call on and fills it.  A buffer whose result local
+carries an owner witness (`@FR-O-Witness`) is never enrolled: the witness releases the store it
+adopts by its own identity test, never against the buffer, and the next call would refill a
+released store.  That makes the callee's
 promoted local hold one of two stores — the caller's, or one it minted because it was handed
 the sentinel — and only the second is the callee's to free.  The scope pass therefore mints an
 ENTRY WITNESS for every promoted record buffer (`__rbw_<buf> = OpRefAlias(buf)` at the top of

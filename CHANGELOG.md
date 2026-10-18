@@ -363,6 +363,26 @@ out built the record or answered `null`; one that also handed back an element of
 parameter, or the result of a `-> S` function went through a buffer, with a copy and a release
 per call.  It now takes the direct route its `-> S` twin takes.
 
+**A struct copied from a missing record into a new vector entry holds its defaults.**  Under
+`--native`, appending `E { prev: v[i] }` after clearing the vector, where `v[i]` is past the
+end, could leave `prev` holding the values of the entry that was cleared.  It now holds the
+type's defaults, as the interpreter always answered.
+
+**A vector first bound to a slice keeps the slice.**  `s: vector<integer> = big[1..3]`
+followed later by `s = other` read the slice as empty, or stopped the program, and did not
+compile under `--native`.  The slice is now what `s` holds until the rebind.
+
+**A function that returns a `??` result of a record with text returns the right record.**
+`pv = maybe(a) ?? Ht { … }; pv` handed the caller a record already released when the default
+was taken; a later value could read 0.  It now returns the default intact.
+
+**Reusing a local name for different kinds of values no longer releases memory still in use.**
+One name bound to a call's result in one place and to an element of a vector in another — in
+two loops, in an `if` arm, or once through `??` — could release a record the program still
+read, or keep one it should have released, on both backends.  The values usually came out
+right until the memory was reused.  Each binding now releases what it owns once.  A
+call's result read inside a loop on the interpreter is likewise released once per pass.
+
 ---
 
 ## 2026-10

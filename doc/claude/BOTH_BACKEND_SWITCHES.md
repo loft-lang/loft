@@ -110,7 +110,9 @@ buffer minted, the field deep-copied into it, the local freed.  With it off, the
 the local's store over at the field's position (`return OpGetField(p, …)` in a
 `return_field_handover` block), the root's own free goes, and every other store free in the
 exit is witnessed against the root — a pooled `__ref_N` the root adopted or an alias `q = p`
-is then skipped, a distinct buffer freed as before.  It is the first bisect step for a wrong
+is then skipped, a distinct buffer freed as before.  A returned VIEW local is admitted only when
+every bind of it is a field of that one root: a `??` bind's dep names its subject and never its
+default, so `pv = maybe(a) ?? T {…}; pv` keeps the copy.  It is the first bisect step for a wrong
 or freed record out of a callee that returns a field of a local, and for a caller reading a
 store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
 (`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
@@ -246,7 +248,11 @@ wrong element on the branch NOT taken. QUALITY-history.md § Cluster III Route 2
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after
 another carries a hidden `__own_<name>` naming the store it minted while it still holds it;
 the IR releases it by store identity at the rebind or at scope exit, and the local itself is
-never-free (`formal/ownership.md` @FR-O-Witness). **`LOFT_NO_OWNER_WITNESS=1`** emits the
+never-free (`formal/ownership.md` @FR-O-Witness).  A bind of a store a compiler temp holds (an
+element of a call's result, a `??` result) is a view to the witness, the lift temp of a call
+whose field the local reads hands its store to the witness, and a call whose result the local
+adopts never takes a pooled buffer, so every store the witness adopts has one owner.
+**`LOFT_NO_OWNER_WITNESS=1`** emits the
 pre-witness form: the first bisect step for a leak or a wrong answer in a local that is both
 copy-bound and view-bound (a walker `cur: Node? = a; cur = cur.next`), and what the
 `LOFT_NO_JOIN_OWN` positive controls set beside their own switch.
