@@ -3440,12 +3440,45 @@ impl Stores {
     /// `LOFT_WATCH_STORE` is watching.
     #[inline(never)]
     fn copy_plain_vectors(&mut self, rec: &DbRef, to: &DbRef, tp: u16) -> bool {
+        if !self.owns_plain_vectors(tp)
+            || crate::keys::watch_store() == Some(to.store_nr)
+            || !heap_free_vector_copy_enabled()
+        {
+            return false;
+        }
+        // Two stores: each resolved once, the plan read where it is cached.
+        if crate::keys::strict_stores() {
+            let _ = self.store(rec);
+            let _ = self.store_mut(to);
+        }
+        if rec.store_nr != to.store_nr
+            && let Some(Some(plan)) = self
+                .types
+                .get(tp as usize)
+                .map(|row| row.plain_vectors.get())
+            && let Some(plan) = plan.as_deref()
+            && let Ok([src, dst]) = self
+                .allocations
+                .get_disjoint_mut([rec.store_nr as usize, to.store_nr as usize])
+            && !dst.read_only
+        {
+            let src: &Store = src;
+            for &(off, size) in plan {
+                let cur = src.get_u32_raw(rec.rec, rec.pos + off);
+                if cur == 0 || Self::owned_edge_absent(cur) {
+                    dst.set_u32_raw(to.rec, to.pos + off, cur);
+                    continue;
+                }
+                let length = src.get_u32_raw(cur, 4);
+                let block = dst.claim(1 + (size * length).div_ceil(8));
+                dst.set_u32_raw(to.rec, to.pos + off, block);
+                src.copy_block_between(cur, 4, dst, block, 4, (length * size + 4) as isize);
+            }
+            return true;
+        }
         let Some((plan, count)) = self.plain_vectors_of(tp) else {
             return false;
         };
-        if crate::keys::watch_store() == Some(to.store_nr) || !heap_free_vector_copy_enabled() {
-            return false;
-        }
         for &(off, size) in &plan[..count] {
             let source = self.store(rec);
             let cur = source.get_u32_raw(rec.rec, rec.pos + off);
@@ -4318,9 +4351,16 @@ impl Stores {
         // (a moved-out value is zeroed): answered from the type's heap slots, without the
         // walk's descent (`holds_no_heap_fast`).  A null or misplaced record, or any slot the
         // fast test cannot read, still goes the full way — the refusal included.
-        if rec.store_nr != u16::MAX
+        let placed = rec.store_nr != u16::MAX
             && (rec.store_nr as usize) < self.allocations.len()
-            && u64::from(rec.pos) < u64::from(self.store(rec).capacity_words()) * 8
+            && u64::from(rec.pos) < u64::from(self.store(rec).capacity_words()) * 8;
+        // A record that owns plain vectors and nothing else is released by its plan, which
+        // frees nothing for one whose vectors are empty: the heap-slot test answers nothing
+        // the plan does not.
+        if placed && self.owns_plain_vectors(tp) && self.release_plain_vectors(rec, tp) {
+            return;
+        }
+        if placed
             && matches!(
                 self.types.get(tp as usize).map(|t| &t.parts),
                 Some(Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_))
@@ -5382,13 +5422,28 @@ impl Stores {
     /// says what is wrong with it.
     #[inline(never)]
     fn release_plain_vectors(&mut self, rec: &DbRef, tp: u16) -> bool {
-        let Some((plan, count)) = self.plain_vectors_of(tp) else {
+        if !self.owns_plain_vectors(tp) {
+            return false;
+        }
+        if crate::keys::strict_stores() {
+            let _ = self.store_mut(rec);
+        }
+        let Some(Some(plan)) = self
+            .types
+            .get(tp as usize)
+            .map(|row| row.plain_vectors.get())
+        else {
             return false;
         };
-        let store = self.store_mut(rec);
+        let Some(plan) = plan.as_deref() else {
+            return false;
+        };
+        let Some(store) = self.allocations.get_mut(rec.store_nr as usize) else {
+            return false;
+        };
         let capacity = store.capacity_words();
         let capacity_bytes = u64::from(capacity) * 8;
-        for &(off, size) in &plan[..count] {
+        for &(off, size) in plan {
             let pos = rec.pos + off;
             if u64::from(pos) + 4 > capacity_bytes {
                 return false;
@@ -5401,7 +5456,7 @@ impl Stores {
                 return false;
             }
         }
-        for &(off, _) in &plan[..count] {
+        for &(off, _) in plan {
             let pos = rec.pos + off;
             let cur = store.get_u32_raw(rec.rec, pos);
             if cur != 0 {
