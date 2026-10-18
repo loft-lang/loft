@@ -425,7 +425,13 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
     // the moved programs are still programs.  The per-commit chunks do not — the suite's own
     // runner and the required `Language suite` check carry them.
     if chunk.is_none() {
-        files.extend(common::corpus::suite_programs());
+        // A cell a `[sandbox]` policy governs is judged by the suite's runner, which applies
+        // the policy; parsed here without it, its admission refusals would read as unmatched.
+        files.extend(
+            common::corpus::suite_programs()
+                .into_iter()
+                .filter(|p| !common::corpus::under_sandbox_policy(p)),
+        );
     }
     // `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` — run only a WINDOW of the sorted corpus.
     //

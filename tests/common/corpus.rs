@@ -56,3 +56,23 @@ fn loft_files_or_dirs(dir: &Path) -> Vec<PathBuf> {
 fn is_loft(p: &Path) -> bool {
     fa::is_file(p) && fa::has_extension(p, "loft")
 }
+
+/// A program a `[sandbox]` policy governs: an ACTIVE policy in the nearest `loft.toml` within
+/// four directories above it — the walk `loft --tests` makes (`test_runner::sandbox_policy_for`).
+/// Its admission refusals are the program's expectations, so a sweep that parses in-process
+/// without applying the policy would read every one as unmatched; the suite's own runner, which
+/// runs the CLI, is where such a cell is judged.
+#[allow(dead_code)]
+pub fn under_sandbox_policy(p: &Path) -> bool {
+    let mut dir = p.parent();
+    for _ in 0..4 {
+        let Some(d) = dir else { return false };
+        if let Ok(content) = fa::read_to_string(d.join("loft.toml"))
+            && loft::sandbox::parse_sandbox_config(&content).is_active()
+        {
+            return true;
+        }
+        dir = d.parent();
+    }
+    false
+}
