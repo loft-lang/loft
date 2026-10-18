@@ -3840,7 +3840,13 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  on a place answers the place, the collection it held released, so it
                  builds where it lives; a callee
                  that on some exit answers a store other than the buffer it was handed
-                 (the destination would hold the writes of the exit not taken); a
+                 and other than one the caller never owns (the destination would hold
+                 the writes of the exit not taken) — THE FOREIGN-EXIT CLAUSE: where
+                 every such exit answers a global constant, a parameter or a field of
+                 either, the call is still handed the place and the site copies the
+                 answer in when it is not the place (`if ans != place { clear(place);
+                 place += ans }`: the copy the unplaced call made, now only on the exit
+                 that answered elsewhere); a
                  `?`/`??` discharge on the result; a destination that does not
                  unconditionally EXIST at the call — a field of a struct-enum VARIANT
                  exists only while the value holds that variant.  A member of a linked
@@ -3933,7 +3939,11 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  heap); the copy and the local's frees go.  A fresh mint writes the
                  type's defaults and the field does not, so the construction must
                  write EVERY leaf field (an embedded record's fields flattened in)
-                 before it reads one.  Declines keep the store and the copy: the
+                 before it reads one; a statement of that construction may name the
+                 local only through fields it already wrote, and the return buffer
+                 not at all — a field handed to a call as its buffer (R-Place, the
+                 compiler's never-freed buffer variable bound to the field) is such a
+                 statement, and a receiver.  Declines keep the store and the copy: the
                  local named outside a receiver position (an argument of a user
                  function, an alias), rebound, freed outside the exit, a second exit,
                  a struct-enum payload, anything else writing the field's bytes.
@@ -5644,7 +5654,10 @@ the verify switch.
                  slice's source among them — do not read it; the
                  self-replace of B by its own view; a call handing it on to an
                  admitted callee as that callee's buffer; or its value flowing out as
-                 the result.  Anything else — a length read, an index, a walk, B as an
+                 the result.  EVERY EXIT answers B — a view, a block or both arms of an
+                 `if` ending in one, a call handed B, a match fallthrough's null —
+                 because the twin's caller never reads the answer: an exit answering a
+                 constant (a view-typed local bound to `OpConstRef`) declines.  Anything else — a length read, an index, a walk, B as an
                  ordinary argument, a free, an insert at an index — observes what B
                  held on entry, and declines; so do a fn-ref call, a `par` and a
                  yield.  Admission is a fixpoint over the call graph: a recursive

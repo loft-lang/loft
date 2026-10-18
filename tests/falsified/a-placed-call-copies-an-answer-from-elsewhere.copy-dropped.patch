@@ -1,0 +1,14 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 3bb200b0d..2e2da4a01 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -3183,7 +3183,8 @@ use a separate collection or add after the loop"
+             &[to.clone(), Value::Var(ans), elem_tp.clone()],
+         );
+         let copy = v_block(vec![clear, append], Type::Void, "place_copy");
+-        vec![v_set(ans, rhs.clone()), v_if(same, Value::Null, copy)]
++        let _ = (same, copy);
++        vec![v_set(ans, rhs.clone())]
+     }
+ 
+     /// `(R-Place)`'s admission for "the buffer IS the place", shared by the assignment

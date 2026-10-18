@@ -7333,13 +7333,20 @@ impl Parser {
                     // bulk copy, with the buffer's mint and free, is gone.  The assignment's
                     // twin is `buffer_is_the_place`; a `?` field keeps the replace, which is
                     // what leaves it absent.
+                    // A callee one of whose exits answers a constant or a parameter is placed
+                    // too, its answer copied in when it is not the field (`place_answer_copy`).
                     if whole == "OpAppendVector"
-                        && let Some(vr) = self.place_buffer_of(&field_ref, value)
+                        && let Some((vr, foreign)) = self.place_buffer_of(&field_ref, value)
                     {
                         self.vars.mark_inline_ref(vr);
                         self.vars.set_skip_free(vr);
                         list.push(v_set(vr, field_ref.clone()));
-                        list.push(value.clone());
+                        if foreign {
+                            let elem = Value::Int(i32::from(elem_tp));
+                            list.extend(self.place_answer_copy(&field_ref, value, vr, &elem));
+                        } else {
+                            list.push(value.clone());
+                        }
                         return Some(field_ref);
                     }
                     list.push(self.cl(

@@ -1,0 +1,165 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Place`'s foreign-exit clause — a call whose vector result goes into a field that
+// exists (`H { v: f(…) }`, `h.v = f(…)`) is handed that field as its buffer even when an exit
+// of `f` answers a store the caller never owns: a global constant (`return NAMES`), a
+// parameter, a field of one.  The call site then copies that answer into the field when it is
+// not the field, so the exits that build write where the value lives and the others cost the
+// copy they always did.  dryopea's `palette_items_for_tool` is this callee.
+//
+// The cells vary what the foreign exit answers (a constant, a parameter, a parameter's
+// field), whether the callee wrote its buffer before answering elsewhere, the element type,
+// the destination (a literal field, an assigned field, a nested field, a field holding old
+// content), and what follows (a write into the field, which must not reach the constant).
+// Every value is hand-computed; each cell runs in a loop so a field is refilled.  The
+// interpreter and native answer the same, and so do `LOFT_NO_PLACE_FOREIGN_EXIT=1`,
+// `LOFT_NO_BUFFER_IS_PLACE=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
+// `LOFT_STRICT_STORES=1`.  Which sites place with the guarded copy is pinned by
+// `tests/buffer_is_place.rs`.
+//
+// @falsified-by: tests/falsified/a-placed-call-copies-an-answer-from-elsewhere.copy-dropped.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel on both backends — the patch drops the copy of an answer that
+//     is not the place.
+//   WITNESS: f1 answers 718 for 1330: both turns that answered `NAMES` (306 each) left the
+//     field empty, the turns that built kept theirs.
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// f7's construction scan (`exit_record::reads_only_written`) is not witnessed here: a literal
+// cannot read its own unwritten field from source, so no cell reaches the read it refuses.
+
+NAMES: vector<text> = ["ab", "cde", "f"];
+NUMS: vector<integer> = [7, 8, 9];
+
+struct Box { tag: integer, items: vector<text> }
+struct Ints { n: integer, xs: vector<integer> }
+struct Outer { k: integer, inner: Ints }
+struct Src { vals: vector<integer> }
+
+// A constant on two exits, a built vector on the third: `palette_items_for_tool`.
+fn names(k: integer) -> vector<text> {
+  if k % 3 == 0 { return NAMES; }
+  if k % 3 == 1 {
+    out: vector<text> = [];
+    for i in 0..k { out += ["n{i}"]; }
+    return out;
+  }
+  ["solo"]
+}
+
+// The buffer written, then a constant answered.
+fn wrote_first(k: integer) -> vector<integer> {
+  r: vector<integer> = [100, 200, 300, 400];
+  if k < 0 { return NUMS; }
+  r += [k];
+  r
+}
+
+// A parameter answered on one exit.
+fn pick(xs: vector<integer>, k: integer) -> vector<integer> {
+  if k < 0 { return xs; }
+  [k, k * 2]
+}
+
+// A field of a parameter answered on one exit.
+fn from_src(s: Src, k: integer) -> vector<integer> {
+  if k < 0 { return s.vals; }
+  [k]
+}
+
+struct Lst { r: integer, items: vector<text>, sel: integer, h: integer }
+struct Pnl { w: integer, lst: Lst, note: text }
+
+// `panel_build`'s shape: a local record whose vector field is placed, its other fields
+// written after it, returned inside the exit literal and so built in the return buffer.
+fn panel(k: integer) -> Pnl {
+  lb = Lst { r: k, items: names(k), sel: k * 2, h: 20 };
+  Pnl { w: 240, lst: lb, note: "k{k}" }
+}
+
+fn tlen(v: vector<text>) -> integer {
+  t = 0;
+  for e in v { t += len(e); }
+  t
+}
+
+fn isum(v: vector<integer>) -> integer {
+  t = 0;
+  for e in v { t += e; }
+  t
+}
+
+fn main() {
+  // f1 — a literal field, k = 0..5: 0 NAMES (3 items, 6 chars), 1 ["n0"] (1, 2),
+  // 2 ["solo"] (1, 4), 3 NAMES (3, 6), 4 ["n0".."n3"] (4, 8), 5 ["solo"] (1, 4).
+  t = 0;
+  for k in 0..6 {
+    b = Box { tag: k, items: names(k) };
+    t += len(b.items) * 100 + tlen(b.items);
+  }
+  assert(t == 1300 + 30, "f1 {t}");
+
+  // f2 — the buffer written before a constant is answered: the field holds NUMS alone.
+  // -1 → [7,8,9] = 24 (3); 5 → [100..400, 5] = 1005 (5); -2 → 24 (3).
+  t = 0;
+  for k in [-1, 5, -2] {
+    s = Ints { n: k, xs: wrote_first(k) };
+    t += len(s.xs) * 10000 + isum(s.xs);
+  }
+  assert(t == 110000 + 24 + 1005 + 24, "f2 {t}");
+
+  // f3 — a parameter answered, into an assigned field holding old content.
+  src: vector<integer> = [1, 2, 3];
+  h = Ints { n: 0, xs: [50, 60, 70, 80] };
+  t = 0;
+  for k in [-1, 4, -1] {
+    h.xs = pick(src, k);
+    t += len(h.xs) * 1000 + isum(h.xs);
+  }
+  // -1 → [1,2,3] = 3006, 4 → [4,8] = 2012, -1 → 3006.
+  assert(t == 3006 + 2012 + 3006, "f3 {t}");
+  // The field is a copy: a write to it leaves the parameter's vector alone.
+  h.xs += [9];
+  assert(isum(src) == 6, "f3 src {isum(src)}");
+  assert(isum(h.xs) == 15, "f3 h {isum(h.xs)}");
+
+  // f4 — a parameter's field answered, into a nested field.
+  sv = Src { vals: [10, 20] };
+  o = Outer { k: 1, inner: Ints { n: 2, xs: [] } };
+  t = 0;
+  for k in [3, -1, 6] {
+    o.inner.xs = from_src(sv, k);
+    t += isum(o.inner.xs);
+  }
+  // 3 → 3, -1 → 30, 6 → 6.
+  assert(t == 39, "f4 {t}");
+
+  // f5 — a constant answered, then the field written: the constant keeps its value.
+  for k in [0, 3] {
+    b = Box { tag: k, items: names(k) };
+    b.items += ["zz"];
+    assert(len(b.items) == 4, "f5 {len(b.items)}");
+  }
+  assert(len(NAMES) == 3 && tlen(NAMES) == 6, "f5 NAMES {len(NAMES)}");
+  w = Ints { n: 0, xs: wrote_first(-1) };
+  w.xs[0] = 70;
+  assert(NUMS[0] == 7, "f5 NUMS {NUMS[0]}");
+
+  // f6 — the field passed as the parameter the callee answers: no placement, the value kept.
+  h2 = Ints { n: 0, xs: [4, 5] };
+  h2.xs = pick(h2.xs, -1);
+  assert(isum(h2.xs) == 9 && len(h2.xs) == 2, "f6 {isum(h2.xs)}");
+  h2.xs = pick(h2.xs, 5);
+  assert(isum(h2.xs) == 15 && len(h2.xs) == 2, "f6b {isum(h2.xs)}");
+
+  // f7 — the local built where the result lives, refilled each turn: k = 0..5 as in f1, plus
+  // r + sel + h = 3k + 20 and len(note) (2 for k < 10) per turn.
+  t = 0;
+  for k in 0..6 {
+    p = panel(k);
+    t += len(p.lst.items) * 100 + tlen(p.lst.items) + p.lst.r + p.lst.sel + p.lst.h + len(p.note);
+  }
+  // f1's 1330, plus 3 × (0 + … + 5) = 45, plus 6 × 20 = 120, plus 6 × 2 = 12.
+  assert(t == 1330 + 45 + 120 + 12, "f7 {t}");
+
+  println("done");
+}

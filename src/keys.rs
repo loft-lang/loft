@@ -2453,6 +2453,17 @@ pub fn buffer_is_the_place_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_IS_PLACE"))
 }
 
+/// `@FR-R-Place`'s foreign-exit clause — a callee one of whose exits answers a store the caller
+/// never owns (a global constant, a parameter, a field of either) is still handed the place, and
+/// the call site copies that answer in when it is not the place — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_PLACE_FOREIGN_EXIT` (read at PARSE time, BOTH backends): such a callee gets its own
+/// buffer store again, filled and copied into the field.
+#[must_use]
+pub fn place_foreign_exit_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PLACE_FOREIGN_EXIT"))
+}
+
 /// @PLN164 C1 step 2 (`@FR-R-InPlaceLiteral`) — a record literal assigned to a vector ELEMENT
 /// is written INTO the slot, as the same literal assigned to a FIELD already is, instead of
 /// being built in a temporary store and deep-copied there — **DEFAULT ON**.  Opt OUT with

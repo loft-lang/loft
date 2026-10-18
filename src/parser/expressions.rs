@@ -3146,14 +3146,48 @@ use a separate collection or add after the loop"
         to: &Value,
         rhs: &Value,
         parent_tp: &Type,
+        rec_tp: &Value,
     ) -> Option<Vec<Value>> {
-        let vr = self.place_buffer_of(to, rhs)?;
+        let (vr, foreign) = self.place_buffer_of(to, rhs)?;
         let mut ops = self.clear_vector_field(to, parent_tp);
         self.vars.mark_inline_ref(vr);
         self.vars.set_skip_free(vr);
         ops.push(v_set(vr, to.clone()));
-        ops.push(rhs.clone());
+        if foreign {
+            ops.extend(self.place_answer_copy(to, rhs, vr, rec_tp));
+        } else {
+            ops.push(rhs.clone());
+        }
         Some(ops)
+    }
+
+    /// `(R-Place)`'s foreign-exit clause — the call handed the place, then its answer copied in
+    /// where the exit taken answered another store (`return NAMES`, a parameter, a field of
+    /// one).  The callee's own first act clears its buffer, so the place is empty or holds
+    /// what an exit wrote before it answered elsewhere; the clear here drops that, and the
+    /// append is the copy the unplaced call made.  An answer that IS the place is a
+    /// `DbRef` equal to it, which `OpEqRef` reads, and copies nothing.  Such an answer is
+    /// never a store the caller owns, so the answer local frees nothing.
+    pub(crate) fn place_answer_copy(
+        &mut self,
+        to: &Value,
+        rhs: &Value,
+        vr: u16,
+        elem_tp: &Value,
+    ) -> Vec<Value> {
+        let tp = self.vars.tp(vr).with_deps(&Deps::frame(vec![vr]));
+        let ans = self.vars.unique("__pans", &tp, &mut self.lexer);
+        self.vars.set_skip_free(ans);
+        // `vr` holds the place: compared through it, the place's base is named only where the
+        // place is written (`exit_record`'s receivers).
+        let same = self.cl("OpEqRef", &[Value::Var(ans), Value::Var(vr)]);
+        let clear = self.cl("OpClearVector", std::slice::from_ref(to));
+        let append = self.cl(
+            "OpAppendVector",
+            &[to.clone(), Value::Var(ans), elem_tp.clone()],
+        );
+        let copy = v_block(vec![clear, append], Type::Void, "place_copy");
+        vec![v_set(ans, rhs.clone()), v_if(same, Value::Null, copy)]
     }
 
     /// `(R-Place)`'s admission for "the buffer IS the place", shared by the assignment
@@ -3161,8 +3195,10 @@ use a separate collection or add after the loop"
     /// `rhs` was handed, when `to` may be handed to the call in its stead — a direct call to a
     /// loft-defined callee that fills its buffer and never mints into it, a place that exists
     /// unconditionally, and no other argument reaching the place's base.  The caller re-points
-    /// the buffer (`inline_ref` + `skip_free`) and drops its copy.
-    pub(crate) fn place_buffer_of(&self, to: &Value, rhs: &Value) -> Option<u16> {
+    /// the buffer (`inline_ref` + `skip_free`) and drops its copy — or, where the second half
+    /// answers `true` (an exit answers a store the caller never owns), keeps the copy behind
+    /// the answer's identity with the place ([`Self::place_answer_copy`]).
+    pub(crate) fn place_buffer_of(&self, to: &Value, rhs: &Value) -> Option<(u16, bool)> {
         if !crate::keys::buffer_is_the_place_enabled() || self.first_pass {
             return None;
         }
@@ -3190,9 +3226,7 @@ use a separate collection or add after the loop"
         // A WRAPPER mint — a returned collection literal's `main_vector<T>` — is not one: on a
         // live place it answers the place, the collection there released
         // (`Stores::mint_at_place`, both backends), so the literal FILLS what it is handed.
-        if !self.callee_fills_its_buffer(*d_nr, &mut Vec::new()) {
-            return None;
-        }
+        let foreign = self.callee_buffer_exits(*d_nr, &mut Vec::new())?;
         // The place must EXIST at the call, unconditionally.  A field of a struct-ENUM VARIANT
         // does not: it lowers through a variant check — `OpGetField(if <tag == V> { subj } else
         // { OpNullRefSentinel() }, …)` — so on any other variant the base is the sentinel and
@@ -3211,7 +3245,7 @@ use a separate collection or add after the loop"
         if rest.iter().any(|a| a.reads_var(base)) {
             return None;
         }
-        Some(vr)
+        Some((vr, foreign))
     }
 
     /// `(R-Place)`'s callee clause for "the buffer IS the place": `d_nr` FILLS the buffer it is
@@ -3224,10 +3258,22 @@ use a separate collection or add after the loop"
     /// call handed the buffer to a callee of which this holds (a cycle declines).  An exit that
     /// answers another store — a global constant (`return NAMES`), a parameter, a field of
     /// one — is exactly the rule's *"a callee that on some exit answers a store other than the
-    /// buffer it was handed"*: placed, its value never reaches the destination.
+    /// buffer it was handed"*: placed, its value never reaches the destination.  Such a callee
+    /// is placed through the foreign-exit clause instead ([`Self::callee_buffer_exits`]); a
+    /// CHAIN exit asks this strict form.
     fn callee_fills_its_buffer(&self, d_nr: u32, active: &mut Vec<u32>) -> bool {
+        self.callee_buffer_exits(d_nr, active) == Some(false)
+    }
+
+    /// The callee half of "the buffer IS the place", with the foreign-exit clause: `None`
+    /// where the callee may not be placed, `Some(false)` where every exit answers the buffer,
+    /// `Some(true)` where some exit instead answers a store the caller never owns — a global
+    /// constant (`OpConstRef`), a parameter, a field of either — which the call site copies
+    /// in after the call ([`Self::place_answer_copy`]).  A store the callee minted is never
+    /// such an answer: it would be the caller's to free, and placed it would be nobody's.
+    fn callee_buffer_exits(&self, d_nr: u32, active: &mut Vec<u32>) -> Option<bool> {
         if active.contains(&d_nr) {
-            return false;
+            return None;
         }
         let callee = self.data.def(d_nr);
         let cvars = &callee.variables;
@@ -3239,18 +3285,15 @@ use a separate collection or add after the loop"
                 && !matches!(a.get(1).map(Value::unspan),
                     Some(Value::Int(tp)) if u16::try_from(*tp).is_ok_and(|tp| database.is_vector_wrapper(tp))))
         }) {
-            return false;
+            return None;
         }
-        let Some(buf) = callee
+        let buf = callee
             .hidden_return_buffer_attr()
             .and_then(|i| callee.attributes().get(i))
             .map(|a| cvars.var(&a.name))
-            .filter(|&v| v != u16::MAX)
-        else {
-            return false;
-        };
+            .filter(|&v| v != u16::MAX)?;
         let Value::Block(body) = callee.code.unspan() else {
-            return false;
+            return None;
         };
         let mut assigns: std::collections::HashMap<u16, Vec<&Value>> =
             std::collections::HashMap::new();
@@ -3271,14 +3314,26 @@ use a separate collection or add after the loop"
         active.push(d_nr);
         let mut cx = BufferExits {
             parser: self,
+            vars: cvars,
             buf,
             assigns: &assigns,
             seen: Vec::new(),
             active,
         };
-        let all = !exits.is_empty() && exits.iter().all(|e| cx.answers(e));
+        let mut foreign = false;
+        let mut placed = !exits.is_empty();
+        for e in &exits {
+            match cx.exit_kind(e) {
+                Some(f) => foreign |= f,
+                None => placed = false,
+            }
+            if !placed {
+                break;
+            }
+        }
         active.pop();
-        all
+        // `LOFT_NO_PLACE_FOREIGN_EXIT` declines the foreign-exit clause, as before it existed.
+        (placed && (!foreign || crate::keys::place_foreign_exit_enabled())).then_some(foreign)
     }
 
     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
@@ -6958,7 +7013,8 @@ use a separate collection or add after the loop"
                     ops.push(append);
                     *code = Value::Insert(ops);
                 } else if !(declared_nullable && matches!(s_type, Type::Optional(_)))
-                    && let Some(ops) = self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
+                    && let Some(ops) =
+                        self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp, &rec_tp)
                 {
                     // Not for a `?` field fed by a `?` call: the field is handed over as the
                     // callee's return BUFFER, and a `return null` answers the null VALUE and
@@ -12199,6 +12255,7 @@ use a separate collection or add after the loop"
 /// The exit walk of [`Parser::callee_fills_its_buffer`]: does a value answer the buffer?
 struct BufferExits<'a> {
     parser: &'a Parser,
+    vars: &'a crate::variables::Function,
     buf: u16,
     assigns: &'a std::collections::HashMap<u16, Vec<&'a Value>>,
     seen: Vec<u16>,
@@ -12206,6 +12263,52 @@ struct BufferExits<'a> {
 }
 
 impl BufferExits<'_> {
+    /// `Some(false)` — the exit answers the buffer; `Some(true)` — it may answer a store the
+    /// caller never owns instead ([`Self::foreign`]); `None` — anything else.
+    fn exit_kind(&mut self, v: &Value) -> Option<bool> {
+        if self.answers(v) {
+            return Some(false);
+        }
+        match v.unspan() {
+            Value::Return(e) => self.exit_kind(e),
+            Value::Block(b) => b.operators.last().and_then(|last| self.exit_kind(last)),
+            Value::Insert(ls) => ls.last().and_then(|last| self.exit_kind(last)),
+            Value::If(_, then, other) => {
+                let a = self.exit_kind(then)?;
+                let b = self.exit_kind(other)?;
+                Some(a || b)
+            }
+            _ => self.foreign(v).then_some(true),
+        }
+    }
+
+    /// A store the caller never owns: a global constant, a parameter other than the buffer,
+    /// a field of either, or a local every assignment of which is one.
+    fn foreign(&mut self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Var(x) if *x == self.buf => false,
+            Value::Var(x) if self.vars.is_argument(*x) => true,
+            Value::Var(x) => {
+                if self.seen.contains(x) {
+                    return false;
+                }
+                let Some(vals) = self.assigns.get(x) else {
+                    return false;
+                };
+                self.seen.push(*x);
+                let all = vals.iter().all(|val| self.foreign(val));
+                self.seen.pop();
+                all
+            }
+            Value::Call(d, args) => match self.parser.data.def(*d).name.as_str() {
+                "OpConstRef" => true,
+                "OpGetField" => args.first().is_some_and(|a| self.foreign(a)),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn answers(&mut self, v: &Value) -> bool {
         match v.unspan() {
             Value::Var(x) if *x == self.buf => true,

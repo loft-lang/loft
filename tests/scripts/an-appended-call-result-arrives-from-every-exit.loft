@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-AppendTwin` — a call result appended into a vector, or placed into a vector field,
+// carries the value of WHICHEVER exit the callee took.  An append twin writes after the
+// destination's elements and its answer is ignored, so it may stand in for the callee only
+// when every exit answers the buffer it was handed.  A callee whose exit answers a global
+// constant, a parameter or a field of one — a store the buffer never held — keeps its own
+// buffer and the copy.  Native admitted it (the twin's constant exit returned the constant
+// unappended): `Ints { xs: wrote_first(-1) }` read `[]` (loft#2042).
+//
+// The interpreter applies no twin and is the oracle; every value is hand-computed, and each
+// cell runs in a loop.  `LOFT_NO_APPEND_TWIN=1`, `LOFT_HOIST_VERIFY=1` and
+// `LOFT_STRICT_STORES=1` answer the same.
+//
+// @falsified-by: tests/falsified/an-appended-call-result-arrives-from-every-exit.exits-unread.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel on native — the patch admits the twin without asking its exits.
+//   WITNESS: a2 answers length 3, sum 9 for 6, 33: the constant turn appended nothing.
+//   HOLDS: leak, panic and free-refusal equal and clean.
+// a1 is placed by `(R-Place)`'s foreign-exit clause now, not by a twin; it guards the literal
+// field either way.
+
+NUMS: vector<integer> = [7, 8, 9];
+
+struct Ints { n: integer, xs: vector<integer> }
+struct Src { vals: vector<integer> }
+
+// The buffer written, then a constant answered.
+fn wrote_first(k: integer) -> vector<integer> {
+  r: vector<integer> = [100, 200, 300, 400];
+  if k < 0 { return NUMS; }
+  r += [k];
+  r
+}
+
+// A constant before any write.
+fn const_first(k: integer) -> vector<integer> {
+  if k < 0 { return NUMS; }
+  r: vector<integer> = [];
+  r += [k, k];
+  r
+}
+
+// A parameter answered.
+fn pick(xs: vector<integer>, k: integer) -> vector<integer> {
+  if k < 0 { return xs; }
+  r: vector<integer> = [];
+  r += [k];
+  r
+}
+
+// A field of a parameter answered.
+fn from_src(s: Src, k: integer) -> vector<integer> {
+  if k < 0 { return s.vals; }
+  r: vector<integer> = [];
+  r += [k * 3];
+  r
+}
+
+// Every exit builds: the twin stays.
+fn builds(k: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  if k < 0 { r += [0]; return r; }
+  r += [k, k + 1];
+  r
+}
+
+fn isum(v: vector<integer>) -> integer {
+  t = 0;
+  for e in v { t += e; }
+  t
+}
+
+fn main() {
+  // a1 — a literal field: -1 → [7,8,9] (3, 24), 5 → [100,200,300,400,5] (5, 1005), -2 → (3, 24).
+  t = 0;
+  for k in [-1, 5, -2] {
+    s = Ints { n: k, xs: wrote_first(k) };
+    t += len(s.xs) * 10000 + isum(s.xs);
+  }
+  assert(t == 110000 + 1053, "a1 {t}");
+
+  // a2 — appended into a local holding [1]: each turn adds the answer.
+  acc: vector<integer> = [1];
+  for k in [-1, 4] { acc += const_first(k); }
+  // [1] + [7,8,9] + [4,4] → 6 elements, 1 + 24 + 8 = 33.
+  assert(len(acc) == 6 && isum(acc) == 33, "a2 {len(acc)} {isum(acc)}");
+
+  // a3 — a parameter answered, appended.
+  src: vector<integer> = [10, 20];
+  out: vector<integer> = [];
+  for k in [-1, 3, -1] { out += pick(src, k); }
+  // [10,20] [3] [10,20] → 5 elements, 63.
+  assert(len(out) == 5 && isum(out) == 63, "a3 {len(out)} {isum(out)}");
+  assert(isum(src) == 30, "a3 src {isum(src)}");
+
+  // a4 — a parameter's field answered, into a literal field.
+  sv = Src { vals: [5, 6, 7] };
+  t = 0;
+  for k in [-1, 2] {
+    s = Ints { n: 0, xs: from_src(sv, k) };
+    t += len(s.xs) * 100 + isum(s.xs);
+  }
+  // [5,6,7] → 318; [6] → 106.
+  assert(t == 318 + 106, "a4 {t}");
+
+  // a5 — every exit builds: -1 → [0], 2 → [2,3]; appended to [9].
+  b: vector<integer> = [9];
+  for k in [-1, 2] { b += builds(k); }
+  assert(len(b) == 4 && isum(b) == 14, "a5 {len(b)} {isum(b)}");
+
+  println("done");
+}

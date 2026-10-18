@@ -10,7 +10,7 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
-### dryopea `panel_build`: a record enum's exits build into the caller's buffer (2026-10-18)
+### dryopea `panel_build`: results built where they are kept (2026-10-18)
 
 - **`(R-Place)`'s callee clause for a record enum** — a function returning a struct-enum
   whose every exit is a variant literal (`return UhToolButton { tb_id: b.btn_id }`, a unit
@@ -20,6 +20,18 @@ All notable changes to the loft language and interpreter.
   a fresh record's zero leaves that field absent).  Both backends; `LOFT_NO_LITERAL_EXIT_BUFFER`.
   `panel_build` 4.05 → 3.85 ms (5.24× → 4.98×), `map_json` 2.81× → 2.62×, every lane 17 hash
   equal.
+- **`(R-Place)`'s foreign-exit clause** — a call whose vector result goes into a field that
+  exists is handed the field as its buffer even when an exit of the callee answers a global
+  constant, a parameter or a field of either; the site copies that answer in when it is not the
+  field (`if ans != place { clear; append }`).  `palette_items_for_tool` answers
+  `HEIGHT_STEP_LABELS` on two exits and builds on the others: the built lists now live where
+  they are kept.  `(R-ExitVector)`'s record clause admits the construction that hands a field
+  to a call (it reads only fields it wrote).  Both backends; `LOFT_NO_PLACE_FOREIGN_EXIT`.
+  `panel_build` 3.85 → 3.41 ms (4.98× → 4.42×, the −11.3 % hand price), every hash equal.
+- **`(R-AppendTwin)` answers from every exit (loft#2042)** — an append twin stood in for a callee
+  whose exit answered a constant: the twin's caller ignores the answer, so `acc += f(-1)` and
+  `Ints { xs: f(-1) }` lost that exit's value on native.  Admission now asks that every exit
+  answer the buffer.
 
 ### graphics `fill_polygon`: records read by index off the held base (2026-10-17)
 

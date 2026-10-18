@@ -122,6 +122,21 @@ impl Scan<'_> {
                     {
                         return self.operands(&a[1..]);
                     }
+                    // A local typed as a view that is handed ANOTHER store — the return tail
+                    // `__ret_tail_N = OpConstRef(…)` of `return NAMES` — carries that store
+                    // out as the result, and a twin's caller never reads the result: the
+                    // destination would miss the exit's value.
+                    if !self.yields_buffer(rhs) {
+                        if self.why.is_none() {
+                            let shape: String =
+                                format!("{:?}", rhs.unspan()).chars().take(120).collect();
+                            self.why = Some(format!(
+                                "a view handed another store: {} = {shape}",
+                                self.vars.name(*x)
+                            ));
+                        }
+                        return false;
+                    }
                     self.scan(rhs, Pos::Flow)
                 } else {
                     self.scan(rhs, Pos::Operand)
@@ -139,7 +154,17 @@ impl Scan<'_> {
             Value::If(c, t, e) => {
                 self.scan(c, Pos::Operand) && self.scan(t, pos) && self.scan(e, pos)
             }
-            Value::Return(r) => self.scan(r, Pos::Flow),
+            // Every exit answers the buffer: the twin's caller ignores the answer.
+            Value::Return(r) => {
+                if !self.yields_buffer(r) {
+                    if self.why.is_none() {
+                        let shape: String = format!("{:?}", r.unspan()).chars().take(80).collect();
+                        self.why = Some(format!("an exit answering another store: {shape}"));
+                    }
+                    return false;
+                }
+                self.scan(r, Pos::Flow)
+            }
             Value::Drop(r) => self.scan(r, Pos::Operand),
             Value::CallRef(..) | Value::Parallel(_) | Value::Yield(_) => false,
             other => {
@@ -154,6 +179,53 @@ impl Scan<'_> {
                     }
                 });
                 ok
+            }
+        }
+    }
+
+    /// Does a value bound to a buffer view hold the buffer — a view, a null init, a block or
+    /// both arms of an `if` that end in one, or a call answering the buffer it is handed?
+    /// The mint around the buffer (`{ if … { B = OpDatabase(B) } else { clear } B }`) ends
+    /// in B; a constant, a parameter or another store does not.
+    fn yields_buffer(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Var(x) => *x == self.b || self.vb.contains(x),
+            Value::Block(bl) => bl.operators.last().is_some_and(|l| self.yields_buffer(l)),
+            Value::Insert(ops) => ops.last().is_some_and(|l| self.yields_buffer(l)),
+            Value::If(_, t, e) => self.yields_buffer(t) && self.yields_buffer(e),
+            // The null a match's fallthrough answers: appended, it adds nothing — as the twin's
+            // exit adds nothing.
+            Value::Call(d, args)
+                if args.is_empty() && self.data.def(*d).name() == "OpNullRefSentinel" =>
+            {
+                true
+            }
+            Value::Call(d, args) => {
+                let def = self.data.def(*d);
+                let ok = matches!(def.name(), "OpGetField" | "OpRefAlias")
+                    && args.first().is_some_and(|f| self.is_view(f))
+                    || def.is_loft_defined()
+                        && def
+                            .hidden_return_buffer_attr()
+                            .is_some_and(|at| args.get(at).is_some_and(|a| self.is_view(a)));
+                if !ok && trace() {
+                    eprintln!(
+                        "append-twin:   not the buffer: {} -> {:?}",
+                        def.name(),
+                        def.returned()
+                    );
+                }
+                ok
+            }
+            other => {
+                if trace() {
+                    eprintln!(
+                        "append-twin:   not the buffer: {:?}",
+                        std::mem::discriminant(other)
+                    );
+                }
+                false
             }
         }
     }
@@ -239,7 +311,18 @@ pub fn eligible(data: &Data, d_nr: u32, memo: &mut HashMap<u32, bool>) -> bool {
         memo,
         why: None,
     };
-    let ok = scan.scan(def.code(), Pos::Flow);
+    // The body's tail is its last exit, unless it is a `return` the walk asks itself.
+    let tail_ok = match def.code().unspan() {
+        Value::Block(bl) => bl
+            .operators
+            .last()
+            .is_none_or(|t| matches!(t.unspan(), Value::Return(_)) || scan.yields_buffer(t)),
+        _ => false,
+    };
+    if !tail_ok {
+        scan.why = Some("the body's tail answers another store".to_string());
+    }
+    let ok = tail_ok && scan.scan(def.code(), Pos::Flow);
     let why = scan.why.take();
     memo.insert(d_nr, ok);
     if trace() {

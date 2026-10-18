@@ -197,6 +197,13 @@ collection literal's wrapper mint answers the place, so it is placed), for a str
 variant's field read through a variant check, and for a literal's `?` field (the replace is
 what leaves it absent).  `loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft` is
 the literal's guard.
+**`LOFT_NO_PLACE_FOREIGN_EXIT=1`** (`@FR-R-Place`'s foreign-exit clause, parse time, BOTH
+backends) gives a callee one of whose exits answers a global constant, a parameter or a field
+of either its own buffer store again, filled and copied into the field — with it off, the call
+is handed the field and the site copies the answer in only when it is not the field
+(`palette_items_for_tool` answering `HEIGHT_STEP_LABELS`).  The first bisect step for a field
+that holds the wrong one of a callee's answers.
+`tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft` is its guard.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
