@@ -2837,11 +2837,13 @@ impl Output<'_> {
                 self.value_records.views.get(&def_nr),
             )
         };
-        self.complete_writes = if self.complete_write_disabled {
-            hoist::CompleteWrites::default()
-        } else {
-            hoist::complete_writes(self.data, self.stores, def_nr)
-        };
+        // The fresh-field arms are kept whatever the switch says: they are what a copy owes
+        // a destination just created, not the elision the switch turns off.
+        self.complete_writes = hoist::complete_writes(self.data, self.stores, def_nr);
+        if self.complete_write_disabled {
+            self.complete_writes.db_vars.clear();
+            self.complete_writes.mint_tps.clear();
+        }
         // `@FR-R-RefillText` — a refill twin reads every text slot of its buffer, so a buffer
         // it mints itself keeps the zero-filling mint (a slot holds 0 or a block it owns).
         if let Some(b) = self.refill_twin_buf {

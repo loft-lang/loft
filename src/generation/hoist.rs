@@ -10136,6 +10136,64 @@ pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
 pub struct CompleteWrites {
     pub db_vars: HashSet<u16>,
     pub mint_tps: HashSet<u16>,
+    /// `@C137`'s fresh-field arm: each record copy into a FIELD of a record a literal group
+    /// is building (`OpCopyRecord(src, OpGetField(…e…, off, Sub), Sub)`), by argument-slice
+    /// address, with the type it writes.  The destination was just created, so a null source
+    /// leaves it what the prefill writes — the emitter writes `Sub`'s default in the copy's
+    /// null arm, which a prefilled element already holds and an element minted without the
+    /// prefill does not (loft#2044).  Computed whatever the switches say: it is not an
+    /// optimisation.
+    pub fresh_fields: HashMap<usize, u16>,
+}
+
+/// The variable a field chain `OpGetField(…OpGetField(Var(t), a, _)…, b, _)` is rooted at,
+/// and whether it IS that variable (no field step).
+fn field_chain_root(v: &Value, data: &Data) -> Option<(u16, bool)> {
+    match v.unspan() {
+        Value::Var(t) => Some((*t, true)),
+        _ => {
+            let args = call_named(v, data, "OpGetField")?;
+            field_chain_root(args.first()?, data).map(|(t, _)| (t, false))
+        }
+    }
+}
+
+/// A record copy into a field reached from `target`: its argument slice's address and the
+/// type it writes.  A copy flagged FRESH already writes a null source absent
+/// (`Stores::copy_null_into`) and needs no arm of its own.
+fn fresh_field_copy(stmt: &Value, target: u16, data: &Data) -> Option<(usize, u16)> {
+    let args = call_named(stmt, data, "OpCopyRecord")?;
+    let (root, whole) = field_chain_root(args.get(1)?, data)?;
+    let Value::Int(raw) = args.get(2)?.unspan() else {
+        return None;
+    };
+    let raw = u16::try_from(*raw).ok()?;
+    (root == target && !whole && raw & crate::keys::COPY_FRESH_DEST == 0)
+        .then(|| (args.as_ptr() as usize, raw & crate::keys::COPY_TP_MASK))
+}
+
+/// The record copies into fields of the element `target` that the MINT at index `at - 1`
+/// builds ([`CompleteWrites::fresh_fields`]): every statement up to the `OpFinishRecord`
+/// that closes the element builds that one record, and nothing outside the literal names
+/// its compiler temporary.  A declared local's literal is not read here: a later
+/// `x.prev = p` writes a record that exists, and the IR does not tell the two apart.
+fn collect_fresh_fields(
+    ops: &[Value],
+    at: usize,
+    target: u16,
+    data: &Data,
+    out: &mut HashMap<usize, u16>,
+) {
+    for stmt in ops.iter().skip(at) {
+        if let Some((addr, sub)) = fresh_field_copy(stmt, target, data) {
+            out.insert(addr, sub);
+        } else if call_named(stmt, data, "OpFinishRecord")
+            .and_then(|a| a.get(1))
+            .is_some_and(|e| matches!(e.unspan(), Value::Var(v) if *v == target))
+        {
+            return;
+        }
+    }
 }
 
 /// Do the statements FOLLOWING index `at` in `ops` cover every field position of `tp`
@@ -10152,6 +10210,7 @@ fn group_covers_type(
     tp: u16,
     data: &Data,
     stores: &Stores,
+    fresh: &HashMap<usize, u16>,
 ) -> bool {
     if (tp as usize) >= stores.types.len() {
         return false;
@@ -10198,6 +10257,36 @@ fn group_covers_type(
                         n & crate::keys::COPY_FRESH_DEST != 0
                             && n & crate::keys::COPY_TP_MASK == tp));
                 return fresh_same_type || !stores.owns_heap(tp);
+            }
+            // A record copy into one of the element's FIELDS writes that field whole: its
+            // null arm writes the field's default (`CompleteWrites::fresh_fields`, the same
+            // scan's members), a present source every byte.  A field type that owns heap is
+            // covered only by a FRESH copy, for the reason the whole-record arm gives.
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpCopyRecord"
+                    && let Some(f) =
+                        args.get(1).and_then(|a| call_named(a, data, "OpGetField"))
+                    && matches!(f.first().map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
+            {
+                let (Some(Value::Int(off)), Some(Value::Int(n))) =
+                    (f.get(1).map(Value::unspan), args.get(2).map(Value::unspan))
+                else {
+                    break;
+                };
+                let (Ok(off), Ok(n)) = (u16::try_from(*off), u16::try_from(*n)) else {
+                    break;
+                };
+                let sub = n & crate::keys::COPY_TP_MASK;
+                let field = fields.iter().find(|fd| fd.position == off);
+                if field.is_none_or(|fd| fd.content != sub)
+                    || (n & crate::keys::COPY_FRESH_DEST == 0
+                        && !fresh.contains_key(&(args.as_ptr() as usize)))
+                    || (stores.owns_heap(sub) && n & crate::keys::COPY_FRESH_DEST == 0)
+                {
+                    break;
+                }
+                written.insert(off);
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
@@ -10406,7 +10495,9 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
                 };
                 admitted += 1;
                 heap_tp = Some(tp);
-                if !refillable(stores, tp) || !group_covers_type(ops, i + 1, b, tp, data, stores) {
+                if !refillable(stores, tp)
+                    || !group_covers_type(ops, i + 1, b, tp, data, stores, &HashMap::new())
+                {
                     ok = false;
                     continue;
                 }
@@ -11203,7 +11294,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             db_declined.insert(*v);
                             continue;
                         };
-                        if group_covers_type(ops, i + 1, *v, tp, data, stores) {
+                        if group_covers_type(ops, i + 1, *v, tp, data, stores, &out.fresh_fields) {
                             out.db_vars.insert(*v);
                         } else {
                             db_declined.insert(*v);
@@ -11220,6 +11311,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                         {
                             continue;
                         }
+                        collect_fresh_fields(ops, i + 1, *e, data, &mut out.fresh_fields);
                         let Some(Value::Int(ptp)) = cargs.get(1).map(Value::unspan) else {
                             continue;
                         };
@@ -11236,7 +11328,17 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                         } else {
                             stores.content(stores.field_type(ptp, fld))
                         };
-                        if etp != u16::MAX && group_covers_type(ops, i + 1, *e, etp, data, stores) {
+                        if etp != u16::MAX
+                            && group_covers_type(
+                                ops,
+                                i + 1,
+                                *e,
+                                etp,
+                                data,
+                                stores,
+                                &out.fresh_fields,
+                            )
+                        {
                             out.mint_tps.insert(ptp);
                         } else {
                             mint_declined.insert(ptp);
@@ -14422,7 +14524,7 @@ fn loop_record_zeros(
                 }
                 mints += 1;
                 if !matches!(args.get(1).map(Value::unspan), Some(Value::Int(t)) if *t == i32::from(tp))
-                    || !group_covers_type(ops, i + 1, v, tp, data, stores)
+                    || !group_covers_type(ops, i + 1, v, tp, data, stores, &HashMap::new())
                 {
                     ok = false;
                     continue;
