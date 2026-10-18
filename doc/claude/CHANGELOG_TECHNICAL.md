@@ -10,6 +10,16 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A slice first bind holds its slice whatever the local is rebound to later (2026-10-18)
+
+- **loft#2038 (silent-wrong)** — `s: vector<T> = big[a..b]` followed later by `s = other`
+  read the slice empty, or panicked, on the interpreter, and named an undeclared variable on
+  `--native`.  The slice is lowered on the second pass, and asked whether the local already
+  held a backing store from its dependency list, which the first pass accumulates over the
+  whole body: `s = other` had put `other` there, so the mint was skipped.  A statement that
+  starts the local's binding (`binding_starts`) now finds it holding nothing.  Guard:
+  `tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft`.
+
 ### A local whose binds mix owned and borrowed stores releases each once (2026-10-18)
 
 - **loft#2045, loft#2041** — the owner witness (`@FR-O-Witness`) decides per run which store a

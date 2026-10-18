@@ -5135,18 +5135,39 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// The proxy narrows it to locals that own their storage; the answer allocates or does
     /// not, and the argument carve-out below exists to avoid an allocation, not a free.
     pub(crate) fn vector_needs_db(&self, vec: u16, in_t: &Type, is_var: bool) -> bool {
-        is_var
-            && *in_t != Type::Void
-            && !self.keyed_local(vec)
+        self.vector_may_own_db(vec, in_t, is_var)
             // A dependency on ITSELF names no backing: the first pass's `v = []` leaves one
             // (the literal is built in `v`), and read as a backing it made a slice bound before
             // that rebind mint nothing — the interpreter read the local as null, native named a
             // variable it never declared.
             && self.vars.tp(vec).depend().iter().all(|d| *d == vec)
+    }
+
+    /// Is `vec` a local that would hold a `__vdb_N` backing of its own — a vector variable,
+    /// not keyed, not a `&` link, not an argument — whatever it holds at this statement?
+    fn vector_may_own_db(&self, vec: u16, in_t: &Type, is_var: bool) -> bool {
+        is_var
+            && *in_t != Type::Void
+            && !self.keyed_local(vec)
             && !matches!(self.vars.tp(vec), Type::RefVar(_))
             // Argument vectors already have a caller-provided backing store; do not
             // allocate a local __vdb_N store that would be freed before the return.
             && !self.vars.is_argument(vec)
+    }
+
+    /// [`Self::vector_needs_db`] asked at a bind that the lowering decides on the SECOND pass
+    /// alone (a slice materialised into the local): a statement that STARTS the local's
+    /// binding (`binding_starts`) finds it holding nothing, whatever its dependency list
+    /// says.  That list is the first pass's, accumulated over the whole body, so a later
+    /// `s = other` already names `other` at the earlier first bind and read as a backing it
+    /// skipped the mint — the slice was written into a store that did not exist (loft#2038).
+    pub(crate) fn vector_needs_db_at_bind(&self, vec: u16, in_t: &Type) -> bool {
+        self.vector_needs_db(vec, in_t, true)
+            || (self.vector_may_own_db(vec, in_t, true)
+                && self
+                    .binding_starts
+                    .iter()
+                    .any(|(c, v, _)| (*c, *v) == (self.context, vec)))
     }
 
     /// The PLACE an accessor expression names: the variable it is rooted at, and the field

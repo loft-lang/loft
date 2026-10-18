@@ -12054,7 +12054,7 @@ use a separate collection or add after the loop"
         (subject, lo_var, hi_var): (Value, u16, u16),
     ) -> Value {
         let row = Value::Int(self.append_elem_tp(elm_tp));
-        let needs_db = self.vector_needs_db(var_nr, elm_tp, true);
+        let needs_db = self.vector_needs_db_at_bind(var_nr, elm_tp);
         let mut stmts = Vec::new();
         if op == "=" && !needs_db {
             stmts.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
@@ -12225,7 +12225,7 @@ use a separate collection or add after the loop"
             // row) and a nested `vector<T>` element (#553 — a 4-byte handle row)
             // land on the same ids the append uses.
             lp.extend(self.append_element_ops(var_nr, &elm_tp, elm_var, Value::Var(for_var)));
-            let needs_db = self.vector_needs_db(var_nr, &elm_tp, true);
+            let needs_db = self.vector_needs_db_at_bind(var_nr, &elm_tp);
             let mut stmts = Vec::new();
             if op == "=" && !needs_db {
                 stmts.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
