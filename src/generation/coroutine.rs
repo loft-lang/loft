@@ -1029,9 +1029,13 @@ fn detect_yield_from(val: &Value, data: &crate::data::Data) -> Option<Value> {
     // `Box<dyn LoftCoroutine>` is due (E0308), and a parameter's `OpCoroutineRetain(h)` hold
     // was emitted as a factory call of that name (E0425, loft#2060).  It lowers as the
     // desugared loop — `next(h)` and a yield per item — which pulls through the handle.
-    if !matches!(init_expr.unspan(), Value::Call(d, _)
-        if matches!(data.def(*d).returned(), crate::data::Type::Iterator(..)))
-    {
+    let Value::Call(sub_fn, _) = init_expr.unspan() else {
+        return None;
+    };
+    if !matches!(
+        data.def(*sub_fn).returned().base(),
+        crate::data::Type::Iterator(..)
+    ) {
         return None;
     }
     let Value::Loop(lp) = bl.operators[1].unspan() else {

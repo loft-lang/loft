@@ -6738,7 +6738,8 @@ impl Parser {
             // so the literal is refused below, and an advice that it "takes the type's zero"
             // beside that error says the opposite of what happens.  The same test the refusal
             // makes: a real enum, not a synthetic `__…` one.
-            if matches!(&tp, Type::Enum(e, _, _) if !self.data.def(*e).name.starts_with("__")) {
+            if matches!(tp.base(), Type::Enum(e, _, _) if !self.data.def(*e).name.starts_with("__"))
+            {
                 continue;
             }
             // A collection or text field is exempt, and the reason is the FIX rather than the
