@@ -285,3 +285,67 @@ fn a_copied_field_is_not_advised_as_its_record_interpret() {
 fn a_copied_field_is_not_advised_as_its_record_native() {
     assert_projection_copies("--native");
 }
+
+/// loft#2039 — `(H-Move)`: an owned droppable placed into a structure MOVES, read off the line
+/// whatever follows, and the byte copy that carries it is that move.  The advice said "`a` is
+/// still used after this point, so it could not be moved" at three such sites — a read in the
+/// same literal, a move under one branch with a read on the other, a move in both arms — while
+/// the drop trace printed one release each.  A non-droppable copy beside them is the control.
+const MOVED_DROPPABLES: &str = r#"
+struct H { id: integer }
+fn OpDrop(self: H) { print("D{self.id} "); }
+fn mk(i: integer) -> H { H { id: i } }
+struct S { h: H, tag: integer }
+struct Holder { v: vector<integer> }
+fn a1() { a = mk(1); s = S { h: a, tag: a.id }; print("R{s.h.id} T{s.tag} "); }
+fn a9(c: boolean) { a = mk(9); if c { s = S { h: a, tag: 0 }; print("R{s.h.id} "); } else { print("A{a.id} "); } }
+fn a10(c: boolean) { a = mk(10); v: vector<H> = []; if c { s = S { h: a, tag: 0 }; print("S{s.h.id} "); } else { v += [a]; print("V{len(v)} "); } }
+fn use_it(s: vector<integer>) -> integer { len(s) }
+fn main() {
+  a1(); a9(true); a9(false); a10(true); a10(false);
+  src = [1, 2, 3]; h = Holder { v: src };
+  println("| {use_it(src)} {len(h.v)}");
+}
+"#;
+
+fn assert_moved_droppables(backend: &str) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_2039_moved_droppables_{}",
+        backend.trim_matches('-')
+    ));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("moved_droppables.loft");
+    fa::create(&path)
+        .and_then(|mut f| f.write_all(MOVED_DROPPABLES.as_bytes()))
+        .expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
+    // One release per H, each where its holder or its owner dies — the move the rule names.
+    assert!(
+        stdout.contains("R1 T1 D1 R9 D9 A9 D9 S10 D10 V1 D10 | 3 3"),
+        "[{backend}] the program must answer its values and release each H once\n{stdout}"
+    );
+    assert!(
+        !diag.contains("copy of H"),
+        "[{backend}] a moved droppable is not a copy to advise\n{diag}"
+    );
+    let n = diag.matches("advice[avoidable-copy]").count();
+    assert!(
+        n == 1 && diag.contains("copy of vector<integer> — `src` is still used after this point"),
+        "[{backend}] want exactly the non-droppable control advised, got {n}\n{diag}"
+    );
+}
+
+#[test]
+fn a_moved_droppable_is_not_advised_as_a_copy_interpret() {
+    assert_moved_droppables("--interpret");
+}
+
+#[test]
+fn a_moved_droppable_is_not_advised_as_a_copy_native() {
+    assert_moved_droppables("--native");
+}

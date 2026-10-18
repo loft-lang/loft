@@ -205,6 +205,11 @@ git do.
 
 ### Bug fixes
 
+**The `avoidable-copy` advice no longer reports a move as a copy.**  Putting a value with an
+`OpDrop` into a struct or vector moves it, and the advice said it "could not be moved" because
+it was "still used after this point" — even when the only other use was on a branch that did not
+move it, or in the same literal.  Those notices are gone; a real copy is still advised.
+
 **A block at the start of a statement gives its value.**  `{ { 4 } - 1 }` is 3, and a function
 ending in `{ … } - 1` returns that; the inner block's value used to be dropped, so `- 1` was a
 statement of its own and the answer was -1 (and `+` or `*` there was refused).  A block that
