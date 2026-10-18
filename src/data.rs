@@ -6206,6 +6206,12 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     })
 }
 
+thread_local! {
+    /// The open instances `Data::instance_def` is catching up (`catch_up_open_instance`).
+    static CATCHING_UP: std::cell::RefCell<std::collections::HashSet<u32>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
 impl Data {
     /// map a vector's content `Type` to a narrow
     /// database element type-nr when the content is a `Type::Integer`
@@ -10001,6 +10007,13 @@ impl Data {
             spelled.join(",")
         );
         if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {
+            // Re-entrant through the field being added (`t: vector<Lst<T>>` names this very
+            // instance), so an instance already being caught up is answered as it stands.
+            if self.is_open_instance(nr) && CATCHING_UP.with(|c| c.borrow_mut().insert(nr)) {
+                let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+                self.catch_up_open_instance(lexer, template, nr, &bindings);
+                CATCHING_UP.with(|c| c.borrow_mut().remove(&nr));
+            }
             return nr;
         }
         // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
@@ -10090,6 +10103,54 @@ impl Data {
             let fields = self.definitions[v as usize].attributes.clone();
             for f in &fields {
                 self.copy_instance_field(lexer, vd, f, bindings);
+            }
+        }
+    }
+
+    /// `@FR-G-Regular` — give an OPEN instance the template fields it lacks.  A template that
+    /// names itself regularly (`t: vector<Lst<T>>` inside `Lst<T>`) mints its open instance
+    /// while its own declaration is still being read, so the instance copied a variant before
+    /// that variant had the field: `match l { Cons { t } … }` inside `fn f<T>(l: Lst<T>)` read
+    /// "variant Cons has no field 't'" (loft#2058).  An open instance is never laid out, so
+    /// adding the missing fields when it is named again is safe; a closed one is minted after
+    /// the declaration and is complete.
+    fn catch_up_open_instance(
+        &mut self,
+        lexer: &mut Lexer,
+        template: u32,
+        d: u32,
+        bindings: &[(u32, Type)],
+    ) {
+        let has = |data: &Self, owner: u32, field: &str| {
+            data.definitions[owner as usize]
+                .attributes
+                .iter()
+                .any(|a| a.name == field)
+        };
+        if self.definitions[d as usize].def_type == DefType::Enum {
+            let variants: Vec<u32> = self
+                .children_of(template)
+                .filter(|&c| self.def_type(c) == DefType::EnumValue)
+                .collect();
+            for v in variants {
+                let vname = self.definitions[v as usize].name.clone();
+                let Some(vd) = self
+                    .children_of(d)
+                    .find(|&c| self.definitions[c as usize].name == vname)
+                else {
+                    continue;
+                };
+                for f in &self.definitions[v as usize].attributes.clone() {
+                    if !has(self, vd, &f.name) {
+                        self.copy_instance_field(lexer, vd, f, bindings);
+                    }
+                }
+            }
+            return;
+        }
+        for f in &self.template_fields(template) {
+            if !has(self, d, &f.name) {
+                self.copy_instance_field(lexer, d, f, bindings);
             }
         }
     }

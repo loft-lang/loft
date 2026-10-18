@@ -211,6 +211,11 @@ git do.
 
 ### Bug fixes
 
+**Generics accept a plain enum where `==` is required, and see a recursive enum's own field.**
+`fn same<T: Equatable>(a: T, b: T)` refused a plain `enum Col { Red, Green }`; and inside
+`fn f<T>(l: Lst<T>)`, matching `Cons { t }` on `enum Lst<T> { Nil, Cons { h: T, t:
+vector<Lst<T>> } }` was refused with "variant Cons has no field 't'".  Both compile now.
+
 **Comparing two tuples that hold a struct gives the right answer.**  A function ending in
 `(p, 1) == (P { hidden: 41 }, 1)` answered `false` for equal tuples, and did not compile with
 `--native`.  It now answers `true`, on both backends.
