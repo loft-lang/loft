@@ -796,8 +796,9 @@ record as it releases, so a second walk over the same bytes returns nothing twic
 residue is `open_file_handles_entry`.  Guards, both backends:
 `a-file-local-moved-into-a-structure-keeps-its-handle.loft` (a moved `File` keeps its handle)
 and `a-file-dying-anywhere-releases-its-handle.loft` (each death releases — the leak report is
-its channel).  `(H-Copy-Refuse)` and `(H-Spent)` reach declared droppables only, so a `File`
-copy whose two structures both stay in use compiles (whether it is refused is with the owner).
+its channel).  `(H-Copy-Refuse)` and `(H-Spent)` reach declared droppables and generator handles
+(`(G-Hold)`) only, so a `File` copy whose two structures both stay in use compiles (whether it
+is refused is with the owner).
 The two share one handle, each with its OWN position: an access starts at the record's `#next`
 wherever the other left the handle (`LoftFile::place`, once per `(R-FileHold)` hold), so a copy
 means the same before or after the source's first read — `a-copied-file-reads-at-its-own-cursor.loft`.

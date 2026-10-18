@@ -92,6 +92,7 @@ mod free_vars;
 mod get_free_vars;
 mod handles;
 mod handoff;
+pub(crate) use handoff::handle_handoff;
 mod inline_returns;
 mod insert_free;
 mod join_rewrite;

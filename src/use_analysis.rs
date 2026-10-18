@@ -5302,6 +5302,22 @@ pub fn post_scope_lints(
     drop_copy_census(data, diags, fallback_file);
 }
 
+/// `@FR-G-Hold` — a program with no hook gives the copy census nothing to judge, but a
+/// generator moved into a field, an element or a tuple member is still spent (`@FR-H-Spent`),
+/// and the walk recorded its reads (`spent::record_all`, loft#2043).
+fn raise_generator_spent_reads(
+    data: &Data,
+    diags: &mut crate::diagnostics::Diagnostics,
+    fallback_file: &str,
+) {
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if matches!(def.def_type, DefType::Function) {
+            raise_spent_reads(data, def, diags, fallback_file);
+        }
+    }
+}
+
 /// Lists every place the program deep-copies a record that has a release to run — the copies the
 /// copy-lease rules decide about (@PLN163): a type without `OpCopy` refuses them, a type with one
 /// runs it on the new structure.
@@ -5426,6 +5442,8 @@ pub fn drop_copy_census(
                 raise_spent_reads(data, def, diags, fallback_file);
             }
         }
+    } else if refuse && data.any_generator_member() {
+        raise_generator_spent_reads(data, diags, fallback_file);
     }
     if census {
         eprintln!(

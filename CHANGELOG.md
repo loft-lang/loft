@@ -117,6 +117,13 @@ write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is r
 `[for p in xs[(0, 0)..(2, 2)] { p }]` for a vector.  Bound as a value it compiled and held one
 meaningless record, so a program that did this was answering wrong.
 
+**A generator you put into a field, a vector or a tuple is no longer yours to use.**  After
+`v += [g]`, `s = S { g: g }`, `s.g = g` or `t = (g, 1)`, reading `g` is refused — the error
+names `g` and the line it moved at — as it already was for a value with an `OpDrop`.  Before,
+`next(g)` quietly advanced the generator its new holder owned, and answered `null` once that
+holder let it go.  Drive it through the holder instead (`next(v[0])`, `next(s.g)`), or bind a
+new generator to `g` first.
+
 ### New
 
 **A library can offer a few functions by their bare name.**  A library that auto-loads
