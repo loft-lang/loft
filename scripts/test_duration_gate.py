@@ -14,11 +14,15 @@ The limit is read from the profile's `slow-timeout.period`, the one home for it.
 nextest retried is judged on its slowest attempt: a first try that ran long and a retry that
 passed quickly is exactly the shape this gate exists to catch.
 
-A test is judged on its OWN work.  The first test to need a native cdylib on a cold runner
-builds it while holding the global build lock — the graphics cdylib is ~95 s — and the
-timing ledger (`LOFT_TIMING_LEDGER=<dir>`, a `lockheld … miss <secs> <test>` row) says which
-test paid and how long; that wait is a shared build every later test gets for free, not the
-test's cost, so it is taken off before the budget is applied and named beside the number.
+A test is judged on its OWN work.  A native cdylib on a cold runner is built once, by the
+first test that needs it, and every later one gets it for free — so the build is not the cost
+of whichever test happened to be first.  The timing ledger (`LOFT_TIMING_LEDGER=<dir>`) holds
+it in two rows, and BOTH are taken off before the budget is applied and named beside the
+number: `lockheld <name> miss <secs> <test>` is the time a test WAITED for the global build lock
+while another built, and `cdylib <name> miss <secs> <test>` is the time it spent BUILDING the
+library itself.  Counting only the first left the builder paying for everyone: on 2026-10-18
+`crystal_editor_gl_matches_gold` read 314.5 s with `lockheld 0.00` and `cdylib miss 149.35` —
+165 s of its own, against 224 s and 231 s on the two runs before, where it had waited instead.
 Measured: `crystal_editor_gl_matches_gold` read 306 s and 317 s on two cold runners, 97 s of
 each holding the lock for the graphics build, and under 300 s wherever the cdylib was warm.
 """
@@ -58,15 +62,16 @@ def attempts(case: ET.Element):
 
 
 def build_waits(ledger_dir: str | None) -> dict[str, float]:
-    """Seconds each test spent holding the build lock for a cache MISS: the ledger's
-    `lockheld <name> miss <secs> <test>` rows, summed per test (the last column)."""
+    """Seconds each test spent on a SHARED native build for a cache miss — waiting for the lock
+    (`lockheld <name> miss <secs> <test>`) or building the library itself (`cdylib <name> miss
+    <secs> <test>`) — summed per test (the last column)."""
     waits: dict[str, float] = {}
     if not ledger_dir or not Path(ledger_dir).is_dir():
         return waits
     for f in Path(ledger_dir).glob("timing-*.tsv"):
         for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
             cols = line.split("\t")
-            if len(cols) >= 5 and cols[0] == "lockheld" and cols[2] == "miss" and cols[3]:
+            if len(cols) >= 5 and cols[0] in ("lockheld", "cdylib") and cols[2] == "miss" and cols[3]:
                 try:
                     waits[cols[4]] = waits.get(cols[4], 0.0) + float(cols[3])
                 except ValueError:
@@ -105,8 +110,8 @@ def main() -> int:
     if total == 0:
         sys.exit(f"test_duration_gate: {junit} lists no test cases — nothing was measured")
     for t, w, name in waited:
-        print(f"test duration gate: {name} ran {t:.1f} s, {w:.1f} s of it holding the build lock for a "
-              f"cold cdylib — its own {t - w:.1f} s is under the {budget:.0f} s budget")
+        print(f"test duration gate: {name} ran {t:.1f} s, {w:.1f} s of it a shared cold cdylib "
+              f"build — its own {t - w:.1f} s is under the {budget:.0f} s budget")
     if not over:
         print(f"test duration gate: {total} tests, none over {budget:.0f} s (half the {limit:.0f} s limit)")
         return 0
