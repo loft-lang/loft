@@ -84,6 +84,14 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     let Some(rb) = own_return_buffer(data, d_nr) else {
         return;
     };
+    // Only a materialised exit is rewritten, bare or under its presence test; a body with none
+    // pays for no walk and no bind table.
+    if !def
+        .code
+        .any_node(&mut |n| matches!(n, Value::Block(bl) if bl.name == "materialized_view_return"))
+    {
+        return;
+    }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let def = data.def(d_nr);
     let mut binds: HashMap<u16, Vec<Option<u16>>> = HashMap::default();
