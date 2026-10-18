@@ -494,7 +494,7 @@ else { e.value += 1; }
 assert((t.data["x"].value ?? -1) == 2 and seen == "", "found, and written through the view");
 t.data["x"] = null;   // remove entry
 t.data += [Entry { key: "b", value: 2 }, Entry { key: "a", value: 1 }];
-for row in t.data { seen += row.key; }  // iterates in key order
+for row in t.data { seen += row.key; }  // iterates in key order (C60)
 assert(seen == "ab" and t.data["x"] == null, "removed, then walked in key order");
 ```
 
