@@ -1600,9 +1600,13 @@ impl Parser {
                 *val = Value::Yield(Box::new(v));
                 Type::Void
             }
-        } else if self.lexer.peek_token("{") {
-            self.parse_block("block", val, &Type::Void)
         } else {
+            // @FR-F-Block — a block at the start of a statement is an expression like any other:
+            // it yields its last expression, and a binary operator after it reads that value
+            // (`{ { 4 } - 1 }` is 3).  It used to be parsed here as a statement with a `Void`
+            // result, which dropped the tail and left `- 1` to start a statement of its own
+            // (loft#2040).  A void block still ends the statement: the operator loop stops at
+            // a void left operand, as it does after an `if`.
             // `const x = expr` — mark the resulting local variable as const after initialisation.
             let const_decl = self.lexer.has_keyword("const");
             let res = self.parse_assign(val);

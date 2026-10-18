@@ -193,6 +193,12 @@ git do.
 
 ### Bug fixes
 
+**A block at the start of a statement gives its value.**  `{ { 4 } - 1 }` is 3, and a function
+ending in `{ … } - 1` returns that; the inner block's value used to be dropped, so `- 1` was a
+statement of its own and the answer was -1 (and `+` or `*` there was refused).  A block that
+ends in a value and stands as a statement now needs a `;` before the next statement, exactly as
+an `if` that ends in a value already did; a block whose last statement has no value needs none.
+
 **A view into a collection keeps its old element when the collection is rebuilt by a call.**
 After `e = h[1]; h = load()`, `e` read and wrote the element of the NEW collection for a
 `hash`, `sorted` or `index`, and a `vector` of values with an `OpDrop` read memory already
