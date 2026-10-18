@@ -348,10 +348,10 @@ fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
 /// UNLESS the `deps/` copy was written by another rustc and the uplifted one by this one.
 ///
 /// `deps/` is preferred because a plain `cargo test` rewrites it and leaves the uplift stale
-/// (#304).  But a cargo whose layout no longer writes `deps/` at all (`build/<pkg>/<unit>/out/`,
-/// nightly 2026-10) leaves a `deps/libloft.rlib` that only a restored cache put there, and
-/// preferring it linked an older toolchain's runtime: the healer's rebuild wrote the fresh rlib
-/// beside it and the next compile took the stale one again (loft#2033).  The rustc that wrote
+/// (#304).  But a cargo whose layout no longer writes `deps/` at all (`build/<pkg>/<unit>/out/`)
+/// leaves a `deps/libloft.rlib` that only a restored cache put there, and preferring it would
+/// link an older toolchain's runtime: a rebuild writes the fresh rlib beside it and the next
+/// compile would take the stale one again (loft#2033).  The rustc that wrote
 /// each candidate is read from its metadata, so the choice moves only on that evidence.  Asked by
 /// `native_utils::loft_lib_dir_for`, the lookup every `--native` compile links through.
 pub fn preferred_runtime_rlib(

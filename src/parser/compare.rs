@@ -770,9 +770,9 @@ impl Parser {
             // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
             // a keyed collection by its records, an enum value by its variant and then fields.
             // `@FR-E-Eq` — two vectors of DIFFERENT element types compare element by element with
-            // each pair's own `==`, where the element types convert soundly (owner ruling
-            // 2026-10-18, loft#2062); a pair that would need an `as` is refused.  Asked of one
-            // element type only, a mixed pair fell to a byte comparison and answered wrong.
+            // each pair's own `==`, where the element types convert soundly; a pair that would
+            // need an `as` is refused (loft#2062).  The content comparison walks one element
+            // schema, so a mixed pair handed to it would compare stored bytes, not values.
             if matches!(op, "==" | "!=")
                 && list.len() == 2
                 && let (Type::Vector(ea, _), Type::Vector(eb, _)) =
