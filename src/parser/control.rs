@@ -8514,7 +8514,13 @@ impl Parser {
     /// Funnelling all reads here is what lets a streamed/accumulating backing (Phase 7)
     /// replace the read without touching the match logic — so do NOT open-code
     /// `OpGetVector` + `get_field` at a slice element site; call this.
-    fn read_slice_elem(&mut self, v: u16, elm_size: &Value, elm_tp: &Type, pos: Value) -> Value {
+    pub(super) fn read_slice_elem(
+        &mut self,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        pos: Value,
+    ) -> Value {
         // @PLN35 PC1 — in CURSOR mode a forward read `v[i]` is relative to the cursor's current
         // `pos`, so it becomes `source[pos + i]`.  Only non-negative literal positions are offset
         // (a negative/tail read has no meaning for a prefix cursor and is rejected upstream).

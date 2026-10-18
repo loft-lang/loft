@@ -170,7 +170,12 @@ comparison, `??`) evaluates both operands under E-Left.
                 exact complement of `==` for every type, a type's own `OpEq` included,
                 with each operand evaluated once; a type's own `OpNe` replaces the
                 complement.  Against the `null` literal `==` is the presence test, and two
-                nullable operands are equal when both are absent.
+                nullable operands are equal when both are absent.  Two vectors of
+                DIFFERENT element types compare element by element in the same way when
+                each element pair has a `==` without an `as` — the integer widths,
+                `float` and `single` by value, nested vectors when their elements do — and
+                are refused otherwise (`character` against `integer`, `boolean`, `text`,
+                an enum).
   (E-Eq-Key)    a keyed collection's key comparison and key hash agree with `==` on the
                 key's type: two keys are one entry exactly when `==` answers true.
 ```

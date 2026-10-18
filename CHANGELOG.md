@@ -211,6 +211,12 @@ git do.
 
 ### Bug fixes
 
+**`==` between vectors of different number types compares their values.**  `vector<u8> [4, 2, 0]
+== vector<integer> [4, 2, 0]` answered `false` — the comparison read bytes, so some unequal pairs
+answered `true` — and now compares element by element: integer widths, `float` and `single` by
+value, nested vectors recursively.  Element types that only meet through an `as` (`character`
+against `integer`, `boolean`, `text`, an enum) are a compile-time error naming both.
+
 **An optional group can stand anywhere in a slice pattern.**  `[Num { n }, (Tag { t })?]`,
 `[Num { n }, (Tag { t })?, End]` and `[a, (Kw { k } Op { o })?, ..rest]` were parse errors — only
 a group at the very start was accepted.  The group takes its elements when they are there (`t` is
