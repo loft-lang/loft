@@ -265,6 +265,19 @@ order** — NaN cannot occur (it is represented as null, D-op-null-1), so exactl
                      overflows, so both halves are null, on both backends.)
 ```
 
+```
+  (E-Concat)  `+` JOINS into a text when one operand is text and the other is text or a
+              character, or when both are characters: `'a' + 'b'` is "ab", `'a' + "cd"` is
+              "acd", `"cd" + 'a'` is "cda".  A CHARACTER with an INTEGER is arithmetic on
+              the code point and answers an integer, whichever side the character is on:
+              `'a' + 1` and `1 + 'a'` are both 98, and `c += 1` on a character place is
+              refused because that integer does not fit it — `(c + 1) as character` is the
+              next letter.  A character with any other operand (a float, a boolean, a
+              record) is refused at compile time and names interpolation, `"{c}{x}"`, as the
+              spelling that puts the two side by side.  Once a run has joined (a text on the
+              left), every later `+` joins: `'a' + 'b' + 1` is "ab1".
+```
+
 **In words.** Integer `/` drops the fractional part toward zero rather than flooring toward
 `-∞` — `-7 / 2` is `-3`, not `-4` — and `%` always carries the sign of the **dividend**, its
 matching remainder (`-7 % 2` is `-1`, `7 % -2` is `1`). This is the C/Rust convention, one of

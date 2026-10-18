@@ -124,6 +124,11 @@ names `g` and the line it moved at — as it already was for a value with an `Op
 holder let it go.  Drive it through the holder instead (`next(v[0])`, `next(s.g)`), or bind a
 new generator to `g` first.
 
+**`+` with a character adds an integer and joins text.**  `'a' + 1` is now `98`, as `1 + 'a'`
+already was; it used to be the text `"a1"`.  `'a' + 'b'` (`"ab"`) and `'a' + "cd"` (`"acd"`) still
+join, and `(c + 1) as character` is the next letter.  A character `+` a float, a boolean or a
+record is refused; write `"{c}{x}"` to put them side by side.
+
 ### New
 
 **A library can offer a few functions by their bare name.**  A library that auto-loads

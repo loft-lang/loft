@@ -286,10 +286,11 @@ s = txt[0..1];    // text ("h") — a one-character string
 
 Practical consequences:
 - `text + text` concatenates (`txt[0..1] + txt[1..2]` is `"he"`).
-- `+` with a character on the LEFT is text concatenation, whatever the right
-  operand: `'a' + 'b'` is the text `"ab"` and `'a' + 1` is `"a1"`.  `-` stays
-  arithmetic on code points (`'a' - 'b'` is `-1`); for a code-point sum write
-  `(c as integer) + 1`.  Interpolation builds the same text: `"{c1}{c2}"`.
+- `+` joins a character with text or with another character: `'a' + 'b'` is the
+  text `"ab"`.  With an integer it is arithmetic on the code point, on either
+  side: `'a' + 1` and `1 + 'a'` are both `98`, and `(c + 1) as character` is the
+  next letter.  `-` is arithmetic too (`'a' - 'b'` is `-1`).  Interpolation puts
+  anything beside a character: `"{c}1"` is `"a1"`.
   Returning interpolated characters from functions works correctly:
   `fn f() -> text { c = txt[0]; "{c}" }` returns `"h"`.
 - `character == text` is a compile error today; format the character
