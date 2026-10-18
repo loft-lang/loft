@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### dryopea `truncate_to`: a record of plain vectors copied and released with each store resolved once (2026-10-18)
+
+- **The copy between two stores** of a record that owns plain vectors and nothing else
+  (`Stores::copy_plain_vectors`) borrows the source and the destination store once and reads
+  the type's cached plan in place; it copied the plan out and resolved both stores per field.
+  A locked destination, a copy within one store and `LOFT_WATCH_STORE` keep the old path.
+- **The release** (`Stores::remove_claims`) tries the plan before the heap-slot test, which
+  answers nothing the plan does not: an empty vector frees nothing either way.
+- The runtime, both backends; `LOFT_NO_PLAIN_VECTOR_RECORDS` still sends such a record through
+  the walk.  `truncate_to` 222 → 202.6 ns a push (−8.6 %), hash equal.
+
 ### hex_recover `forms_upto`: a loop record kept across its nest (2026-10-18)
 
 - **`(R-LoopRecord)`'s nest clause** — a record local declared inside the innermost loop of a
