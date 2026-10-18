@@ -159,6 +159,30 @@ pub(super) fn scope_free_op_var(op: &Value, data: &Data) -> Option<u16> {
     None
 }
 
+/// A scope-exit CLEANUP op — what may follow a value-returning block's result without being
+/// it: a free of a local ([`scope_free_op_var`]), a free of a tuple local's member
+/// (`OpFreeRef(t.0)`), and the reset that marks a freed reference dead
+/// (`r = OpNullRefSentinel()`, which only the compiler writes).  A tuple comparison's block
+/// ends `cmp; OpFreeRef(r.0); __ref = OpNullRefSentinel()`, and asked of the last two the
+/// variable-only test made the RESET the block's value: `(p, 1) == (P { … }, 1)` answered
+/// the sentinel (loft#2055).
+fn is_scope_exit_cleanup(op: &Value, data: &Data) -> bool {
+    if scope_free_op_var(op, data).is_some() {
+        return true;
+    }
+    match op.unspan() {
+        Value::Call(d, args) => {
+            data.op_sets().frees.contains(d)
+                && matches!(args.first().map(Value::unspan), Some(Value::TupleGet(_, _)))
+        }
+        Value::Set(_, rhs) => {
+            matches!(rhs.unspan(), Value::Call(d, a) if a.is_empty()
+                && data.def(*d).name() == "OpNullRefSentinel")
+        }
+        _ => false,
+    }
+}
+
 impl Scopes<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn insert_free(
@@ -184,11 +208,11 @@ impl Scopes<'_> {
         let result_idx = if is_return
             && block.result != Type::Void
             && n > 0
-            && scope_free_op_var(&block.operators[n - 1], data).is_some()
+            && is_scope_exit_cleanup(&block.operators[n - 1], data)
         {
             (0..n)
                 .rev()
-                .find(|&i| scope_free_op_var(&block.operators[i], data).is_none())
+                .find(|&i| !is_scope_exit_cleanup(&block.operators[i], data))
                 .filter(|&i| !matches!(&block.operators[i], Value::Block(_)))
                 .unwrap_or(n.wrapping_sub(1))
         } else {

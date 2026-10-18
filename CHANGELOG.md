@@ -205,6 +205,10 @@ git do.
 
 ### Bug fixes
 
+**Comparing two tuples that hold a struct gives the right answer.**  A function ending in
+`(p, 1) == (P { hidden: 41 }, 1)` answered `false` for equal tuples, and did not compile with
+`--native`.  It now answers `true`, on both backends.
+
 **`sizeof` inside a generic answers the size of the type it was called with.**  In
 `fn g<T>(x: T) -> integer { sizeof(x) }`, `g(5)` answered 0 instead of 8, at every type; and
 `sizeof(T)` was refused.  Both now answer what `sizeof` of a value of that type answers outside
