@@ -110,6 +110,9 @@ argument, `@FR-F-Ret`).
              expression, wherever the block stands, and the value flows out to whatever reads
              it.  It is discarded only where the BLOCK itself is a statement — a `;`-terminated
              one, a loop body, or the body a function drops by F-Drop.
+             So a block (or an `if`) that ends in a value and is followed by another statement
+             needs that `;`: `{ a + 10 } b = 5` is a syntax error, while a block whose last
+             statement has no value ends its statement by itself (loft#2040's suite cell).
   (F-Rec)    a call to the same (or a mutually-recursive) function gets its OWN fresh frame —
              recursion is ordinary, bounded only by the stack.
 ```
