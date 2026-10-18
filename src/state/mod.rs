@@ -1287,6 +1287,19 @@ impl State {
         let closure_span = u16::try_from(self.stack_pos - before_closure).unwrap_or(0);
         let total = arg_size + hidden_bufs_size + closure_span;
         let code_pos = i64::from(self.fn_positions[d_nr]);
+        // `@FR-G-Call`, loft#2059 — a slot holding a GENERATOR (its def returns `iterator<T>`)
+        // starts one, as `OpCoroutineCreate` does for a named call: the arguments and the
+        // closure become the paused frame, and the handle is the call's value.  Called as an
+        // ordinary function, its first `yield` ran in the caller's frame.
+        if self.data_ptr.get().is_some_and(|d| {
+            matches!(
+                d.def(d_nr as u32).returned().base(),
+                crate::data::Type::Iterator(..)
+            )
+        }) {
+            self.coroutine_create(d_nr as u32, u32::from(total), code_pos as u32);
+            return;
+        }
         // The depth the callee's frame is about to occupy, recorded BEFORE `fn_call` pushes
         // it so the two agree by construction rather than by an off-by-one.
         let frame_depth = u32::try_from(self.call_stack.len()).unwrap_or(u32::MAX);

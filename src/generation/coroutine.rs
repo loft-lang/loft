@@ -1436,13 +1436,17 @@ fn write_param_shadows(
             "{indent}#[allow(unused_mut)] let mut var_{local} = self.var_{field};"
         )?;
     }
-    for (a_nr, attr) in attrs.iter().enumerate() {
+    for attr in attrs {
         // A parameter the body writes or links is read through its field instead
-        // (`written_scalar_params`): a copy here would hide the field's writes.
-        if u16::try_from(a_nr).is_ok_and(|a| fielded.contains_key(&a)) {
+        // (`written_scalar_params`): a copy here would hide the field's writes.  `fielded` is
+        // keyed by VARIABLE, and an attribute's index is its variable only up to the captures:
+        // a lambda's `__closure` comes after the capture locals, so asked by index it named the
+        // first capture's field and its shadow was skipped (E0425, loft#2059).  A local's field never
+        // takes a parameter's name (`persistent_field_names`), so the name decides.
+        let aname = sanitize(&attr.name);
+        if fielded.values().any(|f| *f == aname) {
             continue;
         }
-        let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
         } else if matches!(attr.typedef.base(), Type::Iterator(_, _)) {
@@ -3063,7 +3067,8 @@ impl Output<'_> {
         // loft#1899 — a parameter the body writes or links is read and written through the
         // field the struct already declares for it, under the parameter's own name.
         for p in written_scalar_params(self.data.def(def_nr), self.data) {
-            if let Some(attr) = attrs.get(usize::from(p)) {
+            let name = self.data.def(def_nr).variables().name(p);
+            if let Some(attr) = attrs.iter().find(|a| a.name == name) {
                 fields.insert(p, sanitize(&attr.name));
             }
         }

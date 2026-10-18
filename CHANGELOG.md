@@ -211,6 +211,12 @@ git do.
 
 ### Bug fixes
 
+**A lambda can be a generator.**  `f = fn(x: integer) -> iterator<integer> { yield x; yield x + 1; }`
+and `for v in f(10)` now yield `10 11` on both backends, as a named generator does — also through
+a `fn(…)` parameter or a struct field, with captures, and after the function that made the lambda
+has returned.  It panicked on the interpreter, leaked its yields into an enclosing generator, and
+did not compile with `--native`.
+
 **`==` between vectors of different number types compares their values.**  `vector<u8> [4, 2, 0]
 == vector<integer> [4, 2, 0]` answered `false` — the comparison read bytes, so some unequal pairs
 answered `true` — and now compares element by element: integer widths, `float` and `single` by
