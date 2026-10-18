@@ -10,6 +10,31 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A local whose binds mix owned and borrowed stores releases each once (2026-10-18)
+
+- **loft#2045, loft#2041** — the owner witness (`@FR-O-Witness`) decides per run which store a
+  local owns, and it read two kinds of bind as the local's own store when a compiler temp held
+  it: an element of a call's result (held by the call's work-ref) and a `??` result (held by
+  its subject or its default's work-ref).  The first released the call's reused buffer a
+  second time, so a local reused across two loops read freed memory; the second hid the mix,
+  so the store a call bind owned was never released.  Such a bind is now a view.
+- Found by the binding matrix and fixed with it, all on both backends:
+  - #2049: a witnessed local that reads a field of a call's record in an arm or a loop body.
+    The lift temp the call ran in freed the store the witness had adopted, at the arm's end.
+    The temp now hands its store to the witness.
+  - #2050: the second loop's split copy of such a local is assigned once, so the record-buffer
+    pool admitted its call's buffer, and the witness released the pooled store every pass.
+    The pool now declines a buffer whose result local is witnessed.
+  - #2051 (silent-wrong): `(R-ReturnField)` took a `??` bind for a view of its subject and freed the default's
+    store before returning it.  A local view is now admitted only when every bind is a field
+    of its root.
+  - #2052: the interpreter left a lift temp's slot naming its store after a block-exit free
+    guarded by the call's buffer, and the next pass's pre-build free released it again.  That
+    free now resets the slot, as `OpFreeRef`'s already did and native's always does.
+- Guards: `tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft`,
+  `tests/scripts/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.loft`
+  and `tests/scripts/2052-a-lifted-call-result-is-released-once-per-pass.loft`.
+
 ### `--native`: a null record copied into a fresh element's field is its default (2026-10-18)
 
 - **loft#2044 (silent-wrong)** — a struct literal appended to a vector whose nested struct
