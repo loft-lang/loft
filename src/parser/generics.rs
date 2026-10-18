@@ -1196,6 +1196,22 @@ impl Parser {
         code.for_each_child_mut(&mut |c| self.resolve_pending_formats(c, bindings));
     }
 
+    /// `@FR-G-Mono` — size each pending `sizeof` of a fresh monomorph at the type its holder is
+    /// bound to, with the lowering a concrete `sizeof` gets (loft#2054).
+    pub(super) fn resolve_pending_sizeof(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+        if let Value::Call(_, args) = code.unspan()
+            && args.len() == 2
+            && matches!(args[0].unspan(), Value::Int(Self::SIZEOF_PENDING))
+            && let Value::Int(holder) = *args[1].unspan()
+            && let Some((_, concrete)) = bindings.iter().find(|(h, _)| *h as i32 == holder)
+        {
+            let concrete = concrete.clone();
+            *code = Value::Int(self.packed_size(&concrete, u32::MAX));
+            return;
+        }
+        code.for_each_child_mut(&mut |c| self.resolve_pending_sizeof(c, bindings));
+    }
+
     /// Lower each marked bound `==` of a fresh monomorph (`(G-Sat-Eq)`): the call
     /// `OpEqContent(a, b, PENDING, holder)` becomes the CONCRETE `a == b` for the type the
     /// monomorph binds `holder` to — `call_op`, the one lowering a concrete site gets, so a
@@ -1399,6 +1415,7 @@ impl Parser {
         // Inside the instance's own frame (its variables, its context), so a comparison that
         // needs a temporary — a tuple's element-wise one — makes it in the right function.
         self.resolve_content_eq(&mut code, bindings);
+        self.resolve_pending_sizeof(&mut code, bindings);
         self.resolve_pending_formats(&mut code, bindings);
         let returned = self.data.def(d_nr).returned().clone();
         if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)

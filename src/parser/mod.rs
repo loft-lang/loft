@@ -2173,6 +2173,9 @@ impl Parser {
 
     /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
     const CONTENT_EQ_PENDING: i32 = i32::MIN;
+    /// A `sizeof` whose operand is a bare type variable: `OpSizeofRef(SIZEOF_PENDING, holder)`,
+    /// sized at each monomorph from the type the holder is bound to (`resolve_pending_sizeof`).
+    const SIZEOF_PENDING: i32 = i32::MIN + 1;
 
     /// The marker a format hole over a bound type variable carries until its instance lowers
     /// it (`append_data`, `@FR-G-Mono`).

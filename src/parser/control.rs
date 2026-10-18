@@ -21975,7 +21975,24 @@ impl Parser {
                 *val = Value::Int(self.packed_size(&tp, u32::MAX));
             }
         } else if let Some(id) = self.lexer.has_identifier() {
-            let d_nr = self.data.def_nr(&id);
+            // `sizeof(T)` inside a generic: `T` is the type variable, whose placeholder no source
+            // can spell (`T#1`), so the bare name resolved nowhere and was read as an unknown
+            // variable (loft#2054).
+            if self.vars.var(&id) == u16::MAX
+                && self.data.def_nr(&id) == u32::MAX
+                && self.data.is_type_var_spelling(&id)
+                && let Some(tp) = self.parse_type(u32::MAX, &id, false)
+            {
+                found = true;
+                if !self.first_pass {
+                    *val = self.sizeof_value(&tp, u32::MAX);
+                }
+            }
+            let d_nr = if found {
+                u32::MAX
+            } else {
+                self.data.def_nr(&id)
+            };
             if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
                     // Still unresolved after pass 2, so this is not a forward reference:
@@ -21995,7 +22012,7 @@ impl Parser {
                     if !self.first_pass {
                         // `d_nr` is the def of the name the user typed — the alias `i32`, not
                         // the `integer` it collapses to — so its forced `size(N)` applies.
-                        *val = Value::Int(self.packed_size(&tp, d_nr));
+                        *val = self.sizeof_value(&tp, d_nr);
                     }
                 }
             }
@@ -22021,7 +22038,7 @@ impl Parser {
                     // integer is its packed width, a collection its 4-byte field, a tuple its
                     // stored `__tuple<…>` record.  Sized by `type_elm` instead, a `u8` read 8,
                     // a `vector<Point>` its element's size and a keyed collection 0 (loft#1779).
-                    *val = Value::Int(self.packed_size(&tp, u32::MAX));
+                    *val = self.sizeof_value(&tp, u32::MAX);
                 }
             }
         }
@@ -22072,7 +22089,22 @@ impl Parser {
     /// answers, for a type spelled and for an expression's type alike (@F45).  `alias` is the
     /// def of a spelled type name (`i32`, `vector`), whose declared `size(N)` wins; an
     /// expression passes `u32::MAX` and a collection then asks its kind's def the same way.
-    fn packed_size(&mut self, tp: &Type, alias: u32) -> i32 {
+    /// `@FR-G-Mono` — the value a `sizeof` of `tp` lowers to: its packed size, or, for a bare
+    /// type variable (a generic's `T`, store size 0 in the template), a marker each monomorph
+    /// sizes at the type it binds — the template's 0 survived instantiation (loft#2054).
+    fn sizeof_value(&mut self, tp: &Type, alias: u32) -> Value {
+        if let Type::Reference(d, _) = tp.base()
+            && self.data.is_type_var_placeholder(*d)
+        {
+            return Value::Call(
+                self.data.def_nr("OpSizeofRef"),
+                vec![Value::Int(Self::SIZEOF_PENDING), Value::Int(*d as i32)],
+            );
+        }
+        Value::Int(self.packed_size(tp, alias))
+    }
+
+    pub(super) fn packed_size(&mut self, tp: &Type, alias: u32) -> i32 {
         if let Some(n) = self.data.forced_size(alias) {
             return i32::from(n);
         }

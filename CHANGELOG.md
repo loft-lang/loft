@@ -205,6 +205,11 @@ git do.
 
 ### Bug fixes
 
+**`sizeof` inside a generic answers the size of the type it was called with.**  In
+`fn g<T>(x: T) -> integer { sizeof(x) }`, `g(5)` answered 0 instead of 8, at every type; and
+`sizeof(T)` was refused.  Both now answer what `sizeof` of a value of that type answers outside
+the generic.
+
 **A sandboxed script can no longer read a private field by comparing.**  A field linked
 `secret#read` was refused when read, printed or matched, but `p == P { …, hidden: c }` in a loop
 found its value.  Comparing host data with `==` or `!=` now needs the same grant as reading it.
