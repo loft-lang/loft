@@ -278,10 +278,15 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — the closed entries, `D-match-1` to `-22`, are in
+OPEN: **1** — the closed entries, `D-match-1` to `-23`, are in
 [matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
 arm (`|` and `,` alike), a tuple subject, a tuple element, a field, a slice element, and the arm
 root's `name: pattern`.
+
+- **D-match-24 — OPEN (loft#2048).**  `(P-Opt)` holds only for a group at a slice's START
+  (`[(a)?, ..rest]`): anywhere else `(a)?` is a parse error.  The rule's answer is clear — a
+  0-or-1 variable-length part, admissible where it is the only one and refused beside a rest
+  or a run by `(P-Rest)` — and is not yet built.
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
 invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail
