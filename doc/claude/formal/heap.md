@@ -743,6 +743,14 @@ installed, which the frame does own.
              the last lease returns, so a `File` placed where it MOVES (H-Move) keeps the
              handle open for the structure that holds it, and a handle still open at exit
              is a residue (H-FreeAll).
+  (H-Handle-Copy) a COPY of a structure that holds a `File` is LEGAL and takes a lease of its
+             own (H-Handle): the copies share the one OS handle, and each keeps its OWN
+             position — an access starts at the record's `#next`, wherever another copy
+             left the handle — so a copy reads the same before or after the source's
+             first read, and the handle closes when the last copy returns its lease.
+             (H-Copy-Refuse) does not reach it: a copy that keeps its own position and
+             returns its own lease is sound, and a refusal would turn a working program
+             away for no safety it buys.
 ```
 
 **In words.** A drop is not a destructor of loft-side data — the ownership model pays for
@@ -797,8 +805,8 @@ residue is `open_file_handles_entry`.  Guards, both backends:
 `a-file-local-moved-into-a-structure-keeps-its-handle.loft` (a moved `File` keeps its handle)
 and `a-file-dying-anywhere-releases-its-handle.loft` (each death releases — the leak report is
 its channel).  `(H-Copy-Refuse)` and `(H-Spent)` reach declared droppables and generator handles
-(`(G-Hold)`) only, so a `File` copy whose two structures both stay in use compiles (whether it
-is refused is with the owner).
+(`(G-Hold)`) only, and a `File` copy whose two structures both stay in use compiles by
+`(H-Handle-Copy)`.
 The two share one handle, each with its OWN position: an access starts at the record's `#next`
 wherever the other left the handle (`LoftFile::place`, once per `(R-FileHold)` hold), so a copy
 means the same before or after the source's first read — `a-copied-file-reads-at-its-own-cursor.loft`.

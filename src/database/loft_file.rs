@@ -276,7 +276,7 @@ impl Write for LoftFile {
 impl LoftFile {
     /// Put the handle at the reading record's own position before a read: every `File`
     /// record that names this handle keeps its own `#next` (`@FR-H-Handle`), and a copy
-    /// reads where ITS cursor says (loft#2005).  Free when the handle is already there,
+    /// reads where ITS cursor says (`@FR-H-Handle-Copy`, loft#2005).  Free when the handle is already there,
     /// which is every read of a record that alone uses its handle.
     ///
     /// # Errors

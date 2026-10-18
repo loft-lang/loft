@@ -2930,3 +2930,9 @@ unchanged); `panel_build` −0.4 % / −0.8 % (its claims never reached the walk
 equivalence test found on its first run that a freshly claimed record's last payload word
 still spells the free block's old footer (a claim does not zero it) — the case the tail
 confirmation exists for; it is pinned there.
+
+- **`(H-Handle-Copy)` written — 2026-10-18.**  The `File` paragraph had left *"whether a `File`
+  copy is refused"* with the owner.  Owner ruling: *"keep it allowed and write the rule"* — the
+  copy was already sound (one handle, a position per copy, loft#2005; a lease per copy), measured
+  `a: 3 lines | b: 3 lines` on both backends with no leak.
+
