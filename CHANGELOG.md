@@ -129,6 +129,12 @@ already was; it used to be the text `"a1"`.  `'a' + 'b'` (`"ab"`) and `'a' + "cd
 join, and `(c + 1) as character` is the next letter.  A character `+` a float, a boolean or a
 record is refused; write `"{c}{x}"` to put them side by side.
 
+**A type built from a template checks each piece the way a call does.**  `q: Q = "a{n}b"` calls
+`Q`'s `lit` and `hole_int`; a hole whose value does not fit the method's parameter is now refused
+with the error the same call written out gets (it crashed, or reached the method with the wrong
+value), a nullable hole into a non-null parameter warns, and a `lit` that does not take
+`(self: Q, s: text)` is refused instead of silently dropping the literal text.
+
 ### New
 
 **A library can offer a few functions by their bare name.**  A library that auto-loads
