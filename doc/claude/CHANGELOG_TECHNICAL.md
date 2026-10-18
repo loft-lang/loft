@@ -10,6 +10,22 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `--native`: a null record copied into a fresh element's field is its default (2026-10-18)
+
+- **loft#2044 (silent-wrong)** — a struct literal appended to a vector whose nested struct
+  field took a record that was null at run time kept the bytes the element's slot held
+  before: a cleared vector's refilled entries read the cleared entries' values.  Native minted
+  the element without the default prefill (the record push of a loop) and the field's copy
+  writes nothing for a null source into a destination it does not know is fresh.  The copy
+  now carries a null arm writing the field type's default — what the prefill writes, so the
+  interpreter's answer and a prefilled element are unchanged (`@C137`).
+- **`(R-CompleteWrite)`** counts such a copy as covering its field when the field's type owns
+  no heap, so `undo_push`'s append drops its prefill: `slope_path_with_undo` 100.4 → 92.2 ns
+  (−8.1 %), hash equal.
+- Found beside it and filed: loft#2045, a record local reused across two loops — once from a
+  call's vector, once from a parameter — frees a store it still reads (both backends; the
+  root of #2041).
+
 ### dryopea `truncate_to`: plain-vector records copied and released with each store resolved once, kept reservations answered at once (2026-10-18)
 
 - **The copy between two stores** of a record that owns plain vectors and nothing else

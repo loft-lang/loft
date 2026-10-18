@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index b743d2b7c..0c5f719bc 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -10186,7 +10186,7 @@ fn collect_fresh_fields(
+ ) {
+     for stmt in ops.iter().skip(at) {
+         if let Some((addr, sub)) = fresh_field_copy(stmt, target, data) {
+-            out.insert(addr, sub);
++            let _ = (addr, sub);
+         } else if call_named(stmt, data, "OpFinishRecord")
+             .and_then(|a| a.get(1))
+             .is_some_and(|e| matches!(e.unspan(), Value::Var(v) if *v == target))

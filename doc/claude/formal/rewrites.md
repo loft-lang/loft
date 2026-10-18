@@ -3462,10 +3462,21 @@ line in `Output::output_function`'s prelude.
                  handle anew, or zeroes every byte for a null source — so the
                  prefill's zeroed handles are read by nothing.  An UNFLAGGED copy
                  into a heap-owning element releases what the slot holds, and only
-                 the prefill makes that nothing: it keeps it.  An uncovered field — a nested struct arriving by
-                 `OpCopyRecord` into a FIELD, a vector field bound by an append, a
-                 `__nullable` element whose discriminant no `OpSet` names — keeps
-                 the prefill: the check can only DECLINE the elision.  `db_vars`
+                 the prefill makes that nothing: it keeps it.  A record copy into
+                 a FIELD of a minted element (`OpCopyRecord(src, OpGetField(e,
+                 off, Sub), Sub)`, inside the group up to the element's
+                 `OpFinishRecord`) carries a NULL ARM writing `Sub`'s default —
+                 what the prefill writes there, so `@C137`'s just-created
+                 destination holds it whichever mint made the element (loft#2044:
+                 without it, a record push that skipped the prefill kept the
+                 slot's old bytes for a null source).  With that arm the copy
+                 covers its field when `Sub` owns no heap, or when the copy is
+                 flagged FRESH for `Sub`.  An uncovered field — such a copy into
+                 a declared local's field (a later `x.prev = p` writes a record
+                 that exists, and the IR does not tell the two apart), a vector
+                 field bound by an append, a `__nullable` element whose
+                 discriminant no `OpSet` names — keeps the prefill: the check can
+                 only DECLINE the elision.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
                  must).  The interpreter keeps the prefill and is the oracle.
