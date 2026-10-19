@@ -826,6 +826,9 @@ PARSER_BUILTINS = {"remove", "clear", "type_of", "field_value", "sizeof", "type_
 TYPE_NAME = re.compile(r"`([A-Z][A-Za-z0-9]*)(?:\.[A-Z][A-Za-z0-9]*)?`")
 CONST_NAME = re.compile(r"`([A-Z][A-Z0-9_]+)`")
 TEST_PATH = re.compile(r"\b((?:tests|default)/[A-Za-z0-9_./-]+\.(?:loft|rs|expect))\b")
+# A guard in the language suite, cited as `loft-suite/<path>` since the corpus moved there
+# (@PLN193); it resolves against the suite checkout (`SUITE_DIR`), not this tree.
+SUITE_PATH = re.compile(r"\bloft-suite/((?:rules|attic)/[A-Za-z0-9_./-]+\.loft)\b")
 LIB_SECTION = re.compile(r"`use\s+([a-z_][a-z0-9_]*)\s*;`")
 
 
@@ -947,7 +950,9 @@ def _section_rows(text, rules, names, rel):
                 keepers.append(f"{len(sig_ok)} stdlib name(s)")
             unresolved = sorted(sig_bad)
             paths = sorted({p for p in TEST_PATH.findall(joined)
-                            if os.path.exists(os.path.join(ROOT, p))})
+                            if os.path.exists(os.path.join(ROOT, p))}
+                           | {"loft-suite/" + p for p in SUITE_PATH.findall(joined)
+                              if os.path.exists(os.path.join(SUITE_DIR, p))})
             if paths:
                 keepers.append("guard " + paths[0] + (" …" if len(paths) > 1 else ""))
             issues = sorted(set(re.findall(r"loft#(\d+)", joined)))
