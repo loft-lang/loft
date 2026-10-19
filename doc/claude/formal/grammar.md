@@ -127,8 +127,11 @@ a / b?          // null   ← reading `?` as "loose like ??" predicts 0
   (G-Amp-Prefix)  a PREFIX `&` is the reference-type annotation, parsed in the primary
                   expression — NOT a unary operator.  `&a` at a binding makes the bound
                   variable a link (see [binding.md](binding.md)); a prefix `&` anywhere
-                  else is a parse error (binding.md B-Ref-AnnotationOnly), with the one
-                  exception that a `reference<τ>` FIELD takes it (B-Ref-StoredRef).
+                  else is a parse error (binding.md B-Ref-AnnotationOnly), with two
+                  exceptions: a `reference<τ>` FIELD takes it (B-Ref-StoredRef), and BOTH
+                  operands of an identity comparison do — `&a == &b` / `&a != &b` ask whether
+                  both name one record (operational.md E-Eq, DESIGN_DECISIONS @C91); a `&`
+                  on one side only is refused.
   (G-Amp-Disambig) the two are told apart by POSITION: a `&` with a left operand is
                   infix bitwise-and; a leading `&` is the reference annotation.  "Leading"
                   means leading the whole BINDING, not merely leading an operand: in
