@@ -17,7 +17,12 @@ All notable changes to the loft language and interpreter.
   `Stores::vector_record_append` (the slot `vector_append` claims, prefilled with one zero fill
   where `Stores::zero_default` says the element's default is zero bytes) and `vector_finish`,
   where `record_new` and `record_finish` dispatched per element.  `cbor/decode` 8.03 → 6.43 ms
-  (−20 %), hashes equal; `encode` and `encode_bytes` level.  Switch `LOFT_NO_BARE_APPEND`.
+  (−20 %), hashes equal; `encode` and `encode_bytes` level.  Across all 205 routines (the switch
+  A/B, `bench/stats.py`): geomean −0.3 %, hashes equal, `decode` 3.97× → 3.31×,
+  `check_request` 5.00× → 4.81×, `materialise` −31 %, `fill_triangle` −16 %; every slowdown
+  over 3 % is in a routine whose timed code is identical in both builds (html `escape_html`:
+  the same instruction count, +20 % cycles, the hot functions at another offset in their
+  cache line).  Switch `LOFT_NO_BARE_APPEND`.
   Guard: `tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft`.
 - `LOFT_TRACE_PUSH_FILL=1` names the op that keeps a loop from being a record-append loop.
 

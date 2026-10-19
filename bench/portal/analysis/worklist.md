@@ -144,7 +144,7 @@ the compiler rule that would make the natural spelling do the same.
   derives a skip twin, a tag reader and an in-order entry walk from `read_value`'s eager
   recursion, not a local rewrite.  Cheaper and built since: `(R-FieldAppend)`'s bare clause
   appends each decoded child through `vector_append` directly (cbor `decode` −20 %, the same
-  decoder `check_request` runs).  PRICED, NOT BUILT: a push window over the decoder's loops
+  decoder `check_request` runs; the switch A/B moves the row 5.00× → 4.81×).  PRICED, NOT BUILT: a push window over the decoder's loops
   that holds the vector's record number rather than its address (the child's call claims in
   the same store) — cbor `decode` −40 % with the window's zero fill, hash equal; it needs the
   header hoist, `mint_loop` and `mint_window_ok` to admit the pooled buffer's clear, the
