@@ -706,7 +706,11 @@ impl State {
             // this from ordinary loft code with no debugger attached and reported `127` for an
             // `i8` holding `-1`.  Checked before the width arms because the encoding, not the
             // declared width, decides how many bytes carry the value.
-            Type::Integer(_) if narrow.is_some() => {
+            // A linked `u8?` is the same field encoding with its null a reserved code, which
+            // the decode answers as the null sentinel (loft#2073: it fell to `Unsupported`).
+            Type::Integer(_) | Type::Optional(_)
+                if narrow.is_some() && matches!(tp.base(), Type::Integer(_)) =>
+            {
                 let slot = narrow.expect("checked by the guard");
                 let bits = match slot.width {
                     1 => self.peek_at::<u8>(abs_pos).map(u32::from),
@@ -714,7 +718,10 @@ impl State {
                     _ => self.peek_at::<u32>(abs_pos),
                 };
                 bits.map_or(VariableValue::Unreadable("oob"), |b| {
-                    VariableValue::Long(crate::narrow::decode(slot.code(), slot.min, b))
+                    match crate::narrow::decode(slot.code(), slot.min, b) {
+                        i64::MIN => VariableValue::Null,
+                        v => VariableValue::Long(v),
+                    }
                 })
             }
             // loft#1629, `@FR-N-Shape` — a nullable scalar is its non-null twin's slot, the

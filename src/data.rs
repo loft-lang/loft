@@ -13292,6 +13292,18 @@ impl Data {
             Type::Character => "character".to_string(),
             Type::Text(_) => "text".to_string(),
             Type::Keys => "keys".to_string(),
+            // An instance of a generic struct is its template applied to its arguments, each
+            // named as the reader wrote it (`TBox<u8>`) — its def name is the instance KEY,
+            // which carries the argument's range and width (`TBox<integer(0, 255)s1>`) and is
+            // no type a program can write (loft#2072, loft#1824's class).  Only the reader's
+            // spelling: `type_name_str` is the API surface's recorded contract.
+            Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _)
+                if named && self.def(*d_nr).instance_of != u32::MAX =>
+            {
+                let d = self.def(*d_nr);
+                let args: Vec<String> = d.instance_args.iter().map(&name).collect();
+                format!("{}<{}>", self.def(d.instance_of).name, args.join(", "))
+            }
             Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => self.def(*d_nr).name.clone(),
             Type::RefVar(inner) => format!("&{}", name(inner)),
             Type::Vector(inner, _) => format!("vector<{}>", name(inner)),

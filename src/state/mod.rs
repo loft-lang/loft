@@ -1465,7 +1465,9 @@ impl State {
                             .into_iter()
                             .filter(|fv| fv.live && !fn_vars.is_compiler_generated(fv.var_nr))
                             .map(|fv| {
-                                let type_name = fv.typedef.name(data);
+                                // The reader's spelling, as `type_name()` gives it: `i8`, not
+                                // the range `integer(-128, 127)` (loft#2072).
+                                let type_name = data.display_type_name(&fv.typedef);
                                 let value = match fv.value {
                                     crate::state::debug::VariableValue::Integer(n) => {
                                         crate::database::VarValueSnapshot::Int(n)
