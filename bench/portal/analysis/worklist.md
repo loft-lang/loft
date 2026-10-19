@@ -99,6 +99,62 @@ format decision (§ 6).
    (`anim_of`, `check_request`) and relational range facts (`fill_rect`).
 5. Price the rest: `invert`, `sphere`, `map_json`, `arguments/parse`, `rand_indices`.
 
+### The x86 rows over 4×, toward 3× (measured at `27ea270e8`)
+
+`scripts/perf_check.py --routine …` on this laptop, each row interleaved with its Rust twin,
+hashes equal.  Nine rows stand over 4×; `fill_polygon` 3.81×, `draft_fit_p` 3.31×, `sphere`
+2.45×, `combine_cut` 1.98× and `timer_spend` 1.94× have left it since `7d30105c8`.  Each
+profile is callgrind over one routine: the routine's own driver toggled (lane 17), or the
+library function counted at `--n 2` and `--n 6` and differenced so the setup cancels (the
+packages, whose drivers are inlined).  A share is of loft's instructions in the routine.
+"Lands at" multiplies the row by each lever's saving; *est.* marks a saving read off a
+profile share and never hand-priced (such a figure has paid about two thirds, § 0).
+
+| × | row | where loft's excess goes | levers, in order | lands at |
+|--:|---|---|---|---|
+| 4.75 | `flow_layout_full` | `slice_runs` 59 % inclusive (`buf_slice_text` 16 %): each run a vector, a `Run` record and a 1–2 character text the caller walks once and then drops | F1 (−10.6 %, priced) and F2 (−32.5 % on top, priced) below | **≈ 2.9×** |
+| 4.67 | cbor `encode` | store creation 40 % (`OpDatabase`: 13 stores an encode, one per local vector of each `encode_map` call, ~3.3 k instructions each with the claim, the prefill and the free); `head__ap` 21 % | E1 (−15.5 %, priced); L2, the local vectors' stores pooled per frame (−30 % *est.*) | ≈ 2.8× (*est.*) |
+| 4.48 | `slope_path_with_undo` | `map_set_hex` 35 % and `map_get_hex` 28 % (the chunk walk set up per call, three field compares per chunk, `rec_and_len` out of line, 8.5 %); the undo vector's growth 10 % with the store's `resize` 6 % | L7, the chunk vector's header and base handed into the callees as an `__inv` twin from the caller's loop (−30 % *est.*); the undo vector reserved once (−5 % *est.*) | ≈ 3.0× (*est.*) |
+| 4.41 | `pluginabi/request` | base64 59 %: each payload decoded TWICE (`pa_is_base64` decodes to validate, `pa_cbytes` decodes to use; the twin decodes once) by a decoder that makes three passes (a stripped copy, a value vector, the output; the twin's two); the decoded bytes deep-copied into their entry 27 % (`pa_te(k, pa_cbytes(…))`: `OpCopyRecord` of a fresh value); the encoder 15 % | L5, crypto's decoder in one pass (a library native, −20 % *est.*) and the validation answered without decoding twice (−25 % *est.*); L3, a fresh argument built in the record that takes it (−20 % *est.*) | ≈ 2.0× (*est.*) |
+| 4.39 | `truncate_to` | `history_push` 67 %: the entry deep-copied into the timeline's store (`OpCopyRecord` 28 %, `copy_plain_vectors` 18 %) and the dropped entry's release (`release_plain_vectors` 13 %, `remove_claims` 14 %); `keep_vector_range` 20 % (the truncated tail's release, the twin's `Vec::truncate` drops the same) | L3, the entry built in the store that keeps it (`(R-Place)`'s foreign-store clause: no copy, no release of a temporary; a move across stores is ruled out by @C125) (−40 % *est.*) | ≈ 2.6× (*est.*) |
+| 4.31 | `field_add_cell` | the keyed get-or-insert 56 % (`entry_ints` 48 %: `add_at` 15 %, `grow_if_full` + `rehash_into` 22 %, `ints_hash` 11 %); the lookup `OpGetHashLong` 14 %.  The twin is std's `HashMap` (SipHash) and grows too, so the excess is per insert, not the hash | L6, the keyed insert path line by line (unpriced: next to profile) | needs pricing |
+| 4.27 | `panel_build` | the release of last frame's panel 26 % (`release_by_plan`, `remove_claims`), claims 11 %, the prefill 11 % (`set_default_value`), number formatting ~20 % (`format_long` and `format_float` through `core::fmt`) | L4, the panel tree refilled in place of release-and-claim (−25 % *est.*); L1, numbers formatted without `core::fmt` (−12 % *est.*) | ≈ 2.8× (*est.*) |
+| 4.23 | cbor `encode_bytes` | `encode__ap` 78 %: `head__ap` 35 % (one to nine bytes, each run through `push_header` 9 % and `reserve_more` 11 %), `append_bytes` 17 %.  The twin reads 76–96 µs between runs, so this row is noisy | L8, the head written through the caller's held window with the payload reserved with it (−25 % *est.*); X9 −3 % (priced) | ≈ 3.1× (*est.*) |
+| 4.14 | `forms_upto` | spread over the library: `form_admissible` 25 %, `form_closes` 21 %, `form_canon` 15 %, `form_write` 8 %; the key text built by formatting integers ~12 % (`format_long`, `core::fmt`), stores ~8 %, `malloc`/`free` ~6 % | L1 (−10 % *est.*); L2 (−6 % *est.*); the helpers line by line (unpriced) | ≈ 3.5× (*est.*) |
+
+The levers, by reach — each a compiler or runtime rule, never a library rewrite for speed
+(`formal/performance.md` `(Perf-Cure)`):
+
+- **F1 + F2 — `(R-DeadResult)` per field, and a vector a callee builds and its caller walks once
+  streamed.**  F2 is the structure clause's WALK TWIN (`decode_structure_emit`, built) moved
+  off decoders: the callee's loop runs with the caller's loop body as its closure at each
+  append, so neither the vector nor its records are made.  F1 is the shape twin's dropped
+  statements for one unread field.  `flow_layout_full`, and every builder-then-walker pair.
+- **L1 — numbers formatted without `core::fmt`.**  `format_long` / `format_float` go through
+  `fmt::write` and `pad_integral`; a direct integer writer and a shortest-float writer in the
+  runtime.  `panel_build`, `forms_upto`, every format of a number.  Runtime only, both backends.
+- **L2 — a function's local vectors pooled per frame.**  `(R-WorkBuffer)`'s proposed clause
+  for vectors: a local vector's store claimed once per frame and cleared, not created and freed
+  per call (~3.3 k instructions).  cbor `encode`, `forms_upto`, `request`'s encoder.
+- **L3 — a fresh value built where it is kept.**  A call result handed as an argument the
+  callee stores into a record (`pa_te(k, pa_cbytes(…))`), or a record pushed into another
+  store (`history_push`), built in the destination instead of built, deep-copied and released.
+  `request`, `truncate_to`.
+- **L4 — a record tree rebuilt every frame refilled in place.**  `(R-RefillBuffer)` for a tree:
+  the previous frame's records reused field by field.  `panel_build`.
+- **L5 — crypto's base64 decoder in one pass, and its validation without a second decode.**  A
+  library native; the validation half needs a call shared across natives or a validating
+  native — a decision (@C entry) before it is built.  `request`.
+- **L6 — the keyed insert path.**  Unpriced; `field_add_cell` is the row to profile line by line.
+- **L7 — a callee's chunk walk set up once per caller loop.**  `(R-Inputs)` for the chunk
+  vector `map_get_hex` / `map_set_hex` walk.  `slope_path_with_undo`.
+- **L8 — a small append run through the caller's window.**  `(R-PushFill)`'s run clause across a
+  call.  `encode_bytes`, cbor `encode`.
+
+Order by reach and price: F1 + F2 (priced, one row under 3× alone, the machinery built), L3
+(two rows), L1 and L2 (three rows each, both general), then L5, L4, L7, L8; L6 first needs its
+profile.
+
 ### The laptop rows at 4.5× and over, toward 3× (measured at `2cf6c15ca`)
 
 `bench/stats.py`, calibrated: `check_request` 5.05×, `flow_layout_full` 4.83×, cbor `encode`
