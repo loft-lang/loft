@@ -58,6 +58,15 @@ them for the argument — a variable, or for a header any pure path such as `br.
 the twin; a callee answering a scalar record through its return buffer qualifies too — and
 is the bisect step for a wrong value read through a record or vector parameter inside a
 callee a hoisting loop calls.
+**`LOFT_NO_NARROW_ELEMENT_WRITE=1`** (`@FR-R-Inputs`) makes a write into a NARROW-integer
+vector element (`i32`, `u16`, `u8`) untyped for the scalar hoist again, as a base-type element's
+never was: with it on, a loop whose callee writes such elements still holds the record fields
+nobody writes and calls the callee's twin (`hex_edge` `edges_cut` 4.47× → 1.70×, `hex_place`
+`combine_cut` 4.13× → 2.16×) — the bisect step for a stale field read in such a loop.
+**`LOFT_NO_TWIN_INLINE=1`** makes a twin that reaches no loop (but a literal `0..k`, k ≤ 16)
+take the plain `#[inline]` hint instead of `#[inline(always)]`: the A/B for a row that moved
+with it (suite + ten `hex_*` benches, 102 routines, geomean −1.1 %, `mesh_emit` −18 %,
+`draft_fit_p` −15 %; `char_roundtrip` +7 % is layout).
 **`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path

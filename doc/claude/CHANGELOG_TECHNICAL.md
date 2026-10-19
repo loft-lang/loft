@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `--native`: a narrow vector element write keeps a loop's record hoists; small twins inline (2026-10-19)
+
+- **`(R-Inputs)`'s write set** — a write into a narrow-integer vector element (`i32`, `u8`, …)
+  reaches no record field, as a base-type element's write never did; it was untyped, which
+  declined every scalar hoist in a loop whose callee wrote one.  The `hex_*` libraries all write
+  `hex_field`'s narrow edge vectors: `edges_cut` 4.47× → 1.70×, `combine_cut` 4.13× → 2.16×,
+  `stencil_rotate` 3.52× → 2.64×.  Switch `LOFT_NO_NARROW_ELEMENT_WRITE`.
+- **A twin that reaches no loop is `#[inline(always)]`** (a literal `0..k`, k ≤ 16, allowed):
+  with more twins called, LLVM stopped inlining `eg_index__inv` into `wall_chain_walk`, whose
+  folding the plain callee had got.  Restricted to loop-free twins because a twin reaching a
+  vector walk lost that walk's vectorisation when forced (`min_max_of` 0.72× → 1.86×).  Suite
+  + ten `hex_*` benches: geomean −1.1 %.  Switch `LOFT_NO_TWIN_INLINE`.
+- Guard: `tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft`.
+
 ### `--native`: a hash keyed by one text is looked up and inserted into with one probe (2026-10-19)
 
 - **`(R-TypedKeyed)`'s text clause** — a lookup in a `hash<T[k]>` whose one key is a `text`

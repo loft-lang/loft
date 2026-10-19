@@ -1482,7 +1482,12 @@ Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
                  the record — the caller's holders handed in (R-State: a path held
                  by a push header hands in that header, current at the call).  A
                  call missing any input keeps the plain form; the twin exists
-                 beside the original, never instead of it.
+                 beside the original, never instead of it.  A write into a SCALAR
+                 vector element — a base value or a narrow integer — reaches no
+                 record field, so it stales no held scalar.  A twin that runs no
+                 loop, and calls nothing that runs one but a `for i in 0..k` with a
+                 literal k of at most 16, is emitted `#[inline(always)]`: folding
+                 into its hoisting caller is its worth.
 ```
 
 **In words.** @PLN157 § V-p.  The pixel methods read `self.width` / `self.height`

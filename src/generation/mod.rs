@@ -2559,6 +2559,14 @@ impl<'a> Output<'a> {
     /// `newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across
     /// its divide chain, +16 %), and the loop-free helpers are where the gain is.  Empty
     /// (not a blank line) under `LOFT_NO_INLINE_HINT`.
+    ///
+    /// An `__inv` twin (`@FR-R-Inputs`) that runs no loop and calls nothing that does is
+    /// `#[inline(always)]`: its only callers are loops that hoisted its inputs, and folding it
+    /// into each is the twin's whole worth — left a call, its index arithmetic is redone per
+    /// element where the plain callee, inlined, folded against the caller's constants
+    /// (`hex_shape`'s `wall_chain_walk`: `eg_index__inv` behind a call cost +14 % over the
+    /// plain callee inlined).  A twin that reaches a loop keeps the hint: forced into its
+    /// caller's loop it took that loop's vectorisation (`min_max_of` 0.72× → 1.86×).
     #[must_use]
     fn fn_inline_attr(&self, def: &crate::data::Definition) -> &'static str {
         if self.keep_fn_names {
@@ -2568,7 +2576,14 @@ impl<'a> Output<'a> {
                 .code()
                 .any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Parallel(_)))
         {
-            "#[inline]\n"
+            if self.twin.is_some()
+                && twin_inline_always()
+                && calls_no_loop(self.data, def, &mut HashSet::new())
+            {
+                "#[inline(always)]\n"
+            } else {
+                "#[inline]\n"
+            }
         } else {
             ""
         }
@@ -13403,4 +13418,52 @@ pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
 fn hash_reserve_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| !std::env::var("LOFT_NO_HASH_RESERVE").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_NO_TWIN_INLINE=1` — a loop-free `__inv` twin takes the plain `#[inline]` hint again
+/// instead of `#[inline(always)]`: the bisect step for a slowdown in a loop that calls one.
+fn twin_inline_always() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_TWIN_INLINE").is_ok_and(|v| v != "0"))
+}
+
+/// Does `def` run no loop — none but a SMALL CONSTANT one, `for i in 0..k` with a literal
+/// `k` of at most 16, which LLVM unrolls and folds once inlined — nor call, through any chain
+/// of loft-defined calls, a function that does?  `seen` breaks a recursion, which answers
+/// "no loop" for the cycle's repeat.
+fn calls_no_loop(data: &Data, def: &crate::data::Definition, seen: &mut HashSet<u32>) -> bool {
+    let mut ok = true;
+    def.code().any_node(&mut |n| match n {
+        Value::Loop(lp) if small_constant_loop(data, lp) => false,
+        Value::Loop(_) | Value::Parallel(_) => {
+            ok = false;
+            true
+        }
+        Value::Call(d, _) if (*d as usize) < data.definitions.len() => {
+            let callee = data.def(*d);
+            if callee.is_loft_defined() && seen.insert(*d) && !calls_no_loop(data, callee, seen) {
+                ok = false;
+                return true;
+            }
+            false
+        }
+        _ => false,
+    });
+    ok
+}
+
+/// Is this a counted loop whose exit test is `k <= index` for a literal `k` of at most 16 —
+/// the head `for i in 0..k` lowers to?
+fn small_constant_loop(data: &Data, lp: &crate::data::Block) -> bool {
+    let Some(head) = lp.operators.first() else {
+        return false;
+    };
+    let le = data.def_nr("OpLeInt");
+    head.any_node(&mut |n| {
+        matches!(n, Value::If(c, t, _)
+            if matches!(t.unspan(), Value::Break(_))
+                && matches!(c.unspan(), Value::Call(d, a)
+                    if *d == le
+                        && matches!(a.first().map(Value::unspan), Some(Value::Int(k)) if (0..=16).contains(k))))
+    })
 }

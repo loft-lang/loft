@@ -148,6 +148,9 @@ the compiler rule that would make the natural spelling do the same.
   `(R-KeyedEntry)`'s text clauses: a lookup in a hash keyed by one `text` hashes the text it
   is handed (`OpGetHashText`, −4 % of the row), and an insert asks the key first and writes
   the entry it answers (`keyed_entry_text`, −21 %).  `word_count` 3.09× → 2.68× with it.
+- **`hex_edge/edges_cut` 4.42× → 1.76×, BUILT** — a narrow-integer vector element write no
+  longer declines the loop's scalar hoists, so `hexset_get` is called as its `__inv` twin with
+  the window held; `combine_cut` 4.13× → ~2.2× with it.  Loop-free twins are forced inline.
 
 
 Eleven rows read over 5× in `results/laptop.tsv` (the full run at `cbe54eaa2`, every hash
