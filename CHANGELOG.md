@@ -211,6 +211,11 @@ git do.
 
 ### Bug fixes
 
+**A call inside a template hole builds its parameter's type.**  `"{take("x{n}")}"`, where `take`
+expects a target type such as a `Query`, was refused "expected Query, got text" although
+`a = take("x{n}")` builds one.  It now builds the `Query` there too.  A template passed as any
+argument or returned from a function builds the target, as LOFT_LITERALS.md says.
+
 **A lambda can be a generator.**  `f = fn(x: integer) -> iterator<integer> { yield x; yield x + 1; }`
 and `for v in f(10)` now yield `10 11` on both backends, as a named generator does — also through
 a `fn(…)` parameter or a struct field, with captures, and after the function that made the lambda
