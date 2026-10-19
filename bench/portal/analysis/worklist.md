@@ -76,7 +76,7 @@ format decision (§ 6).
 | `flow_layout_full` | 7.00 | S1b and S1c are built (S1c after this host's run: −21 % on x86-64); a fused `character` element read | re-measure, then re-price |
 | `invert` | 5.82 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
 | `sphere` | 5.72 | none named (vector growth, the two `add_triangle` writes); 5.97 → 5.72 with the deep window | unpriced |
-| `decode` | 5.61 | C1 D4′ RE-PRICED: the resolve clause already serves its byte reads, and a base held from entry (the reads all precede the first growth) is −5.5 % on `read_value__d` and `__rg`, the same with all 12 sites held; the −21 % priced before predates the resolve clause.  And `(R-Base)` never proves a parameter apart from the return buffer, so the held form needs a prefix clause (the base valid up to the first statement that may grow).  Then C2 | ≈ 5.3×, then C2 |
+| `decode` | 2.62 | DONE: `(R-FieldAppend)`'s bare clause, then `(R-PushRec)`'s apart-call clause (the decoder loops' push header held across the child's call); the held window priced at a further −8 % | off the cut |
 
 **D. A cause of their own.**
 
