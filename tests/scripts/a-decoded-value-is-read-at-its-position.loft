@@ -27,8 +27,9 @@
 // F7 F1 without its last byte → "bad", status "false/0".
 // F8 the text "x" and one byte more → "bad", status "false/3".
 // F9 { } → "-", "true/2".  F10 { 1: "num-key", "op": "z" } → op "z" (a number key skipped).
-// F11 { "a": "x", "b": "y" } → two "x+y"; each [b, a, c] "yx-" (a read in a loop: declines);
-//    keep → "apply" (a decoded value returned: declines).
+// F11 { "a": "x", "b": "y" } → two "x+y" (one value handed on twice: declines, (6)); each
+//    b, a, c → "yx-" (a read in a loop: declines); keep → "apply" (a decoded value returned:
+//    declines).
 //
 // @falsify-tier: native-release
 // @falsified-by: tests/falsified/a-decoded-value-is-read-at-its-position.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)

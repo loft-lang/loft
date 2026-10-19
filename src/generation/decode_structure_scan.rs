@@ -92,6 +92,9 @@ struct CScan<'a> {
     why: Option<String>,
     /// The walk being scanned answers through its closure.
     in_walk: usize,
+    /// How often each position — a local, or a field of one — is handed on: walked, copied,
+    /// handed to a consumer or returned.
+    uses: HashMap<(u16, i64), usize>,
 }
 
 impl<'a> CScan<'a> {
@@ -115,6 +118,29 @@ impl<'a> CScan<'a> {
         {
             let n = self.name(v);
             self.fail(|| format!("`{n}` is read inside a loop it was not made in"));
+        }
+    }
+
+    /// (6) READ ONCE: the position `expr` names is handed on — walked, copied, handed to a
+    /// consumer or returned — here; a second hand-off is a second walk of the same encoding.
+    /// A tag test reads only the head, and a field read inside the arm that proved the variant
+    /// is part of that match: neither counts.
+    fn hand_on(&mut self, expr: &Value) {
+        let key = match expr.unspan() {
+            Value::Var(var) => (*var, -1),
+            Value::Call(op, args) if op_name(self.data, *op) == "OpGetField" && args.len() == 3 => {
+                let (Value::Var(var), Some(off)) = (args[0].unspan(), int_of(&args[1])) else {
+                    return;
+                };
+                (*var, off)
+            }
+            _ => return,
+        };
+        let count = self.uses.entry(key).or_default();
+        *count += 1;
+        if *count > 1 {
+            let n = self.name(key.0);
+            self.fail(|| format!("`{n}` is handed on twice: read once (6) does not hold"));
         }
     }
 
@@ -363,6 +389,7 @@ impl<'a> CScan<'a> {
                 self.expr(expr);
                 continue;
             };
+            self.hand_on(expr);
             let got = match expr.unspan() {
                 Value::Var(var) => {
                     let rep = self.rep(*var);
@@ -454,7 +481,10 @@ impl<'a> CScan<'a> {
                     None
                 }
             }
-            _ => self.t_expr(rhs),
+            _ => {
+                self.hand_on(rhs);
+                self.t_expr(rhs)
+            }
         };
         if got != Some(want) {
             let n = self.name(expr);
@@ -513,6 +543,7 @@ impl<'a> CScan<'a> {
             self.expr(r);
             return;
         };
+        self.hand_on(r);
         let got = match r.unspan() {
             Value::Var(expr) if self.rep(*expr).is_some() => {
                 self.read(*expr);
@@ -523,9 +554,6 @@ impl<'a> CScan<'a> {
         };
         if got != Some(want) {
             self.fail(|| "a return of something other than a position".into());
-        }
-        if self.in_walk > 0 && self.depth > 0 {
-            // A return from inside a loop of the walk body leaves the closure: fine.
         }
     }
 
@@ -603,7 +631,12 @@ impl<'a> CScan<'a> {
             }
         }
         match src {
-            Some(s) if self.t_expr(s) == Some(Rep::T) => {
+            Some(s)
+                if {
+                    self.hand_on(s);
+                    self.t_expr(s) == Some(Rep::T)
+                } =>
+            {
                 self.c.skip.remove(&addr(v));
             }
             _ => self.fail(|| "a view return of something other than a position".into()),
@@ -707,6 +740,7 @@ impl<'a> CScan<'a> {
         }
         // The owner: `src` is a vector field read inside the arm that proved it.
         self.depth_of.insert(vv, self.depth);
+        self.hand_on(src);
         let owner = match src.unspan() {
             Value::Var(local) if self.rep(*local) == Some(Rep::V(vtp)) => {
                 self.read(*local);
@@ -1109,6 +1143,7 @@ fn consumer(
         callees: Vec::new(),
         why: None,
         in_walk: 0,
+        uses: HashMap::default(),
     };
     for args in vars.arguments() {
         s.depth_of.insert(args, 0);
