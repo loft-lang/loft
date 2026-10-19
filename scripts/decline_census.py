@@ -84,12 +84,12 @@ def census(loft, prog):
         if proc.returncode != 0 or not adm.exists():
             return name, None, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
         admitted = {}
-        for line in adm.read_text().splitlines():
+        for line in adm.read_text(encoding="utf-8").splitlines():
             rule, _, n = line.partition("\t")
             admitted[rule] = int(n)
         declined = defaultdict(int)
         if dec.exists():
-            for line in dec.read_text().splitlines():
+            for line in dec.read_text(encoding="utf-8").splitlines():
                 rule, why, n = line.split("\t")
                 if why == "admitted":
                     # The rule names its sites: one per loop or view, comparable with the
@@ -101,7 +101,7 @@ def census(loft, prog):
 
 
 def family(rule):
-    return rule.split("/")[0]
+    return rule.partition("/")[0]
 
 
 def report(results, reasons, per_program):
@@ -164,7 +164,7 @@ def record(results, admitted, declined, by_rule_reason):
         for (r, why), n in sorted(by_rule_reason.items()):
             if r == rule:
                 lines.append(f"{rule}\t{why}\t{n}")
-    RECORD.write_text("\n".join(lines) + "\n")
+    RECORD.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> int:
