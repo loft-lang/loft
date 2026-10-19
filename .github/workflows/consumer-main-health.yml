@@ -262,8 +262,14 @@ jobs:
                     # A run that ends without a runner verdict — the LOFT_TIMEOUT hard-kill, a
                     # crash, a missing binary — has no `FAIL` line to show, and the step used to
                     # fail with an empty group.  The log's tail is the only evidence then.
+                    # The runner prints a file's diagnostics INDENTED, each on its own line,
+                    # just BEFORE that file's `  FAIL  tests/<file>  (parse errors)` line — so a
+                    # window anchored on `^error` showed every FAIL and not one cause, and
+                    # a consumer red for weeks read "(parse errors)" with nothing to act on.
+                    # The lines before each FAIL are the diagnostics; the verdict line closes.
                     if grep -qE '^ *FAIL +tests/|test result' "/tmp/$name$mode.log"; then
-                      grep -E '^ *FAIL +tests/|^error|test result' "/tmp/$name$mode.log" | head -40
+                      grep -E -B6 '^ *FAIL +tests/' "/tmp/$name$mode.log" | grep -vE '^--$' | head -60
+                      grep -E 'test result' "/tmp/$name$mode.log" | head -2
                     else
                       echo "no test verdict in the log — its last lines:"
                       tail -25 "/tmp/$name$mode.log"
