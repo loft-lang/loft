@@ -9039,9 +9039,22 @@ impl Data {
             DefType::Generic => generic_members,
             _ => false,
         };
+        // `@FR-Disp-Key` — "a consumer's definition of ANOTHER spelling joins" a library's set.
+        // A `use`d library's dispatcher is bound under this source's own name table (the
+        // import binds it bare); the stdlib's is reached only through the stdlib fallback and
+        // keeps the refusal of @C95.  Without this a lone consumer member registered beside the
+        // set as a plain `n_<name>` that selection never ranked — `hit(b)` with `b: u8`
+        // answered the library's `hit(integer)` in silence — and a third definition re-read
+        // every body against that `n_` (loft#2071).
+        let library_set = o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self.def(o_nr).source != STD_SOURCE
+            && self.def(o_nr).source != self.source
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str());
         if d_nr != u32::MAX
             && incumbent_joins(self, d_nr)
-            && self.def(d_nr).source == self.source
+            && (self.def(d_nr).source == self.source
+                || (library_set && self.def(d_nr).source == self.def(o_nr).source))
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
             && self.def_full_spelling(d_nr).as_ref() != Some(&full)
         {
@@ -9089,7 +9102,7 @@ impl Data {
             && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
-            && self.def(o_nr).source == self.source
+            && (self.def(o_nr).source == self.source || library_set)
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
         {
             // A FREE definition of a name that is already an overload set of this source — a
