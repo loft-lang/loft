@@ -1,0 +1,13 @@
+diff --git a/src/generation/ops/vector_ops.rs b/src/generation/ops/vector_ops.rs
+index 9566b1ab6..b0a12277a 100644
+--- a/src/generation/ops/vector_ops.rs
++++ b/src/generation/ops/vector_ops.rs
+@@ -877,7 +877,7 @@ fn bare_append(
+     if u16::try_from(*fld).ok()? != u16::MAX {
+         return None;
+     }
+-    let crate::database::Parts::Vector(elem) =
++    let (crate::database::Parts::Vector(elem) | crate::database::Parts::Sorted(elem, _)) =
+         out.stores.types.get(usize::try_from(*tp).ok()?)?.parts
+     else {
+         return None;

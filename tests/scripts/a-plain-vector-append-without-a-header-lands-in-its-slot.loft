@@ -23,8 +23,25 @@
 // b5 (a cleared vector of trees, its stale slots past the length, then a whole tree copied in
 //    twice: the zero fill is what makes the slot's old tag and handle nothing to release)
 //    2 elements of 3 leaves each, 1 + 2 + 3 twice = 12; the source still 6: 2126.
+// b6 (a cleared vector of records whose one field is a vector — zero default — refilled in a
+//    loop whose call writes the store: each literal appends INTO the element's own field, so
+//    it reads the handle the prefill left there) [0, 10], [1, 11], [2, 12]: 3 elements, 6
+//    values, sum 36: 30636.
+// b7 (a SORTED collection appended in the same loop shape: not a plain vector, so the clause
+//    declines it and the runtime places each record by key) keys 50, 43, 36, 29, 22 for
+//    values 0..4, walked by ascending key: values 4 3 2 1 0, 5 elements: 5043210.
 // The interpreter is the oracle.  `LOFT_NO_BARE_APPEND=1`, `LOFT_POISON_CLAIM=1` and
-// `LOFT_STRICT_STORES=1` must answer identically.
+// `LOFT_STRICT_STORES=1` must answer identically.  The prefill is unobservable in every cell:
+// a literal writes each field itself and an appended copy is fresh, so the clause's edge
+// that a cell can see is its ADMISSION — a plain vector, never a keyed collection.
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-plain-vector-append-without-a-header-lands-in-its-slot.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch admits a `sorted` collection as a
+//   plain vector, so each record lands at the end instead of at its key.
+//   WITNESS: *b7 5001234* (insertion order) where 5043210 (key order) is due.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
 
 struct Rw { n: integer, t: text, f: boolean }
 
@@ -153,6 +170,38 @@ fn b5() -> integer {
   len(v) * 1000 + s * 10 + total(t)
 }
 
+struct Bx { xs: vector<integer> }
+
+fn b6() -> integer {
+  v: vector<Bx> = [Bx { xs: [1, 2, 3] }, Bx { xs: [4, 5, 6] }, Bx { xs: [7, 8, 9] }];
+  v.clear();
+  for i in 0..3 {
+    k = total(build(0, i));
+    v += [Bx { xs: [k, k + 10] }];
+  }
+  s = 0;
+  n = 0;
+  for b in v {
+    for x in b.xs {
+      s += x;
+      n += 1;
+    }
+  }
+  len(v) * 10000 + n * 100 + s
+}
+
+struct Kv { k: integer, v: integer }
+
+fn mkkv(i: integer) -> Kv { Kv { k: 50 - i * 7, v: i } }
+
+fn b7() -> integer {
+  s: sorted<Kv[k]> = [];
+  for i in 0..5 { s += [mkkv(i)]; }
+  w = 0;
+  for e in s { w = w * 10 + e.v; }
+  len(s) * 1000000 + w
+}
+
 fn main() {
   for _r in 0..2 {
     assert(b1() == 3122, "b1 {b1()}");
@@ -160,6 +209,8 @@ fn main() {
     assert(b3() == 13066613, "b3 {b3()}");
     assert(b4() == 30435029, "b4 {b4()}");
     assert(b5() == 2126, "b5 {b5()}");
+    assert(b6() == 30636, "b6 {b6()}");
+    assert(b7() == 5043210, "b7 {b7()}");
   }
   println("done");
 }

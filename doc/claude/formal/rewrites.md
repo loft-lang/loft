@@ -1733,7 +1733,22 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  parent are not plain vector fields and keep the templates.
                  Native; the interpreter's own plain-field path is the oracle.
                  Switch `LOFT_NO_FIELD_APPEND` (and the runtime's own
-                 `LOFT_NO_PLAIN_FIELD_APPEND`).
+                 `LOFT_NO_PLAIN_FIELD_APPEND`).  THE BARE CLAUSE: a mint group over
+                 a BARE vector (`v += [x]`, `OpNewRecord(v, tp, MAX)`) that no push
+                 header holds — in a loop whose header hoist declines, beside a
+                 destination call (R-Destination), outside a group (R-GroupPush) —
+                 whose `tp` is a plain vector is emitted as the vector's own
+                 append: OpNewRecord is `vector_record_append` with the element's
+                 size, OpFinishRecord `vector_finish`.  The admission is the test
+                 `record_new` and `record_finish` make first on every call, so the
+                 slot, the growth step, an absent vector's no-op and a locked
+                 store's refusal are the runtime's.  The prefill is the template's
+                 (none where (R-CompleteWrite) covers the group): one zero fill of
+                 the slot where the element's default is all zero bytes — the
+                 store's own `zero_default`, under which an enum's default is its
+                 zero tag and the bytes past it are read by no variant — else the
+                 element's default walk.  A keyed collection keeps the templates.
+                 Switch `LOFT_NO_BARE_APPEND`.
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
@@ -1762,6 +1777,19 @@ run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
 `tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
 `Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
+*The bare clause:* cbor's `read_value` appends each decoded child to `items` or `entries` in
+a loop whose call claims in the vector's store (the child's pooled buffer, its own vectors
+and texts), so no header holds the vector and every element paid `record_new`'s dispatch,
+the default walk and `record_finish`'s — about 380 instructions where the append itself is
+a slot and a length bump: `cbor/decode` 8.03 → 6.43 ms (−20 %), hashes equal.  The prefill
+is unobservable in every shape the clause reaches today (a literal writes each field, an
+appended copy is fresh, a destination twin writes the whole value — a skipped zero fill
+stays green even under `LOFT_POISON_CLAIM=1`), so the falsified edge is the admission: a
+`sorted` collection admitted as a plain vector lands each record at the end, `b7 5001234`
+where 5043210 is due.  Cells
+`tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft`, pins
+`tests/field_append.rs`.  Sites: the `bare_append` arms of `NewRecordEmitter` and
+`FinishRecordEmitter`, `Stores::vector_record_append`, `Stores::zero_default`.
 
 ### A mint group outside any held header binds its own
 

@@ -10,6 +10,34 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `--native`: an unhoisted plain-vector append is the runtime's own (2026-10-19)
+
+- **`(R-FieldAppend)`'s bare clause** — `v += [x]` on a plain vector that no push header holds
+  (a loop whose header hoist declines, a destination twin's element) is emitted as
+  `Stores::vector_record_append` (the slot `vector_append` claims, prefilled with one zero fill
+  where `Stores::zero_default` says the element's default is zero bytes) and `vector_finish`,
+  where `record_new` and `record_finish` dispatched per element.  `cbor/decode` 8.03 → 6.43 ms
+  (−20 %), hashes equal; `encode` and `encode_bytes` level.  Switch `LOFT_NO_BARE_APPEND`.
+  Guard: `tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft`.
+- `LOFT_TRACE_PUSH_FILL=1` names the op that keeps a loop from being a record-append loop.
+
+### `--native`: a record's address crosses a call into its twin (2026-10-19)
+
+- **`(R-RecPtr)`'s twin clause** — a callee that reads or writes a record parameter's fields at
+  least twice takes that record's address from its caller (`__ip_k`, `__il_k` beside the
+  `__inv` twin's other inputs): the element of a held iteration, in a loop's plain-chains copy
+  as in its checked copy (`LOFT_NO_PLAIN_CHAIN_PTR`), or the caller's own parameter address
+  (`LOFT_NO_PARAM_TWIN_PTR`), and null for anything else, which the twin resolves itself.
+  fixstep `timer_spend` 4.10× → 1.83×, `clock_pump` 2.24× → 1.83×, `clock_advance` 1.65× →
+  1.50×; the full A/B's native geomean −0.36 %.  Switch `LOFT_NO_TWIN_RECORD`.  Guard:
+  `tests/scripts/a-twin-record-address-is-its-arguments-own.loft`.
+
+### Bench: noisy rows measured with more processes (2026-10-19)
+
+- `bench/stats.py --noisy-samples N` (default 21): a row whose spread exceeds `--noisy` after
+  the ordinary samples runs more rounds, each a fresh process — the variance is per-process
+  page placement, which only more processes average out.
+
 ### `--native`: a hash keyed by two to four integer parts takes the typed lookup and the one-probe insert (2026-10-19)
 
 - **`(R-TypedKeyed)`'s and `(R-KeyedEntry)`'s compound clauses** — a lookup by two to four
