@@ -400,6 +400,13 @@ def main():
           f"({sum(1 for i in issues if i['state'] == 'OPEN')} open overall)")
     print(f"  bucketed by issue number into {a.bands} bands of "
           f"~{bands[0][1] - bands[0][0]}")
+    # What the classifier READ: a `class:` label where one is set, the title regex for
+    # the rest.  Said here because the two differ in what they measure — the regexes
+    # over-count — and a reading over mostly-unlabelled issues is the weaker claim.
+    labelled = sum(1 for i in bugs if any(l in CLASS_LABELS for l in label_names(i)))
+    print(f"  classified by `class:` label: {labelled}; by title regex: {len(bugs) - labelled}"
+          + ("   (no issue carries a class label yet — every row below is the title's reading)"
+             if labelled == 0 else ""))
 
     rows, counts, tot, hits = class_trends(bugs, bands)
 
