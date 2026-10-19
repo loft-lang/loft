@@ -75,3 +75,4 @@ tools/indexer/fix_broken_links.py	--help
 tools/indexer/migrate.py	--help
 tools/indexer/rewrite_links.py	--help
 scripts/stability_read.py	--help
+scripts/decline_census.py	--help

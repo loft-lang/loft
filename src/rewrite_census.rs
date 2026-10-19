@@ -20,8 +20,16 @@
 //! off the functions it runs (`scripts/interp_gap.py`).  The phase is `native` for a body the
 //! generator emits (the interpreter never sees that form), `ir` for the scope pass's per-body
 //! rewrites (both backends run them), and `parse` for everything decided before either.
+//!
+//! `declined(rule, site, why)` is the complement — called where a rewrite REFUSED a site it
+//! was shaped for, with the reason the site's trace names — and `LOFT_DECLINE_CENSUS=<file>`
+//! writes `rule<TAB>why<TAB>count` there.  A site is counted once per rule, under the first
+//! reason it gave, however many probes ask about it, so the count is comparable with the
+//! admissions: together they say what share of the shapes a rule is written for it reaches,
+//! and which conditions hold the rest back (`scripts/decline_census.py`, `make
+//! decline-census`).  Not every rule reports its declines yet; the report says which do.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -33,6 +41,13 @@ type ByFn = BTreeMap<(&'static str, String, &'static str), u64>;
 static BY_FN: Mutex<ByFn> = Mutex::new(BTreeMap::new());
 /// The body an admission is being decided for: `(phase, function)`.
 static WHERE: Mutex<Option<(&'static str, String)>> = Mutex::new(None);
+/// `(rule, why) → sites declined for that reason`, kept only when `LOFT_DECLINE_CENSUS` is set.
+static DECLINES: Mutex<BTreeMap<(&'static str, String), u64>> = Mutex::new(BTreeMap::new());
+/// The `(rule, site)` pairs already counted: a site asked about twice is one decline.
+static DECLINED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::new(None);
+/// The `(rule, site)` pairs admitted, for the rules that name their sites: `fired` counts
+/// every emitted copy of a loop (a guarded loop is emitted twice), these count the loop.
+static ADMITTED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::new(None);
 
 /// While one lives, admissions are credited to `function` in `phase` (`"ir"`, `"native"`);
 /// outside every such scope they are `parse`-phase with no function.
@@ -44,7 +59,7 @@ impl InBody {
     #[must_use]
     pub fn enter(phase: &'static str, function: &str) -> Self {
         let mut prev = None;
-        if by_fn_target().is_some()
+        if (by_fn_target().is_some() || decline_target().is_some())
             && let Ok(mut w) = WHERE.lock()
         {
             prev = w.replace((phase, function.to_owned()));
@@ -55,7 +70,7 @@ impl InBody {
 
 impl Drop for InBody {
     fn drop(&mut self) {
-        if by_fn_target().is_some()
+        if (by_fn_target().is_some() || decline_target().is_some())
             && let Ok(mut w) = WHERE.lock()
         {
             *w = self.prev.take();
@@ -109,6 +124,57 @@ fn target() -> Option<&'static str> {
     .as_deref()
 }
 
+fn decline_target() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        std::env::var("LOFT_DECLINE_CENSUS")
+            .ok()
+            .filter(|p| !p.is_empty())
+    })
+    .as_deref()
+}
+
+/// Rewrite `rule` refused `site` — a loop, a local, a function the rule is shaped for —
+/// because `why`.  One count per `(rule, site)`, under the first reason given; the site is
+/// read inside the body being generated (`InBody`), so a loop's scope number, which every
+/// function counts from one, names one loop.  A site one probe refuses and another admits
+/// is in both counts, so a rule's reach reads as a floor.
+pub fn declined(rule: &'static str, site: &str, why: &str) {
+    if PAUSED.load(Ordering::Relaxed) > 0 || decline_target().is_none() {
+        return;
+    }
+    let site = match WHERE.lock().ok().and_then(|w| w.clone()) {
+        Some((_, function)) => format!("{function}:{site}"),
+        None => site.to_owned(),
+    };
+    if let Ok(mut seen) = DECLINED_SITES.lock() {
+        let fresh = seen.get_or_insert_with(HashSet::new).insert((rule, site));
+        if !fresh {
+            return;
+        }
+    }
+    if let Ok(mut d) = DECLINES.lock() {
+        *d.entry((rule, why.to_owned())).or_insert(0) += 1;
+    }
+}
+
+/// Rewrite `rule` admitted `site` — the same site key a `declined` of the rule would carry,
+/// counted once however many copies of it are emitted, so the decline census can set the
+/// two against each other.  `fired` is still called beside it: that count is the rewrite
+/// census's and keeps its meaning.
+pub fn admitted(rule: &'static str, site: &str) {
+    if PAUSED.load(Ordering::Relaxed) > 0 || decline_target().is_none() {
+        return;
+    }
+    let site = match WHERE.lock().ok().and_then(|w| w.clone()) {
+        Some((_, function)) => format!("{function}:{site}"),
+        None => site.to_owned(),
+    };
+    if let Ok(mut seen) = ADMITTED_SITES.lock() {
+        seen.get_or_insert_with(HashSet::new).insert((rule, site));
+    }
+}
+
 /// Rewrite `rule` was admitted at `n` more sites.
 pub fn fired(rule: &'static str, n: usize) {
     if n == 0 || PAUSED.load(Ordering::Relaxed) > 0 {
@@ -135,6 +201,7 @@ pub fn fired(rule: &'static str, n: usize) {
 /// `LOFT_REWRITE_CENSUS_FN`; nothing for a switch that is unset.
 pub fn write() {
     write_by_fn();
+    write_declines();
     let Some(path) = target() else { return };
     let Ok(c) = COUNTS.lock() else { return };
     let mut out = String::new();
@@ -144,6 +211,29 @@ pub fn write() {
     // The error names the file.
     if let Err(e) = crate::file_access::write(path, out) {
         eprintln!("loft: cannot write the rewrite census: {e}");
+    }
+}
+
+fn write_declines() {
+    let Some(path) = decline_target() else { return };
+    let Ok(d) = DECLINES.lock() else { return };
+    let mut out = String::new();
+    for ((rule, why), n) in d.iter() {
+        let _ = writeln!(out, "{rule}\t{why}\t{n}");
+    }
+    // The admitted sites of the rules that name them, as `rule<TAB>admitted<TAB>count`.
+    if let Ok(a) = ADMITTED_SITES.lock() {
+        let mut per_rule: BTreeMap<&'static str, u64> = BTreeMap::new();
+        for (rule, _) in a.iter().flatten() {
+            *per_rule.entry(rule).or_insert(0) += 1;
+        }
+        for (rule, n) in per_rule {
+            let _ = writeln!(out, "{rule}\tadmitted\t{n}");
+        }
+    }
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        eprintln!("loft: cannot write the decline census: {e}");
     }
 }
 

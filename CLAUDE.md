@@ -128,6 +128,13 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   baseline — a DROP (a fix tightened a condition) fails,
                                          #   named by rule and bench; seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
+make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
+                                         #   admitted against the sites it REFUSED, the refusals
+                                         #   ranked by reason — a routine over its bar is a shape a
+                                         #   rewrite declined, and the top reason of a rule that
+                                         #   matters is the next arc, by yield.  Rules without
+                                         #   decline reporting read `not reported`, never covered.
+                                         #   A REPORT (`ARGS="--record"` keeps the snapshot)
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism

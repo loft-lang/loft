@@ -47,6 +47,7 @@ Ask the tool that measures:
 | the classic benchmark suite, every lane | `bench/run_bench.sh` |
 | which fn, line or path burns the time | `make profile` — § Profiling a run |
 | the interpreter against native, every routine with its censuses | `make interp-gap` → `target/interp-gap/report.md` |
+| how far each REWRITE reaches — the sites it admitted against the sites it refused, the refusals by reason | `make decline-census` (`scripts/decline_census.py`, a report; `ARGS="--record"` keeps it in `bench/portal/decline_census.tsv`).  A routine over its bar is a shape a rewrite declined; the reason at the top of a rule that matters is the next arc, picked by yield |
 | did this change move the WORST routines — interpreter/native and native/Rust, re-timed in seconds to minutes | `make worst` (`scripts/worst.py`): the working set is taken from the last complete `make interp-gap` and `make perf-portal`, so a full run is what redefines it |
 
 The rendered benchmark page for users is [doc/00-performance.html](../00-performance.html).

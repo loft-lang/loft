@@ -116,6 +116,26 @@ All notable changes to the loft language and interpreter.
   tree claim by claim and claiming again from a reused store costs more than a fresh store's
   bump claims and a whole-store free).  Guard:
   `tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft`.
+### The decline census — how far each rewrite reaches, and what holds the rest back
+
+- `make decline-census` (`scripts/decline_census.py`) emits the bench programs with
+  `LOFT_DECLINE_CENSUS` set and reports, per rewrite rule, the sites it admitted against the
+  sites it REFUSED, the refusals ranked by reason with names masked so one condition is one
+  row.  `rewrite_census::declined(rule, site, why)` is the compiler side, the complement of
+  `fired`: one count per `(rule, site)` under the first reason, read inside the body being
+  generated so a loop's per-function scope number names one loop; `admitted(rule, site)`
+  counts a site once where `fired` counts every emitted copy (a guarded loop is emitted
+  twice), so the two are comparable.  Wired at the push window, the counted push loop, the
+  held record address, the loop header hoist and the value-record scanner; every other rule
+  reads `not reported`, never covered, and a rule reporting at some of its refusal sites reads
+  `(at most)`.  `--record` keeps the run in `bench/portal/decline_census.tsv`.  A report,
+  never a gate.  First read, 19 bench programs: the push window reaches 30 of 36 loops, the
+  held record address 77 of 576 views — 431 of its refusals are "the remainder may grow a
+  store" — and a refused loop is never the outer loop around a counted one.
+- `tests/decline_census.rs` pins the counting: one refused loop is one decline under the
+  reason its trace names, an outer loop with no push of its own is no decline, and a loop the
+  counted form refuses still takes the deep window and counts as admitted.
+
 ### The stability meters as instruments: the weekly read, coverage by family and inputs, the portal across hosts, gates that file, a mechanism-class label (2026-10-19)
 
 - `make stability-read` (`scripts/stability_read.py`) computes every meter of the owner's

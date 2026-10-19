@@ -141,6 +141,7 @@ make perf-portal-render                                           # render from 
 | `portal/classes.tsv` | the mechanism classes: what bounds a routine of each |
 | `portal/routines.tsv` | every measured routine -> its class and its POPULATION (`engine`, `stdlib`, `library:<name>`) |
 | `portal/census.tsv` | library and consumer routines worth a row and not measured yet, each with its workload and its twin |
+| `portal/decline_census.tsv` | per rewrite rule, the sites admitted and the sites refused by reason over the bench programs — `make decline-census ARGS="--record"` (a report, never a baseline) |
 | `portal/gaps.tsv` | features the consumer programs lean on that no measured row exercises |
 | `portal/libs.tsv` + `portal/checkout_libs.sh` | the library repositories the pass measures from, and the script that checks them out |
 | `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings.  `<host>` is the node name, which follows the network a laptop is on — `LOFT_PERF_HOST=<name>` pins it so one machine keeps one history |

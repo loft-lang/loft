@@ -342,6 +342,10 @@ the rewrite census instead (`bench/portal/rewrite_census.tsv`, `make rewrite-cen
 says a bench program admits the rewrite, and the gate fails when the rule fires at fewer sites
 than its baseline, which is the stronger claim — the census counts as a guard, on its own line
 of the report, and a rewrite rule with no admission on any program is unexercised, not guarded.
+What the census cannot say is how much of what a rule is written for the rule REACHES: that is
+the decline census (`make decline-census`), the same programs with each rule's refusals counted
+beside its admissions and ranked by reason — a report, read when choosing the next arc, and a
+reach figure only for the rules that report their declines.
 
 ### The loop
 

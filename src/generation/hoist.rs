@@ -1863,6 +1863,11 @@ pub fn hoistable(
     // root is unknown.
     if let Some(roots) = &text_grown {
         if !out.movers.is_empty() || !pushes.is_empty() || !mints.is_empty() {
+            crate::rewrite_census::declined(
+                "R-Header",
+                &format!("{}:{}", data.def(def_nr).name(), body.scope),
+                "the loop writes a text and also pushes, mints or reserves",
+            );
             if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
                 eprintln!(
                     "hoist: {} loop {} declined: it writes a text and also pushes, mints or reserves",
@@ -1973,6 +1978,11 @@ pub fn hoistable(
             owned,
         ) else {
             // A statement the write-set walk cannot type: no scalar hoists in this loop.
+            crate::rewrite_census::declined(
+                "R-Header/scalars",
+                &format!("{}:{}", data.def(def_nr).name(), body.scope),
+                "a statement the write-set walk cannot type",
+            );
             if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
                 let shown = format!("{op:?}");
                 eprintln!(
@@ -3373,8 +3383,47 @@ mod free_order_tests {
 // between each and the two call sites without removing anything.
 // `@FR-H-ShortRef` — the held address is valid only while the store it points into grows
 // nowhere in the view's extent; "the remainder may grow a store" is that refusal.
+// A refusal is one `R-RecPtr` decline of the view in the census, under its reason.
 #[allow(clippy::too_many_arguments)]
 fn view_extent_verdict(
+    rest: &[Value],
+    r: u16,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+    twin_params: &HashSet<(u32, u16)>,
+    facts: Option<&StoreFacts>,
+    owned: Option<&HoistOwned>,
+    fresh_e: Option<u16>,
+) -> Result<(), &'static str> {
+    let verdict = view_extent_verdict_inner(
+        rest,
+        r,
+        data,
+        stores,
+        def_nr,
+        cache,
+        allow_in_place,
+        twin_params,
+        facts,
+        owned,
+        fresh_e,
+    );
+    if let Err(why) = verdict {
+        let def = data.def(def_nr);
+        crate::rewrite_census::declined(
+            "R-RecPtr",
+            &format!("{}:{}", def.name(), def.variables().name(r)),
+            why,
+        );
+    }
+    verdict
+}
+
+#[allow(clippy::too_many_arguments)]
+fn view_extent_verdict_inner(
     rest: &[Value],
     r: u16,
     data: &Data,
@@ -6489,6 +6538,11 @@ pub fn push_loop_paths<'a>(lp: &'a Block, data: &Data) -> Option<Vec<PushLoop<'a
 fn push_loop_on<'a>(lp: &'a Block, data: &Data, only: Option<&PathKey>) -> Option<PushLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() && only.is_none();
     let decline = |why: &str| -> Option<PushLoop<'a>> {
+        // A loop with no push of its own is not a shape the rule is for (an outer loop
+        // around a counted one): traced, never counted.
+        if only.is_none() && why != "no push at the top level of the body" {
+            crate::rewrite_census::declined("R-PushFill/loop", &format!("loop {}", lp.scope), why);
+        }
         if trace {
             eprintln!("push-fill: loop {} declined — {why}", lp.scope);
         }
@@ -13517,6 +13571,11 @@ fn may_write_existing(
                     k
                 };
                 if callee {
+                    crate::rewrite_census::declined(
+                        "R-ValueRecord",
+                        &format!("{}:{tp}", def.name()),
+                        "a callee may write an existing record of the type",
+                    );
                     if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
                         eprintln!(
                             "[valuerec]   callee `{name}` may write an existing record of type {tp}"
@@ -13542,6 +13601,11 @@ fn may_write_existing(
                 fresh.insert(*b);
             }
             if native_writes_existing(def, args, tp, data, stores, vars, fresh) {
+                crate::rewrite_census::declined(
+                    "R-ValueRecord",
+                    &format!("{}:{tp}", def.name()),
+                    "a native op may write an existing record of the type",
+                );
                 if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
                     let shown = format!("{n:?}");
                     eprintln!(
@@ -18480,20 +18544,25 @@ enum Pos {
 /// argument, a field value, a return of a non-admitted function, the right of a local
 /// that is not a value local — is declined into `declined`.  Result positions carry the
 /// caller's position down; everything else is an operand.
+#[expect(clippy::too_many_lines, reason = "the census call stands beside each trace")]
 fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>) {
     match node.unspan() {
         Value::Call(callee, args) => {
             // The insert runs whenever the site declines; only the trace is conditional.
-            if pos == Pos::Operand
-                && ctx.admitted.contains_key(callee)
-                && declined.insert(*callee)
-                && std::env::var("LOFT_TRACE_VALUEREC").is_ok()
+            if pos == Pos::Operand && ctx.admitted.contains_key(callee) && declined.insert(*callee)
             {
-                eprintln!(
-                    "[valuerec] {}: its record is consumed in {}",
+                crate::rewrite_census::declined(
+                    "R-ValueRecord",
                     ctx.data.def(*callee).name(),
-                    ctx.data.def(ctx.def_nr).name()
+                    "its record is consumed as an operand at a call site",
                 );
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    eprintln!(
+                        "[valuerec] {}: its record is consumed in {}",
+                        ctx.data.def(*callee).name(),
+                        ctx.data.def(ctx.def_nr).name()
+                    );
+                }
             }
             for (i, arg) in args.iter().enumerate() {
                 // `(R-ValueLocal)` — an admitted call handed straight to a TUPLE PARAMETER
@@ -18605,12 +18674,19 @@ fn site_walk_callref(
         && let Some((arms, _)) = ctx.fnref.get(&(ctx.def_nr, v))
     {
         for a in arms {
-            if declined.insert(*a) && std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
-                eprintln!(
-                    "[valuerec] {}: its record is consumed through a fn-ref in {}",
+            if declined.insert(*a) {
+                crate::rewrite_census::declined(
+                    "R-ValueRecord",
                     ctx.data.def(*a).name(),
-                    ctx.data.def(ctx.def_nr).name()
+                    "its record is consumed through a fn-ref at a call site",
                 );
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    eprintln!(
+                        "[valuerec] {}: its record is consumed through a fn-ref in {}",
+                        ctx.data.def(*a).name(),
+                        ctx.data.def(ctx.def_nr).name()
+                    );
+                }
             }
         }
     }

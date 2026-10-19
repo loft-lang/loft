@@ -4021,6 +4021,11 @@ impl Output<'_> {
             Some(self.stores),
             &mut self.hoist_cache,
         ) {
+            crate::rewrite_census::declined(
+                "R-PushFill",
+                &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
+                &why,
+            );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes — {why}",
@@ -4040,6 +4045,7 @@ impl Output<'_> {
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
+        crate::rewrite_census::admitted("R-PushFill", &format!("loop {}", lp.scope));
         Ok(vec![(win, hdr, vec)])
     }
 
@@ -4097,6 +4103,11 @@ impl Output<'_> {
             &mut self.hoist_cache,
             facts.as_ref(),
         ) {
+            crate::rewrite_census::declined(
+                "R-PushFill",
+                &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
+                &why,
+            );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes (deep) — {why}",
@@ -4116,6 +4127,7 @@ impl Output<'_> {
         )?;
         self.push_windows.push((path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
+        crate::rewrite_census::admitted("R-PushFill", &format!("loop {}", lp.scope));
         Ok(vec![(win, hdr, vec)])
     }
 
@@ -4188,6 +4200,11 @@ impl Output<'_> {
             Some(self.stores),
             &mut self.hoist_cache,
         ) {
+            crate::rewrite_census::declined(
+                "R-PushFill",
+                &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
+                &why,
+            );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes on {} paths — {why}",
@@ -4211,6 +4228,9 @@ impl Output<'_> {
             windows.push((win, hdr, vec));
         }
         crate::rewrite_census::fired("R-PushFill", windows.len());
+        if !windows.is_empty() {
+            crate::rewrite_census::admitted("R-PushFill", &format!("loop {}", lp.scope));
+        }
         Ok(windows)
     }
 
@@ -6014,6 +6034,14 @@ impl Output<'_> {
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
         crate::rewrite_census::fired("R-RecPtr", 1);
+        crate::rewrite_census::admitted(
+            "R-RecPtr",
+            &format!(
+                "{}:{}",
+                self.data.def(self.def_nr).name(),
+                self.data.def(self.def_nr).variables().name(r)
+            ),
+        );
         Ok(())
     }
 

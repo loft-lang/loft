@@ -1,0 +1,83 @@
+# The decline census: per rewrite rule, the sites admitted and the sites refused by reason,
+# over the bench programs.  Written by `scripts/decline_census.py --record`; a report, not a baseline.
+# commit=dec7674a9 programs=19
+# rule <TAB> reason (`admitted` for the admissions; names masked as `_`) <TAB> count
+R-AliasVersion	admitted	7
+R-Apart/vector	admitted	5
+R-Base	admitted	306
+R-Callee	admitted	4
+R-CharWalk	admitted	196
+R-Compact	admitted	2
+R-CompleteWrite	admitted	264
+R-Counter	admitted	567
+R-CtorLiteral	admitted	4
+R-DischargeInto	admitted	27
+R-ElemFirst	admitted	4
+R-ExitVector	admitted	3
+R-ExitVector/record	admitted	2
+R-FieldAppend	admitted	19
+R-FileHold	admitted	1
+R-FlatCopy	admitted	2
+R-FnHeader	admitted	24
+R-FormatAppend	admitted	23
+R-ForwardWalk	admitted	19
+R-GuardFree	admitted	192
+R-GuardedChain	admitted	126
+R-GuardedChain/operators	admitted	465
+R-Header	admitted	326
+R-Header/apart	admitted	16
+R-Header/apart-param	admitted	16
+R-InPlaceLiteral	admitted	8
+R-InRange	admitted	1
+R-InlineLeaf	admitted	291
+R-Inputs	admitted	80
+R-Invariant	admitted	262
+R-KernelSum	admitted	19
+R-KeyedEntry	admitted	4
+R-KeyedEntry/subscript	admitted	3
+R-LazySplit	admitted	4
+R-Leaf	admitted	2144
+R-LeafChain	admitted	740
+R-LitDiv	admitted	277
+R-LiteralAppend	admitted	1
+R-LoopRecord	admitted	2
+R-MaskRange	admitted	5
+R-Mint	admitted	259
+R-Push	admitted	72
+R-PushFill	admitted	30
+R-PushFill	the body names `_`, which may view the pushed vector	5
+R-PushFill	the body names the pushed vector outside its pushes	1
+R-PushFill/loop	the body can leave early, or loops	1
+R-PushFill/loop	the pushes reach two paths	3
+R-PushFill/loop	the step is not `_`	1
+R-PushFill/record	admitted	11
+R-PushRec	admitted	41
+R-Range	admitted	1530
+R-RangedCall	admitted	184
+R-RecPtr	admitted	77
+R-RecPtr	no fusable field read or write of the view	39
+R-RecPtr	the remainder frees a record before a use of the view	24
+R-RecPtr	the remainder may grow a store	431
+R-RecPtr	the remainder rebinds the view	5
+R-RecPtr/index	admitted	2
+R-RefillBuffer	admitted	14
+R-RetAdopt	admitted	60
+R-Reuse	admitted	15
+R-SameRead	admitted	3
+R-Scalar	admitted	69
+R-ScaleFold	admitted	2
+R-SingleUse	admitted	84
+R-SplitTable	admitted	1
+R-TextBorrow	admitted	247
+R-TextClear	admitted	580
+R-TypedKeyed	admitted	32
+R-TypedRead	admitted	2
+R-ValueLocal	admitted	33
+R-ValueRecord	admitted	22
+R-ValueRecord	its record is consumed as an operand at a call site	3
+R-View	admitted	104
+R-WorkBuffer	admitted	19
+R-WorkBuffer/onward	admitted	12
+R-WorkBuffer/result	admitted	6
+R-Wrapper	admitted	335
+R-ZeroCount	admitted	152
