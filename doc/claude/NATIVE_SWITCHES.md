@@ -167,6 +167,13 @@ record's bytes while a run-time compare finds the parameter's store and the buff
 First bisect step for a wrong text read from a match binding on native; `LOFT_POISON=1` is the
 falsifier.
 
+**`LOFT_NO_TEXT_SET_BORROW=1`** (default-ON, generation time, `--native` only) makes every text
+set into a store field copy its value into a `String` first — with it off, the setter reads the
+value where it lives and `Store::set_str` / `refill_str` copy only a value whose bytes lie in
+the destination store, the one store the claim can move.  First bisect step for a wrong text
+written into a field on native; the falsifier is the store unit test
+`a_text_from_its_own_store_survives_the_claim_that_moves_it`.
+
 **`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
 makes a loop that writes a text field or element decline its header hold again — with it off,
 such a loop holds the headers of the vectors it reads, and an element base only for a vector

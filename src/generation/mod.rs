@@ -6879,33 +6879,6 @@ impl Output<'_> {
         ) && !self.text_borrowed(v)
     }
 
-    /// A text VALUE that borrows no store memory, so a store write may read its bytes where
-    /// they are instead of copying them first (`OpSetText`'s claim can move the store a
-    /// borrowed text points into): a literal, a local borrowing the frame's own work text, the
-    /// null text (`OpConvTextFromNull`, the static
-    /// `STRING_NULL` bytes — `x.f = null` copied them into a `String` per write), an owned text
-    /// local, or a block that answers one — the synthesised text a decoder builds into its
-    /// work string.  Anything else answers no and is copied: a copy is never wrong.
-    #[must_use]
-    pub fn text_value_unborrowed(&self, v: &Value) -> bool {
-        match v.unspan() {
-            Value::Text(_) => true,
-            // A local borrowing the frame's own work text: no store holds its bytes.
-            Value::Var(w) if self.work_text_locals.contains(w) => true,
-            Value::Call(d, args) => {
-                args.is_empty()
-                    && (*d as usize) < self.data.definitions.len()
-                    && self.data.def(*d).name() == "OpConvTextFromNull"
-            }
-            Value::Var(w) => self.text_owned(*w),
-            Value::Block(b) => b
-                .operators
-                .last()
-                .is_some_and(|r| matches!(r.unspan(), Value::Var(w) if self.text_owned(*w))),
-            _ => false,
-        }
-    }
-
     /// `@FR-R-SplitTable` — the split table whose local `v` reads through the op `reader`,
     /// or `None`: `v` must be `reader(Var(x), …)` with `x` a table of the function being
     /// emitted or the hidden vector of a walk over one.  Answers the TABLE's variable, whose
