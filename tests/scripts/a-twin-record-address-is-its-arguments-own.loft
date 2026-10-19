@@ -17,7 +17,11 @@
 // `LOFT_NO_TWIN_RECORD`, `LOFT_NO_PLAIN_CHAIN_PTR` and `LOFT_NO_PARAM_TWIN_PTR`, and under
 // `LOFT_HOIST_VERIFY=1`.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-twin-record-address-is-its-arguments-own.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion on --native.  WITNESS: the patch hands every record input the first
+//     record argument's address, so `move_spent(x, acc)` writes the accumulator's fields into
+//     the element: *c4 1001018123012* where 1151312123012 is due.
+//   HOLDS: the interpreter passes no addresses, and answers the same on both trees.
 
 struct Tm { spent: integer, total: integer }
 
