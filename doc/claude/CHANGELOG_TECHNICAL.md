@@ -20,8 +20,9 @@ All notable changes to the loft language and interpreter.
   walk twin (`P__psw<k>`, handing each appended element's positions to the loop body as a
   closure).  The consumers become `__ps` twins over position tuples; a text leaf is read from
   the frame (`codegen_runtime::ps_text`), a field only the built value holds from the plain
-  decoder at the position.  pluginabi `check_request` 4.66× → 1.30× (1.58 → 0.44 ms, the
-  Rust twin 0.34 ms), `req_state_b64` 1.84× → 1.73×, hashes equal.  Switch
+  decoder at the position; a position a decode made carries that decode's shape.  pluginabi
+  `check_request` 4.66× → 0.94× (1.58 → 0.32 ms, the Rust twin 0.34 ms), `req_state_b64`
+  1.84× → 1.70×, hashes equal.  Switch
   `LOFT_NO_DECODE_STRUCTURE`, trace `LOFT_TRACE_DECODE_STRUCTURE`.  Guard
   `tests/scripts/a-decoded-value-is-read-at-its-position.loft`, pin `tests/decode_structure.rs`.
 - The apart-call clause of `(R-PushRec)` asks the push tier: under `LOFT_NO_PUSH_HOIST` it

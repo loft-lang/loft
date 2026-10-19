@@ -6190,9 +6190,10 @@ and answers the same value.
 - Not yet admitted: a byte-string field read, a value walked by index, a decoder with two
   slot fields in one variant, a consumer that is recursive.
 
-Measured on pluginabi `check_request` (`bench/stats.py`, one core, hash unchanged): 4.66× →
-1.30× (1.58 → 0.44 ms against the twin's 0.34 ms); the hand price of the same form was
-0.30 ms.  Switch `LOFT_NO_DECODE_STRUCTURE` (instance 1 of the view clause alone); trace
+A position decoded where it was made — the decoder's own call in `decode`, each part a walk
+appends — carries that decode's tag and slots, so no reader decodes its head again.  Measured
+on pluginabi `check_request` (`bench/stats.py`, one core, hash unchanged): 4.66× → 0.94×
+(1.58 → 0.32 ms against the twin's 0.34 ms); the hand price of the same form was 0.30 ms.  Switch `LOFT_NO_DECODE_STRUCTURE` (instance 1 of the view clause alone); trace
 `LOFT_TRACE_DECODE_STRUCTURE` names each producer and root admitted and each decline with its
 reason, `=2` also prints each consumer's IR.  Guard
 `tests/scripts/a-decoded-value-is-read-at-its-position.loft`, every cell hand-computed on both
