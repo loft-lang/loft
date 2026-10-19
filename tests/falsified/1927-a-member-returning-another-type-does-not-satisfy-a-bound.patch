@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index d6129bea7..7428d13b3 100644
+index 668a7df3c..37848cc54 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -8025,33 +8025,6 @@ impl Data {
+@@ -7159,33 +7159,6 @@ impl Data {
          h == w || variant_of(h, w) || variant_of(w, h)
      }
  
@@ -36,11 +36,11 @@ index d6129bea7..7428d13b3 100644
      /// The member of `start`'s overload set whose visible parameters are `params`
      /// ([`Self::params_fit`]) — `None` when the name has no set or no member fits.  What
      /// [`Self::possible_with_signature`] asks by arity and receiver, asked of the whole
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 07e2f1049..9740906a6 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -10937,20 +10937,6 @@ impl Parser {
+diff --git a/src/parser/bounds.rs b/src/parser/bounds.rs
+index e5a158394..3c0ca6886 100644
+--- a/src/parser/bounds.rs
++++ b/src/parser/bounds.rs
+@@ -732,20 +732,6 @@ impl Parser {
              })
      }
  
@@ -48,7 +48,7 @@ index 07e2f1049..9740906a6 100644
 -    /// in it (`Self.Rows`, `vector<Self.Item>`)?  Such a type stands for whatever companion the
 -    /// implementor supplies, which `associated_bindings` matches; satisfaction asks nothing of
 -    /// it.
--    fn names_associated_type(&self, iface_method: u32, tp: &Type) -> bool {
+-    pub(super) fn names_associated_type(&self, iface_method: u32, tp: &Type) -> bool {
 -        let iface = self.data.def(iface_method).parent;
 -        iface != u32::MAX
 -            && tp.any_node(&mut |t| {
@@ -58,10 +58,10 @@ index 07e2f1049..9740906a6 100644
 -            })
 -    }
 -
-     fn return_type_mismatch(
+     pub(super) fn return_type_mismatch(
          &self,
          iface_method: u32,
-@@ -10974,29 +10960,7 @@ impl Parser {
+@@ -769,29 +755,7 @@ impl Parser {
              _ => None,
          };
          let (Some(w), Some(g)) = (named(&want), named(&got)) else {

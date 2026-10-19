@@ -22,7 +22,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-command -v zip >/dev/null || { echo "make-release: 'zip' is required" >&2; exit 1; }
+# The bundle archive: Info-ZIP's `zip`, or 7-Zip where only it is installed (a Windows runner
+# whose package feed is down).  Nothing reads the archive's own bytes — `repro-verify.sh`
+# unpacks it and compares the contents' SHA256SUMS — so either writer serves.
+if command -v zip >/dev/null; then
+  zip_dir() { zip -qr "$1" "$2"; }
+elif command -v 7z >/dev/null; then
+  zip_dir() { 7z a -tzip -bso0 -bsp0 "$1" "$2"; }
+else
+  echo "make-release: 'zip' (or 7-Zip's '7z') is required" >&2; exit 1
+fi
 
 # Hashing command — the per-OS runners that call this each ship a different one:
 # Linux + Git-Bash (Windows) have GNU `sha256sum`; macOS ships `shasum`.  Both
@@ -151,7 +160,7 @@ QS
 
   ( cd "$stage" && find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||' | xargs $SHA256 > SHA256SUMS )
 
-  ( cd "$DIST" && rm -f "$name.zip" && zip -qr "$name.zip" "$name" )
+  ( cd "$DIST" && rm -f "$name.zip" && zip_dir "$name.zip" "$name" )
   ( cd "$DIST" && $SHA256 "$name.zip" > "$name.zip.sha256" )
   echo ">> $DIST/$name.zip  ($(du -h "$DIST/$name.zip" | cut -f1))"
 done

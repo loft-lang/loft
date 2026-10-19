@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9dc68cf52..f24e9d549 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -15828,11 +15828,6 @@ impl Parser {
+diff --git a/src/parser/compare.rs b/src/parser/compare.rs
+index f21150d37..0a1231311 100644
+--- a/src/parser/compare.rs
++++ b/src/parser/compare.rs
+@@ -416,11 +416,6 @@ impl Parser {
          let mut acc: Option<Value> = None;
          for f in 0..self.data.def(d).attributes().len() {
              let ftp = self.data.attr_type(d, f);

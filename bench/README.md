@@ -98,7 +98,12 @@ What it does, and why each part is there:
 
 Measured on a quiet x86-64 laptop the spreads are 0.0–2.7 % and two full runs reproduce
 every ratio to within about 1 % (the threaded row to about 4 %).  A spread above `--noisy`
-(5 %) is flagged on the row: the box was busy, and that row wants re-running.
+(5 %) is flagged on the row.  On a busy box that row wants re-running; on a quiet one it is
+nearly always a routine that ALLOCATES: each process draws its own physical pages, and their
+cache placement puts the whole run in one of a few speed modes (Rust's `push` reads 15 or
+22 µs per op depending on the process; ASLR off, pinned malloc thresholds and huge pages
+leave the modes in place).  Longer runs cannot average that out, so a program with a noisy
+row takes `--noisy-samples` (21) rounds in all, and its median settles on the common mode.
 
 That reproducibility holds for ONE build.  Any change to the runtime the native lane links
 moves some small routines by code layout alone, and a different change moves different

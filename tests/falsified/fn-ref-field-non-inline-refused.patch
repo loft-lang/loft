@@ -1,7 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -20990,7 +20990,7 @@
+diff --git a/src/parser/closures.rs b/src/parser/closures.rs
+index 09db702f0..1e09bc7fd 100644
+--- a/src/parser/closures.rs
++++ b/src/parser/closures.rs
+@@ -314,7 +314,7 @@ pub(super) fn emit_fn_ref_field_write(
                  Value::Int(n) => Value::Int(n),
                  Value::Null => Value::Int(0),
                  _ => {

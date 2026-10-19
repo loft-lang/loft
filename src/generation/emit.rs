@@ -3107,7 +3107,19 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations); let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations);"
+            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations);"
+        )?;
+        // One binding a line, each with its tag: the emission audit binds a holder by the
+        // line that declares it.
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); //@FR-R-PushFill run header"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations); //@FR-R-PushFill push window, run of {k}"
         )?;
         for val in &run.vals {
             let e = self.expr_string(val)?;
@@ -3325,13 +3337,15 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(w, "{{ //@FR-R-KeyedEntry")?;
         let mut writes: Vec<Value> = Vec::new();
-        let mut key: Option<String> = None;
+        let mut parts: Vec<Option<String>> = vec![None; ke.keys.len()];
         let mut nth = 0usize;
         for op in &ke.writes {
             let Value::Call(d, args) = op.unspan() else {
                 continue;
             };
-            let is_key = args.get(2).is_some_and(|a| std::ptr::eq(a, ke.key));
+            let part = args
+                .get(2)
+                .and_then(|a| ke.keys.iter().position(|k| std::ptr::eq(a, *k)));
             let mut staged: Vec<Value> = Vec::with_capacity(args.len());
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
@@ -3348,23 +3362,45 @@ impl Output<'_> {
                     staged.push(Value::RawExpr(name));
                 }
             }
-            if is_key {
-                key = Some(match staged.get(2) {
+            if let Some(part) = part {
+                parts[part] = Some(match staged.get(2) {
                     Some(Value::RawExpr(n)) => n.clone(),
-                    _ => self.expr_string(ke.key)?,
+                    _ => self.expr_string(ke.keys[part])?,
                 });
             } else {
                 writes.push(Value::Call(*d, staged));
             }
         }
-        let key = key.unwrap_or_else(|| "i64::MIN".to_string());
+        let key = parts.first().cloned().flatten();
         let coll = self.expr_string(ke.coll)?;
         self.indent(w)?;
-        writeln!(
-            w,
-            "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
-            ke.parent_tp, ke.field
-        )?;
+        if ke.keys.len() > 1 {
+            let list: Vec<String> = parts
+                .into_iter()
+                .map(|p| format!("({}) as i64", p.unwrap_or_else(|| "i64::MIN".to_string())))
+                .collect();
+            writeln!(
+                w,
+                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}_u16, {}_u16, &[{}]);",
+                ke.parent_tp,
+                ke.field,
+                list.join(", ")
+            )?;
+        } else if ke.text_key {
+            let key = key.unwrap_or_else(|| "\"\"".to_string());
+            writeln!(
+                w,
+                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}_u16, {}_u16, &*({key}));",
+                ke.parent_tp, ke.field
+            )?;
+        } else {
+            let key = key.unwrap_or_else(|| "i64::MIN".to_string());
+            writeln!(
+                w,
+                "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
+                ke.parent_tp, ke.field
+            )?;
+        }
         for wr in &writes {
             self.indent(w)?;
             self.output_code_inner(w, wr)?;

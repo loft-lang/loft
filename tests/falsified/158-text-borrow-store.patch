@@ -1,15 +1,15 @@
 diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index d6cea232..be15bdf1 100644
+index d6661346c..032b2cc71 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -4448,7 +4448,9 @@ pub fn borrowed_store_texts(
+@@ -4962,7 +4962,9 @@ pub fn borrowed_store_texts(
              continue;
          }
          let scope = mention_scope(body, v);
--        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
-+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active)
+-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None) {
++        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active, None)
 +            .filter(|_| false)
 +        {
-             temps.remove(&v);
-             locals.remove(&v);
-             why.insert(v, w);
+             // The tested clause: a local whose only other writers name the return buffer
+             // (or a callee's buffer it is handed) borrows while its parameters' stores are
+             // not the buffer's — a run-time test at each bind, a copy where it fails.

@@ -1,0 +1,237 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PushRec`'s apart-call clause — a loop that builds a vector of records while it calls
+// a function that writes the store (a recursive decoder's `ks += [sub.value]`, its child decoded
+// into a buffer placed in the very store `ks` lives in) holds a record-push header for that
+// vector on the native backend, when no value the body names can reach the vector but the
+// fresh ones: the minted element, the pooled call buffer, the call's result and views into it.
+// A value that CAN reach the vector — the vector handed to the writing call, or a second
+// parameter naming the same vector — keeps the loop on the runtime's append.  Every cell
+// asserts the VALUES and LENGTHS the vector ends with; the runner checks the store leak at exit.
+//
+// The decoder reads one byte: under 100 a leaf of that value; 100..149 a node of (b - 100)
+// children; 150..199 a map of (b - 150) key/value entries; 200 and over a failure that
+// consumes the byte.  A failed child is skipped and the loop goes on, so a minted element is
+// abandoned and its slot minted again.  Each decode scores ((total × 100 + leaves) × 10 +
+// nodes) × 100 + next, where a node and a map each count as one node.
+//
+// Predictions, hand-computed:
+// a1 [103, 1, 102, 2, 3, 4] — a node of 1, a node of 2 and 3, and 4: total 10, leaves 4,
+//    nodes 2, next 6: 1004206.
+// a2 [152, 1, 2, 3, 102, 4, 5] — a map of 1 → 2 and 3 → (4, 5): total 15, leaves 5, nodes 2,
+//    next 7: 1505207.  [152, 250, 1, 251, 2, 3] — the first key fails (skip to 2), the second
+//    entry's value fails (skip to 4): no entries, nodes 1, next 4: 104.
+// a6 (a `break` before a child, on byte 99) [105, 1, 2, 99, 3, 4] — children 1, 2 then the
+//    break: total 3, leaves 2, nodes 1, next 3: 302103.  [103, 102, 7, 99, 5, 6] — the inner
+//    node takes 7 and breaks at 99, the outer breaks at the same byte: total 7, leaves 1,
+//    nodes 2, next 3: 701203.
+// a7 [104, 5, 250, 6, 251, 7] — four attempts, two fail: children 5 and 6, total 11, leaves 2,
+//    nodes 1, next 5: 1102105.  [103, 250, 102, 251, 9, 8] — a failure, then a node whose first
+//    child fails and whose second is 9, then 8: total 17, leaves 2, nodes 2, next 6: 1702206.
+// a8 [140] then 40 × [102, i, i + 1] — forty two-leaf nodes, each decoded between two appends
+//    in the same store: total Σ(2i + 1) = 1600, leaves 80, nodes 41, next 121: 160084221.
+// a3 (the vector handed to the writing call, which appends 100 + i to it on even i) six
+//    passes: 100 0 1 102 2 3 104 4 5 — 9 elements, last digits 001223445: 91223445.
+// a5 (a second parameter naming the same vector) the same appends: 91223445; and with two
+//    vectors, 0..5 in one and 100, 102, 104 in the other: 6 × 10⁶ + 3 × 10⁵ + 12345: 6312345.
+// The interpreter is the oracle.  `LOFT_NO_APART_MINT=1`, `LOFT_HOIST_VERIFY=1` and
+// `LOFT_POISON_CLAIM=1` must answer identically.
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-vector-built-across-a-writing-call-keeps-its-elements.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch refuses only the vector itself, not a
+//   value whose type can reach it, so `fill(x, x)` keeps a header while its call appends to
+//   the same vector through `w`, and each finish writes the header's stale length over those.
+//   WITNESS: *a5 alias 7 12345* where 9 elements, 91223445, are due.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
+
+enum Tr {
+  Lf { v: integer },
+  Nd { kids: vector<Tr> },
+  Mp { ents: vector<Ent> },
+}
+
+struct Ent { k: Tr, v: Tr }
+
+struct Dec { value: Tr, next: integer, ok: boolean }
+
+fn total(t: Tr) -> integer {
+  match t {
+    Lf { v } => v,
+    Nd { kids } => {
+      s = 0;
+      for k in kids { s += total(k); }
+      s
+    },
+    Mp { ents } => {
+      s = 0;
+      for e in ents { s += total(e.k) + total(e.v); }
+      s
+    },
+  }
+}
+
+fn leaves(t: Tr) -> integer {
+  match t {
+    Lf { v } => 1,
+    Nd { kids } => {
+      s = 0;
+      for k in kids { s += leaves(k); }
+      s
+    },
+    Mp { ents } => {
+      s = 0;
+      for e in ents { s += leaves(e.k) + leaves(e.v); }
+      s
+    },
+  }
+}
+
+fn nodes(t: Tr) -> integer {
+  match t {
+    Lf { v } => 0,
+    Nd { kids } => {
+      s = 1;
+      for k in kids { s += nodes(k); }
+      s
+    },
+    Mp { ents } => {
+      s = 1;
+      for e in ents { s += nodes(e.k) + nodes(e.v); }
+      s
+    },
+  }
+}
+
+fn rd(bs: vector<u8>, pos: integer) -> Dec {
+  if pos >= len(bs) { return Dec { value: Lf { v: -1 }, next: pos, ok: false }; }
+  b = bs[pos] ?? 0;
+  if b < 100 { return Dec { value: Lf { v: b }, next: pos + 1, ok: true }; }
+  if b >= 200 { return Dec { value: Lf { v: -1 }, next: pos + 1, ok: false }; }
+  if b >= 150 {
+    es: vector<Ent> = [];
+    q = pos + 1;
+    for _ in 0..(b - 150) {
+      kd = rd(bs, q);
+      if kd.ok {
+        vd = rd(bs, kd.next);
+        if vd.ok {
+          es += [Ent { k: kd.value, v: vd.value }];
+          q = vd.next;
+        } else {
+          q = vd.next;
+        }
+      } else {
+        q = kd.next;
+      }
+    }
+    return Dec { value: Mp { ents: es }, next: q, ok: true };
+  }
+  ks: vector<Tr> = [];
+  p = pos + 1;
+  for _ in 0..(b - 100) {
+    sub = rd(bs, p);
+    if sub.ok { ks += [sub.value]; p = sub.next; } else { p = sub.next; }
+  }
+  return Dec { value: Nd { kids: ks }, next: p, ok: true };
+}
+
+fn rdb(bs: vector<u8>, pos: integer) -> Dec {
+  if pos >= len(bs) { return Dec { value: Lf { v: -1 }, next: pos, ok: false }; }
+  b = bs[pos] ?? 0;
+  if b < 100 { return Dec { value: Lf { v: b }, next: pos + 1, ok: true }; }
+  ks: vector<Tr> = [];
+  p = pos + 1;
+  for _ in 0..(b - 100) {
+    if (bs[p] ?? 0) == 99 { break; }
+    sub = rdb(bs, p);
+    if sub.ok { ks += [sub.value]; p = sub.next; }
+  }
+  return Dec { value: Nd { kids: ks }, next: p, ok: true };
+}
+
+fn score(d: Dec) -> integer {
+  if !d.ok { return -1; }
+  ((total(d.value) * 100 + leaves(d.value)) * 10 + nodes(d.value)) * 100 + d.next
+}
+
+fn a1() -> integer {
+  score(rd([103, 1, 102, 2, 3, 4], 0))
+}
+
+fn a2() -> integer {
+  score(rd([152, 1, 2, 3, 102, 4, 5], 0)) * 1000 + score(rd([152, 250, 1, 251, 2, 3], 0))
+}
+
+fn a6() -> integer {
+  score(rdb([105, 1, 2, 99, 3, 4], 0)) * 1000000 + score(rdb([103, 102, 7, 99, 5, 6], 0))
+}
+
+fn a7() -> integer {
+  score(rd([104, 5, 250, 6, 251, 7], 0)) * 10000000 + score(rd([103, 250, 102, 251, 9, 8], 0))
+}
+
+fn a8() -> integer {
+  bs: vector<u8> = [140];
+  for i in 0..40 {
+    bs += [102];
+    bs += [i & 255];
+    bs += [(i + 1) & 255];
+  }
+  score(rd(bs, 0))
+}
+
+struct It { n: integer, t: text }
+struct Res { value: It, ok: boolean }
+
+fn grab(w: vector<It>, i: integer) -> Res {
+  if i % 2 == 0 { w += [It { n: 100 + i, t: "x" }]; }
+  Res { value: It { n: i, t: "y{i}" }, ok: true }
+}
+
+fn digits(v: vector<It>) -> integer {
+  s = 0;
+  for e in v { s = s * 10 + e.n % 10; }
+  s
+}
+
+fn a3() -> integer {
+  v: vector<It> = [];
+  for i in 0..6 {
+    r = grab(v, i);
+    if r.ok { v += [r.value]; }
+  }
+  len(v) * 10000000 + digits(v)
+}
+
+fn fill(v: vector<It>, w: vector<It>, n: integer) {
+  for i in 0..n {
+    r = grab(w, i);
+    if r.ok { v += [r.value]; }
+  }
+}
+
+fn a5() -> integer {
+  x: vector<It> = [];
+  fill(x, x, 6);
+  y: vector<It> = [];
+  z: vector<It> = [];
+  fill(y, z, 6);
+  assert(len(x) * 10000000 + digits(x) == 91223445, "a5 alias {len(x)} {digits(x)}");
+  len(y) * 1000000 + len(z) * 100000 + digits(y)
+}
+
+fn main() {
+  for _r in 0..2 {
+    assert(a1() == 1004206, "a1 {a1()}");
+    assert(a2() == 1505207104, "a2 {a2()}");
+    assert(a6() == 302103701203, "a6 {a6()}");
+    assert(a7() == 11021051702206, "a7 {a7()}");
+    assert(a8() == 160084221, "a8 {a8()}");
+    assert(a3() == 91223445, "a3 {a3()}");
+    assert(a5() == 6312345, "a5 {a5()}");
+  }
+  println("done");
+}

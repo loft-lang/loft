@@ -10,6 +10,95 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `--native`: an unhoisted plain-vector append is the runtime's own (2026-10-19)
+
+- **`(R-PushRec)`'s apart-call clause** — a loop the header gate declines because it calls a
+  writer still holds the record-push header for the one vector it mints into, when every
+  value it names that could hold an element is fresh this pass (the minted element, the
+  pooled call buffer, the call's result and views into it) and the vector appears only in its
+  own mint group or as a placement's host.  No up-front reservation: the trip count may be
+  read from input.  `cbor/decode` 6.57 → 5.15 ms hand-priced, hashes equal; fires in cbor,
+  pluginabi, drawing, gridmesh and tween.  The switch A/B over those five packages (26
+  routines): geomean −1.1 %, hashes equal, none slower by 3 %; `decode` 3.42× → 2.62×,
+  `check_request` 4.74× → 4.60×.  Switch `LOFT_NO_APART_MINT`.  Guard
+  `tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft`, pins
+  `tests/apart_mint.rs`.
+- The emission audit binds `(R-PushFill)`'s run-clause header and window (now one tagged
+  binding a line) and ends a holder at a `} else {` that closes its scope — 138 false reports
+  on the cbor and pluginabi benches; `tests/emission_audit.rs` pins the `else` case.
+- **`(R-FieldAppend)`'s bare clause** — `v += [x]` on a plain vector that no push header holds
+  (a loop whose header hoist declines, a destination twin's element) is emitted as
+  `Stores::vector_record_append` (the slot `vector_append` claims, prefilled with one zero fill
+  where `Stores::zero_default` says the element's default is zero bytes) and `vector_finish`,
+  where `record_new` and `record_finish` dispatched per element.  `cbor/decode` 8.03 → 6.43 ms
+  (−20 %), hashes equal; `encode` and `encode_bytes` level.  Across all 205 routines (the switch
+  A/B, `bench/stats.py`): geomean −0.3 %, hashes equal, `decode` 3.97× → 3.31×,
+  `check_request` 5.00× → 4.81×, `materialise` −31 %, `fill_triangle` −16 %; every slowdown
+  over 3 % is in a routine whose timed code is identical in both builds (html `escape_html`:
+  the same instruction count, +20 % cycles, the hot functions at another offset in their
+  cache line).  Switch `LOFT_NO_BARE_APPEND`.
+  Guard: `tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft`.
+- `LOFT_TRACE_PUSH_FILL=1` names the op that keeps a loop from being a record-append loop.
+
+### `--native`: a record's address crosses a call into its twin (2026-10-19)
+
+- **`(R-RecPtr)`'s twin clause** — a callee that reads or writes a record parameter's fields at
+  least twice takes that record's address from its caller (`__ip_k`, `__il_k` beside the
+  `__inv` twin's other inputs): the element of a held iteration, in a loop's plain-chains copy
+  as in its checked copy (`LOFT_NO_PLAIN_CHAIN_PTR`), or the caller's own parameter address
+  (`LOFT_NO_PARAM_TWIN_PTR`), and null for anything else, which the twin resolves itself.
+  fixstep `timer_spend` 4.10× → 1.83×, `clock_pump` 2.24× → 1.83×, `clock_advance` 1.65× →
+  1.50×; the full A/B's native geomean −0.36 %.  Switch `LOFT_NO_TWIN_RECORD`.  Guard:
+  `tests/scripts/a-twin-record-address-is-its-arguments-own.loft`.
+
+### Bench: noisy rows measured with more processes (2026-10-19)
+
+- `bench/stats.py --noisy-samples N` (default 21): a row whose spread exceeds `--noisy` after
+  the ordinary samples runs more rounds, each a fresh process — the variance is per-process
+  page placement, which only more processes average out.
+
+### `--native`: a hash keyed by two to four integer parts takes the typed lookup and the one-probe insert (2026-10-19)
+
+- **`(R-TypedKeyed)`'s and `(R-KeyedEntry)`'s compound clauses** — a lookup by two to four
+  `integer` parts is emitted as `OpGetHashInts` (`hash::find_ints`, digest `keys::ints_hash`),
+  and `h += [T{…}]` into such a hash of a heap-free element asks the key first
+  (`Stores::keyed_entry_ints_at` over the existing `hash::entry_ints`).
+- `composite_hash` 4.18× → 3.27×, hashes equal; lanes 17 and 18 measured level or better
+  against their recorded ratios.  Reach: lanes 16, 17, 18.  Guard:
+  `tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-names.loft`.
+
+### `--native`: a narrow vector element write keeps a loop's record hoists; small twins inline (2026-10-19)
+
+- **`(R-Inputs)`'s write set** — a write into a narrow-integer vector element (`i32`, `u8`, …)
+  reaches no record field, as a base-type element's write never did; it was untyped, which
+  declined every scalar hoist in a loop whose callee wrote one.  The `hex_*` libraries all write
+  `hex_field`'s narrow edge vectors: `edges_cut` 4.47× → 1.70×, `combine_cut` 4.13× → 2.16×,
+  `stencil_rotate` 3.52× → 2.64×.  Switch `LOFT_NO_NARROW_ELEMENT_WRITE`.
+- **A twin that reaches no loop is `#[inline(always)]`** (a literal `0..k`, k ≤ 16, allowed):
+  with more twins called, LLVM stopped inlining `eg_index__inv` into `wall_chain_walk`, whose
+  folding the plain callee had got.  Restricted to loop-free twins because a twin reaching a
+  vector walk lost that walk's vectorisation when forced (`min_max_of` 0.72× → 1.86×).  Suite
+  + ten `hex_*` benches: geomean −1.1 %.  Switch `LOFT_NO_TWIN_INLINE`.
+- Guard: `tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft`.
+
+### `--native`: a hash keyed by one text is looked up and inserted into with one probe (2026-10-19)
+
+- **`(R-TypedKeyed)`'s text clause** — a lookup in a `hash<T[k]>` whose one key is a `text`
+  is emitted as `OpGetHashText`, the key handed over as the text (`hash::find_str`, the digest
+  `keys::str_hash`): no `Content` built and no type-row dispatch per lookup.
+- **`(R-KeyedEntry)`'s text clause** — `h += [T{k: …, …}]` into such a hash asks the key
+  first (`hash::entry_str`, `Stores::keyed_entry_text`) when the key is the only heap the
+  element owns: an entry already under the key is overwritten without its key, a new one is
+  filed where the probe ended with its key text written.  The plain form built the record,
+  then hashed the key again from it to file it.
+- `hash_text_keys` 4.46× → 3.17× (−27 % by time on the hand price, the lookup half −4 %),
+  `word_count` 3.09× → 2.68×; hashes equal.  Reach (`make rewrite-census`): word count, the
+  keyed lane, `assets`, `hex_fit`, `hex_recover`.  Priced and dropped beside it: lending a
+  decode's result store across calls (`check_request` +25 % cycles — clearing the previous
+  tree claim by claim and claiming again from a reused store costs more than a fresh store's
+  bump claims and a whole-store free).  Guard:
+  `tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft`.
+
 ### A slice first bind holds its slice whatever the local is rebound to later (2026-10-18)
 
 - **loft#2038 (silent-wrong)** — `s: vector<T> = big[a..b]` followed later by `s = other`

@@ -5784,7 +5784,10 @@ impl Parser {
                 } else {
                     Self::arm_expectation(&true_type)
                 };
-                let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                let mut chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                if let Some(fit) = self.arm_fits_named_width(&true_type, &false_code, &chain_type) {
+                    chain_type = fit;
+                }
                 false_fact = std::mem::take(&mut self.operand_fact);
                 if true_type == Type::Unknown(0) {
                     false_type = chain_type;
@@ -5830,6 +5833,24 @@ impl Parser {
                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
+                // loft#2066 — a NAMED-width sibling expects nothing of this arm
+                // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
+                // it did when the sibling was its expectation: native reads an untyped one as 0.
+                // A nullable sibling is expected as `integer?` already, so it needs nothing here.
+                let named_width = !matches!(true_type, Type::Optional(_))
+                    && matches!(true_type.base(), Type::Integer(sp) if sp.forced_size.is_some());
+                if false_is_null_literal
+                    && named_width
+                    && let Value::Block(bl) = &mut false_code
+                    && let Some(last) = bl.operators.last_mut()
+                {
+                    *last = self.null_value(&true_type);
+                    bl.result = true_type.clone();
+                    false_type = true_type.clone();
+                }
+                if let Some(fit) = self.arm_fits_named_width(&true_type, &false_code, &false_type) {
+                    false_type = fit;
+                }
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
                 // value is whichever arm ran, so the expression promises no more than either.
                 if let (Some(tc), Some(fc)) =
@@ -5953,10 +5974,15 @@ impl Parser {
         // and the other is a non-null scalar (heap types stay nullable; both-null stays as-is).
         let mut result_tp = merge_dependencies(&true_type, &false_type);
         // `@FR-I-Join` — the two arms' integer ranges join to their union.
-        if let Some(union) = Self::integer_arm_union(
-            &self.arm_contribution(&true_code, &true_type),
-            &self.arm_contribution(&false_code, &false_type),
-        ) {
+        if let Some(union) = Self::integer_arm_union(&true_type, &false_type) {
+            result_tp = union;
+        }
+        // ...and so does an `else if` CHAIN, which is an arm too (loft#2066): its arms are
+        // parsed expecting the full `integer` (`arm_expectation`), so its range has to reach
+        // the join, or a declared destination checks only the then arm's.
+        if let Some(chain) = &chain_borrow
+            && let Some(union) = Self::integer_arm_union(&result_tp, chain)
+        {
             result_tp = union;
         }
         if let Some(chain) = &chain_borrow {
@@ -16005,58 +16031,42 @@ impl Parser {
     /// and the destination checks the joined range, so an integer expectation is the full
     /// `integer`; every other type is expected as it is.
     ///
-    /// A NAMED width (`u8`, `i16` — a `forced_size`) is a declaration, typically the
-    /// destination's own, and keeps holding its siblings: `c: u8 = if … { a } else { a + b }`
-    /// refuses the arm that does not fit, as it always has.
+    /// A NAMED width (`u8`, `i16` — a `forced_size`) is the SIBLING's own declaration, not
+    /// the construct's: `if t { a } else { b }` over `a: u8`, `b: i8` joins to their union
+    /// (loft#2066).  It expects nothing of the next arm, so that arm keeps its own type — the
+    /// full `integer` would convert it at its tail and two `u8` arms would join to `integer`.
+    /// A destination that names a width checks the join at its own store, so
+    /// `c: u8 = if … { a } else { a + b }` is still refused there.
     pub(super) fn arm_expectation(sibling: &Type) -> Type {
         match sibling.base() {
-            Type::Integer(sp) if sp.forced_size.is_some() => sibling.clone(),
             Type::Integer(_) if matches!(sibling, Type::Optional(_)) => {
                 Type::optional(crate::data::I64.clone())
             }
+            // A NAMED width is the sibling's own declaration: the next arm answers in its own
+            // type and the two join (loft#2066).
+            Type::Integer(sp) if sp.forced_size.is_some() => Type::Unknown(0),
             Type::Integer(_) => crate::data::I64.clone(),
             _ => sibling.clone(),
         }
     }
 
-    /// The range an integer arm CONTRIBUTES to a join: a constant tail is the one value it is
-    /// (`else { 7 }` is `[7, 7]`, not the full `integer` a literal is typed), any other arm its
-    /// own type.
-    pub(super) fn arm_contribution<'t>(
-        &self,
-        arm: &Value,
-        tp: &'t Type,
-    ) -> std::borrow::Cow<'t, Type> {
-        use std::borrow::Cow;
-        // Only a literal's own, unbounded `integer`: an arm already held to a declared width
-        // (`u8`) contributes that width, and was refused there if it did not fit.
-        // An optional arm keeps its type: the `?` it carries is what the join must keep.
-        // Borrowed wherever the arm's own type is the answer: this runs for every `if` arm of
-        // every type, and a cloned record or vector type allocates its dep list (+1 200
-        // allocations on the front-end pin's medium corpus).
-        if matches!(tp, Type::Optional(_)) {
-            return Cow::Borrowed(tp);
+    /// loft#2066, `@FR-I-Lit` with `@FR-I-Join` — an arm beside a NAMED-width sibling answers in
+    /// that width when every value it can take fits it (`int_range`: a constant, a narrower
+    /// width, a mask), as it did when the sibling was its expectation: `if t { a } else { 0 }`
+    /// over `a: u8` is a `u8`.  `None` for any other arm, which joins (`integer_arm_union`).
+    fn arm_fits_named_width(&self, sibling: &Type, arm: &Value, arm_tp: &Type) -> Option<Type> {
+        if matches!(sibling, Type::Optional(_)) || matches!(arm_tp, Type::Optional(_)) {
+            return None;
         }
-        match tp.base() {
-            Type::Integer(sp) if sp.min <= i32::MIN + 1 && sp.max >= i64::from(i32::MAX) => {}
-            _ => return Cow::Borrowed(tp),
-        }
-        let tail = match arm.unspan() {
-            Value::Block(bl) => bl.operators.last(),
-            other => Some(other),
+        let (Type::Integer(sp), Type::Integer(_)) = (sibling.base(), arm_tp.base()) else {
+            return None;
         };
-        match tail
-            .and_then(|t| self.const_int(t))
-            .and_then(|k| i32::try_from(k).ok())
-        {
-            Some(k) if k > i32::MIN + 1 => Cow::Owned(Type::Integer(crate::data::IntegerSpec {
-                min: k,
-                max: i64::from(k),
-                forced_size: None,
-                ..crate::data::IntegerSpec::wide()
-            })),
-            _ => Cow::Borrowed(tp),
+        sp.forced_size?;
+        if arm_tp == sibling {
+            return None;
         }
+        let (lo, hi) = self.int_range(arm)?;
+        (lo >= i64::from(sp.min) && hi <= sp.max).then(|| sibling.clone())
     }
 
     /// `@FR-I-Join` — two integer arms join to the UNION of their ranges, optional when either
@@ -16384,11 +16394,12 @@ impl Parser {
     }
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
+        let fitted = self.arm_fits_named_width(so_far, arm, tp);
+        let tp = fitted.as_ref().unwrap_or(tp);
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
         // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`
         // keeps the first arm's, which an arithmetic arm (`@FR-N-Arith`) makes narrower.
-        let joined =
-            Self::integer_arm_union(&joined, &self.arm_contribution(arm, tp)).unwrap_or(joined);
+        let joined = Self::integer_arm_union(&joined, tp).unwrap_or(joined);
         // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
         let joined = match (joined.function_consts(), tp.function_consts()) {
             (Some(jc), Some(ac)) if jc.common(ac) != jc => {

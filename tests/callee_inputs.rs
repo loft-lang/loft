@@ -19,6 +19,11 @@ const CELLS: &str =
 
 /// The callees that earn a twin, with the twin's extra parameters in order.
 const TWINS: &[(&str, &str)] = &[
+    // writes the field it reads: no scalar input, but its record's ADDRESS (`@FR-R-RecPtr`'s
+    // twin clause); `n_c2`'s caller holds none, so its call stays the plain one
+    ("t_2Cv_bumpw", "__ip_0: *const u8, __il_0: bool"),
+    // reads through a nested record path: no scalar input, the record's address
+    ("t_3Box_area", "__ip_0: *const u8, __il_0: bool"),
     // the pixel methods: width, height, the header of `data`
     (
         "t_2Cv_getp",
@@ -49,12 +54,10 @@ const TWINS: &[(&str, &str)] = &[
 
 /// The callees that earn NO twin, and why.
 const NO_TWIN: &[&str] = &[
-    "t_2Cv_bumpw", // writes the field it reads
-    "n_setw",      // writes only
-    "t_2Cv_cnt",   // a length-only view earns no header
-    "t_2Cv_walk",  // recursive: not admitted
-    "t_3Box_area", // reads through a nested record path
-    "n_poke",      // writes only
+    "n_setw",     // writes only
+    "t_2Cv_cnt",  // a length-only view earns no header
+    "t_2Cv_walk", // recursive: not admitted
+    "n_poke",     // writes only
 ];
 
 /// `(caller, twin calls in its body)` — the predictions written beside the cells.

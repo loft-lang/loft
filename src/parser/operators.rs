@@ -5100,22 +5100,6 @@ impl Parser {
         }
     }
 
-    /// If the operand is provably in `[0, M]` — a non-negative constant, or an
-    /// integer type with `min >= 0` — return `M`. Used by `&` range-tracking.
-    fn nonneg_bound(&self, ty: &Type, code: &Value) -> Option<u32> {
-        if let Some(c) = self.const_int(code)
-            && (0..=i64::from(u32::MAX)).contains(&c)
-        {
-            return Some(u32::try_from(c).unwrap_or(u32::MAX));
-        }
-        if let Type::Integer(s) = ty
-            && s.min >= 0
-        {
-            return u32::try_from(s.max).ok();
-        }
-        None
-    }
-
     #[allow(clippy::too_many_arguments)]
     /// @PLN25 DN3 — is a division/mod DIVISOR provably non-zero (so `a / v` cannot fault)?
     /// True for a constant non-zero literal, a var proven non-zero by an enclosing `if v != 0`
@@ -6136,50 +6120,8 @@ impl Parser {
                     concept_ref: "@F38",
                 });
             }
-            // @FR-N-Arith — non-null integer operands give a non-null result typed by the
-            // operands' RANGES; only a nullable operand (@FR-N-Prop) or a partial op
-            // (@FR-N-Div) makes the result nullable.
-            // @PLN25 (N-Arith) range-tracking — capture the operand bounds BEFORE
-            // call_op consumes them, so the result range of `&`/`%` can be narrowed
-            // (a masked/modded value becomes provably-fit for a later narrowing
-            // cast, removing DN4's `(x & 255) as u8` friction).
-            // `@FR-N-Arith` for `+ - *` — the operands' RANGES, read before `call_op` consumes
-            // them: a constant operand is the one value it is, a declared or inferred range is
-            // its bounds, and a plain `integer` is unbounded (no range is derived from it).
-            let arith_ranges = if matches!(operator, "+" | "-" | "*") {
-                let range = |p: &Self, tp: &Type, c: &Value| -> Option<(i64, i64)> {
-                    if let Some(k) = p.const_int(c) {
-                        return Some((k, k));
-                    }
-                    // A plain `integer` is unbounded whichever template spells it — the
-                    // 32-bit one (`i32::MIN + 1 ..= i32::MAX`) or the wide one — so only a
-                    // range strictly inside that window is a range to compute with.
-                    match tp.base() {
-                        Type::Integer(sp)
-                            if sp.min > i32::MIN + 1 || sp.max < i64::from(i32::MAX) =>
-                        {
-                            Some((i64::from(sp.min), sp.max))
-                        }
-                        _ => None,
-                    }
-                };
-                range(self, ctp, code).zip(range(self, &second_type, &second_code))
-            } else {
-                None
-            };
-            let (and_bound, mod_const, lhs_nonneg) = if matches!(operator, "&" | "%") {
-                let and_bound = [
-                    self.nonneg_bound(ctp, code),
-                    self.nonneg_bound(&second_type, &second_code),
-                ]
-                .into_iter()
-                .flatten()
-                .min();
-                let lhs_nonneg = matches!(ctp, Type::Integer(s) if s.min >= 0);
-                (and_bound, self.const_int(&second_code), lhs_nonneg)
-            } else {
-                (None, None, false)
-            };
+            // @FR-N-Arith — non-null integer operands give a non-null result; only a nullable
+            // operand (@FR-N-Prop) or a partial op (@FR-N-Div) makes the result nullable.
             // @PLN25 DN3: integer `/` and `%` PRODUCE null at runtime on a zero divisor (the @C80
             // sentinel), so the RESULT types `τ?` UNLESS the divisor is provably non-zero — a
             // constant non-zero literal (`a / 2`) or a var proven non-zero by an `if v != 0` guard
@@ -6223,71 +6165,9 @@ impl Parser {
                     &[ctp.clone(), second_type],
                 )
             };
-            // Tighten the result range — sound + conservative (never narrower than
-            // the operation guarantees), and only ever a tightening of call_op's
-            // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or
-            // [0, |c|-1] when `a` is non-negative.
-            if let Type::Integer(s) = ctp.clone() {
-                let s = &s;
-                // `@FR-N-Arith` — `a op b` over bounded integers is typed `Integer[r]`, r the
-                // interval arithmetic of the operand ranges (loft#1933: `u8 + u8` typed the full
-                // `integer`, so it could not be stored into a `u16`).  A range the spec cannot
-                // name stays the full `integer`.
-                if let Some(((al, ah), (bl, bh))) = arith_ranges {
-                    let (lo, hi) = match operator {
-                        "+" => (al.saturating_add(bl), ah.saturating_add(bh)),
-                        "-" => (al.saturating_sub(bh), ah.saturating_sub(bl)),
-                        _ => {
-                            let p = [
-                                al.saturating_mul(bl),
-                                al.saturating_mul(bh),
-                                ah.saturating_mul(bl),
-                                ah.saturating_mul(bh),
-                            ];
-                            (*p.iter().min().unwrap_or(&0), *p.iter().max().unwrap_or(&0))
-                        }
-                    };
-                    let both_constant = al == ah && bl == bh;
-                    if !both_constant
-                        && lo > i64::from(i32::MIN)
-                        // `u32::MAX` is the wide template's marker for "wider than 32 bits"
-                        // (`IntegerSpec::wide`), so a range must stay strictly below it.
-                        && hi < i64::from(u32::MAX)
-                        && (lo > i64::from(s.min) || hi < s.max)
-                    {
-                        *ctp = Type::Integer(IntegerSpec {
-                            min: i32::try_from(lo).unwrap_or(s.min),
-                            max: hi,
-                            forced_size: None,
-                            ..*s
-                        });
-                    }
-                }
-                let narrowed = match operator {
-                    "&" => and_bound.map(|m| (0i32, m)),
-                    "%" => mod_const.filter(|c| *c != 0).map(|c| {
-                        let m =
-                            u32::try_from(c.unsigned_abs().saturating_sub(1)).unwrap_or(u32::MAX);
-                        let lo = if lhs_nonneg {
-                            0
-                        } else {
-                            -i32::try_from(m).unwrap_or(i32::MAX)
-                        };
-                        (lo, m)
-                    }),
-                    _ => None,
-                };
-                if let Some((nmin, nmax)) = narrowed
-                    && nmin >= s.min
-                    && i64::from(nmax) <= s.max
-                {
-                    *ctp = Type::Integer(IntegerSpec {
-                        min: nmin,
-                        max: i64::from(nmax),
-                        ..*s
-                    });
-                }
-            }
+            // `@FR-N-Arith` — the result is the operator's own type: a range the operands prove
+            // (`x & 255`, `u8 + u8`) is asked by the narrowing store that needs it
+            // (`int_range`), never written into the type, so it does not reach inference.
             if div_nullable && crate::keys::pln25_dn1_enabled() {
                 *ctp = Type::optional(ctp.clone());
             } else if operand_nullable

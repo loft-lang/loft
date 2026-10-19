@@ -847,6 +847,10 @@ pub struct Output<'a> {
     /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
     /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
     pub twin_base_disabled: bool,
+    /// `LOFT_NO_PLAIN_CHAIN_PTR` — the plain-chains copy of a loop binds no record address.
+    pub plain_chain_ptr_disabled: bool,
+    /// `LOFT_NO_PARAM_TWIN_PTR` — a record parameter's address serves no twin call.
+    pub param_twin_ptr_disabled: bool,
     /// `@FR-R-RecPtr` — per block, the `__pa_N` local holding the address of a record VIEW
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
@@ -1049,6 +1053,10 @@ pub struct Output<'a> {
     /// same local `push_headers`-style; the path is also in [`Self::vec_headers`] as
     /// `__ph_N.h` for every read).  Pushed and popped beside the other hoist frames.
     mint_push_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// The mint paths whose header `@FR-R-PushRec`'s apart-call clause gave
+    /// ([`hoist::LoopHoist::apart_mint`]): [`Self::mint_reserve`] reserves nothing for them.
+    /// Per function; a path kept past its loop only withholds a later reservation.
+    apart_mint_paths: HashSet<hoist::PathKey>,
     /// `LOFT_NO_RECORD_PUSH=1` — a record append keeps its mint-group templates
     /// (`OpNewRecord`'s dispatch + prefill, `OpFinishRecord`'s dispatch) as before @PLN157
     /// § V-t (`@FR-R-PushRec`); the bisect step for a wrong element out of a record-appending
@@ -1064,6 +1072,10 @@ pub struct Output<'a> {
     /// `OpFinishRecord` templates (`@FR-R-FieldAppend` off): the bisect step for a wrong
     /// element out of `r.f += [x]` outside a loop.
     pub field_append_disabled: bool,
+    /// `LOFT_NO_BARE_APPEND=1` — an append to a plain vector that no push header holds keeps
+    /// its `OpNewRecord` / `OpFinishRecord` templates (`@FR-R-FieldAppend`'s bare clause
+    /// off): the bisect step for a wrong element or length out of an unhoisted `v += [x]`.
+    pub bare_append_disabled: bool,
     /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
     /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
     /// step for a wrong element or scalar read in a loop that declares a vector per pass.
@@ -2323,6 +2335,10 @@ impl<'a> Output<'a> {
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its twin clause off with it.
+            param_twin_ptr_disabled: std::env::var("LOFT_NO_PARAM_TWIN_PTR")
+                .is_ok_and(|v| v != "0"),
+            plain_chain_ptr_disabled: std::env::var("LOFT_NO_PLAIN_CHAIN_PTR")
+                .is_ok_and(|v| v != "0"),
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
@@ -2402,11 +2418,13 @@ impl<'a> Output<'a> {
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
+            apart_mint_paths: HashSet::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
             heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
                 .is_ok_and(|v| v != "0"),
             field_append_disabled: std::env::var("LOFT_NO_FIELD_APPEND").is_ok_and(|v| v != "0")
                 || std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_some(),
+            bare_append_disabled: std::env::var("LOFT_NO_BARE_APPEND").is_ok_and(|v| v != "0"),
             rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
             group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
             hoist_owned: hoist::HoistOwned::default(),
@@ -2559,6 +2577,14 @@ impl<'a> Output<'a> {
     /// `newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across
     /// its divide chain, +16 %), and the loop-free helpers are where the gain is.  Empty
     /// (not a blank line) under `LOFT_NO_INLINE_HINT`.
+    ///
+    /// An `__inv` twin (`@FR-R-Inputs`) that runs no loop and calls nothing that does is
+    /// `#[inline(always)]`: its only callers are loops that hoisted its inputs, and folding it
+    /// into each is the twin's whole worth — left a call, its index arithmetic is redone per
+    /// element where the plain callee, inlined, folded against the caller's constants
+    /// (`hex_shape`'s `wall_chain_walk`: `eg_index__inv` behind a call cost +14 % over the
+    /// plain callee inlined).  A twin that reaches a loop keeps the hint: forced into its
+    /// caller's loop it took that loop's vectorisation (`min_max_of` 0.72× → 1.86×).
     #[must_use]
     fn fn_inline_attr(&self, def: &crate::data::Definition) -> &'static str {
         if self.keep_fn_names {
@@ -2568,7 +2594,14 @@ impl<'a> Output<'a> {
                 .code()
                 .any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Parallel(_)))
         {
-            "#[inline]\n"
+            if self.twin.is_some()
+                && twin_inline_always()
+                && calls_no_loop(self.data, def, &mut HashSet::new())
+            {
+                "#[inline(always)]\n"
+            } else {
+                "#[inline]\n"
+            }
         } else {
             ""
         }
@@ -3070,6 +3103,7 @@ impl Output<'_> {
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
+        self.apart_mint_paths.clear();
         self.push_windows.clear();
         self.hoist_counter = 0;
     }
@@ -3701,12 +3735,23 @@ impl Output<'_> {
                 "'l{}: loop {{ //{}_{} plain chains",
                 lp.scope, lp.name, lp.scope
             )?;
-            for v in &lp.operators {
+            // `@FR-R-RecPtr` — the record-view hook, as the checked copy runs it: the
+            // element view a `for e in v` binds takes its address in this copy too.
+            let mut ptr_frames = 0usize;
+            for (at, v) in lp.operators.iter().enumerate() {
                 self.indent(w)?;
                 self.indent += 1;
                 self.output_code_inner(w, v)?;
                 self.indent -= 1;
                 writeln!(w, ";")?;
+                if !self.plain_chain_ptr_disabled
+                    && self.bind_record_ptr(w, &lp.operators, at, None)?
+                {
+                    ptr_frames += 1;
+                }
+            }
+            for _ in 0..ptr_frames {
+                self.rec_ptrs.pop();
             }
             self.indent(w)?;
             writeln!(w, "}} /*{}_{} plain chains*/", lp.name, lp.scope)?;
@@ -4204,6 +4249,10 @@ impl Output<'_> {
         let Some(hdr) = self.active_mint_push(&m.path).map(str::to_owned) else {
             return Ok(None);
         };
+        // `@FR-R-PushRec`'s apart-call clause: its header grows by doubling, unreserved.
+        if self.apart_mint_paths.contains(&m.path) {
+            return Ok(None);
+        }
         if self.coroutine_persistent_fields.contains_key(&m.path.0) {
             return Ok(None);
         }
@@ -4748,6 +4797,7 @@ impl Output<'_> {
             mint_pushes,
             growth_free,
             movers,
+            apart_mint,
         } = hoisted;
         // `@FR-R-Base` — every candidate's base in a growth-free loop; under growth, the
         // base of each candidate whose store is proven apart from every store the loop grows.
@@ -4791,6 +4841,9 @@ impl Output<'_> {
         for (path, expr) in mint_pushes {
             if self.mint_push_headers.iter().any(|f| f.contains_key(&path)) {
                 continue;
+            }
+            if apart_mint {
+                self.apart_mint_paths.insert(path.clone());
             }
             if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;
@@ -5338,7 +5391,7 @@ impl Output<'_> {
             let Value::Call(g, _) = getter.unspan() else {
                 return None;
             };
-            if self.param_rec_ptrs.contains(c) {
+            if self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c) {
                 return None;
             }
             let name = self.data.def(*g).name().to_string();
@@ -5366,7 +5419,31 @@ impl Output<'_> {
                 }
             }
         }
-        Some(args)
+        // `@FR-R-RecPtr`'s twin clause — the address of each record argument the frames
+        // hold, valid for the call's duration for the reason a base is; any other argument
+        // passes null, and the twin resolves its store as the plain body would.  A twin
+        // whose only inputs are addresses, none of them held, is the plain call.
+        let mut any_held = !args.is_empty();
+        for p in &inputs.records {
+            let held = match vals.get(*p as usize)?.unspan() {
+                Value::Var(c)
+                    if !(self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c)) =>
+                {
+                    self.active_rec_ptr(*c).map(str::to_owned)
+                }
+                _ => None,
+            };
+            if let Some(ptr) = held {
+                any_held = true;
+                let lock = rec_ptr_lock(&ptr);
+                args.push(ptr);
+                args.push(lock);
+            } else {
+                args.push("std::ptr::null()".to_string());
+                args.push("false".to_string());
+            }
+        }
+        any_held.then_some(args)
     }
 
     /// The frames a twin's body reads its inputs from: `(parameter, field)` → `__is_k`,
@@ -5678,9 +5755,9 @@ impl Output<'_> {
             // call: the site reads the view's fields into the tuple where the twin read its
             // inputs, so the view keeps its address for them.
             if self.value_records.param_type(g, usize::from(p)).is_some()
-                || self
-                    .callee_inputs_of(g)
-                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+                || self.callee_inputs_of(g).is_some_and(|ci| {
+                    ci.scalars.iter().any(|(q, _, _)| *q == p) || ci.records.contains(&p)
+                })
             {
                 twin_params.insert((g, p));
             }
@@ -5731,8 +5808,13 @@ impl Output<'_> {
             if hoist::scalar_field_uses(stmts, p, self.data, &served) < 2 {
                 continue;
             }
-            // No twin call is served (`param_rec_ptrs`), so none counts as a use.
-            let twin_params = HashSet::new();
+            // A twin call `p` is handed to is a use of the address at the call, as it is for
+            // a view bound in the body: validated here, the address serves that call.
+            let twin_params = if self.param_twin_ptr_disabled {
+                HashSet::new()
+            } else {
+                self.twin_params_of(stmts, p)
+            };
             let verdict = hoist::param_view_ptr(
                 stmts,
                 p,
@@ -5755,7 +5837,14 @@ impl Output<'_> {
             );
             match verdict {
                 Ok(p) => {
-                    self.emit_record_ptr(w, p, None)?;
+                    match self
+                        .twin
+                        .as_ref()
+                        .and_then(|t| t.records.iter().position(|q| *q == p))
+                    {
+                        Some(k) => self.emit_twin_record_ptr(w, p, k)?,
+                        None => self.emit_record_ptr(w, p, None)?,
+                    }
                     self.param_rec_ptrs.insert(p);
                     frames += 1;
                 }
@@ -5771,6 +5860,31 @@ impl Output<'_> {
             }
         }
         Ok(frames)
+    }
+
+    /// `@FR-R-RecPtr`'s twin clause — bind record parameter `r`'s address from the twin's
+    /// input `k`, the caller's held address; a null input is one the caller did not hold,
+    /// resolved here as the plain body resolves it.
+    fn emit_twin_record_ptr(&mut self, w: &mut dyn Write, r: u16, k: usize) -> std::io::Result<()> {
+        self.hoist_counter += 1;
+        let name = format!("__pa_{}", self.hoist_counter);
+        let lock = rec_ptr_lock(&name);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(r))?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {name}: *const u8 = if __ip_{k}.is_null() {{ vector::rec_ptr(&({operand}), &stores.allocations) }} else {{ __ip_{k} }}; //@FR-R-RecPtr record view address for {operand}, from the caller"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {lock}: bool = if __ip_{k}.is_null() {{ vector::rec_locked(&({operand}), &stores.allocations) }} else {{ __il_{k} }};"
+        )?;
+        self.rec_ptrs.push(HashMap::from([(r, name)]));
+        crate::rewrite_census::fired("R-RecPtr", 1);
+        Ok(())
     }
 
     /// `@FR-R-RecPtr` — emit `let __pa_N = …` for view `r` and push its frame.  `stmt` is the
@@ -11269,6 +11383,11 @@ extern crate loft;"
                     write!(w, ", __ib_{k}: *const u8")?;
                 }
             }
+            // `@FR-R-RecPtr`'s twin clause — each record parameter's address and lock, as
+            // the caller holds them; a null address is one the caller did not hold.
+            for k in 0..t.records.len() {
+                write!(w, ", __ip_{k}: *const u8, __il_{k}: bool")?;
+            }
         }
         write!(w, ") ")?;
         if *def.returned() != Type::Void {
@@ -13403,4 +13522,52 @@ pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
 fn hash_reserve_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| !std::env::var("LOFT_NO_HASH_RESERVE").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_NO_TWIN_INLINE=1` — a loop-free `__inv` twin takes the plain `#[inline]` hint again
+/// instead of `#[inline(always)]`: the bisect step for a slowdown in a loop that calls one.
+fn twin_inline_always() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_TWIN_INLINE").is_ok_and(|v| v != "0"))
+}
+
+/// Does `def` run no loop — none but a SMALL CONSTANT one, `for i in 0..k` with a literal
+/// `k` of at most 16, which LLVM unrolls and folds once inlined — nor call, through any chain
+/// of loft-defined calls, a function that does?  `seen` breaks a recursion, which answers
+/// "no loop" for the cycle's repeat.
+fn calls_no_loop(data: &Data, def: &crate::data::Definition, seen: &mut HashSet<u32>) -> bool {
+    let mut ok = true;
+    def.code().any_node(&mut |n| match n {
+        Value::Loop(lp) if small_constant_loop(data, lp) => false,
+        Value::Loop(_) | Value::Parallel(_) => {
+            ok = false;
+            true
+        }
+        Value::Call(d, _) if (*d as usize) < data.definitions.len() => {
+            let callee = data.def(*d);
+            if callee.is_loft_defined() && seen.insert(*d) && !calls_no_loop(data, callee, seen) {
+                ok = false;
+                return true;
+            }
+            false
+        }
+        _ => false,
+    });
+    ok
+}
+
+/// Is this a counted loop whose exit test is `k <= index` for a literal `k` of at most 16 —
+/// the head `for i in 0..k` lowers to?
+fn small_constant_loop(data: &Data, lp: &crate::data::Block) -> bool {
+    let Some(head) = lp.operators.first() else {
+        return false;
+    };
+    let le = data.def_nr("OpLeInt");
+    head.any_node(&mut |n| {
+        matches!(n, Value::If(c, t, _)
+            if matches!(t.unspan(), Value::Break(_))
+                && matches!(c.unspan(), Value::Call(d, a)
+                    if *d == le
+                        && matches!(a.first().map(Value::unspan), Some(Value::Int(k)) if (0..=16).contains(k))))
+    })
 }

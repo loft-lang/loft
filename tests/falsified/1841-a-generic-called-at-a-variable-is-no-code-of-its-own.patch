@@ -1,8 +1,8 @@
 diff --git a/src/compile.rs b/src/compile.rs
-index eec19ab22..ddf5192c4 100644
+index 46c0b437e..636423900 100644
 --- a/src/compile.rs
 +++ b/src/compile.rs
-@@ -151,12 +151,7 @@ pub fn byte_code_from(
+@@ -156,12 +156,7 @@ pub fn byte_code_from(
          None
      };
      for d_nr in start_d_nr..data.definitions() {
@@ -17,10 +17,10 @@ index eec19ab22..ddf5192c4 100644
          }
          // loft#665 piece 3 — publish which definition is being generated, so an
 diff --git a/src/data.rs b/src/data.rs
-index 3aaae436c..c15dee055 100644
+index 668a7df3c..f947d3dcb 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -10763,32 +10763,6 @@ impl Data {
+@@ -10828,32 +10828,6 @@ impl Data {
          }
      }
  
@@ -71,10 +71,10 @@ index 68222cba6..95bb4aa4d 100644
          }
          // A closure-capturing lambda has a hidden `__closure` param as its last
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index 1e2a5296b..69fe398f3 100644
+index 9717193f7..9f94191a7 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -9636,10 +9636,7 @@ extern crate loft;"
+@@ -10317,10 +10317,7 @@ extern crate loft;"
              }
          }
          for dnr in from..till {
@@ -86,14 +86,14 @@ index 1e2a5296b..69fe398f3 100644
                  continue;
              }
              if let Some(r) = reachable
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index f35366ae8..c698900a3 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -11853,17 +11853,21 @@ impl Parser {
+diff --git a/src/parser/monomorph.rs b/src/parser/monomorph.rs
+index 840f615ac..87d28c68e 100644
+--- a/src/parser/monomorph.rs
++++ b/src/parser/monomorph.rs
+@@ -587,17 +587,21 @@ impl Parser {
      /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
      /// at a real type is its own answer; one at a variable stands for its template.
-     fn placeholder_instance_template(&self, d: u32) -> u32 {
+     pub(super) fn placeholder_instance_template(&self, d: u32) -> u32 {
 -        if !self.data.is_placeholder_instance(d) {
 -            return u32::MAX;
 -        }

@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TypedKeyed` and `@FR-R-KeyedEntry`, their compound clauses — on `--native`, a `hash`
+// keyed by two to four `integer` parts is looked up through `hash::find_ints` (the parts handed
+// over as values, hashed as the general entry hashes their `Content::Long`s), and
+// `h += [T{…}]` into it asks the key first when the element owns no heap: the entry under the
+// key is overwritten, a new one is filed with its parts written where the probe ended.
+//
+// What can go wrong is an answer the general entry would not give: a digest that lands in
+// another bucket than the record's own, a repeated key filed twice, a replace that keeps the
+// old fields, or a removal by `null` the next lookup still finds.  The cells vary new and
+// repeated keys, a miss, negative parts, a part past 32 bits, three parts, removal by `null`
+// and a re-insert, growth through several rebuilds (400 keys inserted twice), an element with
+// a text field (declined), a hash in a record's field and a walk after the inserts.  Every
+// value is hand-computed.  Both backends answer the same in every state of
+// `LOFT_NO_KEYED_ENTRY` and `LOFT_NO_TYPED_KEYED`, with no leak under `LOFT_STRICT_STORES=1`, and
+// `LOFT_KEYED_VERIFY=1` passes.
+//
+// @falsified-by: tests/falsified/a-compound-keyed-insert-writes-the-entry-its-key-names.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion on --native.  WITNESS: the patch seeds the typed lookup's digest
+//     differently from the table's, so a present key is missed: *c1 13000*.
+//   HOLDS: the interpreter keeps the general entry, and answers the same on both trees.
+
+struct P { q: integer, r: integer, kind: integer }
+struct World { painted: hash<P[q, r]> }
+struct P3 { a: integer, b: integer, c: integer, v: integer }
+struct W3 { rows: hash<P3[a, b, c]> }
+struct Pt { q: integer, r: integer, note: text }
+struct WT { rows: hash<Pt[q, r]> }
+struct Holder { id: integer, w: World }
+
+// c1: find-or-insert over repeated keys: (1,2) x3, (2,1) x2, (-1,-1) x1, a miss.
+fn c1() -> integer {
+  w = World { painted: [] };
+  for k in [(1, 2), (2, 1), (1, 2), (-1, -1), (2, 1), (1, 2)] {
+    f = w.painted[k.0, k.1];
+    if f == null { w.painted += [P { q: k.0, r: k.1, kind: 1 }]; } else { f.kind += 1; }
+  }
+  miss = if w.painted[3, 3] == null { 1 } else { 0 };
+  // 3*100 + 2*10 + 1 + size 3 * 1000 + miss 10000 = 13321
+  w.painted[1, 2]?.kind * 100 + w.painted[2, 1]?.kind * 10 + w.painted[-1, -1]?.kind + len(w.painted) * 1000 + miss * 10000
+}
+
+// c2: a repeated insert replaces (5 then 7), and removal by null then a re-insert (4).
+fn c2() -> integer {
+  w = World { painted: [] };
+  w.painted += [P { q: 4, r: 4, kind: 5 }];
+  w.painted += [P { q: 4, r: 4, kind: 7 }];
+  w.painted += [P { q: 0, r: 9, kind: 1 }];
+  a = w.painted[4, 4]?.kind;
+  w.painted[4, 4] = null;
+  gone = if w.painted[4, 4] == null { 1 } else { 0 };
+  w.painted += [P { q: 4, r: 4, kind: 4 }];
+  a * 1000 + gone * 100 + w.painted[4, 4]?.kind * 10 + len(w.painted)
+}
+
+// c3: growth through several rebuilds: 400 keys (i, i % 13), each inserted twice.
+fn c3() -> integer {
+  w = World { painted: [] };
+  for _r in 0..2 {
+    for i in 0..400 {
+      f = w.painted[i, i % 13];
+      if f == null { w.painted += [P { q: i, r: i % 13, kind: 1 }]; } else { f.kind += 1; }
+    }
+  }
+  t = 0;
+  for i in 0..400 { t += w.painted[i, i % 13]?.kind; }
+  t * 1000 + len(w.painted)
+}
+
+// c4: three parts, one past 32 bits: (1, 5000000000, 2) twice, (1, 5000000000, 3) once.
+fn c4() -> integer {
+  w = W3 { rows: [] };
+  for c in [2, 2, 3] {
+    f = w.rows[1, 5000000000, c];
+    if f == null { w.rows += [P3 { a: 1, b: 5000000000, c: c, v: 1 }]; } else { f.v += 1; }
+  }
+  w.rows[1, 5000000000, 2]?.v * 10 + w.rows[1, 5000000000, 3]?.v + len(w.rows) * 100
+}
+
+// c5: an element with a text field (declined by the compound clause): the newest note wins.
+fn c5() -> integer {
+  w = WT { rows: [] };
+  w.rows += [Pt { q: 1, r: 1, note: "one" }];
+  w.rows += [Pt { q: 1, r: 1, note: "three" }];
+  len(w.rows[1, 1]?.note) * 10 + len(w.rows)
+}
+
+// c6: the hash in a record field, then a walk in key order: (0,5) 1, (1,0) 2, (1,3) 3.
+fn c6() -> integer {
+  h = Holder { id: 7, w: World { painted: [] } };
+  h.w.painted += [P { q: 1, r: 3, kind: 3 }];
+  h.w.painted += [P { q: 0, r: 5, kind: 9 }];
+  h.w.painted += [P { q: 1, r: 0, kind: 2 }];
+  h.w.painted += [P { q: 0, r: 5, kind: 1 }];
+  t = 0;
+  for e in h.w.painted { t = t * 10 + e.kind; }
+  t * 10 + h.id
+}
+
+fn main() {
+  for _rep in 0..2 {
+    assert(c1() == 13321, "c1 {c1()}");
+    assert(c2() == 7142, "c2 {c2()}");
+    assert(c3() == 800400, "c3 {c3()}");
+    assert(c4() == 221, "c4 {c4()}");
+    assert(c5() == 51, "c5 {c5()}");
+    assert(c6() == 1237, "c6 {c6()}");
+  }
+  println("done");
+}

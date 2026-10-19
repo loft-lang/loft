@@ -1,8 +1,8 @@
-diff --git b/src/database/format.rs a/src/database/format.rs
-index d214c7136..96855be6b 100644
---- b/src/database/format.rs
-+++ a/src/database/format.rs
-@@ -1373,10 +1373,7 @@ impl ShowDb<'_> {
+diff --git a/src/database/format.rs b/src/database/format.rs
+index d933776a3..7003b9383 100644
+--- a/src/database/format.rs
++++ b/src/database/format.rs
+@@ -1550,10 +1550,7 @@ impl ShowDb<'_> {
                          s.push('}');
                          return;
                      }
@@ -14,7 +14,7 @@ index d214c7136..96855be6b 100644
                          "null"
                      } else if known {
                          &vals[v as usize - 1].1
-@@ -1590,7 +1587,7 @@ impl ShowDb<'_> {
+@@ -1770,7 +1767,7 @@ impl ShowDb<'_> {
          // pretty output, every non-empty struct should multi-line.
          let complex =
              self.pretty && (self.json || self.stores.types[self.known_type as usize].complex);
@@ -23,7 +23,7 @@ index d214c7136..96855be6b 100644
          // TODO reference to an object inside a field instead of the object itself, show the key
          s.push('{');
          // JSON pretty mode opens the body with a newline + indent
-@@ -1612,29 +1609,46 @@ impl ShowDb<'_> {
+@@ -1792,29 +1789,46 @@ impl ShowDb<'_> {
      }
  
      /// Return true iff `fields` contains at least one entry that
@@ -87,7 +87,7 @@ index d214c7136..96855be6b 100644
                  continue;
              }
              if first {
-@@ -2305,10 +2319,17 @@ impl ShowDb<'_> {
+@@ -2485,10 +2499,17 @@ impl ShowDb<'_> {
          s.push_str(" {");
          let mut first = true;
          for fld in fields {
@@ -106,26 +106,15 @@ index d214c7136..96855be6b 100644
              if !first {
                  s.push(',');
              }
-diff --git b/src/database/structures.rs a/src/database/structures.rs
-index f7cc26dd2..241540ec4 100644
---- b/src/database/structures.rs
-+++ a/src/database/structures.rs
-@@ -2216,18 +2216,7 @@ impl Stores {
+diff --git a/src/database/structures.rs b/src/database/structures.rs
+index f50dea36e..1f0e4e238 100644
+--- a/src/database/structures.rs
++++ b/src/database/structures.rs
+@@ -2760,7 +2760,7 @@ impl Stores {
          // default is the FIELD's question, not the type's, and
          // [`Self::write_absent_value`] is where that question is answered.
          if matches!(parsed, crate::json::Parsed::Null) {
--            // A COLLECTION field arrives with `to` at the struct BASE and its index in
--            // `field` (`walk_parsed_struct`'s `else` arm, as the non-null path below feeds
--            // `record_new`), so its absent marker belongs at the field's own slot.  Written
--            // at `to` it landed on the FIRST field: `{"p":{"x":1},"v":null}` read `p.x`
--            // back as 4294967295 (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a
--            // record with a null collection field once null fields are written (@C143).
--            let slot = if self.content(tp) == u16::MAX {
--                *to
--            } else {
--                self.field_ref(to, rec_tp, field)
--            };
--            self.write_absent_value(tp, rec_tp, field, &slot);
+-            self.write_absent_at(tp, rec_tp, field, to);
 +            self.write_absent_value(tp, rec_tp, field, to);
              return Ok(());
          }

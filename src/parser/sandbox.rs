@@ -363,6 +363,28 @@ impl Parser {
     /// declared default; an argument equal to the default is exactly what the lock pins
     /// to, so it is free.  Admission (`param_lock_violations`) then rejects an override
     /// whose lock token the calling profile does not grant.
+    /// `@FR-Cap-Set` — is an argument the locked parameter's default?  It is when it FOLDS at
+    /// compile time to the default's value: `1`, `2 - 1`, a named constant.  A
+    /// local or a parameter is not, whatever it holds — the proof belongs to
+    /// the expression written at the call, as a narrowing's does (`@FR-N-Arith`).
+    fn is_the_default(&self, arg: &Value, default: &Value) -> bool {
+        if arg.unspan() == default.unspan() {
+            return true;
+        }
+        if let (Some(a), Some(d)) = (self.const_int(arg), self.const_int(default)) {
+            return a == d;
+        }
+        match (
+            crate::const_eval::const_eval(arg, &self.data),
+            crate::const_eval::const_eval(default, &self.data),
+        ) {
+            (Some(Value::Float(a)), Some(Value::Float(d))) => a.to_bits() == d.to_bits(),
+            (Some(Value::Single(a)), Some(Value::Single(d))) => a.to_bits() == d.to_bits(),
+            (Some(Value::Boolean(a)), Some(Value::Boolean(d))) => a == d,
+            _ => false,
+        }
+    }
+
     pub(super) fn record_param_lock_overrides(&mut self, d_nr: u32, actual: &[Value]) {
         if self.param_locks.is_empty() {
             return;
@@ -376,7 +398,7 @@ impl Parser {
             if matches!(arg.unspan(), Value::Null) {
                 continue; // not supplied → keeps its default, free
             }
-            if arg.unspan() == self.data.def(d_nr).attributes()[i].value.unspan() {
+            if self.is_the_default(arg, &self.data.def(d_nr).attributes()[i].value) {
                 continue; // explicitly the default → not an override
             }
             let pos = *self.lexer.peek_pos();

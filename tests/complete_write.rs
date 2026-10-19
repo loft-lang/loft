@@ -80,14 +80,17 @@ fn counts(rust: &str) -> HashMap<String, (usize, usize)> {
             map.entry(current.clone()).or_default();
         }
         let row = map.entry(current.clone()).or_default();
-        // `@FR-R-FieldAppend` spells a field mint as the field's own append; its const
-        // argument says whether the slot is prefilled, so it is counted as the same form.
+        // `@FR-R-FieldAppend` spells a field mint as the field's own append, and a bare
+        // vector's mint as the vector's own; the first const argument says whether the slot
+        // is prefilled, so each is counted as the same form.
         row.0 += line.matches("OpDatabaseNP(").count()
             + line.matches("OpNewRecordNP(").count()
-            + line.matches("field_vector_append::<false>(").count();
+            + line.matches("field_vector_append::<false>(").count()
+            + line.matches("vector_record_append::<false,").count();
         row.1 += line.matches("OpDatabase(").count()
             + line.matches("OpNewRecord(").count()
-            + line.matches("field_vector_append::<true>(").count();
+            + line.matches("field_vector_append::<true>(").count()
+            + line.matches("vector_record_append::<true,").count();
     }
     map
 }

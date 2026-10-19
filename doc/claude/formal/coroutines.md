@@ -72,6 +72,40 @@ position behind takes a cursor record and advances its field (`fn tokens(c: Curs
 corpus, the libraries or the consumers uses the pattern (loft#1680); a real case can lift the
 refusal later, which breaks nothing.
 
+```
+  (G-Arg-Share)   a heap argument (a struct, a vector, a collection, a text) is SHARED with the
+                  frame, not copied (calls.md F-Param*): the caller and the frame name one
+                  value, so a MUTATION by either — an append, a field write, an element write,
+                  a removal — is seen by the other at the next advance.
+  (G-Arg-Rebind)  a WHOLE rebind of the caller's variable after the call — `v = [..]`,
+                  `lg = S { … }`, `lg = other` — is a NEW binding, and the frame keeps the
+                  value it was handed:  ⟨x = e, ρ⟩ after fr = g(x) leaves  args(fr)  unchanged.
+                  The handed value lives at least as long as the frame — a store a live frame
+                  names is not released by the rebind (heap.md H-Free) — and is released when
+                  both the frame and the caller's scope are done with it.
+```
+
+**In words.** A generator's body runs after its call has returned, so — unlike an ordinary call
+— it can watch what the caller does to its arguments in between. Loft answers that the way an
+ordinary call's parameter already means: the parameter is bound to a VALUE, not to the caller's
+variable. Changing that value (`w += [2]`, `lg.n = 50`) is seen, because both sides hold it;
+pointing the caller's variable at a different value (`lg = Log { n: 50 }`) is not, because the
+frame never named the variable. That is the mirror of `(F-ParamRebind)`, which says the same of
+the callee rebinding its own parameter. The alternative — the frame
+tracking the caller's variable — would make a parameter an alias of a variable, which loft does
+nowhere else. And because the frame still reads the old value, the rebind must not free it: the
+release waits for the frame.
+
+```loft
+struct Log { n: integer }
+fn bump(l: Log) -> iterator<integer> { yield l.n; yield l.n; }
+fn main() {
+  lg = Log { n: 5 };  h = bump(lg);  a = next(h);
+  lg.n = 6;                          b = next(h);   // 6 — a mutation of the shared value
+  lg = Log { n: 50 };                c = next(h);   // 6 — the frame keeps what it was handed
+}
+```
+
 ### `next` / a `for` advance runs one slice, up to the next `yield`
 
 ```
@@ -228,10 +262,9 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 0.**  The closed entries are in [coroutines-history.md](coroutines-history.md).
+**OPEN: 0.**
 
-Every deviation this doc has carried is closed; the record is in the companion
-[coroutines-history.md](coroutines-history.md).
+The closed entries are in the companion [coroutines-history.md](coroutines-history.md).
 
 ## Conformance
 

@@ -77,9 +77,13 @@ lowers to method calls instead, and the template's value is that type rather tha
                    single → hole_single · boolean → hole_boolean · character → hole_character ·
                    a struct/enum → hole_<type name in method case> (`SqlIdent` → hole_sql_ident,
                    an acronym run breaking at the last capital: `SQLIdent` → hole_sql_ident).
-  (F-Target-Pos) the expected type is taken from an ANNOTATED binding (`q: Query = "…"`) or a
-                 struct-literal FIELD of the target type.  A call ARGUMENT and a RETURN position do
-                 NOT target (measured: `expected Query, got text`); route through a local.
+  (F-Target-Pos) the expected type is taken from every position that has one: an ANNOTATED
+                 binding (`q: Query = "…"`) or a reassignment of a local typed τ, a struct-literal
+                 FIELD, a call ARGUMENT (any position, a method's included) and a RETURN position
+                 (the body's tail, an early `return`, either branch of an `if`, a lambda's body).
+                 A HOLE is not a position: the template's own expected type does not reach into
+                 it, so a literal in a hole is a value handed to `hole_text` — while a call
+                 written in the hole targets its own parameter as it does outside one.
   (F-Target-Kind) a hole whose kind the target does not define is a STATIC error — "Query has no
                  `fn hole_int(self: Query, v: integer)` — declare one to accept this hole".
   (F-Target-Spec) a format SPEC on a hole of a target template is a STATIC error — "a format spec

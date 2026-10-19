@@ -1241,16 +1241,25 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  not plain records and are never bound.  THE PARAMETER CLAUSE: a
                  plain-record PARAMETER is a view the caller fixed before the first
                  statement, so the whole body is its remainder and takes the same
-                 verdict; a generator's parameters, which outlive a resumption, never
-                 do.  A TWIN (R-Inputs) runs the clause as its plain function does, over
+                 verdict — a twin call it is handed to counted as a use, as for a view
+                 bound in the body, so the address serves that call's inputs; a
+                 generator's parameters, which outlive a resumption, never do.  A TWIN (R-Inputs) runs the clause as its plain function does, over
                  the accesses its inputs leave: a field read from an input is no use of
-                 the address.  THE BASE CLAUSE: where
+                 the address.  THE TWIN CLAUSE: a record parameter the body reads or
+                 writes through at least twice beyond its scalar inputs is itself an
+                 input of the twin — its ADDRESS and lock.  The caller hands the address
+                 its frames hold for the argument — a view's or its own parameter's — valid for the call for (R-Inputs)'s
+                 reason (an admitted callee grows no store); for any other argument it
+                 hands null, and the twin resolves the store at entry as the plain body
+                 does.  Handing r to such a twin is a use of r's address.  A hidden
+                 return buffer is the callee's own and is never such an input.  THE BASE CLAUSE: where
                  the binding is the head of `for e in v` — `e = { idx = idx + 1;
                  v[idx] }` — over a path whose header AND element base the loop
                  holds (R-Base), the address is `base + idx * size` when `idx` is
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
-                 resolved.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
+                 resolved — in every copy of the loop, (R-GuardedChain)'s plain copy
+                 as its checked one.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
                  `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
                  header AND element base the frame holds, with IDX a repeatable
                  expression (pure operators and discharges): IDX is evaluated once,
@@ -1482,7 +1491,12 @@ Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
                  the record — the caller's holders handed in (R-State: a path held
                  by a push header hands in that header, current at the call).  A
                  call missing any input keeps the plain form; the twin exists
-                 beside the original, never instead of it.
+                 beside the original, never instead of it.  A write into a SCALAR
+                 vector element — a base value or a narrow integer — reaches no
+                 record field, so it stales no held scalar.  A twin that runs no
+                 loop, and calls nothing that runs one but a `for i in 0..k` with a
+                 literal k of at most 16, is emitted `#[inline(always)]`: folding
+                 into its hoisting caller is its worth.
 ```
 
 **In words.** @PLN157 § V-p.  The pixel methods read `self.width` / `self.height`
@@ -1702,7 +1716,21 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  struct-enum element qualifies as a plain struct does — its literal
                  writes its own tag (OpSetEnum(e, 0, variant)) beside the variant's
                  fields — with its slot always zeroed, a narrower variant leaving a
-                 wider one's tail unwritten.
+                 wider one's tail unwritten.  THE APART-CALL CLAUSE: a loop the
+                 (R-InPlace) gate declines — it calls a writer — still holds the
+                 header for the ONE path P it mints into when nothing else in the
+                 body can reach P: every variable it names whose type can hold an
+                 element of P is FRESH this pass (an element minted on P, a placed
+                 record, a pooled call buffer re-established by its pool statement,
+                 the result of a call handed a fresh buffer as its return buffer, a
+                 field view into a fresh record), P itself appears only as the
+                 first operand of its own mint group or as the host a placement
+                 claims beside, and the body runs no CallRef, Parallel or Yield.  A
+                 claim anywhere in P's store moves no record number, length or
+                 capacity, and a record is reached only through a value that names
+                 it.  Under the clause the loop holds no other header, base or
+                 scalar, and takes no reservation: the header grows by doubling,
+                 since the trip count may be read from input.
   (R-FieldAppend)  a mint group over a vector FIELD of a struct that no push header
                  holds — a straight-line `r.f += [x]`, outside any loop (R-PushRec)
                  admits — whose parent type is a STRUCT and whose field is a plain
@@ -1719,7 +1747,22 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  parent are not plain vector fields and keep the templates.
                  Native; the interpreter's own plain-field path is the oracle.
                  Switch `LOFT_NO_FIELD_APPEND` (and the runtime's own
-                 `LOFT_NO_PLAIN_FIELD_APPEND`).
+                 `LOFT_NO_PLAIN_FIELD_APPEND`).  THE BARE CLAUSE: a mint group over
+                 a BARE vector (`v += [x]`, `OpNewRecord(v, tp, MAX)`) that no push
+                 header holds — in a loop whose header hoist declines, beside a
+                 destination call (R-Destination), outside a group (R-GroupPush) —
+                 whose `tp` is a plain vector is emitted as the vector's own
+                 append: OpNewRecord is `vector_record_append` with the element's
+                 size, OpFinishRecord `vector_finish`.  The admission is the test
+                 `record_new` and `record_finish` make first on every call, so the
+                 slot, the growth step, an absent vector's no-op and a locked
+                 store's refusal are the runtime's.  The prefill is the template's
+                 (none where (R-CompleteWrite) covers the group): one zero fill of
+                 the slot where the element's default is all zero bytes — the
+                 store's own `zero_default`, under which an enum's default is its
+                 zero tag and the bytes past it are read by no variant — else the
+                 element's default walk.  A keyed collection keeps the templates.
+                 Switch `LOFT_NO_BARE_APPEND`.
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
@@ -1748,6 +1791,38 @@ run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
 `tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
 `Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
+*The bare clause:* cbor's `read_value` appends each decoded child to `items` or `entries` in
+a loop whose call claims in the vector's store (the child's pooled buffer, its own vectors
+and texts); where no header holds the vector (the apart-call clause below declines, or is
+switched off) every element paid `record_new`'s dispatch,
+the default walk and `record_finish`'s — about 380 instructions where the append itself is
+a slot and a length bump: `cbor/decode` 8.03 → 6.43 ms (−20 %), hashes equal.  The prefill
+is unobservable in every shape the clause reaches today (a literal writes each field, an
+appended copy is fresh, a destination twin writes the whole value — a skipped zero fill
+stays green even under `LOFT_POISON_CLAIM=1`), so the falsified edge is the admission: a
+`sorted` collection admitted as a plain vector lands each record at the end, `b7 5001234`
+where 5043210 is due.  Cells
+`tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft`, pins
+`tests/field_append.rs`.  Sites: the `bare_append` arms of `NewRecordEmitter` and
+`FinishRecordEmitter`, `Stores::vector_record_append`, `Stores::zero_default`.
+*The apart-call clause:* the same decoder loops held no header at all, because the gate asks
+whether the body's writes move NOTHING a holder describes, and a recursive call that builds a
+tree in the vector's own store fails that for every holder at once.  A record-push header
+needs less: its record number, length and capacity change only through an op that names the
+vector's owner slot or record, so a body whose every value that could hold an element is
+fresh this pass cannot reach them, whatever its calls claim.  The test is by TYPE as well as
+by identity, because two parameters can name one vector — `fill(x, x)` hands the writing
+call the very vector the loop builds (cell a5): refusing only the vector itself keeps a header
+there, and each finish writes its stale length over the call's own appends, *a5 alias 7 12345*
+where 9 elements are due.  `cbor/decode` 6.57 → 5.15 ms hand-priced,
+hashes equal; the held window with the length written at the loop's end priced 4.73 ms and
+is not built.  No up-front reservation: `arg` is read from the bytes, and reserving it would
+turn a hostile header into one huge claim where the plain loop fails at its first child.
+Switch `LOFT_NO_APART_MINT`; falsifier `LOFT_HOIST_VERIFY=1`.  Cells
+`tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft`, pins
+`tests/apart_mint.rs`.  Sites: `hoist::apart_mint`, `hoist::apart_fresh`,
+`hoist::apart_mentions_ok`, `hoist::type_reaches`, `hoist::placed_pool_of`,
+`Output::mint_reserve` (its `apart_mint_paths` skip).
 
 ### A mint group outside any held header binds its own
 
@@ -2768,8 +2843,16 @@ c21 keeps the vector form of it.
                   collection, a miss on a collection a lazy source is bound to — is
                   handed to the general entry with the same key, so there is no case
                   the two can answer differently.  Every other collection kind
-                  (`index`, `sorted`, a vector), a text key, a compound key, and a
-                  width the pre-resolved forms do not list keep the general call.
+                  (`index`, `sorted`, a vector), a compound key, and a width the
+                  pre-resolved forms do not list keep the general call.
+                  The TEXT clause: a single `text` key is emitted as
+                  `OpGetHashText(c, type, k)` with `k` handed over as the text, hashed
+                  as the general entry hashes a `Content::Str` (`keys::str_hash`) and
+                  compared against each entry's key text in place (`hash::find_str`),
+                  under the same exits.  The COMPOUND clause: two to four `integer` /
+                  `long` parts are emitted as `OpGetHashInts(c, type, [k₁, …])`, hashed
+                  as the general entry hashes their `Content::Long`s (`keys::ints_hash`)
+                  and compared part by part (`hash::find_ints`).
 ```
 
 **In words.** `(R-Escape)` is not needed here — nothing is removed or reshaped, the
@@ -2797,7 +2880,10 @@ below, for an element that owns no heap.
 
 ```
   (R-KeyedEntry)  c += [T{k: e₀, f₁: e₁, …}] where c is a `hash<T[k]>` with ONE key of
-                  `integer` width, T owns no heap, no linked group holds T's records
+                  `integer` width — or two to four `integer` parts — and T owns no heap; or ONE `text` key that is the only
+                  heap T owns, every other field a plain value: the overwrite never
+                  writes the key (the entry found carries the same text, a fresh one has
+                  it written by the probe), so nothing is stranded — no linked group holds T's records
                   (`@FR-Col-Group`), and the literal writes EVERY field of T — the plain
                   claim (`OpNewRecord`), field writes and file (`OpFinishRecord`) — is
                   emitted as: the values e₀ … eₙ evaluated in source order into temps,
@@ -5092,6 +5178,107 @@ which keep the call, read off the trace; every switch; the store falsifiers).
 
 ## Proposed — the next eliminations, by reach
 
+### A result field no caller reads is never computed — PROPOSED
+
+```
+  (R-DeadResult) a call f(args) whose result R, a record, the caller reads only through
+                 a set L of its fields (the LIVE fields; any other use of R — a copy, a
+                 hand-off, a store, a return, a reference comparison — declines) may
+                 call the twin f__L, in which every write of a field outside L is
+                 dropped together with each computation whose value only a dropped
+                 write reads.  DEAD is found backwards over f's body: a value is dead
+                 when every read of it is dead; a dead value's construction (a mint, an
+                 append to a vector only dead values reach, a call whose result is dead)
+                 is dropped; and a recursive call whose result the twin reads only
+                 through L calls f__L, so the recursion closes over the twin.
+                 Admitted when ALL of:
+                 (1) a dropped computation has no effect but building its value: no
+                     output, no write to a store a live value or any caller reaches, no
+                     native or bridge call, no yield, no `par`;
+                 (2) a dropped computation cannot REPORT a fault: no operation whose
+                     fault is logged, or answered as a value something live reads (a
+                     division, a checked conversion, a parse).  A fault the plain form
+                     reports is observable, and no rewrite changes what a fault shows
+                     (@C120);
+                 (3) every test, loop and branch stays as written: only statements whose
+                     values are dead are dropped, never a condition, so the live fields
+                     and termination are the plain form's;
+                 (4) one twin per live set: L is the same at every call to f__L.
+                 The twin answers R with each dead field at its default; no caller reads
+                 one.  Declines: any use of R but a read of a field of L; a dead value
+                 read through a holder the analysis cannot follow.
+```
+
+**In words.**  `pa_decode_ok(frame)` is `decode(frame).ok`: the decode builds the whole value
+tree — every text, byte string, entry and map — and the caller reads one boolean.  The
+`ok` and `next` fields of `read_value`'s result decide every refusal and every position, and
+none of them reads `value`, so the twin `read_value__{ok,next}` builds nothing and walks the
+same bytes with the same tests.  (1) and (2) are what "nothing observable is lost" means in
+loft: an effect, or a fault the program would have reported.  (3) is what keeps the result:
+the twin takes every branch the plain form takes.  It is the validation half of
+`(R-DecodeView)`'s structure clause and a rule of its own: any caller that reads a status out
+of a builder's result — a parser asked only whether input parses — is the same shape.
+On `check_request` itself `(R-PureReuse)` already folds the two decodes into one whose `value`
+is read, so this rule reaches it only as that clause's validation step.  Switch
+`LOFT_NO_DEAD_RESULT` (planned); falsifier: under `LOFT_HOIST_VERIFY=1` the plain call runs
+beside the twin and every live field is compared.  Priced in worklist.md: a validation walk
+in place of the decode it guards is −5 % of `check_request`, and with the structure clause
+−65 %.
+
+### A call repeated on the same input answers its first result — PROPOSED
+
+```
+  (R-SharedCall) two calls f(a1..an) at sites S1 and S2, S1 reaching S2 on every path
+                 to S2, with the same arguments — the same variables, or the same pure
+                 expressions over them — answer the same value, and S2 reads S1's
+                 result instead of calling f, when ALL of:
+                 (1) f has no EFFECT: it writes no store its caller or any other holder
+                     reaches (a store it mints and answers is its own), and makes no
+                     output, native or bridge call, yield or `par`;
+                 (2) f cannot REPORT a fault: the plain program reports a fault once per
+                     call and the shared form once in all (@C120) — no logged fault, no
+                     fault answered as a value;
+                 (3) f's answer depends only on its arguments and what they reach: no
+                     global it reads is written between S1 and S2, and it reads no
+                     clock, random source, file or socket;
+                 (4) no argument, nor anything an argument reaches, is written between
+                     S1 and S2 — the proof (R-DecodeView)'s (1) makes for its frame;
+                 (5) every site reads the result as a VALUE: no site writes it, links it
+                     or hands it to a callee that writes it; a site that would is given
+                     its own call, or a copy where a copy costs less than the call.
+                 The sites may sit in different functions: a WRAPPER — a function whose
+                 body hands its parameters to f and answers f's result or a field of it
+                 (`pa_decode_ok(b)` is `decode(b).ok`, `pa_decode(b)` is
+                 `decode(b).value`) — is seen through, so two wrapper calls in one body
+                 share the call they wrap, and the holder is a local of that body.  The
+                 result lives from S1 to the last site that reads it and is freed there,
+                 as that site's own result would have been; its live set
+                 ((R-DeadResult)) is the union of what every sharing site reads.
+                 Declines: any of (1)-(5) unproved; a site in a loop whose argument the
+                 loop changes; a recursive f's call to itself.
+```
+
+**In words.**  A program that inspects one result several times often computes it several
+times: a plugin that reads a request's three fields decodes it three times.  `(R-PureReuse)`
+is this rule's narrow case, built: two projection wrappers of one effect-free function on
+the same argument variables, in one block, with nothing between them that writes — which is
+why `check_request` decodes its frame once.  This rule widens each of those limits: the
+sites may sit in different statements and branches (S1 reaching S2 on every path), there may
+be more than two, an argument may be a pure expression, and a site may read the result
+other than through one field.  When the
+routine has no effect, cannot report a fault and its input has not changed, the second call
+can only answer what the first answered, so it may read that answer instead.  (1)-(4) are
+"the second call can observe nothing the first did not", and (5) keeps the shared result a
+value: no site can change what another reads.  It changes WHEN memory is held — the result
+lives from the first call to the last read rather than being built and dropped twice — and
+the program states nothing about that, so the rule may choose it.  Together with
+`(R-DeadResult)` it is the general form of "compute each result once, and only the parts
+that are read", for any number of inspections; `(R-DecodeView)`'s structure clause is the
+narrow case of a value inspected once and never built.  Switch `LOFT_NO_SHARED_CALL`
+(planned); falsifier: under `LOFT_HOIST_VERIFY=1` S2 calls f again and compares the two
+results field by field.  Not priced: no measured row repeats a call that `(R-PureReuse)`
+leaves standing.
+
 Found measuring what still keeps six routines near 100× native; ordered by how
 many programs they reach, not by those six (the owner: *improve all loft scripts as
 much as possible*).  Each carries **PROPOSED** until a site implements it; the two runtime
@@ -5918,6 +6105,56 @@ and the declines: a byte string read, the frame written after the decode, a deco
 returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
 pin `tests/decode_view.rs` holds the roots and the region.
 
+**The structure clause (@C141, read once) — PROPOSED.**  Instance 1 keeps a decoded value's
+LEAVES in the frame and still builds its structure: `check_request` mints a map, a vector of
+three entries and an enum value per key and per value, about 40 % of the call, to read one key.
+The owner extended @C141 to that structure for a value read once:
+
+```
+  (R-DecodeView)'s STRUCTURE clause: a decoded value V — the result of a decode
+                 call over B, its records, vectors and enum values built only from
+                 B's bytes and from each other — is held as its POSITION in B (the
+                 offset of its encoding) and nothing of it is built, when (1)-(3)
+                 hold and its leaves meet (4) and (5), and ALL of:
+                 (6) V is READ ONCE: across the region (2), V and each part of it is
+                     reached by ONE chain of holders — a return hands it up, an
+                     argument hands it down — and read by one walk; no holder is read
+                     again after the walk has moved past it, and none stores it;
+                 (7) every read of V or of a part of V is one the encoding answers at
+                     the part's position: an enum tag (the head's major type), a
+                     number field (the head's argument), a text or byte-string leaf (a
+                     span, as instance 1), and a vector of parts walked IN ORDER from
+                     its first element (a map's entries, an array's items), each step
+                     decoding the next head from B.  An index, a length the encoding
+                     does not state, a reverse walk or a second walk declines;
+                 (8) VALIDATION is not deferred: whatever the decode answers about the
+                     whole of B — that it decodes, where it ends, the refusal of a
+                     truncated or non-canonical frame — is computed in full before the
+                     first read of V (by the decode's (R-DeadResult) twin, which builds
+                     nothing), and a refused frame gives V the value the decode answers
+                     for one, so every read answers what the built value answers;
+                 (9) a part that leaves the walk — a leaf copied into an owned slot, a
+                     part returned (`return e.value`) to a holder outside the chain —
+                     is BUILT there, from its position, as the plain decode builds it.
+                 Declines, building V as written: any of (6)-(9) unproved; a decoded
+                 value kept, handed out of the chain, or walked twice.
+```
+
+**In words.**  A value the program walks once, start to end, can be read off its encoding as
+the walk goes: the encoding already holds every tag, number and leaf in the order the walk
+asks for them.  (6) is what makes the position a faithful stand-in — one walk, so no part is
+asked for twice or out of order — and (7) lists the reads an encoding answers at a position.
+(8) keeps the one thing a lazy reading would change: a frame the decode refuses is refused
+before anything reads it, so a malformed tail cannot hide behind an early match.  (9) builds
+what escapes, so a value the program keeps costs what it costs today — the rule the owner set:
+a kept value is a built one.  A value inspected more than once is the case of
+`(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.  Switch
+`LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
+built and the positional forms run side by side under `LOFT_HOIST_VERIFY=1` and every read is
+compared.  Priced on `check_request` as the library form of its output — a validation walk,
+then the key searched in the frame's bytes: 1.70 → 0.60 ms (5.04× → 1.79×, hash unchanged),
+against −5 % for the validation walk alone (worklist.md § 0).
+
 ### Proposed clauses on existing rules
 
 Each extends a rule above with one admission the measured rows need; the rule's own switch,
@@ -5955,11 +6192,10 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   `OpMoveField` whose destination is the whole element (offset 0, the element's own type) as
   covering every field, so the mint is the no-prefill form.  Cell: `LOFT_POISON_CLAIM=1` over
   the `(R-MoveLast)` corpus — a prefill skipped wrongly shows as poison.
-- **A push window across an admitted recursive call, for `(R-Push)`.**  `(R-Callee)` answers
-  `None` to every question on a recursive edge (`hoist.rs`: a callee met while its own
-  verdict is open), which denies a recursive builder every call-crossing hoist at once; one
-  fixpoint over the callee's own write set admits them together, and `items += [sub.value]`
-  keeps its push header across `read_value`'s call to itself.  cbor `decode`: 5.15 → 4.06 M.
+- **A held push WINDOW across a writing call, for `(R-PushRec)`'s apart-call clause.**  The
+  clause holds the header; the length kept in a local and written once at the loop's end
+  (growth by doubling, the record number re-read after it) priced cbor `decode` 5.15 →
+  4.73 ms beside it.  It needs the window's close on every exit of the loop.
 
 ## Validating the emitted routines against their assumptions
 

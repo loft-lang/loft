@@ -196,6 +196,39 @@ pub fn range<F: RangeFacts + ?Sized>(
     }
 }
 
+/// `x % y`: a CONSTANT divisor bounds the remainder whatever the dividend, once the dividend
+/// is no sentinel (its null answers null) — `-(|c|-1) ..= |c|-1`, from 0 when the dividend
+/// cannot be negative (`@FR-N-Arith`; the parser proves the same at a narrow store,
+/// `Parser::int_range`).  Otherwise a non-negative dividend over a positive divisor is
+/// `0 ..= min(x.hi, y.hi - 1)`.
+fn rem_range<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    args: &[Value],
+    depth: u8,
+) -> Option<Range> {
+    let x = range(data, nn, rv, &args[0], depth);
+    let divisor = match args[1].unspan() {
+        Value::Int(k) => Some(i64::from(*k)),
+        Value::Long(k) if *k != i64::MIN => Some(*k),
+        _ => None,
+    };
+    if let Some(c) = divisor.filter(|c| *c != 0)
+        && (x.is_some() || super::non_sentinel::non_sentinel(data, nn, &args[0]))
+    {
+        let m = i64::try_from(c.unsigned_abs() - 1).ok()?;
+        let lo = if x.is_some_and(|x| x.0 >= 0) { 0 } else { -m };
+        let hi = x.map_or(m, |x| if x.0 >= 0 { x.1.min(m) } else { m });
+        return Some((lo, hi));
+    }
+    let (x, y) = (x?, range(data, nn, rv, &args[1], depth)?);
+    if x.0 < 0 || y.0 <= 0 {
+        return None;
+    }
+    Some((0, x.1.min(y.1 - 1)))
+}
+
 /// The range of the native op `name` over `args` — the operator rules alone, which is
 /// what the emitter asks at the op it is about to write.  `None` for a user call: that is
 /// [`range`]'s business through the callee's one expression.
@@ -252,14 +285,7 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                     let c = [x.0 / y.0, x.0 / y.1, x.1 / y.0, x.1 / y.1];
                     fits(i128::from(*c.iter().min()?), i128::from(*c.iter().max()?))
                 }
-                ("OpRemInt" | "OpRemIntNullable", 2) => {
-                    let (x, y) = (a(0)?, a(1)?);
-                    if x.0 < 0 || y.0 <= 0 {
-                        return None;
-                    }
-                    // Non-negative dividend, positive divisor: `0 ..= min(x.hi, y.hi - 1)`.
-                    Some((0, x.1.min(y.1 - 1)))
-                }
+                ("OpRemInt" | "OpRemIntNullable", 2) => rem_range(data, nn, rv, args, depth),
                 ("OpLandInt", 2) => {
                     // A non-negative literal masks ANY non-sentinel value into `0..=lit`.
                     let masked = |m: &Value, other: &Value| match m.unspan() {

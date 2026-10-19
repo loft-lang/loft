@@ -1973,3 +1973,86 @@ fn unprovable_while_is_rejected() {
         );
     }
 }
+
+/// `@FR-Cap-Call` — an UNGATED stdlib function is admitted under a profile that allows no
+/// library at all, because it computes only on its arguments; a host-touching one names its
+/// gate, and a grant of that gate admits it.
+#[test]
+fn an_ungated_stdlib_function_is_admitted_with_no_library_allowed() {
+    let src = "fn pure() -> integer { v = [3, 1, 2]; v.sort(); len(\"abc\") * 2 + v[0] }\n\
+               fn prints() { println(\"x\"); }\n\
+               fn quits() { exit(3); }\n\
+               fn clock() -> integer { now() }\n";
+    let p = parse_admit(&["fn:pure", "fn:prints", "fn:quits", "fn:clock"], &[], src);
+    let v = p.sandbox_admit();
+    let from = |n: &str| p.data.def_nr(n);
+    assert!(
+        !v.iter().any(|x| x.from() == from("n_pure")),
+        "a pure stdlib computation must be admitted with no grant, got {v:?}"
+    );
+    for (f, sym, gate) in [
+        ("n_prints", "n_println", "io#append"),
+        ("n_quits", "n_exit", "process#update"),
+        ("n_clock", "n_now", "time#read"),
+    ] {
+        assert!(
+            v.contains(&CapViolation::UngrantedCap {
+                from: from(f),
+                symbol: from(sym),
+                group: gate.to_string(),
+            }),
+            "{f} must be refused naming {gate}, got {v:?}"
+        );
+    }
+    let granted = parse_admit(
+        &["fn:prints"],
+        &["io#append"],
+        "fn prints() { println(\"x\"); }\n",
+    );
+    let gv = granted.sandbox_admit();
+    assert!(
+        gv.is_empty(),
+        "println under io#append must be admitted, got {gv:?}"
+    );
+}
+
+/// The reviewed list of UNGATED stdlib functions — each one is admitted in every sandbox, so
+/// each must compute only on its arguments.  A function added to `default/` without a gate
+/// fails here until it is either gated (it reaches the host: a file, the environment, the
+/// clock, the output stream, the process, a thread) or confirmed safe and added to
+/// `index/stdlib_ungated.txt` (`LOFT_BLESS=1` rewrites the list).
+#[test]
+fn the_ungated_stdlib_surface_is_the_reviewed_list() {
+    let mut p = Parser::new();
+    p.parse_dir("default", true, true).unwrap();
+    let mut names: Vec<String> = (0..p.data.definitions())
+        .filter(|&d| {
+            let def = p.data.def(d);
+            matches!(def.def_type(), crate::data::DefType::Function)
+                && def.source == crate::data::STD_SOURCE
+                && def.synthetic().is_none()
+                && def.cap().is_empty()
+        })
+        .map(|d| p.data.def(d).name().to_string())
+        .collect();
+    names.sort();
+    names.dedup();
+    let list = format!("{}\n", names.join("\n"));
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/index/stdlib_ungated.txt");
+    if std::env::var_os("LOFT_BLESS").is_some() {
+        crate::file_access::write(path, &list).unwrap();
+        return;
+    }
+    let want = crate::file_access::read_to_string(path).unwrap_or_default();
+    let want: std::collections::BTreeSet<&str> = want.lines().collect();
+    let have: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let added: Vec<_> = have.difference(&want).collect();
+    let gone: Vec<_> = want.difference(&have).collect();
+    assert!(
+        added.is_empty() && gone.is_empty(),
+        "the ungated stdlib surface moved — every ungated stdlib function is admitted in every \
+         sandbox.\n  new, ungated: {added:?} (gate each that reaches the host)\n  no longer \
+         ungated or gone: {gone:?}\n  then re-pin: LOFT_BLESS=1 cargo test --lib \
+         the_ungated_stdlib_surface_is_the_reviewed_list"
+    );
+}

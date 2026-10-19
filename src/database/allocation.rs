@@ -1029,6 +1029,65 @@ impl Stores {
         self.free_named(db, "");
     }
 
+    /// `@FR-G-Arg-Rebind` — a generator frame takes a hold on the store of a heap argument it
+    /// was handed.  Answers whether it did: the null sentinel, a stack record, a freed or an
+    /// unknown store is not held.
+    pub fn hold_for_frame(&mut self, db: &DbRef) -> bool {
+        let al = db.store_nr;
+        if al == u16::MAX
+            || db.rec == 0
+            || (al as usize) >= self.allocations.len()
+            || self.is_stack_store(al)
+            || self.allocations[al as usize].free
+        {
+            return false;
+        }
+        if let Some(e) = self.frame_held.iter_mut().find(|e| e.0 == al) {
+            e.1 += 1;
+        } else {
+            self.frame_held.push((al, 1, false));
+        }
+        true
+    }
+
+    /// `@FR-G-Arg-Rebind` — a frame gives back the hold [`Self::hold_for_frame`] took.  The
+    /// last hold on a store its caller has already released frees it.
+    pub fn release_frame_hold(&mut self, db: &DbRef) {
+        let Some(i) = self.frame_held.iter().position(|e| e.0 == db.store_nr) else {
+            return;
+        };
+        self.frame_held[i].1 -= 1;
+        if self.frame_held[i].1 == 0 && self.frame_held.swap_remove(i).2 {
+            self.free_named(db, "");
+        }
+    }
+
+    /// Does a live generator frame name this store as an argument?
+    #[must_use]
+    #[inline]
+    pub fn is_frame_held(&self, store_nr: u16) -> bool {
+        !self.frame_held.is_empty() && self.frame_held.iter().any(|e| e.0 == store_nr)
+    }
+
+    /// `free_named`'s half of `@FR-G-Arg-Rebind`: a store a frame still holds is orphaned
+    /// rather than freed.  Answers whether it was.
+    fn orphan_if_frame_held(&mut self, store_nr: u16) -> bool {
+        match self.frame_held.iter_mut().find(|e| e.0 == store_nr) {
+            Some(e) => {
+                e.2 = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `@FR-G-Arg-Rebind` — the re-mint half: `OpDatabase` on a slot whose store a frame
+    /// holds would clear the value the frame reads, so the store is handed to the frames
+    /// (orphaned) and the caller answers `true` and mints into a FRESH store.
+    pub fn detach_if_frame_held(&mut self, db: &DbRef) -> bool {
+        !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr)
+    }
+
     /// `@FR-H-SwapIn` — the deep copy of a store's ROOT record into the root of another
     /// store that holds nothing else, the source store released after it (`OpCopyRecord`'s
     /// free-source form: the rebind of `x = f(…, x, …)` from a callee that minted its
@@ -1121,6 +1180,8 @@ impl Stores {
         if !self.allocations[ds].content_swappable(true)
             || !self.allocations[ts].content_swappable(false)
             || (reset_dest && !self.allocations[ts].holds_only_root())
+            || self.is_frame_held(data.store_nr)
+            || self.is_frame_held(to.store_nr)
         {
             return false;
         }
@@ -1261,6 +1322,7 @@ impl Stores {
             && !self.is_stack_store(db.store_nr)
             && self.allocations[db.store_nr as usize].known_type == tp
             && self.allocations[db.store_nr as usize].content_swappable(false)
+            && !self.is_frame_held(db.store_nr)
     }
 
     /// `@FR-R-RefillText`'s collection clause — the entry of a refilling callee whose return
@@ -1623,6 +1685,11 @@ impl Stores {
         // `OpNullRefSentinel` gives an inline-ref temporary that was never assigned a real
         // store, and it is not an index into `allocations`; this is the rule's runtime home.
         if db.store_nr == u16::MAX {
+            return;
+        }
+        // `@FR-G-Arg-Rebind` — a store a live generator frame names is released when the
+        // frame is done with it too: this free only orphans it.
+        if !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr) {
             return;
         }
         let al = db.store_nr;
@@ -3035,6 +3102,7 @@ impl Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,
@@ -5228,6 +5296,16 @@ impl Stores {
         };
         row.facts.set(facts.0, facts.1);
         facts
+    }
+
+    /// Is `tp`'s default all zero bytes — no nullable field, no declared default, no text, no
+    /// variant tag, recursively; an enum's default is its zero tag?  See [`Self::heap_facts`].
+    /// The emitter asks it to prefill a fresh element with one zero fill
+    /// (`@FR-R-FieldAppend`'s bare clause).
+    #[inline]
+    #[must_use]
+    pub fn zero_default(&self, tp: u16) -> bool {
+        self.heap_facts(tp).1
     }
 
     /// Can a value of `tp` own a heap record?  See [`Self::heap_facts`].

@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9f0a3619b..cfc8ecd59 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -6386,7 +6386,7 @@
+diff --git a/src/parser/convert.rs b/src/parser/convert.rs
+index 8ff36bae7..d734e2c5c 100644
+--- a/src/parser/convert.rs
++++ b/src/parser/convert.rs
+@@ -670,7 +670,7 @@ impl Parser {
              // integer member is affected — a heap member never escalates either way.
              let (what, at, lenient, dense) = match self.store_ctx.last() {
                  Some(c) => (c.what.clone(), c.at, c.never_error, c.dense),

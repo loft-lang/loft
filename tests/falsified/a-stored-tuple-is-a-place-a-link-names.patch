@@ -1,21 +1,21 @@
-diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index eb7ced62a..b12c36915 100644
---- a/src/parser/expressions.rs
-+++ b/src/parser/expressions.rs
-@@ -4923,7 +4923,7 @@
-         // names that record (`@FR-T-Ref-Src`, loft#1883).
-         let mut place_linked = false;
-         if amp_unlowered {
--            let place = Self::stored_tuple_dest(code).unwrap_or_else(|| code.clone());
-+            let place = code.clone();
-             let record = match (self.vars.tp(var_nr).clone(), s_type.base()) {
-                 (Type::RefVar(inner), _)
-                     if var_nr != u16::MAX
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9f0a3619b..4f2aaa523 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -6624,28 +6624,6 @@
+diff --git a/src/parser/call_args.rs b/src/parser/call_args.rs
+index 1c41b1739..736c34425 100644
+--- a/src/parser/call_args.rs
++++ b/src/parser/call_args.rs
+@@ -165,8 +165,6 @@ impl Parser {
+                 && !matches!(&actual_code, Value::Var(_))
+                 && !scalar_place
+                 && !Self::is_addressable(&actual_code, &self.data)
+-                && !Self::stored_tuple_dest(&actual_code)
+-                    .is_some_and(|d| d.is_place_read(&self.data))
+             {
+                 // Defer on pass 1 (#375): a field access on a struct whose
+                 // layout is not yet finalised — because one of its fields is a
+diff --git a/src/parser/convert.rs b/src/parser/convert.rs
+index 8ff36bae7..e91096c77 100644
+--- a/src/parser/convert.rs
++++ b/src/parser/convert.rs
+@@ -908,28 +908,6 @@ impl Parser {
              && let Type::Tuple(elems) = is_type
              && crate::data::ref_tuple_is_record(elems)
          {
@@ -44,19 +44,27 @@ index 9f0a3619b..4f2aaa523 100644
              if let Value::Var(v) = code.unspan() {
                  self.ref_linked_tuple_locals
                      .insert((self.context, self.vars.name(*v).to_string()));
-@@ -17816,8 +17794,6 @@
-                 && !matches!(&actual_code, Value::Var(_))
-                 && !scalar_place
-                 && !Self::is_addressable(&actual_code, &self.data)
--                && !Self::stored_tuple_dest(&actual_code)
--                    .is_some_and(|d| d.is_place_read(&self.data))
-             {
-                 // Defer on pass 1 (#375): a field access on a struct whose
-                 // layout is not yet finalised — because one of its fields is a
-@@ -22386,12 +22362,6 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index ecd1207e3..f83ca69a1 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -5233,7 +5233,7 @@ use a separate collection or add after the loop"
+         // names that record (`@FR-T-Ref-Src`, loft#1883).
+         let mut place_linked = false;
+         if amp_unlowered {
+-            let place = Self::stored_tuple_dest(code).unwrap_or_else(|| code.clone());
++            let place = code.clone();
+             let record = match (self.vars.tp(var_nr).clone(), s_type.base()) {
+                 (Type::RefVar(inner), _)
+                     if var_nr != u16::MAX
+diff --git a/src/parser/places.rs b/src/parser/places.rs
+index 90844d50f..8f51f3f24 100644
+--- a/src/parser/places.rs
++++ b/src/parser/places.rs
+@@ -74,12 +74,6 @@ impl Parser {
      /// allowlist (place-GETTERS only) keeps temporary-builders like `OpGetTextSub`
      /// and every arithmetic / `n_*` op out.
-     fn is_amp_place(val: &Value, data: &Data) -> bool {
+     pub(super) fn is_amp_place(val: &Value, data: &Data) -> bool {
 -        // A stored tuple read with its address (`tuple_unbox`, built while a link parses): a
 -        // vector element or a struct field of tuple type, the record a link names
 -        // (`@FR-T-Ref-Src`, loft#1883).

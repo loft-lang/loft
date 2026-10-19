@@ -59,8 +59,8 @@ fn a_loop_local_vector_keeps_its_store_and_resets_its_length() {
             "{name}: the in-loop mint is a length reset after the first pass"
         );
         assert!(
-            b.contains("if var___vdb_1.store_nr == u16::MAX || var___vdb_1.rec == 0 { var___vdb_1 = OpDatabase")
-                || b.contains("if var___vdb_2.store_nr == u16::MAX || var___vdb_2.rec == 0 { var___vdb_2 = OpDatabase"),
+            b.contains("if var___vdb_1.store_nr == u16::MAX || var___vdb_1.rec == 0 || stores.is_frame_held(var___vdb_1.store_nr) { var___vdb_1 = OpDatabase")
+                || b.contains("if var___vdb_2.store_nr == u16::MAX || var___vdb_2.rec == 0 || stores.is_frame_held(var___vdb_2.store_nr) { var___vdb_2 = OpDatabase"),
             "{name}: the first pass still mints"
         );
     }

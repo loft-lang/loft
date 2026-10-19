@@ -1,10 +1,10 @@
-diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index 0f84a47ef..c6a7aed36 100644
---- b/src/codegen_runtime.rs
-+++ a/src/codegen_runtime.rs
-@@ -226,38 +226,6 @@ pub use crate::live_dispatch::n_live_flip;
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index 3038a4143..a372f88f9 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -50,38 +50,6 @@ pub use crate::live_control::n_live_flip;
  #[cfg(not(target_arch = "wasm32"))]
- pub use crate::live_dispatch::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
+ pub use crate::live_rebuild::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
  
 -/// A tuple's `text` member in a `&str` slot (an argument, an `if` arm, a pre-bound block),
 -/// whatever its source spelled: a `String` local or work text (`&String`), a literal or a
@@ -38,14 +38,14 @@ index 0f84a47ef..c6a7aed36 100644
 -    v.tuple_text()
 -}
 -
- /// Look up the ABI of a runtime helper.  Returns `Abi::Cell` for
- /// unknown names — user-defined functions and Op stubs default to the
- /// post-P199.A cell ABI.
-diff --git b/src/generation/emit.rs a/src/generation/emit.rs
-index 641f0e47c..a1b37107b 100644
---- b/src/generation/emit.rs
-+++ a/src/generation/emit.rs
-@@ -531,14 +531,6 @@ impl Output<'_> {
+ /// Convert a DbRef to a loft_ffi::LoftRef for passing to native C-ABI functions.
+ /// Both types have identical layout (u16 + u32 + u32).
+ #[must_use]
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index e56c0d2c6..310ca6f38 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -652,14 +652,6 @@ impl Output<'_> {
                      // block that binds it — is a statement list with a value tail, which
                      // inside a tuple is legal Rust only as a block expression.
                      let as_block = e.unspan().kind() == ValueType::Insert;
@@ -60,7 +60,7 @@ index 641f0e47c..a1b37107b 100644
                      if as_block {
                          write!(w, "{{ ")?;
                      }
-@@ -546,9 +538,6 @@ impl Output<'_> {
+@@ -667,9 +659,6 @@ impl Output<'_> {
                      if as_block {
                          write!(w, " }}")?;
                      }
@@ -70,11 +70,11 @@ index 641f0e47c..a1b37107b 100644
                      if elem_is_bool {
                          write!(w, ") as u8)")?;
                      }
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 29bc4af48..5779b8151 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -2154,15 +2154,6 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 76e655ca7..61d185d85 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -2289,15 +2289,6 @@ impl Parser {
              // the same carve-outs — the sibling-variant join, the statement-position discard,
              // the honest nullability.  Gated on a KNOWN expected type exactly as `if` is: the
              // first concrete arm has nothing to agree with and names the type instead.
@@ -90,7 +90,7 @@ index 29bc4af48..5779b8151 100644
              let arm_of_sibling = context == "else"
                  || ((context == "if" || context == "match_arm") && !result.is_unknown());
              let tuple_rewritten = !self.first_pass
-@@ -4428,53 +4419,6 @@ impl Parser {
+@@ -4676,53 +4667,6 @@ impl Parser {
          }
      }
  
@@ -144,7 +144,7 @@ index 29bc4af48..5779b8151 100644
      pub(crate) fn rewrite_tail_tuple_to_synthetic_struct(
          &mut self,
          synthetic_d_nr: u32,
-@@ -17954,9 +17898,6 @@ impl Parser {
+@@ -20187,9 +20131,6 @@ impl Parser {
              // "expected __tuple<…>, got (…)" even though the SAME tuple as a
              // function's final expression compiles.  parse_return is the statement
              // path; block_result is the tail path — they must agree.
@@ -154,11 +154,11 @@ index 29bc4af48..5779b8151 100644
              let tuple_rewritten = !self.first_pass
                  // Through `base()`, exactly as `block_result`'s twin above: the statement path
                  // and the tail path must agree about what a tuple is, and an absent tuple is one
-diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
-index 0850aa824..9bfb25fc0 100644
---- b/src/parser/vectors.rs
-+++ a/src/parser/vectors.rs
-@@ -6700,12 +6700,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 475ce7e30..fdac4f645 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -7334,12 +7334,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                      && !self.vars.work_texts().contains(&d)
                      && !self.vars.is_argument(d)
              });

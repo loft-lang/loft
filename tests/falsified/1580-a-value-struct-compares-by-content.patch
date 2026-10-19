@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 37809c24c..6ba16fea6 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -16334,6 +16334,7 @@ impl Parser {
+diff --git a/src/parser/compare.rs b/src/parser/compare.rs
+index f21150d37..bebcca257 100644
+--- a/src/parser/compare.rs
++++ b/src/parser/compare.rs
+@@ -824,6 +824,7 @@ impl Parser {
              // `OpEqRef` and compared identity, so a copy was unequal to its source.
              if matches!(op, "==" | "!=")
                  && list.len() == 2

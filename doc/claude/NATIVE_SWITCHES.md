@@ -58,6 +58,24 @@ them for the argument — a variable, or for a header any pure path such as `br.
 the twin; a callee answering a scalar record through its return buffer qualifies too — and
 is the bisect step for a wrong value read through a record or vector parameter inside a
 callee a hoisting loop calls.
+**`LOFT_NO_NARROW_ELEMENT_WRITE=1`** (`@FR-R-Inputs`) makes a write into a NARROW-integer
+vector element (`i32`, `u16`, `u8`) untyped for the scalar hoist again, as a base-type element's
+never was: with it on, a loop whose callee writes such elements still holds the record fields
+nobody writes and calls the callee's twin (`hex_edge` `edges_cut` 4.47× → 1.70×, `hex_place`
+`combine_cut` 4.13× → 2.16×) — the bisect step for a stale field read in such a loop.
+**`LOFT_NO_TWIN_INLINE=1`** makes a twin that reaches no loop (but a literal `0..k`, k ≤ 16)
+take the plain `#[inline]` hint instead of `#[inline(always)]`: the A/B for a row that moved
+with it (suite + ten `hex_*` benches, 102 routines, geomean −1.1 %, `mesh_emit` −18 %,
+`draft_fit_p` −15 %; `char_roundtrip` +7 % is layout).
+**`LOFT_NO_TWIN_RECORD=1`** (`@FR-R-RecPtr`'s twin clause) gives a twin no record ADDRESS
+input: its record parameters resolve their store at entry again, as the plain body does.
+**`LOFT_NO_PLAIN_CHAIN_PTR=1`** makes the plain-chains copy of a loop (`(R-GuardedChain)`)
+bind no record address for its element views; the checked copy still does.
+**`LOFT_NO_PARAM_TWIN_PTR=1`** keeps a record parameter's address from serving a twin call:
+the parameter clause counts no such call as a use, and the call hands null (or the plain
+call, for a scalar input the caller holds no value for).  Together the three take
+`fixstep` `timer_spend` 4.10× → 1.83×, `clock_pump` 2.24× → 1.83×; the bisect steps for a
+wrong field read or write through a record handed to a twin.
 **`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path
@@ -77,6 +95,21 @@ mint-group templates — with it on, a no-heap struct element is built IN the pu
 next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
 explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
 default value or length out of a record-appending loop.
+**`LOFT_NO_BARE_APPEND=1`** (`@FR-R-FieldAppend`'s bare clause, default-ON, generation time,
+`--native` only) keeps an append to a plain vector that no push header holds on its
+`OpNewRecord` / `OpFinishRecord` templates — with it on, such an append (a loop whose header
+hoist declines, a destination twin's element) is `vector_record_append` and `vector_finish`,
+the dispatch `record_new` and `record_finish` make per call resolved once (`cbor/decode`
+−20 %) — and is the bisect step for a wrong element, prefill or length out of an unhoisted
+`v += [x]`.
+
+**`LOFT_NO_APART_MINT=1`** (`@FR-R-PushRec`'s apart-call clause, default-ON, generation time,
+`--native` only) takes the record-push header away from a loop the header gate declines
+because it calls a writer — a recursive decoder's `items += [sub.value]` — which with it on
+holds the header when every value the body names that could hold an element is fresh
+(`cbor/decode` 6.57 → 5.15 ms).  The bisect step for a wrong element or length in a vector
+built in a loop that also calls a writer; `LOFT_TRACE_HOIST_DECLINE=1` names each loop the
+clause declines.
 **`LOFT_NO_FIELD_MINT=1`** (`@FR-R-Mint`'s field clause, default-ON, generation time,
 `--native` only) keeps a record append to a vector FIELD (`m.verts += [Vertex { … }]`) on
 its templates — with it off, such an append in a loop holds the push header a bare-variable
@@ -812,7 +845,9 @@ staged, the record under the key is removed, a fresh one is claimed in the colle
 and written, and the subscript's key links it — and is the first bisect step for a wrong value,
 key or count after a keyed literal assignment on native.
 **`LOFT_NO_KEYED_ENTRY=1`** (`@FR-R-KeyedEntry`) makes `h += [T{k: …, …}]` on an integer-keyed
-hash of a heap-free element claim, write and file a fresh entry again, replacing the one under a
+hash of a heap-free element (one key or two to four integer parts), or a hash keyed by one
+`text` that is its element's only heap,
+claim, write and file a fresh entry again, replacing the one under a
 repeated key, and makes `h[a, b] = T{…}` on a hash keyed by integer parts take
 `LOFT_NO_KEYED_IN_PLACE`'s removal and claim again — with it on, one probe answers the entry the
 key names and the literal's staged values are written into it — and is the first bisect step

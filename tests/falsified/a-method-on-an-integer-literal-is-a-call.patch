@@ -1,8 +1,8 @@
-diff --git b/src/lexer.rs a/src/lexer.rs
-index 1a257241d..642679e60 100644
---- b/src/lexer.rs
-+++ a/src/lexer.rs
-@@ -140,12 +140,8 @@ struct Recorded {
+diff --git a/src/lexer.rs b/src/lexer.rs
+index 44ae6ff88..c5301cc6c 100644
+--- a/src/lexer.rs
++++ b/src/lexer.rs
+@@ -274,12 +274,8 @@ struct Recorded {
      /// Where the consumed source ended when the token became the one held.
      prev_end: (u32, u32),
      /// The string-interpolation state the read left: a literal that opens a hole leaves
@@ -16,8 +16,8 @@ index 1a257241d..642679e60 100644
 +    scan: ScanState,
  }
  
- /// A lexer that can remember a state via a link and then optionally return to that state.
-@@ -1041,7 +1037,7 @@ impl Lexer {
+ /// The scan cursor over the current source line: the line's own text and a byte offset into
+@@ -1458,7 +1454,7 @@ impl Lexer {
              res: res.clone(),
              cursor: (self.position.line, self.position.pos),
              prev_end: (self.prev_end.line, self.prev_end.pos),
@@ -26,7 +26,7 @@ index 1a257241d..642679e60 100644
          }
      }
  
-@@ -1049,11 +1045,12 @@ impl Lexer {
+@@ -1466,11 +1462,12 @@ impl Lexer {
      /// as it would be read, with the cursor and consumed end the scan leaves.
      fn queue(&mut self, res: LexResult) {
          let at = (self.position.line, self.position.pos);
@@ -40,7 +40,7 @@ index 1a257241d..642679e60 100644
          });
      }
  
-@@ -1071,9 +1068,7 @@ impl Lexer {
+@@ -1490,9 +1487,7 @@ impl Lexer {
          self.position.pos = n.cursor.1;
          self.prev_end.line = n.prev_end.0;
          self.prev_end.pos = n.prev_end.1;
@@ -51,7 +51,7 @@ index 1a257241d..642679e60 100644
          n.res
      }
  
-@@ -1934,15 +1929,7 @@ impl Lexer {
+@@ -2388,15 +2383,7 @@ impl Lexer {
                      self.ret_number(0, pos, false)
                  };
              }
@@ -68,35 +68,3 @@ index 1a257241d..642679e60 100644
                  // P195 + P234: when the previous emitted token was a `.`
                  // (field access), the current number is a tuple/struct
                  // field index — NEVER a float fragment.  This covers two
-@@ -3173,30 +3160,9 @@ mod test {
-         );
-     }
- 
--    /// A letter or `_` after an integer's dot starts a method or a field, never a float
--    /// fraction: `5.tri()` calls `tri` on `5`, as `(5).tri()` does.
--    #[test]
--    fn integer_then_member_does_not_glue_into_float() {
--        validate_cont(
--            "123.a",
--            &[
--                LexItem::Integer(123, false),
--                LexItem::Token(".".to_string()),
--                LexItem::Identifier("a".to_string()),
--            ],
--        );
--        validate_cont(
--            "5._x",
--            &[
--                LexItem::Integer(5, false),
--                LexItem::Token(".".to_string()),
--                LexItem::Identifier("_x".to_string()),
--            ],
--        );
--    }
--
-     #[test]
-     fn lexer_errors() {
-+        error("123.a", "[\"Error: Problem parsing float at error:1:5\"]");
-         error("12. ", "[\"Error: Problem parsing float at error:1:4\"]");
-         error("1.12ea", "[\"Error: Problem parsing float at error:1:6\"]");
-         error(

@@ -1,27 +1,27 @@
 {
  "repos": {
   "loft-libs-assets": {
-   "commit": "015057a142a57e6312d2fbbb92f2e693cda828a6",
+   "commit": "b3cb7445fbf96b5c3ead2f81a2b4f78cf1ae02c1",
    "files": []
   },
   "loft-libs-core": {
-   "commit": "183421c5d7d5217c6859977171a955d20e060c9d",
+   "commit": "4c1529418e99a69ead70e809086e72ace655800d",
    "files": []
   },
   "loft-libs-docs": {
-   "commit": "e84f03c1041084a5e9c75d0c376f305daee07737",
+   "commit": "dd260f04c85ac2efa7d6cf0a180a1c9d5224c3de",
    "files": []
   },
   "loft-libs-game": {
-   "commit": "f8556d55c62a0d18beaf2913777545f206412c59",
+   "commit": "45a0264196663af45ce2cdbc3aaf66a2b3a02725",
    "files": []
   },
   "loft-libs-graphics": {
-   "commit": "bf55745018ba7536463fe065d76ca8726ec8071b",
+   "commit": "badee5f7a848697ae537756b03ab56340923901e",
    "files": []
   },
   "loft-libs-net": {
-   "commit": "9c9eca617d6df125a7f7ddd2a4d5377400488e2f",
+   "commit": "0b6f24637ef62f478fbced165c2f1079d25494de",
    "files": [
     {
      "cites": [
@@ -35,11 +35,11 @@
    ]
   },
   "loft-libs-plugins": {
-   "commit": "f750c5a3475eb1d9c6b114de841dadede9577eaf",
+   "commit": "8aa6d4591fcefe005b738300f385556c64c35aa3",
    "files": []
   },
   "loft-libs-world": {
-   "commit": "5d8bf283c1ea0d707b827e8bdcb205bd86e99d4b",
+   "commit": "a931ce7b3e803157e530dbb77d0b494224c3e4d0",
    "files": []
   }
  },

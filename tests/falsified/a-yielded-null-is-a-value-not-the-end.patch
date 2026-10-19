@@ -1,8 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 3bf8d26be..63006551a 100644
+index 3038a4143..4312a6e02 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -5326,7 +5326,7 @@ fn advance_native<R>(
+@@ -6001,7 +6001,7 @@ fn advance_native<R>(
  pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
      advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
          let val = coro.next_i64(stores);
@@ -11,7 +11,7 @@ index 3bf8d26be..63006551a 100644
      })
  }
  
-@@ -5350,7 +5350,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+@@ -6025,7 +6025,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
      // check also flips to true here because exhaustion frees the slot.
      advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
          let val = coro.next_dbref(stores);
@@ -20,12 +20,12 @@ index 3bf8d26be..63006551a 100644
      })
  }
  
-@@ -5364,7 +5364,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
-         crate::state::STRING_NULL.to_string(),
+@@ -6039,7 +6039,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+         crate::store::STRING_NULL.to_string(),
          |coro, stores| {
              let val = coro.next_text(stores);
--            let done = val == crate::state::STRING_NULL && coro.done();
-+            let done = val == crate::state::STRING_NULL;
+-            let done = val == crate::store::STRING_NULL && coro.done();
++            let done = val == crate::store::STRING_NULL;
              (val, done)
          },
      )

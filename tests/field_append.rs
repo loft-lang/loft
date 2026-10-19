@@ -92,3 +92,96 @@ fn the_switch_restores_the_templates() {
     }
     let _ = fa::remove_file(&out);
 }
+
+/// `@FR-R-FieldAppend`'s bare clause: per function of the bare cells, `(zero-filled appends,
+/// default-prefilled appends, template mints)` — an append to a plain vector no push header
+/// holds is the vector's own append, its prefill one zero fill where the element's default
+/// is zero bytes.
+const BARE_CELLS: &str =
+    "tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft";
+const BARE: &[(&str, usize, usize, usize)] = &[
+    ("n_b1", 0, 1, 0),    // a record owning a text: its default is not zero bytes
+    ("n_build", 2, 0, 0), // an enum element built by a call, in the loop and the copy beside it
+    ("n_rd", 1, 0, 0),    // the decoder's element, built in place by the destination twin
+    ("n_rd__d", 1, 0, 0), // … and inside the twin itself
+    ("n_b4", 1, 0, 0),    // 30 appends through two growth steps
+    ("n_b5", 3, 0, 3),    // the literal's three; `Nd { kids: [...] }` is a variant's field
+    ("n_b7", 0, 0, 1),    // a `sorted` collection is no plain vector: the template stands
+];
+
+fn bare_counts(rust: &str) -> HashMap<String, (usize, usize, usize)> {
+    let mut map: HashMap<String, (usize, usize, usize)> = HashMap::new();
+    let mut current = String::new();
+    for line in rust.lines() {
+        if let Some(rest) = line.strip_prefix("fn ")
+            && let Some(paren) = rest.find('(')
+        {
+            current = rest[..paren].to_string();
+        }
+        let row = map.entry(current.clone()).or_default();
+        row.0 += line.matches("vector_record_append::<true, true>(").count();
+        row.1 += line.matches("vector_record_append::<true, false>(").count();
+        row.2 += line.matches("OpNewRecord(").count() + line.matches("OpNewRecordNP(").count();
+    }
+    map
+}
+
+fn emit_bare(out: &Path, env: &[(&str, &str)]) -> String {
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.arg("--native-release")
+        .arg("--native-emit")
+        .arg(out)
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(BARE_CELLS))
+        .env("LOFT_TIMEOUT", "120");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let status = cmd.output().expect("spawn loft --native-emit");
+    assert!(
+        fa::exists(out),
+        "no Rust emitted (exit {:?}): {}",
+        status.status,
+        String::from_utf8_lossy(&status.stderr)
+    );
+    fa::read_to_string(out).expect("read the emitted Rust")
+}
+
+// `@FR-R-PushRec`'s apart-call clause gives some of these loops a header (b1's `mkrw` call
+// writes a text): the bare clause is what serves them under its switch, and that is what
+// the pins below read.
+#[test]
+fn each_bare_cell_appends_through_the_vector() {
+    let out = std::env::temp_dir().join("loft_bare_append_on.rs");
+    let got = bare_counts(&emit_bare(&out, &[("LOFT_NO_APART_MINT", "1")]));
+    for (name, zero, pre, tpl) in BARE {
+        assert_eq!(
+            got.get(*name).copied().unwrap_or_default(),
+            (*zero, *pre, *tpl),
+            "{name}: (zero-filled appends, prefilled appends, template mints)"
+        );
+    }
+    let _ = fa::remove_file(&out);
+}
+
+#[test]
+fn the_bare_switch_restores_the_templates() {
+    let out = std::env::temp_dir().join("loft_bare_append_off.rs");
+    let rust = emit_bare(
+        &out,
+        &[("LOFT_NO_BARE_APPEND", "1"), ("LOFT_NO_APART_MINT", "1")],
+    );
+    assert!(
+        !rust.contains("vector_record_append"),
+        "LOFT_NO_BARE_APPEND=1 left a bare append in place"
+    );
+    let got = bare_counts(&rust);
+    for (name, zero, pre, tpl) in BARE {
+        assert_eq!(
+            got.get(*name).copied().unwrap_or_default().2,
+            zero + pre + tpl,
+            "{name}: every bare append is a template mint again"
+        );
+    }
+    let _ = fa::remove_file(&out);
+}

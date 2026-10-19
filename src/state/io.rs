@@ -881,9 +881,14 @@ impl State {
         // same sentinel a caller-side `OpInitRefSentinel` reset
         // produces.  Without this, `clear()` below would OOB into
         // `allocations[u16::MAX as usize]`.
-        let fresh = db.store_nr == u16::MAX;
+        let mut fresh = db.store_nr == u16::MAX;
         if !fresh && self.database.mint_at_place(&db, db_tp) {
             return;
+        }
+        // `@FR-G-Arg-Rebind` — a store a live generator frame names keeps the value the frame
+        // was handed: the rebind mints into a fresh store.
+        if !fresh && self.database.detach_if_frame_held(&db) {
+            fresh = true;
         }
         if fresh {
             db = self.database.null();

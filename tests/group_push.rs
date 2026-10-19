@@ -114,8 +114,10 @@ fn counts(rust: &str) -> HashMap<String, Row> {
         row.2 += line.matches("push_record_hoisted_zero").count();
         row.3 += line.matches("push_record_hoisted").count()
             + line.matches("push_record_finish").count();
-        row.4 +=
-            line.matches("OpNewRecord(cell,").count() + line.matches("OpNewRecordNP(cell,").count();
+        // `@FR-R-FieldAppend`'s bare clause spells the template mint as the vector's own append.
+        row.4 += line.matches("OpNewRecord(cell,").count()
+            + line.matches("OpNewRecordNP(cell,").count()
+            + line.matches("vector_record_append::<").count();
         row.5 += usize::from(line.contains("loft#885 loop-invariant vector headers"));
     }
     map

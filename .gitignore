@@ -84,6 +84,10 @@ dist/
 # `make optional-ratchet` compares against it, and the number in the DIFF is the receipt for
 # the walk that lowered it.
 !/index/optional_ratchet.json
+# (Cap-Safe): the reviewed list of ungated stdlib functions is committed — every one is
+# admitted in every sandbox, so the list IS the review, and
+# `the_ungated_stdlib_surface_is_the_reviewed_list` compares against it.
+!/index/stdlib_ungated.txt
 # loft#680: the per-target builtin surface is committed for the same reason —
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.

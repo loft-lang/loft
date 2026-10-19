@@ -3336,16 +3336,20 @@ impl Parser {
             // (`@FR-F-Interp`: a hole holds an expression parsed at full language level).
             self.lexer.whitespace();
             let mut format = Value::Null;
-            // @PLN124 — `in_format_expr` also gates the interpolation TARGET (see
-            // `constant` in vectors.rs): a hole is not the destination, so a string
-            // literal inside one does not inherit the destination's type.
+            // `@FR-F-Target-Pos` — a hole is not the destination, so the template's expected
+            // type does not reach into it: `q: SqlText = "{"seed"}"` hands "seed" to the hole as
+            // a value, never builds a second `SqlText`.  The channel is CLEARED for the hole
+            // rather than gated, because a call inside it sets the channel for its own
+            // arguments, and those do target (`"{take("x{n}")}"`, loft#2064).
             let saved_in_fmt = self.in_format_expr;
             self.in_format_expr = true;
+            let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
             let mut tp = if self.lexer.has_token("for") {
                 self.iter_for(&mut format, &mut append_value)
             } else {
                 self.expression(&mut format)
             };
+            self.expected = saved_expected;
             self.in_format_expr = saved_in_fmt;
             // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
             // hole is swapped to its silent nullable peer (@C66), so `"{a / b}"`, `"{v[i]}"`
@@ -3701,7 +3705,10 @@ impl Parser {
         // refused here rather than skipped: skipped, every literal run of the template was
         // dropped and only the holes reached the target (loft#2056).
         if self.data.attributes(d_nr) != 2 {
-            if !self.first_pass {
+            // Once per template: every literal run reaches the same `lit`, so a second refusal
+            // says nothing the first did not.
+            if !self.first_pass && self.lit_shape_refused != Some((self.context, var)) {
+                self.lit_shape_refused = Some((self.context, var));
                 let nm = self.data.def(target).name().to_string();
                 diagnostic!(
                     self.lexer,

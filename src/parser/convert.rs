@@ -388,7 +388,7 @@ impl Parser {
         } && !self.is_null_source(code);
         // A value that may not fit a narrow slot is refused where the author can choose (@C127).
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
-            let src = self.int_type_name(is_type);
+            let src = self.narrow_source_name(code, is_type);
             let dst = self.int_type_name(should);
             let dense = self.store_ctx.last().is_some_and(|c| c.dense);
             let cures = Self::narrowing_cures(code, should, &dst, dense);

@@ -5,9 +5,12 @@
 /// Types and functions for reading and writing files.
 /// A File value is obtained via file() and carries the path, format, and an internal reference.
 /// Capability groups — the fs/env split a sandbox profile grants via
-/// `fs#read` / `fs#update` / `env#read`; the functions below link in their signature.
+/// `fs#read` / `fs#update` / `env#read`, the host clock (`time#read`) and the embedding
+/// host's message channel (`host#read` / `host#append`); the functions below link in their signature.
 capability fs
 capability env
+capability time
+capability host
 
 /// One entry of the process environment, as `env_variables()` answers them:
 /// the variable's name and its value, both as plain text.
@@ -702,7 +705,7 @@ pub fn store_release(r: reference) -> integer fs#update;
 ///   if !store_bind_lazy(tiles, "tiles.store") {
 ///     store_load(tiles, "tiles.store");     // whole-image, every kind
 ///   }
-pub fn store_bind_lazy(local: reference, source: text) -> boolean;
+pub fn store_bind_lazy(local: reference, source: text) -> boolean fs#read;
 #rust"{{ let r = @local; r.rec != 0 && stores.bind_lazy(&r, @source) }}"
 
 /// Run an explicit condition against this collection's bound
@@ -725,7 +728,7 @@ pub fn store_bind_lazy(local: reference, source: text) -> boolean;
 /// `condition` is SQL, sent as written (the connection is read-only). Answers 0
 /// both when nothing matched and when the query could not run; `store_lazy_error`
 /// tells those apart.
-pub fn store_lazy_query(local: reference, condition: text) -> integer;
+pub fn store_lazy_query(local: reference, condition: text) -> integer fs#read;
 #rust"stores.lazy_query(&(@local), @condition)"
 
 /// Pull a whole KEY RANGE from this collection's bound
@@ -744,7 +747,7 @@ pub fn store_lazy_query(local: reference, condition: text) -> integer;
 /// Both bounds are inclusive, in the collection's own key order. A record already
 /// resident is left alone. Answers 0 when nothing matched AND when the query
 /// could not run; `store_lazy_error` tells those apart.
-pub fn store_lazy_range(local: reference, lo: integer, hi: integer) -> integer;
+pub fn store_lazy_range(local: reference, lo: integer, hi: integer) -> integer fs#read;
 #rust"stores.lazy_range(&(@local), @lo, @hi)"
 
 /// Why a lazy fetch for this collection could not REACH its
@@ -1084,7 +1087,7 @@ pub fn cache_dir() -> text?env#read {
 /// On --html every read already polls (a page cannot wait for a message its own
 /// thread has to deliver), and on --native-wasm, which has no threads, a bounded
 /// read falls back to waiting for the whole stream.
-pub fn host_input(wait_ms: integer = -1) -> text;
+pub fn host_input(wait_ms: integer = -1) -> text host#read;
 #rust"stores.host_input_native(@wait_ms)"
 #impure(host_io)
 /// Sends one STRUCTURED message to the host shell — the outbound mirror of
@@ -1094,17 +1097,17 @@ pub fn host_input(wait_ms: integer = -1) -> text;
 /// loft-initiated work: host_output a request (e.g. "fetch <url>"), the JS
 /// shell acts on it, and pushes the completion back via loftPush for
 /// host_input to pop — JS owns the network, loft stays pure compute.
-pub fn host_output(msg: text);
+pub fn host_output(msg: text) host#append;
 #rust"stores.host_output_native(@msg)"
 #impure(host_io)
 // --- Time ---
 /// Returns the current wall-clock time as milliseconds since the Unix epoch
 /// (00:00 UTC on 1 Jan 1970). Use for timestamps and logging.
-pub fn now() -> integer;
+pub fn now() -> integer time#read;
 #impure(host_io)
 /// Returns microseconds elapsed since program start (monotonic clock).
 /// Unaffected by system clock adjustments. Use for benchmarks and frame timing.
-pub fn ticks() -> integer;
+pub fn ticks() -> integer time#read;
 #impure(host_io)
 // --- Memory diagnostics ---
 /// Returns a multi-line snapshot of all LIVE stores' internal memory

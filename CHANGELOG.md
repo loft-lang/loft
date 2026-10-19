@@ -211,6 +211,29 @@ git do.
 
 ### Bug fixes
 
+**A sandbox may use the safe stdlib without a grant.**  Arithmetic, text, collections, JSON and
+the other stdlib functions that compute only on their arguments are admitted under every sandbox
+profile; `allow_libs = ["code"]` is no longer needed to multiply.  The stdlib functions that reach
+the host now carry a gate a profile grants: `io#append` (print and log), `process#update` (`exit`),
+`time#read` (`now`, `ticks`), `env#read` (`arguments` and the program directories), `fs#read`
+(lazy stores), `thread#update` (`par` loops and `parallel { … }` blocks) and
+`host#read` / `host#append` (`host_input` / `host_output`).  A profile that printed through
+`allow_libs = ["code"]` now grants `io#append` instead.
+
+**A narrowing is proved at the store, not carried in the type.**  `x & 255`, `a % 10`, `u8 + u8`
+and an `if` of constants no longer give their result a hidden range type.  The store that needs the
+range proves it there: `lo: u8 = x & 255`, `s: u16 = p + q`, `(x & 255) as u8` and
+`v: vector<u8> = [x & 255, x & 15]` all compile as before.  Two things change.  A vector literal of
+such values is a plain `vector<integer>`, so `[a & 1, a & 2]` compiles in any order (it was refused
+unless the widest element came first).  A local bound to a masked value is a plain `integer`, so
+`m = x & 255; lo: u8 = m` is now refused — mask at the store, or declare `m: u8 = x & 255`.  A
+narrowing refusal names the range it proved: "cannot implicitly narrow integer (here 0..=510) to u8".
+
+**A call inside a template hole builds its parameter's type.**  `"{take("x{n}")}"`, where `take`
+expects a target type such as a `Query`, was refused "expected Query, got text" although
+`a = take("x{n}")` builds one.  It now builds the `Query` there too.  A template passed as any
+argument or returned from a function builds the target, as LOFT_LITERALS.md says.
+
 **A lambda can be a generator.**  `f = fn(x: integer) -> iterator<integer> { yield x; yield x + 1; }`
 and `for v in f(10)` now yield `10 11` on both backends, as a named generator does — also through
 a `fn(…)` parameter or a struct field, with captures, and after the function that made the lambda

@@ -421,6 +421,68 @@ pub fn entry_ints(
     Some(rec)
 }
 
+/// [`entry_ints`] for a table whose ONE key is a `text` (`@FR-R-KeyedEntry`'s text clause):
+/// one walk over the key text answers the entry already under it, or a fresh one with its key
+/// text written, filed where the walk ended.  The digest is [`keys::str_hash`], which is
+/// [`keys::hash`]'s over a record carrying that text.  `None` when the table cannot be walked
+/// this way, and nothing was changed.
+pub fn entry_str(
+    hash: &DbRef,
+    stores: &mut [Store],
+    keys: &[Key],
+    value: &str,
+    owner: u32,
+) -> Option<DbRef> {
+    let [key] = keys else { return None };
+    if key.type_nr.unsigned_abs() != 6 {
+        return None;
+    }
+    let store = keys::store(hash, stores);
+    let claim = store.collection_rec(hash.rec, hash.pos);
+    if claim == 0 || store.record_words(claim) <= RESERVED_WORDS {
+        return None;
+    }
+    let entries = Entries::of(store, claim, hash.store_nr);
+    if entries.stride == 0 {
+        return None;
+    }
+    let count = elms(store, claim);
+    let fast = keys::FastKey::Str(u32::from(key.position), value);
+    let mut at = home_bucket(keys::str_hash(value, read_seed(store, claim)), count);
+    let mut bucket = None;
+    for _ in 0..count {
+        let slot = store.get_u32_raw(claim, BUCKET0 + at * SLOT_BYTES);
+        if slot == 0 {
+            bucket = Some(BUCKET0 + at * SLOT_BYTES);
+            break;
+        }
+        let (rec, pos) = entries.at(store, slot);
+        if fast.matches(store, rec, pos) {
+            return Some(DbRef {
+                store_nr: hash.store_nr,
+                rec,
+                pos,
+            });
+        }
+        at += 1;
+        if at >= count {
+            at = 0;
+        }
+    }
+    let bucket = bucket?;
+    let store = keys::mut_store(hash, stores);
+    let (index, rec, pos) = arena::alloc_at(store, claim, entries.stride, owner);
+    let text = store.set_str(value);
+    store.set_u32_raw(rec, pos + u32::from(key.position), text);
+    let rec = DbRef {
+        store_nr: hash.store_nr,
+        rec,
+        pos,
+    };
+    add_at(hash, &rec, bucket, index, stores, keys);
+    Some(rec)
+}
+
 pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     // loft#1213 — read the slot through `collection_rec` so an ABSENT field reads as "no
     // table" and takes the branch below, rather than as a table at the reserved id.
@@ -983,6 +1045,77 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
             })
         }
     };
+    Some(found)
+}
+
+/// [`find_long`] for a hash keyed by two to four `integer` / `long` parts, the key handed
+/// over as the values (`@FR-R-TypedKeyed`'s compound clause): the digest is
+/// [`keys::ints_hash`], the one [`keys::key_hash`] computes for those `Content::Long`s, and
+/// the probe compares every part in place.  `None` for any other key shape.
+#[must_use]
+pub fn find_ints(
+    hash_ref: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+    values: &[i64],
+) -> Option<DbRef> {
+    if keys.len() < 2
+        || keys.len() > 4
+        || keys.len() != values.len()
+        || keys
+            .iter()
+            .any(|k| !matches!(k.type_nr.unsigned_abs(), 1 | 2))
+    {
+        return None;
+    }
+    let store = &stores[hash_ref.store_nr as usize];
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    let mut found = DbRef {
+        store_nr: hash_ref.store_nr,
+        rec: 0,
+        pos: 0,
+    };
+    if claim == 0 || store.record_words(claim) == 0 {
+        return Some(found);
+    }
+    let count = elms(store, claim);
+    let home = home_bucket(keys::ints_hash(values, read_seed(store, claim)), count);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    (found.rec, found.pos) = probe(store, claim, count, home, &entries, |r, b| {
+        keys.iter()
+            .zip(values)
+            .all(|(k, v)| store.get_int(r, b + u32::from(k.position)) == *v)
+    });
+    Some(found)
+}
+
+/// [`find_long`] for a hash whose ONE key is a `text` (type 6), the key handed over as the
+/// text itself (`@FR-R-TypedKeyed`'s text clause): the digest is [`keys::str_hash`], the
+/// one [`keys::key_hash`] computes for a `Content::Str`, and the probe compares each
+/// entry's key text in place.  `None` for any other key kind, which leaves the lookup to
+/// the general entry.
+#[must_use]
+pub fn find_str(hash_ref: &DbRef, stores: &[Store], key: &Key, value: &str) -> Option<DbRef> {
+    if key.type_nr.unsigned_abs() != 6 {
+        return None;
+    }
+    let store = &stores[hash_ref.store_nr as usize];
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    let mut found = DbRef {
+        store_nr: hash_ref.store_nr,
+        rec: 0,
+        pos: 0,
+    };
+    if claim == 0 || store.record_words(claim) == 0 {
+        return Some(found);
+    }
+    let count = elms(store, claim);
+    let home = home_bucket(keys::str_hash(value, read_seed(store, claim)), count);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let k = keys::FastKey::Str(u32::from(key.position), value);
+    (found.rec, found.pos) = probe(store, claim, count, home, &entries, |r, b| {
+        k.matches(store, r, b)
+    });
     Some(found)
 }
 

@@ -24,6 +24,9 @@ with numbers that can be compared from one pass to the next:
   * each lane is sampled `--samples` times, the lanes INTERLEAVED so drift lands on both,
     and the process is pinned to one performance core where the machine has `taskset`
     (a hybrid CPU otherwise moves a run between core kinds, a ±10 % swing by itself);
+  * a program with a NOISY row (spread over `--noisy`) takes `--noisy-samples` rounds in
+    all: an allocating routine's speed depends on the physical pages its process drew,
+    so it has per-process modes that only more processes average out;
   * one warm-up round is discarded, and a row reports the MEDIAN, the spread of the
     samples (their interquartile range, as a percentage of the median) and the ratio with
     its RANGE (the native lane's first quartile over the reference's third, and the
@@ -366,6 +369,7 @@ def run_metadata(a):
                               ":!bench/portal/results", ":!doc/claude/PERF_PORTAL.md") else "no",
         "rustc": subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip(),
         "samples": a.samples,
+        "noisy_samples": a.noisy_samples,
         "target_ms": a.target_ms,
         "ref_flags": a.ref_flags,
         "pinned": "no" if a.no_pin or not pin_prefix(1, True) else "yes",
@@ -425,14 +429,27 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
     # calibration reads 5–8 % slow (caches, frequency ramp), every later one does not.
     for cmd_lane, cmd in cmds.items():
         rows_of(cmd, n_of[cmd_lane], pin, f"{bench} [{cmd_lane}] warm-up", cwd)
-    for _ in range(a.samples):
-        for lane, cmd in cmds.items():
-            for name, r in rows_of(cmd, n_of[lane], pin, f"{bench} [{lane}]", cwd).items():
-                samples[lane].setdefault(name, []).append(r["ns"])
-                regions[lane].setdefault(name, []).append(r["us"])
-                prev = hashes[lane].setdefault(name, r["hash"])
-                if prev != r["hash"]:
-                    fail(f"{bench}/{name} [{lane}]: the hash changed between runs ({prev} vs {r['hash']})")
+    def rounds(count):
+        for _ in range(count):
+            for lane, cmd in cmds.items():
+                for name, r in rows_of(cmd, n_of[lane], pin, f"{bench} [{lane}]", cwd).items():
+                    samples[lane].setdefault(name, []).append(r["ns"])
+                    regions[lane].setdefault(name, []).append(r["us"])
+                    prev = hashes[lane].setdefault(name, r["hash"])
+                    if prev != r["hash"]:
+                        fail(f"{bench}/{name} [{lane}]: the hash changed between runs ({prev} vs {r['hash']})")
+
+    rounds(a.samples)
+    # A noisy row is mostly a routine that allocates: each process draws its own physical
+    # pages, and their cache placement puts the whole run in one of a few speed MODES
+    # (Rust's `push` reads 15 or 22 us per op by process; turning ASLR off, pinning the
+    # malloc thresholds or asking for huge pages does not remove them).  More iterations
+    # inside a process cannot average that out; more processes can, so a program with a
+    # noisy picked row takes `--noisy-samples` rounds in all.
+    picked = [n for n in next(iter(samples.values())) if keep is None or keep(n)]
+    if any(max(spread(samples[lane][n]) for lane in cmds if n in samples[lane]) > a.noisy
+           for n in picked):
+        rounds(max(0, a.noisy_samples - a.samples))
     names = [n for n in next(iter(samples.values())) if keep is None or keep(n)]
     for name in names:
         seen = {lane: hashes[lane].get(name) for lane in cmds if name in hashes[lane]}
@@ -570,6 +587,9 @@ def main():
     ap.add_argument("--target-ms", type=float, default=400.0)
     ap.add_argument("--bar", type=float, default=2.0)
     ap.add_argument("--noisy", type=float, default=5.0, help="spread %% above which a row is flagged")
+    ap.add_argument("--noisy-samples", type=int, default=21,
+                    help="the rounds a program with a noisy row takes in all: its speed modes are "
+                         "per process, so more processes settle the median where longer runs do not")
     ap.add_argument("--ref-flags", default="-O", help="rustc flags for the reference lane")
     ap.add_argument("--package-target-ms", type=float, default=4000.0,
                     help="the run length a --package lane is calibrated to: a library's bench "

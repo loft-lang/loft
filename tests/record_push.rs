@@ -103,9 +103,11 @@ fn counts(rust: &str) -> HashMap<String, (usize, usize, usize, usize)> {
             + line.matches("push_record_windowed").count()
             + line.matches("windowed finish").count();
         // @PLN157 § V-y — the no-prefill twin IS the template call (minus the default
-        // walk), so both spellings count as "template left".
-        row.3 +=
-            line.matches("OpNewRecord(cell,").count() + line.matches("OpNewRecordNP(cell,").count();
+        // walk), and `@FR-R-FieldAppend`'s bare clause spells it as the vector's own append,
+        // so every spelling counts as "template left".
+        row.3 += line.matches("OpNewRecord(cell,").count()
+            + line.matches("OpNewRecordNP(cell,").count()
+            + line.matches("vector_record_append::<").count();
     }
     map
 }

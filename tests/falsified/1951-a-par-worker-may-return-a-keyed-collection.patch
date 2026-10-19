@@ -55,13 +55,13 @@ index 6d62af979..f5b2c508c 100644
      (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
  }
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index f35366ae8..cd25b8694 100644
+index 297a78de4..0fd4e500e 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -23882,6 +23882,19 @@ fn merge_dependencies(a: &Type, b: &Type) -> Type {
-     a.joined_deps(b)
- }
- 
+@@ -3320,3 +3320,16 @@ mod plan86_nesting_guard_tests;
+ mod plan86_reachable_set_tests;
+ #[cfg(test)]
+ mod plan86_sandbox_designation_tests;
 +fn field_id(key: &[(String, bool)], name: &mut String) {
 +    for (k_nr, (k, asc)) in key.iter().enumerate() {
 +        if k_nr > 0 {
@@ -75,11 +75,8 @@ index f35366ae8..cd25b8694 100644
 +    *name += "]>";
 +}
 +
- /// Collect all `Value::Var` indices reachable anywhere in `val`.
- fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
-     match val {
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 01b0bcf82..fe511555b 100644
+index 475ce7e30..b8529e161 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
 @@ -3,11 +3,10 @@
@@ -95,7 +92,7 @@ index 01b0bcf82..fe511555b 100644
  
  /// The neutral record type of a captured fn-ref's closure half (loft#1869).
  pub(crate) const FN_RECORD: &str = "__fn_record";
-@@ -8131,7 +8130,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -8196,7 +8195,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
              Type::Function(..) => self.database.int(0, false),
              Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
              Type::Hash(tp, key, _) => {
@@ -107,7 +104,7 @@ index 01b0bcf82..fe511555b 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8146,7 +8148,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -8211,7 +8213,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // @PLN48 — mirror Hash: resolve the spatial<T[…]> db type id, and
                  // register it on demand for a local-only var (whose type would else
                  // be absent from the schema, so iteration/`get_type` sees u16::MAX).
@@ -119,7 +116,7 @@ index 01b0bcf82..fe511555b 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8160,7 +8165,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -8225,7 +8230,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // The Radix shape, for a trie: resolve the registered id, and register
                  // on demand for a local-only var whose type is otherwise absent from
                  // the schema.  Same spelling `Stores::trie` uses.
@@ -129,7 +126,7 @@ index 01b0bcf82..fe511555b 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8171,7 +8177,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -8236,7 +8242,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  self.database.trie(c_tp, key)
              }
              Type::Sorted(tp, key, _) => {
@@ -146,7 +143,7 @@ index 01b0bcf82..fe511555b 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8187,7 +8201,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -8252,7 +8266,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  self.database.sorted(c_tp, key)
              }
              Type::Index(tp, key, _) => {

@@ -771,6 +771,22 @@ impl OpEmitter for NewRecordEmitter {
                 ctx.emit(&args[0])?;
                 return write!(ctx.w, "), {pos}, {size}, {elem})");
             }
+            // `@FR-R-FieldAppend`'s bare clause — `v += [x]` on a plain vector: the slot
+            // `record_new`'s first path claims, its prefill one zero fill where the
+            // element's default is zero bytes.
+            if args.len() == 3
+                && let Some((elem, size, zero)) = bare_append(ctx.output, &args[1], &args[2])
+            {
+                crate::rewrite_census::fired("R-FieldAppend/bare", 1);
+                write!(
+                    ctx.w,
+                    "stores.vector_record_append::<{}, {}>(&(",
+                    !no_prefill,
+                    zero && !no_prefill
+                )?;
+                ctx.emit(&args[0])?;
+                return write!(ctx.w, "), {size}, {elem})");
+            }
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
             // in this function covers the element type calls the no-prefill twin; the
             // call shape mirrors the `#rust` template exactly.
@@ -842,6 +858,33 @@ fn field_append(
     Some((pos, elem, out.stores.size(elem)))
 }
 
+/// `@FR-R-FieldAppend`'s bare clause — the element a mint or finish without a push header
+/// appends to a BARE plain vector, as `(element type, element size, zero default)`: `tp` a
+/// `Parts::Vector` and `fld` the `u16::MAX` that names the vector itself — exactly the
+/// shape `record_new` and `record_finish` take their first path for, so the emitted calls
+/// do what those would have done.
+fn bare_append(
+    out: &crate::generation::Output,
+    tp: &Value,
+    fld: &Value,
+) -> Option<(u16, u16, bool)> {
+    if out.bare_append_disabled {
+        return None;
+    }
+    let (Value::Int(tp), Value::Int(fld)) = (tp.unspan(), fld.unspan()) else {
+        return None;
+    };
+    if u16::try_from(*fld).ok()? != u16::MAX {
+        return None;
+    }
+    let crate::database::Parts::Vector(elem) =
+        out.stores.types.get(usize::try_from(*tp).ok()?)?.parts
+    else {
+        return None;
+    };
+    Some((elem, out.stores.size(elem), out.stores.zero_default(elem)))
+}
+
 /// `OpFinishRecord` — the finish half of [`NewRecordEmitter`]'s fused form: the length
 /// bump, written to the header and the record, exactly where `record_finish`'s
 /// `vector_finish` bumped.  Same gate; everywhere else the `#rust` template stands.
@@ -874,6 +917,12 @@ impl OpEmitter for FinishRecordEmitter {
                 write!(ctx.w, "stores.field_vector_finish(&(")?;
                 ctx.emit(&args[0])?;
                 return write!(ctx.w, "), {pos})");
+            }
+            // `@FR-R-FieldAppend`'s bare clause — the finish half: the vector's length bump.
+            if args.len() == 4 && bare_append(ctx.output, &args[2], &args[3]).is_some() {
+                write!(ctx.w, "vector::vector_finish(&(")?;
+                ctx.emit(&args[0])?;
+                return write!(ctx.w, "), &mut stores.allocations)");
             }
             return super::default::DefaultEmitter.emit(ctx, args);
         };

@@ -8554,55 +8554,55 @@ pub fn panic(message: text, file: text, line: integer)
 Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry and execution continues. The file and line are injected by the compiler; do not pass them manually.
 
 ```rust
-pub fn exit(code: integer)
+pub fn exit(code: integer) process#update
 ```
 
 Ends the program at once with exit status `code`, as a shell's `exit` does: what was printed is flushed, nothing more is printed, and no diagnostic names the line — a script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a message).  Under `loft test` it ends the test instead, as a failure that names the code.
 
 ```rust
-pub fn log_info(message: text, file: text, line: integer)
+pub fn log_info(message: text, file: text, line: integer) io#append
 ```
 
 Write a structured log record at the chosen severity. The file and line are injected by the compiler; do not pass them manually. Safe to call from `par` workers: the host serialises log writes across threads.
 
 ```rust
-pub fn log_warn(message: text, file: text, line: integer)
+pub fn log_warn(message: text, file: text, line: integer) io#append
 ```
 
 Like log\_info, at warning severity.
 
 ```rust
-pub fn log_error(message: text, file: text, line: integer)
+pub fn log_error(message: text, file: text, line: integer) io#append
 ```
 
 Like log\_info, at error severity.
 
 ```rust
-pub fn log_fatal(message: text, file: text, line: integer)
+pub fn log_fatal(message: text, file: text, line: integer) io#append
 ```
 
 Like log\_info, at fatal severity.
 
 ```rust
-pub fn print(v1: text)
+pub fn print(v1: text) io#append
 ```
 
 Writes v to standard output without a newline. Use for progress output and building up a line incrementally.
 
 ```rust
-pub fn println(v1: text)
+pub fn println(v1: text) io#append
 ```
 
 Writes v followed by a newline. The standard choice for line-oriented output.
 
 ```rust
-pub fn eprint(v1: text)
+pub fn eprint(v1: text) io#append
 ```
 
 Writes v to standard ERROR without a newline. Companion to print() — use to separate human-readable status / progress / summary lines from machine-readable stdout (JSON, structured data piped to downstream consumers).
 
 ```rust
-pub fn eprintln(v1: text)
+pub fn eprintln(v1: text) io#append
 ```
 
 Writes v followed by a newline to standard ERROR.
@@ -8835,7 +8835,7 @@ Returns the text unchanged — the identity case, so `text` satisfies `Printable
 
 == File System
 
-Types and functions for reading and writing files. A File value is obtained via file() and carries the path, format, and an internal reference. Capability groups — the fs/env split a sandbox profile grants via `fs\#read` / `fs\#update` / `env\#read`; the functions below link in their signature.
+Types and functions for reading and writing files. A File value is obtained via file() and carries the path, format, and an internal reference. Capability groups — the fs/env split a sandbox profile grants via `fs\#read` / `fs\#update` / `env\#read`, the host clock (`time\#read`) and the embedding host's message channel (`host\#read` / `host\#append`); the functions below link in their signature.
 
 ```rust
 pub struct EnvVariable {
@@ -9146,7 +9146,7 @@ Not `store\_reclaim`, which gives back the FILE's unused TAIL and changes its si
 == Lazy stores
 
 ```rust
-pub fn store_bind_lazy(local: reference, source: text) -> boolean
+pub fn store_bind_lazy(local: reference, source: text) -> boolean fs#read
 ```
 
 Bind a COLLECTION to a lazy source. After this, a lookup that MISSES fetches that one entry and inserts it, so the next lookup is an ordinary resident hit; a lookup that hits never leaves the process. The collection is therefore automatically the cached data set — there is no separate cache.
@@ -9157,7 +9157,7 @@ Read-only, and the connection enforces it. A binding that cannot be served — a
 FALSE means the binding was not made, and it is worth checking. A `.store` IMAGE is read a page at a time, which only a `hash`, a `trie` or a `spatial` supports: a `sorted` or `index` bound to one is refused HERE, at the call that is wrong, rather than answering `null` at every later lookup. Those kinds load whole — `store\_load` / `store\_load\_url\_trusted` carry all of them. A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. if !store\_bind\_lazy(tiles, "tiles.store") { store\_load(tiles, "tiles.store");     // whole-image, every kind }
 
 ```rust
-pub fn store_lazy_query(local: reference, condition: text) -> integer
+pub fn store_lazy_query(local: reference, condition: text) -> integer fs#read
 ```
 
 Run an explicit condition against this collection's bound DATABASE source and pull every matching row into the collection. Answers how many records the collection gained.
@@ -9167,7 +9167,7 @@ The rows land IN the collection, not in a separate result: a person reached by t
 `condition` is SQL, sent as written (the connection is read-only). Answers 0 both when nothing matched and when the query could not run; `store\_lazy\_error` tells those apart.
 
 ```rust
-pub fn store_lazy_range(local: reference, lo: integer, hi: integer) -> integer
+pub fn store_lazy_range(local: reference, lo: integer, hi: integer) -> integer fs#read
 ```
 
 Pull a whole KEY RANGE from this collection's bound DATABASE source in ONE query. Answers how many records the collection gained.
@@ -9270,37 +9270,37 @@ pub fn env_variable(name: text) -> text env#read
 Returns the value of the environment variable `name`, or `null` when it is not set. A variable set to the empty string answers `""`, so `== null` tells the two apart. Use to read configuration from the shell environment.
 
 ```rust
-pub fn arguments() -> vector<text>
+pub fn arguments() -> vector<text> env#read
 ```
 
 Functions for interacting with the host operating system. Returns the script-level arguments passed after the script path. Does not include the loft binary name or loft CLI flags.
 
 ```rust
-pub fn ymd_days_ago(days: integer) -> text
+pub fn ymd_days_ago(days: integer) -> text time#read
 ```
 
 Returns the UTC calendar date `days` days before today as `YYYY-MM-DD`. Use for cutoff dates in time-window filters; negative `days` clamps to today.
 
 ```rust
-pub fn directory(v: text = "") -> text
+pub fn directory(v: text = "") -> text env#read
 ```
 
 Returns the current working directory, optionally with v appended as a subpath. loft sets the working directory to the program's own directory, so this is that directory — unless the file declares `\#cwd`, which keeps the directory the program was launched from.
 
 ```rust
-pub fn user_directory(v: text = "") -> text
+pub fn user_directory(v: text = "") -> text env#read
 ```
 
 Returns the current user's home directory, optionally with v appended. Use for storing user-specific data or configuration.
 
 ```rust
-pub fn program_directory(v: text = "") -> text
+pub fn program_directory(v: text = "") -> text env#read
 ```
 
 Returns the directory containing the running executable, optionally with v appended. Use to locate assets shipped beside a compiled program.  Under the interpreter the executable is the `loft` binary itself, and a `--native` run executes from a temporary build directory, so neither names the script's directory — use `source\_dir()` for that.
 
 ```rust
-pub fn source_dir() -> text
+pub fn source_dir() -> text env#read
 ```
 
 Returns the directory containing the main source file being executed. Use to locate data files relative to the script, regardless of working directory.
@@ -9332,7 +9332,7 @@ pub fn cache_dir() -> text?env#read
 Returns loft's per-user cache directory (\$XDG\_CACHE\_HOME/loft, else \$HOME/.cache/loft) — the same root the engine caches into — or null on a target with no filesystem (the browser).
 
 ```rust
-pub fn host_input(wait_ms: integer = -1) -> text
+pub fn host_input(wait_ms: integer = -1) -> text host#read
 ```
 
 Reads pending host input as one text; empty when there is none.  The source is per-target: stdin on native and --native-wasm (WASI); the JS host's input QUEUE on --html — seed it with globalThis.loftInput before loft\_start, and push live messages any time with globalThis.loftPush(msg) (e.g. fetch() completions).  Use for a headless compute module or a polled input loop — the inbound mirror of host\_output.  The engine only moves opaque bytes; the program parses them.
@@ -9341,7 +9341,7 @@ host\_output("MODE?"); mode = host\_input(200);        // "" =\> no host, run lo
 On --html every read already polls (a page cannot wait for a message its own thread has to deliver), and on --native-wasm, which has no threads, a bounded read falls back to waiting for the whole stream.
 
 ```rust
-pub fn host_output(msg: text)
+pub fn host_output(msg: text) host#append
 ```
 
 Sends one STRUCTURED message to the host shell — the outbound mirror of host\_input, distinct from user-facing print.  Per target: a line on stderr (native and WASI — the invoking process can script it); the page's globalThis.loftOutput(msg) handler on --html.  The browser pattern for loft-initiated work: host\_output a request (e.g. "fetch \<url\>"), the JS shell acts on it, and pushes the completion back via loftPush for host\_input to pop — JS owns the network, loft stays pure compute.
@@ -9349,13 +9349,13 @@ Sends one STRUCTURED message to the host shell — the outbound mirror of host\_
 == Time
 
 ```rust
-pub fn now() -> integer
+pub fn now() -> integer time#read
 ```
 
 Returns the current wall-clock time as milliseconds since the Unix epoch (00:00 UTC on 1 Jan 1970). Use for timestamps and logging.
 
 ```rust
-pub fn ticks() -> integer
+pub fn ticks() -> integer time#read
 ```
 
 Returns microseconds elapsed since program start (monotonic clock). Unaffected by system clock adjustments. Use for benchmarks and frame timing.

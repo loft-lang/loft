@@ -1,22 +1,17 @@
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index bb29c4e15..8c32c9d6f 100644
+index 596451f43..ffc0fd978 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
-@@ -14,10 +14,9 @@ use super::insert_free::{
-     any_text_return_buffer, expr_ends_in_return, free_copied_text_sources, text_return_buffer_for,
+@@ -15,7 +15,7 @@ use super::insert_free::{
  };
  use super::returns::{
--    collect_return_sources, is_heap_return_type, is_value_return_type, last_non_free_result,
--    move_join_hooks_into_arms, return_copies_view_holders, return_copies_whole_local,
--    return_has_non_source_arm, return_has_null_arm, return_moved_holders,
--    returned_var_null_unified,
-+    collect_return_sources, is_heap_return_type, is_value_return_type, move_join_hooks_into_arms,
-+    return_copies_view_holders, return_copies_whole_local, return_has_non_source_arm,
-+    return_has_null_arm, return_moved_holders, returned_var_null_unified,
+     collect_return_sources, is_argument_text_view, is_heap_return_type, is_value_return_type,
+-    last_non_free_result, move_join_hooks_into_arms, return_copies_view_holders,
++    move_join_hooks_into_arms, return_copies_view_holders,
+     return_copies_whole_local, return_has_non_source_arm, return_has_null_arm,
+     return_moved_holders, returned_var_null_unified,
  };
- use super::{Scopes, call};
- use crate::data::{Data, Deps, Type, Value, v_if, v_set};
-@@ -691,7 +690,7 @@ impl Scopes<'_> {
+@@ -691,7 +691,7 @@ impl Scopes<'_> {
                  "OpFreeRefIfDistinct"
              });
              let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
@@ -25,7 +20,7 @@ index bb29c4e15..8c32c9d6f 100644
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
              for &src in &null_arm_record_sources {
-@@ -845,7 +844,7 @@ impl Scopes<'_> {
+@@ -853,7 +853,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -34,7 +29,7 @@ index bb29c4e15..8c32c9d6f 100644
              free_copied_text_sources(&mut result, expr, &ls, function, data);
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
-@@ -891,7 +890,7 @@ impl Scopes<'_> {
+@@ -899,7 +899,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -43,7 +38,7 @@ index bb29c4e15..8c32c9d6f 100644
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -946,7 +945,7 @@ impl Scopes<'_> {
+@@ -954,7 +954,7 @@ impl Scopes<'_> {
                  }
              }
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -52,7 +47,7 @@ index bb29c4e15..8c32c9d6f 100644
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -1243,7 +1242,7 @@ impl Scopes<'_> {
+@@ -1251,7 +1251,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -61,7 +56,7 @@ index bb29c4e15..8c32c9d6f 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else if ret_var != u16::MAX {
                      ls.push(Value::Return(Box::new(Value::Var(ret_var))));
-@@ -1305,7 +1304,7 @@ impl Scopes<'_> {
+@@ -1313,7 +1313,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -70,7 +65,7 @@ index bb29c4e15..8c32c9d6f 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1386,163 +1385,31 @@ pub(super) struct Delivered {
+@@ -1394,163 +1394,31 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -260,7 +255,7 @@ index bb29c4e15..8c32c9d6f 100644
 +    vec![v_set(tmp, expr.clone())]
  }
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 00ee9a902..34c1bdd48 100644
+index 1dfef7df4..bccb80df7 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
 @@ -2647,12 +2647,7 @@ impl State {
@@ -295,7 +290,7 @@ index 00ee9a902..34c1bdd48 100644
                      && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
                      && let Some(fn_nr) =
                          crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-@@ -7160,43 +7146,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7177,43 +7163,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
          seed: Some((ix, *nxt)),
      })
  }

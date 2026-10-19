@@ -436,6 +436,14 @@ pub struct Stores {
     /// in one store that named one record name one copy.  Forgotten when the copied record's
     /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
     pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
+    /// `@FR-G-Arg-Rebind` — the stores a live generator frame names as an ARGUMENT:
+    /// `(store_nr, frames holding it, orphaned)`.  The caller and the frame share the value
+    /// (`@FR-G-Arg-Share`), and it is released when BOTH are done with it: a free while a
+    /// frame holds the store only orphans it, and the last frame's release frees it
+    /// ([`Stores::release_frame_hold`]).  A whole rebind that would re-mint the store in
+    /// place takes a fresh one instead ([`Stores::detach_if_frame_held`]), so the frame keeps
+    /// the value it was handed.  Runtime-only: `clone` starts it empty.
+    pub(crate) frame_held: Vec<(u16, u32, bool)>,
     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
     /// `None` when none is.
     ///
@@ -745,6 +753,7 @@ impl Clone for Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: self.max,
@@ -1519,6 +1528,7 @@ impl Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: 0,

@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 02ee1d7e9..f5155e4be 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -5102,8 +5102,7 @@ impl Parser {
+diff --git a/src/parser/store_check.rs b/src/parser/store_check.rs
+index fd0dc8e47..52b29a8cf 100644
+--- a/src/parser/store_check.rs
++++ b/src/parser/store_check.rs
+@@ -198,8 +198,7 @@ impl Parser {
          // `limit` range wider than 65 536 codes has no 4-byte width bucket
          // (`range_to_width` answers 8), so asking width of it refused `x & 2147483647`
          // into an `i32` — the mask the refusal itself offers as the cure (loft#1814).

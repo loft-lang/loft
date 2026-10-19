@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index f3228af4c..c26199896 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -4843,18 +4843,11 @@ impl Parser {
+diff --git a/src/parser/store_check.rs b/src/parser/store_check.rs
+index fd0dc8e47..da7a03beb 100644
+--- a/src/parser/store_check.rs
++++ b/src/parser/store_check.rs
+@@ -90,18 +90,11 @@ impl Parser {
  
      /// Does a value of `is_type` meet `should` through the implicit checked narrowing?  A
      /// question of the two TYPES alone, so pass 1 — which converts nothing — can ask it too.

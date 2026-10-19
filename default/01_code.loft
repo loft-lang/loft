@@ -1,6 +1,12 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @F1 @F4 @F38 @F39 @F44 — catalogue anchors (@PLN92); see loft-lang/features
+/// Capability groups for the language core's few host-touching functions — the output
+/// stream, ending the process, starting threads.  Every OTHER stdlib function carries no gate
+/// and computes only on its arguments, so a sandbox may call it under any profile (`(Cap-Call)`).
+capability io
+capability process
+capability thread
 // --- Types ---
 /// Primitive types built into loft.
 /// True or false value.
@@ -1693,35 +1699,35 @@ pub fn panic(message: text, file: text, line: integer);
 /// printed is flushed, nothing more is printed, and no diagnostic names the line — a
 /// script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a
 /// message).  Under `loft test` it ends the test instead, as a failure that names the code.
-pub fn exit(code: integer);
+pub fn exit(code: integer) process#update;
 #rust"loft::runtime_error::exit_program(@code)"
 #impure(host_io)
 /// Write a structured log record at the chosen severity.
 /// The file and line are injected by the compiler; do not pass them manually.
 /// Safe to call from `par` workers: the host serialises log writes across threads.
-pub fn log_info(message: text, file: text, line: integer);
+pub fn log_info(message: text, file: text, line: integer) io#append;
 #impure(host_io)
 /// Like log_info, at warning severity.
-pub fn log_warn(message: text, file: text, line: integer);
+pub fn log_warn(message: text, file: text, line: integer) io#append;
 #impure(host_io)
 /// Like log_info, at error severity.
-pub fn log_error(message: text, file: text, line: integer);
+pub fn log_error(message: text, file: text, line: integer) io#append;
 #impure(host_io)
 /// Like log_info, at fatal severity.
-pub fn log_fatal(message: text, file: text, line: integer);
+pub fn log_fatal(message: text, file: text, line: integer) io#append;
 #impure(host_io)
-fn OpPrint(v1: text);
+fn OpPrint(v1: text) io#append;
 #cold
 #rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\ncrate::codegen_runtime::print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
 /// Writes v to standard output without a newline.
 /// Use for progress output and building up a line incrementally.
-pub fn print(v1: text) {
+pub fn print(v1: text) io#append {
   OpPrint(v1);
 }
 #impure(host_io)
 /// Writes v followed by a newline. The standard choice for line-oriented output.
 
-pub fn println(v1: text) {
+pub fn println(v1: text) io#append {
   OpPrint("{v1}\n");
 }
 #impure(host_io)
@@ -1730,12 +1736,12 @@ pub fn println(v1: text) {
 /// Companion to print() — use to separate human-readable status
 /// / progress / summary lines from machine-readable stdout
 /// (JSON, structured data piped to downstream consumers).
-pub fn eprint(v1: text);
+pub fn eprint(v1: text) io#append;
 #rust"crate::codegen_runtime::host_eprint(@v1)"
 #impure(host_io)
 
 /// Writes v followed by a newline to standard ERROR.
-pub fn eprintln(v1: text) {
+pub fn eprintln(v1: text) io#append {
   eprint("{v1}\n");
 }
 #impure(host_io)
@@ -2046,7 +2052,7 @@ fn parallel_for(
   return_size: integer,
   threads: integer,
   func: integer
-) -> reference;
+) -> reference thread#update;
 // Plan-06 phase 5a (DESIGN.md D8.1): #impure(par_call) — par-safety
 // analyser allows nested calls when the inner worker fn is itself
 // par-safe (D8 R2 / D2.1.1 recursive Arc promotion).
@@ -2070,7 +2076,7 @@ fn parallel_discard(
   return_size: integer,
   threads: integer,
   func: integer
-);
+) thread#update;
 #impure(par_call)
 // Plan-06 PRIORITY.md spine step 8a — `Stitch::Queue` runtime entry.
 // Internal: workers run, each row's u64-encoded return value is pushed
@@ -2088,7 +2094,7 @@ fn parallel_queue(
   return_size: integer,
   threads: integer,
   func: integer
-) -> integer;
+) -> integer thread#update;
 #impure(par_call)
 // Step 8a — read one row's u64 result from the active queue buffer.
 // `idx` is the input row index.  Returns the worker's return value
@@ -2111,7 +2117,7 @@ fn parallel_queue_text(
   return_size: integer,
   threads: integer,
   func: integer
-) -> integer;
+) -> integer thread#update;
 // Step 8c — read one text from the active text-queue buffer.  Clones
 // the String into stores.scratch following the standard text-return
 // convention.
@@ -2133,7 +2139,7 @@ fn parallel_queue_ref(
   return_size: integer,
   threads: integer,
   func: integer
-) -> integer;
+) -> integer thread#update;
 // Step 8d.1 — read one rebased DbRef from the active par-ref buffer.
 fn parallel_buf_get_ref(idx: integer) -> reference;
 // Step 8d.1 — pop the active par-ref buffer; free every adopted
@@ -2153,7 +2159,7 @@ fn parallel_queue_narrow(
   return_size: integer,
   threads: integer,
   func: integer
-) -> integer;
+) -> integer thread#update;
 // Plan-06 ARC.md A3 — read one narrow row.  return_size is the
 // per-row stride (1, 2, or 4); signed selects sign-extension
 // (passed as integer 0/1 — boolean would push only 1 byte but
@@ -2190,7 +2196,7 @@ fn parallel_buf_get_float(idx: integer) -> float;
 // `par_fold(items, init, fold, threads)` builtin desugars to.
 // Rust-side tests in `tests/threading.rs` exercise the runtime
 // directly via `parallel::run_parallel_fold`.
-fn parallel_fold(input: reference, init: integer, fold: integer, threads: integer) -> integer;
+fn parallel_fold(input: reference, init: integer, fold: integer, threads: integer) -> integer thread#update;
 #impure(par_call)
 // Plan-06 ARC.md A6.b — fn-ref-return Queue runtime entry.  Same
 // arg layout as parallel_for; workers return 20-byte fn-ref blobs
@@ -2206,7 +2212,7 @@ fn parallel_queue_fn(
   return_size: integer,
   threads: integer,
   func: integer
-) -> integer;
+) -> integer thread#update;
 // Plan-06 ARC.md A6.b — read one 20-byte fn-ref blob from the
 // active fn-buffer.  Declared with a `fn(integer) -> integer`
 // return type so the codegen tracker advances by 20 bytes
@@ -2223,7 +2229,7 @@ fn parallel_buf_get_fn(idx: integer) -> fn(integer) -> integer;
 // Plan-06 ARC.md A6.b — pop the active fn-queue buffer.
 fn parallel_buf_drop_fn();
 // A15: parallel {} structured concurrency opcodes (replaced dead si_* superinstructions)
-fn OpParallelBegin(n_arms: const u8);
+fn OpParallelBegin(n_arms: const u8) thread#update;
 #cold
 fn OpParallelArm(offset: const u16);
 #cold
