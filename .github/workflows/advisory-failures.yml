@@ -37,7 +37,10 @@ on:
         description: 'The run to digest'
         required: true
   workflow_run:
-    workflows: ["CI", "Nightly checks (UB sanitizers + toolchain matrix)"]
+    # consumer-main-health is the stability meter's gate (STABILITY_ROADMAP.md § The owner's
+    # directive), and it was red for 25 nights with nothing on the tracker — a meter failing
+    # silently.  Its reds now go into the same combined issue, grouped under its own workflow.
+    workflows: ["CI", "Nightly checks (UB sanitizers + toolchain matrix)", "consumer-main-health"]
     types: [completed]
 
 permissions:

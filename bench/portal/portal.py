@@ -253,9 +253,8 @@ def render():
     w(f"routine within **{BAR:.0f}×**.  A ratio is native ns/op over the twin's, medians of pinned, calibrated,")
     w("interleaved samples; both lanes printed the same result hash or the row would not be here.\n")
 
-    for meta, rows in runs:
-        judged = []
-        unclassified = []
+    def judge(rows):
+        judged, unclassified = [], []
         for r in rows:
             if not r.get("ratio"):
                 continue
@@ -265,6 +264,29 @@ def render():
                 unclassified.append(key)
                 continue
             judged.append(dict(r, **reg, ratio_f=float(r["ratio"])))
+        return judged, unclassified
+
+    # ── every host, one line each: the release cut (C136: the rows over 5×) is a number the
+    # stability read quotes, and the page rendered one host's section after another, so the
+    # cut on the other machines was a worklist paragraph nobody re-measured.  A ratio still
+    # compares within ONE machine; the table puts the machines beside each other, never on one
+    # line.
+    w("## Hosts — the latest run on each machine\n")
+    w("| host | arch | measured | commit | routines | median | within 2× | over 3× | over 4.5× | over 5× | at or under 1× |")
+    w("|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|")
+    for meta, rows in runs:
+        judged, _ = judge(rows)
+        if not judged:
+            continue
+        xs = [r["ratio_f"] for r in judged]
+        w(f"| {meta.get('host', '?')} | {meta.get('arch', '?')} | {meta.get('date', '?')} | `{meta.get('commit', '?')}` | "
+          f"{len(xs)} | **{statistics.median(xs):.2f}×** | {sum(x <= BAR for x in xs)} | {sum(x > CEILING for x in xs)} | "
+          f"{sum(x > 4.5 for x in xs)} | {sum(x > 5 for x in xs)} | {sum(x <= 1.0 for x in xs)} |")
+    w("\nThe rows over 5× are the release cut (`bench/portal/analysis/worklist.md` § 0); `scripts/perf_trend.py "
+      "--population` is the same table over every committed measurement.\n")
+
+    for meta, rows in runs:
+        judged, unclassified = judge(rows)
         if not judged:
             continue
         host = meta.get("host", "?")

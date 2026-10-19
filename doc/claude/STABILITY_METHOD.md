@@ -531,6 +531,27 @@ tree, comes with its own oracle (the rule states what must be true), and ends wi
 enforce. Reach for a screen when a rule walk has named a class and you want its full extent;
 do not reach for one as the way in.
 
+## The weekly read — `make stability-read`
+
+The meters of [STABILITY_ROADMAP.md § The owner's directive](STABILITY_ROADMAP.md) are each
+a query, and a read of them assembled by hand is where the misreads come from: a guard
+tier counted over fewer inputs looks the same as one counted over all of them, and a
+series rebuilt in prose each time it is wanted is rebuilt differently each time.
+`scripts/stability_read.py` asks every source the same way for every ISO week and writes
+one row per week to `index/stability_weekly.tsv` (`--record`): the tracker (filed,
+`silent-wrong`, `sev:high`, consumer-hit, the `contract:strained` share of the week's judged
+closes and how many consecutive weeks it has read zero, the median hours from filing to
+close, `silent-wrong` open on main at the week's end), the consumers' own commit counts
+beside the consumer-hit count (a dormant consumer reads as a stable language, and only
+the commit count tells the two apart), the register at the week's last commit (rules
+defined, the rewrite family and its growth that week, annotated, guarded by a test or the
+rewrite census), the deviation registers, the design decisions, the consumer gate's
+scheduled nights green, the release gate's age, and the portal's median and release cut
+per host.  The series file is the trend; the script's docstring is the column key.  A
+report, never a gate: it reads the tracker through `gh api` when signed in and the public
+endpoint when not, and the tracker labels as they are NOW, so a past week's `open_sw_main`
+is an approximation from the filing and closing stamps.
+
 ## Relation to the rest of the method stack
 
 - [GOALS.md](GOALS.md) Goal E — the destination this method walks toward;

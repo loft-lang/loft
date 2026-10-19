@@ -116,6 +116,32 @@ All notable changes to the loft language and interpreter.
   tree claim by claim and claiming again from a reused store costs more than a fresh store's
   bump claims and a whole-store free).  Guard:
   `tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft`.
+### The stability meters as instruments: the weekly read, coverage by family and inputs, the portal across hosts, gates that file, a mechanism-class label (2026-10-19)
+
+- `make stability-read` (`scripts/stability_read.py`) computes every meter of the owner's
+  directive per ISO week — the tracker's filed / `silent-wrong` / `sev:high` / consumer-hit
+  counts, the `contract:strained` share of judged closes and its zero streak, the median
+  hours to close, `silent-wrong` open on main, the consumers' own commit counts, the
+  register's size by family and its rewrite growth, the guarded count, the deviation
+  registers, the design decisions, the consumer gate's nights green, the release gate's age
+  and the portal's release cut per host — and `--record` keeps one row per week in
+  `index/stability_weekly.tsv`, so the December read is a file and not a table built by hand.
+- `rule_tags.py coverage` names the guard inputs it read and warns when the language suite is
+  not beside the tree (the count reads tests/ alone then — 231 where both read 412 — and
+  nothing said so), and reports the register BY FAMILY: rules, annotated, guarded, census-only,
+  neither, and the rewrites the census lists with no admission on any program (unexercised).
+- `make perf-portal` renders a hosts table first — each machine's latest run with its median,
+  over 3×, over 4.5×, over 5× (the release cut, C136) and at-or-under-1× counts — and
+  `scripts/perf_trend.py --population` is the same table over every committed measurement.
+- The consumer nightly's reds reach the combined `[ci] Red steps` issue
+  (`advisory-failures.yml` digests `consumer-main-health` runs): the meter had been red for
+  25 nights with nothing on the tracker.  `release-gate.yml` runs weekly (Monday 16:20 UTC)
+  so the "release gate green" meter has a timeline; a release still dispatches it on its
+  candidate.
+- A `class:` label (the bug form's "Mechanism class" dropdown; `.github/LABELS.md`) names the
+  mechanism an issue belongs to; `scripts/bug-review.py` reads it instead of the title regex
+  for a labelled issue, so the keystone payoff measurement is exact as far as the labels reach.
+
 ### The rewrite census is a guard tier (2026-10-19)
 
 - `scripts/rule_tags.py coverage` and `worklist` read `bench/portal/rewrite_census.tsv` beside

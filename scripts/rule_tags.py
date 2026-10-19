@@ -513,12 +513,44 @@ def census_rules():
     return out
 
 
+def census_listed():
+    """Every rule the census LISTS, admitted or not: the difference with `census_rules` is
+    the rewrites no bench program exercises."""
+    out = set()
+    try:
+        lines = open(CENSUS, encoding="utf-8", errors="replace").readlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.rstrip("\n").split("\t")
+        if not line.startswith("#") and len(parts) >= 4:
+            out.add(parts[2].strip())
+    return out
+
+
 def guard_tags(rules):
     """The rules an active guard names: a test under GUARD_DIRS citing the rule, or a rewrite
     census row admitting it.  The ONE answer to "is this rule guarded", so `coverage` and
     `worklist` cannot disagree about it."""
     named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
     return named | {t for t in census_rules() if t in rules}
+
+
+def guard_inputs_line():
+    """What the guard tier READ, said in the report — a count over fewer inputs looks the
+    same as a count over all of them (the suite checkout absent read 231 where both read
+    412, and nothing said why)."""
+    dirs = ", ".join(_rel(d) if d.startswith(ROOT) else d for d in GUARD_DIRS)
+    line = f"  guard inputs: {dirs}; rewrite census {_rel(CENSUS) if os.path.exists(CENSUS) else 'ABSENT'}"
+    if not os.environ.get("GUARD_DIRS") and not os.path.isdir(SUITE_RULES):
+        line += (f"\n  ⚠ the language suite is not beside this tree ({_rel(SUITE_DIR)}, LOFT_SUITE_DIR): the "
+                 "guard tier reads tests/ alone and reads LOW — check the suite out beside the tree")
+    return line
+
+
+def family_of(tag):
+    """A rule's family is its prefix up to the first dash: `B-Copy` → `B`, `R-Range` → `R`."""
+    return tag.split("-", 1)[0]
 
 
 def citations_in(dirs, exts):
@@ -1048,6 +1080,19 @@ def main():
         print(f"  both tiers       {len(ann & grd):>4} / {total}   {pct(len(ann & grd)):5.1f} %")
         print(f"  neither          {len(rules.keys() - ann - grd):>4} / {total}   "
               f"{pct(len(rules.keys() - ann - grd)):5.1f} %")
+        print(guard_inputs_line())
+        # By family: the register grows unevenly (the rewrite family fastest), and one share
+        # over every rule hides which family is outrunning its guards.  A rewrite the census
+        # lists with no admission on any program is UNEXERCISED, named rather than counted.
+        listed = {t for t in census_listed() if t in rules}
+        fams = sorted({family_of(t) for t in rules})
+        print("\n  family   rules  annotated  guarded  census-only  neither   unexercised rewrites")
+        for fam in fams:
+            fr = {t for t in rules if family_of(t) == fam}
+            unex = sorted(t for t in (listed & fr) - census if t not in named)
+            print(f"  {fam:<8} {len(fr):>5}  {len(fr & ann):>9}  {len(fr & grd):>7}  "
+                  f"{len(fr & (census - named)):>11}  {len(fr - ann - grd):>7}   "
+                  f"{', '.join(unex) if unex else ''}")
         print("\nA guard tier counts a rule NAMED by a test, which is not the same as a test "
               "that\nwould fail without it — read it as the weaker claim; a rewrite rule's "
               "census row is the\nstronger one (`make rewrite-census` fails when the rewrite "

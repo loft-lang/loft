@@ -2850,6 +2850,10 @@ linkcheck-external:
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
 
+.PHONY: stability-read
+stability-read:  ## The weekly stability read: every meter of the owner's directive, one row per week (ARGS="--since 2026-08-03 --record" keeps the series)
+	@python3 scripts/stability_read.py $(ARGS)
+
 .PHONY: rule-pairs
 rule-pairs:  ## The rule pairs the formal text names that no guard file names together
 	@python3 scripts/rule_tags.py pairs $(ARGS)

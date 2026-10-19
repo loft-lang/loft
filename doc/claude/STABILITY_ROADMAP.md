@@ -51,6 +51,8 @@ pointed WIDE, not deep ([PERFORMANCE.md § Wide before deep](PERFORMANCE.md#wide
 
 **The meters, read weekly — together they are the definition of "stable" the owner uses.**
 No figure is written here: each is a query, and a figure in prose is stale the day after.
+`make stability-read` computes every row below for each week and `--record` keeps them in
+`index/stability_weekly.tsv` ([STABILITY_METHOD.md § The weekly read](STABILITY_METHOD.md)).
 
 | meter | stable when | read it with |
 |---|---|---|

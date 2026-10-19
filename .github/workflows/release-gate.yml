@@ -57,6 +57,12 @@ on:
   workflow_dispatch:
   push:
     branches: [release-gate-probe]
+  # The weekly run is the STABILITY METER's (STABILITY_ROADMAP.md § The owner's directive:
+  # "release gate green"), not release evidence — a release still dispatches the gate on its
+  # own candidate.  Without it the meter had no timeline at all: three runs in six weeks, none
+  # green, and eighteen days with no run to read.  Monday, after the daily's window.
+  schedule:
+    - cron: '20 16 * * 1'
 
 # Two dispatches on the same ref queue; a release run is never cancelled by a newer
 # one.  A cancelled gate proves nothing and a re-run costs an hour.
