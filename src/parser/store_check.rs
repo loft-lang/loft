@@ -241,8 +241,104 @@ impl Parser {
                 true
             }
             _ => self
-                .const_int(code)
-                .is_some_and(|n| n >= i64::from(spec.min) && n <= spec.max),
+                .int_range(code)
+                .is_some_and(|(lo, hi)| lo >= i64::from(spec.min) && hi <= spec.max),
+        }
+    }
+
+    /// The source a narrowing refusal names: the value's type, and the range its shape proves
+    /// when there is one (`integer (here 0..=510)`), so the author sees how far it misses.
+    pub(super) fn narrow_source_name(&self, code: &Value, tp: &Type) -> String {
+        let name = self.int_type_name(tp);
+        match self.int_range(code) {
+            Some((lo, hi)) if lo != hi && Self::declared_range(tp) != Some((lo, hi)) => {
+                format!("{name} (here {lo}..={hi})")
+            }
+            _ => name,
+        }
+    }
+
+    fn declared_range(tp: &Type) -> Option<(i64, i64)> {
+        match tp.base() {
+            Type::Integer(sp) if sp.min > i32::MIN + 1 || sp.max < i64::from(i32::MAX) => {
+                Some((i64::from(sp.min), sp.max))
+            }
+            _ => None,
+        }
+    }
+
+    /// `@FR-N-Arith` — the values an integer EXPRESSION can take, as far as its own shape
+    /// proves them: a constant is its value, a local or a call is its DECLARED range, a narrow
+    /// field or element read is its width, `+ - *` the interval arithmetic of their operands,
+    /// `a & c` (c ≥ 0) is `[0, c]`, and `a % c` is `[-(|c|-1), |c|-1]` — `[0, |c|-1]` when `a`
+    /// cannot be negative.  `None` is "anything an integer holds".
+    ///
+    /// The range is asked HERE, where a narrow destination needs it, and never written into the
+    /// expression's type (owner ruling 2026-10-19): `x & 255` is an `integer`, a local bound to
+    /// it is an `integer`, and only the store that meets the mask proves the fit.
+    pub(super) fn int_range(&self, code: &Value) -> Option<(i64, i64)> {
+        if let Some(n) = self.const_int(code) {
+            return Some((n, n));
+        }
+        let declared = |tp: &Type| Self::declared_range(tp);
+        match code.unspan() {
+            Value::Var(v) => declared(self.vars.tp(*v)),
+            Value::If(_, then, other) => {
+                let ((a, b), (c, d)) = self.int_range(then).zip(self.int_range(other))?;
+                Some((a.min(c), b.max(d)))
+            }
+            Value::Block(bl) if bl.name != "ncc" => self.int_range(bl.operators.last()?),
+            Value::Call(d, args) => {
+                let name = self.data.def(*d).name();
+                let operand = |i: usize| args.get(i).and_then(|a| self.int_range(a));
+                let min_arg = || args.get(2).and_then(|a| self.const_int(a));
+                match name {
+                    "OpGetByte" | "OpGetByteNullable" => min_arg().map(|m| (m, m + 255)),
+                    "OpGetShort" | "OpGetShortRaw" | "OpGetShortSpare" | "OpGetShortFull" => {
+                        min_arg().map(|m| (m, m + 65535))
+                    }
+                    "OpAddInt" | "OpMinInt" | "OpMulInt" => {
+                        let ((al, ah), (bl, bh)) = operand(0).zip(operand(1))?;
+                        let (lo, hi) = match name {
+                            "OpAddInt" => (al.saturating_add(bl), ah.saturating_add(bh)),
+                            "OpMinInt" => (al.saturating_sub(bh), ah.saturating_sub(bl)),
+                            _ => {
+                                let p = [
+                                    al.saturating_mul(bl),
+                                    al.saturating_mul(bh),
+                                    ah.saturating_mul(bl),
+                                    ah.saturating_mul(bh),
+                                ];
+                                (*p.iter().min()?, *p.iter().max()?)
+                            }
+                        };
+                        Some((lo, hi))
+                    }
+                    "OpLandInt" => [operand(0), operand(1)]
+                        .into_iter()
+                        .flatten()
+                        .filter(|(lo, _)| *lo >= 0)
+                        .map(|(_, hi)| hi)
+                        .min()
+                        .map(|hi| (0, hi)),
+                    "OpRemInt" => {
+                        let c = args.get(1).and_then(|a| self.const_int(a))?;
+                        if c == 0 {
+                            return None;
+                        }
+                        let m = c.unsigned_abs().saturating_sub(1);
+                        let m = i64::try_from(m).ok()?;
+                        let lo = if operand(0).is_some_and(|(lo, _)| lo >= 0) {
+                            0
+                        } else {
+                            -m
+                        };
+                        Some((lo, m))
+                    }
+                    _ => declared(self.data.def(*d).returned()),
+                }
+            }
+            _ => None,
         }
     }
 

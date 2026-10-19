@@ -785,9 +785,11 @@ out-of-range value:
   local with no further cast.  `x as u8? ?? d` means the same thing; the
   `?`-free form is the natural one.
 - **Mask** — `x & 0xFF`.  Keeps the low bits (wraps an out-of-range
-  value).  The mask proves the range, so the result stores into a `u8`
-  slot with no `as` at all — the idiom for byte packing, RGBA, and
-  hashing.
+  value).  The mask proves the range where it meets the store, so
+  `b: u8 = x & 0xFF` needs no `as` — the idiom for byte packing, RGBA, and
+  hashing.  The proof belongs to the expression, not to a variable:
+  `m = x & 0xFF` makes `m` an `integer`, and `b: u8 = m` is refused.  Mask
+  at the store, or declare `m: u8 = x & 0xFF`.
 - **Constrain the source type** — declare it `integer limit(0, 255)` (or
   `u8`).  A value that provably fits narrows implicitly, no cast.
 

@@ -158,10 +158,21 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                variable.
   (N-Div)      Γ ⊢ a,b ⇒ Integer                     ⟹   Γ ⊢ a/b, a%b ⇒ Integer?  (÷0 undefined)
   (N-Parse)    Γ ⊢ parse_τ(s)                          ⟹   Γ ⊢ …     ⇒ τ?           (invalid)
-  (N-Arith)    Γ ⊢ a,b ⇒ Integer,  op ∈ {+,-,*}      ⟹   Γ ⊢ a op b ⇒ Integer[r]
-               where r = the range-arithmetic of the operands.  NON-null if r ⊆ i64 (the
+  (N-Arith)    Γ ⊢ a,b ⇒ Integer,  op ∈ {+,-,*,&,%}  ⟹   Γ ⊢ a op b ⇒ Integer
+               the operator's own type: NO range is written into it.  The range r an
+               expression's SHAPE proves is asked only where a narrow slot needs it — a store
+               (N-Store), an argument, a return, an element, a cast (N-Cast) — and the
+               narrowing is admitted iff r fits.  r: a constant is its value; a local, a
+               parameter or a call is its DECLARED range; a narrow field or element read is
+               its width; `+ - *` the interval arithmetic of the operands' r; `a & c` (one
+               operand with r ⊆ [0, c]) is [0, c]; `a % c` (c a non-zero constant) is
+               [-(|c|-1), |c|-1], or [0, |c|-1] when a's r is non-negative; an `if` or
+               `match` the union of its arms'.  So `lo: u8 = x & 255` is admitted and
+               `m = x & 255; lo: u8 = m` is refused — `m` is an `integer`, and a local's
+               range is its declaration, never its last value.  NON-null if r ⊆ i64 (the
                common bounded case — no `??`); else Integer? (overflow → null).
-  (N-Cast)     Γ ⊢ e ⇒ Integer[s]   ⟹   Γ ⊢ (e as τ) ⇒ τ   REQUIRES s ⊆ range(τ).  If the
+  (N-Cast)     Γ ⊢ e ⇒ Integer, r = the range e proves (N-Arith)   ⟹   Γ ⊢ (e as τ) ⇒ τ
+               REQUIRES r ⊆ range(τ).  If the
                fit is NOT provable it is a COMPILE ERROR — `as τ` is an assertion of fit; the
                honest form for a maybe-miss is `as τ?`.  (`b: integer; b as u8` errors; `400
                as u8` errors — provably can't fit.)

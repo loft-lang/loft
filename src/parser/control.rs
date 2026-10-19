@@ -5953,10 +5953,7 @@ impl Parser {
         // and the other is a non-null scalar (heap types stay nullable; both-null stays as-is).
         let mut result_tp = merge_dependencies(&true_type, &false_type);
         // `@FR-I-Join` — the two arms' integer ranges join to their union.
-        if let Some(union) = Self::integer_arm_union(
-            &self.arm_contribution(&true_code, &true_type),
-            &self.arm_contribution(&false_code, &false_type),
-        ) {
+        if let Some(union) = Self::integer_arm_union(&true_type, &false_type) {
             result_tp = union;
         }
         if let Some(chain) = &chain_borrow {
@@ -16019,46 +16016,6 @@ impl Parser {
         }
     }
 
-    /// The range an integer arm CONTRIBUTES to a join: a constant tail is the one value it is
-    /// (`else { 7 }` is `[7, 7]`, not the full `integer` a literal is typed), any other arm its
-    /// own type.
-    pub(super) fn arm_contribution<'t>(
-        &self,
-        arm: &Value,
-        tp: &'t Type,
-    ) -> std::borrow::Cow<'t, Type> {
-        use std::borrow::Cow;
-        // Only a literal's own, unbounded `integer`: an arm already held to a declared width
-        // (`u8`) contributes that width, and was refused there if it did not fit.
-        // An optional arm keeps its type: the `?` it carries is what the join must keep.
-        // Borrowed wherever the arm's own type is the answer: this runs for every `if` arm of
-        // every type, and a cloned record or vector type allocates its dep list (+1 200
-        // allocations on the front-end pin's medium corpus).
-        if matches!(tp, Type::Optional(_)) {
-            return Cow::Borrowed(tp);
-        }
-        match tp.base() {
-            Type::Integer(sp) if sp.min <= i32::MIN + 1 && sp.max >= i64::from(i32::MAX) => {}
-            _ => return Cow::Borrowed(tp),
-        }
-        let tail = match arm.unspan() {
-            Value::Block(bl) => bl.operators.last(),
-            other => Some(other),
-        };
-        match tail
-            .and_then(|t| self.const_int(t))
-            .and_then(|k| i32::try_from(k).ok())
-        {
-            Some(k) if k > i32::MIN + 1 => Cow::Owned(Type::Integer(crate::data::IntegerSpec {
-                min: k,
-                max: i64::from(k),
-                forced_size: None,
-                ..crate::data::IntegerSpec::wide()
-            })),
-            _ => Cow::Borrowed(tp),
-        }
-    }
-
     /// `@FR-I-Join` — two integer arms join to the UNION of their ranges, optional when either
     /// is (`@FR-N-Join`); `None` when either arm is not an integer, or the ranges are one.
     pub(super) fn integer_arm_union(a: &Type, b: &Type) -> Option<Type> {
@@ -16387,8 +16344,7 @@ impl Parser {
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
         // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`
         // keeps the first arm's, which an arithmetic arm (`@FR-N-Arith`) makes narrower.
-        let joined =
-            Self::integer_arm_union(&joined, &self.arm_contribution(arm, tp)).unwrap_or(joined);
+        let joined = Self::integer_arm_union(&joined, tp).unwrap_or(joined);
         // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
         let joined = match (joined.function_consts(), tp.function_consts()) {
             (Some(jc), Some(ac)) if jc.common(ac) != jc => {

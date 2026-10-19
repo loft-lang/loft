@@ -211,6 +211,15 @@ git do.
 
 ### Bug fixes
 
+**A narrowing is proved at the store, not carried in the type.**  `x & 255`, `a % 10`, `u8 + u8`
+and an `if` of constants no longer give their result a hidden range type.  The store that needs the
+range proves it there: `lo: u8 = x & 255`, `s: u16 = p + q`, `(x & 255) as u8` and
+`v: vector<u8> = [x & 255, x & 15]` all compile as before.  Two things change.  A vector literal of
+such values is a plain `vector<integer>`, so `[a & 1, a & 2]` compiles in any order (it was refused
+unless the widest element came first).  A local bound to a masked value is a plain `integer`, so
+`m = x & 255; lo: u8 = m` is now refused — mask at the store, or declare `m: u8 = x & 255`.  A
+narrowing refusal names the range it proved: "cannot implicitly narrow integer (here 0..=510) to u8".
+
 **A call inside a template hole builds its parameter's type.**  `"{take("x{n}")}"`, where `take`
 expects a target type such as a `Query`, was refused "expected Query, got text" although
 `a = take("x{n}")` builds one.  It now builds the `Query` there too.  A template passed as any

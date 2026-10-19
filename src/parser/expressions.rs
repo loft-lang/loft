@@ -10391,7 +10391,7 @@ use a separate collection or add after the loop"
             let dst = self.int_type_name(store_tp);
             if !self.int_value_fits(code, store_tp) {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
-                let src = self.int_type_name(s_type);
+                let src = self.narrow_source_name(code, s_type);
                 let cures = Self::narrowing_cures(code, store_tp, &dst, false);
                 diagnostic!(
                     self.lexer,
