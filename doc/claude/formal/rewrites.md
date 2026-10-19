@@ -1716,7 +1716,21 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  struct-enum element qualifies as a plain struct does — its literal
                  writes its own tag (OpSetEnum(e, 0, variant)) beside the variant's
                  fields — with its slot always zeroed, a narrower variant leaving a
-                 wider one's tail unwritten.
+                 wider one's tail unwritten.  THE APART-CALL CLAUSE: a loop the
+                 (R-InPlace) gate declines — it calls a writer — still holds the
+                 header for the ONE path P it mints into when nothing else in the
+                 body can reach P: every variable it names whose type can hold an
+                 element of P is FRESH this pass (an element minted on P, a placed
+                 record, a pooled call buffer re-established by its pool statement,
+                 the result of a call handed a fresh buffer as its return buffer, a
+                 field view into a fresh record), P itself appears only as the
+                 first operand of its own mint group or as the host a placement
+                 claims beside, and the body runs no CallRef, Parallel or Yield.  A
+                 claim anywhere in P's store moves no record number, length or
+                 capacity, and a record is reached only through a value that names
+                 it.  Under the clause the loop holds no other header, base or
+                 scalar, and takes no reservation: the header grows by doubling,
+                 since the trip count may be read from input.
   (R-FieldAppend)  a mint group over a vector FIELD of a struct that no push header
                  holds — a straight-line `r.f += [x]`, outside any loop (R-PushRec)
                  admits — whose parent type is a STRUCT and whose field is a plain
@@ -1779,7 +1793,8 @@ run guards the clause.  Switch
 `Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
 *The bare clause:* cbor's `read_value` appends each decoded child to `items` or `entries` in
 a loop whose call claims in the vector's store (the child's pooled buffer, its own vectors
-and texts), so no header holds the vector and every element paid `record_new`'s dispatch,
+and texts); where no header holds the vector (the apart-call clause below declines, or is
+switched off) every element paid `record_new`'s dispatch,
 the default walk and `record_finish`'s — about 380 instructions where the append itself is
 a slot and a length bump: `cbor/decode` 8.03 → 6.43 ms (−20 %), hashes equal.  The prefill
 is unobservable in every shape the clause reaches today (a literal writes each field, an
@@ -1790,6 +1805,24 @@ where 5043210 is due.  Cells
 `tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft`, pins
 `tests/field_append.rs`.  Sites: the `bare_append` arms of `NewRecordEmitter` and
 `FinishRecordEmitter`, `Stores::vector_record_append`, `Stores::zero_default`.
+*The apart-call clause:* the same decoder loops held no header at all, because the gate asks
+whether the body's writes move NOTHING a holder describes, and a recursive call that builds a
+tree in the vector's own store fails that for every holder at once.  A record-push header
+needs less: its record number, length and capacity change only through an op that names the
+vector's owner slot or record, so a body whose every value that could hold an element is
+fresh this pass cannot reach them, whatever its calls claim.  The test is by TYPE as well as
+by identity, because two parameters can name one vector — `fill(x, x)` hands the writing
+call the very vector the loop builds (cell a5): refusing only the vector itself keeps a header
+there, and each finish writes its stale length over the call's own appends, *a5 alias 7 12345*
+where 9 elements are due.  `cbor/decode` 6.57 → 5.15 ms hand-priced,
+hashes equal; the held window with the length written at the loop's end priced 4.73 ms and
+is not built.  No up-front reservation: `arg` is read from the bytes, and reserving it would
+turn a hostile header into one huge claim where the plain loop fails at its first child.
+Switch `LOFT_NO_APART_MINT`; falsifier `LOFT_HOIST_VERIFY=1`.  Cells
+`tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft`, pins
+`tests/apart_mint.rs`.  Sites: `hoist::apart_mint`, `hoist::apart_fresh`,
+`hoist::apart_mentions_ok`, `hoist::type_reaches`, `hoist::placed_pool_of`,
+`Output::mint_reserve` (its `apart_mint_paths` skip).
 
 ### A mint group outside any held header binds its own
 
@@ -6159,11 +6192,10 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   `OpMoveField` whose destination is the whole element (offset 0, the element's own type) as
   covering every field, so the mint is the no-prefill form.  Cell: `LOFT_POISON_CLAIM=1` over
   the `(R-MoveLast)` corpus — a prefill skipped wrongly shows as poison.
-- **A push window across an admitted recursive call, for `(R-Push)`.**  `(R-Callee)` answers
-  `None` to every question on a recursive edge (`hoist.rs`: a callee met while its own
-  verdict is open), which denies a recursive builder every call-crossing hoist at once; one
-  fixpoint over the callee's own write set admits them together, and `items += [sub.value]`
-  keeps its push header across `read_value`'s call to itself.  cbor `decode`: 5.15 → 4.06 M.
+- **A held push WINDOW across a writing call, for `(R-PushRec)`'s apart-call clause.**  The
+  clause holds the header; the length kept in a local and written once at the loop's end
+  (growth by doubling, the record number re-read after it) priced cbor `decode` 5.15 →
+  4.73 ms beside it.  It needs the window's close on every exit of the loop.
 
 ## Validating the emitted routines against their assumptions
 

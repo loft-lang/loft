@@ -12,6 +12,18 @@ All notable changes to the loft language and interpreter.
 
 ### `--native`: an unhoisted plain-vector append is the runtime's own (2026-10-19)
 
+- **`(R-PushRec)`'s apart-call clause** — a loop the header gate declines because it calls a
+  writer still holds the record-push header for the one vector it mints into, when every
+  value it names that could hold an element is fresh this pass (the minted element, the
+  pooled call buffer, the call's result and views into it) and the vector appears only in its
+  own mint group or as a placement's host.  No up-front reservation: the trip count may be
+  read from input.  `cbor/decode` 6.57 → 5.15 ms hand-priced, hashes equal; fires in cbor,
+  pluginabi, drawing, gridmesh and tween.  Switch `LOFT_NO_APART_MINT`.  Guard
+  `tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft`, pins
+  `tests/apart_mint.rs`.
+- The emission audit binds `(R-PushFill)`'s run-clause header and window (now one tagged
+  binding a line) and ends a holder at a `} else {` that closes its scope — 138 false reports
+  on the cbor and pluginabi benches; `tests/emission_audit.rs` pins the `else` case.
 - **`(R-FieldAppend)`'s bare clause** — `v += [x]` on a plain vector that no push header holds
   (a loop whose header hoist declines, a destination twin's element) is emitted as
   `Stores::vector_record_append` (the slot `vector_append` claims, prefilled with one zero fill

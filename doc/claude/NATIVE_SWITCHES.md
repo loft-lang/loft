@@ -102,6 +102,14 @@ hoist declines, a destination twin's element) is `vector_record_append` and `vec
 the dispatch `record_new` and `record_finish` make per call resolved once (`cbor/decode`
 −20 %) — and is the bisect step for a wrong element, prefill or length out of an unhoisted
 `v += [x]`.
+
+**`LOFT_NO_APART_MINT=1`** (`@FR-R-PushRec`'s apart-call clause, default-ON, generation time,
+`--native` only) takes the record-push header away from a loop the header gate declines
+because it calls a writer — a recursive decoder's `items += [sub.value]` — which with it on
+holds the header when every value the body names that could hold an element is fresh
+(`cbor/decode` 6.57 → 5.15 ms).  The bisect step for a wrong element or length in a vector
+built in a loop that also calls a writer; `LOFT_TRACE_HOIST_DECLINE=1` names each loop the
+clause declines.
 **`LOFT_NO_FIELD_MINT=1`** (`@FR-R-Mint`'s field clause, default-ON, generation time,
 `--native` only) keeps a record append to a vector FIELD (`m.verts += [Vertex { … }]`) on
 its templates — with it off, such an append in a loop holds the push header a bare-variable

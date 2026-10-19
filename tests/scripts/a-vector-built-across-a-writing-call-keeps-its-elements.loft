@@ -39,6 +39,13 @@
 // `LOFT_POISON_CLAIM=1` must answer identically.
 //
 // @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-vector-built-across-a-writing-call-keeps-its-elements.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch refuses only the vector itself, not a
+//   value whose type can reach it, so `fill(x, x)` keeps a header while its call appends to
+//   the same vector through `w`, and each finish writes the header's stale length over those.
+//   WITNESS: *a5 alias 7 12345* where 9 elements, 91223445, are due.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
 
 enum Tr {
   Lf { v: integer },

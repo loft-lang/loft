@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index a6060db9a..c0e93f9bf 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -1390,7 +1390,7 @@ fn apart_mint(
+     let fresh = apart_fresh(body, data, stores, vars, &target.path);
+     let reaches =
+         |v: u16| v >= vars.count() || type_reaches(data, vars.tp(v), elem, &mut HashSet::new());
+-    let admitted = apart_mentions_ok(body, data, p, &|v| fresh.contains(&v) || !reaches(v));
++    let admitted = apart_mentions_ok(body, data, p, &|v| fresh.contains(&v) || v != p || !reaches(v));
+     if !admitted {
+         if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+             eprintln!(
