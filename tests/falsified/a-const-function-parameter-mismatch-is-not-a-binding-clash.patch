@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 0406974e2..9e43a5b06 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -9167,13 +9167,8 @@ impl Parser {
+diff --git a/src/parser/generics.rs b/src/parser/generics.rs
+index 348b7ee9a..4799c5ee3 100644
+--- a/src/parser/generics.rs
++++ b/src/parser/generics.rs
+@@ -886,13 +886,8 @@ impl Parser {
                  if self.convert_admitting(&mut trial, &types[i], &expected) {
                      continue;
                  }

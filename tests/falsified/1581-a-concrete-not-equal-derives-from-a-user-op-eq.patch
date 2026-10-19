@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 37809c24c..15b6345e6 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -16335,7 +16335,7 @@ impl Parser {
+diff --git a/src/parser/compare.rs b/src/parser/compare.rs
+index f21150d37..53934ef97 100644
+--- a/src/parser/compare.rs
++++ b/src/parser/compare.rs
+@@ -825,7 +825,7 @@ impl Parser {
              if matches!(op, "==" | "!=")
                  && list.len() == 2
                  && let Some(d) = self.value_struct_operands(types)

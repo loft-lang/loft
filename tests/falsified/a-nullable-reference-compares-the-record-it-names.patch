@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 8bc0f4965..c750b6c78 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -14957,7 +14957,8 @@ impl Parser {
+diff --git a/src/parser/compare.rs b/src/parser/compare.rs
+index f21150d37..b98c8c3d0 100644
+--- a/src/parser/compare.rs
++++ b/src/parser/compare.rs
+@@ -836,7 +836,8 @@ impl Parser {
              // presence tests — so two present references to DIFFERENT records compared equal.
              // The presence test is right only against the `null` literal, whose type is
              // `Null`, not `Reference` (@C91).

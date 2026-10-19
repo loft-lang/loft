@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 886bc691a..077fbe0d0 100644
+index 14d006db6..75cdfe780 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -439,17 +439,6 @@ impl Parser {
+@@ -463,17 +463,6 @@ impl Parser {
      /// that are 4-byte handles.  It agreed with the storage side only while the
      /// storage side made the same mistake; reading both from one derivation is
      /// what keeps reader and writer in step (loft#624 nested).
@@ -20,11 +20,42 @@ index 886bc691a..077fbe0d0 100644
      pub(crate) fn vector_elem_iter_stride(&mut self, vtp: &Type) -> u16 {
          let vec_tp = self.data.type_def_nr(vtp);
          let db_tp = self.data.def(vec_tp).known_type();
+diff --git a/src/parser/generics.rs b/src/parser/generics.rs
+index 348b7ee9a..53a61bb88 100644
+--- a/src/parser/generics.rs
++++ b/src/parser/generics.rs
+@@ -724,7 +724,7 @@ impl Parser {
+         // type variable is.
+         let mut new_code = tmpl_code;
+         for (holder, bound_to) in &bindings {
+-            let iter_stride = self.vector_elem_read(bound_to);
++            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+             new_code = Self::substitute_type_in_value(
+                 new_code,
+                 *holder,
+@@ -980,7 +980,7 @@ impl Parser {
+         let tmpl_vars = self.data.definitions[d as usize].variables.clone();
+         let mut code = tmpl_code;
+         for (holder, bound_to) in &bindings {
+-            let iter_stride = self.vector_elem_read(bound_to);
++            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+             code = Self::substitute_type_in_value(code, *holder, bound_to, iter_stride, &self.data);
+         }
+         self.fill_monomorph_body(inst, code, &tmpl_vars, &bindings);
+@@ -1693,7 +1693,7 @@ impl Parser {
+                 let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
+                 let mut code = tmpl_code;
+                 for (holder, bound_to) in &bindings {
+-                    let iter_stride = self.vector_elem_read(bound_to);
++                    let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+                     code = Self::substitute_type_in_value(
+                         code,
+                         *holder,
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 157de604a..0406974e2 100644
+index 297a78de4..e9073873d 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -209,15 +209,6 @@ pub(crate) struct AmpIdentity {
+@@ -115,15 +115,6 @@ pub(crate) struct AmpIdentity {
      pub(crate) place: bool,
  }
  
@@ -40,34 +71,11 @@ index 157de604a..0406974e2 100644
  /// Which binding position a leading `&` may occupy at the point the operand parser
  /// reaches it, and therefore which token ENDS the operand the `&` annotates.
  ///
-@@ -8970,7 +8961,7 @@ impl Parser {
-         // type variable is.
-         let mut new_code = tmpl_code;
-         for (holder, bound_to) in &bindings {
--            let iter_stride = self.vector_elem_read(bound_to);
-+            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
-             new_code = Self::substitute_type_in_value(
-                 new_code,
-                 *holder,
-@@ -9270,7 +9261,7 @@ impl Parser {
-         let tmpl_vars = self.data.definitions[d as usize].variables.clone();
-         let mut code = tmpl_code;
-         for (holder, bound_to) in &bindings {
--            let iter_stride = self.vector_elem_read(bound_to);
-+            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
-             code = Self::substitute_type_in_value(code, *holder, bound_to, iter_stride, &self.data);
-         }
-         self.fill_monomorph_body(inst, code, &tmpl_vars, &bindings);
-@@ -9886,7 +9877,7 @@ impl Parser {
-                 let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
-                 let mut code = tmpl_code;
-                 for (holder, bound_to) in &bindings {
--                    let iter_stride = self.vector_elem_read(bound_to);
-+                    let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
-                     code = Self::substitute_type_in_value(
-                         code,
-                         *holder,
-@@ -11600,7 +11591,7 @@ impl Parser {
+diff --git a/src/parser/monomorph.rs b/src/parser/monomorph.rs
+index 840f615ac..921b2f666 100644
+--- a/src/parser/monomorph.rs
++++ b/src/parser/monomorph.rs
+@@ -902,7 +902,7 @@ impl Parser {
          val: Value,
          tv_nr: u32,
          concrete: &Type,
@@ -76,7 +84,7 @@ index 157de604a..0406974e2 100644
          data: &Data,
      ) -> Value {
          match val {
-@@ -11671,23 +11662,7 @@ impl Parser {
+@@ -1020,23 +1020,7 @@ impl Parser {
                      // The stride comes from `vector_elem_iter_stride` (the one
                      // home, computed by the caller) — NOT a re-derived byte-sum;
                      // see that helper for why the two drifted.

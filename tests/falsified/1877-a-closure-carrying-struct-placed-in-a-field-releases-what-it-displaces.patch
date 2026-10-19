@@ -1,8 +1,8 @@
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 76acbe4dd..9bb65b8d2 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -14419,86 +14419,6 @@ impl Parser {
+diff --git a/src/parser/closures.rs b/src/parser/closures.rs
+index 09db702f0..f60c0b61e 100644
+--- a/src/parser/closures.rs
++++ b/src/parser/closures.rs
+@@ -569,86 +569,6 @@ impl Parser {
      /// leaves dangling DbRefs — silent cross-object corruption once
      /// the store slot is reused.  The three escape sinks reject on
      /// this predicate; locals and downward argument passing stay free.
@@ -89,7 +89,11 @@ index 76acbe4dd..9bb65b8d2 100644
      /// The return deps an instance's `-> T` record return was declared without, from its body.
      ///
      /// @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
-@@ -16118,10 +16038,29 @@ impl Parser {
+diff --git a/src/parser/members.rs b/src/parser/members.rs
+index ecdd7a624..5f86b35d6 100644
+--- a/src/parser/members.rs
++++ b/src/parser/members.rs
+@@ -1148,10 +1148,29 @@ impl Parser {
          // transparent to it (nullability is read separately via `attr_nullable`).
          let tp = tp.base().clone();
          let nm = self.data.attr_name(d_nr, f_nr);
@@ -123,11 +127,11 @@ index 76acbe4dd..9bb65b8d2 100644
          let pos = self
              .database
              .position(self.data.def(d_nr).known_type(), &nm);
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 08117f9a5..68eba0c7b 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -1214,10 +1214,10 @@ impl Parser {
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 2f384a474..2c7730df1 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -1215,10 +1215,10 @@ impl Parser {
              };
          #[cfg(feature = "wasm")]
          let tp_val = i32::from(tp);
@@ -142,10 +146,10 @@ index 08117f9a5..68eba0c7b 100644
      }
  
      /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
-diff --git b/src/scopes/capture_adoption.rs a/src/scopes/capture_adoption.rs
-index 2dbb025ab..0b456fc74 100644
---- b/src/scopes/capture_adoption.rs
-+++ a/src/scopes/capture_adoption.rs
+diff --git a/src/scopes/capture_adoption.rs b/src/scopes/capture_adoption.rs
+index 0d84192ba..9f3b1c940 100644
+--- a/src/scopes/capture_adoption.rs
++++ b/src/scopes/capture_adoption.rs
 @@ -103,6 +103,7 @@ fn cascade_before_record_frees(data: &mut Data) {
          free_ref: data.def_nr("OpFreeRef"),
          live: data.def_nr("OpStoreLive"),
@@ -237,11 +241,11 @@ index 2dbb025ab..0b456fc74 100644
              continue;
          }
          let Type::Reference(record, _) = function.tp(v) else {
-diff --git b/src/scopes/capture_builds.rs a/src/scopes/capture_builds.rs
-index 1ff13ecff..1c3c53a45 100644
---- b/src/scopes/capture_builds.rs
-+++ a/src/scopes/capture_builds.rs
-@@ -826,7 +826,7 @@ pub(crate) fn backs_an_adopted_capture(
+diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
+index cf1166b8d..be71165a9 100644
+--- a/src/scopes/capture_builds.rs
++++ b/src/scopes/capture_builds.rs
+@@ -773,7 +773,7 @@ pub(crate) fn backs_an_adopted_capture(
  fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
      let name = function.name(c);
      for w in 0..function.next_var() {
@@ -250,7 +254,7 @@ index 1ff13ecff..1c3c53a45 100644
              continue;
          }
          let Type::Reference(record, _) = function.tp(w) else {
-@@ -1091,11 +1091,9 @@ pub(super) fn free_unless_record_built(
+@@ -1038,11 +1038,9 @@ pub(super) fn free_unless_record_built(
  }
  
  /// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
@@ -265,7 +269,7 @@ index 1ff13ecff..1c3c53a45 100644
  /// The name of the local closure record `record`'s capture attribute `a` holds: the attribute's
  /// own name, or — for the `<name>__clos` half of a captured fn-ref (loft#1869) — the fn-ref
  /// local `<name>`, through which the frame holds that closure's record.
-@@ -1123,6 +1121,6 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
+@@ -1070,6 +1068,6 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
      }
  }
  

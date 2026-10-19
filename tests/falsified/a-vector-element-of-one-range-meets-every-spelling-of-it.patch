@@ -1,25 +1,8 @@
-diff --git b/src/data.rs a/src/data.rs
-index 049b70714..86cdcd4b6 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -648,6 +648,16 @@ impl IntegerSpec {
-         self.forced_size.is_none() && (self.is_signed32_template() || self.is_wide_template())
-     }
- 
-+    /// Are these one RANGE — one integer type (`@FR-C-Refl`; the range is an integer's identity,
-+    /// formal/types.md § the integer model)?  The full integer is one range in both of its
-+    /// bound encodings; every other range is its `[min, max]`, however it was spelled — `u8`
-+    /// and `integer limit(0, 255)` are one.
-+    #[must_use]
-+    pub fn same_range(&self, other: &IntegerSpec) -> bool {
-+        (self.is_full_integer() && other.is_full_integer())
-+            || (self.min == other.min && self.max == other.max)
-+    }
-+
-     #[must_use]
-     pub fn non_null_reads_null(&self) -> bool {
-         self.is_wide_template() || self.is_signed32_template()
-@@ -3345,13 +3355,14 @@ impl Type {
+diff --git a/src/data.rs b/src/data.rs
+index 668a7df3c..47b353be3 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -2660,13 +2660,14 @@ impl Type {
      /// element as eight 1-byte ones — silently, since the element COUNT is
      /// stored and still agrees.
      ///
@@ -41,7 +24,7 @@ index 049b70714..86cdcd4b6 100644
      #[must_use]
      pub fn same_element_storage(&self, other: &Type) -> bool {
          match (self.base(), other.base()) {
-@@ -3360,10 +3371,7 @@ impl Type {
+@@ -2675,10 +2676,7 @@ impl Type {
                      matches!(self, Type::Optional(_)),
                      matches!(other, Type::Optional(_)),
                  );
@@ -53,3 +36,24 @@ index 049b70714..86cdcd4b6 100644
              }
              (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
              // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is
+diff --git a/src/narrow.rs b/src/narrow.rs
+index 3813d7520..863415542 100644
+--- a/src/narrow.rs
++++ b/src/narrow.rs
+@@ -503,6 +503,16 @@ impl IntegerSpec {
+         self.forced_size.is_none() && (self.is_signed32_template() || self.is_wide_template())
+     }
+ 
++    /// Are these one RANGE — one integer type (`@FR-C-Refl`; the range is an integer's identity,
++    /// formal/types.md § the integer model)?  The full integer is one range in both of its
++    /// bound encodings; every other range is its `[min, max]`, however it was spelled — `u8`
++    /// and `integer limit(0, 255)` are one.
++    #[must_use]
++    pub fn same_range(&self, other: &IntegerSpec) -> bool {
++        (self.is_full_integer() && other.is_full_integer())
++            || (self.min == other.min && self.max == other.max)
++    }
++
+     #[must_use]
+     pub fn non_null_reads_null(&self) -> bool {
+         self.is_wide_template() || self.is_signed32_template()

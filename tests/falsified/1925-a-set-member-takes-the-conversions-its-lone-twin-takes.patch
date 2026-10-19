@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 75099f067..132a6e970 100644
+index 668a7df3c..54d503b96 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -7887,25 +7887,6 @@ impl Data {
+@@ -7021,25 +7021,6 @@ impl Data {
          &self.possible[start]
      }
  
@@ -28,8 +28,25 @@ index 75099f067..132a6e970 100644
      /// The operator definition whose SIGNATURE matches — same candidate list the concrete
      /// path walks, asked with the arity and receiver instead of the name alone.
      ///
+diff --git a/src/parser/convert.rs b/src/parser/convert.rs
+index 8ff36bae7..6df596dd8 100644
+--- a/src/parser/convert.rs
++++ b/src/parser/convert.rs
+@@ -1236,7 +1236,11 @@ impl Parser {
+                         return true;
+                     }
+                 }
+-            } else if self.data.converts_with(dnr, check_type, is_type, should) {
++            } else if self.data.attributes(dnr) > 0
++                && (self.data.attr_type(dnr, 0).is_equal(check_type)
++                    || self.data.attr_type(dnr, 0).is_equal(is_type))
++                && self.data.def(dnr).returned().is_equal(should)
++            {
+                 // @PLN99 Arc C — for a `Reference` source, `check_type` was flattened to the
+                 // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
+                 // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),
 diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
-index 149bef662..ba38166f6 100644
+index e76dea3cb..3f6e3dcbe 100644
 --- a/src/parser/dispatch.rs
 +++ b/src/parser/dispatch.rs
 @@ -99,7 +99,7 @@ impl Parser {
@@ -70,7 +87,7 @@ index 149bef662..ba38166f6 100644
      /// Every overload of `name` that takes the routed argument types, with its rank vector,
      /// or `None` when the name has no overload set or an argument has no spelling.
      fn ranked_overloads(
-@@ -664,9 +642,6 @@ impl Parser {
+@@ -699,9 +677,6 @@ impl Parser {
          at: Option<&crate::lexer::Position>,
      ) {
          let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
@@ -80,7 +97,7 @@ index 149bef662..ba38166f6 100644
          let text = match sel {
              Selection::Ambiguous(taken) => {
                  let by: Vec<String> = taken
-@@ -700,29 +675,11 @@ impl Parser {
+@@ -735,29 +710,11 @@ impl Parser {
              }
              _ => return,
          };
@@ -114,20 +131,3 @@ index 149bef662..ba38166f6 100644
          }
      }
  }
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 650be68fa..9f0a3619b 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -6952,7 +6952,11 @@ impl Parser {
-                         return true;
-                     }
-                 }
--            } else if self.data.converts_with(dnr, check_type, is_type, should) {
-+            } else if self.data.attributes(dnr) > 0
-+                && (self.data.attr_type(dnr, 0).is_equal(check_type)
-+                    || self.data.attr_type(dnr, 0).is_equal(is_type))
-+                && self.data.def(dnr).returned().is_equal(should)
-+            {
-                 // @PLN99 Arc C — for a `Reference` source, `check_type` was flattened to the
-                 // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
-                 // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),

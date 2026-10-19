@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9f0a3619b..95a13d4a3 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -22393,9 +22393,7 @@
+diff --git a/src/parser/places.rs b/src/parser/places.rs
+index 90844d50f..36f8acdd2 100644
+--- a/src/parser/places.rs
++++ b/src/parser/places.rs
+@@ -81,9 +81,7 @@ impl Parser {
              return dbref.is_place_read(data);
          }
          match val.unspan() {

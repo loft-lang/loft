@@ -1,8 +1,8 @@
-diff --git b/src/data.rs a/src/data.rs
-index 094a00584..eee337c83 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -7566,11 +7566,9 @@ impl Data {
+diff --git a/src/data.rs b/src/data.rs
+index 668a7df3c..ec7906c8c 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -7193,11 +7193,9 @@ impl Data {
      /// member was declared first (`@FR-F-Recv`, loft#1817).
      #[must_use]
      pub fn overload_with_params(&self, start: &str, params: &[Type]) -> Option<u32> {
@@ -15,11 +15,11 @@ index 094a00584..eee337c83 100644
      }
  
      /// @PLN99 Arc C — register `d_nr` into the `possible[prefix]` operator map.
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 367f89c4f..b61fb1e0a 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -10201,28 +10201,7 @@ impl Parser {
+diff --git a/src/parser/bounds.rs b/src/parser/bounds.rs
+index e5a158394..2e2f14a4c 100644
+--- a/src/parser/bounds.rs
++++ b/src/parser/bounds.rs
+@@ -447,28 +447,7 @@ impl Parser {
              let mut misfit = None;
              if found != u32::MAX {
                  let params = self.bound_params_at(child_nr, &concrete_type);
@@ -49,20 +49,11 @@ index 367f89c4f..b61fb1e0a 100644
                      if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
                          found = member;
                      } else {
-@@ -10819,11 +10798,7 @@ impl Parser {
-                             .clone()
-                     })
-                     .collect();
--                // A template member fits any list at its variables, and nothing here can
--                // instantiate it: the concrete member of the set is the one to bind (loft#1826).
--                if data.def(resolved).def_type == DefType::Generic
--                    || !data.params_fit(resolved, &params)
--                {
-+                if !data.params_fit(resolved, &params) {
-                     if let Some(by_params) = data.overload_with_params(fn_name, &params) {
-                         resolved = by_params;
-                     } else if eq_stub {
-@@ -16127,24 +16102,6 @@ impl Parser {
+diff --git a/src/parser/compare.rs b/src/parser/compare.rs
+index f21150d37..845a831c1 100644
+--- a/src/parser/compare.rs
++++ b/src/parser/compare.rs
+@@ -741,24 +741,6 @@ impl Parser {
                          Type::Never
                      };
                  };
@@ -87,3 +78,20 @@ index 367f89c4f..b61fb1e0a 100644
                  if m != u32::MAX {
                      let tp = self.call_nr(code, m, list, types, false, &[], None);
                      if tp != Type::Null {
+diff --git a/src/parser/monomorph.rs b/src/parser/monomorph.rs
+index 840f615ac..50b0c433b 100644
+--- a/src/parser/monomorph.rs
++++ b/src/parser/monomorph.rs
+@@ -104,11 +104,7 @@ impl Parser {
+                             .clone()
+                     })
+                     .collect();
+-                // A template member fits any list at its variables, and nothing here can
+-                // instantiate it: the concrete member of the set is the one to bind (loft#1826).
+-                if data.def(resolved).def_type == DefType::Generic
+-                    || !data.params_fit(resolved, &params)
+-                {
++                if !data.params_fit(resolved, &params) {
+                     if let Some(by_params) = data.overload_with_params(fn_name, &params) {
+                         resolved = by_params;
+                     } else if eq_stub {

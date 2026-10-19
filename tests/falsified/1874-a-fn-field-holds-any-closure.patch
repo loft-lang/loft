@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9f0a3619b..67ba0d3b9 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -16164,12 +16164,14 @@
+diff --git a/src/parser/members.rs b/src/parser/members.rs
+index ecdd7a624..2f139815c 100644
+--- a/src/parser/members.rs
++++ b/src/parser/members.rs
+@@ -1351,12 +1351,14 @@ impl Parser {
                      if prev == u32::MAX {
                          self.data.definitions[d_nr as usize].attributes[f_nr]
                              .assigned_lambda_d_nr = lambda_d_u;

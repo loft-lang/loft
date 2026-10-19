@@ -1,8 +1,8 @@
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index bdc5004b0..dbbaacb4b 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -9391,15 +9386,8 @@ impl Parser {
+diff --git a/src/parser/monomorph.rs b/src/parser/monomorph.rs
+index 840f615ac..cef9e75de 100644
+--- a/src/parser/monomorph.rs
++++ b/src/parser/monomorph.rs
+@@ -34,15 +34,8 @@ impl Parser {
              return d_nr;
          }
          // Resolve the concrete first-arg type by substituting tv_nr in the attribute type.

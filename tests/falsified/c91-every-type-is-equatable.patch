@@ -1,8 +1,8 @@
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 37809c24c..bde5eb505 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -10316,6 +10316,7 @@ impl Parser {
+diff --git a/src/parser/bounds.rs b/src/parser/bounds.rs
+index e5a158394..cb2cb4986 100644
+--- a/src/parser/bounds.rs
++++ b/src/parser/bounds.rs
+@@ -485,6 +485,7 @@ impl Parser {
                  && method_suffix == "OpEq"
                  && want == 2
                  && self.content_comparable(concrete_nr)
