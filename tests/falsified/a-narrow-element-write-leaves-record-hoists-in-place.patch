@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 4bd5cd562..36329d646 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -2077,7 +2077,7 @@ fn body_writes(
+                 {
+                     Target::Record(chain) => {
+                         for (tp, base) in chain {
+-                            set.offsets.insert((tp, base + i64::from(*fld)));
++                            let _ = (tp, base, fld);
+                         }
+                     }
+                     Target::NoRecord => {}

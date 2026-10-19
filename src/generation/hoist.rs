@@ -28,7 +28,7 @@
 //! shows up as a failure under one suite run.
 
 use crate::data::{Block, Data, DefType, Type, Value};
-use crate::database::Stores;
+use crate::database::{Parts, Stores};
 pub(crate) use crate::ir_shape::split_call;
 pub use crate::ir_shape::{WrapperOperand, one_op_wrapper};
 use crate::ir_shape::{as_int, as_var, call_named};
@@ -1914,6 +1914,15 @@ fn inline_parents(stores: &Stores, tp: u16) -> Vec<(u16, i64)> {
 }
 
 /// The element type of the vector operand of an element-address op, as a [`Target`].
+/// `LOFT_NO_NARROW_ELEMENT_WRITE=1` — a write into a NARROW-integer vector element is
+/// untyped again for the scalar hoist, as it was before such an element was read as a slot
+/// of the vector's block: the first bisect step for a wrong value read through a hoisted
+/// record field in a loop whose callee writes `i32` / `u16` / `u8` vector elements.
+fn narrow_element_write_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_NARROW_ELEMENT_WRITE").is_ok_and(|v| v != "0"))
+}
+
 fn element_target(
     vector: &Value,
     data: &Data,
@@ -1949,7 +1958,19 @@ fn element_target(
                 Target::Unknown
             } else if stores.is_struct(elem) {
                 Target::Record(vec![(elem, 0)])
-            } else if stores.is_base(elem) {
+            } else if stores.is_base(elem)
+                || narrow_element_write_enabled()
+                    && matches!(
+                        stores.types[elem as usize].parts,
+                        Parts::Byte(..)
+                            | Parts::Short(..)
+                            | Parts::Int(..)
+                            | Parts::ShortRaw(..)
+                            | Parts::IntRaw(..)
+                    )
+            {
+                // A scalar element — a base value or a narrow integer — is a slot in the
+                // vector's block, never a field of a record a hoisted scalar reads.
                 Target::NoRecord
             } else {
                 Target::Unknown

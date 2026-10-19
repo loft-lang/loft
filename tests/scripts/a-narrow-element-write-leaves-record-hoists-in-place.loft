@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The scalar hoist's write set (`generation::hoist::body_writes`, `@FR-R-Inputs`) reads a write
+// into a NARROW-integer vector element (`i32`, `u8`, …) as a write to a slot of the vector's
+// block, never to a record field — as it reads a base-type element.  So a loop that calls a
+// callee writing such elements still holds the record fields nobody writes, and calls the
+// callee's `__inv` twin with them; the fields the callee DOES write (a counter) are still read
+// fresh after every call.
+//
+// What can go wrong is a field held across a call that writes it: a stale counter.  The cells
+// read a window record the loop never writes, call a callee that writes two narrow vectors and
+// bumps a counter field, and read the counter after each call; one writes a cell twice, so the
+// counter must rise once.  Every value is hand-computed.  Both backends answer the same with
+// and without `LOFT_NO_NARROW_ELEMENT_WRITE` and `LOFT_NO_TWIN_INLINE`, and under
+// `LOFT_HOIST_VERIFY=1`.
+//
+// @falsified-by: tests/falsified/a-narrow-element-write-leaves-record-hoists-in-place.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion on --native.  WITNESS: the patch drops record-field writes from the
+//     write set, so the counter is held across the loop and reads 0 after every call: *n1
+//     54054* where 1234054054 is due.
+//   HOLDS: the interpreter keeps no hoists, and answers the same on both trees.
+
+struct Grid { w: integer, h: integer, cells: vector<i32>, flags: vector<u8>, count: integer }
+struct Win { q0: integer, w: integer, on: vector<boolean> }
+
+fn win_get(s: Win, q: integer) -> boolean {
+  i = q - s.q0;
+  if i < 0 || i >= s.w { return false; }
+  s.on[i] ?? false
+}
+// writes a narrow element and bumps a record field the caller reads
+fn mark(g: Grid, i: integer, v: integer) {
+  if i < 0 || i >= len(g.cells) { return; }
+  was = (g.cells[i] ?? 0) as integer;
+  if was == 0 { g.count = g.count + 1; }
+  g.cells[i] = (v as i32?) ?? 0;
+  g.flags[i] = ((v & 255) as u8?) ?? 0;
+}
+
+// n1: a loop reading a window it never writes, calling a callee that writes narrow elements and
+// a counter field; the loop reads the counter after every call.
+fn n1() -> integer {
+  s = Win { q0: 2, w: 6, on: [true, false, true, true, false, true] };
+  g = Grid { w: 8, h: 1, cells: [0, 0, 0, 0, 0, 0, 0, 0], flags: [0, 0, 0, 0, 0, 0, 0, 0], count: 0 };
+  t = 0;
+  for q in 0..10 {
+    if win_get(s, q) {
+      mark(g, q - 2, q * 3);
+      t = t * 10 + g.count;
+    }
+  }
+  // on at q = 2, 4, 5, 7: cells 0, 2, 3, 5 written 6, 12, 15, 21 — counts 1, 2, 3, 4
+  c = 0;
+  for x in g.cells { c += x as integer; }
+  f = 0;
+  for x in g.flags { f += x as integer; }
+  (t * 1000 + c) * 1000 + f
+}
+
+// n2: the same cell written twice: the counter rises once.
+fn n2() -> integer {
+  s = Win { q0: 0, w: 4, on: [true, true, true, true] };
+  g = Grid { w: 2, h: 1, cells: [0, 0], flags: [0, 0], count: 0 };
+  t = 0;
+  for q in 0..4 {
+    if win_get(s, q) { mark(g, q % 2, q + 1); t = t * 10 + g.count; }
+  }
+  t * 100 + (g.cells[0] ?? 0) as integer * 10 + (g.cells[1] ?? 0) as integer
+}
+
+fn main() {
+  for _r in 0..2 {
+    assert(n1() == 1234054054, "n1 {n1()}");
+    assert(n2() == 122234, "n2 {n2()}");
+  }
+  println("done");
+}
