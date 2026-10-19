@@ -1,11 +1,13 @@
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 475ce7e30..0c7b84e2a 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -5142,7 +5142,7 @@
+@@ -5134,7 +5134,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
              // (the literal is built in `v`), and read as a backing it made a slice bound before
              // that rebind mint nothing — the interpreter read the local as null, native named a
              // variable it never declared.
 -            && self.vars.tp(vec).depend().iter().all(|d| *d == vec)
 +            && self.vars.tp(vec).depend().is_empty() // SABOTAGE: a self-dependency read as a backing
-             && !matches!(self.vars.tp(vec), Type::RefVar(_))
-             // Argument vectors already have a caller-provided backing store; do not
-             // allocate a local __vdb_N store that would be freed before the return.
+     }
+ 
+     /// Is `vec` a local that would hold a `__vdb_N` backing of its own — a vector variable,

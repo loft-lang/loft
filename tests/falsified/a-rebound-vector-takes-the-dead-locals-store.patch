@@ -1,13 +1,13 @@
 diff --git a/src/take_local.rs b/src/take_local.rs
-index 926bdc4ab..c13ac0106 100644
+index bccaa39aa..8fda13440 100644
 --- a/src/take_local.rs
 +++ b/src/take_local.rs
-@@ -297,7 +297,7 @@ fn admit(s: &[Value], i: usize, whole: &Value, data: &Data, d_nr: u32, ops: &Ops
+@@ -351,7 +351,7 @@ fn source_run(run: &[Value], whole: &Value, src: u16, ops: &Ops) -> Result<(), &
              nulls += 1;
          }
      });
--    if names(whole, y) != inside + nulls {
-+    if false && names(whole, y) != inside + nulls {
-         trace("declined — the source is named outside its block run");
-         return None;
+-    if names(whole, src) != inside + nulls {
++    if false && names(whole, src) != inside + nulls {
+         return Err("declined — the source is named outside its block run");
      }
+     // A write INTO the source names it first: a vector append, or a record push's

@@ -1,8 +1,8 @@
 diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 2549d53a..2bec898e 100644
+index d6661346c..0fc73a78b 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -14740,13 +14740,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+@@ -16868,13 +16868,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
              // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
              // was freed by nobody, one record per call on `--native` alone, in a concrete
              // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
@@ -17,12 +17,12 @@ index 2549d53a..2bec898e 100644
 +            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
                  return None;
              }
-             // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
+             // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
 diff --git a/src/lexer.rs b/src/lexer.rs
-index fc621186..b6803059 100644
+index 44ae6ff88..c5301cc6c 100644
 --- a/src/lexer.rs
 +++ b/src/lexer.rs
-@@ -273,12 +273,8 @@ struct Recorded {
+@@ -274,12 +274,8 @@ struct Recorded {
      /// Where the consumed source ended when the token became the one held.
      prev_end: (u32, u32),
      /// The string-interpolation state the read left: a literal that opens a hole leaves
@@ -36,8 +36,8 @@ index fc621186..b6803059 100644
 +    scan: ScanState,
  }
  
- /// A lexer that can remember a state via a link and then optionally return to that state.
-@@ -1201,7 +1197,7 @@ impl Lexer {
+ /// The scan cursor over the current source line: the line's own text and a byte offset into
+@@ -1458,7 +1454,7 @@ impl Lexer {
              res: res.clone(),
              cursor: (self.position.line, self.position.pos),
              prev_end: (self.prev_end.line, self.prev_end.pos),
@@ -46,7 +46,7 @@ index fc621186..b6803059 100644
          }
      }
  
-@@ -1209,11 +1205,12 @@ impl Lexer {
+@@ -1466,11 +1462,12 @@ impl Lexer {
      /// as it would be read, with the cursor and consumed end the scan leaves.
      fn queue(&mut self, res: LexResult) {
          let at = (self.position.line, self.position.pos);
@@ -60,7 +60,7 @@ index fc621186..b6803059 100644
          });
      }
  
-@@ -1231,9 +1228,7 @@ impl Lexer {
+@@ -1490,9 +1487,7 @@ impl Lexer {
          self.position.pos = n.cursor.1;
          self.prev_end.line = n.prev_end.0;
          self.prev_end.pos = n.prev_end.1;
@@ -71,7 +71,7 @@ index fc621186..b6803059 100644
          n.res
      }
  
-@@ -2093,15 +2088,7 @@ impl Lexer {
+@@ -2388,15 +2383,7 @@ impl Lexer {
                      self.ret_number(0, pos, false)
                  };
              }
@@ -88,46 +88,14 @@ index fc621186..b6803059 100644
                  // P195 + P234: when the previous emitted token was a `.`
                  // (field access), the current number is a tuple/struct
                  // field index — NEVER a float fragment.  This covers two
-@@ -3435,30 +3422,9 @@ mod test {
-         );
-     }
- 
--    /// A letter or `_` after an integer's dot starts a method or a field, never a float
--    /// fraction: `5.tri()` calls `tri` on `5`, as `(5).tri()` does.
--    #[test]
--    fn integer_then_member_does_not_glue_into_float() {
--        validate_cont(
--            "123.a",
--            &[
--                LexItem::Integer(123, false),
--                LexItem::Token(".".to_string()),
--                LexItem::Identifier("a".to_string()),
--            ],
--        );
--        validate_cont(
--            "5._x",
--            &[
--                LexItem::Integer(5, false),
--                LexItem::Token(".".to_string()),
--                LexItem::Identifier("_x".to_string()),
--            ],
--        );
--    }
--
-     #[test]
-     fn lexer_errors() {
-+        error("123.a", "[\"Error: Problem parsing float at error:1:5\"]");
-         error("12. ", "[\"Error: Problem parsing float at error:1:4\"]");
-         error("1.12ea", "[\"Error: Problem parsing float at error:1:6\"]");
-         error(
-diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 4cffbb0a..4658a855 100644
---- a/src/parser/mod.rs
-+++ b/src/parser/mod.rs
-@@ -9804,90 +9804,6 @@ impl Parser {
-         }
+diff --git a/src/parser/generics.rs b/src/parser/generics.rs
+index 348b7ee9a..0b63c7219 100644
+--- a/src/parser/generics.rs
++++ b/src/parser/generics.rs
+@@ -1252,91 +1252,6 @@ impl Parser {
          code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
      }
+ 
 -    /// @FR-F-ParamScalar / @FR-G-Mono — a generic's `p: T` is spelled as a reference to `T`'s
 -    /// placeholder, so the template lowered `p = …` as a HEAP-parameter rebind: an entry
 -    /// witness, a guarded release and a detach of `p` (`rebind_local_heap_param`).  That is
@@ -135,7 +103,7 @@ index 4cffbb0a..4658a855 100644
 -    /// or `float` instance was an internal error on the witness's slot, and a `text` one wrote
 -    /// the borrowed argument.  An instance whose parameter is not a heap type drops the
 -    /// witness's statements and its mapping, so the scope pass adds no exit release either.
--    fn strip_scalar_instance_rebinds(&mut self, code: &mut Value) {
+-    pub(super) fn strip_scalar_instance_rebinds(&mut self, code: &mut Value) {
 -        fn strip(code: &mut Value, data: &Data, p: u16, orig: u16) {
 -            let is_var = |v: &Value, n: u16| matches!(v.unspan(), Value::Var(x) if *x == n);
 -            let witness_op = |v: &Value| match v.unspan() {
@@ -179,7 +147,7 @@ index 4cffbb0a..4658a855 100644
 -    /// parameter was still `T`, so the instance wrote the BORROWED argument slot:
 -    /// `fn g<T>(p: T, q: T) -> T { p = q; p }` at `T = text` answered the argument on
 -    /// `--interpret` and did not build on `--native`.  The instance takes the twin's answer.
--    fn promote_assigned_text_params(&mut self, code: &mut Value) {
+-    pub(super) fn promote_assigned_text_params(&mut self, code: &mut Value) {
 -        let params = self.vars.count();
 -        for p in 0..params {
 -            if !self.vars.is_argument(p)
@@ -212,10 +180,11 @@ index 4cffbb0a..4658a855 100644
 -            }
 -        }
 -    }
- 
-     fn fill_monomorph_body(
+-
+     pub(super) fn fill_monomorph_body(
          &mut self,
-@@ -10003,8 +9919,6 @@ impl Parser {
+         d_nr: u32,
+@@ -1452,8 +1367,6 @@ impl Parser {
                  }
              }
          }
@@ -225,10 +194,10 @@ index 4cffbb0a..4658a855 100644
          self.context = outer_context;
          self.data.definitions[d_nr as usize].code = code;
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index 6adb7665..216dbcc8 100644
+index 596451f43..3b6f39faa 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
-@@ -589,19 +589,6 @@ impl Scopes<'_> {
+@@ -586,19 +586,6 @@ impl Scopes<'_> {
          } else {
              HashSet::default()
          };
@@ -248,7 +217,7 @@ index 6adb7665..216dbcc8 100644
          // Kept for the null-arm join leg below, which releases its sources after this sweep.
          let join_arm_dropped = arm_dropped.clone();
          let mut ls = self.get_free_vars(
-@@ -672,10 +659,7 @@ impl Scopes<'_> {
+@@ -669,10 +656,7 @@ impl Scopes<'_> {
          // otherwise emit `Return(expr)` with the sources leaking on the null
          // path (frees suppressed above), and the legacy path would re-open the
          // eval-stack UAF.
@@ -260,7 +229,7 @@ index 6adb7665..216dbcc8 100644
              self.ret_temp_counter += 1;
              let name = format!("__ret_{}", self.ret_temp_counter);
              let tmp = function.add_temp_var(&name, tp);
-@@ -731,18 +715,6 @@ impl Scopes<'_> {
+@@ -728,18 +712,6 @@ impl Scopes<'_> {
                      _ => free,
                  });
              }
@@ -280,10 +249,10 @@ index 6adb7665..216dbcc8 100644
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index 6429ffc8..2a4def0d 100644
+index 633bb2527..5a61c8872 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1155,15 +1155,6 @@ impl Scopes<'_> {
+@@ -1114,15 +1114,6 @@ impl Scopes<'_> {
          if to_scope == 1 {
              let free_distinct = data.def_nr("OpFreeRefIfDistinct");
              for (param, orig) in function.rebind_params() {
@@ -300,10 +269,10 @@ index 6429ffc8..2a4def0d 100644
                      free_distinct,
                      vec![Value::Var(param), Value::Var(orig)],
 diff --git a/src/use_analysis.rs b/src/use_analysis.rs
-index d20a2628..b7c3937f 100644
+index ddb7639a3..070bbaec4 100644
 --- a/src/use_analysis.rs
 +++ b/src/use_analysis.rs
-@@ -8056,77 +8056,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
+@@ -7896,77 +7896,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
          func.is_argument(v)
              && !matches!(func.tp(v), Type::RefVar(_))
              && !func.name(v).starts_with("__")
@@ -382,10 +351,10 @@ index d20a2628..b7c3937f 100644
  ///
  /// This is the difference between a write that LOSES data and one that merely writes into
 diff --git a/src/variables/mod.rs b/src/variables/mod.rs
-index 48f47f93..9a2ed2e7 100644
+index 7b8711baf..6845a386c 100644
 --- a/src/variables/mod.rs
 +++ b/src/variables/mod.rs
-@@ -4258,12 +4258,6 @@ impl Function {
+@@ -4406,12 +4406,6 @@ impl Function {
      /// @PLN87 P2.1 — record that visible heap parameter `param` is
      /// whole-binding-reassigned in the body and `orig` is its caller-store
      /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.

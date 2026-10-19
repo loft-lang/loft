@@ -1,7 +1,7 @@
-diff --git b/src/btree.rs a/src/btree.rs
+diff --git a/src/btree.rs b/src/btree.rs
 index b439b5dab..9634c2e6f 100644
---- b/src/btree.rs
-+++ a/src/btree.rs
+--- a/src/btree.rs
++++ b/src/btree.rs
 @@ -637,7 +637,7 @@ fn arena_of(data: &DbRef, stores: &[Store]) -> Option<Arena> {
      if data.is_null() {
          return None;
@@ -11,11 +11,11 @@ index b439b5dab..9634c2e6f 100644
          0 => None,
          arena => Some(Arena(arena)),
      }
-diff --git b/src/database/allocation.rs a/src/database/allocation.rs
-index 4041572bd..8f7865818 100644
---- b/src/database/allocation.rs
-+++ a/src/database/allocation.rs
-@@ -224,34 +224,6 @@ impl Stores {
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 79180186d..1821ff59f 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -249,34 +249,6 @@ impl Stores {
          cur == DbRef::ABSENT_REC
      }
  
@@ -50,7 +50,7 @@ index 4041572bd..8f7865818 100644
      /// Report an edge the walk refused to follow, once per site.
      ///
      /// Loud rather than silent: refusing the edge turns a crash into a leak, which is
-@@ -404,17 +376,6 @@ impl Stores {
+@@ -429,17 +401,6 @@ impl Stores {
          let mut children = Vec::new();
          let mut container_rec = None;
          let mut extra_recs = Vec::new();
@@ -68,7 +68,7 @@ index 4041572bd..8f7865818 100644
          // A view over records a sibling owns: keep the spine teardown, drop the
          // element walk.  Only the per-element-record kinds can be a view — a
          // contiguous `Vector`/`Sorted` stores its elements INLINE, so it cannot
-@@ -3415,12 +3376,8 @@ impl Stores {
+@@ -3585,12 +3546,8 @@ impl Stores {
          let length = vector::length_vector(rec, &self.allocations);
          let size = u32::from(self.size(content_tp));
          let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
@@ -83,7 +83,7 @@ index 4041572bd..8f7865818 100644
              return;
          }
          let into = self.store_mut(to).claim(1 + (size * length).div_ceil(8));
-@@ -3833,27 +3790,7 @@ impl Stores {
+@@ -4014,22 +3971,9 @@ impl Stores {
          }
      }
  
@@ -99,19 +99,15 @@ index 4041572bd..8f7865818 100644
 -            .set_u32_raw(to.rec, to.pos, DbRef::ABSENT_REC);
 -        true
 -    }
--
+ 
      pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
--        if !self.copy_absent_collection(rec, to, tp) {
--            self.copy_claims_kind(rec, to, tp);
--        }
--    }
--
--    /// The per-kind half of [`Self::copy_claims`], for a value that is present.
--    fn copy_claims_kind(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
-         // TODO prevent copying secondary structures
-         match &self.types[tp as usize].parts {
-             Parts::Base if tp == 5 => {
-@@ -5320,7 +5257,7 @@ impl Stores {
+-        if self.copy_absent_collection(rec, to, tp)
+-            || (self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp))
++        if self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp)
+         {
+             return;
+         }
+@@ -5845,7 +5789,7 @@ impl Stores {
                  | Parts::Sorted(..)
                  | Parts::Ordered(..)
                  | Parts::Hash(..)
@@ -120,11 +116,11 @@ index 4041572bd..8f7865818 100644
                  _ => false,
              }
          })
-diff --git b/src/database/structures.rs a/src/database/structures.rs
-index 9c503eef9..8ca147cfa 100644
---- b/src/database/structures.rs
-+++ a/src/database/structures.rs
-@@ -1409,14 +1409,7 @@ impl Stores {
+diff --git a/src/database/structures.rs b/src/database/structures.rs
+index f50dea36e..000de4bf0 100644
+--- a/src/database/structures.rs
++++ b/src/database/structures.rs
+@@ -1553,14 +1553,7 @@ impl Stores {
          // absence are different values, and only the whole-value replace may turn one into
          // the other — an `a += b` must leave `a` alone.
          self.deliver_vector_parse_errors(o_db, db, true);
@@ -140,11 +136,11 @@ index 9c503eef9..8ca147cfa 100644
              self.clear_vector_release(db);
              self.mark_collection_absent(db);
              return;
-diff --git b/src/hash.rs a/src/hash.rs
-index a590a97ee..944751875 100644
---- b/src/hash.rs
-+++ a/src/hash.rs
-@@ -715,7 +715,7 @@ fn hash_rec_pos(
+diff --git a/src/hash.rs b/src/hash.rs
+index 186e8fca5..ba3d9e74d 100644
+--- a/src/hash.rs
++++ b/src/hash.rs
+@@ -939,7 +939,7 @@ fn hash_rec_pos(
  #[must_use]
  pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> DbRef {
      let store = &stores[hash_ref.store_nr as usize];
@@ -153,7 +149,7 @@ index a590a97ee..944751875 100644
      let mut record = DbRef {
          store_nr: hash_ref.store_nr,
          rec: 0,
-@@ -782,7 +782,7 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
+@@ -1006,7 +1006,7 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
          return None;
      }
      let store = &stores[hash_ref.store_nr as usize];
@@ -162,7 +158,7 @@ index a590a97ee..944751875 100644
      let mut found = DbRef {
          store_nr: hash_ref.store_nr,
          rec: 0,
-@@ -930,7 +930,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
+@@ -1225,7 +1225,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
      if rec.rec == 0 {
          return 0;
      }
@@ -171,7 +167,7 @@ index a590a97ee..944751875 100644
      let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
      if length == 0 {
          return 0;
-@@ -992,7 +992,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
+@@ -1287,7 +1287,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
  /// holds what [`remove`] answered.  A record slot is somebody else's record and a
  /// borrowing table owns nothing, so both release nothing, as [`free_entry`] decides too.
  pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
@@ -180,7 +176,7 @@ index a590a97ee..944751875 100644
      if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 {
          return;
      }
-@@ -1012,7 +1012,7 @@ pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
+@@ -1307,7 +1307,7 @@ pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
  /// own first four bytes, so it must be released only after the caller has finished
  /// reading the entry's fields (its key to unlink by, its pointers to free).
  pub fn free_entry(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store]) {
@@ -189,7 +185,7 @@ index a590a97ee..944751875 100644
      if claim == 0 {
          return;
      }
-@@ -1051,7 +1051,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
+@@ -1346,7 +1346,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
      if hash_ref.is_null() {
          return 0;
      }
@@ -198,7 +194,7 @@ index a590a97ee..944751875 100644
      if claim == 0 {
          return 0;
      }
-@@ -1077,7 +1077,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
+@@ -1372,7 +1372,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
  /// for an uninitialised hash (no claim allocated yet).
  #[must_use]
  pub fn table_bytes(hash_ref: &DbRef, stores: &[Store]) -> u32 {
@@ -207,7 +203,7 @@ index a590a97ee..944751875 100644
      if claim == 0 {
          return 0;
      }
-@@ -1112,7 +1112,7 @@ pub fn records(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
+@@ -1407,7 +1407,7 @@ pub fn records(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
  #[must_use]
  pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
      let store = keys::store(hash_ref, stores);
@@ -216,7 +212,7 @@ index a590a97ee..944751875 100644
      if claim == 0 {
          return Vec::new();
      }
-@@ -1142,7 +1142,7 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
+@@ -1468,7 +1468,7 @@ pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
  #[must_use]
  pub fn arena_records(hash_ref: &DbRef, stores: &[Store]) -> Vec<u32> {
      let store = keys::store(hash_ref, stores);
@@ -225,7 +221,7 @@ index a590a97ee..944751875 100644
      if claim == 0 {
          return Vec::new();
      }
-@@ -1186,7 +1186,7 @@ pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<D
+@@ -1512,7 +1512,7 @@ pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<D
  /// debug-time structural invariant check; callers should never hit a
  /// panic here in production.
  pub fn validate(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) {
@@ -234,11 +230,11 @@ index a590a97ee..944751875 100644
      let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
      let mut l = 0;
      for record in records(hash_ref, stores) {
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 655847a5d..1f98d8425 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -6903,19 +6903,9 @@ use a separate collection or add after the loop"
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index ecd1207e3..c19743861 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -6980,19 +6980,9 @@ use a separate collection or add after the loop"
                      code.unspan(),
                      Value::Var(rv) if self.vars.tp(*rv).depend().is_empty()
                  );
@@ -259,7 +255,7 @@ index 655847a5d..1f98d8425 100644
                      ops.push(append);
                      *code = Value::Insert(ops);
                  } else if matches!(code.unspan(), Value::Var(_)) {
-@@ -6927,20 +6917,19 @@ use a separate collection or add after the loop"
+@@ -7004,21 +6994,19 @@ use a separate collection or add after the loop"
                      let dep_free_tp = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
                      let tmp = self.vars.unique("_p154_rhs", &dep_free_tp, &mut self.lexer);
                      let init_tmp = v_set(tmp, Value::Null);
@@ -276,9 +272,10 @@ index 655847a5d..1f98d8425 100644
                      ops.push(append);
                      *code = Value::Insert(ops);
 -                } else if !(declared_nullable && matches!(s_type, Type::Optional(_)))
--                    && let Some(ops) = self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
+-                    && let Some(ops) =
+-                        self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp, &rec_tp)
 +                } else if let Some(ops) =
-+                    self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
++                    self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp, &rec_tp)
                  {
 -                    // Not for a `?` field fed by a `?` call: the field is handed over as the
 -                    // callee's return BUFFER, and a `return null` answers the null VALUE and
@@ -287,7 +284,7 @@ index 655847a5d..1f98d8425 100644
                      *code = Value::Insert(ops);
                  } else {
                      let rhs_saved = code.clone();
-@@ -6980,7 +6969,7 @@ use a separate collection or add after the loop"
+@@ -7058,7 +7046,7 @@ use a separate collection or add after the loop"
                      let fill_tmp = if projection {
                          vec![
                              v_set(tmp, Value::Null),
@@ -296,7 +293,7 @@ index 655847a5d..1f98d8425 100644
                          ]
                      } else {
                          if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
-@@ -6989,7 +6978,7 @@ use a separate collection or add after the loop"
+@@ -7067,7 +7055,7 @@ use a separate collection or add after the loop"
                          vec![v_set(tmp, rhs_saved)]
                      };
                      let clear = self.clear_vector_field(to, &lhs_parent_tp);
@@ -305,11 +302,11 @@ index 655847a5d..1f98d8425 100644
                      let mut ops = fill_tmp;
                      ops.extend(clear);
                      ops.push(append);
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 68a80855b..8db57257d 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -7186,14 +7186,7 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index db27d377e..65f907d8b 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -7326,14 +7326,7 @@ impl Parser {
                              Value::Int(i32::from(vec_tp)),
                          ],
                      );
@@ -325,10 +322,10 @@ index 68a80855b..8db57257d 100644
                      // `@FR-R-Place` — "the buffer IS the place": the literal's field exists (the
                      // header prime wrote its empty handle) and a call that fills its buffer is
                      // handed the field itself, so the result is built where it lives and the
-diff --git b/src/radix_db.rs a/src/radix_db.rs
+diff --git a/src/radix_db.rs b/src/radix_db.rs
 index c42059a81..799f0b97b 100644
---- b/src/radix_db.rs
-+++ a/src/radix_db.rs
+--- a/src/radix_db.rs
++++ b/src/radix_db.rs
 @@ -147,7 +147,7 @@ pub(crate) fn key_bits(keys: &[Key]) -> u32 {
  /// entities share a bucket; no dedup here.
  pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
@@ -401,10 +398,10 @@ index c42059a81..799f0b97b 100644
      if tree == 0 {
          return Vec::new();
      }
-diff --git b/src/trie_db.rs a/src/trie_db.rs
+diff --git a/src/trie_db.rs b/src/trie_db.rs
 index 6d70fad26..66018ed2c 100644
---- b/src/trie_db.rs
-+++ a/src/trie_db.rs
+--- a/src/trie_db.rs
++++ b/src/trie_db.rs
 @@ -105,7 +105,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
          return;
      };
@@ -459,11 +456,11 @@ index 6d70fad26..66018ed2c 100644
      let mut out = Vec::new();
      let Some(key) = keys.first() else {
          return out;
-diff --git b/src/vector.rs a/src/vector.rs
-index f4b4cdc4e..25a292cb7 100644
---- b/src/vector.rs
-+++ a/src/vector.rs
-@@ -720,13 +720,6 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
+diff --git a/src/vector.rs b/src/vector.rs
+index 91cb6f7f6..e203f1c8e 100644
+--- a/src/vector.rs
++++ b/src/vector.rs
+@@ -762,13 +762,6 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
          store.release_foreign();
          return;
      }
