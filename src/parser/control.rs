@@ -5784,7 +5784,10 @@ impl Parser {
                 } else {
                     Self::arm_expectation(&true_type)
                 };
-                let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                let mut chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                if let Some(fit) = self.arm_fits_named_width(&true_type, &false_code, &chain_type) {
+                    chain_type = fit;
+                }
                 false_fact = std::mem::take(&mut self.operand_fact);
                 if true_type == Type::Unknown(0) {
                     false_type = chain_type;
@@ -5844,6 +5847,9 @@ impl Parser {
                     *last = self.null_value(&true_type);
                     bl.result = true_type.clone();
                     false_type = true_type.clone();
+                }
+                if let Some(fit) = self.arm_fits_named_width(&true_type, &false_code, &false_type) {
+                    false_type = fit;
                 }
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
                 // value is whichever arm ran, so the expression promises no more than either.
@@ -16044,6 +16050,25 @@ impl Parser {
         }
     }
 
+    /// loft#2066, `@FR-I-Lit` with `@FR-I-Join` — an arm beside a NAMED-width sibling answers in
+    /// that width when every value it can take fits it (`int_range`: a constant, a narrower
+    /// width, a mask), as it did when the sibling was its expectation: `if t { a } else { 0 }`
+    /// over `a: u8` is a `u8`.  `None` for any other arm, which joins (`integer_arm_union`).
+    fn arm_fits_named_width(&self, sibling: &Type, arm: &Value, arm_tp: &Type) -> Option<Type> {
+        if matches!(sibling, Type::Optional(_)) || matches!(arm_tp, Type::Optional(_)) {
+            return None;
+        }
+        let (Type::Integer(sp), Type::Integer(_)) = (sibling.base(), arm_tp.base()) else {
+            return None;
+        };
+        sp.forced_size?;
+        if arm_tp == sibling {
+            return None;
+        }
+        let (lo, hi) = self.int_range(arm)?;
+        (lo >= i64::from(sp.min) && hi <= sp.max).then(|| sibling.clone())
+    }
+
     /// `@FR-I-Join` — two integer arms join to the UNION of their ranges, optional when either
     /// is (`@FR-N-Join`); `None` when either arm is not an integer, or the ranges are one.
     pub(super) fn integer_arm_union(a: &Type, b: &Type) -> Option<Type> {
@@ -16369,6 +16394,8 @@ impl Parser {
     }
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
+        let fitted = self.arm_fits_named_width(so_far, arm, tp);
+        let tp = fitted.as_ref().unwrap_or(tp);
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
         // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`
         // keeps the first arm's, which an arithmetic arm (`@FR-N-Arith`) makes narrower.
