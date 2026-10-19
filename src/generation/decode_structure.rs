@@ -212,13 +212,38 @@ impl Producer {
         format!("({})", parts.join(", "))
     }
 
-    /// A position's Rust type: the kind byte (`0` a position, else a unit variant's tag),
-    /// then the position's parameters.
+    /// A position's Rust type: the kind byte — `0` a position whose shape is not known, `1`
+    /// one whose shape is, `2` a unit literal — then the position's parameters, then the
+    /// shape's tag and two slot words.  A position decoded where it was made carries the
+    /// shape that decode answered, so no reader decodes its head again.
     #[must_use]
     pub fn rep_tuple(&self) -> String {
         let mut parts = vec!["u8"];
         parts.extend(self.params.iter().map(|p| p.1));
+        parts.extend(["u8", "i64", "i64"]);
         format!("({})", parts.join(", "))
+    }
+
+    /// A unit literal's position tuple.
+    #[must_use]
+    pub fn unit_rep(&self, tag: u8) -> String {
+        format!(
+            "(2u8{}, {tag}u8, 0_i64, 0_i64)",
+            ", Default::default()".repeat(self.params.len())
+        )
+    }
+
+    /// The position `args` (an expression whose fields `.0…` are the parameters) with the
+    /// shape `shape` (whose `.0`, `.1`, `.2` are the tag and slots) known.
+    #[must_use]
+    pub fn known_rep(&self, args: &str, shape: &str) -> String {
+        use std::fmt::Write as _;
+        let mut out = "(1u8".to_string();
+        for i in 0..self.params.len() {
+            let _ = write!(out, ", {args}.{i}");
+        }
+        let _ = write!(out, ", {shape}.0, {shape}.1, {shape}.2)");
+        out
     }
 
     /// Index of the scalar field at `off` in the shape tuple.

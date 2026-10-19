@@ -180,7 +180,10 @@ impl Output<'_> {
     }
 
     fn ps_rep_zero(&self, prod: &Producer, r: Rep) -> String {
-        let t = format!("(0u8{})", ", Default::default()".repeat(prod.params.len()));
+        let t = format!(
+            "(0u8{}, 0u8, 0_i64, 0_i64)",
+            ", Default::default()".repeat(prod.params.len())
+        );
         match r {
             Rep::T | Rep::V(_) => t,
             Rep::D => {
@@ -449,15 +452,8 @@ impl Output<'_> {
             let y = &prod.yields[&addr(node)];
             let mut parts = y.parts.clone();
             parts.sort_unstable_by_key(|x| x.0);
-            let pos = |cr: u16| {
-                use std::fmt::Write as _;
-                let mut s = "(0u8".to_string();
-                for i in 0..prod.params.len() {
-                    let _ = write!(s, ", __pa_{cr}.{i}");
-                }
-                s.push(')');
-                s
-            };
+            // Each part was decoded by the walk itself: its shape is the call variable's.
+            let pos = |cr: u16| prod.known_rep(&format!("__pa_{cr}"), &self.ps_var(cr));
             let elem = if parts.len() == 1 && parts[0].0 < 0 {
                 pos(parts[0].1)
             } else {
@@ -634,11 +630,7 @@ impl Output<'_> {
                 let tag = unit_return(self.data, bl).unwrap_or(1);
                 write!(w, "{{ return ")?;
                 self.ps_wrap_open(w)?;
-                write!(
-                    w,
-                    "({tag}u8{})",
-                    ", Default::default()".repeat(prod.params.len())
-                )?;
+                write!(w, "{}", prod.unit_rep(tag))?;
                 self.ps_wrap_close(w)?;
                 write!(w, "; }}")?;
                 Ok(true)
@@ -722,11 +714,7 @@ impl Output<'_> {
         x: &Value,
     ) -> std::io::Result<()> {
         if let Some(tag) = unit_literal(self.data, x) {
-            write!(
-                w,
-                "({tag}u8{})",
-                ", Default::default()".repeat(prod.params.len())
-            )?;
+            write!(w, "{}", prod.unit_rep(tag))?;
             return Ok(());
         }
         match x.unspan() {
@@ -781,7 +769,14 @@ impl Output<'_> {
         for i in 0..prod.params.len() {
             write!(w, ", __r.{}", i + 1)?;
         }
-        write!(w, ") }} else {{ (__r.0, 0_i64, 0_i64")?;
+        let k = prod.params.len();
+        write!(
+            w,
+            ") }} else {{ (__r.{}, __r.{}, __r.{}",
+            k + 1,
+            k + 2,
+            k + 3
+        )?;
         for _ in &prod.scalars {
             write!(w, ", Default::default()")?;
         }
@@ -813,11 +808,7 @@ impl Output<'_> {
                 for i in 0..prod.params.len() {
                     write!(w, ", __a.{i}")?;
                 }
-                write!(w, "); ((0u8")?;
-                for i in 0..prod.params.len() {
-                    write!(w, ", __a.{i}")?;
-                }
-                write!(w, ")")?;
+                write!(w, "); ({}", prod.known_rep("__a", "__s"))?;
                 for i in 0..prod.scalars.len() {
                     write!(w, ", __s.{}", 3 + i)?;
                 }
@@ -847,11 +838,7 @@ impl Output<'_> {
                         }
                     }
                 }
-                write!(
-                    w,
-                    "{xv} = (({tag}u8{})",
-                    ", Default::default()".repeat(prod.params.len())
-                )?;
+                write!(w, "{xv} = ({}", prod.unit_rep(tag))?;
                 for s in &prod.scalars {
                     write!(w, ", ")?;
                     match vals.iter().find(|v| v.0 == s.off) {
@@ -996,7 +983,7 @@ impl Output<'_> {
         writeln!(w, ";")?;
         write!(
             w,
-            "  let __pw: Option<{ret}> = if __pwo.0 == 0 {{ {}(cell, {}",
+            "  let __pw: Option<{ret}> = if __pwo.0 <= 1 {{ {}(cell, {}",
             self.ps_name(pd, &format!("__psw{k}")),
             self.ps_frame()
         )?;
