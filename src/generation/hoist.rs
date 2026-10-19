@@ -18544,7 +18544,10 @@ enum Pos {
 /// argument, a field value, a return of a non-admitted function, the right of a local
 /// that is not a value local — is declined into `declined`.  Result positions carry the
 /// caller's position down; everything else is an operand.
-#[expect(clippy::too_many_lines, reason = "the census call stands beside each trace")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the census call stands beside each trace"
+)]
 fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>) {
     match node.unspan() {
         Value::Call(callee, args) => {
