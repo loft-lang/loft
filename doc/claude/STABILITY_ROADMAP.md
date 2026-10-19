@@ -293,6 +293,40 @@ shared-runtime paths, which is why the engine classes come first for the interpr
 directive above stands; this read adds the perf meter, the null re-cut, the two gate
 repairs and the interpreter's place in the sequence, and takes nothing out.
 
+**Re-read (2026-10-19), three weeks on — the same meters, now a computed series.**  Asked by
+the owner as *how far are we from a stable loft, on the metrics*; the rows below are
+`make stability-read`'s (`index/stability_weekly.tsv`), which this read is the first to use.
+
+| meter | stable when | 2026-09-29 | 2026-10-19 | moved |
+|---|---|---|---|---|
+| `contract:strained` share of judged closes | 0 for two weeks | 14 % (week) | 10 / 6 / 14 % the last three full weeks; zero streak 0 | falling, not at 0 |
+| `silent-wrong` open on main | 0 | 0 | 0 (one `fixed-pending-merge`) | holds |
+| the consumer gate | green two weeks | red every night since 09-24 | red 25 of 25 scheduled nights; its reds reach the tracker only from this read on | no trend to read |
+| release gate | green | last run 09-08, red | last run 10-01, red; weekly from this read on | no trend to read |
+| rule coverage, annotated / guarded | 70 % / 40 % floors | 73.9 / 57.7 % of 395 | 85.8 / 46.7 % of 527 over tests/ and the rewrite census, the suite checkout absent | floors met; the register grew 33 %, 68 of the 133 new rules rewrites |
+| open deviations | 0 that block a tag | 3 | 3, two definitional | holds |
+| shipped routines vs Rust twin | median 2×, none over 3× | 2.80×, 73 of 162 over 3× (09-27) | x86 10-16: 1.99×, 49 over 3×, 5 over 5×; arm64 10-09: 2.27×, 71 over 3×, 27 over 5× | falling on every host; the 5× cut met on x86 only |
+
+Filed per week since the table above: 143, 112, 76 — the first fall that is not a quiet
+week — with the `silent-wrong` share down from its 53 % peak to 29–40 % and `sev:high`
+filings down 42 % between the two 30-day windows (178 → 103), the walk still running.
+The register gained 16 rules in the last full week after +79, +38 and +40; the deviation
+registers sat at 3 for three weeks; the tracker holds 8 open issues and no pick-up work;
+median hours from filing to close stayed between 10 and 24 all autumn.  The rulings
+(`@C`, 70 → 93) are read as the rules being consulted, not rewritten — the owner's call on
+this read — and are not a concern.
+
+**Verdict.**  Not stable by the meters; closer on four aspects than on 09-29 — the strained
+share, the discovery mix, the perf median and the 5× tail — and unchanged on two, both for
+the same reason: the consumer gate and the release gate produced no trend because nothing
+exercised them, which this read's instruments fix (the nightly files its reds, the gate
+runs weekly).  What has not begun to converge: the mechanism classes — three of four monthly
+keystones read NO EFFECT and null/sentinel rose again (10.8 → 18.6 %), so discovery is
+cooling by chapter exhaustion, not because the classes are closed — and the guard tier
+against a register growing a quarter per month, where the rewrite family is now 114 of
+527 and its own guard is the census.  On the trends alone, four meters read stable by the
+December read; the two gates have no trend to extrapolate until they have run.
+
 ## The wide-release bar — what must be true before loft goes to many people
 
 > This roadmap exists to clear **one** thing: the GOALS.md promise of **"a floor that
