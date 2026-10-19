@@ -6118,7 +6118,9 @@ a kept value is a built one.  A value inspected more than once is the case of
 `(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.  Switch
 `LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
 built and the positional forms run side by side under `LOFT_HOIST_VERIFY=1` and every read is
-compared.  Priced on `check_request` before it is built (worklist.md).
+compared.  Priced on `check_request` as the library form of its output — a validation walk,
+then the key searched in the frame's bytes: 1.70 → 0.60 ms (5.04× → 1.79×, hash unchanged),
+against −5 % for the validation walk alone (worklist.md § 0).
 
 ### Proposed clauses on existing rules
 
