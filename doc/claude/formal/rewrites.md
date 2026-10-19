@@ -1241,16 +1241,25 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  not plain records and are never bound.  THE PARAMETER CLAUSE: a
                  plain-record PARAMETER is a view the caller fixed before the first
                  statement, so the whole body is its remainder and takes the same
-                 verdict; a generator's parameters, which outlive a resumption, never
-                 do.  A TWIN (R-Inputs) runs the clause as its plain function does, over
+                 verdict — a twin call it is handed to counted as a use, as for a view
+                 bound in the body, so the address serves that call's inputs; a
+                 generator's parameters, which outlive a resumption, never do.  A TWIN (R-Inputs) runs the clause as its plain function does, over
                  the accesses its inputs leave: a field read from an input is no use of
-                 the address.  THE BASE CLAUSE: where
+                 the address.  THE TWIN CLAUSE: a record parameter the body reads or
+                 writes through at least twice beyond its scalar inputs is itself an
+                 input of the twin — its ADDRESS and lock.  The caller hands the address
+                 its frames hold for the argument — a view's or its own parameter's — valid for the call for (R-Inputs)'s
+                 reason (an admitted callee grows no store); for any other argument it
+                 hands null, and the twin resolves the store at entry as the plain body
+                 does.  Handing r to such a twin is a use of r's address.  A hidden
+                 return buffer is the callee's own and is never such an input.  THE BASE CLAUSE: where
                  the binding is the head of `for e in v` — `e = { idx = idx + 1;
                  v[idx] }` — over a path whose header AND element base the loop
                  holds (R-Base), the address is `base + idx * size` when `idx` is
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
-                 resolved.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
+                 resolved — in every copy of the loop, (R-GuardedChain)'s plain copy
+                 as its checked one.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
                  `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
                  header AND element base the frame holds, with IDX a repeatable
                  expression (pure operators and discharges): IDX is evaluated once,

@@ -847,6 +847,10 @@ pub struct Output<'a> {
     /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
     /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
     pub twin_base_disabled: bool,
+    /// `LOFT_NO_PLAIN_CHAIN_PTR` — the plain-chains copy of a loop binds no record address.
+    pub plain_chain_ptr_disabled: bool,
+    /// `LOFT_NO_PARAM_TWIN_PTR` — a record parameter's address serves no twin call.
+    pub param_twin_ptr_disabled: bool,
     /// `@FR-R-RecPtr` — per block, the `__pa_N` local holding the address of a record VIEW
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
@@ -2323,6 +2327,10 @@ impl<'a> Output<'a> {
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its twin clause off with it.
+            param_twin_ptr_disabled: std::env::var("LOFT_NO_PARAM_TWIN_PTR")
+                .is_ok_and(|v| v != "0"),
+            plain_chain_ptr_disabled: std::env::var("LOFT_NO_PLAIN_CHAIN_PTR")
+                .is_ok_and(|v| v != "0"),
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
@@ -3716,12 +3724,23 @@ impl Output<'_> {
                 "'l{}: loop {{ //{}_{} plain chains",
                 lp.scope, lp.name, lp.scope
             )?;
-            for v in &lp.operators {
+            // `@FR-R-RecPtr` — the record-view hook, as the checked copy runs it: the
+            // element view a `for e in v` binds takes its address in this copy too.
+            let mut ptr_frames = 0usize;
+            for (at, v) in lp.operators.iter().enumerate() {
                 self.indent(w)?;
                 self.indent += 1;
                 self.output_code_inner(w, v)?;
                 self.indent -= 1;
                 writeln!(w, ";")?;
+                if !self.plain_chain_ptr_disabled
+                    && self.bind_record_ptr(w, &lp.operators, at, None)?
+                {
+                    ptr_frames += 1;
+                }
+            }
+            for _ in 0..ptr_frames {
+                self.rec_ptrs.pop();
             }
             self.indent(w)?;
             writeln!(w, "}} /*{}_{} plain chains*/", lp.name, lp.scope)?;
@@ -5353,7 +5372,7 @@ impl Output<'_> {
             let Value::Call(g, _) = getter.unspan() else {
                 return None;
             };
-            if self.param_rec_ptrs.contains(c) {
+            if self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c) {
                 return None;
             }
             let name = self.data.def(*g).name().to_string();
@@ -5381,7 +5400,31 @@ impl Output<'_> {
                 }
             }
         }
-        Some(args)
+        // `@FR-R-RecPtr`'s twin clause — the address of each record argument the frames
+        // hold, valid for the call's duration for the reason a base is; any other argument
+        // passes null, and the twin resolves its store as the plain body would.  A twin
+        // whose only inputs are addresses, none of them held, is the plain call.
+        let mut any_held = !args.is_empty();
+        for p in &inputs.records {
+            let held = match vals.get(*p as usize)?.unspan() {
+                Value::Var(c)
+                    if !(self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c)) =>
+                {
+                    self.active_rec_ptr(*c).map(str::to_owned)
+                }
+                _ => None,
+            };
+            if let Some(ptr) = held {
+                any_held = true;
+                let lock = rec_ptr_lock(&ptr);
+                args.push(ptr);
+                args.push(lock);
+            } else {
+                args.push("std::ptr::null()".to_string());
+                args.push("false".to_string());
+            }
+        }
+        any_held.then_some(args)
     }
 
     /// The frames a twin's body reads its inputs from: `(parameter, field)` → `__is_k`,
@@ -5693,9 +5736,9 @@ impl Output<'_> {
             // call: the site reads the view's fields into the tuple where the twin read its
             // inputs, so the view keeps its address for them.
             if self.value_records.param_type(g, usize::from(p)).is_some()
-                || self
-                    .callee_inputs_of(g)
-                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+                || self.callee_inputs_of(g).is_some_and(|ci| {
+                    ci.scalars.iter().any(|(q, _, _)| *q == p) || ci.records.contains(&p)
+                })
             {
                 twin_params.insert((g, p));
             }
@@ -5746,8 +5789,13 @@ impl Output<'_> {
             if hoist::scalar_field_uses(stmts, p, self.data, &served) < 2 {
                 continue;
             }
-            // No twin call is served (`param_rec_ptrs`), so none counts as a use.
-            let twin_params = HashSet::new();
+            // A twin call `p` is handed to is a use of the address at the call, as it is for
+            // a view bound in the body: validated here, the address serves that call.
+            let twin_params = if self.param_twin_ptr_disabled {
+                HashSet::new()
+            } else {
+                self.twin_params_of(stmts, p)
+            };
             let verdict = hoist::param_view_ptr(
                 stmts,
                 p,
@@ -5770,7 +5818,14 @@ impl Output<'_> {
             );
             match verdict {
                 Ok(p) => {
-                    self.emit_record_ptr(w, p, None)?;
+                    match self
+                        .twin
+                        .as_ref()
+                        .and_then(|t| t.records.iter().position(|q| *q == p))
+                    {
+                        Some(k) => self.emit_twin_record_ptr(w, p, k)?,
+                        None => self.emit_record_ptr(w, p, None)?,
+                    }
                     self.param_rec_ptrs.insert(p);
                     frames += 1;
                 }
@@ -5786,6 +5841,31 @@ impl Output<'_> {
             }
         }
         Ok(frames)
+    }
+
+    /// `@FR-R-RecPtr`'s twin clause — bind record parameter `r`'s address from the twin's
+    /// input `k`, the caller's held address; a null input is one the caller did not hold,
+    /// resolved here as the plain body resolves it.
+    fn emit_twin_record_ptr(&mut self, w: &mut dyn Write, r: u16, k: usize) -> std::io::Result<()> {
+        self.hoist_counter += 1;
+        let name = format!("__pa_{}", self.hoist_counter);
+        let lock = rec_ptr_lock(&name);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(r))?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {name}: *const u8 = if __ip_{k}.is_null() {{ vector::rec_ptr(&({operand}), &stores.allocations) }} else {{ __ip_{k} }}; //@FR-R-RecPtr record view address for {operand}, from the caller"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {lock}: bool = if __ip_{k}.is_null() {{ vector::rec_locked(&({operand}), &stores.allocations) }} else {{ __il_{k} }};"
+        )?;
+        self.rec_ptrs.push(HashMap::from([(r, name)]));
+        crate::rewrite_census::fired("R-RecPtr", 1);
+        Ok(())
     }
 
     /// `@FR-R-RecPtr` — emit `let __pa_N = …` for view `r` and push its frame.  `stmt` is the
@@ -11283,6 +11363,11 @@ extern crate loft;"
                 for k in 0..t.headers.len() {
                     write!(w, ", __ib_{k}: *const u8")?;
                 }
+            }
+            // `@FR-R-RecPtr`'s twin clause — each record parameter's address and lock, as
+            // the caller holds them; a null address is one the caller did not hold.
+            for k in 0..t.records.len() {
+                write!(w, ", __ip_{k}: *const u8, __il_{k}: bool")?;
             }
         }
         write!(w, ") ")?;

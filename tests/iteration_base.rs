@@ -47,7 +47,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     // holds its base (`len(it.nm)` is a text-value op, no writer since `@FR-R-TextBorrow`)
     // and `it.k` is read through the iteration's address.
     ("n_w11", 1, 0, 0, 0),
-    ("n_w12", 1, 0, 0, 0),
+    // An innermost loop with an admitted chain: its plain-chains copy binds the element's
+    // address as the checked copy does (`@FR-R-RecPtr`'s base clause, every copy).
+    ("n_w12", 2, 0, 0, 0),
     // A vector of scalars is another iterator: its step stays checked.
     ("n_w13", 0, 0, 0, 0),
     ("n_w14", 1, 0, 0, 0),

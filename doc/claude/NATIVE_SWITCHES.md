@@ -67,6 +67,15 @@ nobody writes and calls the callee's twin (`hex_edge` `edges_cut` 4.47× → 1.7
 take the plain `#[inline]` hint instead of `#[inline(always)]`: the A/B for a row that moved
 with it (suite + ten `hex_*` benches, 102 routines, geomean −1.1 %, `mesh_emit` −18 %,
 `draft_fit_p` −15 %; `char_roundtrip` +7 % is layout).
+**`LOFT_NO_TWIN_RECORD=1`** (`@FR-R-RecPtr`'s twin clause) gives a twin no record ADDRESS
+input: its record parameters resolve their store at entry again, as the plain body does.
+**`LOFT_NO_PLAIN_CHAIN_PTR=1`** makes the plain-chains copy of a loop (`(R-GuardedChain)`)
+bind no record address for its element views; the checked copy still does.
+**`LOFT_NO_PARAM_TWIN_PTR=1`** keeps a record parameter's address from serving a twin call:
+the parameter clause counts no such call as a use, and the call hands null (or the plain
+call, for a scalar input the caller holds no value for).  Together the three take
+`fixstep` `timer_spend` 4.10× → 1.83×, `clock_pump` 2.24× → 1.83×; the bisect steps for a
+wrong field read or write through a record handed to a twin.
 **`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path

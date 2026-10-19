@@ -2299,6 +2299,11 @@ pub struct CalleeInputs {
     pub scalars: Vec<(u16, i64, Value)>,
     /// `(parameter, path offsets, the path expression)`, in first-appearance order.
     pub headers: Vec<(u16, Vec<i64>, Value)>,
+    /// The plain-record parameters whose ADDRESS crosses the call (`@FR-R-RecPtr`'s twin
+    /// clause): each one the body reads or writes through at least twice beyond its scalar
+    /// inputs, as the parameter clause counts it.  The caller hands the address it holds,
+    /// and the twin binds it where the plain body resolves the store at entry.
+    pub records: Vec<u16>,
 }
 
 /// The per-callee memo of [`callee_inputs`]: `None` is a callee that has no twin — beside
@@ -2482,7 +2487,30 @@ fn callee_inputs_inner(
         }
         false
     });
-    (!out.scalars.is_empty() || !out.headers.is_empty()).then_some(out)
+    if twin_record_enabled() {
+        for p in 0..params {
+            // A hidden return buffer is the callee's own to mint: no caller holds it.
+            if record_param(p).is_none() || def.attributes()[usize::from(p)].hidden {
+                continue;
+            }
+            let served: Vec<i64> = out
+                .scalars
+                .iter()
+                .filter(|(q, _, _)| *q == p)
+                .map(|(_, f, _)| *f)
+                .collect();
+            if scalar_field_uses(&body.operators, p, data, &served) >= 2 {
+                out.records.push(p);
+            }
+        }
+    }
+    (!out.scalars.is_empty() || !out.headers.is_empty() || !out.records.is_empty()).then_some(out)
+}
+
+/// `@FR-R-RecPtr`'s twin clause, switched off by `LOFT_NO_TWIN_RECORD`.
+fn twin_record_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_TWIN_RECORD").is_ok_and(|v| v != "0"))
 }
 
 /// `v` with every `Var(from)` renamed to `Var(to)` — a callee's read re-spelled over the

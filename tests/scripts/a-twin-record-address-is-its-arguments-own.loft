@@ -1,0 +1,169 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RecPtr`'s twin clause: a callee that reads and writes a record parameter's fields in
+// place takes that record's ADDRESS from its caller (`__ip_k`, beside the `__inv` twin's other
+// inputs), where the plain body resolves the store at entry.  The caller passes the address
+// its frames hold for the argument — the element of a held iteration, in the loop's plain-
+// chains copy as in its checked copy, or its own parameter's — and null for anything else,
+// which the twin resolves itself.  The address must be the argument's own: each record parameter its own record, two
+// parameters naming one record sharing it.
+//
+// The cells: a loop over a vector of records calling two in-place mutators (c1); an element
+// expression as the argument, which hands null (c2); a parameter passed on, whose address the
+// caller hands on from its own parameter address (c3); two record parameters, distinct and the
+// same record (c4) and one element as both (c6); a parameter handed down three frames (c5).
+// Every value is hand-computed.  Both backends answer the same with and without
+// `LOFT_NO_TWIN_RECORD`, `LOFT_NO_PLAIN_CHAIN_PTR` and `LOFT_NO_PARAM_TWIN_PTR`, and under
+// `LOFT_HOIST_VERIFY=1`.
+//
+// @falsified-by: PENDING
+
+struct Tm { spent: integer, total: integer }
+
+fn arm(t: Tm, u: integer) {
+  t.spent = 0;
+  t.total = u;
+}
+
+fn spend(t: Tm, u: integer) -> boolean {
+  if t.total <= 0 { return false; }
+  t.spent = t.spent + u;
+  if t.spent < t.total { return false; }
+  t.spent = 0;
+  t.total = 0;
+  true
+}
+
+// c1: totals 6, 9, 17; units 2, 3, 4, 5 (cumulative 2, 5, 9, 14).  At k = 2 timers 0 and 1
+// fire and re-arm with 102 and 112; at k = 3 both spend 5.  Fires 1 then 2: f = 12; spent
+// 5 + 5 + 14 = 24; totals 102 + 112 + 17 = 231.
+fn c1() -> integer {
+  v: vector<Tm> = [];
+  for _ in 0..3 { v += [Tm { spent: 0, total: 0 }]; }
+  for t in v { arm(t, 6 + t#index * 3 + (t#index / 2) * 5); }
+  f = 0;
+  for k in 0..4 {
+    u = 2 + k;
+    for t in v {
+      if spend(t, u) {
+        f = f * 10 + t#index + 1;
+        arm(t, 100 + t#index * 10 + k);
+      }
+    }
+  }
+  s = 0;
+  n = 0;
+  for t in v { s += t.spent; n += t.total; }
+  f * 1000000 + s * 1000 + n
+}
+
+// c2: totals 4, 8, 20, three units of 3 each.  k = 1: v[0] fires (6 >= 4); k = 2: v[1] fires
+// (9 >= 8); v[2] keeps 9.  c = 12, so 1209.
+fn c2() -> integer {
+  v = [Tm { spent: 0, total: 4 }, Tm { spent: 0, total: 8 }, Tm { spent: 0, total: 20 }];
+  c = 0;
+  for _k in 0..3 {
+    for i in 0..3 {
+      if spend(v[i], 3) { c = c * 10 + i + 1; }
+    }
+  }
+  c * 100 + v[2].spent + v[0].total + v[1].total
+}
+
+// c3: spend 4 then 6 through a parameter: total 9 fires on the second (r = 10, all zero);
+// total 50 keeps spent 10.
+fn twice(t: Tm, a: integer, b: integer) -> integer {
+  r = 0;
+  if spend(t, a) { r += 1; }
+  if spend(t, b) { r += 10; }
+  r * 1000 + t.spent * 10 + t.total
+}
+
+fn c3() -> integer {
+  x = Tm { spent: 0, total: 9 };
+  y = Tm { spent: 0, total: 50 };
+  twice(x, 4, 6) * 1000 + twice(y, 4, 6)
+}
+
+fn move_spent(a: Tm, b: Tm) {
+  b.spent = b.spent + a.spent;
+  a.spent = 0;
+  b.total = b.total + 1;
+  a.total = a.total * 2;
+}
+
+// c4: three records into one accumulator (100, 10): spent 100 + 3 + 5 + 7 = 115, total 13,
+// the records' totals doubled to 2 + 4 + 6 = 12, their spent all 0, the walk 123.  Then one
+// record as both parameters, (4, 5): spent 4 + 4 = 8 then 0, total 6 then 12.
+fn c4() -> integer {
+  v = [Tm { spent: 3, total: 1 }, Tm { spent: 5, total: 2 }, Tm { spent: 7, total: 3 }];
+  acc = Tm { spent: 100, total: 10 };
+  w = 0;
+  for x in v {
+    move_spent(x, acc);
+    w = w * 10 + x#index + 1;
+  }
+  s = 0;
+  n = 0;
+  for x in v { s += x.spent; n += x.total; }
+  y = Tm { spent: 4, total: 5 };
+  move_spent(y, y);
+  ((acc.spent * 100 + acc.total) * 100 + n + s) * 1000000 + w * 1000 + y.spent * 100 + y.total
+}
+
+struct Ck { a: integer, b: integer, acc: integer }
+
+fn ck_scaled(c: Ck, e: integer) -> integer {
+  t = c.acc + e * c.a;
+  c.acc = t % c.b;
+  t / c.b
+}
+
+fn ck_adv(c: Ck, e: integer) -> integer {
+  n = ck_scaled(c, e) + ck_scaled(c, 1);
+  if c.acc >= c.b || c.acc < 0 { return -2; }
+  n
+}
+
+fn ck_pump(c: Ck, e: integer) -> integer {
+  if c.acc >= c.b || c.acc < 0 { return -3; }
+  ck_adv(c, e) * 10 + ck_adv(c, e + 1)
+}
+
+// c5: a parameter handed down three frames, each frame reading it and the last writing it:
+// a = 3, b = 7.  Pumps of 2, 3, 4 answer 12, 12, 32 (the accumulator runs 6 2 4 0, 2 5 3 6,
+// 4 0 1 4), and the accumulator ends at 4.
+fn c5() -> integer {
+  c = Ck { a: 3, b: 7, acc: 0 };
+  s = 0;
+  for i in 0..3 { s = s * 1000 + ck_pump(c, i + 2); }
+  s * 10 + c.acc
+}
+
+// c6: one element as both parameters, through its held address: (2, 3) becomes spent 4 then
+// 0, total 4 then 8; (5, 1) spent 0, total 4.  Totals 12, spent 0.
+fn c6() -> integer {
+  v = [Tm { spent: 2, total: 3 }, Tm { spent: 5, total: 1 }];
+  w = 0;
+  for x in v {
+    move_spent(x, x);
+    w = w * 10 + x#index + 1;
+  }
+  s = 0;
+  n = 0;
+  for x in v { s += x.spent; n += x.total; }
+  (n * 10 + s) * 100 + w
+}
+
+fn main() {
+  for _r in 0..2 {
+    assert(c1() == 12024231, "c1 {c1()}");
+    assert(c2() == 1209, "c2 {c2()}");
+    assert(c3() == 10000150, "c3 {c3()}");
+    assert(c4() == 1151312123012, "c4 {c4()}");
+    assert(c5() == 120120324, "c5 {c5()}");
+    assert(c6() == 12012, "c6 {c6()}");
+  }
+  println("done");
+}

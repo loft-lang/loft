@@ -23,7 +23,8 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
             LIVE push header and is a second holder of its path; a windowed push, a windowed
             record mint and the close name a live header and a live window, and a windowed
             mint's address (`__pw_N.base.add(…)`) is a record-view holder like R-RecPtr's.
-  R-RecPtr  a record view's address (`let __pa_N: *const u8 = vector::rec_ptr(…)`) is a holder
+  R-RecPtr  a record view's address (`let __pa_N: *const u8 = vector::rec_ptr(…)`, or a twin's
+            input `__ip_k` with that as its null fallback) is a holder
             for the rest of its block, and every `rec_get`/`rec_set` through one names a live one.
             (base clause) an address taken from a held element base — `if (idx as u64) <
             u64::from(H.len) { B.add(idx * size) }` — names a live header H and a live base B
@@ -52,6 +53,9 @@ BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base v
 # end; every `rec_get`/`rec_set` through it must name a live one.
 # The view's operand may carry spaces: a `&`-link local reads as `unsafe { *var_al }`.
 BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((.+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
+# R-RecPtr's twin clause: a twin's record parameter takes its address from its input `__ip_k`,
+# the caller's held address, or resolves the store when the caller handed null.
+BIND_RECPTR_CALLER = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if (__ip_\d+)\.is_null\(\) \{ vector::rec_ptr\(&\((.+?)\), &stores\.allocations\) \} else \{ \2 \}; //@FR-R-RecPtr record view address for (\S+?), from the caller")
 # R-RecPtr's base clause: the loop variable of `for e in v` takes its address from the element
 # base the loop holds — the header and the base it names must both be live, on one path.
 BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ vector::held_elem_ptr\((__vb_\d+), var_\w+ as usize \* \d+(?: \+ \d+)?, (?:true|false)\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
@@ -98,6 +102,7 @@ def audit(text, quiet=False):
     violations, notes = [], []
     bound_total, uses_total = 0, 0
     fn = None
+    fn_head = ""
     depth = 0
     holders = []  # live holders, innermost last
     dbrefs = {}  # `__vd_N` -> the path it was bound from
@@ -107,6 +112,7 @@ def audit(text, quiet=False):
         m = FN_HEAD.match(line)
         if m:
             fn = m.group(1)
+            fn_head = line
             depth = 0
             holders = []
             dbrefs = {}
@@ -190,6 +196,15 @@ def audit(text, quiet=False):
             if win is None or win.kind != "window":
                 violations.append(f"{fn}:{nr}: R-PushFill — {mrw.group(1)} takes its address from {mrw.group(2)}, which is not a live push window")
             holders.append(Holder(mrw.group(1), "recptr", f"rec:{mrw.group(3)}", depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
+        mrc = BIND_RECPTR_CALLER.match(line)
+        if mrc:
+            if f"{mrc.group(2)}: *const u8" not in fn_head:
+                violations.append(f"{fn}:{nr}: R-RecPtr — {mrc.group(1)} reads {mrc.group(2)}, which is no input of this twin")
+            holders.append(Holder(mrc.group(1), "recptr", f"rec:{mrc.group(3)}", depth, nr))
             bound_total += 1
             depth += code.count("{") - code.count("}")
             holders = [h for h in holders if h.depth <= depth]
