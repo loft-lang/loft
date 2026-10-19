@@ -337,7 +337,11 @@ figure, or do not quote the figure.
 
 ⚠ **The guard tier is a proxy and says so.** It counts a rule NAMED by a test, which is weaker
 than a test that would FAIL without it. Treat a rule's move from annotated to guarded as
-evidence someone looked, not as proof the rule is defended.
+evidence someone looked, not as proof the rule is defended. A **rewrite** rule is guarded by
+the rewrite census instead (`bench/portal/rewrite_census.tsv`, `make rewrite-census`): a row
+says a bench program admits the rewrite, and the gate fails when the rule fires at fewer sites
+than its baseline, which is the stronger claim — the census counts as a guard, on its own line
+of the report, and a rewrite rule with no admission on any program is unexercised, not guarded.
 
 ### The loop
 

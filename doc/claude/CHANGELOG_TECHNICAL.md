@@ -116,6 +116,15 @@ All notable changes to the loft language and interpreter.
   tree claim by claim and claiming again from a reused store costs more than a fresh store's
   bump claims and a whole-store free).  Guard:
   `tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft`.
+### The rewrite census is a guard tier (2026-10-19)
+
+- `scripts/rule_tags.py coverage` and `worklist` read `bench/portal/rewrite_census.tsv` beside
+  the tests: a rule with an admission on a bench program is guarded, since `make rewrite-census`
+  fails when the rewrite stops firing — the stronger claim, and the one instrument that
+  verifies a rewrite rule.  Twenty-seven `R-` rules read as unguarded while the census held
+  their admissions; the report names the census's contribution on its own line.  A rule the
+  census lists with no admission stays unguarded: that is an unexercised rewrite.
+  `LOFT_REWRITE_CENSUS` points at another file.  STABILITY_METHOD.md § The rule-led walk.
 
 ### A slice first bind holds its slice whatever the local is rebound to later (2026-10-18)
 
