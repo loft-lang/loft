@@ -86,7 +86,7 @@ impl OpEmitter for OpDatabaseEmitter {
                 };
                 write!(
                     ctx.w,
-                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ var_{name} = {mint}(cell,var_{name}, "
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
                 )?;
                 ctx.emit_i32_slot(tp_val)?;
                 if complete {
@@ -99,6 +99,9 @@ impl OpEmitter for OpDatabaseEmitter {
                     " as u16, &var_{name}) }} /* @FR-R-LoopRecord kept record, defaults re-established */"
                 );
             }
+            // Both kept-store forms take the mint for a store a live generator frame names
+            // (`@FR-G-Arg-Rebind`): the mint gives the rebind a fresh store, keeping the
+            // frame's value.
             // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a LOOP BUFFER: a per-site vector buffer
             // minted inside a loop keeps its store and its vector across iterations.  The
             // first pass mints; every later pass resets the vector's length and keeps its
@@ -118,7 +121,7 @@ impl OpEmitter for OpDatabaseEmitter {
                 };
                 write!(
                     ctx.w,
-                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ var_{name} = {mint}(cell,var_{name}, "
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
                 )?;
                 ctx.emit_i32_slot(tp_val)?;
                 return write!(

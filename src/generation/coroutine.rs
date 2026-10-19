@@ -3191,6 +3191,22 @@ impl Output<'_> {
             owns_fnrefs,
             &held_params,
         )?;
+        // `@FR-G-Arg-Rebind` — a lazy generator's heap arguments, which the frame holds for
+        // its life (`alloc_coroutine_held`).  An eager one ran its body in its factory.
+        if !is_eager(&segments) {
+            let args: Vec<String> = attrs
+                .iter()
+                .filter(|a| crate::data::is_dbref(a.typedef.base()))
+                .map(|a| format!("self.var_{}", sanitize(&a.name)))
+                .collect();
+            if !args.is_empty() {
+                writeln!(
+                    w,
+                    "    fn held_args(&self, out: &mut Vec<DbRef>) {{ out.extend_from_slice(&[{}]); }}",
+                    args.join(", ")
+                )?;
+            }
+        }
         writeln!(w, "}}\n")?;
         self.in_coroutine_body = prev_in_coroutine;
         self.coroutine_persistent_fields = prev_persistent;

@@ -261,6 +261,22 @@ unchanged; [coroutines.md](coroutines.md) now states only what is open.
 
 **rules written (2026-07-04), 0 own** — lazy one-value-per-advance; straight-line yields lazy on both backends, and so is a loop body that ONLY yields; a loop body with a SECOND statement is eager on native (a DECIDED EDGE — rustc restriction, loft#836); conformance via the oracle
 
+## Deviations carried by coroutines.md until 2026-10-19
+
+* **D-gen-13** *(opened 2026-10-19, CLOSED 2026-10-19; loft#2067)* — `(G-Arg-Rebind)`: a
+  caller's whole rebind of an argument after a generator call reached the frame, on both
+  backends.  The filed shape was a struct literal (`lg = Log { … }` re-minted the local's own
+  store in place); the matrix found the same defect for `lg = other` (the pre-bind free released
+  the store and the copy re-claimed the slot), a keyed collection's rebind, a vector literal's
+  re-mint in a loop (`OpDatabase` in place, and natively the `@FR-R-LoopBuffer` /
+  `@FR-R-LoopRecord` kept stores), a rebind inside the loop driving the generator, two frames over
+  one value, and a frame that outlives its caller's scope (it read a released store).  **Fix.**
+  The rule's release clause, at the store: a frame takes a hold on the store of every heap
+  argument at creation (`Stores::hold_for_frame`; native `alloc_coroutine_held`), a free of a
+  held store only orphans it and the last hold frees it, and a re-mint or a content swap of a held
+  store takes a fresh store instead.  Guard
+  `loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft`.
+
 ## Deviations carried by coroutines.md until 2026-10-06
 
 Opened and closed in the same change; the chapter's `OPEN:` line never carried it.

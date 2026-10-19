@@ -2107,7 +2107,7 @@ impl Output<'_> {
             // plain `fn h(v: vector<integer>) -> iterator<integer>` did not compile either.
             let is_generator = matches!(def_fn.returned(), Type::Iterator(_, _));
             if is_generator {
-                write!(w, "loft::codegen_runtime::alloc_coroutine(")?;
+                write!(w, "loft::codegen_runtime::alloc_coroutine_held(cell, ")?;
             }
             write!(w, "{}(", self.fn_ident(def_fn))?;
             let mut first_arg = true;

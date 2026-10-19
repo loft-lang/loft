@@ -262,14 +262,7 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 1.**
-- **D-gen-13** *(loft#2067)* — `(G-Arg-Rebind)`: a caller's whole rebind of a STRUCT argument
-  after a generator call reaches the frame, on both backends — `lg = Log { n: 50 }` builds IN
-  PLACE into the store the frame reads (`OpDatabase` re-claims the local's own store), so the
-  next advance answers 50.  A vector rebind is right: its literal mints a fresh backing.  The cure
-  is not the closure route (`rebind_must_mint`): that rebind frees the displaced store, which the
-  frame still reads — the rule's release clause is the half that has to be built.  Receipt
-  `loft-suite/rules/coroutines/G-Call/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft`.
+**OPEN: 0.**
 
 The closed entries are in the companion [coroutines-history.md](coroutines-history.md).
 

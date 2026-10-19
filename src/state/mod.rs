@@ -411,6 +411,9 @@ pub struct CoroutineFrame {
     /// (`OpCoroutineRetain`), and each release gives one back.  The frame is freed with the
     /// last.
     pub holds: u32,
+    /// `@FR-G-Arg-Rebind` — the stores of the heap arguments this frame was handed, each
+    /// held for the frame's life ([`Stores::hold_for_frame`]) and given back when it ends.
+    pub held: Vec<DbRef>,
 }
 
 /// Internal State of the interpreter to run bytecode.
@@ -1893,7 +1896,14 @@ impl State {
                 owned_stores =
                     Self::owned_store_locals_in_bytes(d_nr, &mut frame.stack_bytes, &data_ptr);
             }
+            let held = self.coroutines[idx]
+                .as_mut()
+                .map(|f| std::mem::take(&mut f.held))
+                .unwrap_or_default();
             self.coroutines[idx] = None;
+            for db in held {
+                self.database.release_frame_hold(&db);
+            }
             // After the slot is cleared, so a nested generator handle among these frees its
             // own frame without re-entering this one.
             for db in owned_stores {
@@ -2134,6 +2144,43 @@ impl State {
     /// After this call, the `Str` pointers in `stack_bytes` are independent of the
     /// caller's `String` allocations, so `OpFreeText` on the caller's side cannot
     /// dangle the coroutine's copy.
+    /// `@FR-G-Arg-Rebind` — take a hold, for the new frame, on the store of every heap
+    /// argument it was handed (a generator handle is held through `holds` instead), so the
+    /// caller's release or rebind of that value leaves the frame's copy alive.  Laid out as
+    /// [`Self::serialise_text_args`] reads the argument region.
+    fn hold_arg_stores(&mut self, d_nr: u32, stack_bytes: &[u8], args_size: u32) -> Vec<DbRef> {
+        let data_ptr = self.data_ptr.clone();
+        let Some(data) = data_ptr.get() else {
+            return Vec::new();
+        };
+        let Some(def) = data.definitions.get(d_nr as usize) else {
+            return Vec::new();
+        };
+        let mut held = Vec::new();
+        let mut byte_offset: usize = 0;
+        for attr in def.attributes() {
+            if byte_offset >= args_size as usize {
+                break;
+            }
+            let attr_size = var_size(&attr.typedef, &Context::Argument) as usize;
+            if crate::data::is_dbref(attr.typedef.base())
+                && byte_offset + std::mem::size_of::<DbRef>() <= stack_bytes.len()
+            {
+                // SAFETY: bounds checked above; the byte-packed stack stores the `DbRef`
+                // unaligned.
+                #[allow(clippy::cast_ptr_alignment)]
+                let db: DbRef = unsafe {
+                    std::ptr::read_unaligned(stack_bytes.as_ptr().add(byte_offset).cast::<DbRef>())
+                };
+                if self.database.hold_for_frame(&db) {
+                    held.push(db);
+                }
+            }
+            byte_offset += attr_size;
+        }
+        held
+    }
+
     fn serialise_text_args(
         &self,
         d_nr: u32,
@@ -2197,6 +2244,7 @@ impl State {
         // S25.1 (CO1.3d / P2-R1): serialise text args to owned Strings before the
         // caller's OpFreeText can free the backing allocations.
         let text_owned = self.serialise_text_args(d_nr, &mut stack_bytes, args_size);
+        let held = self.hold_arg_stores(d_nr, &stack_bytes, args_size);
         // CO1.3d: append the return-address slot expected by the function body.
         // fn_call pushes this slot for regular calls; coroutines must include it so that
         // get_var offsets computed at codegen time remain valid after resume.
@@ -2226,6 +2274,7 @@ impl State {
             saved_store_generations: Vec::new(),
             generation: 0, // stamped by allocate_coroutine
             holds: 1,
+            held,
         };
         let (idx, generation) = self.allocate_coroutine(frame);
 
@@ -2755,6 +2804,7 @@ impl State {
         // Drop serialised state.
         frame.text_owned.clear();
         frame.stack_bytes.clear();
+        let held = std::mem::take(&mut frame.held);
 
         let call_depth = frame.call_depth;
         let stack_base = frame.stack_base;
@@ -2769,6 +2819,9 @@ impl State {
         self.active_coroutines.pop();
         // Free the slot: coroutine_exhausted() returns true for None entries.
         self.coroutines[idx] = None;
+        for db in held {
+            self.database.release_frame_hold(&db);
+        }
 
         // Restore call stack to consumer depth.
         self.call_stack.truncate(call_depth);

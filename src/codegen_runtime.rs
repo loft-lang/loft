@@ -548,6 +548,11 @@ fn op_database_inner(
     if stores.mint_at_place(&db, db_tp) {
         return db;
     }
+    // `@FR-G-Arg-Rebind` — the bytecode VM's twin (`State::alloc_record_at`): a store a live
+    // generator frame names keeps its value, so the rebind mints into a fresh store.
+    if db.store_nr != u16::MAX && stores.detach_if_frame_held(&db) {
+        db = DbRef::NULL;
+    }
     let kept = if db.store_nr == u16::MAX {
         // Null sentinel (no real store yet) — allocate a fresh one, which `null` has
         // already initialised.
@@ -5553,6 +5558,12 @@ pub trait LoftCoroutine {
     /// its own field, and the generated body only frees fields that are still set.
     fn drop_stores(&mut self, _stores: &mut Stores) {}
 
+    /// `@FR-G-Arg-Rebind` — the heap arguments this generator was handed, as its factory
+    /// stored them, pushed onto `out`: [`alloc_coroutine_held`] holds their stores for the
+    /// frame's life.  Generated per lazy generator; an eager one ran its body in its factory
+    /// and keeps this empty default.
+    fn held_args(&self, _out: &mut Vec<DbRef>) {}
+
     /// @FR-G-Next / @FR-G-Done — has this generator reached its end?  Asked only when an advance
     /// answered its channel's end sentinel, because that sentinel is also a value a
     /// generator may yield — `i64::MIN` is the integer null, `"\0"` the text null,
@@ -5580,6 +5591,56 @@ std::thread_local! {
     /// (loft#1708).  Read only for a live handle, so a stale count of a freed slot is never
     /// consulted: `alloc_coroutine` resets it to one.
     static NATIVE_COROUTINE_HOLDS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// `@FR-G-Arg-Rebind` — per slot, the argument stores the frame holds
+    /// ([`alloc_coroutine_held`]); emptied when the frame ends.
+    static NATIVE_COROUTINE_HELD: std::cell::RefCell<Vec<Vec<DbRef>>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The buffer [`alloc_coroutine_held`] fills before the frame has a slot.
+    static NATIVE_HELD_SCRATCH: std::cell::RefCell<Vec<DbRef>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Give back the argument holds of the frame in slot `idx` (`@FR-G-Arg-Rebind`): the frame
+/// ended, by exhaustion or by its last holder's release.
+fn release_native_held(idx: usize, stores: &mut Stores) {
+    NATIVE_COROUTINE_HELD.with(|h| {
+        // The slot keeps its buffer's capacity for the next frame; a release frees no frame,
+        // so nothing re-enters this table while it is borrowed.
+        if let Some(held) = h.borrow_mut().get_mut(idx) {
+            for db in held.drain(..) {
+                stores.release_frame_hold(&db);
+            }
+        }
+    });
+}
+
+/// [`alloc_coroutine`] for a generator call: the frame also takes a hold on the store of
+/// every heap argument it was handed (`@FR-G-Arg-Rebind`), the native twin of the bytecode
+/// VM's `State::hold_arg_stores`.
+#[must_use]
+pub fn alloc_coroutine_held(
+    cell: &std::cell::UnsafeCell<Stores>,
+    coro: Box<dyn LoftCoroutine>,
+) -> DbRef {
+    // The buffers circulate between the scratch and the slots, so a generator call allocates
+    // nothing here once the table has warmed up.
+    let mut held = NATIVE_HELD_SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    held.clear();
+    coro.held_args(&mut held);
+    if !held.is_empty() {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        held.retain(|db| stores.hold_for_frame(db));
+    }
+    let gen_ref = alloc_coroutine(coro);
+    let idx = gen_ref.rec as usize;
+    NATIVE_COROUTINE_HELD.with(|h| {
+        let mut h = h.borrow_mut();
+        if h.len() <= idx {
+            h.resize(idx + 1, Vec::new());
+        }
+        std::mem::swap(&mut h[idx], &mut held);
+    });
+    held.clear();
+    NATIVE_HELD_SCRATCH.with(|s| *s.borrow_mut() = held);
+    gen_ref
 }
 
 fn set_native_holds(idx: usize, holds: u32) {
@@ -5795,6 +5856,7 @@ pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
     });
     if let Some((_, mut coro)) = taken {
         coro.drop_stores(stores);
+        release_native_held(gen_ref.rec as usize, stores);
     }
 }
 
@@ -5829,7 +5891,7 @@ fn advance_native<R>(
         return dead;
     };
     let (val, exhausted) = step(coro.as_mut(), stores);
-    NATIVE_COROUTINES.with(|c| {
+    let ended = NATIVE_COROUTINES.with(|c| {
         let mut coroutines = c.borrow_mut();
         let idx = gen_ref.rec as usize;
         // Put back only into the slot it left: a free during the advance empties the slot,
@@ -5837,11 +5899,16 @@ fn advance_native<R>(
         if native_coroutine_live(&coroutines, gen_ref) {
             if exhausted {
                 coroutines[idx] = None;
+                return true;
             } else if let Some((_, slot)) = coroutines[idx].as_mut() {
                 *slot = coro;
             }
         }
+        false
     });
+    if ended {
+        release_native_held(gen_ref.rec as usize, stores);
+    }
     val
 }
 
