@@ -24,6 +24,7 @@ is reported, not failed: the channel is the reader's to re-record.
     python3 scripts/receipts_ci.py                   # refresh + score every stale receipt
     python3 scripts/receipts_ci.py --list            # only say what is in reach
     python3 scripts/receipts_ci.py --changed --base origin/main   # also what changed since BASE
+    python3 scripts/receipts_ci.py --only "a.patch b.patch"      # exactly these (a hand re-derivation)
 """
 
 import argparse
@@ -138,7 +139,11 @@ def main():
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--changed", action="store_true",
                     help="also score receipts whose patch or guard changed since --base")
+    ap.add_argument("--only", default="",
+                    help="score exactly these receipts (patch names, space- or comma-separated) "
+                         "— a re-derived receipt applies, so nothing else puts it in reach")
     args = ap.parse_args()
+    only = {n.strip() for n in args.only.replace(",", " ").split() if n.strip()}
 
     base = git("merge-base", args.base, "HEAD").stdout.strip()
     changed = set(git("diff", "--name-only", base, "HEAD").stdout.split())
@@ -154,6 +159,12 @@ def main():
         guards = cites.get(name, [])
         moved = args.changed and (
             f"tests/falsified/{name}" in changed or any(g in changed for g in guards))
+        if only:
+            if name in only and guards:
+                reach.append(patch)
+                if not applies(patch):
+                    stale.append(patch)
+            continue
         if name in known:
             continue
         ok = applies(patch)

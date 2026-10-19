@@ -25,6 +25,11 @@ on:
       - 'tests/falsified/**'
       - 'tests/scripts/**'
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Score exactly these receipts (patch names, space-separated) — for receipts re-derived by hand, which apply and so are not otherwise in reach'
+        required: false
+        default: ''
   push:
     branches: [receipts-probe]
 
@@ -91,10 +96,12 @@ jobs:
       # (dispatch), so a run that re-derives four of six is not thrown away for the other two.
       - name: Refresh and score
         id: score
+        env:
+          ONLY: ${{ github.event.inputs.only }}
         run: |
           git config user.name "loft-derive-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          python3 scripts/receipts_ci.py
+          python3 scripts/receipts_ci.py ${ONLY:+--only "$ONLY"}
 
       - name: The receipt ratchet (every patch applies, the baseline only shrinks)
         if: success()
