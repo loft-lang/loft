@@ -3107,7 +3107,19 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations); let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations);"
+            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations);"
+        )?;
+        // One binding a line, each with its tag: the emission audit binds a holder by the
+        // line that declares it.
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); //@FR-R-PushFill run header"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations); //@FR-R-PushFill push window, run of {k}"
         )?;
         for val in &run.vals {
             let e = self.expr_string(val)?;

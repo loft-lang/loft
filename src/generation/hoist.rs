@@ -1052,6 +1052,10 @@ pub struct LoopHoist {
     /// whose store is proven apart from every one of them ([`StoreFacts::distinct`]) keeps
     /// its base under that growth.  Empty exactly when `growth_free`.
     pub movers: Vec<u16>,
+    /// `@FR-R-PushRec`'s apart-call clause admitted `mint_pushes` ([`apart_mint`]): the
+    /// header grows by the runtime's doubling and the loop takes no up-front reservation,
+    /// since its trip count may be a value read from input and its mints conditional.
+    pub apart_mint: bool,
 }
 
 /// `@FR-R-Base`'s growth clause and `@FR-R-RecPtr`'s remainder clause — can two variables'
@@ -1271,6 +1275,271 @@ pub(super) fn mover_roots(
     out
 }
 
+/// Can a value of type `t` hold a record of definition `target`, at any depth — through a
+/// reference, an enum's payload, a collection's elements, a tuple?  A type this walk does not
+/// know answers YES: a miss here would let a loop hold a header something can still move.
+fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
+    match t {
+        Type::Integer(_)
+        | Type::Boolean
+        | Type::Float
+        | Type::Single
+        | Type::Character
+        | Type::Text(_)
+        | Type::Null
+        | Type::Void
+        | Type::Never
+        | Type::Enum(_, false, _) => false,
+        Type::Reference(d, _)
+        | Type::Enum(d, true, _)
+        | Type::Sorted(d, _, _)
+        | Type::Index(d, _, _)
+        | Type::Radix(d, _, _)
+        | Type::Trie(d, _, _)
+        | Type::Hash(d, _, _) => def_reaches(data, *d, target, seen),
+        Type::Vector(elm, _) | Type::Optional(elm) | Type::RefVar(elm) | Type::Rewritten(elm) => {
+            type_reaches(data, elm, target, seen)
+        }
+        Type::Tuple(elms) => elms.iter().any(|e| type_reaches(data, e, target, seen)),
+        _ => true,
+    }
+}
+
+fn def_reaches(data: &Data, d: u32, target: u32, seen: &mut HashSet<u32>) -> bool {
+    if d == target {
+        return true;
+    }
+    if d as usize >= data.definitions.len() {
+        return true;
+    }
+    if !seen.insert(d) {
+        return false;
+    }
+    data.def(d)
+        .attributes()
+        .iter()
+        .any(|a| type_reaches(data, &a.typedef, target, seen))
+        || data
+            .children_of(d)
+            .into_iter()
+            .any(|c| data.def_type(c) == DefType::EnumValue && def_reaches(data, c, target, seen))
+}
+
+/// `@FR-R-PushRec`'s apart-call clause — the record-push header a loop the gate DECLINES
+/// still holds for the ONE vector it mints into, when nothing else in the body can reach that
+/// vector.  The gate declines a loop that calls a writer: a recursive decoder's
+/// `sub = read_value(bytes, p, d, buf); if sub.ok { items += [sub.value] }` claims in the
+/// very store `items` lives in.  A header is a record number, a length and a capacity — a
+/// claim elsewhere in the store moves none of them; only an op that names the vector's owner
+/// slot or record can.  So the body is read for MENTIONS: every variable whose type can hold
+/// an element of the vector ([`type_reaches`]) must be FRESH this pass — the element a mint
+/// answered, the pooled call buffer its pool statement placed or cleared, or the result of a
+/// call handed that buffer as its return buffer, none of which holds a record that existed
+/// before the pass — and the vector itself appears only as the first operand of its own mint
+/// group (`OpPreAllocVector`, `OpNewRecord`, `OpFinishRecord`) or as the host a placement
+/// claims beside (`OpPlaceRecord`).  Loft reaches a record only through a value that names
+/// it, so no call in such a body can resize the vector or change its length.  The answer is
+/// the path and its operand; the loop holds no other header, no base and no scalar under
+/// this clause, and takes no reservation ([`LoopHoist::apart_mint`]): the header grows by
+/// the runtime's doubling, so a trip count read from input reserves nothing.
+fn apart_mint(
+    body: &Block,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    tiers: HoistTiers,
+) -> Option<(PathKey, Value)> {
+    if !(tiers.mint && tiers.record_push && crate::keys::apart_mint_enabled()) {
+        return None;
+    }
+    let vars = data.def(def_nr).variables();
+    let mut target: Option<MintTarget> = None;
+    let mut ok = true;
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpNewRecord"
+            {
+                match mint_target(data, stores, "OpNewRecord", args, vars) {
+                    Some(t) if mint_push_qualifies(stores, t.vector_tp, tiers.heap_push) => {
+                        match &target {
+                            Some(tt) if tt.path != t.path => ok = false,
+                            Some(_) => {}
+                            None => target = Some(t),
+                        }
+                    }
+                    _ => ok = false,
+                }
+            }
+            false
+        });
+    }
+    let target = target.filter(|_| ok)?;
+    let p = target.path.0;
+    if !target.path.1.is_empty() {
+        return None;
+    }
+    let Type::Vector(element_tp, _) = vars.tp(p).base() else {
+        return None;
+    };
+    let elem = match element_tp.base() {
+        Type::Reference(d, _) | Type::Enum(d, true, _) => *d,
+        _ => return None,
+    };
+    let fresh = apart_fresh(body, data, stores, vars, &target.path);
+    let reaches =
+        |v: u16| v >= vars.count() || type_reaches(data, vars.tp(v), elem, &mut HashSet::new());
+    let admitted = apart_mentions_ok(body, data, p, &|v| fresh.contains(&v) || !reaches(v));
+    if !admitted {
+        if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+            eprintln!(
+                "hoist: {} loop {} holds no apart mint header — a value that can reach {} is not fresh",
+                data.def(def_nr).name(),
+                body.scope,
+                vars.name(p)
+            );
+        }
+        return None;
+    }
+    crate::rewrite_census::fired("R-PushRec/apart", 1);
+    Some((target.path, target.vector))
+}
+
+/// [`apart_mint`]'s FRESH variables, to a fixed point (a call's result is fresh only once its
+/// buffer is): the elements minted on `path`, a placed record, a pooled call buffer (its pool
+/// statement), the result of a call handed a fresh buffer as its return buffer, and a field
+/// view into a fresh record (`kv = kd.value`).
+fn apart_fresh(
+    body: &Block,
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    path: &PathKey,
+) -> HashSet<u16> {
+    let mut fresh: HashSet<u16> = HashSet::new();
+    loop {
+        let before = fresh.len();
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                match n {
+                    Value::Set(v, inner) => {
+                        if let Value::Call(d, args) = inner.unspan()
+                            && (*d as usize) < data.definitions.len()
+                        {
+                            let name = data.def(*d).name();
+                            let view_of_fresh = |a: Option<&Value>| {
+                                matches!(a.map(Value::unspan), Some(Value::Var(b)) if fresh.contains(b))
+                            };
+                            if (name == "OpNewRecord"
+                                && mint_path(data, stores, name, args, vars).as_ref() == Some(path))
+                                || placed_pool_of(n, data).is_some()
+                                || (name == "OpGetField" && view_of_fresh(args.first()))
+                                || data
+                                    .def(*d)
+                                    .hidden_return_buffer_attr()
+                                    .is_some_and(|a| view_of_fresh(args.get(a)))
+                            {
+                                fresh.insert(*v);
+                            }
+                        }
+                    }
+                    Value::If(..) => {
+                        if let Some((b, _)) = pool_of(n, data).or_else(|| placed_pool_of(n, data)) {
+                            fresh.insert(b);
+                        }
+                    }
+                    _ => {}
+                }
+                false
+            });
+        }
+        if fresh.len() == before {
+            return fresh;
+        }
+    }
+}
+
+/// [`apart_mint`]'s mention walk: every variable the body names must be `allowed` (fresh, or of
+/// a type that cannot reach the vector) — save the vector `p` itself as the first operand of
+/// its own mint group or as a placement's host — and the body runs no `CallRef`, `Parallel` or
+/// `Yield`, whose code this walk cannot see.
+fn apart_mentions_ok(body: &Block, data: &Data, p: u16, allowed: &dyn Fn(u16) -> bool) -> bool {
+    const HOST_OPS: [&str; 4] = [
+        "OpPreAllocVector",
+        "OpNewRecord",
+        "OpFinishRecord",
+        "OpPlaceRecord",
+    ];
+    fn walk(n: &Value, ok: &mut dyn FnMut(&Value) -> Option<bool>) -> bool {
+        if let Some(verdict) = ok(n) {
+            return verdict;
+        }
+        let mut all = true;
+        n.for_each_child(&mut |c| all &= walk(c, ok));
+        all
+    }
+    fn judge(n: &Value, data: &Data, p: u16, allowed: &dyn Fn(u16) -> bool) -> Option<bool> {
+        match n.unspan() {
+            Value::Var(v) => Some(allowed(*v)),
+            Value::Set(v, _) if !allowed(*v) => Some(false),
+            Value::CallRef(..) | Value::Parallel(_) | Value::Yield(_) => Some(false),
+            // The vector as its own mint group's operand, or as a placement's host: the
+            // remaining operands still walk.
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && HOST_OPS.contains(&data.def(*d).name())
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == p) =>
+            {
+                Some(
+                    args[1..]
+                        .iter()
+                        .all(|a| walk(a, &mut |m| judge(m, data, p, allowed))),
+                )
+            }
+            _ => None,
+        }
+    }
+    body.operators
+        .iter()
+        .all(|op| walk(op, &mut |n| judge(n, data, p, allowed)))
+}
+
+/// `(R-Place)`'s pool statement — `if OpRefIsNull(b) { b = OpPlaceRecord(host, tp) } else
+/// OpClear(b, tp)`, answered as `(b, tp)`: [`pool_of`] with the buffer placed beside a host
+/// instead of minted in a store of its own.  Asked of the `If`, or of the placement itself.
+fn placed_pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
+    let placed = |s: &Value| -> Option<(u16, u16)> {
+        let Value::Set(b, inner) = s.unspan() else {
+            return None;
+        };
+        match call_named(inner, data, "OpPlaceRecord")? {
+            [_, Value::Int(tp)] => Some((*b, u16::try_from(*tp).ok()?)),
+            _ => None,
+        }
+    };
+    let Value::If(cond, mint_branch, release) = stmt.unspan() else {
+        return placed(stmt);
+    };
+    let buf = match call_named(cond, data, "OpRefIsNull")? {
+        [arg] => match arg.unspan() {
+            Value::Var(var) => *var,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (b, tp) = placed(only_statement(mint_branch)?)?;
+    if b != buf {
+        return None;
+    }
+    match call_named(release, data, "OpClear")? {
+        [arg, Value::Int(clear_tp)] if is_var(arg, buf) && i32::from(tp) == *clear_tp => {
+            Some((buf, tp))
+        }
+        _ => None,
+    }
+}
+
 /// `@FR-R-Header`'s apart clause — what a loop the gate DECLINES still holds: the header
 /// and the element base of each vector it only reads in a store nothing in it is handed
 /// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
@@ -1382,7 +1651,20 @@ pub fn hoistable(
     {
         Some(text_set_roots(body, data))
     } else {
-        return apart_hoist(body, data, def_nr, facts, cache, owned);
+        let apart = apart_hoist(body, data, def_nr, facts, cache, owned);
+        // `@FR-R-PushRec`'s apart-call clause — only where the apart headers hold nothing,
+        // so a loop that keeps them keeps exactly them.
+        if apart.vectors.is_empty()
+            && let Some((path, expr)) = apart_mint(body, data, stores, def_nr, tiers)
+        {
+            return LoopHoist {
+                movers: vec![path.0],
+                mint_pushes: vec![(path, expr)],
+                apart_mint: true,
+                ..LoopHoist::default()
+            };
+        }
+        return apart;
     };
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
@@ -1391,6 +1673,7 @@ pub fn hoistable(
         mint_pushes: Vec::new(),
         growth_free: false,
         movers: Vec::new(),
+        apart_mint: false,
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body, data, vars);

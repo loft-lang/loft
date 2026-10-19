@@ -147,10 +147,13 @@ fn emit_bare(out: &Path, env: &[(&str, &str)]) -> String {
     fa::read_to_string(out).expect("read the emitted Rust")
 }
 
+// `@FR-R-PushRec`'s apart-call clause gives some of these loops a header (b1's `mkrw` call
+// writes a text): the bare clause is what serves them under its switch, and that is what
+// the pins below read.
 #[test]
 fn each_bare_cell_appends_through_the_vector() {
     let out = std::env::temp_dir().join("loft_bare_append_on.rs");
-    let got = bare_counts(&emit_bare(&out, &[]));
+    let got = bare_counts(&emit_bare(&out, &[("LOFT_NO_APART_MINT", "1")]));
     for (name, zero, pre, tpl) in BARE {
         assert_eq!(
             got.get(*name).copied().unwrap_or_default(),
@@ -164,7 +167,10 @@ fn each_bare_cell_appends_through_the_vector() {
 #[test]
 fn the_bare_switch_restores_the_templates() {
     let out = std::env::temp_dir().join("loft_bare_append_off.rs");
-    let rust = emit_bare(&out, &[("LOFT_NO_BARE_APPEND", "1")]);
+    let rust = emit_bare(
+        &out,
+        &[("LOFT_NO_BARE_APPEND", "1"), ("LOFT_NO_APART_MINT", "1")],
+    );
     assert!(
         !rust.contains("vector_record_append"),
         "LOFT_NO_BARE_APPEND=1 left a bare append in place"

@@ -1780,6 +1780,15 @@ pub fn apart_headers_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APART_HEADERS"))
 }
 
+/// `LOFT_NO_APART_MINT=1` — a loop the header gate declines holds no record-push header for
+/// the vector it mints into (`@FR-R-PushRec`'s apart-call clause off): the first bisect step
+/// for a wrong element or length in a vector built in a loop that also calls a writer —
+/// a recursive decoder's `items += [sub.value]`.
+pub fn apart_mint_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APART_MINT"))
+}
+
 /// `LOFT_NO_APART_PARAM=1` — a PARAMETER's vector in a loop the header gate declines takes no
 /// header again (`@FR-R-Header`'s apart clause, its parameter half, off): the first bisect step
 /// for a stale element or length read from a parameter's vector in a loop that also grows the

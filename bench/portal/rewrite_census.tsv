@@ -700,7 +700,7 @@ cbor	bd4932067	R-Counter	113
 cbor	bd4932067	R-Destination	15
 cbor	bd4932067	R-DischargeInto	1
 cbor	bd4932067	R-ExitVector	6
-cbor	bd4932067	R-FieldAppend/bare	24
+cbor	bd4932067	R-FieldAppend/bare	13
 cbor	bd4932067	R-FnHeader	6
 cbor	bd4932067	R-FormatAppend	1
 cbor	bd4932067	R-ForwardResult	3
@@ -708,7 +708,7 @@ cbor	bd4932067	R-ForwardWalk	4
 cbor	bd4932067	R-GuardFree	25
 cbor	bd4932067	R-GuardedChain	12
 cbor	bd4932067	R-GuardedChain/operators	24
-cbor	bd4932067	R-Header	31
+cbor	bd4932067	R-Header	39
 cbor	bd4932067	R-Header/apart	56
 cbor	bd4932067	R-InPlaceLiteral	9
 cbor	bd4932067	R-InlineLeaf	21
@@ -727,7 +727,8 @@ cbor	bd4932067	R-Push	14
 cbor	bd4932067	R-PushFill	14
 cbor	bd4932067	R-PushFill/record	2
 cbor	bd4932067	R-PushFill/run	12
-cbor	bd4932067	R-PushRec	2
+cbor	bd4932067	R-PushRec	10
+cbor	bd4932067	R-PushRec/apart	22
 cbor	bd4932067	R-Range	239
 cbor	bd4932067	R-RangedCall	7
 cbor	bd4932067	R-RecPtr	8
@@ -799,7 +800,7 @@ drawing	873da7f9a	R-DischargeInto	1
 drawing	873da7f9a	R-ElemFirst	9
 drawing	873da7f9a	R-ExitVector	3
 drawing	873da7f9a	R-FieldAppend	24
-drawing	873da7f9a	R-FieldAppend/bare	10
+drawing	873da7f9a	R-FieldAppend/bare	8
 drawing	873da7f9a	R-Fill	8
 drawing	873da7f9a	R-Fill/guarded	4
 drawing	873da7f9a	R-FlatCopy	10
@@ -810,7 +811,7 @@ drawing	873da7f9a	R-GroupPush	15
 drawing	873da7f9a	R-GuardFree	18
 drawing	873da7f9a	R-GuardedChain	36
 drawing	873da7f9a	R-GuardedChain/operators	145
-drawing	873da7f9a	R-Header	279
+drawing	873da7f9a	R-Header	281
 drawing	873da7f9a	R-InPlaceLiteral	8
 drawing	873da7f9a	R-InlineLeaf	190
 drawing	873da7f9a	R-Inputs	133
@@ -833,7 +834,8 @@ drawing	873da7f9a	R-Place	1
 drawing	873da7f9a	R-Push	59
 drawing	873da7f9a	R-PushFill	61
 drawing	873da7f9a	R-PushFill/record	7
-drawing	873da7f9a	R-PushRec	28
+drawing	873da7f9a	R-PushRec	30
+drawing	873da7f9a	R-PushRec/apart	5
 drawing	873da7f9a	R-Range	474
 drawing	873da7f9a	R-RangedCall	36
 drawing	873da7f9a	R-RecPtr	146
@@ -1046,14 +1048,14 @@ gridmesh	873da7f9a	R-CompleteWrite	18
 gridmesh	873da7f9a	R-Counter	62
 gridmesh	873da7f9a	R-DischargeInto	1
 gridmesh	873da7f9a	R-ExitVector	3
-gridmesh	873da7f9a	R-FieldAppend/bare	13
+gridmesh	873da7f9a	R-FieldAppend/bare	8
 gridmesh	873da7f9a	R-FlatCopy	1
 gridmesh	873da7f9a	R-FormatAppend	1
 gridmesh	873da7f9a	R-ForwardWalk	3
 gridmesh	873da7f9a	R-GuardFree	18
 gridmesh	873da7f9a	R-GuardedChain	5
 gridmesh	873da7f9a	R-GuardedChain/operators	12
-gridmesh	873da7f9a	R-Header	32
+gridmesh	873da7f9a	R-Header	37
 gridmesh	873da7f9a	R-Header/apart	12
 gridmesh	873da7f9a	R-Header/apart-param	12
 gridmesh	873da7f9a	R-InPlaceLiteral	3
@@ -1070,6 +1072,8 @@ gridmesh	873da7f9a	R-Mint	7
 gridmesh	873da7f9a	R-Push	15
 gridmesh	873da7f9a	R-PushFill	8
 gridmesh	873da7f9a	R-PushFill/hash	2
+gridmesh	873da7f9a	R-PushRec	5
+gridmesh	873da7f9a	R-PushRec/apart	20
 gridmesh	873da7f9a	R-Range	89
 gridmesh	873da7f9a	R-RangedCall	13
 gridmesh	873da7f9a	R-RecPtr	14
@@ -1855,7 +1859,7 @@ pluginabi	33aa4cc2c	R-Destination	30
 pluginabi	33aa4cc2c	R-DischargeInto	1
 pluginabi	33aa4cc2c	R-ElemFirst	1
 pluginabi	33aa4cc2c	R-ExitVector	6
-pluginabi	33aa4cc2c	R-FieldAppend/bare	40
+pluginabi	33aa4cc2c	R-FieldAppend/bare	20
 pluginabi	33aa4cc2c	R-FnHeader	9
 pluginabi	33aa4cc2c	R-FormatAppend	1
 pluginabi	33aa4cc2c	R-ForwardResult	3
@@ -1863,7 +1867,7 @@ pluginabi	33aa4cc2c	R-ForwardWalk	3
 pluginabi	33aa4cc2c	R-GuardFree	28
 pluginabi	33aa4cc2c	R-GuardedChain	11
 pluginabi	33aa4cc2c	R-GuardedChain/operators	24
-pluginabi	33aa4cc2c	R-Header	36
+pluginabi	33aa4cc2c	R-Header	50
 pluginabi	33aa4cc2c	R-Header/apart	60
 pluginabi	33aa4cc2c	R-Header/apart-param	4
 pluginabi	33aa4cc2c	R-InPlaceLiteral	9
@@ -1881,6 +1885,8 @@ pluginabi	33aa4cc2c	R-PureReuse	1
 pluginabi	33aa4cc2c	R-Push	19
 pluginabi	33aa4cc2c	R-PushFill	18
 pluginabi	33aa4cc2c	R-PushFill/run	12
+pluginabi	33aa4cc2c	R-PushRec	14
+pluginabi	33aa4cc2c	R-PushRec/apart	40
 pluginabi	33aa4cc2c	R-Range	255
 pluginabi	33aa4cc2c	R-RangedCall	11
 pluginabi	33aa4cc2c	R-RecPtr	2
@@ -2203,9 +2209,8 @@ tween	873da7f9a	R-FieldAppend/bare	10
 tween	873da7f9a	R-FlatCopy	2
 tween	873da7f9a	R-FormatAppend	1
 tween	873da7f9a	R-ForwardWalk	5
-tween	873da7f9a	R-GroupPush	1
 tween	873da7f9a	R-GuardFree	9
-tween	873da7f9a	R-Header	14
+tween	873da7f9a	R-Header	15
 tween	873da7f9a	R-InlineLeaf	20
 tween	873da7f9a	R-Inputs	9
 tween	873da7f9a	R-KernelSum	1
@@ -2215,6 +2220,8 @@ tween	873da7f9a	R-LitDiv	1
 tween	873da7f9a	R-Mint	7
 tween	873da7f9a	R-Push	4
 tween	873da7f9a	R-PushFill	2
+tween	873da7f9a	R-PushRec	1
+tween	873da7f9a	R-PushRec/apart	2
 tween	873da7f9a	R-Range	37
 tween	873da7f9a	R-RangedCall	2
 tween	873da7f9a	R-RecPtr	16

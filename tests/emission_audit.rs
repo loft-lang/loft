@@ -42,6 +42,7 @@ const CORPORA: &[&str] = &[
     "tests/scripts/157-move-append.loft",
     "tests/scripts/157-retbuf-adopt.loft",
     "tests/scripts/157-selfread-literal.loft",
+    "tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft",
     "bench/12_drawing/bench.loft",
 ];
 
@@ -137,6 +138,37 @@ fn the_audit_refuses_a_second_holder_for_one_path() {
     assert!(
         !ok && text.contains("R-State") && text.contains("__vh_999"),
         "the audit must refuse a second holder for one path:\n{text}"
+    );
+    let _ = fa::remove_file(&out);
+}
+
+/// A holder dies with the scope that bound it, also where one line closes that scope and opens
+/// the next (`} else {`): a mover in the `else` arm of `@FR-R-PushFill`'s run clause is no
+/// mover on a held path, while the same mover inside the arm still is.
+#[test]
+fn a_holder_ends_at_the_else_that_closes_its_arm() {
+    let out = std::env::temp_dir().join("loft_emission_audit_else.rs");
+    let rust = [
+        "fn n_run(cell: &std::cell::UnsafeCell<Stores>, mut var_buf: DbRef) {",
+        "  if !(var_buf).is_null() { //@FR-R-PushFill run of 2",
+        "    let mut __ph_1 = vector::push_header(&(var_buf), &stores.allocations); //@FR-R-PushFill run header",
+        "    let mut __pw_1 = vector::push_window(&__ph_1, 1_u32, &stores.allocations); //@FR-R-PushFill push window, run of 2",
+        "    vector::pre_alloc_vector(&(var_buf), 1_u32, 1_u32, &mut stores.allocations);",
+        "  } else {",
+        "    vector::pre_alloc_vector(&(var_buf), 1_u32, 1_u32, &mut stores.allocations);",
+        "  }",
+        "}",
+    ]
+    .join("\n");
+    fa::write(&out, rust).expect("write the hand-made emission");
+    let (ok, _, text) = audit(&out);
+    let found: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("VIOLATION"))
+        .collect();
+    assert!(
+        !ok && found.len() == 1 && found[0].contains("n_run:5:") && found[0].contains("R-Refresh"),
+        "the mover inside the arm, and only it, must be refused:\n{text}"
     );
     let _ = fa::remove_file(&out);
 }

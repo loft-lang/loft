@@ -1053,6 +1053,10 @@ pub struct Output<'a> {
     /// same local `push_headers`-style; the path is also in [`Self::vec_headers`] as
     /// `__ph_N.h` for every read).  Pushed and popped beside the other hoist frames.
     mint_push_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// The mint paths whose header `@FR-R-PushRec`'s apart-call clause gave
+    /// ([`hoist::LoopHoist::apart_mint`]): [`Self::mint_reserve`] reserves nothing for them.
+    /// Per function; a path kept past its loop only withholds a later reservation.
+    apart_mint_paths: HashSet<hoist::PathKey>,
     /// `LOFT_NO_RECORD_PUSH=1` — a record append keeps its mint-group templates
     /// (`OpNewRecord`'s dispatch + prefill, `OpFinishRecord`'s dispatch) as before @PLN157
     /// § V-t (`@FR-R-PushRec`); the bisect step for a wrong element out of a record-appending
@@ -2414,6 +2418,7 @@ impl<'a> Output<'a> {
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
+            apart_mint_paths: HashSet::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
             heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
                 .is_ok_and(|v| v != "0"),
@@ -3098,6 +3103,7 @@ impl Output<'_> {
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
+        self.apart_mint_paths.clear();
         self.push_windows.clear();
         self.hoist_counter = 0;
     }
@@ -4243,6 +4249,10 @@ impl Output<'_> {
         let Some(hdr) = self.active_mint_push(&m.path).map(str::to_owned) else {
             return Ok(None);
         };
+        // `@FR-R-PushRec`'s apart-call clause: its header grows by doubling, unreserved.
+        if self.apart_mint_paths.contains(&m.path) {
+            return Ok(None);
+        }
         if self.coroutine_persistent_fields.contains_key(&m.path.0) {
             return Ok(None);
         }
@@ -4787,6 +4797,7 @@ impl Output<'_> {
             mint_pushes,
             growth_free,
             movers,
+            apart_mint,
         } = hoisted;
         // `@FR-R-Base` — every candidate's base in a growth-free loop; under growth, the
         // base of each candidate whose store is proven apart from every store the loop grows.
@@ -4830,6 +4841,9 @@ impl Output<'_> {
         for (path, expr) in mint_pushes {
             if self.mint_push_headers.iter().any(|f| f.contains_key(&path)) {
                 continue;
+            }
+            if apart_mint {
+                self.apart_mint_paths.insert(path.clone());
             }
             if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;

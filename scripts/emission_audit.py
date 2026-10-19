@@ -109,6 +109,7 @@ def audit(text, quiet=False):
     index_headers = {}  # `__in_N` -> the header its range test reads
     for nr, raw in enumerate(text.splitlines(), 1):
         line = STRING.sub('""', raw)
+        earlier = len(holders)  # the holders bound before this line (the scope step below)
         m = FN_HEAD.match(line)
         if m:
             fn = m.group(1)
@@ -121,6 +122,7 @@ def audit(text, quiet=False):
             # (a base input `__ib_k` is the twin clause of R-Base: a holder like the rest)
             for param in re.findall(r"(__i[shb]_\d+): ", m.group(2)):
                 holders.append(Holder(param, "input", None, 1, nr))
+            earlier = 0
         code = line.split("//")[0]
         # R-GroupPush — a group header's Rust binding outlives its group; the emitter marks
         # where the holder dies, and from there it is not a holder of the path.
@@ -317,8 +319,19 @@ def audit(text, quiet=False):
                 if held:
                     notes.append(f"{fn}:{nr}: note — {op} on held path `{path}` ({held[-1].name}): a runtime read the holder could serve")
         # ---- scope: braces after this line, then drop holders bound deeper ----
-        depth += code.count("{") - code.count("}")
-        holders = [h for h in holders if h.depth <= depth]
+        # A line can close a scope and open another (`} else {`): a holder an EARLIER line
+        # bound deeper than the lowest depth this line reaches died with the scope it closed,
+        # though the net count is zero.  A holder this line binds is judged by where the
+        # line ends.
+        low = depth
+        for ch in code:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                low = min(low, depth)
+        holders = [h for i, h in enumerate(holders)
+                   if h.depth <= (low if i < earlier else depth)]
     if not quiet:
         for v in violations:
             print("VIOLATION", v)
