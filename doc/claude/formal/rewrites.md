@@ -5117,6 +5117,50 @@ which keep the call, read off the trace; every switch; the store falsifiers).
 
 ## Proposed — the next eliminations, by reach
 
+### A result field no caller reads is never computed — PROPOSED
+
+```
+  (R-DeadResult) a call f(args) whose result R, a record, the caller reads only through
+                 a set L of its fields (the LIVE fields; any other use of R — a copy, a
+                 hand-off, a store, a return, a reference comparison — declines) may
+                 call the twin f__L, in which every write of a field outside L is
+                 dropped together with each computation whose value only a dropped
+                 write reads.  DEAD is found backwards over f's body: a value is dead
+                 when every read of it is dead; a dead value's construction (a mint, an
+                 append to a vector only dead values reach, a call whose result is dead)
+                 is dropped; and a recursive call whose result the twin reads only
+                 through L calls f__L, so the recursion closes over the twin.
+                 Admitted when ALL of:
+                 (1) a dropped computation has no effect but building its value: no
+                     output, no write to a store a live value or any caller reaches, no
+                     native or bridge call, no yield, no `par`;
+                 (2) a dropped computation cannot REPORT a fault: no operation whose
+                     fault is logged, or answered as a value something live reads (a
+                     division, a checked conversion, a parse).  A fault the plain form
+                     reports is observable, and no rewrite changes what a fault shows
+                     (@C120);
+                 (3) every test, loop and branch stays as written: only statements whose
+                     values are dead are dropped, never a condition, so the live fields
+                     and termination are the plain form's;
+                 (4) one twin per live set: L is the same at every call to f__L.
+                 The twin answers R with each dead field at its default; no caller reads
+                 one.  Declines: any use of R but a read of a field of L; a dead value
+                 read through a holder the analysis cannot follow.
+```
+
+**In words.**  `pa_decode_ok(frame)` is `decode(frame).ok`: the decode builds the whole value
+tree — every text, byte string, entry and map — and the caller reads one boolean.  The
+`ok` and `next` fields of `read_value`'s result decide every refusal and every position, and
+none of them reads `value`, so the twin `read_value__{ok,next}` builds nothing and walks the
+same bytes with the same tests.  (1) and (2) are what "nothing observable is lost" means in
+loft: an effect, or a fault the program would have reported.  (3) is what keeps the result:
+the twin takes every branch the plain form takes.  It is the validation half of
+`(R-DecodeView)`'s structure clause and a rule of its own: any caller that reads a status out
+of a builder's result — a parser asked only whether input parses — is the same shape.
+Switch `LOFT_NO_DEAD_RESULT` (planned); falsifier: under `LOFT_HOIST_VERIFY=1` the plain call
+runs beside the twin and every live field is compared.  Priced on `check_request` before it is
+built (worklist.md).
+
 Found measuring what still keeps six routines near 100× native; ordered by how
 many programs they reach, not by those six (the owner: *improve all loft scripts as
 much as possible*).  Each carries **PROPOSED** until a site implements it; the two runtime
@@ -5942,6 +5986,52 @@ owned value beside a decoded one, a pooled buffer refilled with an integer and t
 and the declines: a byte string read, the frame written after the decode, a decoded value
 returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
 pin `tests/decode_view.rs` holds the roots and the region.
+
+**The structure clause (@C141, read once) — PROPOSED.**  Instance 1 keeps a decoded value's
+LEAVES in the frame and still builds its structure: `check_request` mints a map, a vector of
+three entries and an enum value per key and per value, about 40 % of the call, to read one key.
+The owner extended @C141 to that structure for a value read once:
+
+```
+  (R-DecodeView)'s STRUCTURE clause: a decoded value V — the result of a decode
+                 call over B, its records, vectors and enum values built only from
+                 B's bytes and from each other — is held as its POSITION in B (the
+                 offset of its encoding) and nothing of it is built, when (1)-(3)
+                 hold and its leaves meet (4) and (5), and ALL of:
+                 (6) V is READ ONCE: across the region (2), V and each part of it is
+                     reached by ONE chain of holders — a return hands it up, an
+                     argument hands it down — and read by one walk; no holder is read
+                     again after the walk has moved past it, and none stores it;
+                 (7) every read of V or of a part of V is one the encoding answers at
+                     the part's position: an enum tag (the head's major type), a
+                     number field (the head's argument), a text or byte-string leaf (a
+                     span, as instance 1), and a vector of parts walked IN ORDER from
+                     its first element (a map's entries, an array's items), each step
+                     decoding the next head from B.  An index, a length the encoding
+                     does not state, a reverse walk or a second walk declines;
+                 (8) VALIDATION is not deferred: whatever the decode answers about the
+                     whole of B — that it decodes, where it ends, the refusal of a
+                     truncated or non-canonical frame — is computed in full before the
+                     first read of V (by the decode's (R-DeadResult) twin, which builds
+                     nothing), and a refused frame gives V the value the decode answers
+                     for one, so every read answers what the built value answers;
+                 (9) a part that leaves the walk — a leaf copied into an owned slot, a
+                     part returned (`return e.value`) to a holder outside the chain —
+                     is BUILT there, from its position, as the plain decode builds it.
+                 Declines, building V as written: any of (6)-(9) unproved; a decoded
+                 value kept, handed out of the chain, or walked twice.
+```
+
+**In words.**  A value the program walks once, start to end, can be read off its encoding as
+the walk goes: the encoding already holds every tag, number and leaf in the order the walk
+asks for them.  (6) is what makes the position a faithful stand-in — one walk, so no part is
+asked for twice or out of order — and (7) lists the reads an encoding answers at a position.
+(8) keeps the one thing a lazy reading would change: a frame the decode refuses is refused
+before anything reads it, so a malformed tail cannot hide behind an early match.  (9) builds
+what escapes, so a value the program keeps costs what it costs today — the rule the owner set:
+a kept value is a built one.  Switch `LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
+built and the positional forms run side by side under `LOFT_HOIST_VERIFY=1` and every read is
+compared.  Priced on `check_request` before it is built (worklist.md).
 
 ### Proposed clauses on existing rules
 
