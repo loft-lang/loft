@@ -1,0 +1,13 @@
+diff --git a/src/generation/decode_structure_emit.rs b/src/generation/decode_structure_emit.rs
+index 4bb1ff3b8..9a3b7f8a9 100644
+--- a/src/generation/decode_structure_emit.rs
++++ b/src/generation/decode_structure_emit.rs
+@@ -465,7 +465,7 @@ impl Output<'_> {
+                     "({},)",
+                     parts
+                         .iter()
+-                        .map(|x| pos(x.1))
++                        .map(|_| pos(parts[0].1))
+                         .collect::<Vec<_>>()
+                         .join(", ")
+                 )

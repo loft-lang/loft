@@ -31,6 +31,12 @@
 //    keep → "apply" (a decoded value returned: declines).
 //
 // @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-decoded-value-is-read-at-its-position.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch hands every part of a walked entry
+//   at the key's position, so the value read is the key.
+//   WITNESS: *F1 op: op* where "apply" is due.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
 
 enum Val {
   VNull,
