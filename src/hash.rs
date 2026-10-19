@@ -1048,6 +1048,47 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
     Some(found)
 }
 
+/// [`find_long`] for a hash keyed by two to four `integer` / `long` parts, the key handed
+/// over as the values (`@FR-R-TypedKeyed`'s compound clause): the digest is
+/// [`keys::ints_hash`], the one [`keys::key_hash`] computes for those `Content::Long`s, and
+/// the probe compares every part in place.  `None` for any other key shape.
+#[must_use]
+pub fn find_ints(
+    hash_ref: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+    values: &[i64],
+) -> Option<DbRef> {
+    if keys.len() < 2
+        || keys.len() > 4
+        || keys.len() != values.len()
+        || keys
+            .iter()
+            .any(|k| !matches!(k.type_nr.unsigned_abs(), 1 | 2))
+    {
+        return None;
+    }
+    let store = &stores[hash_ref.store_nr as usize];
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    let mut found = DbRef {
+        store_nr: hash_ref.store_nr,
+        rec: 0,
+        pos: 0,
+    };
+    if claim == 0 || store.record_words(claim) == 0 {
+        return Some(found);
+    }
+    let count = elms(store, claim);
+    let home = home_bucket(keys::ints_hash(values, read_seed(store, claim)), count);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    (found.rec, found.pos) = probe(store, claim, count, home, &entries, |r, b| {
+        keys.iter()
+            .zip(values)
+            .all(|(k, v)| store.get_int(r, b + u32::from(k.position)) == *v)
+    });
+    Some(found)
+}
+
 /// [`find_long`] for a hash whose ONE key is a `text` (type 6), the key handed over as the
 /// text itself (`@FR-R-TypedKeyed`'s text clause): the digest is [`keys::str_hash`], the
 /// one [`keys::key_hash`] computes for a `Content::Str`, and the probe compares each

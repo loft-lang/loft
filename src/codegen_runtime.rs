@@ -978,6 +978,45 @@ pub fn OpGetHashLong(
     OpGetRecord(cell, data, db_tp, &[crate::keys::Content::Long(key)])
 }
 
+/// [`OpGetHashLong`] for a `hash<T[k₁, …]>` keyed by two to four integer parts, the key
+/// handed over as the values (`@FR-R-TypedKeyed`'s compound clause).  The same exits as the
+/// integer entry.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+pub fn OpGetHashInts(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key: &[i64],
+) -> DbRef {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    let content = || -> Vec<crate::keys::Content> {
+        key.iter().map(|v| crate::keys::Content::Long(*v)).collect()
+    };
+    if data.rec != 0
+        && !vector::is_absent_collection(&data, &stores.allocations)
+        && let Some(found) =
+            crate::hash::find_ints(&data, &stores.allocations, stores.keys(db_tp as u16), key)
+        && (found.rec != 0 || !stores.lazy_bound(&data))
+    {
+        if crate::keys::keyed_verify() {
+            let general = stores.find(&data, db_tp as u16, &content());
+            assert!(
+                (general.rec, general.pos) == (found.rec, found.pos),
+                "LOFT_KEYED_VERIFY: the typed compound lookup answers {}+{} where the general \
+                 one answers {}+{}",
+                found.rec,
+                found.pos,
+                general.rec,
+                general.pos,
+            );
+        }
+        return found.or_null();
+    }
+    OpGetRecord(cell, data, db_tp, &content())
+}
+
 /// [`OpGetHashLong`] for a `hash<T[k]>` whose ONE key is a `text`, the key handed over as
 /// the text (`@FR-R-TypedKeyed`'s text clause).  The same exits as the integer entry:
 /// anything that is not the plain answer is the general entry's, reached with the same key.

@@ -2779,7 +2779,10 @@ c21 keeps the vector form of it.
                   `OpGetHashText(c, type, k)` with `k` handed over as the text, hashed
                   as the general entry hashes a `Content::Str` (`keys::str_hash`) and
                   compared against each entry's key text in place (`hash::find_str`),
-                  under the same exits.
+                  under the same exits.  The COMPOUND clause: two to four `integer` /
+                  `long` parts are emitted as `OpGetHashInts(c, type, [k₁, …])`, hashed
+                  as the general entry hashes their `Content::Long`s (`keys::ints_hash`)
+                  and compared part by part (`hash::find_ints`).
 ```
 
 **In words.** `(R-Escape)` is not needed here — nothing is removed or reshaped, the
@@ -2807,7 +2810,7 @@ below, for an element that owns no heap.
 
 ```
   (R-KeyedEntry)  c += [T{k: e₀, f₁: e₁, …}] where c is a `hash<T[k]>` with ONE key of
-                  `integer` width, T owns no heap — or ONE `text` key that is the only
+                  `integer` width — or two to four `integer` parts — and T owns no heap; or ONE `text` key that is the only
                   heap T owns, every other field a plain value: the overwrite never
                   writes the key (the entry found carries the same text, a fresh one has
                   it written by the probe), so nothing is stranded — no linked group holds T's records

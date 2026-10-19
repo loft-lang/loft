@@ -10,6 +10,16 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `--native`: a hash keyed by two to four integer parts takes the typed lookup and the one-probe insert (2026-10-19)
+
+- **`(R-TypedKeyed)`'s and `(R-KeyedEntry)`'s compound clauses** — a lookup by two to four
+  `integer` parts is emitted as `OpGetHashInts` (`hash::find_ints`, digest `keys::ints_hash`),
+  and `h += [T{…}]` into such a hash of a heap-free element asks the key first
+  (`Stores::keyed_entry_ints_at` over the existing `hash::entry_ints`).
+- `composite_hash` 4.18× → 3.27×, hashes equal; lanes 17 and 18 measured level or better
+  against their recorded ratios.  Reach: lanes 16, 17, 18.  Guard:
+  `tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-names.loft`.
+
 ### `--native`: a narrow vector element write keeps a loop's record hoists; small twins inline (2026-10-19)
 
 - **`(R-Inputs)`'s write set** — a write into a narrow-integer vector element (`i32`, `u8`, …)

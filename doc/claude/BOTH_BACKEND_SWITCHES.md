@@ -675,8 +675,9 @@ places every key by division.  The placement formula is `digest mod count` eithe
 stores written under either read under both; it is the A/B for the rule and the way to write a
 table whose count the mask does not serve.
 **`LOFT_NO_TYPED_KEYED=1`** (`@FR-R-TypedKeyed`, generation time, `--native` only) emits a
-lookup in a `hash` with ONE integer or `text` key as the general `OpGetRecord` again — with
-it off it is `OpGetHashLong` (or `OpGetHashText`, the key handed over as the text), the
+lookup in a `hash` with ONE integer or `text` key, or two to four integer parts, as the
+general `OpGetRecord` again — with it off it is `OpGetHashLong` (or `OpGetHashText`, the key
+handed over as the text; `OpGetHashInts`, the parts as values), the
 integer key handed over as the integer it is, with no `Content` built, no
 type-row dispatch and the walk compiled for the key's kind (613 → 444 instructions a lookup,
 `hash_find` −13 %) — and is the first bisect step for a wrong or missing record out of such

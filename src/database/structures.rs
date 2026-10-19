@@ -463,6 +463,21 @@ impl Stores {
         rec
     }
 
+    /// [`Self::keyed_entry_long`] for a hash keyed by one to four integer parts
+    /// (`@FR-R-KeyedEntry`'s compound clause): [`Self::keyed_entry_ints`] on the hash the field
+    /// holds.
+    pub fn keyed_entry_ints_at(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        key: &[i64],
+    ) -> DbRef {
+        let tp = self.sub_record_type(parent_tp, field);
+        let d = self.field_ref(data, parent_tp, field);
+        self.keyed_entry_ints(&d, tp, key)
+    }
+
     /// [`Self::keyed_entry_long`] for a hash whose ONE key is a `text`
     /// (`@FR-R-KeyedEntry`'s text clause): the entry under `key`, or a fresh one with the key
     /// text written and filed.  The general path where the table cannot be walked that way.

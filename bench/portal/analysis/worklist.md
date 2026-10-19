@@ -151,6 +151,8 @@ the compiler rule that would make the natural spelling do the same.
 - **`hex_edge/edges_cut` 4.42× → 1.76×, BUILT** — a narrow-integer vector element write no
   longer declines the loop's scalar hoists, so `hexset_get` is called as its `__inv` twin with
   the window held; `combine_cut` 4.13× → ~2.2× with it.  Loop-free twins are forced inline.
+- **`16_consumer_shapes/composite_hash` 4.18× → 3.27×, BUILT** — the compound clauses of the
+  typed lookup and the one-probe insert (two to four integer key parts).
 
 
 Eleven rows read over 5× in `results/laptop.tsv` (the full run at `cbe54eaa2`, every hash
