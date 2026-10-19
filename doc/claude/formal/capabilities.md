@@ -70,6 +70,8 @@ gated.
   (Cap-Safe)     e = call f ;  f ∈ stdlib ;  gate(f) = ⊥                  ⟹  P ; restricted ⊢ e ✓
   (Cap-Set)      e = pass arg a to param p of host f ;
                  a ≡ default(p)  ∨  lock(p) = ⊥  ∨  lock(p) ∈ P           ⟹  P ; restricted ⊢ e ✓
+                 where a ≡ d iff a is omitted or FOLDS at compile time to d's value (`1`,
+                 `2 - 1`, a named constant); a local or a parameter never does, whatever it holds.
   (Cap-Read)     e = read host field m ;   readcap(m) = ⊥  ∨  readcap(m) ∈ P
                                                                           ⟹  P ; restricted ⊢ e ✓
   (Cap-Write)    e = write host field m, right r ∈ {update, append} ;
