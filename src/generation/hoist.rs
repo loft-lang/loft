@@ -1349,7 +1349,9 @@ fn apart_mint(
     def_nr: u32,
     tiers: HoistTiers,
 ) -> Option<(PathKey, Value)> {
-    if !(tiers.mint && tiers.record_push && crate::keys::apart_mint_enabled()) {
+    // The push tier too: `LOFT_NO_PUSH_HOIST=1` promises a loop that pushes hoists nothing,
+    // and this clause runs exactly where the header gate declined — which that switch makes it do.
+    if !(tiers.mint && tiers.record_push && tiers.push && crate::keys::apart_mint_enabled()) {
         return None;
     }
     let vars = data.def(def_nr).variables();
