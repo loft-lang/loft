@@ -1,8 +1,8 @@
 diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
-index d393d9364..21edc9be9 100644
+index 7e338153..b6598ee6 100644
 --- a/src/generation/coroutine.rs
 +++ b/src/generation/coroutine.rs
-@@ -1344,9 +1344,8 @@
+@@ -1362,9 +1362,8 @@ fn written_scalar_params(
          }
          v.for_each_child(&mut |c| walk(c, data, vars, out));
      }
@@ -13,4 +13,4 @@ index d393d9364..21edc9be9 100644
 +    std::collections::HashSet::new()
  }
  
- /// loft#1899 — the scalar LINK locals of a generator body (`c = &x`, a `&` to a scalar, a
+ /// loft#1899 — the LINK locals of a generator body (`c = &x`, a `&` to a scalar, a text, a
