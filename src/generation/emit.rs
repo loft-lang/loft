@@ -154,6 +154,14 @@ impl Output<'_> {
         {
             return Ok(());
         }
+        // `@FR-R-DecodeView`'s structure clause — a position's reads, writes and walks in a
+        // positional twin, before the view clause's span hooks.
+        if self.ps_mode.is_some()
+            && let Some(code) = node.native()
+            && self.ps_expr(w, code)?
+        {
+            return Ok(());
+        }
         // `@FR-R-DecodeView` — a span field's write and a span text's read, in the same
         // dispatch for the same reason.
         if !self.dv.region.is_empty()
@@ -3616,7 +3624,10 @@ impl Output<'_> {
         // exactly as a loop body would, and a loop inside re-uses it.  Opened after the
         // prologue, because the header reads `stores`; closed before the block's brace so a
         // tail value flows out of the wrapper.
-        let fn_frame = if is_fn_body && !self.fn_header_disabled && !self.hoist_disabled {
+        let fn_frame = if is_fn_body
+            && !self.fn_header_disabled
+            && (!self.hoist_disabled || self.ps_mode.is_some())
+        {
             let mut memo = std::mem::take(&mut self.fn_header_memo);
             let paths = super::hoist::fn_header_params(bl, self.data, self.def_nr, &mut memo);
             self.fn_header_memo = memo;
@@ -4070,6 +4081,11 @@ impl Output<'_> {
             if repeat_skip.is_some_and(|last| vnr <= last) {
                 continue;
             }
+            // `@FR-R-DecodeView`'s structure clause — a statement the positional twin drops,
+            // before pre-evaluation can lift anything out of it.
+            if self.ps_mode.is_some() && self.ps_skip(v) {
+                continue;
+            }
             if apart_skip.is_some_and(|next| vnr < next) {
                 continue;
             }
@@ -4355,7 +4371,7 @@ impl Output<'_> {
             }
             // `@FR-R-Destination` — a call whose result's heap field is moved whole into a
             // fresh element: the element is minted first and the callee's twin builds there.
-            if super::destination::enabled() && !self.in_coroutine_body {
+            if super::destination::enabled() && !self.in_coroutine_body && self.ps_mode.is_none() {
                 let mut memo = std::mem::take(&mut self.dest_memo);
                 let site = super::destination::site(
                     operators,

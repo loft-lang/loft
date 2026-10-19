@@ -687,6 +687,14 @@ impl Output<'_> {
             }
             return Ok(());
         }
+        // `@FR-R-DecodeView`'s structure clause — a node the positional twin writes: only its
+        // plain operands are searched.
+        if let Some(operands) = self.ps_operands(v) {
+            for x in operands {
+                self.collect_pre_evals_inner(x, result)?;
+            }
+            return Ok(());
+        }
         // `@FR-R-DecodeView` — a span write writes its operands where they stand.
         if let Some(operands) = self.dv_operands(v) {
             for x in operands {

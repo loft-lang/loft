@@ -414,6 +414,31 @@ pub fn dv_span_text(
     true
 }
 
+/// `@FR-R-DecodeView`'s structure clause — a text leaf read at its position: the frame's
+/// bytes `b[lo..hi]` under `text_from_byte_range`'s bounds, and `""` where they are not UTF-8,
+/// as that function answers.  Nothing is copied.
+#[must_use]
+#[inline]
+pub fn ps_text(stores: &Stores, b: DbRef, lo: i64, hi: i64) -> &str {
+    let bytes = dv_bytes(stores, &b);
+    let length = bytes.len() as i64;
+    if length == 0 {
+        return "";
+    }
+    let bound = |x: i64| {
+        if x < 0 {
+            (x + length).max(0)
+        } else {
+            x.min(length)
+        }
+    };
+    let (lo, hi) = (bound(lo), bound(hi));
+    if hi <= lo {
+        return "";
+    }
+    std::str::from_utf8(&bytes[lo as usize..hi as usize]).unwrap_or("")
+}
+
 /// Write the span word `word` into the record `rec`: its field at `off` holds nothing of its
 /// own, so the record's release frees nothing for it.
 #[inline]
