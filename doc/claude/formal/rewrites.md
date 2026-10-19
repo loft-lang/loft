@@ -6105,7 +6105,7 @@ and the declines: a byte string read, the frame written after the decode, a deco
 returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
 pin `tests/decode_view.rs` holds the roots and the region.
 
-**The structure clause (@C141, read once) — PROPOSED.**  Instance 1 keeps a decoded value's
+**The structure clause (@C141, read once) — instance 1 BUILT.**  Instance 1 of the rule keeps a decoded value's
 LEAVES in the frame and still builds its structure: `check_request` mints a map, a vector of
 three entries and an enum value per key and per value, about 40 % of the call, to read one key.
 The owner extended @C141 to that structure for a value read once:
@@ -6148,12 +6148,62 @@ asked for twice or out of order — and (7) lists the reads an encoding answers 
 before anything reads it, so a malformed tail cannot hide behind an early match.  (9) builds
 what escapes, so a value the program keeps costs what it costs today — the rule the owner set:
 a kept value is a built one.  A value inspected more than once is the case of
-`(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.  Switch
-`LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
-built and the positional forms run side by side under `LOFT_HOIST_VERIFY=1` and every read is
-compared.  Priced on `check_request` as the library form of its output — a validation walk,
-then the key searched in the frame's bytes: 1.70 → 0.60 ms (5.04× → 1.79×, hash unchanged),
-against −5 % for the validation walk alone (worklist.md § 0).
+`(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.
+
+**Instance 1 of the structure clause, built** (`src/generation/decode_structure.rs` and
+`decode_structure_scan.rs` decide, `decode_structure_emit.rs` writes).  It rides on the view
+clause's roots, region and frame.  The POSITION of a value is the scalar arguments of the
+decoder call that answers it: `decode(b).value` is `read_value(b, 0, 0).value`, a map entry's
+key is `read_value(b, p, d + 1).value` for the `p` the loop handed that call.  The frame does
+not change while a position lives ((1), the region's read-only walk), and the decoder answers
+from its arguments and the frame alone, so running it again at a position takes the same path
+and answers the same value.
+- The PRODUCER is a recursive region function answering a record of one view-enum field and
+  scalar fields, from one frame parameter and scalar parameters.  Its SHAPE TWIN `P__ps`
+  drops every statement that only builds — a mint, a field write, an append, a release,
+  whose operators are a closed list that report no fault — and keeps every test, loop and
+  scalar, so its scalar fields are the plain form's; each `return` answers the variant's tag,
+  ONE slot (a number, or a text run's span `(lo, hi)` when the run's guard holds) and the
+  scalar fields.  A field only the built value holds — a text that is no run, a byte string
+  — answers a marker, and a read of it calls the plain decoder at the position (`P__pst`)
+  and takes the field from the value it builds: (9) for a leaf.  Its WALK TWIN `P__psw<k>`
+  runs the same body and hands each element appended to the walked vector field — the
+  positions of the calls its parts were moved from — to a closure, stopping at the closure's
+  first answer.  A walked local may only be appended to and moved into its field, and a
+  call's position must not be reassigned between its part's binding and the append.
+- A CONSUMER is every other function of the root's chain.  It holds a value as a tuple:
+  `(0, position…)`, or `(tag, 0…)` for a unit literal it returns; a decoded record as
+  `(position, scalar fields…)`; an element as a tuple of positions.  The reads (7) admits:
+  the tag (the shape, computed once per arm), a number, boolean or text field inside the arm
+  that proved the variant, a scalar field of the record, an in-order walk of a vector field
+  (`for e in v.entries`, the loop's body becoming the walk twin's closure, which leaves only
+  by `return`).  An index, a length, a second walk, a value stored or handed to a non-loft
+  function declines the root.
+- (6) in instance 1: a tag test reads the head and a field read inside its arm is part of
+  that match; a walk, a copy, a hand-off to a consumer or a return HANDS a position ON, and
+  a position handed on twice declines.  No position made outside a loop or a walk is read
+  inside it, and no consumer reaches itself, so each part is decoded a bounded number of
+  times.
+- (8) holds by construction: the record the root reads `ok` and `next` from is the decoder's
+  own scalar answer, computed by the shape twin over the whole frame before the root reads a
+  position, and a refused frame's position answers the decoder's value for it.
+- Not yet admitted: a byte-string field read, a value walked by index, a decoder with two
+  slot fields in one variant, a consumer that is recursive.
+
+Measured on pluginabi `check_request` (`bench/stats.py`, one core, hash unchanged): 4.66× →
+1.30× (1.58 → 0.44 ms against the twin's 0.34 ms); the hand price of the same form was
+0.30 ms.  Switch `LOFT_NO_DECODE_STRUCTURE` (instance 1 of the view clause alone); trace
+`LOFT_TRACE_DECODE_STRUCTURE` names each producer and root admitted and each decline with its
+reason, `=2` also prints each consumer's IR.  Guard
+`tests/scripts/a-decoded-value-is-read-at-its-position.loft`, every cell hand-computed on both
+backends — lookups found, absent, duplicated and under a number key, a number and a boolean, a
+label only the built value holds, an array summed, a nested lookup, a find in an array of maps,
+the status alone, invalid UTF-8, a frame one level too deep, truncated, or with a trailing
+byte, an empty map, and the declines: a second hand-off, a read in a loop, a value returned.
+Its planted defect hands every part of an entry at the key's position; the pin
+`tests/decode_structure.rs` holds the roots, the twins and the switch.  The side-by-side run
+of both forms under `LOFT_HOIST_VERIFY=1` the clause names is not built: the switch A/B and
+the interpreter are its falsifiers.
 
 ### Proposed clauses on existing rules
 

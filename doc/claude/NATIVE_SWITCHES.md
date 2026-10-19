@@ -522,6 +522,14 @@ one it declines, with the mention that declined it.
 A reader behind a one-statement helper is held only where the helper is inlined
 (`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
 
+**`LOFT_NO_DECODE_STRUCTURE=1`** (`@FR-R-DecodeView`'s structure clause, default-ON, generation
+time, the same builds) builds every decoded value — with it off, a root whose chain reads its
+decoded value once holds the value as its position (the decoder's arguments) and re-runs the
+decoder's `__ps` shape and `__psw` walk twins to read it.  The first bisect step for a wrong
+answer out of a decoder's caller on a release build, after `LOFT_NO_DECODE_VIEW`.
+**`LOFT_TRACE_DECODE_STRUCTURE=1`** names each producer and root admitted and each decline with
+its reason; `=2` also prints each consumer's IR.
+
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that
