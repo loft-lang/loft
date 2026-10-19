@@ -53,7 +53,18 @@ jobs:
 
       - name: Install packaging tools (Windows)
         if: runner.os == 'Windows'
-        run: choco install zip unzip -y
+        # Chocolatey's feed answers 503 now and then, and `choco` then reports "installed 0/0"
+        # with exit 0 — the step passed and make-release.sh stopped on the missing `zip`.  So
+        # the install is retried, and the step fails HERE when `zip` is still not on PATH.
+        run: |
+          for ($i = 1; $i -le 4; $i++) {
+            choco install zip unzip -y --no-progress
+            if (Get-Command zip -ErrorAction SilentlyContinue) { exit 0 }
+            Write-Host "zip not installed (attempt $i of 4) - retrying"
+            Start-Sleep -Seconds (20 * $i)
+          }
+          Write-Error "chocolatey did not install zip after 4 attempts"
+          exit 1
 
       - name: Cache cargo
         id: cargo-cache
