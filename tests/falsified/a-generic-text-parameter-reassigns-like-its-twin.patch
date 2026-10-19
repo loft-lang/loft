@@ -1,11 +1,11 @@
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index d1c3f221c..1ac341eab 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -9537,90 +9537,6 @@ impl Parser {
-         }
+diff --git a/src/parser/generics.rs b/src/parser/generics.rs
+index 348b7ee9a..51232ff9d 100644
+--- a/src/parser/generics.rs
++++ b/src/parser/generics.rs
+@@ -1252,90 +1252,6 @@ impl Parser {
          code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
      }
+ 
 -    /// @FR-F-ParamScalar / @FR-G-Mono — a generic's `p: T` is spelled as a reference to `T`'s
 -    /// placeholder, so the template lowered `p = …` as a HEAP-parameter rebind: an entry
 -    /// witness, a guarded release and a detach of `p` (`rebind_local_heap_param`).  That is
@@ -13,7 +13,7 @@ index d1c3f221c..1ac341eab 100644
 -    /// or `float` instance was an internal error on the witness's slot, and a `text` one wrote
 -    /// the borrowed argument.  An instance whose parameter is not a heap type drops the
 -    /// witness's statements and its mapping, so the scope pass adds no exit release either.
--    fn strip_scalar_instance_rebinds(&mut self, code: &mut Value) {
+-    pub(super) fn strip_scalar_instance_rebinds(&mut self, code: &mut Value) {
 -        fn strip(code: &mut Value, data: &Data, p: u16, orig: u16) {
 -            let is_var = |v: &Value, n: u16| matches!(v.unspan(), Value::Var(x) if *x == n);
 -            let witness_op = |v: &Value| match v.unspan() {
@@ -57,7 +57,7 @@ index d1c3f221c..1ac341eab 100644
 -    /// parameter was still `T`, so the instance wrote the BORROWED argument slot:
 -    /// `fn g<T>(p: T, q: T) -> T { p = q; p }` at `T = text` answered the argument on
 -    /// `--interpret` and did not build on `--native`.  The instance takes the twin's answer.
--    fn promote_assigned_text_params(&mut self, code: &mut Value) {
+-    pub(super) fn promote_assigned_text_params(&mut self, code: &mut Value) {
 -        let params = self.vars.count();
 -        for p in 0..params {
 -            if !self.vars.is_argument(p)
@@ -91,9 +91,9 @@ index d1c3f221c..1ac341eab 100644
 -        }
 -    }
  
-     fn fill_monomorph_body(
+     pub(super) fn fill_monomorph_body(
          &mut self,
-@@ -9736,8 +9652,6 @@ impl Parser {
+@@ -1452,8 +1368,6 @@ impl Parser {
                  }
              }
          }
@@ -102,11 +102,11 @@ index d1c3f221c..1ac341eab 100644
          let vars = std::mem::replace(&mut self.vars, outer_vars);
          self.context = outer_context;
          self.data.definitions[d_nr as usize].code = code;
-diff --git b/src/variables/mod.rs a/src/variables/mod.rs
-index 793e26e6c..c5b695698 100644
---- b/src/variables/mod.rs
-+++ a/src/variables/mod.rs
-@@ -4234,12 +4234,6 @@ impl Function {
+diff --git a/src/variables/mod.rs b/src/variables/mod.rs
+index 7b8711baf..6845a386c 100644
+--- a/src/variables/mod.rs
++++ b/src/variables/mod.rs
+@@ -4406,12 +4406,6 @@ impl Function {
      /// @PLN87 P2.1 — record that visible heap parameter `param` is
      /// whole-binding-reassigned in the body and `orig` is its caller-store
      /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.
