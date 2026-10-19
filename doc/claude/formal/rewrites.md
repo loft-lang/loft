@@ -5161,6 +5161,54 @@ Switch `LOFT_NO_DEAD_RESULT` (planned); falsifier: under `LOFT_HOIST_VERIFY=1` t
 runs beside the twin and every live field is compared.  Priced on `check_request` before it is
 built (worklist.md).
 
+### A call repeated on the same input answers its first result — PROPOSED
+
+```
+  (R-SharedCall) two calls f(a1..an) at sites S1 and S2, S1 reaching S2 on every path
+                 to S2, with the same arguments — the same variables, or the same pure
+                 expressions over them — answer the same value, and S2 reads S1's
+                 result instead of calling f, when ALL of:
+                 (1) f has no EFFECT: it writes no store its caller or any other holder
+                     reaches (a store it mints and answers is its own), and makes no
+                     output, native or bridge call, yield or `par`;
+                 (2) f cannot REPORT a fault: the plain program reports a fault once per
+                     call and the shared form once in all (@C120) — no logged fault, no
+                     fault answered as a value;
+                 (3) f's answer depends only on its arguments and what they reach: no
+                     global it reads is written between S1 and S2, and it reads no
+                     clock, random source, file or socket;
+                 (4) no argument, nor anything an argument reaches, is written between
+                     S1 and S2 — the proof (R-DecodeView)'s (1) makes for its frame;
+                 (5) every site reads the result as a VALUE: no site writes it, links it
+                     or hands it to a callee that writes it; a site that would is given
+                     its own call, or a copy where a copy costs less than the call.
+                 The sites may sit in different functions: a WRAPPER — a function whose
+                 body hands its parameters to f and answers f's result or a field of it
+                 (`pa_decode_ok(b)` is `decode(b).ok`, `pa_decode(b)` is
+                 `decode(b).value`) — is seen through, so two wrapper calls in one body
+                 share the call they wrap, and the holder is a local of that body.  The
+                 result lives from S1 to the last site that reads it and is freed there,
+                 as that site's own result would have been; its live set
+                 ((R-DeadResult)) is the union of what every sharing site reads.
+                 Declines: any of (1)-(5) unproved; a site in a loop whose argument the
+                 loop changes; a recursive f's call to itself.
+```
+
+**In words.**  A program that inspects one result several times often computes it several
+times: `check_request` decodes the same frame to ask whether it decodes, then again to read
+one key, and a plugin that reads a request's three fields decodes it three times.  When the
+routine has no effect, cannot report a fault and its input has not changed, the second call
+can only answer what the first answered, so it may read that answer instead.  (1)-(4) are
+"the second call can observe nothing the first did not", and (5) keeps the shared result a
+value: no site can change what another reads.  It changes WHEN memory is held — the result
+lives from the first call to the last read rather than being built and dropped twice — and
+the program states nothing about that, so the rule may choose it.  Together with
+`(R-DeadResult)` it is the general form of "compute each result once, and only the parts
+that are read", for any number of inspections; `(R-DecodeView)`'s structure clause is the
+narrow case of a value inspected once and never built.  Switch `LOFT_NO_SHARED_CALL`
+(planned); falsifier: under `LOFT_HOIST_VERIFY=1` S2 calls f again and compares the two
+results field by field.  Priced on `check_request` before it is built (worklist.md).
+
 Found measuring what still keeps six routines near 100× native; ordered by how
 many programs they reach, not by those six (the owner: *improve all loft scripts as
 much as possible*).  Each carries **PROPOSED** until a site implements it; the two runtime
@@ -6029,7 +6077,9 @@ asked for twice or out of order — and (7) lists the reads an encoding answers 
 (8) keeps the one thing a lazy reading would change: a frame the decode refuses is refused
 before anything reads it, so a malformed tail cannot hide behind an early match.  (9) builds
 what escapes, so a value the program keeps costs what it costs today — the rule the owner set:
-a kept value is a built one.  Switch `LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
+a kept value is a built one.  A value inspected more than once is the case of
+`(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.  Switch
+`LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
 built and the positional forms run side by side under `LOFT_HOIST_VERIFY=1` and every read is
 compared.  Priced on `check_request` before it is built (worklist.md).
 
