@@ -3705,7 +3705,10 @@ impl Parser {
         // refused here rather than skipped: skipped, every literal run of the template was
         // dropped and only the holes reached the target (loft#2056).
         if self.data.attributes(d_nr) != 2 {
-            if !self.first_pass {
+            // Once per template: every literal run reaches the same `lit`, so a second refusal
+            // says nothing the first did not.
+            if !self.first_pass && self.lit_shape_refused != Some((self.context, var)) {
+                self.lit_shape_refused = Some((self.context, var));
                 let nm = self.data.def(target).name().to_string();
                 diagnostic!(
                     self.lexer,
