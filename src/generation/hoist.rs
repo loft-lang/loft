@@ -6903,7 +6903,7 @@ pub fn mint_loop<'a>(
         return Err("no record mint in the body".to_string());
     }
     // Every op naming the path is a mint group's own: the reservation, the mint, the finish.
-    let mut other = false;
+    let mut other: Option<&str> = None;
     for s in &body.operators {
         s.any_node(&mut |n| {
             if let Value::Call(d, args) = n
@@ -6915,13 +6915,13 @@ pub fn mint_loop<'a>(
                     "OpPreAllocVector" | "OpNewRecord" | "OpFinishRecord"
                 )
             {
-                other = true;
+                other.get_or_insert(data.def(*d).name());
             }
             false
         });
     }
-    if other {
-        return Err("another op reaches the path".to_string());
+    if let Some(op) = other {
+        return Err(format!("another op reaches the path ({op})"));
     }
     let mut banned = vec![rc.loop_var, rc.index, target.path.0];
     if let Some(nx) = rc.next {

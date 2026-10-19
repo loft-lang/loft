@@ -1068,6 +1068,10 @@ pub struct Output<'a> {
     /// `OpFinishRecord` templates (`@FR-R-FieldAppend` off): the bisect step for a wrong
     /// element out of `r.f += [x]` outside a loop.
     pub field_append_disabled: bool,
+    /// `LOFT_NO_BARE_APPEND=1` — an append to a plain vector that no push header holds keeps
+    /// its `OpNewRecord` / `OpFinishRecord` templates (`@FR-R-FieldAppend`'s bare clause
+    /// off): the bisect step for a wrong element or length out of an unhoisted `v += [x]`.
+    pub bare_append_disabled: bool,
     /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
     /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
     /// step for a wrong element or scalar read in a loop that declares a vector per pass.
@@ -2415,6 +2419,7 @@ impl<'a> Output<'a> {
                 .is_ok_and(|v| v != "0"),
             field_append_disabled: std::env::var("LOFT_NO_FIELD_APPEND").is_ok_and(|v| v != "0")
                 || std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_some(),
+            bare_append_disabled: std::env::var("LOFT_NO_BARE_APPEND").is_ok_and(|v| v != "0"),
             rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
             group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
             hoist_owned: hoist::HoistOwned::default(),

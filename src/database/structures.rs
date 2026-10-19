@@ -285,6 +285,34 @@ impl Stores {
         slot
     }
 
+    /// `@FR-R-FieldAppend`'s bare clause — [`Self::record_new`]'s first path with the dispatch
+    /// resolved by the emitter: `v += [x]` on a PLAIN vector `data` (`OpNewRecord(v, tp,
+    /// MAX)` whose `tp` is a `Parts::Vector`), the element slot `vector_append` claims,
+    /// `size` bytes wide.  `PREFILL` is the template's prefill (`OpNewRecord`; off for
+    /// `OpNewRecordNP`): one zero fill when `ZERO` — the emitter's proof that `elem`'s
+    /// default is all zero bytes ([`Self::zero_default`]) — else `elem`'s default walk.
+    #[inline]
+    pub fn vector_record_append<const PREFILL: bool, const ZERO: bool>(
+        &mut self,
+        data: &DbRef,
+        size: u32,
+        elem: u16,
+    ) -> DbRef {
+        self.records_created += 1;
+        let slot = vector::vector_append(data, size, &mut self.allocations);
+        if PREFILL {
+            if ZERO {
+                // An absent vector answers no slot: nothing to fill, as the walk's own test.
+                if !slot.is_null() && slot.rec != 0 {
+                    self.store_mut(&slot).zero_range(slot.rec, slot.pos, size);
+                }
+            } else {
+                self.set_default_value(elem, &slot);
+            }
+        }
+        slot
+    }
+
     /// `@FR-R-FieldAppend` — [`Self::record_finish`]'s plain-field path: the length bump of the
     /// vector field `pos` bytes into `data`.
     #[inline]

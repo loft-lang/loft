@@ -5298,6 +5298,16 @@ impl Stores {
         facts
     }
 
+    /// Is `tp`'s default all zero bytes — no nullable field, no declared default, no text, no
+    /// variant tag, recursively; an enum's default is its zero tag?  See [`Self::heap_facts`].
+    /// The emitter asks it to prefill a fresh element with one zero fill
+    /// (`@FR-R-FieldAppend`'s bare clause).
+    #[inline]
+    #[must_use]
+    pub fn zero_default(&self, tp: u16) -> bool {
+        self.heap_facts(tp).1
+    }
+
     /// Can a value of `tp` own a heap record?  See [`Self::heap_facts`].
     #[inline]
     pub(super) fn type_owns_heap(&self, tp: u16) -> bool {
