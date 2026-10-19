@@ -144,12 +144,11 @@ the compiler rule that would make the natural spelling do the same.
   derives a skip twin, a tag reader and an in-order entry walk from `read_value`'s eager
   recursion, not a local rewrite.  Cheaper and built since: `(R-FieldAppend)`'s bare clause
   appends each decoded child through `vector_append` directly (cbor `decode` −20 %, the same
-  decoder `check_request` runs; the switch A/B moves the row 5.00× → 4.81×).  PRICED, NOT BUILT: a push window over the decoder's loops
-  that holds the vector's record number rather than its address (the child's call claims in
-  the same store) — cbor `decode` −40 % with the window's zero fill, hash equal; it needs the
-  header hoist, `mint_loop` and `mint_window_ok` to admit the pooled buffer's clear, the
-  buffer's placement and the destination call, and growth by doubling instead of an up-front
-  reservation (the trip count is read from the frame).  PRICED and DROPPED: lending the decode's store across calls (the caller-lent
+  decoder `check_request` runs; the switch A/B moves the row 5.00× → 4.81×).  BUILT since:
+  `(R-PushRec)`'s apart-call clause holds the decoder loops' push header across the child's
+  call (cbor `decode` 3.42× → 2.62×, `check_request` 4.74× → 4.60×).  PRICED, NOT BUILT: the
+  held window on top of it — the length in a local, written at the loop's end, growth by
+  doubling — `decode` 5.15 → 4.73 ms by hand, hash equal (formal/rewrites.md's open list).  PRICED and DROPPED: lending the decode's store across calls (the caller-lent
   buffer, cleared before each call) — +29 % instructions, +25 % cycles: clearing the previous
   tree claim by claim and claiming again from a reused store costs more than a fresh store's
   bump claims and one whole-store free.  The same holds for `encode`'s 13 stores per call.

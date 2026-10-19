@@ -18,7 +18,9 @@ All notable changes to the loft language and interpreter.
   pooled call buffer, the call's result and views into it) and the vector appears only in its
   own mint group or as a placement's host.  No up-front reservation: the trip count may be
   read from input.  `cbor/decode` 6.57 → 5.15 ms hand-priced, hashes equal; fires in cbor,
-  pluginabi, drawing, gridmesh and tween.  Switch `LOFT_NO_APART_MINT`.  Guard
+  pluginabi, drawing, gridmesh and tween.  The switch A/B over those five packages (26
+  routines): geomean −1.1 %, hashes equal, none slower by 3 %; `decode` 3.42× → 2.62×,
+  `check_request` 4.74× → 4.60×.  Switch `LOFT_NO_APART_MINT`.  Guard
   `tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft`, pins
   `tests/apart_mint.rs`.
 - The emission audit binds `(R-PushFill)`'s run-clause header and window (now one tagged
