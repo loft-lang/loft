@@ -5157,9 +5157,12 @@ loft: an effect, or a fault the program would have reported.  (3) is what keeps 
 the twin takes every branch the plain form takes.  It is the validation half of
 `(R-DecodeView)`'s structure clause and a rule of its own: any caller that reads a status out
 of a builder's result — a parser asked only whether input parses — is the same shape.
-Switch `LOFT_NO_DEAD_RESULT` (planned); falsifier: under `LOFT_HOIST_VERIFY=1` the plain call
-runs beside the twin and every live field is compared.  Priced on `check_request` before it is
-built (worklist.md).
+On `check_request` itself `(R-PureReuse)` already folds the two decodes into one whose `value`
+is read, so this rule reaches it only as that clause's validation step.  Switch
+`LOFT_NO_DEAD_RESULT` (planned); falsifier: under `LOFT_HOIST_VERIFY=1` the plain call runs
+beside the twin and every live field is compared.  Priced in worklist.md: a validation walk
+in place of the decode it guards is −5 % of `check_request`, and with the structure clause
+−65 %.
 
 ### A call repeated on the same input answers its first result — PROPOSED
 
@@ -5195,8 +5198,13 @@ built (worklist.md).
 ```
 
 **In words.**  A program that inspects one result several times often computes it several
-times: `check_request` decodes the same frame to ask whether it decodes, then again to read
-one key, and a plugin that reads a request's three fields decodes it three times.  When the
+times: a plugin that reads a request's three fields decodes it three times.  `(R-PureReuse)`
+is this rule's narrow case, built: two projection wrappers of one effect-free function on
+the same argument variables, in one block, with nothing between them that writes — which is
+why `check_request` decodes its frame once.  This rule widens each of those limits: the
+sites may sit in different statements and branches (S1 reaching S2 on every path), there may
+be more than two, an argument may be a pure expression, and a site may read the result
+other than through one field.  When the
 routine has no effect, cannot report a fault and its input has not changed, the second call
 can only answer what the first answered, so it may read that answer instead.  (1)-(4) are
 "the second call can observe nothing the first did not", and (5) keeps the shared result a
@@ -5207,7 +5215,8 @@ the program states nothing about that, so the rule may choose it.  Together with
 that are read", for any number of inspections; `(R-DecodeView)`'s structure clause is the
 narrow case of a value inspected once and never built.  Switch `LOFT_NO_SHARED_CALL`
 (planned); falsifier: under `LOFT_HOIST_VERIFY=1` S2 calls f again and compares the two
-results field by field.  Priced on `check_request` before it is built (worklist.md).
+results field by field.  Not priced: no measured row repeats a call that `(R-PureReuse)`
+leaves standing.
 
 Found measuring what still keeps six routines near 100× native; ordered by how
 many programs they reach, not by those six (the owner: *improve all loft scripts as
