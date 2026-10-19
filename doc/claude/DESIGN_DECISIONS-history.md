@@ -4780,6 +4780,13 @@ field copied on escape, or no views and the levers that need no decision (≈ 5.
 *"In the optimizations everything is possible as long as the semantics of the original program
 is kept.  So giving a view with operations per character is fine."*
 
+Extended 2026-10-19 to decoded STRUCTURE, read once.  `check_request` was the worst row left
+(4.97× Rust) with C141's leaves built: the decode still built a `CMap`, a vector of three
+`CborEntry` records and an enum value per key and value, about 40 % of the call, to answer
+one key.  Presented with that example as three options — views for read-once values only,
+views for every decoded value (re-parsing on each walk, weighed per site), or no extension and
+the in-place-entries lever (≈ 3.5×) — the owner chose read-once only.
+
 ## C142 — A null inside a `{…}` hole renders plain `null`, never the reason it is null
 
 Decided 2026-10-08 by the owner: *"I do not want to see the reason of null in {} expressions"*.

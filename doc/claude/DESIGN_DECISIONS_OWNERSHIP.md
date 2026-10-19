@@ -258,6 +258,15 @@ program cannot observe, and the Rust reference never does it (`&str` into the fr
 stays inside @C125: no program holds a view by choice, so the programmer still never chooses
 between two kinds of value — the compiler proves where a view is the same value.
 
+**Decoded structure, read once.** A decoded value's STRUCTURE — its records, vectors and enum
+values, not only its texts and byte strings — may be a view into the bytes too, but only for a
+value that is read once and never leaves the function that decoded it
+(`pa_text(pa_decode(frame), "op")`): the walk that reads it walks the bytes, and nothing is
+built.  A decoded value the program keeps, hands out, or walks more than once is built as
+today, so the cost of a value stays where the program can see it — a kept value is a built
+one.  Validation is not deferred: whatever the decode reports about the whole frame (`ok`, a
+truncated frame) it still reports up front.
+
 **Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
 **Holds at:** `@C141` — the rule `(R-DecodeView)` in [formal/rewrites.md](formal/rewrites.md)
 (instance 1 built: `src/generation/decode_view.rs`); guards

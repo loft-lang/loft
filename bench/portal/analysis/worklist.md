@@ -136,8 +136,8 @@ the compiler rule that would make the natural spelling do the same.
   temporaries are records freed after the copy.  Lending the decode's store across calls
   (R-Reuse through a function boundary) and building entries in place are each ~15–20 % by the
   profile, ≈ 3.5× together.  Below 3× needs the decode to build only what is read, which is
-  `(R-DecodeView)` carried from texts to entries (C141's direction, not yet decided for this
-  half).  PRICED and DROPPED: lending the decode's store across calls (the caller-lent
+  `(R-DecodeView)` carried from texts to entries — DECIDED (C141, read-once only): a decoded
+  value read once inside the function that decoded it may be walked in its bytes.  PRICED and DROPPED: lending the decode's store across calls (the caller-lent
   buffer, cleared before each call) — +29 % instructions, +25 % cycles: clearing the previous
   tree claim by claim and claiming again from a reused store costs more than a fresh store's
   bump claims and one whole-store free.  The same holds for `encode`'s 13 stores per call.
