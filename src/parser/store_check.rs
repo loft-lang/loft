@@ -275,7 +275,7 @@ impl Parser {
     /// holds".
     ///
     /// The range is asked HERE, where a narrow destination needs it, and never written into the
-    /// expression's type (owner ruling 2026-10-19): `x & 255` is an `integer`, a local bound to
+    /// expression's type: `x & 255` is an `integer`, a local bound to
     /// it is an `integer`, and only the store that meets the mask proves the fit.
     pub(super) fn int_range(&self, code: &Value) -> Option<(i64, i64)> {
         if let Some(n) = self.const_int(code) {

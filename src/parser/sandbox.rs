@@ -364,8 +364,8 @@ impl Parser {
     /// to, so it is free.  Admission (`param_lock_violations`) then rejects an override
     /// whose lock token the calling profile does not grant.
     /// `@FR-Cap-Set` — is an argument the locked parameter's default?  It is when it FOLDS at
-    /// compile time to the default's value: `1`, `2 - 1`, a named constant (owner ruling
-    /// 2026-10-19).  A local or a parameter is not, whatever it holds — the proof belongs to
+    /// compile time to the default's value: `1`, `2 - 1`, a named constant.  A
+    /// local or a parameter is not, whatever it holds — the proof belongs to
     /// the expression written at the call, as a narrowing's does (`@FR-N-Arith`).
     fn is_the_default(&self, arg: &Value, default: &Value) -> bool {
         if arg.unspan() == default.unspan() {

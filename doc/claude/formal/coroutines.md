@@ -91,7 +91,7 @@ ordinary call's parameter already means: the parameter is bound to a VALUE, not 
 variable. Changing that value (`w += [2]`, `lg.n = 50`) is seen, because both sides hold it;
 pointing the caller's variable at a different value (`lg = Log { n: 50 }`) is not, because the
 frame never named the variable. That is the mirror of `(F-ParamRebind)`, which says the same of
-the callee rebinding its own parameter (owner ruling 2026-10-19). The alternative — the frame
+the callee rebinding its own parameter. The alternative — the frame
 tracking the caller's variable — would make a parameter an alias of a variable, which loft does
 nowhere else. And because the frame still reads the old value, the rebind must not free it: the
 release waits for the frame.

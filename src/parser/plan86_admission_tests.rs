@@ -1976,7 +1976,7 @@ fn unprovable_while_is_rejected() {
 
 /// `@FR-Cap-Call` — an UNGATED stdlib function is admitted under a profile that allows no
 /// library at all, because it computes only on its arguments; a host-touching one names its
-/// gate, and a grant of that gate admits it (owner ruling 2026-10-19).
+/// gate, and a grant of that gate admits it.
 #[test]
 fn an_ungated_stdlib_function_is_admitted_with_no_library_allowed() {
     let src = "fn pure() -> integer { v = [3, 1, 2]; v.sort(); len(\"abc\") * 2 + v[0] }\n\

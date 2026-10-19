@@ -669,8 +669,8 @@ pub fn admit_capabilities(
             let cap = def.cap();
             // `@FR-Cap-Safe` — an UNGATED stdlib function is safe: it computes only on its
             // arguments, because every stdlib function that reaches the host (a file, the
-            // environment, the clock, the output stream, the process, a thread) carries a gate
-            // (owner ruling 2026-10-19).  So it is admitted under every profile, with no
+            // environment, the clock, the output stream, the process, a thread) carries a gate.
+            // So it is admitted under every profile, with no
             // `allow_libs = ["code"]` needed to multiply.  An ungated function of any other
             // library is still the host's to vet.
             if cap.is_empty() && def.source == crate::data::STD_SOURCE {
