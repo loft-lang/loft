@@ -5833,8 +5833,11 @@ impl Parser {
                 // loft#2066 — a NAMED-width sibling expects nothing of this arm
                 // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
                 // it did when the sibling was its expectation: native reads an untyped one as 0.
+                // A nullable sibling is expected as `integer?` already, so it needs nothing here.
+                let named_width = !matches!(true_type, Type::Optional(_))
+                    && matches!(true_type.base(), Type::Integer(sp) if sp.forced_size.is_some());
                 if false_is_null_literal
-                    && matches!(true_type, Type::Integer(sp) if sp.forced_size.is_some())
+                    && named_width
                     && let Value::Block(bl) = &mut false_code
                     && let Some(last) = bl.operators.last_mut()
                 {
