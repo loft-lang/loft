@@ -270,8 +270,9 @@ impl Parser {
     /// `@FR-N-Arith` — the values an integer EXPRESSION can take, as far as its own shape
     /// proves them: a constant is its value, a local or a call is its DECLARED range, a narrow
     /// field or element read is its width, `+ - *` the interval arithmetic of their operands,
-    /// `a & c` (c ≥ 0) is `[0, c]`, and `a % c` is `[-(|c|-1), |c|-1]` — `[0, |c|-1]` when `a`
-    /// cannot be negative.  `None` is "anything an integer holds".
+    /// `a & c` (c ≥ 0) is `[0, c]`, `a % c` is `[-(|c|-1), |c|-1]` — `[0, |c|-1]` when `a`
+    /// cannot be negative — and `x ?? d` the union of its two.  `None` is "anything an integer
+    /// holds".
     ///
     /// The range is asked HERE, where a narrow destination needs it, and never written into the
     /// expression's type (owner ruling 2026-10-19): `x & 255` is an `integer`, a local bound to
@@ -287,7 +288,20 @@ impl Parser {
                 let ((a, b), (c, d)) = self.int_range(then).zip(self.int_range(other))?;
                 Some((a.min(c), b.max(d)))
             }
-            Value::Block(bl) if bl.name != "ncc" => self.int_range(bl.operators.last()?),
+            // `@FR-N-Coal` — `x ?? d` lowers to `{ tmp = x; if tmp { tmp } else { d } }`: it
+            // answers the subject's values or the default's, so its range is their union.  Read
+            // from the subject rather than from the temp, whose type is the join's.
+            Value::Block(bl) if bl.name == "ncc" => {
+                let [Value::Set(_, subject), last] = &bl.operators[..] else {
+                    return None;
+                };
+                let Value::If(_, _, default) = last.unspan() else {
+                    return None;
+                };
+                let ((a, b), (c, d)) = self.int_range(subject).zip(self.int_range(default))?;
+                Some((a.min(c), b.max(d)))
+            }
+            Value::Block(bl) => self.int_range(bl.operators.last()?),
             Value::Call(d, args) => {
                 let name = self.data.def(*d).name();
                 let operand = |i: usize| args.get(i).and_then(|a| self.int_range(a));
