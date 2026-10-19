@@ -16002,12 +16002,12 @@ impl Parser {
     /// and the destination checks the joined range, so an integer expectation is the full
     /// `integer`; every other type is expected as it is.
     ///
-    /// A NAMED width (`u8`, `i16` — a `forced_size`) is a declaration, typically the
-    /// destination's own, and keeps holding its siblings: `c: u8 = if … { a } else { a + b }`
-    /// refuses the arm that does not fit, as it always has.
+    /// A NAMED width (`u8`, `i16` — a `forced_size`) is the SIBLING's own declaration, not
+    /// the construct's: `if t { a } else { b }` over `a: u8`, `b: i8` joins to their union
+    /// (loft#2066).  A destination that names a width checks the join at its own store, so
+    /// `c: u8 = if … { a } else { a + b }` is still refused there.
     pub(super) fn arm_expectation(sibling: &Type) -> Type {
         match sibling.base() {
-            Type::Integer(sp) if sp.forced_size.is_some() => sibling.clone(),
             Type::Integer(_) if matches!(sibling, Type::Optional(_)) => {
                 Type::optional(crate::data::I64.clone())
             }
