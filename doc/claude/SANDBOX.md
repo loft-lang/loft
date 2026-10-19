@@ -109,7 +109,7 @@ plug = ["fn:apply_op"]        # one function
 plug = ["src/oplog.loft"]     # every function in a file — `*`, `**`, `?` allowed
 
 [profile.plug]                # ⚠ REQUIRED — `plug` above is a PROFILE NAME, not a keyword
-allow_libs = ["code"]         # the grants live HERE; under `[sandbox]` they are ignored
+allow = ["io#append"]         # the grants live HERE; under `[sandbox]` they are ignored
 ```
 
 ⚠⚠ **`plug` is a name you chose, and every key under `[sandbox]` reads as
@@ -124,11 +124,24 @@ them under `[sandbox]` is silently a no-op: they are parsed as a profile named
 `allow_libs` with the grants as its selectors. That is the second round of the
 mistake, and it is the reason the first one is worth a diagnostic.
 
-⚠ **Any library that builds a vector needs `allow_libs = ["code"]`.** The grant
-key is the *source file* a def comes from — `default/01_code.loft` → `code`,
-`03_text.loft` → `text` — so ordinary collection and text work reaches the
-stdlib under those names. An otherwise pure library is not admissible without
-them, which surprises anyone who reads "no `#native`, no I/O" as sufficient.
+**The stdlib's safe functions need no grant (`(Cap-Safe)`).** Arithmetic, text, collections,
+JSON, reflection, generators — every stdlib function without a gate — compute only on their
+arguments, so every profile may call them; an empty `[profile.plug]` section runs a pure
+script.  The stdlib functions that reach the host each carry a gate the profile grants:
+
+| Gate | Functions |
+|---|---|
+| `io#append` | `print`, `println`, `eprint`, `eprintln`, `log_info` … `log_fatal` |
+| `process#update` | `exit` |
+| `time#read` | `now`, `ticks`, `ymd_days_ago` |
+| `env#read` | `arguments`, `directory`, `user_directory`, `program_directory`, `source_dir`, `env_variable(s)`, the temp/cache dirs |
+| `fs#read` / `fs#update` | files, directories, `store_load*`, `store_bind_lazy`, `store_lazy_query`, `store_lazy_range` |
+| `thread#update` | `for … par(…)` loops and `parallel { … }` blocks |
+| `host#read` / `host#append` | `host_input` / `host_output` |
+
+`index/stdlib_ungated.txt` is the reviewed list of the ungated rest; a stdlib function added
+without a gate fails `the_ungated_stdlib_surface_is_the_reviewed_list` until it is gated or
+confirmed safe.  `allow_libs` is for a host's OWN libraries.
 
 Prefer the **path selector** for plugin-shaped code. A module with private helpers
 needs all of them designated, and naming each one is tedious enough that the

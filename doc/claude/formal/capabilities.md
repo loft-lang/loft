@@ -67,6 +67,7 @@ gated.
   (Cap-Own)      owned(e)                                                ⟹  P ; ctx ⊢ e ✓
   (Cap-Call)     e = call f ;  gate(f) = g#r ;  ( g#r ∈ P  ∨  lib(f) ∈ P.libs )
                                                                           ⟹  P ; restricted ⊢ e ✓
+  (Cap-Safe)     e = call f ;  f ∈ stdlib ;  gate(f) = ⊥                  ⟹  P ; restricted ⊢ e ✓
   (Cap-Set)      e = pass arg a to param p of host f ;
                  a ≡ default(p)  ∨  lock(p) = ⊥  ∨  lock(p) ∈ P           ⟹  P ; restricted ⊢ e ✓
   (Cap-Read)     e = read host field m ;   readcap(m) = ⊥  ∨  readcap(m) ∈ P
@@ -78,8 +79,12 @@ gated.
 
 **In words.** Outside the sandbox nothing is gated (`Cap-Trusted`). Inside it, anything a
 script does to data **it owns** is free (`Cap-Own`) — only reaching into the *host* is
-checked. To **call** a host function you need its gate granted, or its whole library allowed
-(`Cap-Call`); once you may call it, you may pass any **argument** — except a parameter the
+checked. An ungated STDLIB function is safe — it computes only on its arguments — so any
+profile may call it (`Cap-Safe`): every stdlib function that reaches the host carries a gate
+(`fs#…`, `env#read`, `time#read`, `io#append` for the output stream, `process#update` for
+`exit`, `thread#update` for `par` and `parallel { … }`, `host#read` / `host#append`), and
+`index/stdlib_ungated.txt` is the reviewed list of the rest, held by a guard.  To **call** any
+other host function you need its gate granted, or its whole library allowed (`Cap-Call`); once you may call it, you may pass any **argument** — except a parameter the
 host **locked** to its default, which needs the lock (`Cap-Set`). **Reading** a host field is
 free unless the host marked it private (`Cap-Read`); **updating or appending** to one needs
 the field's grant, and *append* is only meaningful on a collection (`Cap-Write`). Anything

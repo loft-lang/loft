@@ -474,6 +474,14 @@ fn referenced_defs(data: &Data, fn_dnr: u32, out: &mut HashSet<u32>) {
         Value::FnRef(d, _, _) if *d >= 0 => {
             out.insert(*d as u32);
         }
+        // A `parallel { … }` block starts its arms on threads: the code generator lowers it to
+        // `OpParallelBegin`, which carries the block's gate, so the walk names that op here.
+        Value::Parallel(_) => {
+            let begin = data.def_nr("OpParallelBegin");
+            if begin != u32::MAX {
+                out.insert(begin);
+            }
+        }
         _ => {}
     });
 }
@@ -659,6 +667,15 @@ pub fn admit_capabilities(
             }
             // 2.3: capability check (deny-by-default).
             let cap = def.cap();
+            // `@FR-Cap-Safe` — an UNGATED stdlib function is safe: it computes only on its
+            // arguments, because every stdlib function that reaches the host (a file, the
+            // environment, the clock, the output stream, the process, a thread) carries a gate
+            // (owner ruling 2026-10-19).  So it is admitted under every profile, with no
+            // `allow_libs = ["code"]` needed to multiply.  An ungated function of any other
+            // library is still the host's to vet.
+            if cap.is_empty() && def.source == crate::data::STD_SOURCE {
+                continue;
+            }
             if cap.is_empty() {
                 violations.push(CapViolation::UntaggedSymbol { from, symbol });
             } else if !profile.is_some_and(|p| p.allows(cap)) {
@@ -721,6 +738,13 @@ impl CapViolation {
 /// prefix stripped; method names (`t_<len><Type>_<m>`) are left as-is.
 fn display_name(data: &Data, def_nr: u32) -> String {
     let n = data.def(def_nr).name();
+    // The two thread starters a program never names: the source construct is what it wrote.
+    if n == "OpParallelBegin" {
+        return "parallel { … }".to_string();
+    }
+    if n.starts_with("n_parallel_") && !data.def(def_nr).cap().is_empty() {
+        return "for … par(…)".to_string();
+    }
     n.strip_prefix("n_").unwrap_or(n).to_string()
 }
 

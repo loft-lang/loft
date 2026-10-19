@@ -221,7 +221,7 @@ pub fn join(self: const vector<text>, sep: text) -> text {
 /// Returns the script-level arguments passed after the script path.
 /// Does not include the loft binary name or loft CLI flags.
 
-pub fn arguments() -> vector<text>;
+pub fn arguments() -> vector<text> env#read;
 #rust"stores.os_arguments()"
 #impure(host_io)
 // Why the section is re-opened here rather than the definitions moved (a note for
@@ -284,19 +284,19 @@ pub fn chr(cp: integer) -> text {
 // --- Environment ---
 /// Returns the UTC calendar date `days` days before today as `YYYY-MM-DD`.
 /// Use for cutoff dates in time-window filters; negative `days` clamps to today.
-pub fn ymd_days_ago(days: integer) -> text;
+pub fn ymd_days_ago(days: integer) -> text time#read;
 #rust"Stores::ymd_days_ago_native(@days)"
 #impure(host_io)
 /// Returns the current working directory, optionally with v appended as a subpath.
 /// loft sets the working directory to the program's own directory, so this is
 /// that directory — unless the file declares `#cwd`, which keeps the directory
 /// the program was launched from.
-pub fn directory(v: text = "") -> text;
+pub fn directory(v: text = "") -> text env#read;
 #rust"Stores::os_directory_native(@v)"
 #impure(host_io)
 /// Returns the current user's home directory, optionally with v appended.
 /// Use for storing user-specific data or configuration.
-pub fn user_directory(v: text = "") -> text;
+pub fn user_directory(v: text = "") -> text env#read;
 #rust"Stores::os_home_native(@v)"
 #impure(host_io)
 /// Returns the directory containing the running executable, optionally with v appended.
@@ -304,11 +304,11 @@ pub fn user_directory(v: text = "") -> text;
 /// the executable is the `loft` binary itself, and a `--native` run executes from a
 /// temporary build directory, so neither names the script's directory — use
 /// `source_dir()` for that.
-pub fn program_directory(v: text = "") -> text;
+pub fn program_directory(v: text = "") -> text env#read;
 #rust"Stores::os_executable_native(@v)"
 #impure(host_io)
 /// Returns the directory containing the main source file being executed.
 /// Use to locate data files relative to the script, regardless of working directory.
-pub fn source_dir() -> text;
+pub fn source_dir() -> text env#read;
 #rust"Stores::source_dir_native()"
 #impure(host_io)

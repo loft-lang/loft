@@ -211,6 +211,15 @@ git do.
 
 ### Bug fixes
 
+**A sandbox may use the safe stdlib without a grant.**  Arithmetic, text, collections, JSON and
+the other stdlib functions that compute only on their arguments are admitted under every sandbox
+profile; `allow_libs = ["code"]` is no longer needed to multiply.  The stdlib functions that reach
+the host now carry a gate a profile grants: `io#append` (print and log), `process#update` (`exit`),
+`time#read` (`now`, `ticks`), `env#read` (`arguments` and the program directories), `fs#read`
+(lazy stores), `thread#update` (`par` loops and `parallel { … }` blocks) and
+`host#read` / `host#append` (`host_input` / `host_output`).  A profile that printed through
+`allow_libs = ["code"]` now grants `io#append` instead.
+
 **A narrowing is proved at the store, not carried in the type.**  `x & 255`, `a % 10`, `u8 + u8`
 and an `if` of constants no longer give their result a hidden range type.  The store that needs the
 range proves it there: `lo: u8 = x & 255`, `s: u16 = p + q`, `(x & 255) as u8` and
