@@ -1381,6 +1381,15 @@ jobs:
       # default toolchain unless told otherwise: under a matrix toolchain it could not read the
       # rlib that toolchain had just built (E0463) and fell back to a cached stable one that
       # predated the tree (`E0425 op_pow_int`).  One toolchain for the build and the pipeline.
+      # The restored `target/` is keyed on Cargo.lock and saved only on a miss, so its loft
+      # rlibs are main's from whenever the lock last changed.  `native_lib::find_loft_rlib`
+      # prefers an unhashed `libloft.rlib`, then the newest hashed one — a cached rlib wins over
+      # the one this build makes, and generated code naming a runtime function the cached
+      # library lacks fails to compile (`E0599 vector_record_append`, the branch probe for
+      # PR #2069).  Dropped here, the only loft rlib is the one `cargo test` builds below.
+      - name: Drop the cached loft rlibs
+        run: rm -f target/release/libloft.rlib target/release/deps/libloft-*.rlib target/release/deps/libloft-*.rmeta
+
       - name: Test (ubuntu, ${{ matrix.toolchain }})
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.tc.outputs.toolchain }}
