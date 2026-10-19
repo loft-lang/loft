@@ -5830,6 +5830,18 @@ impl Parser {
                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
+                // loft#2066 — a NAMED-width sibling expects nothing of this arm
+                // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
+                // it did when the sibling was its expectation: native reads an untyped one as 0.
+                if false_is_null_literal
+                    && matches!(true_type, Type::Integer(sp) if sp.forced_size.is_some())
+                    && let Value::Block(bl) = &mut false_code
+                    && let Some(last) = bl.operators.last_mut()
+                {
+                    *last = self.null_value(&true_type);
+                    bl.result = true_type.clone();
+                    false_type = true_type.clone();
+                }
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
                 // value is whichever arm ran, so the expression promises no more than either.
                 if let (Some(tc), Some(fc)) =
@@ -5954,6 +5966,14 @@ impl Parser {
         let mut result_tp = merge_dependencies(&true_type, &false_type);
         // `@FR-I-Join` — the two arms' integer ranges join to their union.
         if let Some(union) = Self::integer_arm_union(&true_type, &false_type) {
+            result_tp = union;
+        }
+        // ...and so does an `else if` CHAIN, which is an arm too (loft#2066): its arms are
+        // parsed expecting the full `integer` (`arm_expectation`), so its range has to reach
+        // the join, or a declared destination checks only the then arm's.
+        if let Some(chain) = &chain_borrow
+            && let Some(union) = Self::integer_arm_union(&result_tp, chain)
+        {
             result_tp = union;
         }
         if let Some(chain) = &chain_borrow {
@@ -16004,13 +16024,18 @@ impl Parser {
     ///
     /// A NAMED width (`u8`, `i16` — a `forced_size`) is the SIBLING's own declaration, not
     /// the construct's: `if t { a } else { b }` over `a: u8`, `b: i8` joins to their union
-    /// (loft#2066).  A destination that names a width checks the join at its own store, so
+    /// (loft#2066).  It expects nothing of the next arm, so that arm keeps its own type — the
+    /// full `integer` would convert it at its tail and two `u8` arms would join to `integer`.
+    /// A destination that names a width checks the join at its own store, so
     /// `c: u8 = if … { a } else { a + b }` is still refused there.
     pub(super) fn arm_expectation(sibling: &Type) -> Type {
         match sibling.base() {
             Type::Integer(_) if matches!(sibling, Type::Optional(_)) => {
                 Type::optional(crate::data::I64.clone())
             }
+            // A NAMED width is the sibling's own declaration: the next arm answers in its own
+            // type and the two join (loft#2066).
+            Type::Integer(sp) if sp.forced_size.is_some() => Type::Unknown(0),
             Type::Integer(_) => crate::data::I64.clone(),
             _ => sibling.clone(),
         }
