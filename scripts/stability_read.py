@@ -219,9 +219,14 @@ def repo_row(sha):
             text = show(sha, f)
             rules.update(DEF_INLINE.findall(text))
             deviations += sum(int(x) for x in re.findall(r"OPEN:\s*\**\s*(\d+)", text))
+    # The same file kinds `rule_tags.py` reads (`.rs` and `.loft`): a rule named in a test's
+    # expectation file or a fixture's JSON is not a guard, and counting it read 359 where
+    # the coverage report read 246.
     cited = {d: set() for d in ("src", "tests")}
     for d in cited:
-        for tag in git("grep", "-ho", r"@FR-[A-Za-z0-9-]*", sha, "--", d).split("\n"):
+        out = git("grep", "-ho", r"@FR-[A-Za-z0-9-]*", sha, "--", f"{d}/**/*.rs", f"{d}/**/*.loft",
+                  f"{d}/*.rs", f"{d}/*.loft")
+        for tag in out.split("\n"):
             m = CITE.match(tag.strip())
             if m:
                 cited[d].add(m.group(1))
