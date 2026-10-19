@@ -53,17 +53,22 @@ jobs:
 
       - name: Install packaging tools (Windows)
         if: runner.os == 'Windows'
-        # Chocolatey's feed answers 503 now and then, and `choco` then reports "installed 0/0"
-        # with exit 0 — the step passed and make-release.sh stopped on the missing `zip`.  So
-        # the install is retried, and the step fails HERE when `zip` is still not on PATH.
+        # Chocolatey's feed answers 503 for hours at a time, and `choco` then reports
+        # "installed 0/0" with exit 0.  The install is retried; when the feed stays down the
+        # runner's preinstalled 7-Zip stands in (make-release.sh and the smoke test both take
+        # `7z`), and the step fails only when neither is there.
         run: |
-          for ($i = 1; $i -le 4; $i++) {
+          for ($i = 1; $i -le 3; $i++) {
             choco install zip unzip -y --no-progress
             if (Get-Command zip -ErrorAction SilentlyContinue) { exit 0 }
-            Write-Host "zip not installed (attempt $i of 4) - retrying"
-            Start-Sleep -Seconds (20 * $i)
+            Write-Host "zip not installed (attempt $i of 3)"
+            Start-Sleep -Seconds (15 * $i)
           }
-          Write-Error "chocolatey did not install zip after 4 attempts"
+          if (Get-Command 7z -ErrorAction SilentlyContinue) {
+            Write-Host "chocolatey is unavailable - 7-Zip packs and unpacks the bundle"
+            exit 0
+          }
+          Write-Error "neither zip nor 7z is available"
           exit 1
 
       - name: Cache cargo
@@ -141,7 +146,7 @@ jobs:
           fi
 
           rm -rf smoke && mkdir smoke
-          unzip -q "dist/$name.zip" -d smoke
+          if command -v unzip >/dev/null; then unzip -q "dist/$name.zip" -d smoke; else 7z x -bso0 -bsp0 -osmoke "dist/$name.zip"; fi
           logs="$PWD/smoke-logs"; mkdir -p "$logs"
           cd "smoke/$name"
 
