@@ -9178,13 +9178,21 @@ fn main() {
     // (DLL staging reads the parse), and anything the manifest registers beyond loft
     // sources (`startup_cache::native_fast_path`).  A decline costs nothing new: the slow
     // path still hits the generated-Rust cache and skips rustc as before.
-    let native_fingerprint = native_source_key_fingerprint(
-        native_release,
-        native_debug,
-        lean,
-        html_names,
-        debug_name.as_deref(),
-    );
+    // Only a run that reaches the `'native` block reads the fingerprint, and computing it can
+    // spawn `rustc --version` (the runtime rlib's lookup asks which rustc wrote it) — a cost an
+    // interpreter run must not pay, and on macOS a spawn that starts the driver-death watcher
+    // shell besides (loft#2070).
+    let native_fingerprint = if native_mode || native_emit.is_some() {
+        native_source_key_fingerprint(
+            native_release,
+            native_debug,
+            lean,
+            html_names,
+            debug_name.as_deref(),
+        )
+    } else {
+        0
+    };
     // loft#1684 — the program cache's key names the search path AS GIVEN, captured before
     // the parse: resolving a registry `use` appends that package's directory to
     // `p.lib_dirs`, so a key taken after the parse was one no pre-parse lookup computes —
