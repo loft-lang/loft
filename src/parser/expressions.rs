@@ -10460,7 +10460,7 @@ use a separate collection or add after the loop"
                     };
                     if !handled
                         && !self.first_pass
-                        && !matches!(values[i], Type::Null)
+                        && !matches!(values[i].base(), Type::Null)
                         && !self.is_null_source(member)
                     {
                         self.guard_declared_range(member, &slots[i], &values[i], nullable);

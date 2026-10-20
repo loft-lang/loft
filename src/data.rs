@@ -9176,8 +9176,8 @@ impl Data {
                     t != u32::MAX && {
                         let at = self.attr(t, fn_name);
                         at != usize::MAX
-                            && matches!(self.def(t).attributes[at].typedef,
-                                Type::Routine(r) if r == d_nr)
+                            && matches!(self.def(t).attributes[at].typedef.base(),
+                                Type::Routine(r) if *r == d_nr)
                     }
                 });
             if !slot_reports {

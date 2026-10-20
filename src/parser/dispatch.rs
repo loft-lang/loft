@@ -76,7 +76,7 @@ impl Parser {
         // A `null` literal fits a `τ?` slot as it is, and a dense one only by storing a null
         // where none is declared — `(N-Store)`'s step, LOSSY.  So a declared `τ?` member is
         // the selection, and two of them tie (loft#2081, `@FR-Disp-Applicable`).
-        if matches!(arg, Type::Null) {
+        if matches!(arg.base(), Type::Null) {
             return Some(if matches!(param, Type::Optional(_)) {
                 EXACT
             } else {
@@ -161,7 +161,7 @@ impl Parser {
         // set decides it rather than the pre-dispatch ladder, which ranks no nullability.
         if routed
             .iter()
-            .any(|t| !matches!(t, Type::Null) && self.data.key_identity(t).is_none())
+            .any(|t| !matches!(t.base(), Type::Null) && self.data.key_identity(t).is_none())
         {
             return None;
         }
