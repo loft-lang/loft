@@ -9164,8 +9164,26 @@ impl Data {
             // Without it a stdlib collision read as a bare "Cannot redefine 'sum'", which
             // does not say that `sum` is the stdlib's rather than a duplicate of the
             // reader's own (loft#863).
-            let text = self.redefinition_text(lexer, d_nr, fn_name);
-            diagnostic!(lexer, Level::Error, "{text}");
+            // A METHOD colliding with a stdlib method of its receiver type is reported by the
+            // type's slot below, which names the stdlib and the type (`` `negate` is a stdlib
+            // method on `float` ``); saying "Cannot redefine" here as well was one mistake, two
+            // refusals (loft#2086).  Only when that slot holds this very def, so the slot's
+            // report is certain.
+            let slot_reports = (is_self || is_both)
+                && self.def(d_nr).source == STD_SOURCE
+                && arguments.first().is_some_and(|a| {
+                    let t = self.method_family(self.type_def_nr(&a.typedef));
+                    t != u32::MAX && {
+                        let at = self.attr(t, fn_name);
+                        at != usize::MAX
+                            && matches!(self.def(t).attributes[at].typedef,
+                                Type::Routine(r) if r == d_nr)
+                    }
+                });
+            if !slot_reports {
+                let text = self.redefinition_text(lexer, d_nr, fn_name);
+                diagnostic!(lexer, Level::Error, "{text}");
+            }
             // Report and CONTINUE, under a name nothing can reach.  Answering `u32::MAX`
             // here made `parse_function` return `false` — "this was not a function" —
             // with the lexer parked between the parameter list and the `->`, so the
@@ -9277,7 +9295,12 @@ impl Data {
                         "cannot redefine field `{fn_name}` on `{tname}`"
                     );
                 }
-                return u32::MAX;
+                // Report and CONTINUE, as the free-function collision above does: the def is
+                // registered under its own key and simply takes no slot on the type, so the
+                // rest of the definition parses and the error stands alone.  `u32::MAX` made
+                // `parse_function` answer "not a function" with the lexer before `->`, and the
+                // top level reported `Syntax error: unexpected '->'` (loft#2086).
+                return d_nr;
             } else {
                 let a_nr = self.add_attribute(lexer, type_nr, fn_name, Type::Routine(d_nr));
                 self.definitions[type_nr as usize].attributes[a_nr].mutable = false;
@@ -9581,21 +9604,21 @@ impl Data {
     /// The argument types as DISPATCHED: `(F-Recv)`'s argument clause — a `both`/`self`
     /// overload pair takes uniform nullability, so when ANY argument is nullable every
     /// position is asked for as `τ?`, and null propagates regardless of position and of
-    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list, or a
-    /// `null` literal first, has no receiver: the first position becomes `Unknown`, which
-    /// asks for the free `n_<name>`.
+    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list has no
+    /// receiver: the first position becomes `Unknown`, which asks for the free `n_<name>`.  A
+    /// `null` literal stays `Null` in every position: an overload set RANKS it (it fits a
+    /// `τ?` member as it is, loft#2081), and the ladder ([`Self::select`]) reads a leading
+    /// `null` as no receiver itself.
     #[must_use]
     pub fn routed_types(&self, types: &[Type]) -> Vec<Type> {
-        if types.is_empty() || types[0] == Type::Null {
-            let mut out = vec![Type::Unknown(0)];
-            out.extend_from_slice(types.get(1..).unwrap_or(&[]));
-            return out;
+        if types.is_empty() {
+            return vec![Type::Unknown(0)];
         }
         if types.iter().any(|t| matches!(t, Type::Optional(_))) {
             types
                 .iter()
                 .map(|t| {
-                    if matches!(t, Type::Optional(_)) {
+                    if matches!(t, Type::Optional(_) | Type::Null) {
                         t.clone()
                     } else {
                         Type::optional(t.base().clone())
@@ -9614,7 +9637,11 @@ impl Data {
     /// yield exactly one.
     #[must_use]
     pub fn select(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
-        let routed = self.routed_types(types);
+        let mut routed = self.routed_types(types);
+        // A `null` literal first has no receiver: the ladder asks for the free `n_<name>`.
+        if routed[0] == Type::Null {
+            routed[0] = Type::Unknown(0);
+        }
         match self.candidates(source, fn_name, &routed[0]).as_slice() {
             [one] => *one,
             _ => u32::MAX,

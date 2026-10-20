@@ -22296,7 +22296,10 @@ impl Parser {
             } else {
                 self.data.def_nr(&id)
             };
-            if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
+            if d_nr != u32::MAX
+                && self.data.def_type(d_nr) != DefType::EnumValue
+                && !self.type_word_starts_a_value()
+            {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
                     // Still unresolved after pass 2, so this is not a forward reference:
                     // those resolve in `resolve_deferred_unknowns` and take the branch
@@ -22507,6 +22510,14 @@ impl Parser {
     /// `type_name(expr)` — compile-time intrinsic that returns the static type
     /// of `expr` as a text constant.  Works on both type names and expressions:
     /// `type_name(integer)`, `type_name(my_var)`, `type_name(1 + 2)`.
+    /// After `sizeof(` / `type_name(` and a word naming a declared type: does the word start
+    /// an EXPRESSION instead — a struct literal `TPt { … }` or a qualified variant
+    /// `TSh::TCi { … }`?  Read as the bare type, the literal's `{` met `)` and the call was
+    /// refused (loft#2082); the expression path synthesises the same type (`@FR-T-Syn`).
+    fn type_word_starts_a_value(&self) -> bool {
+        self.lexer.peek_token("{") || self.lexer.peek_token("::")
+    }
+
     pub(crate) fn parse_type_name(&mut self, val: &mut Value) -> Type {
         // Try parsing as a type name first (like sizeof does).
         let mut found = false;
@@ -22522,7 +22533,10 @@ impl Parser {
             }
         } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
-            if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
+            if d_nr != u32::MAX
+                && self.data.def_type(d_nr) != DefType::EnumValue
+                && !self.type_word_starts_a_value()
+            {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
                     // Same unresolved-name case `parse_size` handles above, and it was
                     // silent here for the same reason: `*val` kept its `Null` initialiser,

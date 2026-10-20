@@ -3078,6 +3078,12 @@ impl Parser {
                 return false;
             }
             if !self.first_pass && (self.vars.tp(*nr).is_unknown() || !self.vars.is_defined(*nr)) {
+                // A PARAMETER still untyped on pass 2 is a lambda's whose type could not be
+                // inferred: that refusal is the report, so answer "reported" and let the caller
+                // poison the value rather than add an "Unknown variable" per read (loft#2085).
+                if self.vars.is_argument(*nr) && self.vars.tp(*nr).is_unknown() {
+                    return true;
+                }
                 let name = self.vars.name(*nr).to_string();
                 if name == "_" {
                     // loft#795 — `_` DISCARDS its value (each `_ = …` gets its own slot),

@@ -2509,6 +2509,10 @@ impl Parser {
             if !self.first_pass
                 && t.is_unknown()
                 && let Value::Var(nr) = code
+                // A PARAMETER still untyped on pass 2 is a lambda's whose type could not be
+                // inferred, and that refusal is already reported once; one "Unknown variable"
+                // per read of it only buried it (loft#2085, `@FR-Disp-Hint`).
+                && !self.vars.is_argument(*nr)
             {
                 // Name it, like every sibling site does (`objects.rs` reports `Unknown
                 // variable 'x' — did you mean 'y'?`).  A bare "Unknown variable" leaves

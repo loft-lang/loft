@@ -5941,8 +5941,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.expected = saved_expected;
             parsed
         };
-        // `(Slice-Value)` — a slice as an ELEMENT is the vector the slot wants.
-        if let Some(vt) = self.iterator_as_vector(&mut p, &t, &in_t.clone()) {
+        // `(Slice-Value)` — a slice as an ELEMENT is the vector the slot wants, and in a
+        // literal no annotation types it is the vector it makes: left an iterator, it typed
+        // `[src[3..], src[..1]]` as a vector of iterators — `vv[0][0]` was refused as indexing
+        // a non-vector and `vv.len()` an internal compiler error (loft#2084).
+        let want = match t.base() {
+            Type::Iterator(elm, _) if in_t.is_unknown() => Type::Vector(elm.clone(), Deps::none()),
+            _ => in_t.clone(),
+        };
+        if let Some(vt) = self.iterator_as_vector(&mut p, &t, &want) {
             t = vt;
         }
         // @FR-C-Var — an inferred literal's tuple element stores its variant members as their

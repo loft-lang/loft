@@ -717,12 +717,13 @@ impl State {
                     2 => self.peek_at::<u16>(abs_pos).map(u32::from),
                     _ => self.peek_at::<u32>(abs_pos),
                 };
-                bits.map_or(VariableValue::Unreadable("oob"), |b| {
-                    match crate::narrow::decode(slot.code(), slot.min, b) {
+                bits.map_or(
+                    VariableValue::Unreadable("oob"),
+                    |b| match crate::narrow::decode(slot.code(), slot.min, b) {
                         i64::MIN => VariableValue::Null,
                         v => VariableValue::Long(v),
-                    }
-                })
+                    },
+                )
             }
             // loft#1629, `@FR-N-Shape` — a nullable scalar is its non-null twin's slot, the
             // absence spelled as the null sentinel; the same sentinels `render_frame_local`

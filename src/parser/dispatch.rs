@@ -73,6 +73,16 @@ impl Parser {
     /// The rank of passing an argument of type `arg` to a parameter of type `param`, or
     /// `None` when the argument cannot satisfy the parameter.
     fn dispatch_rank(&mut self, arg: &Type, param: &Type) -> Option<Rank> {
+        // A `null` literal fits a `τ?` slot as it is, and a dense one only by storing a null
+        // where none is declared — `(N-Store)`'s step, LOSSY.  So a declared `τ?` member is
+        // the selection, and two of them tie (loft#2081, `@FR-Disp-Applicable`).
+        if matches!(arg, Type::Null) {
+            return Some(if matches!(param, Type::Optional(_)) {
+                EXACT
+            } else {
+                LOSSY
+            });
+        }
         let (arg_opt, param_opt) = (
             matches!(arg, Type::Optional(_)),
             matches!(param, Type::Optional(_)),
@@ -146,7 +156,13 @@ impl Parser {
         if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
             return None;
         }
-        if routed.iter().any(|t| self.data.key_identity(t).is_none()) {
+        // A `null` literal has no spelling of its own, yet it is the plainest argument a call
+        // can be written with: it ranks against every parameter (`dispatch_rank`), so the
+        // set decides it rather than the pre-dispatch ladder, which ranks no nullability.
+        if routed
+            .iter()
+            .any(|t| !matches!(t, Type::Null) && self.data.key_identity(t).is_none())
+        {
             return None;
         }
         let routines: Vec<u32> = self

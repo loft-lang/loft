@@ -5468,6 +5468,23 @@ use a separate collection or add after the loop"
         // `Value::Iter(_, _, Block(_), _)` shape — its `next` is the
         // resume-call.  Materialise only when the `next` is a Block (the
         // slice / range / collection-iteration shape).  (@P287)
+        // `@FR-Slice-Value` — a slice reached through a block's TAIL (`b = { src[1..3] }`) is
+        // the fresh vector the bare spelling binds.  The routes below recognise only a bare
+        // `Value::Iter`, so the block's iterator reached the scopes pass outside the loop its
+        // `break` belongs to — an internal compiler error on both backends (loft#2084; the
+        // `if`-arm spelling was loft#1941).  Materialised through the one home for the
+        // coercion, it binds as any vector does.
+        if op == "="
+            && !matches!(code, Value::Iter(..))
+            && Self::slice_shaped(code)
+            && let Type::Iterator(elm, _) = s_type.base().clone()
+        {
+            let want = Type::Vector(elm, Deps::none());
+            let is_tp = s_type.clone();
+            if let Some(vt) = self.iterator_as_vector(code, &is_tp, &want) {
+                s_type = vt;
+            }
+        }
         // Materialisable iter detection — by IR shape, NOT by s_type.  The
         // `s_type` is the type the RHS *evaluates to*, but parse_operators
         // may silently convert `Iterator<T>` to `Vector<T>` when the LHS
@@ -8539,7 +8556,13 @@ use a separate collection or add after the loop"
     /// target, a block's tail — because the call is what decides, not how the bind is spelled.
     fn binds_foreign_value(&self, code: &Value, target: u16) -> bool {
         match code.unspan() {
-            Value::Set(v, rhs) if *v == target => self.value_is_foreign(rhs, &[]),
+            // A WHOLE-VALUE bind of another local (`w = b`) is a copy, the reader's own
+            // (`@FR-B-Copy`) — the very cure the refusal of a write names ("copy it first");
+            // reading it as foreign refused the cure for a record (loft#2083).  The coalesce
+            // temp and a slice view keep their own arms.
+            Value::Set(v, rhs) if *v == target => {
+                !matches!(rhs.unspan(), Value::Var(_)) && self.value_is_foreign(rhs, &[])
+            }
             // A SLICE of foreign data bound to a local is a view of the same bytes, read in
             // place without a copy (`OpSliceView`, @PLN174 F4b) — foreign itself.
             Value::Call(d, args)
