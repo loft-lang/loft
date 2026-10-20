@@ -3100,8 +3100,24 @@ impl Parser {
     /// spellings is what makes it the owner's 2026-09-16 ruling — `?`/`??` mean nothing on a
     /// tuple that is there — without withdrawing `v[i] ?? d`, which is the idiom the ruling
     /// names as the one that must keep working.
-    fn tuple_subject_is_held(code: &Value) -> bool {
-        matches!(code.unspan(), Value::Var(_) | Value::Tuple(_))
+    ///
+    /// A CALL is held too — of a function or through a function value, in both of the homes a
+    /// tuple return arrives in (the stack tuple, or the boxed `__tuple<…>` a heap-carrying
+    /// return travels as): `(T-Absent)` names "a declared member-nullable return" among the
+    /// tuples that EXIST, and the one call that answers an absence is a generic `-> T?`
+    /// instantiated at a tuple, whose type carries the `?` that
+    /// [`is_existing_tuple`](Parser::is_existing_tuple) already reads.  Admitting only the two
+    /// spellings above let `mk()?` and `mk() ?? d` compile on a `-> (integer, text)` while the
+    /// same discharge of its result held in a local was refused (loft#2076).  An OPERATOR call
+    /// is not held: it is the element read itself, the shape the refusal must not reach.
+    /// Everything else — the `tuple_unbox` block an element read arrives as, a `??` chain, a
+    /// branch — answers no, which can only leave a discharge admitted, never refuse one.
+    fn tuple_subject_is_held(data: &crate::data::Data, code: &Value) -> bool {
+        match code.unspan() {
+            Value::Var(_) | Value::Tuple(_) | Value::CallRef(..) => true,
+            Value::Call(d, _) => !data.def(*d).is_operator(),
+            _ => false,
+        }
     }
 
     /// The members of a BOXED tuple whose only difference from `stack`'s elements is each
@@ -3574,7 +3590,7 @@ impl Parser {
         // `tuples.md` D-tup-10).
         if !self.first_pass
             && Self::is_existing_tuple(&self.data, ctp)
-            && Self::tuple_subject_is_held(code)
+            && Self::tuple_subject_is_held(&self.data, code)
         {
             diagnostic!(
                 self.lexer,
@@ -4731,7 +4747,8 @@ impl Parser {
         // on a PARTLY PRESENT one, where `??` keeps the present member and a whole-value
         // default would drop it.  Refusing is the owner's 2026-09-16 ruling (`tuples.md`
         // D-tup-10) — the alternative was to pick a meaning the rules do not settle.
-        if Self::is_existing_tuple(&self.data, ctp) && Self::tuple_subject_is_held(code) {
+        if Self::is_existing_tuple(&self.data, ctp) && Self::tuple_subject_is_held(&self.data, code)
+        {
             if !self.first_pass {
                 diagnostic!(
                     self.lexer,
