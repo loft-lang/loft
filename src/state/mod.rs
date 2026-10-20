@@ -1522,11 +1522,19 @@ impl State {
                                         )
                                     }
                                 };
+                                // A local the compiler PROMOTED onto the caller's return buffer
+                                // sits in a hidden parameter slot under its own name; the author
+                                // declared it as a local, so it is reported as one (loft#2087).
+                                let promoted =
+                                    fv.is_argument
+                                        && data.def(d_nr).attr_names.get(&fv.name).is_some_and(
+                                            |&a| data.def(d_nr).attributes()[a].hidden,
+                                        );
                                 crate::database::VarSnapshot {
                                     name: fv.name,
                                     type_name,
                                     value,
-                                    is_argument: fv.is_argument,
+                                    is_argument: fv.is_argument && !promoted,
                                 }
                             })
                             .collect()

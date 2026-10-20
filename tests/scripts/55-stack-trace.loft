@@ -10,6 +10,22 @@ fn st_middle() -> vector<StackFrame> {
   st_inner()
 }
 
+// loft#2087 — a local the compiler promotes onto the caller's text buffer (the returned `o`)
+// is a hidden parameter slot, not a parameter the author declared: `arguments` lists `a` only.
+// Native frames carry no lists (STACKTRACE.md ST-6), so only the interpreter's answer is read.
+fn st_promoted(a: integer) -> text {
+  fs = stack_trace();
+  fr = fs[len(fs) - 1];
+  o = "";
+  for v in fr.arguments {
+    o += "{v.name};";
+  }
+  if len(fr.variables) == 0 {
+    o = "a;";
+  }
+  o
+}
+
 // @FTR-046 — `stack_trace()` answers the live frames, innermost first, from a nested call
 fn main() {
   // --- Direct call: at least one frame ---
@@ -35,6 +51,9 @@ fn main() {
   }
   assert(found_inner, "st_inner in trace");
   assert(found_middle, "st_middle in trace");
+
+  promoted = st_promoted(3);
+  assert(promoted == "a;", "a promoted return local is no argument: {promoted}");
 
   println("stack-trace test passed");
 }
