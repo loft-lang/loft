@@ -2394,6 +2394,7 @@ ci: ci-guard
 	cargo clippy --all-targets --all-features -- -D warnings >> result.txt 2>&1 && \
 	scripts/check_doc_drift.sh >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py claims >> result.txt 2>&1 && \
+	python3 scripts/ci_shards.py proof >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py fences --gate >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py sections --gate >> result.txt 2>&1 && \
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \

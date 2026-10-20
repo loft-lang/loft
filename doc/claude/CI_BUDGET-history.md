@@ -830,3 +830,19 @@ What it says:
   A crate split leaves that unit where it is; shortening it is a change of its own, measured
   against the interpreter's speed (the likely content is the dispatch loop with its inlined
   operators).
+
+## Where a test leg's minutes went
+
+Measured 2026-10-20 on the dispatched gate of 2026-10-19 (run 39339989819, five ubuntu legs, 20 to
+24 min each) and the next day's (39393070285, 27 to 30): of a leg's wall, the test phase
+was 6 to 8 minutes and the rest was build — `cargo build --all-targets` 7.6 to 8.5 (all
+445 test binaries, of which the leg then ran a third), the release binary and library
+2.4, the wasm rlib 1.5, the fixture warm-up 3 — and, once `main` had saved its 11 GB
+cache, a 4 to 6 minute restore of a `target/` that made the build no faster: the
+dependencies are half a minute of a cold build (89 crates before `Compiling loft`), the
+rest is loft and its test crates, which change with every commit.  The cure is
+[CI_BUDGET.md § Each leg builds only the binaries it runs](CI_BUDGET.md#each-leg-builds-only-the-binaries-it-runs):
+`scripts/ci_shards.py` packs the rest into three legs by the seconds in
+`scripts/ci_shards.tsv` (rest-a 154 binaries incl. the 22 wasm-building ones, rest-b 136,
+rest-c 144, 1 378 s of test time on the heaviest), each leg builds only its pack, and the
+cargo cache keeps the registry and no `target/`.

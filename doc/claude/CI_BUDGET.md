@@ -694,6 +694,41 @@ day it appears, or the gate finds a month of them at once. Cost is the nightlies
 — `ci.yml` 37–82 min, `miri.yml` 22–34 min, the rest under 15 — in parallel, so about
 an hour and a half of wall clock for a release that happens monthly.
 
+## Each leg builds only the binaries it runs
+
+**Rule: a test leg builds the test binaries it runs and nothing else, and restores no
+`target/`.**  Of a leg's wall, the test phase was a third and the rest was build: every
+leg compiled all 445 test binaries and ran its share, and a restore of the whole
+`target/` took minutes without making the build faster, because the dependencies are
+half a minute of a cold build and the rest is loft and its test crates, which change
+with every commit (the measurement: [the history companion § Where a test leg's minutes
+went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).
+
+What `ci.yml` does:
+
+- **`scripts/ci_shards.py`** owns the leg → binaries map.  `heavy` and `corpus` keep their
+  membership from `ci_test_filter.py`; the rest is packed into `rest-a/b/c` by the measured
+  seconds in `scripts/ci_shards.tsv` (greedy, heaviest first; a binary the table does not
+  know packs at the median), the wasm-building binaries together in `rest-a`.  The `Shard`
+  step answers each leg's `--test …` flags; `Build`, the warm-up and both nextest passes
+  take them, so the build and the run select one set, and `--partition slice` is gone.
+  `proof` fails when a binary is in no leg or in two; it runs on every leg and in `make ci`.
+- The wasm target and the html rlib are built on the legs that have a wasm-building binary
+  (`heavy`, `corpus`, `rest-a`) and skipped on the others.
+- The Linux/macOS cargo cache keeps the registry, the git db and `~/.loft/build-cache`
+  and no `target/`: a restore in seconds, and the half-minute of dependencies compiled
+  cold.  The read-only restorers (`index-hygiene`, `leak-scan`, `viewer-smoke`, the
+  language suite, the release row) read the same list.
+- **`scripts/ci_timing.py legs <run>`** prints every leg's queue wait, its steps and its
+  total against the 20-minute budget, and each leg writes its own `Leg timing` table to
+  its job summary — the table a long leg is read from, before anything is split.
+
+Three rest legs and not more: a leg that builds its own 140 binaries starts its tests in a
+fraction of the old build, so the budget is met by making each leg quick, not by adding
+runners — a fourth leg would have cost a runner for every run to shave a minute.  Re-pack
+when a rest leg pulls away from the others: `scripts/ci_shards.py measure <junit>…` from the
+run's `nextest-junit-*` artifacts rewrites the table, `pack` shows the result.
+
 ## What to optimise and split
 A–E (moving the stdlib round-trip pair to nightly, the sharding attempts, macOS leaving the PR matrix, the cheap nightly gates on the PR, the build floor) are implemented, dropped or superseded; their record is in the history companion.
 

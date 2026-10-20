@@ -10,6 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### CI: a test leg builds only the binaries it runs; the legs' steps timed against the budget
+
+- `scripts/ci_shards.py` packs the test binaries into the legs (`heavy`, `corpus`, and
+  `rest-a/b/c` by the measured seconds in `scripts/ci_shards.tsv`, the wasm-building ones
+  together) and answers each leg's `--test …` flags; `ci.yml`'s `Build`, warm-up and nextest
+  passes take them, `--partition slice` is gone, the wasm target and rlib are built only on
+  the legs with a wasm-building binary, and the Linux/macOS cargo cache carries no
+  `target/`.  Measured before: every leg built all 445 test binaries (7.6 to 8.5 min) and
+  restored an 11 GB cache (4 to 6 min) that made the build no faster, for a test phase of
+  6 to 8 min.  `proof` (a binary in exactly one leg) runs on every leg and in `make ci`.
+- `scripts/ci_timing.py legs <run>` / `leg <run> <name>`: each test leg's queue wait, its
+  steps of half a minute or more and its total against the 20-minute budget; every leg
+  writes its own table to its job summary (CI_BUDGET.md § Each leg builds only the
+  binaries it runs).
+
 ### `--native`: a decoded value read once is held as its position (2026-10-19)
 
 - **`(R-DecodeView)`'s structure clause, instance 1** — a root whose chain reads its decoded

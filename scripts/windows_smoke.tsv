@@ -76,3 +76,4 @@ tools/indexer/migrate.py	--help
 tools/indexer/rewrite_links.py	--help
 scripts/stability_read.py	--help
 scripts/decline_census.py	--help
+scripts/ci_shards.py	--help
