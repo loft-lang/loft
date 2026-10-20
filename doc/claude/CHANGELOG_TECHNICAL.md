@@ -48,8 +48,9 @@ All notable changes to the loft language and interpreter.
   built all 445 test binaries (7.6 to 8.5 min), compiled the crate again in release (2.2 to
   3.2), restored an 11 GB cache (4 to 6 min) that made the build no faster and warmed two
   wasm runtimes (1m45 each) for each of two binaries whether a test used them or not, for a
-  test phase of 6 to 8 min.  `proof` (a binary in exactly one leg) runs on every leg and in
-  `make ci`.
+  test phase of 6 to 8 min; after: 11.8 to 15.8 min per leg, every leg within the budget
+  (CI_BUDGET-history.md § Where a test leg's minutes went).  `proof` (a binary in exactly
+  one leg) runs on every leg and in `make ci`.
 - `scripts/ci_timing.py legs <run>` / `leg <run> <name>`: each test leg's queue wait, its
   steps of half a minute or more and its total against the 20-minute budget; every leg
   writes its own table to its job summary (CI_BUDGET.md § Each leg builds only the

@@ -878,3 +878,9 @@ three legs that link a runtime built the html and wasi rlibs one after the other
 each on a four-core runner neither saturates (so they build side by side).  The rest packs
 were re-weighted from this run (rest-a 11.0 min before its tests, rest-b 7.5: the runtime
 leg's offset is 3.5 min).
+
+With those (run 39414576471, green): corpus 11.8, heavy 15.8, rest-a 13.5, rest-b 15.7,
+rest-c 15.2 — every leg within budget, from 20–37 min per leg two days earlier.  Of the
+legs' walls: build 2.3–5.0 (the leg holding `--lib` the longest), the runtime rlibs 2.8–3.4
+side by side, the warm-up 1.4–1.8, tests 4.2–8.3.  Windows runs the same five legs on a PR
+and had not run them by this commit.
