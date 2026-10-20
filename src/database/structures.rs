@@ -2888,6 +2888,14 @@ impl Stores {
                             break;
                         }
                     }
+                    // In a DECLARED field the unknown tag is a value that did not fit: the
+                    // field takes what an absent value takes there — its default, or no value
+                    // at all, which a checked parse answers null for — and the read lists it
+                    // under `#errors` (@C148, loft#2079).  An element keeps the null code.
+                    if v == 0 && field != u16::MAX && rec_tp != u16::MAX {
+                        self.write_absent_at(tp, rec_tp, field, to);
+                        return Err(mismatch());
+                    }
                     v
                 };
                 self.store_mut(to).set_byte(to.rec, to.pos, 0, val);
@@ -3246,7 +3254,18 @@ impl Stores {
             };
             (c, f.content)
         };
+        // An enum field's default is its discriminant (`typedef::fold_declared_default`); the
+        // walker's enum arm reads a variant by NAME, so it goes in as the name.
+        let variant = match (&c, &self.types[content as usize].parts) {
+            (crate::keys::Content::Long(n), Parts::Enum(vals)) if *n > 0 => {
+                vals.get(*n as usize - 1).map(|v| v.1.clone())
+            }
+            _ => None,
+        };
         let parsed = match c {
+            crate::keys::Content::Long(_) if variant.is_some() => {
+                crate::json::Parsed::Str(variant.expect("checked by the guard"))
+            }
             // A boolean field is content type 4, whose walker arm accepts only
             // `Parsed::Bool`; every other numeric field reads the integer spelling.
             crate::keys::Content::Long(n) if content == 4 => crate::json::Parsed::Bool(n != 0),
@@ -3289,6 +3308,23 @@ impl Stores {
             return;
         }
         let nullable = self.field_declared_nullable(rec_tp, field);
+        // `@FR-D-NoEnumF`: a non-null enum field has no zero to take — its 0 IS its null — so a
+        // parse that leaves one without a value has not produced the record (loft#2079).  The
+        // checked cast reads this and answers null; the asserting forms are refused at compile
+        // time for a type where it can happen (`Data::parse_unfillable`).
+        if !nullable
+            && self.parse_unfilled.is_none()
+            && matches!(self.types[tp as usize].parts, Parts::Enum(_))
+            && !self.types[tp as usize].name.starts_with("__")
+            && self.types[tp as usize].name != "JsonValue"
+        {
+            let fname = self
+                .record_fields(rec_tp)
+                .get(field as usize)
+                .map(|f| f.name.clone())
+                .unwrap_or_default();
+            self.parse_unfilled = Some(fname);
+        }
         self.set_default_value_nullable(tp, nullable, Absent::Final, slot);
     }
 

@@ -40,7 +40,14 @@ impl Parser {
             // stdlib's `exists(text)` beside `exists(File)`), then the operator map — and
             // the unknown-function site below names the set when that finds nothing either.
             let routed = self.data.routed_types(types);
-            let d = match self.select_overload(source, name, &routed) {
+            // `source == u16::MAX` is a BARE call; any other names the package it was
+            // qualified with, whose own definitions alone it reaches (`@FR-Disp-Key`).
+            let selection = if source == u16::MAX {
+                self.select_overload(source, name, &routed)
+            } else {
+                self.select_qualified_overload(source, name, &routed)
+            };
+            let d = match selection {
                 crate::parser::dispatch::Selection::One(d) => {
                     // A call inside a generic at the generic's own variable is decided again
                     // in each instance (@PLN165 B3b).

@@ -26,28 +26,45 @@ use crate::parser::{Function, Parser, v_block, v_if};
 
 /// How far a call's argument is from a parameter's declared type, per position.
 /// Smaller is more specific — except that `GENERIC` and a conversion are not ordered at all
-/// ([`rank_no_worse`]).
+/// ([`rank_no_worse`]).  A concrete rank is the SUM of its base step and its nullability step,
+/// and carries [`CONVERSION`] when the base step is a conversion: `D-Rank`'s incomparability is
+/// the conversion's, so a widening with a nullability step on top (`u8?` into `integer`, which
+/// sums to `CONVERTED`) is no conversion and ranks above a generic member.
 type Rank = u8;
 const EXACT: Rank = 0;
 const WIDENED: Rank = 1;
 const LOSSY: Rank = 2;
 const CONVERTED: Rank = 3;
+/// The bit a rank carries when its BASE step is a conversion (`Disp-Specific`'s CONVERTED);
+/// read by [`rank_no_worse`] and masked off by [`rank_order`].
+const CONVERSION: Rank = 0x40;
 /// `@FR-D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
 /// variable binds.  Worse than `EXACT`, `WIDENED` and `LOSSY`: a concrete definition that
 /// takes the argument as it is wins.  Apart from the concrete ranks' sums (a conversion with
 /// a nullability step on top reaches 5), so no concrete rank ever reads as this one.
-const GENERIC: Rank = 100;
+const GENERIC: Rank = 0x80;
 
 /// `D-Rank`'s order on one position: is `a` no worse than `b`?  The concrete ranks are
 /// ordered by size and `GENERIC` sits above `LOSSY`, but `GENERIC` against any conversion is
 /// INCOMPARABLE — one definition needs an implicit conversion, the other an instantiation,
 /// and neither is derivable as more specific from the signatures.
 fn rank_no_worse(a: Rank, b: Rank) -> bool {
-    let apart = |x: Rank, y: Rank| x == GENERIC && y != GENERIC && y >= CONVERTED;
-    if apart(a, b) || apart(b, a) {
+    let converted = |x: Rank| x != GENERIC && x & CONVERSION != 0;
+    if (a == GENERIC && converted(b)) || (b == GENERIC && converted(a)) {
         return false;
     }
-    a <= b
+    rank_order(a) <= rank_order(b)
+}
+
+/// The order key of a rank: a concrete rank's sum with the conversion bit masked off, and
+/// `GENERIC` above every concrete rank (it is ordered against those [`rank_no_worse`] lets
+/// through: the non-converting ones).
+fn rank_order(r: Rank) -> u8 {
+    if r == GENERIC {
+        u8::MAX
+    } else {
+        r & !CONVERSION
+    }
 }
 
 /// What selection over an overload set answered.
@@ -119,7 +136,12 @@ impl Parser {
             (true, false) => LOSSY,   // (N-Store): a nullable value into a dense slot, warned
             _ => EXACT,
         };
-        Some(base.saturating_add(step))
+        let rank = base.saturating_add(step);
+        Some(if base == CONVERTED {
+            rank | CONVERSION
+        } else {
+            rank
+        })
     }
 
     /// `@FR-Disp-Applicable` — does a call's argument of type `arg` reach a `param` slot through
@@ -252,8 +274,10 @@ impl Parser {
             .map(|(arg, param)| {
                 if self.data.mentions_type_var(param) {
                     let bound = Self::substitute_all(param.clone(), &bindings);
+                    // `D-Rank`: where the argument takes the parameter AS BOUND without a
+                    // conversion — a nullability step on top included.
                     self.dispatch_rank(arg, &bound)
-                        .filter(|rank| *rank < CONVERTED)
+                        .filter(|rank| rank & CONVERSION == 0)
                         .map(|_| GENERIC)
                 } else {
                     self.dispatch_rank(arg, param)
@@ -525,9 +549,36 @@ impl Parser {
         name: &str,
         routed: &[Type],
     ) -> Selection {
-        let Some(ranked) = self.ranked_overloads(source, name, routed) else {
+        self.select_overload_from(source, name, routed, false)
+    }
+
+    /// [`Self::select_overload`] for a call that NAMED its package (`kd::hit(b)`): only the
+    /// definitions that package declares take part.  A consumer's member of a new spelling
+    /// joins the library's set for a BARE call (`@FR-Disp-Key`), and a qualified call is the
+    /// author saying which package's definition they mean — so what it reaches does not
+    /// depend on whether the consumer imported with `*` (owner ruling 2026-10-20).
+    pub(crate) fn select_qualified_overload(
+        &mut self,
+        source: u16,
+        name: &str,
+        routed: &[Type],
+    ) -> Selection {
+        self.select_overload_from(source, name, routed, true)
+    }
+
+    fn select_overload_from(
+        &mut self,
+        source: u16,
+        name: &str,
+        routed: &[Type],
+        own_only: bool,
+    ) -> Selection {
+        let Some(mut ranked) = self.ranked_overloads(source, name, routed) else {
             return Selection::NotDecidable;
         };
+        if own_only && source != u16::MAX {
+            ranked.retain(|(r, _)| self.data.def(*r).source == source);
+        }
         if ranked.is_empty() {
             return Selection::NoneApplicable;
         }
@@ -558,7 +609,7 @@ impl Parser {
                     _ => return false,
                 }
             } else if rank_no_worse(*y, *x) {
-                better |= y != x;
+                better |= rank_order(*y) != rank_order(*x);
             } else {
                 return false;
             }

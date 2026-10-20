@@ -6894,7 +6894,7 @@ impl Parser {
                     .collect();
                 partial.sort_by_key(|(_, v_nr, _)| *v_nr);
                 for (name, v_nr, tp) in partial {
-                    let opt = Type::optional(tp);
+                    let opt = Self::capture_optional(&tp);
                     self.vars.set_type(v_nr, opt.clone());
                     if !first_names.contains(&name) {
                         arm_stmts.push(v_set(v_nr, self.absent_capture(&opt)));
@@ -10213,7 +10213,7 @@ impl Parser {
             let var_type = if present_in_all {
                 ftype.clone()
             } else {
-                Type::optional(ftype.clone())
+                Self::capture_optional(ftype)
             };
             let v_nr = self.create_unique(&format!("mv_{fname}"), &var_type);
             if v_nr == u16::MAX {
@@ -10498,7 +10498,7 @@ impl Parser {
             let var_type = if present_in_all {
                 ftype.clone()
             } else {
-                Type::optional(ftype.clone())
+                Self::capture_optional(ftype)
             };
             let v_nr = self.create_unique(&format!("mv_{fname}"), &var_type);
             if v_nr == u16::MAX {
@@ -13096,7 +13096,7 @@ impl Parser {
             if everywhere {
                 continue;
             }
-            let opt = Type::optional(tp.clone());
+            let opt = Self::capture_optional(tp);
             self.vars.set_type(*slot, opt.clone());
             if !first_set.contains(name) {
                 first_bindings.push(v_set(*slot, self.absent_capture(&opt)));

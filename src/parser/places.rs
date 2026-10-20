@@ -769,6 +769,29 @@ impl Parser {
         }
     }
 
+    /// `@FR-P-Opt-Ty` / `@FR-P-Alt-Diff` — the type of a capture only some branches bind: its
+    /// field's type, nullable, in a form that HOLDS every value the field can.  A narrow integer
+    /// that fills its width (`u8`, `i16`) gives one code to its null when nullable (`@FR-N-Reserve`:
+    /// `u8?` holds 0..=254), so a present top value read null wherever the capture went; the
+    /// capture keeps the RANGE and drops the forced width, which a nullable `limit` range answers
+    /// with a spare code beside it (owner ruling 2026-10-20).
+    pub(super) fn capture_optional(tp: &Type) -> Type {
+        // A field already nullable is its own capture type: its values are those `τ?` holds.
+        if matches!(tp, Type::Optional(_)) {
+            return tp.clone();
+        }
+        if let Type::Integer(spec) = tp.base()
+            && !spec.is_full_integer()
+            && (i64::from(spec.usable_min(true)) > i64::from(spec.min)
+                || spec.usable_max(true) < spec.max)
+        {
+            let mut wide = *spec;
+            wide.forced_size = None;
+            return Type::optional(Type::Integer(wide));
+        }
+        Type::optional(tp.clone())
+    }
+
     /// `@FR-P-Opt-Ty` / `@FR-P-Alt-Diff` with `@FR-T-Absent` — the value a pattern capture
     /// holds where its pattern did NOT bind it: the null of its promoted `τ?`.
     ///

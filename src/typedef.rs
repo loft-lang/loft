@@ -52,6 +52,10 @@ pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Conten
     match value.unspan() {
         Value::Int(i) => Some(Content::Long(i64::from(*i))),
         Value::Long(i) => Some(Content::Long(*i)),
+        // An enum field's `= <variant>` is a constant too: its 1-based discriminant, which the
+        // store writes back by the variant's NAME (`Stores::write_declared_default`).  It
+        // folded to nothing, so an omitted `tint: Colour = Blue` read null (loft#2079).
+        Value::Enum(n, _) if *n > 0 => Some(Content::Long(i64::from(*n))),
         // A boolean field is a byte holding 0/1; `Content` has no boolean spelling and
         // the walker reads this back through the field's own content type.
         Value::Boolean(b) => Some(Content::Long(i64::from(*b))),

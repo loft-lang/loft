@@ -7737,6 +7737,78 @@ impl Data {
     /// predicate that both the `x?` default-fallback operator and (the `S{}` zero
     /// value, in time) consult — there must be exactly one notion of "T's default".
     ///
+    /// loft#2079, `@FR-D-NoEnumF` / `@FR-N-Cast` — can a text parse into `tp` leave a field
+    /// without a value?  A parse fills an omitted field with its default, so a type a parse
+    /// reaches that has none — a record whose bare enum field declares no `= <variant>`, at
+    /// any depth: an inline record, a nullable record that may be present, a collection's
+    /// element, a struct-enum variant's payload — answers the reason (`has_default`'s), and
+    /// the asserting forms (`text as T`, `T.parse(…)`) are refused for it.
+    #[must_use]
+    pub fn parse_unfillable(&self, tp: &Type) -> Option<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.parse_unfillable_in(tp, &mut seen)
+    }
+
+    fn parse_unfillable_in(
+        &self,
+        tp: &Type,
+        seen: &mut std::collections::HashSet<u32>,
+    ) -> Option<String> {
+        match tp.base() {
+            Type::Vector(e, _) => self.parse_unfillable_in(e, seen),
+            Type::Hash(d, _, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _) => {
+                self.parse_unfillable_in(&Type::Reference(*d, Deps::none()), seen)
+            }
+            Type::Reference(d, deps)
+                if !deps.is_pointer_marker()
+                    && matches!(self.def_type(*d), DefType::Struct | DefType::EnumValue) =>
+            {
+                if !seen.insert(*d) {
+                    return None;
+                }
+                let rec = self.def(*d).name().to_string();
+                (0..self.attributes(*d)).find_map(|a| {
+                    let at = &self.def(*d).attributes()[a];
+                    let ftp = self.attr_type(*d, a);
+                    if at.value != Value::Null || at.constant || at.hidden {
+                        return None;
+                    }
+                    // A bare enum field with no `= <variant>` — `JsonValue` aside: a field of
+                    // it captures whatever JSON stands there, so a parse always gives it one.
+                    if let Type::Enum(e, _, _) = &ftp
+                        && !self.def(*e).name.starts_with("__")
+                        && self.def(*e).name != "JsonValue"
+                    {
+                        let fname = self.attr_name(*d, a);
+                        let tn = ftp.name(self);
+                        return Some(format!(
+                            "record `{rec}` has no default: field `{fname}: {tn}` is an enum \
+                             with no explicit choice — add `{fname}: {tn} = <variant>`, or make \
+                             it `{tn}?` (defaults null)"
+                        ));
+                    }
+                    self.parse_unfillable_in(&ftp, seen)
+                })
+            }
+            Type::Enum(d, true, _) => {
+                if self.def(*d).name == "JsonValue" || !seen.insert(*d) {
+                    return None;
+                }
+                let d = *d;
+                (0..self.definitions.len() as u32)
+                    .filter(|v| {
+                        self.def_type(*v) == DefType::EnumValue && self.def(*v).parent() == d
+                    })
+                    .find_map(|v| self.parse_unfillable_in(&Type::Reference(v, Deps::none()), seen))
+            }
+            _ => None,
+        }
+    }
+
     /// `Ok(())` when a default exists; `Err(reason)` names the first field / reason a
     /// record has none, ready to drop into the compile error.  Scalars, text,
     /// collections, enums (first/marked variant), nullables (`null`), tuples of

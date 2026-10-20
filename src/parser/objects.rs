@@ -3216,6 +3216,38 @@ impl Parser {
         let mut arg_expr = Value::Null;
         let arg_tp = self.expression(&mut arg_expr);
         self.lexer.token(")");
+        // loft#2079 — `T.parse(…)` answers a T, so a field the parse can leave without a value
+        // (a bare enum with no default, `@FR-D-NoEnumF`) is refused here as `text as T` is.
+        if !self.first_pass {
+            let target = if self.data.def_type(d_nr) == DefType::Enum {
+                Type::Enum(d_nr, true, crate::data::Deps::none())
+            } else {
+                Type::Reference(d_nr, crate::data::Deps::none())
+            };
+            if let Some(reason) = self.data.parse_unfillable(&target) {
+                let t = self.data.def(d_nr).name().to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    code = "text-parse-may-leave-a-field-unfilled",
+                    "`{t}.parse(…)` answers a `{t}` that every field of the text fills, and it \
+                     cannot: {reason}; or parse with `text as {t}?`, which answers null when the \
+                     text leaves such a field out"
+                );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("parse with the checked cast `text as {t}?`"),
+                    condition: Some(
+                        "a text that leaves the field out is an expected input — the result is \
+                         then nullable"
+                            .to_string(),
+                    ),
+                    edit: None,
+                    concept: "checked cast",
+                    concept_ref: "@F5",
+                });
+            }
+        }
         if !self.first_pass {
             // JsonValue resolves to either Type::Reference (if a
             // user-declared alias) or Type::Enum(_, true, _) (mixed

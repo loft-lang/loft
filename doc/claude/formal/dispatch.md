@@ -36,7 +36,10 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
                     dependency list are a redefinition.  One SOURCE is one set; a library's set reaches
                     every import spelling of its consumers whole, and a consumer's definition of
                     ANOTHER spelling joins it, while one the set already carries is a
-                    redefinition.
+                    redefinition.  The joined set is what a BARE call reaches; a call QUALIFIED
+                    with the package (`kd::hit(b)`) names the package whose definition it means,
+                    and reaches only the definitions that package declares, whatever the import
+                    spelling.
 
   (Disp-Applicable) a definition takes a call when every argument may satisfy its parameter, as
                     the call's own argument check decides for a lone definition — the
@@ -57,7 +60,10 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
   (D-Rank)          a parameter naming a type variable ranks GENERIC where it binds: worse than
                     EXACT, WIDENED and LOSSY, and INCOMPARABLE with CONVERTED — `f(x: float)` and
                     `f<T>(x: T)` called with an integer are ambiguous, one needing a conversion and
-                    the other an instantiation.  Between two generic members, the one admitting
+                    the other an instantiation.  The comparison is per STEP: what is incomparable is
+                    a conversion, so a widening with a nullability step on top (a `u8?` into an
+                    `integer` parameter, WIDENED + LOSSY) is no conversion, and the concrete member
+                    ranks above the generic one.  Between two generic members, the one admitting
                     strictly fewer types is more specific — (G-Select), interfaces.md.
 
   (Disp-Select)     a call reaches the unique most-specific applicable definition.

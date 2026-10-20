@@ -5481,6 +5481,46 @@ impl Parser {
                 //    the checked `as τ?` (value or null) or the assert-or-default `as τ ?? d`. A
                 //    `?? d` immediately after IS that form — allowed, and typed `τ?` so the `??`
                 //    discharges it (mirrors the DN4 narrowing `coalesced` rule above).
+                // loft#2079 — `text as T` asserts the parse produces a T; a field it can leave
+                // without a value (a bare enum with no default) makes that unprovable, so the
+                // asserting cast is refused and the checked `as T?` named — it answers null.
+                if !self.first_pass
+                    && !nullable_cast
+                    && !self.lexer.peek_token("??")
+                    && matches!(ctp.base(), Type::Text(_))
+                    && matches!(
+                        rt.base(),
+                        Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+                    )
+                    && let Some(reason) = self.data.parse_unfillable(&rt)
+                {
+                    let t = rt.base().source_name(&self.data);
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        code = "text-parse-may-leave-a-field-unfilled",
+                        "`as {t}` asserts the text fills every field, and it cannot: {reason}; \
+                         or cast with `as {t}?`, which answers null when the text leaves such a \
+                         field out"
+                    );
+                    self.lexer.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: "make the cast checked".to_string(),
+                        condition: Some(
+                            "a text that leaves the field out is an expected input — the result \
+                             is then nullable, so a non-null target needs a discharge"
+                                .to_string(),
+                        ),
+                        edit: Some(crate::diagnostics::Edit {
+                            line: type_end.0,
+                            col: type_end.1,
+                            len: 0,
+                            text: "?".to_string(),
+                        }),
+                        concept: "checked cast",
+                        concept_ref: "@F5",
+                    });
+                }
                 if !nullable_cast
                     && crate::keys::pln25_dn1_enabled()
                     && matches!(ctp, Type::Text(_))

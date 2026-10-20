@@ -3111,6 +3111,7 @@ impl Stores {
             bridge_text_dest: None,
             const_refs: self.const_refs.clone(),
             last_json_errors: Vec::new(),
+            parse_unfilled: None,
             // The worker inherits the parent's program context, so a `par`
             // inside a `par` worker can dispatch in turn.  Without it the
             // nested dispatch finds no context and aborts the run

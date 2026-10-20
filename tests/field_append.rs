@@ -126,7 +126,9 @@ fn bare_counts(rust: &str) -> HashMap<String, (usize, usize, usize, usize)> {
         row.0 += line.matches("vector_record_append::<true, true>(").count();
         row.1 += line.matches("vector_record_append::<true, false>(").count();
         row.2 += line.matches("OpNewRecord(").count() + line.matches("OpNewRecordNP(").count();
-        row.3 += line.matches("vector_record_append::<false, false>(").count();
+        row.3 += line
+            .matches("vector_record_append::<false, false>(")
+            .count();
     }
     map
 }

@@ -514,6 +514,9 @@ pub struct Stores {
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
     pub last_json_errors: Vec<String>,
+    /// loft#2079 — the first non-null enum FIELD the running text parse left with no value
+    /// (`Stores::write_absent_value`): `record_from_text` answers null for it.
+    pub parse_unfilled: Option<String>,
     /// The interpreter's context while it executes (`parallel::ParallelCtx`: its bytecode,
     /// native table and program), set by `State::execute()` and read back by its `par`
     /// natives.  Opaque here: the store a compiled program links never reads it.
@@ -765,6 +768,7 @@ impl Clone for Stores {
             bridge_text_dest: None,
             const_refs: Vec::new(),
             last_json_errors: Vec::new(),
+            parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
             par_text_buffer_stack: Vec::new(),
@@ -1540,6 +1544,7 @@ impl Stores {
             bridge_text_dest: None,
             const_refs: Vec::new(),
             last_json_errors: Vec::new(),
+            parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
             par_text_buffer_stack: Vec::new(),

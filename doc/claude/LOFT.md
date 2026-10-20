@@ -851,7 +851,11 @@ part copied out of a parsed value or a parsed value stored into a field or an el
 variable: `f()#errors` does not parse, and a variable that is neither a record nor a vector is
 refused.  The one-step `Type.parse(text)`, the `text as T` cast and the staged
 `Type.parse(json_parse(text))` all fill it; `json_errors()` carries the same mismatches as one
-text.  Guards:
+text.  A field with no default cannot be left out: a record whose bare enum field declares no
+`= <variant>` is refused by `text as T` and `T.parse(…)` (`text-parse-may-leave-a-field-unfilled`),
+and the checked `text as T?` answers null when the text leaves that field out, sets it to
+`null`, or names a variant the enum does not have.  Guards:
+`loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft`,
 `loft-suite/attic/scripts/a-record-errors-read-answers-for-its-own-parse.loft`,
 `loft-suite/attic/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
 

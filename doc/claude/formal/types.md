@@ -364,6 +364,13 @@ function on types, shared with the `S{}` zero value (one home per fact,
                  not silently zero-fill to it; and choosing a variant as a record's default is
                  a real decision the author must make.  Fix by supplying the field, giving it
                  `= <variant>`, or typing it `E?` — which then defaults to `null` by (D-Opt).
+                 A TEXT PARSE fills every field the text leaves out with its default, so it
+                 needs this one too: the asserting `text as T` and `T.parse(…)` are refused
+                 for a T where such a field can be reached — directly, in an inline or
+                 nullable record, a collection's element or a variant's payload — and the
+                 checked `text as T?` answers null when the text leaves one without a value
+                 (omitted, `null`, or a variant the enum lacks, which is listed under
+                 `#errors`, @C148).  A declared `= <variant>` fills an omitted field.
 ```
 
 **In words.** Every type either has one obvious zero or it has none, and `x?` is exactly
@@ -703,6 +710,10 @@ and nullable-join `(N-Join)` that already run the integer / nullability model ab
                  is undefined ⟹ STATIC ERROR "alternatives bind name at incompatible types")
   (P-Alt-Diff)   name bound in only SOME alternatives  ⟹   name : τ?           (via (N-Join))
   (P-Opt-Ty)     a capture inside (a)?                 ⟹   promoted to τ?       (via (N-Opt))
+                 — a τ? that holds every value of τ: a narrow width filling its storage
+                 (`u8`, `i16`) promotes to its range with a spare code (`integer limit(0,
+                 255)?`), since `u8?` gives its top code to null (N-Reserve) and the
+                 capture is a slot.
   (P-Rep-Ty)     the capture inside (a)* / (a)+        ⟹   vector<τ>            (via (N-Dense))
   (P-Rest-Ty)    ..name over a vector<τ> subject      ⟹   name : vector<τ>
 ```

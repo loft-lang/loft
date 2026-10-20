@@ -547,8 +547,9 @@ impl Stores {
     /// `#errors` names each such value — as the staged `T.parse(JsonValue)` form reads it.
     pub fn record_from_text(&mut self, text: &str, tp: u16) -> DbRef {
         self.last_json_errors.clear();
+        self.parse_unfilled = None;
         let mut into = self.text_target(tp);
-        let errs = match self.read_text(text, tp, &into) {
+        let mut errs = match self.read_text(text, tp, &into) {
             Ok(()) => Vec::new(),
             Err(TextErr::Misfit(msgs)) => msgs,
             Err(TextErr::Malformed(msg)) => {
@@ -557,6 +558,17 @@ impl Stores {
                 vec![msg]
             }
         };
+        // loft#2079 — a non-null enum field the text left without a value: the parse made no
+        // value of the type.  Only the checked `text as T?` reaches here with such a type (the
+        // asserting forms are refused at compile time), and it answers null.
+        if let Some(field) = self.parse_unfilled.take() {
+            self.free(&into);
+            errs.push(format!(
+                "field `{field}` has no value and no default — the parse answers null"
+            ));
+            self.last_json_errors.extend(errs);
+            return DbRef::NULL;
+        }
         self.last_json_errors.extend(errs.iter().cloned());
         self.set_parse_errors(&into, tp, errs);
         into
