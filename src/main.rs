@@ -192,6 +192,16 @@ fn print_help() {
     println!("                                unit) and strip the live/debug tier as --lean does:");
     println!("                                a SHIPPED binary.  --native keeps every tier — the");
     println!("                                semantics run");
+    println!("  --static                      with a native build: link every native library INTO");
+    println!(
+        "                                the binary — one file that runs with no loft, rustc or"
+    );
+    println!(
+        "                                library file beside it (a program may ask with `#link static`)"
+    );
+    println!(
+        "  --dynamic                     link native libraries beside the binary (the default)"
+    );
     println!(
         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
     );
@@ -7592,6 +7602,11 @@ fn main() {
             native_mode = true;
             native_requested = true;
             native_debug = true;
+        } else if a == "--static" || a == "--dynamic" {
+            // How a native build links the native libraries it uses: INTO the binary
+            // (`--static`, one file to ship) or beside it (`--dynamic`, the default).  Over
+            // the program's own `#link` directive (`native_utils::link_by_flag`).
+            native_utils::link_by_flag(a == "--static");
         } else if a == "--lean" {
             // @PLN98 P2 — opt OUT of the live/debug tier: the generated Rust
             // carries no live-dispatch machinery (smallest binary, no
@@ -9184,6 +9199,11 @@ fn main() {
     // (DLL staging reads the parse), and anything the manifest registers beyond loft
     // sources (`startup_cache::native_fast_path`).  A decline costs nothing new: the slow
     // path still hits the generated-Rust cache and skips rustc as before.
+    // The program's `#link` directive, read from its header before anything keys on the
+    // link mode — the fast path below runs a cached binary without parsing.
+    if let Ok(src) = fa::read_to_string(&abs_file) {
+        native_utils::apply_link_directive(&src);
+    }
     // Computed where it is used — the fast path's lookup and the sidecar a native build
     // saves — never on a run that takes neither (an `--interpret` run, a check).  Computing it
     // can spawn `rustc --version` (the runtime rlib's lookup asks which rustc wrote it), and

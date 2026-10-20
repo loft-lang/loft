@@ -4880,6 +4880,85 @@ fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     Ok(())
 }
 
+/// A program that says `#link static` ships as ONE file: its native package's Rust is linked
+/// into the binary, which names no library file and runs alone in an empty directory.  The
+/// control is the same program under `#link dynamic`, whose binary must name the package's
+/// library — so the byte check below can fail.  The fixture's two answers are its ABI oracle:
+/// 42, and -1, which a narrowed return would bring back as 4294967295.
+#[test]
+fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if find_loft_rlib().is_none() {
+        println!("a_static_link_ships_one_file_that_runs_alone: skipped (no libloft.rlib / rustc)");
+        return Ok(());
+    }
+    let lib_dir = std::env::current_dir()?.join("tests/lib");
+    let library_file = format!(
+        "{}loft_native_scalar{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+    let root = std::env::temp_dir().join(format!("loft_static_link_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    for (mode, must_name_the_library) in [("static", false), ("dynamic", true)] {
+        let dir = root.join(mode);
+        fa::create_dir_all(&dir)?;
+        let program = dir.join("p.loft");
+        fa::write(
+            &program,
+            format!(
+                "#link {mode}\nuse native_scalar_pkg;\nfn main() {{ println(\"{{native_scalar_pkg::native_answer()}} {{native_scalar_pkg::native_sentinel()}}\"); }}\n"
+            ),
+        )?;
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args(["--native", "--check", "--lib"])
+            .arg(&lib_dir)
+            .arg(&program)
+            .env("LOFT_CHECK_ARTIFACT", "1")
+            .env("LOFT_TIMEOUT", "600")
+            .output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let binary = stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("ok ")?.split(' ').nth(1).map(PathBuf::from))
+            .unwrap_or_else(|| {
+                panic!(
+                    "[#link {mode}] no artifact on the ok line:\n{stdout}{}",
+                    String::from_utf8_lossy(&out.stderr)
+                )
+            });
+        let bytes = fa::read(&binary)?;
+        let names_it = bytes
+            .windows(library_file.len())
+            .any(|w| w == library_file.as_bytes());
+        assert_eq!(
+            names_it,
+            must_name_the_library,
+            "[#link {mode}] the binary {} the library file `{library_file}`",
+            if names_it { "names" } else { "does not name" }
+        );
+        if mode == "static" {
+            let alone = dir.join("alone");
+            fa::create_dir_all(&alone)?;
+            let shipped = alone.join(fa::file_name(&binary).unwrap_or_default());
+            fa::copy(&binary, &shipped)?;
+            let run = loft::platform::process::harness_command(&shipped)
+                .current_dir(&alone)
+                .output()?;
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout).trim(),
+                "42 -1",
+                "the static binary, alone in a directory: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+        }
+    }
+    let _ = fa::remove_dir_all(&root);
+    Ok(())
+}
+
 /// loft#907 — a `#native "sym"` its library implements under a DIFFERENT Rust
 /// name must reach that implementation on BOTH backends.
 ///

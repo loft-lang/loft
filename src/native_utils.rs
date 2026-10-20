@@ -1744,9 +1744,80 @@ pub(crate) fn rlibs_in_dir(
 /// no-op (it already matches the default).
 #[must_use]
 pub(crate) fn native_cabi_enabled() -> bool {
-    // The C-ABI path is the default on every host; only `LOFT_NATIVE_CABI=0`
-    // opts back into the legacy rlib link (the escape hatch).
-    !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
+    // The C-ABI path is the default on every host.  A STATIC link — each native package's
+    // rlib linked INTO the binary as `extern crate`, one file with nothing to ship beside it —
+    // is chosen by, strongest first: `--static` / `--dynamic`, the program's `#link`
+    // directive, `LOFT_NATIVE_CABI=0` (the old escape hatch).
+    match LINK.load(std::sync::atomic::Ordering::Relaxed) {
+        LINK_STATIC => false,
+        LINK_DYNAMIC => true,
+        _ => !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0")),
+    }
+}
+
+const LINK_UNSET: u8 = 0;
+const LINK_STATIC: u8 = 1;
+const LINK_DYNAMIC: u8 = 2;
+/// The run's link mode, once a flag or the program's `#link` directive has named one.
+static LINK: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(LINK_UNSET);
+/// Whether a FLAG set [`LINK`]: a flag outranks the program's directive.
+static LINK_BY_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `--static` (`true`) / `--dynamic` (`false`): this run's link mode, over the program's own
+/// `#link` directive.
+pub(crate) fn link_by_flag(static_link: bool) {
+    LINK.store(
+        if static_link {
+            LINK_STATIC
+        } else {
+            LINK_DYNAMIC
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    LINK_BY_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The link mode a program's header names — `#link static` or `#link dynamic` among the
+/// directives before its first declaration — applied unless a flag named one.  Read from the
+/// SOURCE, before any parse: the native fast path runs a cached binary without parsing, and
+/// its key holds the link mode, so a mode known only after the parse would key the lookup
+/// and the save differently.  The parser checks the same lines (`Parser::parse_file`).
+pub(crate) fn apply_link_directive(source: &str) {
+    if LINK_BY_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if let Some(static_link) = link_directive(source) {
+        LINK.store(
+            if static_link {
+                LINK_STATIC
+            } else {
+                LINK_DYNAMIC
+            },
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+/// `Some(true)` for `#link static`, `Some(false)` for `#link dynamic`, `None` when the header
+/// names no mode.  The header is a `#!` first line, then blank and `//` lines and `#`
+/// directives, up to the first line that is none of those.
+pub(crate) fn link_directive(source: &str) -> Option<bool> {
+    for (n, line) in source.lines().enumerate() {
+        let line = line.trim();
+        if (n == 0 && line.starts_with("#!")) || line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        let directive = line.strip_prefix('#')?;
+        let mut words = directive.trim_end_matches(';').split_whitespace();
+        if words.next() == Some("link") {
+            return match words.next() {
+                Some("static") => Some(true),
+                Some("dynamic") => Some(false),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// PKG.4/PKG.5: add `--extern` flags to a rustc command for native package rlibs.

@@ -2224,10 +2224,25 @@ impl Parser {
         // directory.  Whole-program; must precede declarations.  At file top the
         // lexer's first token can only be this directive (`#rust`/`#native`/etc.
         // are declaration-scoped, consumed later by `parse_rust`).
-        if self.lexer.has_token("#") {
+        // `#link static` / `#link dynamic` names how a native build links the native libraries
+        // the program uses.  The DRIVER acts on it, reading the header before any parse
+        // (`native_utils::apply_link_directive`); here it is only checked, so a misspelt mode
+        // is refused rather than silently linking the default way.
+        while self.lexer.has_token("#") {
             match self.lexer.has_identifier().as_deref() {
                 Some("cwd") => {
                     self.database.program_relative = false;
+                    let _ = self.lexer.has_token(";");
+                }
+                Some("link") => {
+                    let mode = self.lexer.has_identifier().unwrap_or_default();
+                    if mode != "static" && mode != "dynamic" {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Unknown link mode '#link {mode}' (expected '#link static' or '#link dynamic')"
+                        );
+                    }
                     let _ = self.lexer.has_token(";");
                 }
                 other => {
@@ -2235,8 +2250,9 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "Unknown file directive '#{name}' (expected '#cwd')"
+                        "Unknown file directive '#{name}' (expected '#cwd' or '#link')"
                     );
+                    break;
                 }
             }
         }
