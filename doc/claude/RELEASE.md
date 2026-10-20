@@ -47,9 +47,10 @@ in all three parts** (owner) — and the validation runs **twice per cycle**:
 Both rows block the tag until ticked with the evidence of each part:
 
 1. **Library documentation** — every library that owes a review or moved since its
-   watermark has been read and its watermark bumped:
+   watermark has been read and its watermark bumped, its registry description read against
+   its API and given its home in `loft.toml`:
    `make libcatalogue && make libraries-review` reads clean
-   ([LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md)).
+   ([LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md) § 2b).
 2. **User documentation** — the stdlib reference, the guides, the comparison pages and the
    generated HTML: `cargo run --bin gendoc` leaves no diff (the pages match their sources;
    `doc_hygiene::the_generated_pages_match_their_sources` checks this on every change, except

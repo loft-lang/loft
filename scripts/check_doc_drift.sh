@@ -1583,6 +1583,50 @@ scripts/refresh-unreleased.py --force to record it (they are NOT counted as owin
     rm -f "$owes"
   fi
 
+  # The registry DESCRIPTION is the first thing a searcher reads, and it lives in two
+  # places: `description` in the library's loft.toml (its home — a publish copies it into the
+  # index) and the index entry.  A text with no field behind it was written into the index by
+  # hand and no publish ever corrects it; crypto's named two ciphers the library never had
+  # for four months.  This lists where the text lives; whether it is TRUE is the by-hand read
+  # (LIBRARY_DOC_REVIEW.md § 2b).
+  if [ $have_pub -eq 1 ]; then
+    local desc_rows n_home=0 n_nohome=0 n_differs=0 n_unmeasured=0 dk dkind dtext
+    desc_rows=$(mktemp)
+    jq -r --slurpfile r "$reg" '
+      to_entries[] | select(.key != "loft") | . as $p
+      | (($r[0].packages[$p.key].description // "") | gsub("[\t\n]"; " ")) as $idx
+      | if ($p.value | has("description") | not) then [$p.key, "unmeasured", ""]
+        elif $p.value.description == null then [$p.key, "nohome", $idx]
+        elif $p.value.description != ($r[0].packages[$p.key].description // "") then [$p.key, "differs", $idx]
+        else [$p.key, "home", ""] end | @tsv' "$unrel" > "$desc_rows" 2>/dev/null
+    while IFS=$'\t' read -r dk dkind dtext; do
+      case "$dkind" in
+        home) n_home=$((n_home + 1)) ;; nohome) n_nohome=$((n_nohome + 1)) ;;
+        differs) n_differs=$((n_differs + 1)) ;; *) n_unmeasured=$((n_unmeasured + 1)) ;;
+      esac
+    done < "$desc_rows"
+    say ""
+    say "  -- registry descriptions (the index text against its home, loft.toml's \`description\`) --"
+    say "    $n_home at home · $n_nohome with no loft.toml field · $n_differs differ from it · \
+$n_unmeasured not measured"
+    if [ $n_nohome -gt 0 ]; then
+      yellow "    no \`description\` in loft.toml — the index text was written by hand; give it a home:"
+      while IFS=$'\t' read -r dk dkind dtext; do
+        [ "$dkind" = nohome ] && say "      $(printf '%-22s' "$dk") ${dtext:0:70}"
+      done < "$desc_rows"
+    fi
+    if [ $n_differs -gt 0 ]; then
+      yellow "    loft.toml's \`description\` is not the index's — the next publish refreshes it (--expect-meta):"
+      while IFS=$'\t' read -r dk dkind dtext; do
+        [ "$dkind" = differs ] && say "      $dk"
+      done < "$desc_rows"
+    fi
+    [ $n_unmeasured -gt 0 ] && yellow "    ⚠ $n_unmeasured library(ies) carry no description record — \
+scripts/refresh-unreleased.py backfills it (they are NOT counted as owing one)"
+    say "    Every description is still READ against the library's API: § 2b."
+    rm -f "$desc_rows"
+  fi
+
   say ""
   say "  -- to re-read (its source moved since its watermark) --"
   local n_moved=0 n_blind=0 commits sigs repo_dir
