@@ -103,6 +103,30 @@ pub(crate) fn loft_lib_dir() -> Option<std::path::PathBuf> {
     loft_lib_dir_for(None)
 }
 
+/// Every native-target `libloft.rlib` [`loft_lib_dir`] could answer, present on disk, in its
+/// search order — without choosing among them, which asks the live `rustc`
+/// (`preferred_runtime_rlib`).  For a key that must move whenever the linked runtime could
+/// have: hashing all the candidates moves it as surely, and costs no process.
+pub(crate) fn runtime_rlib_candidates() -> Vec<std::path::PathBuf> {
+    let Some(exe_dir) = env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
+    else {
+        return Vec::new();
+    };
+    let mut out = vec![
+        exe_dir.join("deps").join("libloft.rlib"),
+        exe_dir.join("libloft.rlib"),
+    ];
+    if crate::file_access::file_name(&exe_dir).is_some_and(|n| n == "bin")
+        && let Some(prefix) = exe_dir.parent()
+    {
+        out.push(prefix.join("share").join("loft").join("libloft.rlib"));
+    }
+    out.retain(|p| crate::file_access::exists(p));
+    out
+}
+
 /// Walk up from the running loft binary to the loft SOURCE tree — the first
 /// ancestor directory whose `Cargo.toml` is the `loft` package's own manifest.
 /// `Some` in a dev / source checkout (where the native runtime can be rebuilt

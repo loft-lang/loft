@@ -51,6 +51,11 @@ impl Run {
     fn binary_cache(&self) -> &str {
         self.marker("native_binary_cache=")
     }
+    /// Did this run launch `rustc` to ask its version?  A run that executes a cached binary
+    /// or interprets must not: the launch costs more than the rest of a warm start.
+    fn probed_rustc(&self) -> bool {
+        self.stderr.contains("rustc_probe=")
+    }
     fn marker(&self, key: &str) -> &str {
         let Some(at) = self.stderr.find(key) else {
             return "(absent)";
@@ -104,6 +109,13 @@ fn warm_to_a_hit(root: &Path, script: &Path, want: &str) {
         "a first run has no sidecar: {}",
         cold.stderr
     );
+    // The control for the warm run's assertion below: a run that compiles asks rustc, and
+    // says so — so an absent line is the probe not happening, not the instrument missing.
+    assert!(
+        cold.probed_rustc(),
+        "a compiling run must report its rustc probe: {}",
+        cold.stderr
+    );
     let warm = run(root, script);
     assert!(
         warm.ok && warm.stdout.contains(want),
@@ -115,6 +127,11 @@ fn warm_to_a_hit(root: &Path, script: &Path, want: &str) {
         warm.source_key(),
         "hit",
         "the second run of an unchanged program must be served by its source key: {}",
+        warm.stderr
+    );
+    assert!(
+        !warm.probed_rustc(),
+        "executing a cached binary must not launch rustc: {}",
         warm.stderr
     );
 }
@@ -334,6 +351,11 @@ fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
         i.ok && i.stdout.contains("sum=100"),
         "{}{}",
         i.stdout,
+        i.stderr
+    );
+    assert!(
+        !i.probed_rustc(),
+        "an interpreted run links nothing and must not launch rustc: {}",
         i.stderr
     );
     let r = run(&root, &script);

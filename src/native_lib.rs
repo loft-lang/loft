@@ -1712,14 +1712,18 @@ pub fn rustc_available() -> bool {
 }
 
 /// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
-/// there is no working `rustc`.  Asked once per process.
+/// there is no working `rustc`.  Asked once per process, and the ONE place loft asks it:
+/// a launch of `rustc` costs more than a warm start of loft itself, so a run that executes a
+/// program must never reach here.  `LOFT_TIMING=1` reports each launch (`rustc_probe=`), which
+/// is how a start-up that pays one shows it.
 #[must_use]
 pub fn rustc_version() -> Option<&'static str> {
     use std::sync::OnceLock;
     static VERSION: OnceLock<Option<String>> = OnceLock::new();
     VERSION
         .get_or_init(|| {
-            Spawn::new(Program::search("rustc"))
+            let started = std::time::Instant::now();
+            let version = Spawn::new(Program::search("rustc"))
                 .arg("--version")
                 .run(b"")
                 .ok()
@@ -1731,7 +1735,14 @@ pub fn rustc_version() -> Option<&'static str> {
                         .unwrap_or("rustc")
                         .trim()
                         .to_string()
-                })
+                });
+            if crate::platform::timing_enabled() {
+                eprintln!(
+                    "LOFT_TIMING rustc_probe={:.2}ms",
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            version
         })
         .as_deref()
 }

@@ -4292,10 +4292,16 @@ fn native_source_key_fingerprint(
     native_utils::native_cabi_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
-    if let Some(lib_dir) = loft_lib_dir()
-        && let Ok(meta) = fa::metadata(lib_dir.join("libloft.rlib"))
-    {
-        meta.modified().ok().hash(&mut h);
+    // Every runtime rlib a build could link, not the one it would choose: choosing asks the
+    // live `rustc` which copy it can read (loft#2033), a process launch this key — computed
+    // on the way to EXECUTING a cached binary — has no use for.  A change to either copy
+    // moves the key; the choice itself is made where a build links.
+    for rlib in native_utils::runtime_rlib_candidates() {
+        rlib.hash(&mut h);
+        fa::metadata(&rlib)
+            .and_then(|m| m.modified())
+            .ok()
+            .hash(&mut h);
     }
     h.finish()
 }
@@ -9178,11 +9184,11 @@ fn main() {
     // (DLL staging reads the parse), and anything the manifest registers beyond loft
     // sources (`startup_cache::native_fast_path`).  A decline costs nothing new: the slow
     // path still hits the generated-Rust cache and skips rustc as before.
-    // Only a run that reaches the `'native` block reads the fingerprint, and computing it can
-    // spawn `rustc --version` (the runtime rlib's lookup asks which rustc wrote it) — a cost an
-    // interpreter run must not pay, and on macOS a spawn that starts the driver-death watcher
-    // shell besides (loft#2070).
-    let native_fingerprint = if native_mode || native_emit.is_some() {
+    // Computed where it is used — the fast path's lookup and the sidecar a native build
+    // saves — never on a run that takes neither (an `--interpret` run, a check).  Computing it
+    // can spawn `rustc --version` (the runtime rlib's lookup asks which rustc wrote it), and
+    // on macOS that spawn also starts the driver-death watcher shell (loft#2070).
+    let native_fingerprint = || {
         native_source_key_fingerprint(
             native_release,
             native_debug,
@@ -9190,8 +9196,6 @@ fn main() {
             html_names,
             debug_name.as_deref(),
         )
-    } else {
-        0
     };
     // loft#1684 — the program cache's key names the search path AS GIVEN, captured before
     // the parse: resolving a registry `use` appends that package's directory to
@@ -9221,7 +9225,7 @@ fn main() {
             &abs_file,
             &cache_key_dirs,
             &default_str,
-            native_fingerprint,
+            native_fingerprint(),
         )
         .filter(|hit| native_utils::cache_safe_to_execute(&hit.binary));
         if platform::timing_enabled() {
@@ -12067,7 +12071,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             loft::startup_cache::save_native_sidecar(
                 &abs_file,
                 &cache_key_dirs,
-                native_fingerprint,
+                native_fingerprint(),
                 &cached_binary,
             );
         }

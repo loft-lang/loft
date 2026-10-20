@@ -990,16 +990,8 @@ pub fn rustc_mismatch() -> Option<&'static str> {
             if stamp.is_empty() {
                 return None;
             }
-            let live = crate::platform::process::Spawn::new(
-                crate::platform::process::Program::search("rustc"),
-            )
-            .arg("--version")
-            .run(b"")
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-            match live {
-                Some(v) if v == stamp => None,
+            match crate::native_lib::rustc_version() {
+                Some(v) if v == stamp.trim() => None,
                 Some(v) => Some(format!(
                     "rustc changed since this loft was built ({stamp} → {v})"
                 )),
