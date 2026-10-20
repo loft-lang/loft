@@ -44,7 +44,7 @@ fn scan(path: text, out: Out) {
 
 fn main() {
   out = Out { rows: [] };
-  for p in "tests".walk(".rs") { if p.dir() == "tests" { scan(p, out); } }
+  for p in "tests/*.rs".glob() { scan(p, out); }
   for p in "src".walk(".rs") { scan(p, out); }
   // The header as the original holds it, one literal (finding 014: `` \` `` is a backtick).
   header = `

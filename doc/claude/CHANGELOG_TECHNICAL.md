@@ -27,6 +27,23 @@ All notable changes to the loft language and interpreter.
   `tests/scripts/a-decoded-value-is-read-at-its-position.loft`, pin `tests/decode_structure.rs`.
 - The apart-call clause of `(R-PushRec)` asks the push tier: under `LOFT_NO_PUSH_HOIST` it
   bound a record-push header (`push_hoist::the_switch_hoists_no_push`).
+### `--interpret`: a call into a library native costs an index, not two locks (2026-10-20)
+
+- **`extensions::native_auto_dispatch`** read its slot per call under the `NATIVE_SIGS` mutex,
+  cloned the symbol and signature out, and looked the bridge up by symbol under
+  `BRIDGE_REGISTRY`'s; then it built its argument lists in two fresh vectors and ran
+  `bridge_args` / `bridge_args_done` even for a call with no store argument.  The bridge is
+  now resolved once at wiring and stored beside the signature; each thread reads its slot
+  from its own copy by library index (`cached_sig`), refetched when a wiring pass bumps
+  `SIGS_GENERATION`; arguments sit in a stack buffer up to eight (`ArgBuf`); and a call with
+  no store argument and no store answer skips the pin/copy/mint step it never needed.
+  `shared_store_dispatch` reads `SHARED_SIGS` through the same cache.  3M regex `search`
+  calls 1.45 s → 0.84 s (~100 ns a call); `tests/dump_ignored_tests` 0.96 s → 0.68 s.  Unit
+  pins `extensions::dispatch_cache_tests`: a rewired slot is never served from a thread's
+  stale copy, and an argument list past the inline slots keeps every value.
+- **`tests/dump_ignored_tests`** lists `tests/*.rs` with `glob`, as the original does, instead
+  of walking every directory under `tests/` and keeping the top level: 1.78 s → 0.96 s with
+  the old dispatcher, same output.
 
 ### `--native`: an unhoisted plain-vector append is the runtime's own (2026-10-19)
 
