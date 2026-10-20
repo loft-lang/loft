@@ -182,10 +182,11 @@ world holds; the service rebuilds; the world crosses into the new build through 
 with its references, hashes and sorted collections intact (today's JSON snapshot restores them
 to defaults); and a change the map refuses shows its reason in the IDE while the game keeps
 running the old build.  It rests on the background rebuild and the browser swap of
-[08-live-build-swap.md](18-engine-host/08-live-build-swap.md) (S4, S6), and on the browser front
-end of the server-backed IDE ([@PLN16](https://github.com/loft-lang/plans/issues/16) M5e), not
-the serverless playground of [@PLN62](https://github.com/loft-lang/plans/issues/62), which
-cannot host a real game.
+[08-live-build-swap.md](18-engine-host/08-live-build-swap.md) (S4, S6), and on an IDE in the
+browser: the server-backed one ([@PLN16](https://github.com/loft-lang/plans/issues/16) M5e)
+first, and the serverless one ([@PLN62](https://github.com/loft-lang/plans/issues/62)) once it
+runs a full game or a long simulation, which is its goal.  The converter builds for `wasm32`
+(step 8), so it serves both.
 
 ## Open questions (owner)
 
