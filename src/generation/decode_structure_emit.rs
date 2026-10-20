@@ -72,6 +72,13 @@ impl Output<'_> {
         }
     }
 
+    /// Is `d` emitted as a consumer TWIN (`d__ps`)?  A root is a consumer too, but it is
+    /// emitted in its positional form under its own name, taking the frame — so a call of one
+    /// from another root's twin stays a plain call.
+    fn ps_twin(&self, d: u32) -> bool {
+        self.ps.consumers.contains_key(&d) && !self.ps.roots.contains(&d)
+    }
+
     fn ps_name(&self, d: u32, suffix: &str) -> String {
         format!(
             "{}{suffix}",
@@ -395,7 +402,7 @@ impl Output<'_> {
                     .collect(),
             );
         }
-        if self.ps.consumers.contains_key(&callee) {
+        if self.ps_twin(callee) {
             let gc = &self.ps.consumers[&callee];
             let def = self.data.def(callee);
             return Some(
@@ -814,7 +821,7 @@ impl Output<'_> {
                 }
                 write!(w, ") }}")
             }
-            Value::Call(callee, args) if self.ps.consumers.contains_key(callee) => {
+            Value::Call(callee, args) if self.ps_twin(*callee) => {
                 write!(w, "{xv} = ")?;
                 self.ps_consumer_call(w, cons, pd, prod, *callee, args)
                     .map(|_| ())
@@ -913,6 +920,9 @@ impl Output<'_> {
                 return Ok(true);
             }
             _ => {}
+        }
+        if !self.ps_twin(callee) {
+            return Ok(false);
         }
         let Some(gc) = self.ps.consumers.get(&callee).cloned() else {
             return Ok(false);
@@ -1058,7 +1068,7 @@ impl Output<'_> {
             }
             self.output_ps_slow_text(w, dnr)?;
         }
-        if self.ps.consumers.contains_key(&dnr) && !self.ps.roots.contains(&dnr) {
+        if self.ps_twin(dnr) {
             self.ps_mode = Some(PsMode::Consumer(dnr));
             let r = self.output_function(w, dnr, program_store);
             self.ps_mode = None;

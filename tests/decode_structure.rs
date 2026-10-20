@@ -14,7 +14,13 @@ const CELLS: &str = "tests/scripts/a-decoded-value-is-read-at-its-position.loft"
 /// read in a loop), `two` (one value handed on twice) and `keep` (a value returned) keep the
 /// built form.
 const ROOTS: &[&str] = &[
-    "n_deep", "n_find", "n_lookup", "n_num", "n_status", "n_total",
+    "n_checked",
+    "n_deep",
+    "n_find",
+    "n_lookup",
+    "n_num",
+    "n_status",
+    "n_total",
 ];
 
 /// The consumers' twins (`__ps`), the producer's shape twin among them.

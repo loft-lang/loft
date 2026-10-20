@@ -30,6 +30,9 @@
 // F11 { "a": "x", "b": "y" } → two "x+y" (one value handed on twice: declines, (6)); each
 //    b, a, c → "yx-" (a read in a loop: declines); keep → "apply" (a decoded value returned:
 //    declines).
+// F12 a root that calls another root (`checked`: `status`, then its own decode): F1 op →
+//    "apply", F7 → "bad".  A root is emitted under its own name, so the call of one stays a plain call; the
+//    consumer-twin name it was given did not exist and the release build did not compile.
 //
 // @falsify-tier: native-release
 // @falsified-by: tests/falsified/a-decoded-value-is-read-at-its-position.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
@@ -248,6 +251,14 @@ fn keep(frame: vector<u8>) -> Val {
   return d.value;
 }
 
+/// A root that asks another root about its frame before decoding it itself (the request
+/// check's shape when its two decodes are not one): the other root is called by its own name.
+fn checked(frame: vector<u8>, key: text) -> text {
+  if status(frame) == "false/0" { return "bad"; }
+  d = dec(frame);
+  text_of(get(d.value, key))
+}
+
 fn f1() -> vector<u8> {
   [4, 5,
    2, 2, 111, 112,  2, 5, 97, 112, 112, 108, 121,
@@ -317,6 +328,7 @@ fn main() {
   f11: vector<u8> = [4, 2, 2, 1, 97, 2, 1, 120, 2, 1, 98, 2, 1, 121];
   assert(two(f11) == "x+y", "F11 two: {two(f11)}");
   assert(each(f11, "b", "a", "c") == "yx-", "F11 each: {each(f11, \"b\", \"a\", \"c\")}");
+  assert(checked(f, "op") == "apply" && checked(f7, "op") == "bad", "F12 checked: {checked(f, \"op\")} {checked(f7, \"op\")}");
   k = keep(f);
   assert(text_of(get(k, "op")) == "apply", "F11 keep: {text_of(get(k, \"op\"))}");
   println("done");
