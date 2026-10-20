@@ -208,6 +208,13 @@ The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
               collection's ELEMENT stride is width(element), which for a record element is its
               size (L-Align: a multiple of its alignment) — or the 4-byte record id where the
               program links the element type (heap.md H-LongRef).
+  (L-Ref-Slot) a stored reference names its target's store by SLOT number, and a store
+              image records the slot it was written from (its sidecar's `slot=`).  A
+              whole-image load into slot s rewrites every reference naming the recorded slot
+              to s.  It refuses the load when a reference names any other store (not part of
+              the image), or when the image holds a reference and records no slot (nothing
+              can tell its references apart).  Never a reference left naming the writer's
+              slot in the reader.
 ```
 
 **In words.** A collection field holds a small (4-byte) pointer, not the data inline, and a

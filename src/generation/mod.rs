@@ -13687,7 +13687,11 @@ fn output_enum_values(
 ) -> std::io::Result<()> {
     let def = data.def(d_nr);
     let e_var = format!("t{type_id}");
-    for a in def.attributes() {
+    // Only the variants: a method's dispatcher shares the list (`Data::is_variant`, loft#2100).
+    for (a_nr, a) in def.attributes().iter().enumerate() {
+        if !data.is_variant(d_nr, a_nr) {
+            continue;
+        }
         let variant_type = if matches!(a.typedef, Type::Enum(_, true, _)) {
             // Find the EnumValue definition whose parent is this enum and name matches.
             (0..data.definitions())

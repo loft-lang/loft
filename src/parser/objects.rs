@@ -1477,13 +1477,13 @@ impl Parser {
         // type at all — the same peel `enum_context` already does to decide there IS an
         // enum context here (loft#1065 one site over, loft#1416).
         } else if let Type::Enum(enr, _, _) = parent_tp.peel_link()
-            && self.data.def(*enr).attr_names.contains_key(name)
+            && self.data.variant_attr(*enr, name).is_some()
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
         } else if let Type::Reference(enr, _) = parent_tp.peel_link()
             && self.data.def_type(*enr) == DefType::Enum
-            && self.data.def(*enr).attr_names.contains_key(name)
+            && self.data.variant_attr(*enr, name).is_some()
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
@@ -2501,8 +2501,8 @@ impl Parser {
             );
             return ret;
         }
-        if let Some(a_nr) = self.data.def(enum_nr).attr_names.get(variant_name) {
-            *code = self.data.attr_value(enum_nr, *a_nr);
+        if let Some(a_nr) = self.data.variant_attr(enum_nr, variant_name) {
+            *code = self.data.attr_value(enum_nr, a_nr);
         }
         ret
     }
@@ -2870,7 +2870,7 @@ impl Parser {
             // emit via the shared emitter (plain discriminant or mixed-enum
             // allocation), resolved within the variant's own enum.
             if let Type::Enum(en, _, _) = t
-                && self.data.def(en).attr_names.contains_key(name)
+                && self.data.variant_attr(en, name).is_some()
             {
                 return self.emit_variant_value(en, name, code);
             }

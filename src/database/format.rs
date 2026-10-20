@@ -1467,13 +1467,6 @@ impl ShowDb<'_> {
             }
         } else if (self.known_type as usize) < self.stores.types.len() {
             match &self.stores.types[self.known_type as usize].parts {
-                // The trie KIND exists at the schema level from step 2 of
-                // doc/claude/plans/text-keyed-trie.md; rendering is step 3.  No trie can
-                // be CONSTRUCTED until the keyword lands (step 6), so this is
-                // unreachable today — and loud rather than a silent wrong answer.
-                Parts::Trie(_, _) => {
-                    unimplemented!("trie rendering — step 3 of doc/claude/plans/text-keyed-trie.md")
-                }
                 Parts::Enum(vals) => {
                     // P54 Q3 second half — when serialising in JSON mode
                     // and the parent enum is JsonValue, render the
@@ -1650,7 +1643,8 @@ impl ShowDb<'_> {
                 | Parts::Ordered(tp, _)
                 | Parts::Hash(tp, _)
                 | Parts::Index(tp, _)
-                | Parts::Radix(tp, _) => {
+                | Parts::Radix(tp, _)
+                | Parts::Trie(tp, _) => {
                     // `(F-Render)`: a null of any type renders `null`.  A collection field or
                     // local is addressed AT its slot, so its absence is the slot's
                     // (`is_absent_collection`, the one home `== null` asks) — rendered as the
@@ -1903,11 +1897,28 @@ impl ShowDb<'_> {
         }
         let complex = self.pretty && self.stores.types[content as usize].complex;
         s.push('[');
-        if matches!(
-            self.stores.types[self.known_type as usize].parts,
-            Parts::Hash(_, _)
-        ) {
-            self.write_hash(s, content, indent, &data, complex);
+        // The kinds whose elements are not reached by `next`: each is walked by the module
+        // that owns its layout — a hash in key order, a spatial in its tree's order, a trie in
+        // key order — and rendered as the list of those records.  A spatial or trie field
+        // panicked here before, as an `iterate` on a non-collection (loft#2102).
+        let walked = match self.stores.types[self.known_type as usize].parts {
+            Parts::Hash(_, _) => Some(crate::hash::records_sorted(
+                &data,
+                &self.stores.allocations,
+                self.stores.keys(self.known_type),
+            )),
+            Parts::Radix(_, _) => Some(record_refs(
+                &data,
+                crate::radix_db::records(&data, &self.stores.allocations),
+            )),
+            Parts::Trie(_, _) => Some(record_refs(
+                &data,
+                crate::trie_db::records(&data, &self.stores.allocations),
+            )),
+            _ => None,
+        };
+        if let Some(recs) = walked {
+            self.write_records(s, content, indent, &recs, complex);
             return;
         }
         let mut pos = i32::MAX;
@@ -1969,9 +1980,10 @@ impl ShowDb<'_> {
         s.push(']');
     }
 
-    /// The elements of a hash, in key order.
+    /// The elements `recs` of a hash, a spatial or a trie, in the order their owning
+    /// module's walk gives them.
     ///
-    /// The walk is [`crate::hash::records_sorted`] rather than a bucket loop of its own.
+    /// A hash's walk is [`crate::hash::records_sorted`] rather than a bucket loop of its own.
     /// This method used to carry one, and it decayed: @PLN135 arc H moved entries into an
     /// ARENA, where several share one record and `(rec, pos)` identifies an entry, while
     /// the loop here still read every bucket slot as a bare record number at `pos: 8`.
@@ -1980,12 +1992,14 @@ impl ShowDb<'_> {
     /// struct, which is exactly the report: `{r_f}` segfaulted the interpreter and exited
     /// silently on native while `{r_f.cells[1, 2]}` and every scalar field were fine
     /// (loft#873). One walk, in the module that owns the layout, cannot drift from it.
-    fn write_hash(&self, s: &mut String, content: u16, indent: u16, data: &DbRef, complex: bool) {
-        let recs = crate::hash::records_sorted(
-            data,
-            &self.stores.allocations,
-            self.stores.keys(self.known_type),
-        );
+    fn write_records(
+        &self,
+        s: &mut String,
+        content: u16,
+        indent: u16,
+        recs: &[DbRef],
+        complex: bool,
+    ) {
         let mut first_elm = true;
         for (n, r) in recs.iter().enumerate() {
             // Bounded render (the debugger's glance) — the same cap `write_list` applies
@@ -2570,6 +2584,18 @@ impl ShowDb<'_> {
 /// element holding one renders as its kind rather than as either backend's numbers.
 pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
     store_nr == super::COROUTINE_STORE || store_nr == super::NATIVE_COROUTINE_STORE
+}
+
+/// A record-per-element collection's record numbers as references to their payloads, which
+/// start at byte 8 of each record.
+fn record_refs(coll: &DbRef, recs: Vec<u32>) -> Vec<DbRef> {
+    recs.into_iter()
+        .map(|rec| DbRef {
+            store_nr: coll.store_nr,
+            rec,
+            pos: 8,
+        })
+        .collect()
 }
 
 #[cfg(test)]

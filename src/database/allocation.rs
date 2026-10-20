@@ -4791,6 +4791,12 @@ impl Stores {
         // a refused bind must leave the slot as it was, and must not reach the sidecar
         // write at the end of this function, which records THIS program's layout and
         // so would wave every later load of the file through.
+        // Read before the sidecar is rewritten for this slot below.
+        let recorded = if exists {
+            Self::recorded_slot(path)
+        } else {
+            None
+        };
         if exists && !self.schema_gate_ok(slot, path, "store_persist_bind") {
             return false;
         }
@@ -4883,7 +4889,16 @@ impl Stores {
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
 
-        self.allocations[slot_idx] = new_store;
+        // An existing file's references name the slot it was written from; the fresh branch
+        // just wrote this slot's own bytes, whose references already name it.
+        if exists {
+            let what = path.display().to_string();
+            if !self.adopt_image(slot, new_store, recorded, &what, "store_persist_bind") {
+                return false;
+            }
+        } else {
+            self.allocations[slot_idx] = new_store;
+        }
         // @PLN123 B3 — the OTHER load moment, and the one the plan is really
         // about: a bound store is what a long-lived store normally is.  Only on
         // the EXISTING-file branch — the fresh branch is a WRITE, where a
@@ -4898,7 +4913,7 @@ impl Stores {
         // schema-derived offsets. Best-effort: a store without a sidecar just
         // falls back to the post-copy `store_verify` backstop on load.
         if preserved.0 != u16::MAX {
-            let id = crate::schema_sidecar::LayoutIdentity::of(self, &[preserved.0]);
+            let id = crate::schema_sidecar::LayoutIdentity::of_store(self, slot, preserved.0);
             if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
                 crate::loft_eprintln!(
                     "store_persist_bind: could not write layout sidecar beside {}",
@@ -4985,7 +5000,7 @@ impl Stores {
         // Same sidecar the bind path writes, for the same reason: a paged or
         // remote loader gates on it BEFORE range-reading foreign bytes, and an
         // image written by this call is exactly the one that gets served.
-        let id = crate::schema_sidecar::LayoutIdentity::of(self, &[tp]);
+        let id = crate::schema_sidecar::LayoutIdentity::of_store(self, slot, tp);
         if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
             crate::loft_eprintln!(
                 "store_persist_copy: could not write layout sidecar beside {}",
@@ -5068,7 +5083,16 @@ impl Stores {
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
 
-        self.allocations[slot_idx] = new_store;
+        let what = path.display().to_string();
+        if !self.adopt_image(
+            slot,
+            new_store,
+            Self::recorded_slot(path),
+            &what,
+            "store_load",
+        ) {
+            return false;
+        }
         // @PLN123 B2 — the load moment is the one place records may move (see
         // `compact_slot`).  ON by default; `LOFT_NO_COMPACT_ON_LOAD` turns it off
         // and leaves the loaded store exactly as the file had it, which is the
@@ -6390,8 +6414,76 @@ impl Stores {
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
-        self.allocations[slot_idx] = new_store;
-        true
+        self.adopt_image(slot, new_store, None, "the image", "store_load")
+    }
+
+    /// [`Stores::load_bytes`] for an image whose sidecar recorded the slot it was written
+    /// from (`recorded`), so its stored references can be made to name `slot` (loft#2099).
+    fn load_bytes_from(
+        &mut self,
+        slot: u16,
+        bytes: &[u8],
+        recorded: Option<u16>,
+        what: &str,
+        builtin: &str,
+    ) -> bool {
+        if slot as usize >= self.allocations.len() {
+            return false;
+        }
+        let s = &self.allocations[slot as usize];
+        let preserved = (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned);
+        let Some(mut new_store) = crate::store::Store::from_bytes(bytes) else {
+            return false;
+        };
+        new_store.set_known_type(preserved.0);
+        new_store.free = preserved.1;
+        new_store.set_created_at(preserved.2);
+        new_store.last_op_at = preserved.3;
+        new_store.pinned = preserved.4;
+        self.adopt_image(slot, new_store, recorded, what, builtin)
+    }
+
+    /// Put a loaded store image in `slot` and make its stored references name it there
+    /// (`rebase_stored_refs`); on a refusal the slot keeps the store it had, and the reason
+    /// is on stderr, as a layout refusal's is.
+    pub(super) fn adopt_image(
+        &mut self,
+        slot: u16,
+        image: crate::store::Store,
+        recorded: Option<u16>,
+        what: &str,
+        builtin: &str,
+    ) -> bool {
+        let previous = std::mem::replace(&mut self.allocations[slot as usize], image);
+        match self.rebase_stored_refs(slot, recorded) {
+            Ok(()) => true,
+            Err(why) => {
+                self.allocations[slot as usize] = previous;
+                crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+                false
+            }
+        }
+    }
+
+    /// The slot a store file's sidecar says it was written from.
+    pub(super) fn recorded_slot(path: &std::path::Path) -> Option<u16> {
+        let side = crate::schema_sidecar::dschema_path(path);
+        let text = crate::file_access::read_to_string(side).ok()?;
+        crate::schema_sidecar::LayoutIdentity::from_sidecar(&text)?.slot
+    }
+
+    /// The same for a store fetched from `url`, asked only for a type that holds references:
+    /// every other load is spared the second fetch.
+    #[cfg(any(
+        feature = "registry",
+        all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
+    ))]
+    fn url_recorded_slot(&self, slot: u16, url: &str) -> Option<u16> {
+        if !self.holds_stored_refs(self.allocations[slot as usize].known_type) {
+            return None;
+        }
+        let bytes = crate::net::fetch_bytes(&format!("{url}.dschema")).ok()?;
+        crate::schema_sidecar::LayoutIdentity::from_sidecar(std::str::from_utf8(&bytes).ok()?)?.slot
     }
 
     /// @PLN97 arc G Phase 0 — load a persisted store IMAGE over HTTP(S) from a
@@ -6430,7 +6522,8 @@ impl Stores {
             crate::loft_eprintln!("store loader: refusing {url} — {e}");
             return false;
         }
-        self.load_bytes(slot, &bytes)
+        let recorded = self.url_recorded_slot(slot, url);
+        self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url")
     }
 
     /// @PLN97 arc G Phase 0 — load a whole store IMAGE over HTTP(S)/`file://` from
@@ -6461,7 +6554,8 @@ impl Stores {
                 return false;
             }
         };
-        self.load_bytes(slot, &bytes)
+        let recorded = self.url_recorded_slot(slot, url);
+        self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url_trusted")
     }
 
     /// @PLN97 arc G Phase 2 — load a store IMAGE from a local file that may be
@@ -6480,7 +6574,14 @@ impl Stores {
             Ok(b) => b,
             Err(_) => return false,
         };
-        self.load_bytes(slot, &bytes)
+        let what = path.display().to_string();
+        self.load_bytes_from(
+            slot,
+            &bytes,
+            Self::recorded_slot(path),
+            &what,
+            "store_load_untrusted",
+        )
     }
 
     /// loft#700 — does the store at `path` have the layout this program will READ it
@@ -8267,7 +8368,7 @@ impl Stores {
 /// relocating records and rewriting every `DbRef`, which is compaction, not
 /// this.
 #[cfg(feature = "mmap")]
-fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
+pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
     // PRIMARY = 1 is the first record's word position.
     let mut rec: u32 = 1;
     let mut live_end: u32 = 1;
@@ -8309,7 +8410,11 @@ fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
 /// Returns `None` if the source bytes don't describe a walkable record chain,
 /// or if `target_words` would cut into live data.
 #[cfg(feature = "mmap")]
-fn build_padded_store_image(src: &[u8], src_words: u32, target_words: u32) -> Option<Vec<u8>> {
+pub(super) fn build_padded_store_image(
+    src: &[u8],
+    src_words: u32,
+    target_words: u32,
+) -> Option<Vec<u8>> {
     if (src.len() as u32) < src_words.saturating_mul(8) {
         return None;
     }
@@ -8337,7 +8442,7 @@ fn build_padded_store_image(src: &[u8], src_words: u32, target_words: u32) -> Op
 /// beside the target and rename over.  Rename is atomic, so a reader either
 /// sees the old image or the new one — never a truncated store.  @PLN123 B3.
 #[cfg(feature = "mmap")]
-fn write_image_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(super) fn write_image_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut tmp = path.to_path_buf();
     let mut name = tmp

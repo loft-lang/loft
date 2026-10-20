@@ -16,10 +16,14 @@ use crate::schema_sidecar::{LayoutIdentity, SCHEMA_MARKER};
 /// in `schema`, so `schema_sidecar::classify` refuses the raw handoff.
 #[must_use]
 pub fn of_scoped(stores: &Stores, roots: &[u16], data: &crate::data::Data) -> LayoutIdentity {
+    let (root, facts) = LayoutIdentity::root_and_facts(stores, roots);
     LayoutIdentity {
         layout_hash: stores.layout_algo_hash(roots),
         dump: stores.layout_dump(roots),
         schema: nullability_schema(data, roots),
+        root,
+        facts,
+        slot: None,
     }
 }
 

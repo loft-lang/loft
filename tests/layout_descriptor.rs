@@ -35,6 +35,10 @@ struct Bag { items: hash<Item[ik]> }
 struct SortedBag { items: sorted<Item[ik]> }
 struct IndexBag { items: index<Item[ik]> }
 struct RefHost { child: Scalars }
+struct Word { w: text }
+struct Lexicon { words: trie<Word[w]> }
+struct Pin { x: integer, y: integer }
+struct Map { pins: spatial<Pin[x, y]> }
 enum Color { Red, Green, Blue }
 enum Shape { Circle { radius: integer }, Rect { width: integer, height: integer } }
 "#;
@@ -50,6 +54,8 @@ const CORPUS_TYPES: &[&str] = &[
     "SortedBag",
     "IndexBag",
     "RefHost",
+    "Lexicon",
+    "Map",
     "Color",
     "Shape",
 ];
@@ -332,4 +338,205 @@ fn descriptor_to_json_is_well_formed_and_faithful() {
         js.contains("\"kind\":\"iterated\",\"sub\":\"hash\""),
         "hash<> → iterated/hash\n{js}"
     );
+}
+
+// ── @PLN196 step 0: the dump reads back into the description it was rendered from ──
+
+/// The corpus description read back from its own dump, for one program's roots: equal to the
+/// live description once the facts the dump does not record are set aside.  The sum of the
+/// facts set aside is the report step 0 asks for — what a version-2 sidecar must add.
+#[test]
+fn the_corpus_dump_reads_back_into_its_description() {
+    let p = parse(CORPUS);
+    let roots: Vec<u16> = CORPUS_TYPES.iter().map(|n| known(&p, n)).collect();
+    let live = p.database.layout_descriptor(&roots);
+    let dump = p.database.layout_dump(&roots);
+    let back = loft::database::LayoutDesc::from_dump(&dump).expect("the corpus dump parses");
+    assert_eq!(
+        back.render_dump(),
+        dump,
+        "the parsed description re-renders the dump"
+    );
+    assert_eq!(
+        back.canonical().unwrap(),
+        live.as_dumped().canonical().unwrap(),
+        "name-keyed, the dump carries every layout fact the live table has"
+    );
+}
+
+/// Anti-vacuity for the comparison above: a description whose one field moved compares
+/// unequal, and a dump with a position edited reads back as a different description.
+#[test]
+fn a_moved_field_is_seen_by_the_comparison() {
+    let p = parse(CORPUS);
+    let roots = [known(&p, "Scalars")];
+    let dump = p.database.layout_dump(&roots);
+    let edited = dump.replacen("i@", "i@9", 1);
+    assert_ne!(edited, dump, "the edit applied");
+    match loft::database::LayoutDesc::from_dump(&edited) {
+        Ok(back) => assert_ne!(
+            back.canonical().unwrap(),
+            p.database
+                .layout_descriptor(&roots)
+                .as_dumped()
+                .canonical()
+                .unwrap(),
+            "a moved field must not compare equal"
+        ),
+        Err(e) => panic!("an edited position is still a parseable dump: {e}"),
+    }
+}
+
+/// Step 0 over every program: each program's layout reads back from its own dump, and the
+/// facts the dump does not carry are counted per kind.  A program whose dump does not read
+/// back, or reads back as a different description, fails here with its name.
+#[test]
+fn every_corpus_layout_reads_back_from_its_dump() {
+    common::on_cli_stack(every_corpus_layout_body);
+}
+
+fn every_corpus_layout_body() {
+    let (data, db) = cached_default();
+    let mut scripts: Vec<std::path::PathBuf> = loft::file_access::read_dir("tests/scripts")
+        .expect("tests/scripts")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| loft::file_access::has_extension(p, "loft"))
+        .collect();
+    scripts.sort();
+    scripts.extend(common::corpus::suite_programs());
+    let (mut checked, mut with_types) = (0usize, 0usize);
+    let (mut lost_null, mut lost_target, mut lost_group, mut lost_linked) = (0, 0, 0, 0);
+    let mut failures: Vec<String> = Vec::new();
+    for script in &scripts {
+        let mut p = Parser::new();
+        p.data = data.clone();
+        p.database = db.clone();
+        if !p.parse(&script.to_string_lossy(), false) {
+            continue;
+        }
+        checked += 1;
+        let roots = loft::layout_schema::program_roots(&p.data);
+        if roots.is_empty() {
+            continue;
+        }
+        with_types += 1;
+        let live = p.database.layout_descriptor(&roots);
+        let dump = p.database.layout_dump(&roots);
+        let name = script.display();
+        let back = match loft::database::LayoutDesc::from_dump(&dump) {
+            Ok(b) => b,
+            Err(e) => {
+                failures.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        match (back.canonical(), live.as_dumped().canonical()) {
+            (Ok(a), Ok(b)) if a == b => {}
+            (Ok(a), Ok(b)) => {
+                let first = b
+                    .nodes
+                    .iter()
+                    .find(|(k, n)| a.nodes.get(k) != Some(n))
+                    .map_or_else(String::new, |(k, n)| {
+                        format!(
+                            " — first at `{}`: live {n:?}, read back {:?}",
+                            b.names[k],
+                            a.nodes.get(k)
+                        )
+                    });
+                failures.push(format!("{name}: reads back as another layout{first}"));
+            }
+            (Err(e), _) | (_, Err(e)) => failures.push(format!("{name}: {e}")),
+        }
+        // Version 2: the dump plus its facts read back into the WHOLE live description.
+        let mut full = back.clone();
+        match full.apply_facts(&live.render_facts()) {
+            Ok(()) => {
+                if full.canonical().ok() != live.canonical().ok() {
+                    failures.push(format!("{name}: dump + facts read back as another layout"));
+                }
+            }
+            Err(e) => failures.push(format!("{name}: facts do not apply: {e}")),
+        }
+        let fields = || {
+            live.nodes.values().flat_map(|n| match n {
+                LayoutNode::Record(fs) | LayoutNode::EnumValue(_, fs) => fs.clone(),
+                _ => Vec::new(),
+            })
+        };
+        lost_null += usize::from(fields().any(|f| f.nullable));
+        lost_target += usize::from(fields().any(|f| f.target != u16::MAX));
+        lost_group += usize::from(fields().any(|f| !f.group.is_empty()));
+        // Linked shows in the dump wherever a `vector`/`sorted` over the type became an
+        // `array`/`ordered`; it is lost only for a linked type nothing renders that way.
+        let shown: std::collections::BTreeSet<u16> = live
+            .nodes
+            .values()
+            .filter_map(|n| match n {
+                LayoutNode::Array(e) => Some(*e),
+                LayoutNode::Iterated(Iterated::Ordered { elem, .. }) => Some(*elem),
+                _ => None,
+            })
+            .collect();
+        lost_linked += usize::from(live.linked.iter().any(|t| {
+            !shown.contains(t)
+                && live.nodes.values().any(
+                    |n| matches!(n, LayoutNode::Iterated(Iterated::Hash { elem, .. }) if elem == t),
+                )
+        }));
+    }
+    eprintln!(
+        "@PLN196 step 0: {checked} programs parsed, {with_types} with types; the dump drops \
+         nullability in {lost_null}, a reference's target in {lost_target}, an index group in \
+         {lost_group}, a hash element's linkedness in {lost_linked}"
+    );
+    assert!(
+        checked > 100,
+        "expected many programs to parse, got {checked}"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} program layouts do not read back from their dump:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+// ── loft#2096: a variant type's disambiguated name is part of the identity ──────
+
+/// Two programs whose struct-enums share the variant name `Item`, declared in the opposite
+/// order and with the field types swapped.  The second definer's variant type is named
+/// `src1::Item`, so in one program `PV1` holds `Item { v: text }` and in the other
+/// `src1::Item { v: u32 }` — the same set of type lines either way.  The enum line must say
+/// which, or the identities are equal and `store_load` reads one program's text pointer as
+/// the other's number (measured before the fix: `a.v=6`, `b.v=`).
+#[test]
+fn swapped_same_named_variants_have_different_identities() {
+    let x = "enum PV1 { NoneA, Item { v: text } }\nenum PV2 { NoneB, Item { v: u32 } }\n\
+             struct H { a: PV1, b: PV2 }\nstruct W { hs: vector<H> }\n";
+    let y = "enum PV2 { NoneB, Item { v: text } }\nenum PV1 { NoneA, Item { v: u32 } }\n\
+             struct H { a: PV1, b: PV2 }\nstruct W { hs: vector<H> }\n";
+    let (px, py) = (parse(x), parse(y));
+    let (wx, wy) = ([known(&px, "W")], [known(&py, "W")]);
+    let (dx, dy) = (px.database.layout_dump(&wx), py.database.layout_dump(&wy));
+    assert_ne!(dx, dy, "the variant swap must change the dump:\n{dx}");
+    assert_ne!(
+        px.database.layout_algo_hash(&wx),
+        py.database.layout_algo_hash(&wy),
+        "and the identity a store records"
+    );
+    // Each reads back into its own description, with each variant bound to its own type.
+    for (p, roots, dump) in [(&px, &wx, &dx), (&py, &wy, &dy)] {
+        let back = loft::database::LayoutDesc::from_dump(dump).expect("parses");
+        assert_eq!(
+            back.canonical().unwrap(),
+            p.database
+                .layout_descriptor(roots)
+                .as_dumped()
+                .canonical()
+                .unwrap(),
+            "{dump}"
+        );
+    }
 }

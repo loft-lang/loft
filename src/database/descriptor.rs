@@ -86,6 +86,14 @@ pub struct LayoutField {
     /// reader that wants the declaration without moving the hash a store was
     /// written under.
     pub nullable: bool,
+    /// @PLN196 — the type a stored `reference<T>` field points at (`Field::target`), or
+    /// `u16::MAX`.  Carried, never rendered: the 12-byte row is the same for every target, so
+    /// the layout identity cannot see it, and an upgrade that re-points references needs it.
+    pub target: u16,
+    /// @PLN196 — the other fields of this record whose keyed collection shares this one's
+    /// records (`@FR-Col-Group`), by field number.  Carried, never rendered: an upgrade must
+    /// convert a shared record once and file it in every member.
+    pub group: Vec<u16>,
 }
 
 impl LayoutField {
@@ -216,6 +224,18 @@ pub struct LayoutDesc {
     pub nodes: BTreeMap<u16, LayoutNode>,
     pub names: BTreeMap<u16, String>,
     pub sizes: BTreeMap<u16, u16>,
+    /// The placement token of a keyed collection whose layout is NOT this build's
+    /// (`crate::placement`), keyed by type id.  Empty for a description of the live table,
+    /// which is this build's placement by definition; filled only by
+    /// [`LayoutDesc::from_dump`] when the dump it parses was written by a build whose
+    /// keyed collection was laid out differently.  Carried so the description re-renders
+    /// exactly, and so an upgrade can refuse a collection this build's code cannot walk.
+    pub placements: BTreeMap<u16, String>,
+    /// @PLN196 — the record types stored by REFERENCE (`Type::linked`): their keyed
+    /// collections hold one record per element.  Carried, never rendered, because the dump
+    /// shows it only where a `vector`/`sorted` over the type turned into an
+    /// `array`/`ordered`; a store holding only a `hash<T>` gives no sign of it.
+    pub linked: std::collections::BTreeSet<u16>,
 }
 
 impl LayoutDesc {
@@ -226,6 +246,12 @@ impl LayoutDesc {
             .get(&k)
             .cloned()
             .unwrap_or_else(|| format!("#{k}"))
+    }
+
+    /// The placement suffix of keyed type `k` whose kind's token in THIS build is `own`:
+    /// the foreign token a parsed dump recorded, else this build's.
+    fn tag(&self, k: u16, own: &str) -> String {
+        crate::placement::tag(self.placements.get(&k).map_or(own, String::as_str))
     }
 
     fn size(&self, k: u16) -> u16 {
@@ -245,12 +271,24 @@ impl LayoutDesc {
     }
 
     /// Render one node exactly as `Stores::render_layout_parts` does.
-    fn render_parts(&self, node: &LayoutNode) -> String {
+    fn render_parts(&self, id: u16, node: &LayoutNode) -> String {
         match node {
             LayoutNode::Base(_) => "base".to_string(),
             LayoutNode::Record(fields) => format!("struct{{{}}}", self.render_fields(fields)),
+            // The twin of `Stores::render_layout_parts`: a variant names its type where the
+            // type's name is not its own (loft#2096).
             LayoutNode::Choices(vs) => {
-                let inner: Vec<String> = vs.iter().map(|(_, n)| n.clone()).collect();
+                let inner: Vec<String> = vs
+                    .iter()
+                    .map(|(t, n)| {
+                        let tn = self.name(*t);
+                        if *t != u16::MAX && tn != *n {
+                            format!("{n}={tn}")
+                        } else {
+                            n.clone()
+                        }
+                    })
+                    .collect();
                 format!("enum{{{}}}", inner.join(", "))
             }
             LayoutNode::EnumValue(tag, fields) => {
@@ -303,7 +341,7 @@ impl LayoutDesc {
                         "hash<{}>(keys={keys:?},elem_size={}{})",
                         self.name(*elem),
                         self.size(*elem),
-                        crate::placement::tag(crate::placement::HASH)
+                        self.tag(id, crate::placement::HASH)
                     )
                 }
                 Iterated::Index { elem, keys } => {
@@ -311,7 +349,7 @@ impl LayoutDesc {
                         "index<{}>(keys={keys:?},elem_size={}{})",
                         self.name(*elem),
                         self.size(*elem),
-                        crate::placement::tag(crate::placement::INDEX)
+                        self.tag(id, crate::placement::INDEX)
                     )
                 }
                 Iterated::Radix { elem, keys } => {
@@ -319,15 +357,18 @@ impl LayoutDesc {
                         "spatial<{}>(keys={keys:?},elem_size={}{})",
                         self.name(*elem),
                         self.size(*elem),
-                        crate::placement::tag(crate::placement::RADIX)
+                        self.tag(id, crate::placement::RADIX)
                     )
                 }
+                // Spelled as `Stores::render_layout_parts` spells it — no element size, the
+                // key field inside the brackets.  It once rendered its own spelling, so a
+                // description holding a trie re-rendered a different dump and hashed to a
+                // different identity than the store it described.
                 Iterated::Trie { elem, key } => {
                     format!(
-                        "trie<{}>(key={key},elem_size={}{})",
+                        "trie<{}[{key}]>{}",
                         self.name(*elem),
-                        self.size(*elem),
-                        crate::placement::tag(crate::placement::TRIE)
+                        self.tag(id, crate::placement::TRIE)
                     )
                 }
             },
@@ -362,7 +403,7 @@ impl LayoutDesc {
                 "{}\tsize={}\t{}",
                 self.name(id),
                 self.size(id),
-                self.render_parts(&self.nodes[&id])
+                self.render_parts(id, &self.nodes[&id])
             );
         }
         out
@@ -591,16 +632,38 @@ impl Stores {
         let mut nodes = BTreeMap::new();
         let mut names = BTreeMap::new();
         let mut sizes = BTreeMap::new();
+        let mut linked = std::collections::BTreeSet::new();
         for kt in self.layout_closure(roots) {
             let t = &self.types[kt as usize];
+            if t.is_linked_flag() {
+                linked.insert(kt);
+            }
             names.insert(kt, t.name.clone());
             sizes.insert(kt, self.size(kt));
             nodes.insert(kt, self.transcribe(kt));
+        }
+        // A stored reference may name a record of a type outside the closure (`(L-Ref)`: any
+        // store).  Its NAME is recorded, with no node, so the facts can say what it points
+        // at; `render_dump` walks the nodes and never sees it.
+        let targets: Vec<u16> = nodes
+            .values()
+            .filter_map(|n| match n {
+                LayoutNode::Record(fs) | LayoutNode::EnumValue(_, fs) => Some(fs),
+                _ => None,
+            })
+            .flatten()
+            .map(|f| f.target)
+            .filter(|t| *t != u16::MAX && !names.contains_key(t))
+            .collect();
+        for t in targets {
+            names.insert(t, self.types[t as usize].name.clone());
         }
         LayoutDesc {
             nodes,
             names,
             sizes,
+            placements: BTreeMap::new(),
+            linked,
         }
     }
 
@@ -611,6 +674,8 @@ impl Stores {
             position: f.position,
             content: f.content,
             nullable: f.nullable,
+            target: f.target,
+            group: f.other_indexes().to_vec(),
         };
         match &self.types[kt as usize].parts {
             Parts::Base => {

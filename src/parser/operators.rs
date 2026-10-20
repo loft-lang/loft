@@ -5613,8 +5613,7 @@ impl Parser {
                 {
                     let en = rt.source_name(&self.data);
                     if let Some(lit) = &cast_literal {
-                        if !self.data.def(e_nr).attr_names.contains_key(lit.as_str())
-                            && !self.first_pass
+                        if self.data.variant_attr(e_nr, lit.as_str()).is_none() && !self.first_pass
                         {
                             diagnostic!(
                                 self.lexer,

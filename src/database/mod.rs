@@ -9,6 +9,9 @@ pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
 mod field_groups;
+mod layout_parse;
+mod upgrade;
+mod upgrade_map;
 pub use field_groups::{LinkedFieldGroup, LinkedFieldKind};
 mod format;
 mod io;
@@ -35,6 +38,8 @@ pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
 pub use journal::Journal;
 pub use types::Type;
+pub use upgrade::FileUpgrade;
+pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 
 /// Store index reserved for compile-time constant data (vectors, long strings).
 /// Always allocated during `State::new()`, locked before execution begins.

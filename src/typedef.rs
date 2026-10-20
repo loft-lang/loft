@@ -1059,17 +1059,27 @@ fn register_enum_db(data: &mut Data, database: &mut Stores, d: u32) {
 /// The database half is add-if-absent because `Stores::value` appends blindly:
 /// a second pass over an already-populated enum would give it `Red, Green, Red,
 /// Green` and shift what each discriminant names.
+///
+/// Only a VARIANT is stamped (`Data::is_variant`).  A method whose receiver is the enum hangs
+/// its dispatcher on the same attribute list, and stamped as a variant it became one of the
+/// enum's values: `"label" as E` parsed to a value named `label`, and adding a method
+/// changed the layout identity, so `store_load` refused every stored `E` (loft#2100).  A
+/// variant's discriminant is its position in the database list, plus one.
 fn stamp_enum_variants(data: &mut Data, database: &mut Stores, d: u32, e_nr: u16) {
     for a in 0..data.attributes(d) {
-        let v_name = data.attr_name(d, a);
-        let known = match &database.types[e_nr as usize].parts {
-            crate::database::Parts::Enum(values) => values.iter().any(|(_, n)| *n == v_name),
-            _ => false,
-        };
-        if !known {
-            database.value(e_nr, &v_name, u16::MAX);
+        if !data.is_variant(d, a) {
+            continue;
         }
-        data.set_attr_value(d, a, Value::Enum(a as u8 + 1, e_nr));
+        let v_name = data.attr_name(d, a);
+        let at = match &database.types[e_nr as usize].parts {
+            crate::database::Parts::Enum(values) => values.iter().position(|(_, n)| *n == v_name),
+            _ => None,
+        };
+        let at = match at {
+            Some(i) => i as u16,
+            None => database.value(e_nr, &v_name, u16::MAX),
+        };
+        data.set_attr_value(d, a, Value::Enum(at as u8 + 1, e_nr));
     }
 }
 

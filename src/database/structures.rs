@@ -204,7 +204,7 @@ impl Stores {
     /// a miss, which is a not-found sentinel and not a type — letting it through reaches the
     /// type table as an index and reports `index out of bounds: … the index is 65535`, naming
     /// neither the type nor the field it failed to find (loft#977).
-    fn sub_record_type(&self, parent_tp: u16, field: u16) -> u16 {
+    pub(super) fn sub_record_type(&self, parent_tp: u16, field: u16) -> u16 {
         if field == u16::MAX {
             return parent_tp;
         }

@@ -7570,6 +7570,31 @@ impl Data {
         self.def(d_nr).attributes.len()
     }
 
+    /// Is attribute `a_nr` of the enum `d_nr` one of its VARIANTS?
+    ///
+    /// An enum's attribute list holds its variants (typed `Type::Enum`, plain or
+    /// struct-enum) and, after them, the dispatcher of each method whose receiver is the enum
+    /// (a `Type::Routine`, `definitions.rs`).  Every site that turns a name into a variant —
+    /// the storage list, the native registration, a bare or qualified variant, a parsed
+    /// literal — asks this, so a method can never become a value (loft#2100).
+    #[must_use]
+    pub fn is_variant(&self, d_nr: u32, a_nr: usize) -> bool {
+        self.def(d_nr)
+            .attributes
+            .get(a_nr)
+            .is_some_and(|a| matches!(a.typedef, Type::Enum(..)))
+    }
+
+    /// The attribute number of the VARIANT `name` of enum `d_nr` ([`Self::is_variant`]).
+    #[must_use]
+    pub fn variant_attr(&self, d_nr: u32, name: &str) -> Option<usize> {
+        self.def(d_nr)
+            .attr_names
+            .get(name)
+            .copied()
+            .filter(|a| self.is_variant(d_nr, *a))
+    }
+
     #[must_use]
     pub fn attr(&self, d_nr: u32, name: &str) -> usize {
         if let Some(nr) = self.def(d_nr).attr_names.get(name) {

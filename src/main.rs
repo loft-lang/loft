@@ -6718,23 +6718,10 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 println!("loft layout: no baseline yet — run `loft layout accept {file}`.");
                 0
             }
-            Ok(ss::SchemaVerdict::Match) => {
-                println!("loft layout: unchanged.");
-                0
-            }
-            Ok(ss::SchemaVerdict::Changed(diff)) => {
-                println!("{}", ss::describe_change(&diff));
-                if diff.is_actionable() {
-                    let path = project.join(".loft").join("migration_outline.loft");
-                    if let Some(parent) = path.parent() {
-                        let _ = fa::create_dir_all(parent);
-                    }
-                    match fa::write(&path, ss::migration_outline(&diff)) {
-                        Ok(()) => println!("  migration outline written to {}", path.display()),
-                        Err(e) => eprintln!("  could not write migration outline: {e}"),
-                    }
-                }
-                0
+            // Nothing changed, so nothing to say.
+            Ok(ss::SchemaVerdict::Match) => 0,
+            Ok(ss::SchemaVerdict::Changed(_)) => {
+                layout_upgrade_report(&project, &p.database, &roots, file)
             }
             Ok(ss::SchemaVerdict::Unreadable) => {
                 eprintln!(
@@ -6752,6 +6739,146 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             1
         }
     }
+}
+
+/// @PLN196 step 7 — `loft layout upgrade <file> <store>…`: carry each store file into the
+/// layout `<file>` reads it with.  The new store is written beside the old and swapped in;
+/// the old one is kept as `<store>.old`.  A refused store is left exactly as it was, and the
+/// command exits 1 naming why.
+fn run_layout_upgrade(file: &str, stores: &[String]) -> i32 {
+    if stores.is_empty() {
+        eprintln!("loft layout: usage: loft layout upgrade <file> <store>…");
+        return 1;
+    }
+    let entry = std::path::PathBuf::from(file);
+    if !fa::exists(&entry) {
+        eprintln!("loft layout: file {file} not found");
+        return 1;
+    }
+    let abs = file_access::plain_canonical(&entry);
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
+    let mut p = parser::Parser::new();
+    if let Some(src_dir) = entry.parent() {
+        p.lib_dirs.push(src_dir.to_string_lossy().to_string());
+    }
+    let _ = p.parse_stdlib(&default_str);
+    // `parse` answers whether there was nothing to say; a warning still compiles.
+    p.parse(&abs.to_string_lossy(), false);
+    if p.diagnostics.error_count() > 0 {
+        for l in p.diagnostics.lines() {
+            eprintln!("{l}");
+        }
+        eprintln!("loft layout: {file} does not compile");
+        return 1;
+    }
+    #[cfg(not(feature = "mmap"))]
+    {
+        eprintln!("loft layout: this build reads no store files");
+        1
+    }
+    #[cfg(feature = "mmap")]
+    {
+        upgrade_each(&mut p.database, stores)
+    }
+}
+
+/// Upgrade each store file through `db`'s layout; the exit code of the whole command.
+#[cfg(feature = "mmap")]
+fn upgrade_each(db: &mut loft::database::Stores, stores: &[String]) -> i32 {
+    let mut exit = 0;
+    for store in stores {
+        match db.upgrade_file(std::path::Path::new(store), None) {
+            Ok(loft::database::FileUpgrade::Current) => {}
+            Ok(loft::database::FileUpgrade::Upgraded { kept, changes }) => {
+                println!(
+                    "{store}: upgraded (the old store is kept as {})",
+                    kept.display()
+                );
+                for c in changes {
+                    println!("  {c}");
+                }
+            }
+            Err(e) => {
+                eprintln!("{store}: not upgraded — {e}");
+                exit = 1;
+            }
+        }
+    }
+    exit
+}
+
+/// @PLN196 step 2 — what an upgrade from the baseline layout to this program's would do to a
+/// store, from the upgrade map: every change, every refusal with its reason.  Exits 1 when
+/// anything is refused, so a project's CI can gate on a change its stored data cannot cross.
+fn layout_upgrade_report(
+    project: &std::path::Path,
+    db: &loft::database::Stores,
+    roots: &[u16],
+    file: &str,
+) -> i32 {
+    use loft::database::{LayoutDesc, UpgradeMap};
+    let text = fa::read_to_string(loft::schema_sidecar::baseline_path(project)).unwrap_or_default();
+    let old = loft::schema_sidecar::LayoutIdentity::from_sidecar(&text)
+        .ok_or_else(|| "the baseline is not a layout file".to_string())
+        .and_then(|id| {
+            let mut d = LayoutDesc::from_dump(&id.dump)?;
+            d.apply_facts(&id.facts)?;
+            Ok(d)
+        });
+    let old = match old {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!(
+                "loft layout: the baseline cannot be read by this version of loft ({e}) —                  re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
+            );
+            return 1;
+        }
+    };
+    let new = db.layout_descriptor(roots);
+    let mut changes: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
+    for &root in roots {
+        let name = db.types[root as usize].name.clone();
+        let Some((&old_root, _)) = old.names.iter().find(|(_, n)| **n == name) else {
+            continue; // a type the baseline did not have: no stored data to carry
+        };
+        let map = UpgradeMap::derive(&old, old_root, &new, root);
+        changes.extend(map.changes);
+        refused.extend(
+            map.refusals
+                .into_iter()
+                .map(|r| format!("{} — {}", r.path, r.reason)),
+        );
+    }
+    let new_names: std::collections::BTreeSet<&str> = roots
+        .iter()
+        .map(|r| db.types[*r as usize].name.as_str())
+        .collect();
+    for (id, name) in &old.names {
+        let user = !matches!(old.nodes.get(id), Some(loft::database::LayoutNode::Base(_)))
+            && name.chars().next().is_some_and(char::is_uppercase)
+            && !name.contains("::");
+        if user && !new_names.contains(name.as_str()) && db.names.get(name).is_none() {
+            changes.push(format!(
+                "{name} is gone: a store whose root is a `{name}` cannot be read"
+            ));
+        }
+    }
+    changes.sort();
+    changes.dedup();
+    refused.sort();
+    refused.dedup();
+    if changes.is_empty() && refused.is_empty() {
+        return 0;
+    }
+    println!("loft layout: a store written with the baseline layout upgrades as follows");
+    for c in &changes {
+        println!("  {c}");
+    }
+    for r in &refused {
+        println!("  refused: {r}");
+    }
+    i32::from(!refused.is_empty())
 }
 
 /// `loft fix [--apply] <file…>` — @PLN131 steps 3–4: check each suggested fix by running
@@ -8483,14 +8610,20 @@ fn main() {
             let rest: Vec<String> = argv[i..].to_vec();
             std::process::exit(run_api_surface_command(&rest));
         } else if a == "layout" {
-            // @PLN97 Phase F — `loft layout <accept|check> <file>`. Self-contained
-            // + early-exit: never touches the normal build path (zero cost).
+            // @PLN97 Phase F — `loft layout <accept|check> <file>`, and @PLN196's
+            // `loft layout upgrade <file> <store>…`. Self-contained + early-exit: never
+            // touches the normal build path (zero cost).
             let sub = argv.get(i).cloned().unwrap_or_default();
             i += 1;
             let Some(file) = argv.get(i).cloned() else {
-                eprintln!("loft layout: usage: loft layout <accept|check> <file>");
+                eprintln!(
+                    "loft layout: usage: loft layout <accept|check> <file> | upgrade <file> <store>…"
+                );
                 std::process::exit(1);
             };
+            if sub == "upgrade" {
+                std::process::exit(run_layout_upgrade(&file, &argv[i + 1..]));
+            }
             std::process::exit(run_layout_command(&sub, &file));
         } else if a == "fmt" {
             // Parser-driven formatter (loft-written, via the host-call API).
