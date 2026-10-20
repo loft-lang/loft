@@ -406,6 +406,27 @@ which anchors *both* built-in and native I/O at the process working directory
 instead — useful for a CLI tool that should read files relative to where the
 user invoked it.
 
+### A native build links its libraries beside the binary, or into it
+
+A native build (`--native`, `--native-release`) of a program that uses a library with Rust
+code in it — `regex`, `crypto`, the graphics libraries — links that library's code one of two
+ways.  **Dynamic**, the default: the library is a separate file (`.so` / `.dylib` / `.dll`)
+the binary loads when it starts, so a shipped binary needs that file beside it.  **Static**:
+the library's code is built into the binary, which is then one file that runs with no loft,
+no `rustc` and no library file beside it.  The program can say which it wants with a
+directive at the top of the file, beside `#cwd`:
+
+```grammar
+#link static
+use regex;
+fn main() { … }
+```
+
+`--static` / `--dynamic` on the command line win over the directive.  The interpreter
+ignores it — an interpreted run loads libraries the same way either way.  A library written
+in loft alone (`script`) is always compiled into the binary.  Guard:
+`tests/native.rs::a_static_link_ships_one_file_that_runs_alone`.
+
 ### Closure capture: the value at definition, the write shared
 
 A captured scalar is taken by value when the closure is formed: a later write to the

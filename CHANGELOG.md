@@ -137,6 +137,13 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A native program can ship as one file.**  Put `#link static` at the top of a program (or
+pass `--static`) and a native build links the code of the libraries it uses — `regex`,
+`crypto`, the graphics libraries — into the binary itself.  The result runs on its own: no
+loft, no `rustc`, no library file beside it.  Without it, such libraries stay separate files
+the binary loads at start, as before; `--dynamic` asks for that over a program's `#link
+static`.
+
 **A library can offer a few functions by their bare name.**  A library that auto-loads
 (`[triggers]` in its manifest) could already be reached by one of its methods or types with
 no `use`; it can now list *builders* — `builders = ["set"]` — and a bare `set(words)` in your
