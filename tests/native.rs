@@ -5224,12 +5224,17 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
             String::from_utf8_lossy(&o.stderr)
         );
     }
-    // Controls: take away a library each program needs at run time.
-    let lc_types = format!(
-        "{}lc_types{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    );
+    // Controls: take away a library each program needs at run time.  `liblc_types` is found
+    // by stem, not spelled from `DLL_PREFIX`: the MinGW build keeps the `lib` prefix that a
+    // Windows DLL name otherwise lacks.
+    let lc_types = fa::read_dir(root.join("static"))?
+        .into_iter()
+        .filter_map(|e| e.os_name())
+        .find(|n| {
+            let n = n.to_string_lossy();
+            n.contains("lc_types") && n.ends_with(std::env::consts::DLL_SUFFIX)
+        })
+        .expect("the static dist holds liblc_types");
     let shim = fa::read_dir(root.join("dynamic"))?
         .into_iter()
         .filter_map(|e| e.os_name())
