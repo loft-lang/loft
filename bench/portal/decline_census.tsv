@@ -1,6 +1,6 @@
 # The decline census: per rewrite rule, the sites admitted and the sites refused by reason,
 # over the bench programs.  Written by `scripts/decline_census.py --record`; a report, not a baseline.
-# commit=dec7674a9 programs=19
+# commit=239edd66a programs=19
 # rule <TAB> reason (`admitted` for the admissions; names masked as `_`) <TAB> count
 R-AliasVersion	admitted	7
 R-Apart/vector	admitted	5
@@ -55,9 +55,9 @@ R-PushRec	admitted	41
 R-Range	admitted	1530
 R-RangedCall	admitted	184
 R-RecPtr	admitted	77
-R-RecPtr	no fusable field read or write of the view	39
-R-RecPtr	the remainder frees a record before a use of the view	24
-R-RecPtr	the remainder may grow a store	431
+R-RecPtr	no fusable field read or write of the view	293
+R-RecPtr	the remainder frees a record before a use of the view	21
+R-RecPtr	the remainder may grow a store	180
 R-RecPtr	the remainder rebinds the view	5
 R-RecPtr/index	admitted	2
 R-RefillBuffer	admitted	14

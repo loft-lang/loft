@@ -323,7 +323,13 @@ where the block's remainder grows no store, frees no record before a later use, 
 rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loop variable —
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
-and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+and each declined with its reason — a view with no fusable access is declined for that
+before the remainder is walked for growth, so a growth refusal is one that cost something,
+and under each growth refusal a `class` line gives the view's and each mover's chain end
+(`+` fresh, `-` not), the apart verdict, the buffer op that blocks when one does, and
+`use-after-growth`: whether any address-served use follows the first growth, the question an
+ordered remainder clause would ask (priced, not built: `bench/portal/analysis/recptr-remainder.md`).
+`LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
 **`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, default-ON, generation
 time, `--native` only) writes a value record into `v[i]` through the element read and its
 address taken back out of the reference — with it off, the element is derived where it is

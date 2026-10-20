@@ -152,6 +152,16 @@ All notable changes to the loft language and interpreter.
 - `tests/decline_census.rs` pins the counting: one refused loop is one decline under the
   reason its trace names, an outer loop with no push of its own is no decline, and a loop the
   counted form refuses still takes the deep window and counts as admitted.
+- The record address's verdict (`R-RecPtr`, `view_extent_verdict_inner`) asks for a fusable
+  use of the view BEFORE it walks the remainder for growth: 293 of its 431 growth refusals
+  were views with no address-served access, which the census now reads as "no fusable field
+  read or write" (180 growth refusals remain).  `LOFT_TRACE_RECPTR=1` prints a `class` line
+  under each growth refusal — the view's and each mover's chain end and freshness, the apart
+  verdict, the buffer op that blocks, and `use-after-growth`, whether any address-served use
+  follows the first growth (the ordered clause's question, answered without building it).
+  Classified and hand-priced in `bench/portal/analysis/recptr-remainder.md`: neither the
+  ordered clause nor a frame-local buffer-mint exemption moved an over-bar row, so neither is
+  built.
 
 ### The stability meters as instruments: the weekly read, coverage by family and inputs, the portal across hosts, gates that file, a mechanism-class label (2026-10-19)
 

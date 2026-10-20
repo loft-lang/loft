@@ -2275,6 +2275,99 @@ fn element_target(
     }
 }
 
+/// `@FR-R-RecPtr` — is `n` an access of view `r` the held address SERVES: a fusable scalar
+/// field read or in-place write (either spelling of the field), a copy the address serves,
+/// or `r` handed as a twin's input?  The one definition the verdict's `touched` and the
+/// ordered walk ([`address_use_after_growth`]) both read.  A node of any other shape is no
+/// such access: a text read, a hand to a plain callee or a comparison goes through the
+/// `DbRef`, so a growth after it moves nothing the address answered.
+fn address_use(
+    n: &Value,
+    r: u16,
+    data: &Data,
+    stores: &Stores,
+    owned: Option<&HoistOwned>,
+    twin_params: &HashSet<(u32, u16)>,
+) -> bool {
+    let Value::Call(g, args) = n else {
+        return false;
+    };
+    if (*g as usize) >= data.definitions.len() {
+        return false;
+    }
+    let name = data.def(*g).name();
+    let on_r = matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == r);
+    if (scalar_kind(name).is_some() || setter_kind(name).is_some())
+        && args.len() >= 2
+        && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == r)
+        && (on_r || nested_field_enabled())
+    {
+        return true;
+    }
+    if copy_serves_view(stores, name, args, r, owned) {
+        return true;
+    }
+    args.iter().enumerate().any(|(i, a)| {
+        matches!(a.unspan(), Value::Var(v) if *v == r)
+            && u16::try_from(i).is_ok_and(|p| twin_params.contains(&(*g, p)))
+    })
+}
+
+/// The ORDERED question behind `@FR-R-RecPtr`'s remainder clause: does any address-served
+/// use of `r` (`address_use`) run AFTER a statement that may grow a store?  Statement order
+/// within a block, each arm of an `if` on its own path from the state before it, a loop
+/// body read as repeating (a growth anywhere in it precedes a use anywhere in it), and a
+/// statement that both grows and uses answering yes — the order inside one statement is not
+/// read.  `may_grow` is the verdict's own growth test, so the two agree on what grows.
+fn address_use_after_growth(
+    stmts: &[Value],
+    grown: &mut bool,
+    may_grow: &mut dyn FnMut(&Value) -> bool,
+    is_use: &dyn Fn(&Value) -> bool,
+) -> bool {
+    for s in stmts {
+        match s.unspan() {
+            Value::Block(b) => {
+                if address_use_after_growth(&b.operators, grown, may_grow, is_use) {
+                    return true;
+                }
+            }
+            Value::If(c, a, b) => {
+                if address_use_after_growth(std::slice::from_ref(c), grown, may_grow, is_use) {
+                    return true;
+                }
+                let before = *grown;
+                let mut ga = before;
+                if address_use_after_growth(std::slice::from_ref(a), &mut ga, may_grow, is_use) {
+                    return true;
+                }
+                let mut gb = before;
+                if address_use_after_growth(std::slice::from_ref(b), &mut gb, may_grow, is_use) {
+                    return true;
+                }
+                *grown = ga || gb;
+            }
+            Value::Loop(b) => {
+                let g = b.operators.iter().any(&mut *may_grow);
+                let u = b.operators.iter().any(|o| o.any_node(&mut |n| is_use(n)));
+                if u && (*grown || g) {
+                    return true;
+                }
+                *grown |= g;
+            }
+            _ => {
+                let g = may_grow(s);
+                let u = s.any_node(&mut |n| is_use(n));
+                if u && (*grown || g) {
+                    return true;
+                }
+                *grown |= g;
+            }
+        }
+    }
+    false
+}
+
 /// `LOFT_TRACE_HOIST_DECLINE=1` — name the node that made [`body_writes`] answer `None`.
 fn trace_write_decline(n: &Value) {
     if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
@@ -3423,6 +3516,10 @@ fn view_extent_verdict(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the trace's classification stands beside the verdict"
+)]
 fn view_extent_verdict_inner(
     rest: &[Value],
     r: u16,
@@ -3441,58 +3538,8 @@ fn view_extent_verdict_inner(
     // A mint window's own element is FRESH for its extent: a copy into it is a write of
     // its bytes, not a growth (`fresh_copy` in `blocks_header_hoist`).
     let mut fresh: HashSet<u16> = fresh_e.into_iter().collect();
-    // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
-    // view's cannot move it, so the remainder may grow THOSE stores: the push and mint tiers
-    // open exactly when every mover's root is distinct from `r`'s store.
-    let movers_apart = facts.is_some_and(|f| {
-        let roots = mover_roots(rest, data, stores, vars);
-        !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
-    });
-    if let Some(op) = rest.iter().find(|op| {
-        blocks_header_hoist(
-            op,
-            data,
-            Some(stores),
-            cache,
-            &mut HashSet::new(),
-            Some(vars),
-            HoistTiers {
-                in_place: allow_in_place,
-                push: movers_apart,
-                mint: movers_apart,
-                ..HoistTiers::default()
-            },
-            &mut fresh,
-            owned,
-        )
-    }) {
-        if std::env::var("LOFT_TRACE_RECPTR").is_ok() {
-            let shown = format!("{op:?}");
-            eprintln!(
-                "recptr:   `{}` grows a store by {}",
-                vars.name(*r),
-                &shown[..shown.len().min(220)]
-            );
-        }
-        return Err("the remainder may grow a store");
-    }
-    if movers_apart && std::env::var("LOFT_TRACE_RECPTR").is_ok() {
-        eprintln!(
-            "recptr: {} keeps `{}` beside a growth of another store",
-            data.def(def_nr).name(),
-            vars.name(*r)
-        );
-    }
-    // In statement order: a free (a scope exit's release of a local, a buffer's) BEFORE a
-    // use of `r` declines — through the store a freed record answers the sentinel, through
-    // an address it would answer stale bytes — while the frees that follow the last use,
-    // which is where a block's own releases stand, cost nothing.  A view that outlives its
-    // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
     let mut rebound = false;
     let mut touched = false;
-    if free_before_use(rest, *r, data, vars) {
-        return Err("the remainder frees a record before a use of the view");
-    }
     for op in rest {
         op.any_node(&mut |n| {
             match n {
@@ -3545,11 +3592,150 @@ fn view_extent_verdict_inner(
             false
         });
     }
-    if rebound {
-        return Err("the remainder rebinds the view");
-    }
+    // Asked before the growth walk: a view the remainder never reads through its address
+    // gains nothing from one, so its verdict names that and not a growth that would have
+    // cost nothing (the decline census counts the reasons that cost).
     if !touched {
         return Err(NO_FUSABLE_USE);
+    }
+    // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
+    // view's cannot move it, so the remainder may grow THOSE stores: the push and mint tiers
+    // open exactly when every mover's root is distinct from `r`'s store.
+    let movers_apart = facts.is_some_and(|f| {
+        let roots = mover_roots(rest, data, stores, vars);
+        !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
+    });
+    if let Some(op) = rest.iter().find(|op| {
+        blocks_header_hoist(
+            op,
+            data,
+            Some(stores),
+            cache,
+            &mut HashSet::new(),
+            Some(vars),
+            HoistTiers {
+                in_place: allow_in_place,
+                push: movers_apart,
+                mint: movers_apart,
+                ..HoistTiers::default()
+            },
+            &mut fresh,
+            owned,
+        )
+    }) {
+        if std::env::var("LOFT_TRACE_RECPTR").is_ok() {
+            let shown = format!("{op:?}");
+            eprintln!(
+                "recptr:   `{}` grows a store by {}",
+                vars.name(*r),
+                &shown[..shown.len().min(220)]
+            );
+            // The classification line: the view's chain end and freshness, each mover's,
+            // and the apart verdict — what a sharper fact would have to prove.
+            let end_of = |x: u16| -> String {
+                match facts.and_then(|f| f.terminal(x)) {
+                    Some(e) => format!(
+                        "{}{}",
+                        vars.name(e),
+                        if facts.is_some_and(|f| f.owns_alone(e)) {
+                            "+"
+                        } else {
+                            "-"
+                        }
+                    ),
+                    None => "?".to_owned(),
+                }
+            };
+            let roots = mover_roots(std::slice::from_ref(op), data, stores, vars);
+            let movers: Vec<String> = roots
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{}={}{}",
+                        vars.name(*m),
+                        end_of(*m),
+                        if facts.is_some_and(|f| f.distinct(*r, *m)) {
+                            ":apart"
+                        } else {
+                            ":same?"
+                        }
+                    )
+                })
+                .collect();
+            let mut buffer_op = String::new();
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpDatabase" | "OpDatabaseNP" | "OpClear"
+                    )
+                    && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                    && *b < vars.count()
+                    && buffer_op.is_empty()
+                {
+                    buffer_op = format!("{}({})", data.def(*d).name(), vars.name(*b));
+                }
+                false
+            });
+            let mut grown = false;
+            let mut fresh_walk = fresh.clone();
+            let after = address_use_after_growth(
+                rest,
+                &mut grown,
+                &mut |o: &Value| {
+                    blocks_header_hoist(
+                        o,
+                        data,
+                        Some(stores),
+                        cache,
+                        &mut HashSet::new(),
+                        Some(vars),
+                        HoistTiers {
+                            in_place: allow_in_place,
+                            push: movers_apart,
+                            mint: movers_apart,
+                            ..HoistTiers::default()
+                        },
+                        &mut fresh_walk,
+                        owned,
+                    )
+                },
+                &|n: &Value| address_use(n, *r, data, stores, owned, twin_params),
+            );
+            eprintln!(
+                "recptr:   class `{}` end={} facts={} movers=[{}] buffer-op={} use-after-growth={}",
+                vars.name(*r),
+                end_of(*r),
+                if facts.is_some() { "some" } else { "none" },
+                movers.join(" "),
+                if buffer_op.is_empty() {
+                    "-"
+                } else {
+                    &buffer_op
+                },
+                if after { "yes" } else { "no" }
+            );
+        }
+        return Err("the remainder may grow a store");
+    }
+    if movers_apart && std::env::var("LOFT_TRACE_RECPTR").is_ok() {
+        eprintln!(
+            "recptr: {} keeps `{}` beside a growth of another store",
+            data.def(def_nr).name(),
+            vars.name(*r)
+        );
+    }
+    // In statement order: a free (a scope exit's release of a local, a buffer's) BEFORE a
+    // use of `r` declines — through the store a freed record answers the sentinel, through
+    // an address it would answer stale bytes — while the frees that follow the last use,
+    // which is where a block's own releases stand, cost nothing.  A view that outlives its
+    // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
+    if free_before_use(rest, *r, data, vars) {
+        return Err("the remainder frees a record before a use of the view");
+    }
+    if rebound {
+        return Err("the remainder rebinds the view");
     }
     Ok(())
 }
