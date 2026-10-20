@@ -252,7 +252,7 @@ doctor:
 install-artifacts: check-targets all wasm-html-mt-lib
 	@cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random
 	@cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
-	@scripts/lean_build.sh --lib
+	@scripts/lean_build.sh --lib --bin loft
 	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
@@ -261,7 +261,7 @@ install-artifacts: check-targets all wasm-html-mt-lib
 # native binary + lib; this adds the feature-complete install-lib rlib the copies
 # need.  Same stale-loft_ffi prune as the full target.
 install-artifacts-native: all
-	@scripts/lean_build.sh --lib
+	@scripts/lean_build.sh --lib --bin loft
 	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
@@ -303,7 +303,9 @@ install:
 	fi
 	@$(SUDO) chmod -R a+rX $(PREFIX)/share/loft
 	@$(SUDO) install -d $(PREFIX)/bin
-	@$(SUDO) install -m 755 target/release/loft $(PREFIX)/bin/loft
+	@# The production binary, built with the runtime beside it (scripts/lean_build.sh):
+	@# no development aids, and one feature set for the interpreter and `--native`.
+	@$(SUDO) install -m 755 target/install-lib/release/loft $(PREFIX)/bin/loft
 	@smoke="$${TMPDIR:-/tmp}/loft-install-smoke.loft"; \
 	printf 'fn main() {\n    println("loft install smoke ok")\n}\n' > "$$smoke"; \
 	if ! $(PREFIX)/bin/loft --interpret "$$smoke" >/dev/null 2>"$$smoke.err"; then \
