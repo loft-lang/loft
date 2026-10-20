@@ -698,15 +698,19 @@ impl Parser {
             // converted a placeholder, and the tuple was copied bit for bit — `(1, 2)` held in a
             // variable read back `(1, 1e-323)` as `(integer, float)` on the interpreter and did
             // not compile natively.  Such a tuple is rebuilt from its members, each converted.
+            // `@FR-N-Reserve` — and so is one whose member meets a slot that BOUNDS it: an
+            // `integer?` member stored into a `u8?` one keeps the same stack word, so nothing
+            // above rebuilt it, and `(255, 1)` held as `(integer?, integer)` read `255` out of
+            // the `u8?` member it was stored into (loft#2074).  The member's own `convert`
+            // applies the guard.
             if all_compatible
                 && !literal
                 && !self.first_pass
                 && !matches!(is_type, Type::Optional(_))
                 && !matches!(should, Type::Optional(_))
-                && src_elems
-                    .iter()
-                    .zip(dst_elems.iter())
-                    .any(|(s, d)| self.changes_representation(s, d))
+                && src_elems.iter().zip(dst_elems.iter()).any(|(s, d)| {
+                    self.changes_representation(s, d) || Self::member_owes_range_guard(code, s, d)
+                })
             {
                 let tmp = self.create_unique("_tconv", is_type);
                 let mut members = Vec::with_capacity(src_elems.len());
