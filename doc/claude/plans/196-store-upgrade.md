@@ -156,6 +156,31 @@ length and leaks:
 
 The new program reads the converted store on `--interpret` and on `--native`.
 
+**The linked flip, both directions.**  A keyed collection over `T` anywhere in the program,
+even in a struct the store never holds, makes `T` linked: every `vector<T>` becomes
+`array<T>`, its elements moved out of the vector into records of their own, and the vector
+holds 4-byte record ids instead of inline elements.  Today both directions are refused on
+load (the dump line changes `vector<T>` to `array<T>`, measured), so these are upgrade cells,
+not a live misread:
+
+- **index gained** (`vector<T>` to `array<T>`): one record claimed per element, the element
+  converted into it, the id list written in the old order;
+- **index lost** (`array<T>` to `vector<T>`): each record's payload folded back inline at
+  `T`'s stride, order kept;
+- **not every lost index unlinks `T`**: a stored `reference<T>` keeps `T` linked
+  (`@FR-H-LongRef`), so the map reads linkedness from the new type table, never from "an
+  index was removed";
+- **a reference to such an element** names an inline position on one side and a record on
+  the other, so it goes through the old-to-new record map (step 6);
+- **the cause is elsewhere**: the struct that holds the vector did not change, so the map's
+  report names the collection that flipped it (`T is now stored by reference because
+  X.by_k indexes it`).
+
+Crossed with empty, one and many elements, and with an element that owns heap (text, a
+nested vector).  `hash<T>` alone is the exception: its entries change shape with `T`'s
+linkedness, but today's reader decodes either shape and writes after the load come out right
+in both directions (measured), so a hash-only flip needs no conversion of its own.
+
 ## Steps
 
 | # | step | verify (what goes red if it is wrong) |
