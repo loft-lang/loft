@@ -1681,6 +1681,17 @@ use closures::{
 };
 use imports::{ImportSpec, PendingImport};
 use packages::{file_exists, registry_fn_hint, script_dir};
+
+/// Does user function `fn_nr` write through its parameter `slot` — a field, an element, a
+/// nested place, directly or through a call it makes ([`callee_param_writes`])?  `true` for a
+/// slot it does not have, the answer that keeps a caller's assumption safe.
+pub(crate) fn callee_writes_param(fn_nr: u32, data: &Data, slot: usize) -> bool {
+    let mut cache = crate::fxhash::FxHashMap::default();
+    callee_param_writes(fn_nr, data, &mut cache)
+        .get(slot)
+        .copied()
+        .unwrap_or(true)
+}
 mod advice;
 mod bounds;
 mod call_args;

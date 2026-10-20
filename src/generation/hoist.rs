@@ -16536,7 +16536,16 @@ fn namings_avoid_place(
                                     && crate::scopes::same_place(cx.watch, (cx.root, inner))
                             })
                         });
-                        if reaches || cx.disturbed.is_none() {
+                        // The summary records what MOVES; a callee that writes a value
+                        // into the viewed vector's elements moves nothing and is still seen
+                        // through a view where the copy it stands for would not see it —
+                        // `s.ops[0].pts[1].py = 70` read back through the result (loft#2077,
+                        // `@FR-O-ViewField`, `@FR-B-Copy`).  So a callee that writes through
+                        // the argument at all declines the site.
+                        if reaches
+                            || cx.disturbed.is_none()
+                            || crate::parser::callee_writes_param(*d, cx.data, i)
+                        {
                             cx.ok = false;
                             return;
                         }
