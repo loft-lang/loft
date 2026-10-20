@@ -101,6 +101,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN192](https://github.com/loft-lang/plans/issues/192) | future | Regex captures, find-all and replace — a `Match` whose texts the compiler can keep a view of the subject ([plan](plans/192-regex-captures-as-spans.md)) |
+| [@PLN195](https://github.com/loft-lang/plans/issues/195) | future | Where a native program finds its libraries — `dist/` beside the binary, then a shared root loft searches (`LOFT_LIB_PATH`, `~/.loft/lib`); the static mode (`#link static`) already ships |
 | [@PLN171](https://github.com/loft-lang/plans/issues/171) | future | LSP / DAP follow-ups |
 | [@PLN66](https://github.com/loft-lang/plans/issues/66) | future | Viewer ↔ LSP bridge |
 | [@PLN70](https://github.com/loft-lang/plans/issues/70) | future | Viewer generalisation |
