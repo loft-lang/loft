@@ -113,6 +113,16 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
                     ambiguous or uncovered, a removed or re-signatured member, a second definition
                     of a name that was one function, and an add to a set holding a generic member
                     are refused whole.
+
+  (Disp-Trigger)    a method, type or builder named with no library in reach — no `use`, no
+                    qualifier — loads the package whose `pub` surface (F-Surface) derives that
+                    name, and the package's copy is the one a `use` would load: the program's
+                    own package, then each DECLARED dependency's sibling, `path =`, `--lib` or
+                    `LOFT_LIB` copy, else its installed copy (the lock's pin); then, for a
+                    package nothing declares, a copy in a `--lib` or `LOFT_LIB` directory; then
+                    the registry's catalogue.  A name two candidates at the same step derive is
+                    refused at compile time, naming both packages and the `use` that settles it
+                    — never chosen by declaration or directory order.
 ```
 
 **In words.**  A name may be defined several times for different parameter types, and a call
@@ -121,6 +131,12 @@ widening, a widening before a lossy step, a concrete definition before a generic
 fit equally well, or none fits, the program is refused — the compiler never picks by
 declaration order.  The choice is made at compile time unless an argument is held at an enum,
 and then it is made on the variant at run time, exactly as the equivalent `match` would.
+
+A method a program calls without loading any library — `line.matches(p)`, `dir.walk(".rs")` —
+loads the library that provides it, and it is the same copy of that library an explicit `use`
+would have loaded: a library under development passed with `--lib` answers for its new methods
+too, and an older installed copy never decides which names exist.  When two libraries at the
+same place both provide the name, the call is refused and names both.
 
 **Declined: an untyped fallback.**  The design's `Disp-Fallback` — a definition with untyped
 parameters, applicable to every call — was not added.  The fallback is a TYPED definition at the
@@ -141,8 +157,17 @@ value-shaped decision, and value clauses would make coverage undecidable.
 | Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `loft-suite/attic/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `loft-suite/attic/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |
 | Disp-Match-Equiv | the oracle twin | `tests/oracle/34-dispatch-set.loft` / `34-dispatch-set-as-match.loft`, `tests/oracle/35-dispatch-self-set.loft` (`@ORACLE_TWIN`) |
 | Disp-World | `live_reload::add_fn_block` | `tests/live_world.rs` |
+| Disp-Trigger | `Parser::trigger_map` (with `cmdline_dep_root`, `cmdline_packages`), `Parser::catalog_trigger_map` | `tests/builder_trigger.rs` (`a_lib_flag_copy_fires_its_own_method_triggers`, `a_registry_dependency_fires_its_type_and_builder_triggers`) |
 
 ## Deviations
 
-**OPEN: 0.**  The register — D-disp-1 to D-disp-4, each with what resolved it — is
+**OPEN: 2.**
+- **D-disp-5** — a trigger two candidates derive is DROPPED, not refused by name: the call then
+  reads as an unknown method (`Unknown field text.hum`), naming neither package nor the cure.
+  Holds for two `--lib` packages and for the catalogue's ambiguous names alike (loft#2094).
+- **D-disp-6** — a `LOFT_LIB` directory is not a trigger source: `use twa;` loads `twa` from
+  `LOFT_LIB`, while a bare `"x".only_twa()` beside it is an unknown method.  `--lib`, which
+  `use` searches just before it, is (loft#2095).
+
+The closed register — D-disp-1 to D-disp-4, each with what resolved it — is
 [dispatch-history.md](dispatch-history.md).

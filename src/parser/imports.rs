@@ -146,7 +146,8 @@ impl Parser {
     /// from the current package's declared triggers — `[triggers] enabled` plus
     /// the text-methods derived from its source — and those of its
     /// trigger-enabled dependencies.  The package is located by walking up from
-    /// `from_file` to the nearest `loft.toml`.
+    /// `from_file` to the nearest `loft.toml`.  Each package's copy is the one a `use`
+    /// would load (`@FR-Disp-Trigger`).
     pub(super) fn trigger_map(
         &mut self,
         from_file: &str,
@@ -178,6 +179,9 @@ impl Parser {
                         // registry dependency read only through it left `names:
                         // sorted<Word[key]>` undefined while the `path =` form of the same
                         // package fired (@PLN179 finding 018's registry half).
+                        // A `--lib` copy sits between the two, where `lib_path` puts it: a
+                        // `path =` dependency outranks the flag (`lib-flag-outranked`), and the
+                        // flag outranks anything installed.
                         let entry = self
                             .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
                             .map(|r| r.entry)
@@ -187,7 +191,9 @@ impl Parser {
                                 .parent()
                                 .and_then(|p| p.parent())
                                 .map(std::path::Path::to_path_buf),
-                            None => Self::registry_dep_root(&d, dep, value),
+                            None => self
+                                .cmdline_dep_root(dep)
+                                .or_else(|| Self::registry_dep_root(&d, dep, value)),
                         };
                         if let Some(root) = root {
                             Self::add_pkg_triggers(
@@ -204,10 +210,107 @@ impl Parser {
             }
             dir = d.parent().map(std::path::Path::to_path_buf);
         }
+        // A package nothing declares is the catalogue's to name, unless a `--lib` directory
+        // holds it: `use` would load that copy, so its triggers answer before the catalogue's
+        // — a method only that copy has (a library under development) fires too.  A name two
+        // such packages both derive is dropped, as the catalogue drops one: which package a
+        // bare call loads is never decided by directory order.
+        let mut flag = (
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+        let mut twice = std::collections::HashSet::new();
+        for root in self.cmdline_packages() {
+            let mut one = (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            );
+            Self::add_pkg_triggers(
+                &root.join("loft.toml"),
+                &root,
+                &mut one.0,
+                &mut one.1,
+                &mut one.2,
+            );
+            for (mine, all) in [
+                (one.0, &mut flag.0),
+                (one.1, &mut flag.1),
+                (one.2, &mut flag.2),
+            ] {
+                for (name, pkg) in mine {
+                    match all.get(&name) {
+                        Some(other) if *other != pkg => {
+                            twice.insert(name);
+                        }
+                        Some(_) => {}
+                        None => {
+                            all.insert(name, pkg);
+                        }
+                    }
+                }
+            }
+        }
+        for (all, into) in [
+            (flag.0, &mut map),
+            (flag.1, &mut types),
+            (flag.2, &mut builders),
+        ] {
+            for (name, pkg) in all {
+                if !twice.contains(&name) {
+                    into.entry(name).or_insert(pkg);
+                }
+            }
+        }
         self.auto_use_trigger_map = Some(map.clone());
         self.auto_use_type_map = types;
         self.auto_use_builder_map = builders;
         map
+    }
+
+    /// The `--lib` copy of the package `dep`, the one `lib_path` would load from a command-line
+    /// directory: the directory itself when it IS that package (#408), else `<dir>/<dep>`.
+    fn cmdline_dep_root(&mut self, dep: &str) -> Option<std::path::PathBuf> {
+        for l in self.lib_dirs.clone() {
+            if self.lib_path_manifest_resolve(&l, dep).is_none() {
+                continue;
+            }
+            let dir = std::path::Path::new(&l);
+            return Some(
+                if crate::file_access::file_name(dir).as_deref() == Some(dep) {
+                    dir.to_path_buf()
+                } else {
+                    dir.join(dep)
+                },
+            );
+        }
+        None
+    }
+
+    /// Every package a command-line directory holds: the directory itself when it carries a
+    /// `loft.toml`, else each subdirectory that does.  A hidden entry is a cache or a
+    /// checkout's history, never a package (loft#1761).
+    fn cmdline_packages(&self) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for l in &self.lib_dirs {
+            let dir = std::path::Path::new(l);
+            if crate::file_access::is_file(dir.join("loft.toml")) {
+                out.push(dir.to_path_buf());
+                continue;
+            }
+            for p in crate::file_access::read_dir(l.as_str()).unwrap_or_default() {
+                let Some(name) = p.file_name() else { continue };
+                if name.starts_with('.') {
+                    continue;
+                }
+                let sub = dir.join(name);
+                if crate::file_access::is_file(sub.join("loft.toml")) {
+                    out.push(sub);
+                }
+            }
+        }
+        out
     }
 
     /// Add a package's derived triggers to the three maps — its text methods

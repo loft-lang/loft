@@ -177,3 +177,96 @@ fn a_registry_dependency_fires_its_type_and_builder_triggers() {
     let _ = fa::remove_dir_all(&dir);
     let _ = fa::remove_dir_all(&home);
 }
+
+/// The triggers come from the copy a `use` would load (`@FR-Disp-Trigger`).  `use` takes a `--lib` directory's
+/// copy before an installed one (the testbed's "a dependency you are changing gets an explicit
+/// `--lib <its worktree>`"), so the method triggers must too: a method only that copy has,
+/// `shout`, fires with a declared registry dependency pinned to an older copy, and with no
+/// declaration at all.  The control runs the declaring project without the flag, where the
+/// pinned copy has no `shout` and the call must fail — so a pass is the override's doing.
+#[test]
+fn a_lib_flag_copy_fires_its_own_method_triggers() {
+    let tmp = std::env::temp_dir().join(format!("loft_builder_libflag_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let fixture = root().join("tests/lib/builder_pkg");
+    // The pinned registry copy: the fixture as it is, version 0.1.0.
+    let home = tmp.join("home");
+    let pinned = home.join(".loft/registry/builder_pkg-0.1.0");
+    // The `--lib` override: the same package one version on, with one method more.
+    let override_dir = tmp.join("override");
+    let newer = override_dir.join("builder_pkg");
+    for (dst, version) in [(&pinned, "0.1.0"), (&newer, "0.2.0")] {
+        fa::create_dir_all(dst.join("src")).expect("mkdir");
+        let manifest = fa::read_to_string(fixture.join("loft.toml")).expect("manifest");
+        fa::write(
+            dst.join("loft.toml"),
+            manifest.replace("version = \"0.1.0\"", &format!("version = \"{version}\"")),
+        )
+        .expect("manifest");
+        let mut src = fa::read_to_string(fixture.join("src/builder_pkg.loft")).expect("source");
+        if version == "0.2.0" {
+            src.push_str("\npub fn shout(self: text) -> text { \"{self}!\" }\n");
+        }
+        fa::write(dst.join("src/builder_pkg.loft"), src).expect("source");
+    }
+    let script = "fn main() { println(\"hi\".shout()); }\n";
+    let declaring = tmp.join("declaring");
+    fa::create_dir_all(&declaring).expect("mkdir");
+    fa::write(
+        declaring.join("loft.toml"),
+        "[package]\nname = \"usesbag\"\nversion = \"0.1.0\"\n\n[dependencies]\nbuilder_pkg = \">=0.1\"\n",
+    )
+    .expect("manifest");
+    fa::write(
+        declaring.join("loft.lock"),
+        "schema_version = 1\n\n[[package]]\nname = \"builder_pkg\"\nversion = \"0.1.0\"\nurl = \"\"\nsha256 = \"\"\nsource = \"registry\"\n",
+    )
+    .expect("lock");
+    fa::write(declaring.join("p.loft"), script).expect("script");
+    let bare = tmp.join("bare");
+    fa::create_dir_all(&bare).expect("mkdir");
+    fa::write(
+        bare.join("loft.toml"),
+        "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("manifest");
+    fa::write(bare.join("p.loft"), script).expect("script");
+    let run_with = |dir: &std::path::Path, backend: &str, lib: bool| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg(backend);
+        if lib {
+            cmd.arg("--lib").arg(&override_dir);
+        }
+        let out = cmd
+            .arg(dir.join("p.loft"))
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_HOME", &home)
+            .env("LOFT_NO_CACHE", "1")
+            .current_dir(std::env::temp_dir())
+            .output()
+            .expect("spawn loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    for backend in ["--interpret", "--native"] {
+        for (dir, what) in [
+            (&declaring, "a declared dependency"),
+            (&bare, "no declaration"),
+        ] {
+            let (ok, stdout, stderr) = run_with(dir, backend, true);
+            assert!(
+                ok && stdout == "hi!",
+                "[{backend}, {what}] the --lib copy's method did not fire:\n{stdout}\n{stderr}"
+            );
+        }
+        let (ok, stdout, stderr) = run_with(&declaring, backend, false);
+        assert!(
+            !ok && stderr.contains("shout"),
+            "[{backend}] without the flag the pinned copy has no `shout`, so the call must fail:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = fa::remove_dir_all(&tmp);
+}
