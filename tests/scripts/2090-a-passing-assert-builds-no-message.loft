@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PASSING ASSERT BUILDS NO MESSAGE (loft#2090, the promise of loft#873): an `assert` whose
+// condition holds does not evaluate its message, so a message that formats values — or calls
+// a function — costs nothing on the passing path.  The witness is a message that calls a
+// function counting its own calls: it must not run while every assertion passes.  A constant
+// message and an assert with no message keep working, and a FAILING assert still reports the
+// message it builds (the expected-fail function).
+//
+// Values hand-computed: 1000 passing asserts → the counter stays 0.
+//
+// @falsified-at: 18594597b — interpret and native: the counter read 1000 (every passing assert
+//   built its message).
+// CHANNEL: the asserts, and the expected failure's message.
+// HOLDS: a constant-message and a no-message assert pass as before.
+
+struct Calls { n: integer }
+
+fn noted(c: Calls, i: integer) -> text {
+  c.n += 1;
+  "element {i}"
+}
+
+fn test_a_passing_assert_does_not_build_its_message() {
+  c = Calls { n: 0 };
+  for i in 0..1000 {
+    assert(i >= 0, "{noted(c, i)} is below zero");
+  }
+  assert(c.n == 0, "fixed message");
+  assert(c.n == 0);
+}
+
+// @EXPECT_FAIL: element 7 is below zero
+fn test_a_failing_assert_reports_the_message_it_builds() {
+  c = Calls { n: 0 };
+  i = 7;
+  assert(i < 0, "{noted(c, i)} is below zero");
+}

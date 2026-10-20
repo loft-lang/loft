@@ -20760,7 +20760,30 @@ impl Parser {
                 )
             };
             let d_nr = self.data.def_nr("n_assert");
-            *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
+            // loft#2090 — the message is evaluated only when the assertion fails (#873's
+            // promise).  A constant message costs nothing to build and keeps the one call; a
+            // built one (`"element {i} is {x}"`) is formatted on the failing branch alone, and
+            // the passing branch hands `n_assert` the condition's own text, which is what a
+            // run that lists its passing assertions (the playground's `report_asserts`) shows.
+            if matches!(message.unspan(), Value::Text(_)) {
+                *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
+            } else {
+                let condition = Value::str(&Self::extract_assert_expr(call_pos));
+                let pass = Value::Call(
+                    d_nr,
+                    vec![
+                        Value::Boolean(true),
+                        condition,
+                        a_file.clone(),
+                        a_line.clone(),
+                    ],
+                );
+                let fail = Value::Call(d_nr, vec![Value::Boolean(false), message, a_file, a_line]);
+                // Inside a block: a bare statement `if` testing a local reads as an author's
+                // GUARD of the read that bound it (`rewrite_defended_fault_sites`), and an
+                // assert is not one — it must leave that read's fault report as it was.
+                *val = v_block(vec![v_if(test, pass, fail)], Type::Void, "assert");
+            }
             Type::Void
         } else if name == "panic" {
             let message = if list.is_empty() {
