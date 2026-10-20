@@ -12156,14 +12156,20 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             } else {
                 &binary
             };
-            let name = fa::file_stem(std::path::Path::new(&abs_file))
-                .unwrap_or_else(|| "program".to_string());
-            if let Err(e) =
-                native_utils::write_dist(std::path::Path::new(dir), built, &name, &p.data)
-            {
-                eprintln!("loft: --out {dir}: {e}");
-                std::process::exit(1);
+            // A library has no `main`, so there is no program to write: the compile is the
+            // whole answer, as it is for `--check` — which is what `loft build native` asked
+            // before it wrote `dist/`, and why both print the same `ok`.
+            if p.data.def_nr("n_main") != u32::MAX {
+                let name = fa::file_stem(std::path::Path::new(&abs_file))
+                    .unwrap_or_else(|| "program".to_string());
+                if let Err(e) =
+                    native_utils::write_dist(std::path::Path::new(dir), built, &name, &p.data)
+                {
+                    eprintln!("loft: --out {dir}: {e}");
+                    std::process::exit(1);
+                }
             }
+            println!("ok");
             return;
         }
         if check_only {

@@ -123,20 +123,8 @@ fn search_dirs() -> Vec<(PathBuf, bool)> {
     {
         dirs.push((home.join(".loft").join("lib"), false));
     }
-    dirs.push((system_root(), false));
+    dirs.push((crate::platform::system_library_root(), false));
     dirs
-}
-
-/// The system-wide library root.
-fn system_root() -> PathBuf {
-    if cfg!(windows) {
-        std::env::var_os("ProgramData")
-            .map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from)
-            .join("loft")
-            .join("lib")
-    } else {
-        PathBuf::from("/usr/local/lib/loft")
-    }
 }
 
 /// Every place `lib` may be in `dirs`, in search order.

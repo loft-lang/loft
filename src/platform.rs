@@ -1758,6 +1758,24 @@ pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
     }
 }
 
+/// @PLN195 — the system-wide root a dynamic native program searches last for its libraries,
+/// each in a `<package>-<version>/` subdirectory: `/usr/local/lib/loft` on Unix,
+/// `%ProgramData%\loft\lib` on Windows.
+#[must_use]
+pub fn system_library_root() -> std::path::PathBuf {
+    if cfg!(windows) {
+        std::env::var_os("ProgramData")
+            .map_or_else(
+                || std::path::PathBuf::from(r"C:\ProgramData"),
+                std::path::PathBuf::from,
+            )
+            .join("loft")
+            .join("lib")
+    } else {
+        std::path::PathBuf::from("/usr/local/lib/loft")
+    }
+}
+
 /// Does a native binary find a C library that ships beside its package only because loft
 /// copies it beside the binary?  True on Windows (no RPATH; the loader searches the `.exe`'s
 /// directory and `PATH`), so the staging step runs after every build — and anything that
