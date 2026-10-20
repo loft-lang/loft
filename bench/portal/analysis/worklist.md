@@ -135,6 +135,24 @@ prefill on both sides of the call: `panel_build` 3.67× → 3.44×.
 4.66×.  Store creation is ~950 instructions (12 % of `encode`) spread over slot bookkeeping,
 `Store::init` and a fresh store's first claim through the tree path; no single fold moves it
 more than ~2 %.
+#### The five rows over 4× at `4cc416af4`, analysed (2026-10-20)
+
+Callgrind per op against the twin, compiled from the release emission with line tables; a
+price is an edit of the emitted Rust or of the library source, timed interleaved on one core
+(`--n` 200–300, uncached), hash unchanged.
+
+| × | row | loft / twin | where the excess goes | priced | lands at |
+|--:|---|---|---|---|---|
+| 4.53 | `slope_path_with_undo` | 2275 / 415 instr per step | `map_get_hex` 337 and `map_set_hex` 408 instr per call (twin ~100): the chunk walk rebuilds a `DbRef` per pass, each field read is a null-and-bounds `rec_get`, the nested `ck_hexes` is resolved twice (`length_vector`, then `get_vector`), the `Hex` read and written field by field through the store; the undo vector's growth (`resize`, `resize_store`, `memset`) ~11 % | both helpers in the tight form (held base, raw field compares, one `rec_and_len`, one element address) **−27.5 %** | **≈ 3.3×**; the undo vector reserved without the zero fill *est.* −8 % → ≈ 3.0× |
+| 4.42 | `pluginabi/request` | 151 k / 31 k instr per request | base64 decoded TWICE per payload (`pa_is_base64` then `pa_cbytes`, 31 % each pair); the decoded bytes copied ~3 times into the entry (`copy_claims` 40 k, `OpCopyRecord` 13 k); the encoder | one decode per payload, validated by its result (library form) **−31 %** | **≈ 3.05×**; R2, the bytes built where the entry keeps them, *est.* −15 % → ≈ 2.6× |
+| 4.66 | cbor `encode` | 113 k / 26.5 k instr per encode | the rank loop's `key_lt` (per byte a checked `kb[i] ?? 0`, ~112 instr a compare, ~40 k); a key's bytes appended through `vector_slice` (~450 instr for 1–8 bytes: the headers resolved four times) and `vector_add` (~650); 14 stores (~14 k with their release) | E1 (earlier, library form) −15.5 % | E1 + `vector_slice`/`vector_add` resolving each header once *est.* −12 % → ≈ 3.5×; 3× needs the rank loop's reads held (`key_lt` is called with the buffer as a parameter: a twin clause) |
+| 4.16 | `truncate_to` | 3.6 k / 755 instr per push | the entry deep-copied into the timeline (~1035: two claims ~143 each, `copy_plain_vectors` ~372 of its own); the dropped entry released (~730: two deletes ~165 each, `release_plain_vectors` ~234); the entry's own build ~1130 (a push header and a reservation per push) | L3, the entry built in the timeline's element: **+30 % — REFUTED** (its vectors then grow element by element in the large, fragmented store; the reused loop record copies once at the exact size) | runtime tightening of the copy, the release and claim/delete *est.* −25 % → ≈ 3.2×; no structural lever found |
+| 4.44 | `field_add_cell` | 545 M / 123 M instr | keyed operations 55 %: ~440 instr each against hashbrown's ~200–300 — per call the entries header, the seed, the record words and the sub-record type re-read (~60), SipHash 52, the arena claim 52; rehash 54 M against 22 M (191 per moved entry); `mark_borders`' dirty inserts | the second bucket lookup removed (library form) −0.9 % — DROPPED | the keyed header held across a loop or call *est.* −8 %, a cheaper rehash *est.* −6 % → ≈ 3.9×; needs a line-level pass of the keyed runtime |
+
+The common thread of the last three is the runtime's unit cost: a claim, a delete, a vector
+header resolution and a keyed probe each cost several times their `malloc` / `Vec` /
+hashbrown counterpart, and these rows are made of them.
+
 **PRICED and DROPPED** — `@FR-R-Apart` instance 3 for full-width `vector<integer>` locals:
 cbor `encode` 4.66× → 4.26×, but drawing's image routines 2–3.5× slower (`render_marks` +255 %,
 `resize` +220 %): their whole-image integer buffers lost the store's reservation, held base
