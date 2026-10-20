@@ -10,6 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Two gate reds of the joined tree: the prefill cells' native half, a twin's registry notice
+
+- `tests/prefill_image.rs::the_cells_use_the_image_on_both_backends` read `Mix`'s image
+  used 0 times on native: (R-CompleteWrite)'s buffer clauses now cover c11's per-activation
+  return slot too, so every `Mix` shape of the cells is a complete write there and the
+  native half of the verify pin had gone vacuous.  A c12 cell mints `Outer` — whose
+  `Inner?` field's discriminant no literal writes, the shape the rule keeps the prefill
+  for — once per activation, thirty times (29 image uses on native, hand-checked), and the
+  test counts `Mix` on the interpreter and `Outer` on native.
+- `scripts/script_twin.sh` runs both sides with `LOFT_NO_UPGRADE_NOTICE=1`: the
+  `[registry] crypto 0.3.13 is pinned; 0.3.14 is the newest release` line reached the
+  port's stderr the day a newer crypto reached the runner's cache, and nothing a twin
+  compares had changed.
+
+
 ### CI: a test leg builds only the binaries it runs; the legs' steps timed against the budget
 
 - `scripts/ci_shards.py` packs the test binaries into the legs (`heavy`, `corpus`, and
