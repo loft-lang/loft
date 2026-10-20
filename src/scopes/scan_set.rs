@@ -1595,6 +1595,17 @@ impl Scopes<'_> {
                 &set_value,
             )
             .is_some()
+            // loft#2078 — an UNRESOLVED closure call: `OpBindFnRefResult` copies or adopts,
+            // so the local owns either way and `(O-Opaque)`'s assumed borrow must not make
+            // it an alias of the argument handed back (`@FR-B-Copy`).
+            || (!function.is_argument(v)
+                && crate::use_analysis::opaque_callref_record(
+                    data,
+                    self.d_nr,
+                    function.tp(v),
+                    &set_value,
+                )
+                .is_some())
         {
             let deps: Vec<u16> = function.tp(v).depend().clone();
             for d in deps {
