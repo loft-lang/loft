@@ -157,17 +157,11 @@ value-shaped decision, and value clauses would make coverage undecidable.
 | Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `loft-suite/attic/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `loft-suite/attic/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |
 | Disp-Match-Equiv | the oracle twin | `tests/oracle/34-dispatch-set.loft` / `34-dispatch-set-as-match.loft`, `tests/oracle/35-dispatch-self-set.loft` (`@ORACLE_TWIN`) |
 | Disp-World | `live_reload::add_fn_block` | `tests/live_world.rs` |
-| Disp-Trigger | `Parser::trigger_map` (with `cmdline_dep_root`, `cmdline_packages`), `Parser::catalog_trigger_map` | `tests/builder_trigger.rs` (`a_lib_flag_copy_fires_its_own_method_triggers`, `a_registry_dependency_fires_its_type_and_builder_triggers`) |
+| Disp-Trigger | `Parser::trigger_map` (with `cmdline_dep_root`, `packages_in`, `loft_lib_dirs`), `Parser::catalog_trigger_map`, the ambiguity refusal `Parser::ambiguous_providers` (`registry_index::ambiguous_trigger_providers` for the catalogue) | `tests/builder_trigger.rs` (`a_lib_flag_copy_fires_its_own_method_triggers`, `a_registry_dependency_fires_its_type_and_builder_triggers`, `a_loft_lib_package_fires_its_method_triggers`, `a_method_two_packages_provide_is_refused_naming_both`, `a_method_two_catalogue_packages_provide_is_refused_naming_both`) |
 
 ## Deviations
 
-**OPEN: 2.**
-- **D-disp-5** — a trigger two candidates derive is DROPPED, not refused by name: the call then
-  reads as an unknown method (`Unknown field text.hum`), naming neither package nor the cure.
-  Holds for two `--lib` packages and for the catalogue's ambiguous names alike (loft#2094).
-- **D-disp-6** — a `LOFT_LIB` directory is not a trigger source: `use twa;` loads `twa` from
-  `LOFT_LIB`, while a bare `"x".only_twa()` beside it is an unknown method.  `--lib`, which
-  `use` searches just before it, is (loft#2095).
+**OPEN: 0.**
 
-The closed register — D-disp-1 to D-disp-4, each with what resolved it — is
+The closed register — D-disp-1 to D-disp-6, each with what resolved it — is
 [dispatch-history.md](dispatch-history.md).

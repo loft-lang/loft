@@ -270,3 +270,178 @@ fn a_lib_flag_copy_fires_its_own_method_triggers() {
     }
     let _ = fa::remove_dir_all(&tmp);
 }
+
+/// Write a trigger-enabled package `name` under `dir` whose one method is `method`.
+fn trigger_pkg(dir: &std::path::Path, name: &str, method: &str) {
+    let pkg = dir.join(name);
+    fa::create_dir_all(pkg.join("src")).expect("mkdir");
+    fa::write(
+        pkg.join("loft.toml"),
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[triggers]\nenabled = true\n"
+        ),
+    )
+    .expect("manifest");
+    fa::write(
+        pkg.join(format!("src/{name}.loft")),
+        format!("pub fn {method}(self: text) -> text {{ \"{name} {{self}}\" }}\n"),
+    )
+    .expect("source");
+}
+
+/// Run `prog` with the given `--lib` and `LOFT_LIB` directories, in an empty home so no
+/// installed copy or catalogue answers: (success, stdout, stderr).
+fn run_trigger(
+    prog: &std::path::Path,
+    backend: &str,
+    lib: Option<&std::path::Path>,
+    loft_lib: Option<&std::path::Path>,
+    home: &std::path::Path,
+) -> (bool, String, String) {
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    cmd.arg(backend);
+    if let Some(l) = lib {
+        cmd.arg("--lib").arg(l);
+    }
+    if let Some(l) = loft_lib {
+        cmd.env("LOFT_LIB", l);
+    } else {
+        cmd.env_remove("LOFT_LIB");
+    }
+    let out = cmd
+        .arg(prog)
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_HOME", home)
+        .env("LOFT_NO_CACHE", "1")
+        .current_dir(std::env::temp_dir())
+        .output()
+        .expect("spawn loft");
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+/// `@FR-Disp-Trigger` (loft#2095, D-disp-6): `use` searches the `LOFT_LIB` directories just
+/// after `--lib`, so a bare method call reaches a trigger-enabled package found there, as it
+/// reaches one under `--lib` — both when nothing declares the package and when the project's
+/// manifest declares it with no other copy to load.  The control runs without `LOFT_LIB`,
+/// where nothing provides the method and the call must fail.
+#[test]
+fn a_loft_lib_package_fires_its_method_triggers() {
+    let tmp = std::env::temp_dir().join(format!("loft_trigger_loftlib_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let home = tmp.join("home");
+    fa::create_dir_all(&home).expect("mkdir");
+    let solo = tmp.join("solo");
+    trigger_pkg(&solo, "twc", "only_twc");
+    let script = "fn main() { println(\"x\".only_twc()); }\n";
+    let bare = tmp.join("bare");
+    fa::create_dir_all(&bare).expect("mkdir");
+    fa::write(bare.join("p.loft"), script).expect("script");
+    let declaring = tmp.join("declaring");
+    fa::create_dir_all(&declaring).expect("mkdir");
+    fa::write(
+        declaring.join("loft.toml"),
+        "[package]\nname = \"usestwc\"\nversion = \"0.1.0\"\n\n[dependencies]\ntwc = \">=0.1\"\n",
+    )
+    .expect("manifest");
+    fa::write(declaring.join("p.loft"), script).expect("script");
+    for backend in ["--interpret", "--native"] {
+        for (dir, what) in [
+            (&bare, "no declaration"),
+            (&declaring, "a declared dependency"),
+        ] {
+            let (ok, stdout, stderr) =
+                run_trigger(&dir.join("p.loft"), backend, None, Some(&solo), &home);
+            assert!(
+                ok && stdout == "twc x",
+                "[{backend}, {what}] the LOFT_LIB package's method did not fire:\n{stdout}\n{stderr}"
+            );
+        }
+        let (ok, stdout, stderr) = run_trigger(&bare.join("p.loft"), backend, None, None, &home);
+        assert!(
+            !ok && stderr.contains("only_twc"),
+            "[{backend}] without LOFT_LIB nothing provides `only_twc`, so the call must fail:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+/// `@FR-Disp-Trigger` (loft#2094, D-disp-5): a method two trigger-enabled packages of one
+/// search step both provide is refused by name — both packages and the `use` that settles
+/// it — instead of reading as an unknown method, and no directory order picks one.  The
+/// control adds the `use`, which must run.
+#[test]
+fn a_method_two_packages_provide_is_refused_naming_both() {
+    let tmp = std::env::temp_dir().join(format!("loft_trigger_twice_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let home = tmp.join("home");
+    fa::create_dir_all(&home).expect("mkdir");
+    let libs = tmp.join("libs");
+    trigger_pkg(&libs, "twa", "hum");
+    trigger_pkg(&libs, "twb", "hum");
+    let prog = tmp.join("both.loft");
+    fa::write(&prog, "fn main() { println(\"x\".hum()); }\n").expect("script");
+    let settled = tmp.join("settled.loft");
+    fa::write(
+        &settled,
+        "use twb::*;\nfn main() { println(\"x\".hum()); }\n",
+    )
+    .expect("script");
+    for backend in ["--interpret", "--native"] {
+        let (ok, stdout, stderr) = run_trigger(&prog, backend, Some(&libs), None, &home);
+        assert!(
+            !ok && stderr.contains("`hum` is provided by both `twa` and `twb`")
+                && stderr.contains("`use twa::*;` or `use twb::*;`"),
+            "[{backend}] the ambiguous trigger was not refused by name:\n{stdout}\n{stderr}"
+        );
+        let (ok, stdout, stderr) = run_trigger(&settled, backend, Some(&libs), None, &home);
+        assert!(
+            ok && stdout == "twb x",
+            "[{backend}] `use twb::*;` must settle it:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+/// `@FR-Disp-Trigger` (loft#2094, D-disp-5), the catalogue half: a method two PUBLISHED
+/// packages provide is left out of the catalogue's trigger map (no package is guessed), and
+/// the call is refused naming both instead of reading as an unknown method.  The index is a
+/// fake one in an otherwise empty home, so nothing installed answers.
+#[test]
+fn a_method_two_catalogue_packages_provide_is_refused_naming_both() {
+    let tmp = std::env::temp_dir().join(format!("loft_trigger_catalog_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let home = tmp.join("home");
+    fa::create_dir_all(home.join(".loft/registry")).expect("mkdir");
+    let version = |trigger: &str| {
+        format!(
+            r#"{{ "categories": [], "yanked": [], "versions": {{ "0.1.0": {{
+                "url": "https://example.invalid/p.tar.gz", "sha256": "s", "size": 1,
+                "loft": ">=0.8", "triggers": ["{trigger}"],
+                "published": "2026-10-20T00:00:00Z" }} }} }}"#
+        )
+    };
+    fa::write(
+        home.join(".loft/registry/index.json"),
+        format!(
+            r#"{{ "schema_version": 1, "updated": "2026-10-20T00:00:00Z", "packages": {{
+                "cata": {}, "catb": {} }} }}"#,
+            version("hum:text"),
+            version("hum:integer")
+        ),
+    )
+    .expect("index");
+    let prog = tmp.join("p.loft");
+    fa::write(&prog, "fn main() { println(\"x\".hum()); }\n").expect("script");
+    for backend in ["--interpret", "--native"] {
+        let (ok, stdout, stderr) = run_trigger(&prog, backend, None, None, &home);
+        assert!(
+            !ok && stderr.contains("`hum` is provided by both `cata` and `catb`"),
+            "[{backend}] the catalogue's ambiguous trigger was not refused by name:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = fa::remove_dir_all(&tmp);
+}

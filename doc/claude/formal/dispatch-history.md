@@ -103,3 +103,16 @@ OPEN: **0**.
   set split by receiver keeps each receiver's hint, as the rule now says in words.  Guards:
   `tests/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`,
   `tests/scripts/1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft`.
+- **D-disp-5 — CLOSED 2026-10-20** (loft#2094).  `(Disp-Trigger)`: a trigger two candidates
+  derive was DROPPED, so the call read as an unknown method (`Unknown field text.hum`), naming
+  neither package nor the cure — for two library-directory packages and for the catalogue's
+  shared names alike.  Both now keep the providers they leave out (`Parser::auto_use_ambiguous`;
+  the sidecar's `ambiguous` map, derivation 3) and the call is refused naming both packages and
+  the `use` that settles it.  Guards: `tests/builder_trigger.rs`
+  `a_method_two_packages_provide_is_refused_naming_both`,
+  `a_method_two_catalogue_packages_provide_is_refused_naming_both`.
+- **D-disp-6 — CLOSED 2026-10-20** (loft#2095).  `(Disp-Trigger)`: a `LOFT_LIB` directory was
+  not a trigger source — `use twa;` loaded `twa` from it while a bare `"x".only_twa()` beside it
+  was an unknown method.  `--lib` and `LOFT_LIB` are now scanned as ONE step, the directories
+  `use` searches after the declared copies.  Guard: `tests/builder_trigger.rs`
+  `a_loft_lib_package_fires_its_method_triggers`.

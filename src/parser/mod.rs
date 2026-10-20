@@ -738,6 +738,10 @@ pub struct Parser {
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
     auto_use_trigger_map: Option<std::collections::HashMap<String, String>>,
+    /// `@FR-Disp-Trigger` (loft#2094) — the method names two trigger-enabled packages of ONE
+    /// search step both derive, with those packages: dropped from the map (no directory order
+    /// chooses), and named by the unknown-method refusal.  Built with `auto_use_trigger_map`.
+    pub(crate) auto_use_ambiguous: std::collections::HashMap<String, Vec<String>>,
     /// The type half of the same surface: `type name -> providing package`, from the
     /// current package's and its trigger-enabled dependencies' `pub struct` / `pub enum`
     /// names (`triggers.rs`).  Built with `auto_use_trigger_map`; local only — a type name
@@ -768,6 +772,10 @@ pub struct Parser {
     /// the sidecar's `builders`, for a bare call on a package the user has not declared.
     #[cfg_attr(not(feature = "registry"), allow(dead_code))]
     auto_use_catalog_builders: Option<std::collections::HashMap<String, String>>,
+    /// The catalogue's methods two packages provide (`method -> "a,b"`), for the refusal
+    /// that names them (loft#2094).  `None` until first asked.
+    #[cfg_attr(not(feature = "registry"), allow(dead_code))]
+    auto_use_catalog_ambiguous: Option<std::collections::HashMap<String, String>>,
     /// Is this the first pass on parsing:
     /// - Do not assume that all struct / enum types are already parsed.
     /// - Define variables, try to determine their type (can become clear from later code).
@@ -1950,9 +1958,11 @@ impl Parser {
             program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
+            auto_use_ambiguous: std::collections::HashMap::new(),
             auto_use_type_map: std::collections::HashMap::new(),
             auto_use_builder_map: std::collections::HashMap::new(),
             auto_use_catalog_builders: None,
+            auto_use_catalog_ambiguous: None,
             reported_manifest_errors: Vec::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),

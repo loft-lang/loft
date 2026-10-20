@@ -633,6 +633,19 @@ impl Parser {
                         "the method's own answer for an empty one",
                     ) {
                         // reported; fall through to the recovery below
+                    } else if let Some(pkgs) = self.ambiguous_providers(&field) {
+                        // `@FR-Disp-Trigger` (loft#2094): two packages of one search step (or
+                        // of the catalogue) both provide the method, and nothing chooses.
+                        let uses: Vec<String> =
+                            pkgs.iter().map(|p| format!("`use {p}::*;`")).collect();
+                        let named: Vec<String> = pkgs.iter().map(|p| format!("`{p}`")).collect();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{field}` is provided by both {} — write {} to say which",
+                            named.join(" and "),
+                            uses.join(" or ")
+                        );
                     } else if has_free_hint {
                         // loft#850 — only the stdlib can be blamed for the stdlib's
                         // choices; a `use`d package that declares `{field}` free-only

@@ -1209,7 +1209,15 @@ pub fn cached_versions(pkg: &str) -> Vec<String> {
 /// receiver-blind pre-scan cannot tell apart.
 #[must_use]
 pub fn trigger_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
-    providers_of(index, false)
+    providers_of(index, false).0
+}
+
+/// The methods [`trigger_providers`] omits, each with the packages that provide it, joined
+/// by `,` in name order: what the unknown-method refusal names instead of saying nothing
+/// (`@FR-Disp-Trigger`, loft#2094).
+#[must_use]
+pub fn ambiguous_trigger_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
+    providers_of(index, false).1
 }
 
 /// The builder half of [`trigger_providers`]: `function name -> package` over the
@@ -1217,7 +1225,7 @@ pub fn trigger_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
 /// consumer looks up when no declared dependency carries the name.
 #[must_use]
 pub fn builder_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
-    providers_of(index, true)
+    providers_of(index, true).0
 }
 
 /// A trigger entry's receiver is `fn` for a builder; everything else is a method.
@@ -1225,7 +1233,12 @@ fn is_builder_trigger(trig: &str) -> bool {
     trig.split_once(':').is_some_and(|(_, r)| r == "fn")
 }
 
-fn providers_of(index: &RegistryIndex, builders: bool) -> BTreeMap<String, String> {
+/// `(unique, ambiguous)`: a name one package provides, mapped to it; a name two or more
+/// provide, mapped to those packages joined by `,`.
+fn providers_of(
+    index: &RegistryIndex,
+    builders: bool,
+) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
     let mut providers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (pname, pkg) in &index.packages {
         let Some(ver) = find_best_version(pkg, "*", false) else {
@@ -1245,15 +1258,18 @@ fn providers_of(index: &RegistryIndex, builders: bool) -> BTreeMap<String, Strin
                 .insert(pname.clone());
         }
     }
-    providers
-        .into_iter()
-        .filter_map(|(method, pkgs)| {
-            // Unique provider → map it; ambiguous → omit (require explicit `use`).
-            (pkgs.len() == 1)
-                .then(|| pkgs.into_iter().next().map(|p| (method, p)))
-                .flatten()
-        })
-        .collect()
+    // Unique provider → map it; ambiguous → omit (require explicit `use`) and keep the
+    // providers for the refusal.
+    let mut unique = BTreeMap::new();
+    let mut ambiguous = BTreeMap::new();
+    for (method, pkgs) in providers {
+        if pkgs.len() == 1 {
+            unique.extend(pkgs.into_iter().map(|p| (method.clone(), p)));
+        } else {
+            ambiguous.insert(method, pkgs.into_iter().collect::<Vec<_>>().join(","));
+        }
+    }
+    (unique, ambiguous)
 }
 
 // ── Derived trigger sidecar ───────────────────────────────────────
@@ -1280,14 +1296,19 @@ fn index_stamp(index: &std::path::Path) -> Option<(u64, u64)> {
     Some((meta.len(), mtime))
 }
 
-/// The two maps a sidecar carries: the method triggers and the builders.
-type SidecarMaps = (BTreeMap<String, String>, BTreeMap<String, String>);
+/// The maps a sidecar carries: the method triggers, the builders, and the methods two
+/// packages provide ([`ambiguous_trigger_providers`]).
+type SidecarMaps = (
+    BTreeMap<String, String>,
+    BTreeMap<String, String>,
+    BTreeMap<String, String>,
+);
 
 /// How the maps are derived from the index, written into the sidecar beside the index
 /// stamp: a loft whose derivation differs rebuilds a sidecar the index stamp alone would
 /// call current.  1 was the union over every published version; 2 is the newest loadable
-/// release only ([`trigger_providers`]).
-const SIDECAR_DERIVATION: i64 = 2;
+/// release only ([`trigger_providers`]); 3 adds the `ambiguous` map.
+const SIDECAR_DERIVATION: i64 = 3;
 
 /// The sidecar's maps, or `None` when it is absent, unreadable, stamped for a
 /// different index, derived another way ([`SIDECAR_DERIVATION`]), or written before it
@@ -1308,6 +1329,7 @@ fn read_trigger_sidecar_at(
     let mut derivation: Option<i64> = None;
     let mut map = BTreeMap::new();
     let mut builders: Option<BTreeMap<String, String>> = None;
+    let mut ambiguous: Option<BTreeMap<String, String>> = None;
     let read_map = |v: &Parsed| {
         let mut m = BTreeMap::new();
         if let Parsed::Object(entries) = v {
@@ -1326,13 +1348,14 @@ fn read_trigger_sidecar_at(
             "derivation" => derivation = v.as_i64(),
             "triggers" => map = read_map(v),
             "builders" => builders = Some(read_map(v)),
+            "ambiguous" => ambiguous = Some(read_map(v)),
             _ => {}
         }
     }
     (stamped_len? == i64::try_from(len).ok()?
         && stamped_mtime? == i64::try_from(mtime).ok()?
         && derivation? == SIDECAR_DERIVATION)
-        .then_some((map, builders?))
+        .then_some((map, builders?, ambiguous?))
 }
 
 /// Write the sidecar for a map derived from the index that carried `stamp`.
@@ -1361,6 +1384,7 @@ fn write_trigger_sidecar_at(sidecar: &std::path::Path, stamp: (u64, u64), maps: 
         ("derivation".to_string(), 0, Parsed::Int(SIDECAR_DERIVATION)),
         ("triggers".to_string(), 0, Parsed::Object(entries(&maps.0))),
         ("builders".to_string(), 0, Parsed::Object(entries(&maps.1))),
+        ("ambiguous".to_string(), 0, Parsed::Object(entries(&maps.2))),
     ]);
     if let Some(parent) = sidecar.parent() {
         let _ = file_access::create_dir_all(parent);
@@ -1371,6 +1395,12 @@ fn write_trigger_sidecar_at(sidecar: &std::path::Path, stamp: (u64, u64), maps: 
     {
         let _ = file_access::remove_file(&tmp);
     }
+}
+
+/// Every map a sidecar carries, derived from `index`.
+fn sidecar_maps(index: &RegistryIndex) -> SidecarMaps {
+    let (triggers, ambiguous) = providers_of(index, false);
+    (triggers, builder_providers(index), ambiguous)
 }
 
 /// [`catalog_trigger_map`] and [`catalog_builder_map`] against explicit paths.
@@ -1385,7 +1415,7 @@ fn catalog_maps_at(sidecar: &std::path::Path, index: &std::path::Path) -> Sideca
     let Ok(parsed) = parse_index(&content) else {
         return SidecarMaps::default();
     };
-    let maps = (trigger_providers(&parsed), builder_providers(&parsed));
+    let maps = sidecar_maps(&parsed);
     write_trigger_sidecar_at(sidecar, stamp, &maps);
     maps
 }
@@ -1414,6 +1444,14 @@ pub fn catalog_builder_map() -> BTreeMap<String, String> {
     catalog_maps_at(&triggers_sidecar_path(), &index).1
 }
 
+/// The methods the catalogue leaves out because two packages provide them, each with
+/// those packages (`a,b`), from the same sidecar — what the unknown-method refusal names.
+#[must_use]
+pub fn catalog_ambiguous_map() -> BTreeMap<String, String> {
+    let (index, _, _) = index_paths();
+    catalog_maps_at(&triggers_sidecar_path(), &index).2
+}
+
 /// Bring the derived trigger sidecar in line with an index that has just been
 /// loaded.  Costs one `stat` plus a short read when it is already current, and
 /// reuses the caller's parsed index when it is not — so the registry commands
@@ -1437,11 +1475,7 @@ pub fn refresh_trigger_sidecar(index: &RegistryIndex, source_len: u64) {
     if stamp.0 != source_len {
         return;
     }
-    write_trigger_sidecar_at(
-        &sidecar,
-        stamp,
-        &(trigger_providers(index), builder_providers(index)),
-    );
+    write_trigger_sidecar_at(&sidecar, stamp, &sidecar_maps(index));
 }
 
 /// Map every `method:receiver` trigger in the catalog to its owning package.
@@ -2292,6 +2326,13 @@ mod tests {
         assert_eq!(map.get("regex_find"), Some(&"regex".to_string()));
         assert_eq!(map.get("slugify"), Some(&"slug".to_string()));
         assert_eq!(map.get("matches"), None, "ambiguous method must be omitted");
+        // …and kept with its providers, for the refusal that names them (loft#2094).
+        let ambiguous = ambiguous_trigger_providers(&idx);
+        assert_eq!(
+            ambiguous.get("matches").map(String::as_str),
+            Some("glob,regex")
+        );
+        assert_eq!(ambiguous.len(), 1, "only the shared name: {ambiguous:?}");
     }
 
     /// The newest loadable release speaks for a package: a spelling an older release carried
