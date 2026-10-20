@@ -4999,7 +4999,6 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
         .arg("--out")
         .arg(&dist)
         .arg(&program)
-        .env("LOFT_NATIVE_BIND", "loft")
         .env("LOFT_TIMEOUT", "600")
         .output()?;
     assert!(

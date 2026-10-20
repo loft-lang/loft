@@ -1758,20 +1758,10 @@ pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
     }
 }
 
-/// macOS's spelling of "beside the binary" in an RPATH (`@loader_path`; ELF's `$ORIGIN`
-/// means nothing to dyld), as a `rustc` argument.  `None` elsewhere.
-#[must_use]
-pub fn loader_path_rpath_arg() -> Option<&'static str> {
-    if cfg!(target_os = "macos") {
-        Some("-Clink-arg=-Wl,-rpath,@loader_path")
-    } else {
-        None
-    }
-}
-
-/// Does a native binary find its package DLLs only because loft copies them beside it?
-/// True on Windows (no RPATH; the loader searches the `.exe`'s directory and `PATH`), so the
-/// staging step runs after every build — and anything that skips the build must not skip it.
+/// Does a native binary find a C library that ships beside its package only because loft
+/// copies it beside the binary?  True on Windows (no RPATH; the loader searches the `.exe`'s
+/// directory and `PATH`), so the staging step runs after every build — and anything that
+/// skips the build must not skip it.
 #[must_use]
 pub fn stages_dlls_beside_binary() -> bool {
     cfg!(windows)

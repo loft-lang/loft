@@ -1608,7 +1608,7 @@ pub(crate) fn run_tests(
                         let mut out = generation::Output::new(&native_data, &native_db);
                         // Host-native backend: C-ABI cdylib link (NATIVE_ARTIFACT_IDENTITY.md § Resolution).
                         out.native_cabi = native_utils::native_cabi_enabled();
-                        out.native_bind = native_utils::native_bind_enabled();
+                        out.native_bind = out.native_cabi;
                         // #621 — when this harness supplies the crate's `main`
                         // below, suppress the generator's own bootstrap.
                         // `output_native_reachable` emits one whenever ANY

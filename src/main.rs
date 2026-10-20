@@ -4312,7 +4312,6 @@ fn native_source_key_fingerprint(
     html_names.hash(&mut h);
     debug_name.hash(&mut h);
     native_utils::native_cabi_enabled().hash(&mut h);
-    native_utils::native_bind_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
     // Every runtime rlib a build could link, not the one it would choose: choosing asks the
@@ -11410,8 +11409,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `native_cabi_enabled()` keeps codegen and the linker flags in sync
             // (off on Windows, which stays on the rlib path).
             out.native_cabi = native_utils::native_cabi_enabled();
-            // @PLN195 — and whether the program binds those libraries itself.
-            out.native_bind = native_utils::native_bind_enabled();
+            // @PLN195 — a dynamic program binds those libraries itself.
+            out.native_bind = out.native_cabi;
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
