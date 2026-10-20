@@ -129,10 +129,11 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  of what it points at.  A `&S` / `&vector<τ>` is then SHARED by (L-CapHeap) —
                  the same DbRef either way, so a field write, an element write and an append
                  from inside the closure all reach the caller — and a `&integer` / `&text` is
-                 COPIED at creation by (L-CapScalar).  The `&` itself does NOT survive into
-                 the closure, so a write that would replace what it points AT is REFUSED
-                 (a decided edge, DESIGN_DECISIONS @C115 — not a deviation: the copy is what
-                 (L-CapScalar) requires, so no code change closes it).
+                 COPIED at creation by (L-CapScalar).  For a COPIED pointee the `&` does not
+                 survive into the closure, so a write that would replace it is REFUSED
+                 (DESIGN_DECISIONS @C115: the copy is what (L-CapScalar) requires).  A SHARED
+                 pointee is the caller's own record, so replacing it whole from inside the
+                 closure (`p = S { … }`) reaches the caller exactly as a field write does.
   (L-CapRebind)  a WHOLE-VALUE rebind of a captured heap local is not a mutation-through: a
                  record built before it keeps the store it was built with and answers the
                  build-time value; the local names a store of its own from the rebind on.  So
