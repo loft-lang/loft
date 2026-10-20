@@ -3610,7 +3610,20 @@ line in `Output::output_function`'s prelude.
                  that exists, and the IR does not tell the two apart), a vector
                  field bound by an append, a `__nullable` element whose
                  discriminant no `OpSet` names — keeps the prefill: the check can
-                 only DECLINE the elision.  `db_vars`
+                 only DECLINE the elision.  BUFFER clauses: a return buffer's
+                 GUARDED mint (`if <buffer holds a record> null else
+                 OpDatabase(v, tp)`) heads its literal's group like a plain mint;
+                 inside a group a bind of another variable whose value never names
+                 the record (`__lift = f(…)`, the value a later set stores) is
+                 passed over, and an inline record field written member by member
+                 (`OpSet…(OpGetField(v, off, Sub), m, x)`) is covered when every
+                 member of `Sub` is.  An element handed to a call AS ITS RETURN
+                 BUFFER (`r = f(…, e)`, then `if OpDistinctStore(r, e)
+                 OpCopyRecord(r, e, FRESH | tp)`) is covered when `f` writes every
+                 field of the buffer it is handed — every mint of it covers and
+                 every `return` of it follows one in its own block — since the
+                 answer is then `e` itself, and the fresh copy writes every byte
+                 of `e` otherwise.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
                  must).  The interpreter keeps the prefill and is the oracle.

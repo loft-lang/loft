@@ -1,0 +1,84 @@
+// `@FR-R-CompleteWrite`'s buffer clauses — a record a function builds by a literal into the
+// return buffer its caller hands it skips the default prefill, on both sides of the call:
+// the callee's guarded mint (`if <buffer holds a record> null else OpDatabase(…)`) heads a
+// covering group, whose values may come from calls (`__lift = f(…)`) and may fill an inline
+// record member by member; and the caller's appended element, handed to such a callee as
+// its buffer and copied from the answer when the answer is another record, is written whole
+// on both arms.  Every cell refills slots a previous build left holding OTHER values, so a
+// field the prefill should have reset and nothing wrote shows as a stale value; every value
+// is hand-computed, and the interpreter keeps every prefill.
+//
+// @falsified-at: none — the clauses admit only groups the literal lowering makes complete
+// (it writes every field, declared default or not); no loft source spells an incomplete
+// group in these shapes, so no sabotage has an admitted defect to expose.  The slot-reuse
+// cells are the channel a wrong admission would move (stale fields), checked on both
+// backends, and `LOFT_POISON_CLAIM=1` (a claim filled with poison, not zeros) answers
+// identically on `--native` and `--native-release` (2026-10-20); `tests/complete_write.rs`
+// pins which sites drop the prefill.
+struct R { x: integer, y: integer, w: integer, h: integer }
+struct B { id: integer, r: R, label: text, flag: boolean, n: float }
+
+fn rect_of(id: integer) -> (integer, integer, integer, integer) {
+  (id * 10, id * 10 + 1, 40 + id, 30 - id)
+}
+
+// The panel's shape: a call's tuple fills the inline record, then texts and a flag.
+fn mk(id: integer, label: text, sel: boolean) -> B {
+  B { id: id, r: R { x: rect_of(id).0, y: rect_of(id).1, w: rect_of(id).2, h: rect_of(id).3 }, label: label,
+      flag: sel, n: id as float * 0.5 }
+}
+
+// A callee that answers ANOTHER record on one path: the caller copies it into its slot.
+fn pick(p: B, k: integer) -> B {
+  if k > 1 { return mk(k, "k{k}", false); }
+  p
+}
+
+fn show(b: B) -> text { "{b.id}:{b.r.x},{b.r.y},{b.r.w},{b.r.h}:{b.label}:{b.flag}:{b.n}" }
+
+// c1 — appended elements built by `mk`, the vector cleared and built again with other values.
+fn c1() -> text {
+  v: vector<B> = [];
+  for i in 0..3 { v += [mk(i + 5, "first{i}", true)]; }
+  v.clear();
+  v += [mk(1, "a", false)];
+  v += [mk(2, "bb", true)];
+  out = "";
+  for b in v { out += "{show(b)};"; }
+  out
+}
+
+// c2 — the callee's answer is the parameter on one arm and a fresh literal on the other.
+fn c2() -> text {
+  base = mk(9, "base", true);
+  v: vector<B> = [];
+  for i in 0..3 { v += [mk(i + 20, "old", true)]; }
+  v.clear();
+  for k in 0..3 { v += [pick(base, k)]; }
+  out = "";
+  for b in v { out += "{show(b)};"; }
+  out
+}
+
+// c3 — the guarded mint into a local, rebuilt in a loop over the same local.
+fn c3() -> text {
+  out = "";
+  for i in 0..3 {
+    b = mk(i, "t{i}", i == 1);
+    out += "{show(b)};";
+  }
+  out
+}
+
+fn main() {
+  r1 = c1();
+  println("c1 {r1}");
+  assert(r1 == "1:10,11,41,29:a:false:0.5;2:20,21,42,28:bb:true:1;", "c1");
+  r2 = c2();
+  println("c2 {r2}");
+  assert(r2 == "9:90,91,49,21:base:true:4.5;9:90,91,49,21:base:true:4.5;2:20,21,42,28:k2:false:1;", "c2");
+  r3 = c3();
+  println("c3 {r3}");
+  assert(r3 == "0:0,1,40,30:t0:false:0;1:10,11,41,29:t1:true:0.5;2:20,21,42,28:t2:false:1;", "c3");
+  println("ok");
+}

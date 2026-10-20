@@ -10556,9 +10556,16 @@ fn group_covers_type(
         return false;
     }
     let mut written: HashSet<u16> = HashSet::new();
+    // An inline record field written member by member: field position → member positions.
+    let mut members: HashMap<u16, HashSet<u16>> = HashMap::new();
     for stmt in ops.iter().skip(at) {
         match stmt.unspan() {
             Value::Line(_) => {}
+            // A bind of another variable whose value never names the record — the value a
+            // later set stores, `__lift = f(…)` — reads nothing the prefill would write.
+            Value::Set(x, rhs)
+                if *x != target
+                    && !rhs.any_node(&mut |n| matches!(n, Value::Var(u) if *u == target)) => {}
             // The declaration's own bind (`v = OpGetField(target, 0, tp)`) interleaves
             // a VECTOR store's group between the OpDatabase and the length reset — a
             // member that covers nothing.  (The collection-field prefill is ONE u32
@@ -10628,6 +10635,15 @@ fn group_covers_type(
                     && let Ok(off) = u16::try_from(*off)
                 {
                     written.insert(off);
+                } else if name.starts_with("OpSet")
+                    && let Some(f) = args.first().and_then(|a| call_named(a, data, "OpGetField"))
+                    && matches!(f.first().map(Value::unspan), Some(Value::Var(w)) if *w == target)
+                    && let Some(Value::Int(off)) = f.get(1).map(Value::unspan)
+                    && let Ok(off) = u16::try_from(*off)
+                    && let Some(Value::Int(m)) = args.get(1).map(Value::unspan)
+                    && let Ok(m) = u16::try_from(*m)
+                {
+                    members.entry(off).or_default().insert(m);
                 } else {
                     break;
                 }
@@ -10635,7 +10651,16 @@ fn group_covers_type(
             _ => break,
         }
     }
-    fields.iter().all(|f| written.contains(&f.position))
+    fields.iter().all(|f| {
+        written.contains(&f.position)
+            || members.get(&f.position).is_some_and(|m| {
+                let sub = f.content as usize;
+                sub < stores.types.len()
+                    && matches!(&stores.types[sub].parts,
+                        crate::database::Parts::Struct(sf)
+                            if !sf.is_empty() && sf.iter().all(|x| m.contains(&x.position)))
+            })
+    })
 }
 
 /// `@FR-R-RefillBuffer` — what [`refill_buffers`] admitted for one function: its return
@@ -11591,6 +11616,138 @@ pub fn refill_text_sites(
     out
 }
 
+/// An element handed to a call AS ITS RETURN BUFFER, and copied from the call's answer when
+/// that is another record: `r = f(…, e)` then `if OpDistinctStore(r, e) OpCopyRecord(r, e,
+/// FRESH | tp) else null`.  The element is written whole on both arms when `f` writes every
+/// field of the buffer it is handed ([`buffer_complete`]) — the answer is then `e` itself —
+/// and the copy, flagged FRESH for the element's type, writes every byte of `e` otherwise.
+fn call_pair_covers(
+    ops: &[Value],
+    at: usize,
+    target: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> bool {
+    let mut rest = ops
+        .iter()
+        .skip(at)
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)));
+    let Some(Value::Set(r, call)) = rest.next().map(Value::unspan) else {
+        return false;
+    };
+    let Value::Call(f, args) = call.unspan() else {
+        return false;
+    };
+    if (*f as usize) >= data.definitions.len() {
+        return false;
+    }
+    let Some(rb) = data.def(*f).hidden_return_buffer_attr() else {
+        return false;
+    };
+    let names_target = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(u) if *u == target));
+    let handed = args.iter().enumerate().all(|(i, a)| {
+        if i == rb {
+            matches!(a.unspan(), Value::Var(u) if *u == target)
+        } else {
+            !names_target(a)
+        }
+    });
+    if !handed {
+        return false;
+    }
+    let Some(Value::If(test, copy, other)) = rest.next().map(Value::unspan) else {
+        return false;
+    };
+    let pair = |v: &Value, name: &str| {
+        call_named(v, data, name).is_some_and(|a| {
+            matches!(a.first().map(Value::unspan), Some(Value::Var(u)) if u == r)
+                && matches!(a.get(1).map(Value::unspan), Some(Value::Var(u)) if *u == target)
+        })
+    };
+    let fresh = call_named(copy, data, "OpCopyRecord").is_some_and(|a| {
+        matches!(a.get(2).map(Value::unspan), Some(Value::Int(n)) if u16::try_from(*n)
+            .is_ok_and(|n| n & crate::keys::COPY_FRESH_DEST != 0 && n & crate::keys::COPY_TP_MASK == tp))
+    });
+    pair(test, "OpDistinctStore")
+        && pair(copy, "OpCopyRecord")
+        && fresh
+        && matches!(other.unspan(), Value::Null)
+        && buffer_complete(data, stores, *f)
+}
+
+/// Does `f` write every field of the return buffer it is handed before it answers it?  Every
+/// mint of the buffer heads a covering literal ([`complete_writes`]'s `db_vars`), and every
+/// `return` of the buffer follows such a mint in its own block.  A recursive chain answers no
+/// past two levels.
+fn buffer_complete(data: &Data, stores: &Stores, f: u32) -> bool {
+    thread_local! {
+        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+    let def = data.def(f);
+    let Some(rb) = def
+        .hidden_return_buffer_attr()
+        .map(|i| def.variables().var(&def.attributes()[i].name))
+    else {
+        return false;
+    };
+    if DEPTH.with(std::cell::Cell::get) >= 2 {
+        return false;
+    }
+    DEPTH.with(|d| d.set(d.get() + 1));
+    let complete = complete_writes(data, stores, f).db_vars.contains(&rb);
+    DEPTH.with(|d| d.set(d.get() - 1));
+    if !complete {
+        return false;
+    }
+    let mut ok = true;
+    def.code().any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let mut minted = false;
+            for op in &bl.operators {
+                if guarded_mint(op, data).is_some_and(|(v, _)| v == rb)
+                    || call_named(op, data, "OpDatabase").is_some_and(
+                        |a| matches!(a.first().map(Value::unspan), Some(Value::Var(u)) if *u == rb),
+                    )
+                {
+                    minted = true;
+                }
+                if let Value::Return(x) = op.unspan()
+                    && matches!(x.unspan(), Value::Var(u) if *u == rb)
+                    && !minted
+                {
+                    ok = false;
+                }
+            }
+        }
+        !ok
+    });
+    ok
+}
+
+/// `if <test of v> null else OpDatabase(v, tp)` — the mint a struct literal built into a
+/// return buffer opens with: the record the caller handed, or a fresh one.  The test names
+/// only `v`.
+fn guarded_mint(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
+    let Value::If(test, then, els) = stmt.unspan() else {
+        return None;
+    };
+    if !matches!(then.unspan(), Value::Null) {
+        return None;
+    }
+    let args = call_named(els, data, "OpDatabase")?;
+    let (Some(Value::Var(v)), Some(Value::Int(tp))) = (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) else {
+        return None;
+    };
+    if test.any_node(&mut |n| matches!(n, Value::Var(u) if u != v)) {
+        return None;
+    }
+    Some((*v, u16::try_from(*tp).ok()?))
+}
+
 /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
 /// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
 /// writes every field explicitly (a named value, the declared default, the interned
@@ -11632,6 +11789,16 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             db_declined.insert(*v);
                         }
                     }
+                    // A return buffer's guarded mint, `if <v holds a record> null else
+                    // OpDatabase(v, tp)`, heading the literal group: on either arm the group
+                    // writes the record the statements after it name.
+                    Value::If(_, _, _) if let Some((v, tp)) = guarded_mint(stmt, data) => {
+                        if group_covers_type(ops, i + 1, v, tp, data, stores, &out.fresh_fields) {
+                            out.db_vars.insert(v);
+                        } else {
+                            db_declined.insert(v);
+                        }
+                    }
                     // `Set(e, OpNewRecord(P, tp, fld))` heading a mint group: the sets
                     // that follow write through `e`.
                     Value::Set(e, inner) => {
@@ -11661,7 +11828,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             stores.content(stores.field_type(ptp, fld))
                         };
                         if etp != u16::MAX
-                            && group_covers_type(
+                            && (group_covers_type(
                                 ops,
                                 i + 1,
                                 *e,
@@ -11669,7 +11836,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                                 data,
                                 stores,
                                 &out.fresh_fields,
-                            )
+                            ) || call_pair_covers(ops, i + 1, *e, etp, data, stores))
                         {
                             out.mint_tps.insert(ptp);
                         } else {
