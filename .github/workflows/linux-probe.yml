@@ -11,6 +11,11 @@
 #   gh workflow run linux-probe.yml --ref <branch> -f filter='binary(native) and test(/dynamic/)'
 #   gh workflow run linux-probe.yml --ref <branch> -f run='readelf -d target/release/loft'
 #
+# GitHub dispatches a workflow by name only once the file is on the default branch.  Before
+# that — and for a branch whose copy of this file differs from main's — push the commit to
+# the `linux-probe` branch instead: a push runs the STANDING filter below (every test binary
+# that runs a native-package program), as a push to `windows-probe` runs that probe's.
+#
 # `filter` is a cargo-nextest filterset (the same language as win-cdylib.yml's input); the
 # tests run on the dev profile under the `ci` nextest profile, exactly as ci.yml's Test job
 # runs them, so a result here is a result there.  `run` is bash, run INSTEAD of the tests,
@@ -18,6 +23,8 @@
 name: linux-probe
 
 on:
+  push:
+    branches: [linux-probe]
   workflow_dispatch:
     inputs:
       filter:
@@ -43,6 +50,10 @@ env:
   # As ci.yml: the native-test binary cache lives under target/, so the restored cache
   # carries it and a native test does not recompile what the last CI run compiled.
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
+  # The standing filter a push runs; a dispatch's `filter` replaces it.
+  STANDING_FILTER: >-
+    binary(native) or binary(n2_cdylib) or binary(n3_use_native) or binary(native_loader)
+    or binary(native_abi_contract) or binary(package_layout)
 
 jobs:
   probe:
@@ -78,12 +89,12 @@ jobs:
       - name: Build (release loft binary + lib for integration tests)
         run: cargo build --release --lib --bin loft
       - name: Install cargo-nextest
-        if: inputs.filter != ''
+        if: github.event_name == 'push' || inputs.filter != ''
         uses: taiki-e/install-action@nextest
       - name: Run the requested tests
-        if: inputs.filter != ''
+        if: github.event_name == 'push' || inputs.filter != ''
         env:
-          FILTER: ${{ inputs.filter }}
+          FILTER: ${{ inputs.filter || env.STANDING_FILTER }}
         run: |
           echo "nextest filter: $FILTER"
           cargo nextest run --profile ci --no-fail-fast -E "$FILTER"
@@ -100,7 +111,7 @@ jobs:
           bash -c "$PROBE"
           echo "probe exit: $?"
       - name: Nothing was asked
-        if: inputs.filter == '' && inputs.run == ''
+        if: github.event_name == 'workflow_dispatch' && inputs.filter == '' && inputs.run == ''
         run: |
           echo "linux-probe: give a nextest filter (-f filter=…) or a shell (-f run=…)." >&2
           exit 1

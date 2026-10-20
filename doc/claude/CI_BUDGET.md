@@ -409,7 +409,10 @@ gh workflow run macos-probe.yml --ref <branch> -f filter='…'               # t
 
 `linux-probe` restores the Linux leg's cache read-only and runs the tests the way `ci.yml`'s
 Test job does (dev profile, the `ci` nextest profile, the release rlib built first), so its
-answer is that leg's answer for the tests it selects.
+answer is that leg's answer for the tests it selects.  GitHub dispatches a workflow by name
+only once the file is on `main`; before that, a push of the commit to the probe's own branch
+(`linux-probe`, `windows-probe`) runs its standing probes — for `linux-probe`, every test
+binary that runs a native-package program.
 
 **The inner loop can die the same way, and earlier than the tests (2026-09-21).**  A
 `find_problems.sh --subject store` run that had passed two hours before was killed for
