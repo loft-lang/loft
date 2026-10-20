@@ -24,7 +24,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-REPOS=(assets core docs game graphics net world)
+# The library repos: the ones index/library_guards.json records.  That file is the committed
+# list of every loft-libs-* repo, and `make guards-check` fails when one is added or removed,
+# so this audit never carries a list of its own that can fall behind it.
+here=$(cd "$(dirname "$0")/.." && pwd)
+mapfile -t REPOS < <(python3 -c '
+import json, sys
+for name in sorted(json.load(open(sys.argv[1]))["repos"]):
+    if name.startswith("loft-libs-"):
+        print(name[len("loft-libs-"):])
+' "$here/index/library_guards.json")
+[ "${#REPOS[@]}" -gt 0 ] || { echo "lib-branch-audit: no library repos in index/library_guards.json" >&2; exit 2; }
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 
 rows=()   # one "repo|branch|pr|status" per non-default branch, in repo order
