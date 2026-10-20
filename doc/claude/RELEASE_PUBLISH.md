@@ -15,6 +15,7 @@ behind these rules are in [RELEASE-history.md](RELEASE-history.md).
 - [Tag & publish — the mechanics](#tag--publish--the-mechanics-draft-first-under-immutable-releases)
 - [The bundles and the registry entry](#the-bundles-and-the-registry-entry)
 - [What the tag pipeline proves about the artifacts](#what-the-tag-pipeline-proves-about-the-artifacts)
+- [The site](#the-site)
 - [The reference PDF](#the-reference-pdf)
 - [Two install layouts](#two-install-layouts)
 - [Reproducible builds](#reproducible-builds)
@@ -139,6 +140,22 @@ so the tag run is the only place they can be checked.
   `make-release.sh` builds one, served over `file://`, and `tests/doc_hygiene.rs` checks that
   its `uname` mapping matches `PUBLISHED_TRIPLES`.  What only a by-hand run covers is the real
   transport (the GitHub CDN and its sidecar) and the shipped binary's own `verify-self`.
+
+## The site
+
+`loft-lang.org` is three GitHub Pages sites under one domain:
+
+| path | source | what changes it |
+|---|---|---|
+| `/loft/` | this repository's `main:/docs` | `gendoc`, on every push to `main` (§ The reference PDF) |
+| `/blog/` | [loft-lang/blog](https://github.com/loft-lang/blog) | the author, one approved post at a time |
+| `/` | [loft-lang/loft-lang.github.io](https://github.com/loft-lang/loft-lang.github.io) | nothing: it redirects to `/loft/` |
+
+The root holds no version, no download link and no description of loft, so a release never
+touches it. Everything a release changes on the site comes from `gendoc`, and the docs pages
+link the blog from their navigation (`documentation::build_nav`). Keep it a redirect: a
+hand-written page there is a second copy of the docs front page, and it falls behind at the
+first release that renames a download.
 
 ## The reference PDF
 

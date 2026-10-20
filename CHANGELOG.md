@@ -153,6 +153,11 @@ machine that built it.  `loft build --install` puts a program's libraries in `~/
 where programs built against different versions of one library each find their own.  A
 missing library is a clear error naming the package, its version and where loft looked,
 rather than the OS loader's message.
+**The documentation links the blog, and `loft-lang.org` opens the documentation.**  Every docs
+page has a Blog link in its navigation, to [loft-lang.org/blog](https://loft-lang.org/blog/),
+where the author writes about why loft exists and how it is built.  The site's front address
+now goes straight to the documentation, which always shows the current release, instead of an
+old download page.
 
 **A library can offer a few functions by their bare name.**  A library that auto-loads
 (`[triggers]` in its manifest) could already be reached by one of its methods or types with
