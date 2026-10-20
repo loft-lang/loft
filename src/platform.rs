@@ -1758,6 +1758,19 @@ pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
     }
 }
 
+/// @PLN197 — the file name of a C library's STATIC archive, which a static native link puts
+/// into the binary (`-l static=<stem>`): `lib<stem>.a`.  `None` on Windows, where the shim's
+/// compiler is a MinGW `cc` whose archives rustc's MSVC target does not reliably link (its
+/// objects call MinGW's own helpers), so a static Windows program keeps the shim beside it.
+#[must_use]
+pub fn c_archive_file_name(stem: &str) -> Option<String> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(format!("lib{stem}.a"))
+    }
+}
+
 /// @PLN195 — the system-wide root a dynamic native program searches last for its libraries,
 /// each in a `<package>-<version>/` subdirectory: `/usr/local/lib/loft` on Unix,
 /// `%ProgramData%\loft\lib` on Windows.

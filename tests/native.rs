@@ -5108,6 +5108,149 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
     Ok(())
 }
 
+/// @PLN197 — a C library a package ships travels with the program, and never by a path of
+/// the machine that built it.  The `c_abi` fixtures carry both kinds: `lcshim`'s `[c] shim`,
+/// which loft compiles, and `lcabi`'s prebuilt `liblc_types`.  Built with `--out`, both
+/// ways: the dynamic program finds both libraries beside itself through loft's search order;
+/// the static one has the shim's code INSIDE it (where this host links a C archive) and
+/// finds `liblc_types`, which has no archive, the same way.  Neither binary may name the
+/// directory the packages were built in — the copy is renamed away before the moved runs,
+/// which must answer exactly as `--interpret` does.  Controls: the dynamic program without
+/// the shim beside it, and the static one without `liblc_types`, must each stop naming the
+/// package — so a binary that still reached into the build tree cannot pass.
+#[test]
+fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if find_loft_rlib().is_none()
+        || loft::platform::process::harness_command("cc")
+            .arg("--version")
+            .output()
+            .is_err()
+    {
+        println!("a_shipped_c_library_travels_with_the_program: skipped (no rustc / cc)");
+        return Ok(());
+    }
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
+    let built = loft::platform::process::harness_command("make")
+        .arg("-C")
+        .arg(&fixture)
+        .output()?;
+    assert!(
+        built.status.success(),
+        "the fixture library must build: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+        fa::create_dir_all(to)?;
+        for entry in fa::read_dir(from)? {
+            let name = entry.os_name().expect("fixture entry");
+            let (src, dst) = (from.join(&name), to.join(&name));
+            if fa::symlink_metadata(&src)?.file_type().is_dir() {
+                copy_tree(&src, &dst)?;
+            } else {
+                fa::copy(&src, &dst)?;
+            }
+        }
+        Ok(())
+    }
+    let root = std::env::temp_dir().join(format!("loft_shipped_c_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    let tree = root.join("tree");
+    copy_tree(&fixture, &tree)?;
+    // The shim is built fresh, from the copy, so its artefacts belong to this run.
+    let _ = fa::remove_dir_all(tree.join("pkg").join("lcshim").join("native-auto"));
+    let program = root.join("p.loft");
+    fa::write(
+        &program,
+        "use lcshim::*;\nuse lcabi::*;\nfn main() {\n  println(\"mod {shim_mod(17, 5)} owned {shim_owned(7)} neg {lc_neg_i32(5)}\");\n}\n",
+    )?;
+    let loft_cmd = |args: &[&str]| -> std::io::Result<std::process::Output> {
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args(args)
+            .arg("--lib")
+            .arg(tree.join("pkg"))
+            .arg(&program)
+            .env("LOFT_TIMEOUT", "600")
+            .output()
+    };
+    let interp = loft_cmd(&["--interpret"])?;
+    let want = String::from_utf8_lossy(&interp.stdout).trim().to_string();
+    assert_eq!(want, "mod 2 owned shim-7 neg -5", "the oracle itself");
+
+    let exe = format!("p{}", std::env::consts::EXE_SUFFIX);
+    let archives_link = loft::platform::c_archive_file_name("x").is_some();
+    let needle = tree.to_string_lossy().into_owned();
+    for (mode, flag) in [("dynamic", "--dynamic"), ("static", "--static")] {
+        let dist = root.join(mode);
+        let out = loft_cmd(&["--native-release", flag, "--out", &dist.to_string_lossy()])?;
+        assert!(
+            out.status.success(),
+            "[{mode}] --out failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let bytes = fa::read(dist.join(&exe))?;
+        assert!(
+            !bytes.windows(needle.len()).any(|w| w == needle.as_bytes()),
+            "[{mode}] the binary names the build tree `{needle}`"
+        );
+        let shim_beside = fa::read_dir(&dist)?
+            .into_iter()
+            .filter_map(|e| e.os_name())
+            .any(|n| n.to_string_lossy().contains("lcshim_shim_"));
+        assert_eq!(
+            shim_beside,
+            mode == "dynamic" || !archives_link,
+            "[{mode}] the shim is {} the program",
+            if shim_beside { "beside" } else { "not beside" }
+        );
+    }
+    let hidden = root.join("tree-hidden");
+    fa::rename(&tree, &hidden)?;
+    let run = |dir: &Path| {
+        loft::platform::process::harness_command(dir.join(&exe))
+            .current_dir(dir)
+            .env("LOFT_HOME", root.join("no-home"))
+            .env_remove("LOFT_LIB_PATH")
+            .output()
+    };
+    for mode in ["dynamic", "static"] {
+        let o = run(&root.join(mode))?;
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout).trim(),
+            want,
+            "[{mode}, build tree gone] {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    // Controls: take away a library each program needs at run time.
+    let lc_types = format!(
+        "{}lc_types{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+    let shim = fa::read_dir(root.join("dynamic"))?
+        .into_iter()
+        .filter_map(|e| e.os_name())
+        .find(|n| n.to_string_lossy().contains("lcshim_shim_"))
+        .expect("the dynamic dist holds the shim");
+    fa::remove_file(root.join("dynamic").join(&shim))?;
+    fa::remove_file(root.join("static").join(&lc_types))?;
+    for (mode, package) in [("dynamic", "`lcshim`"), ("static", "`lcabi`")] {
+        let o = run(&root.join(mode))?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(1), "[{mode} control] exit: {err}");
+        assert!(
+            err.contains(package) && err.contains("searched:"),
+            "[{mode} control] the error does not name {package}:\n{err}"
+        );
+    }
+    fa::rename(&hidden, &tree)?;
+    let _ = fa::remove_dir_all(&root);
+    Ok(())
+}
+
 /// loft#907 — a `#native "sym"` its library implements under a DIFFERENT Rust
 /// name must reach that implementation on BOTH backends.
 ///

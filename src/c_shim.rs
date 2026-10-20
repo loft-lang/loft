@@ -43,34 +43,7 @@ const OUT_DIR: &str = "native-auto";
 /// absent, or when the compile fails (carrying `cc`'s own diagnostics — the
 /// author needs the C error, not our summary of it).
 pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, String> {
-    if sources.is_empty() {
-        return Err("no shim sources".to_string());
-    }
-    let dir = std::path::Path::new(pkg_dir);
-    use sha2::{Digest, Sha256};
-    let mut paths = Vec::with_capacity(sources.len());
-    let mut hasher = Sha256::new();
-    for s in sources {
-        let p = dir.join(s);
-        let bytes = crate::file_access::read(&p).map_err(|e| {
-            format!(
-                "names `{s}`, which cannot be read ({e}) — the path resolves against \
-                 the package directory"
-            )
-        })?;
-        hasher.update(s.as_bytes());
-        hasher.update(&bytes);
-        paths.push(p);
-    }
-    // The compiler identity belongs in the key: the same source built by a
-    // different `cc` is a different artifact, and reusing one across a toolchain
-    // change is how a stale ABI survives an upgrade.
-    hasher.update(cc_identity().as_bytes());
-
-    let out_dir = dir.join(OUT_DIR);
-    let digest = hasher.finalize();
-    let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
-    let stem = format!("{}_shim_{key:016x}", stem_of(pkg_dir));
+    let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
     let so = out_dir.join(crate::platform::cdylib_file_name(&stem));
     if crate::file_access::exists(&so) {
         return Ok(so);
@@ -189,6 +162,186 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     Ok(so)
 }
 
+/// The shim's artefact identity: its stem (`<package>_shim_<key>`, the key a hash of the
+/// sources and the compiler), its source paths, and the directory its artefacts land in.
+/// One home for it, so the shared library and the static archive of the same sources can
+/// never be keyed apart.
+fn identity(
+    pkg_dir: &str,
+    sources: &[String],
+) -> Result<(String, Vec<std::path::PathBuf>, std::path::PathBuf), String> {
+    if sources.is_empty() {
+        return Err("no shim sources".to_string());
+    }
+    let dir = std::path::Path::new(pkg_dir);
+    use sha2::{Digest, Sha256};
+    let mut paths = Vec::with_capacity(sources.len());
+    let mut hasher = Sha256::new();
+    for s in sources {
+        let p = dir.join(s);
+        let bytes = crate::file_access::read(&p).map_err(|e| {
+            format!(
+                "names `{s}`, which cannot be read ({e}) — the path resolves against \
+                 the package directory"
+            )
+        })?;
+        hasher.update(s.as_bytes());
+        hasher.update(&bytes);
+        paths.push(p);
+    }
+
+    // The compiler identity belongs in the key: the same source built by a
+    // different `cc` is a different artifact, and reusing one across a toolchain
+    // change is how a stale ABI survives an upgrade.
+    hasher.update(cc_identity().as_bytes());
+    let digest = hasher.finalize();
+    let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
+    Ok((
+        format!("{}_shim_{key:016x}", stem_of(pkg_dir)),
+        paths,
+        dir.join(OUT_DIR),
+    ))
+}
+
+/// @PLN197 — the shim as a STATIC archive (`lib<stem>.a`), beside the shared library of the
+/// same sources, for a program that links its libraries into the binary (`--static`,
+/// `#link static`).  Built on demand: the interpreter and a dynamic program never need it.
+/// `Ok(None)` where this host does not link a C archive into a program
+/// (`platform::c_archive_file_name`); the static link then keeps the shim beside the binary.
+///
+/// # Errors
+/// As [`build`]: an unreadable source, no C compiler, a compile that fails, or no `ar`.
+pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::PathBuf>, String> {
+    let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
+    let Some(name) = crate::platform::c_archive_file_name(&stem) else {
+        return Ok(None);
+    };
+    let archive = out_dir.join(&name);
+    if crate::file_access::exists(&archive) {
+        return Ok(Some(archive));
+    }
+    crate::file_access::create_dir_all(&out_dir).map_err(|e| format!("cannot create {e}"))?;
+    // Staged and renamed like the shared library, for the same reason: a concurrent
+    // static link sees no archive or a complete one.
+    let stage = out_dir.join(format!(".stage-a.{}", std::process::id()));
+    crate::file_access::create_dir_all(&stage).map_err(|e| format!("cannot create {e}"))?;
+    let fail = |msg: String| {
+        let _ = crate::file_access::remove_dir_all(&stage);
+        Err(msg)
+    };
+    let mut objects = Vec::with_capacity(paths.len());
+    for (i, p) in paths.iter().enumerate() {
+        let obj = stage.join(format!("{i}.o"));
+        let out = Spawn::new(Program::os(cc_program()))
+            .arg("-O2")
+            .arg("-fPIC")
+            .arg("-c")
+            .arg(p)
+            .arg("-o")
+            .arg(&obj)
+            .run(b"");
+        match out {
+            Ok(o) if o.status.success() => objects.push(obj),
+            Ok(o) => {
+                return fail(format!(
+                    "did not compile.\n{}",
+                    String::from_utf8_lossy(&o.stderr).trim_end()
+                ));
+            }
+            Err(e) => {
+                return fail(format!(
+                    "`[c] shim` needs a C compiler and `{}` could not be run ({e})",
+                    cc_program()
+                ));
+            }
+        }
+    }
+    let tmp = stage.join(&name);
+    let mut ar = Spawn::new(Program::os("ar"));
+    ar.push_arg("rcs").push_arg(&tmp);
+    for o in &objects {
+        ar.push_arg(o);
+    }
+    match ar.run(b"") {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return fail(format!(
+                "`ar` could not archive the shim.\n{}",
+                String::from_utf8_lossy(&o.stderr).trim_end()
+            ));
+        }
+        Err(e) => return fail(format!("a static link of a `[c] shim` needs `ar` ({e})")),
+    }
+    let published = crate::file_access::rename(&tmp, &archive).map_err(|e| {
+        format!(
+            "cannot publish the shim archive to `{}`: {e}",
+            archive.display()
+        )
+    });
+    let _ = crate::file_access::remove_dir_all(&stage);
+    published.map(|()| Some(archive))
+}
+
+/// @PLN197 — the static archive of a C library a package ships, which a static native link
+/// puts into the binary: the package's `[c] shim`, archived on demand ([`archive`]), or a
+/// `lib<stem>.a` the package ships beside the shared library.  `None` when there is none, or
+/// where this host links no C archive into a program (`platform::c_archive_file_name`).
+#[must_use]
+pub fn static_archive_for(
+    lib: &crate::data::CLibrary,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    if let Some(m) = crate::manifest::read_manifest(&format!("{}/loft.toml", lib.pkg_dir))
+        && !m.c_shim.is_empty()
+        && build(&lib.pkg_dir, &m.c_shim).ok().as_deref() == Some(path)
+    {
+        return match archive(&lib.pkg_dir, &m.c_shim) {
+            Ok(a) => a,
+            Err(why) => {
+                eprintln!("loft: `[c] shim` for `{}`: {why}", lib.pkg_dir);
+                None
+            }
+        };
+    }
+    let file = crate::file_access::file_name(path)?;
+    let archive = path
+        .parent()?
+        .join(crate::platform::c_archive_file_name(&library_stem(&file))?);
+    crate::file_access::exists(&archive).then_some(archive)
+}
+
+/// @PLN197 — does a static link put the C libraries the package at `pkg_dir` ships INTO the
+/// binary?  Only when every one of them has a static archive ([`static_archive_for`]).  A
+/// `#c` symbol is attributed to its package, never to one of its libraries, so a package
+/// whose libraries are split — one inside the binary, one bound at start — would leave its
+/// symbols nowhere a lookup by name can reach: a symbol linked into a binary is not in its
+/// dynamic symbol table.  Such a package keeps all of them bound instead.
+#[must_use]
+pub fn archived_package(data: &crate::data::Data, pkg_dir: &str) -> bool {
+    let shipped: Vec<_> = data
+        .shipped_c_libraries()
+        .into_iter()
+        .filter(|(c, _)| c.pkg_dir == pkg_dir)
+        .collect();
+    !shipped.is_empty()
+        && shipped
+            .iter()
+            .all(|(c, path)| static_archive_for(c, path).is_some())
+}
+
+/// `libfoo.so.5` / `libfoo.dylib` / `foo.dll` / `libfoo.a` -> `foo`: the library's name as
+/// `-l` takes it — the file's name without the `lib` the linker adds back and without any
+/// extension or version.
+#[must_use]
+pub fn library_stem(file: &str) -> String {
+    let base = file.strip_prefix("lib").unwrap_or(file);
+    [".so", ".dylib", ".dll", ".a"]
+        .iter()
+        .find_map(|ext| base.split_once(ext).map(|(stem, _)| stem))
+        .unwrap_or(base)
+        .to_string()
+}
+
 /// The C compiler to drive: `CC` when set, else `cc`.
 fn cc_program() -> String {
     std::env::var("CC").unwrap_or_else(|_| "cc".to_string())
@@ -197,6 +350,13 @@ fn cc_program() -> String {
 /// A short identity for the compiler, folded into the artifact key. Its own
 /// version banner, or the program name when it will not report one.
 fn cc_identity() -> String {
+    // Asked once per process: every artefact lookup keys on it, and a static link asks for
+    // the shim and its archive several times.
+    static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(cc_identity_uncached).clone()
+}
+
+fn cc_identity_uncached() -> String {
     Spawn::new(Program::os(cc_program()))
         .arg("--version")
         .run(b"")

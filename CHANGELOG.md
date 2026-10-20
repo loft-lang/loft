@@ -159,6 +159,12 @@ where the author writes about why loft exists and how it is built.  The site's f
 now goes straight to the documentation, which always shows the current release, instead of an
 old download page.
 
+**A C library a package ships goes with your program.**  The C code a package compiles
+through `[c] shim`, or a library file it ships beside itself, is now copied into `dist/`
+and found the same way as a package's own library.  With `#link static`, a shim's code is
+built into the binary itself — so a program using such a package can still ship as one
+file.  System libraries (like `libz`) are still the system's to provide.
+
 **A library can offer a few functions by their bare name.**  A library that auto-loads
 (`[triggers]` in its manifest) could already be reached by one of its methods or types with
 no `use`; it can now list *builders* — `builders = ["set"]` — and a bare `set(words)` in your

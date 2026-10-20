@@ -11888,6 +11888,29 @@ impl Data {
             .map(|c| c.pkg_dir.as_str())
     }
 
+    /// @PLN197 — every REQUIRED C library a package ships itself — its `[c] shim`, which
+    /// loft built, or a file beside its `loft.toml` — with the file it resolves to on this
+    /// host.  These are the C libraries a native program must carry with it: linked into a
+    /// static binary, found through `loft::native_bind`'s search order by a dynamic one,
+    /// copied by `--out`.  A bare soname is absent here — it is the system's to find — and so
+    /// is an optional library, which is opened only when a call needs it.
+    #[must_use]
+    pub fn shipped_c_libraries(&self) -> Vec<(&CLibrary, std::path::PathBuf)> {
+        self.c_libraries
+            .iter()
+            .filter(|c| !c.optional)
+            .filter_map(|c| {
+                let dir = std::path::Path::new(&c.pkg_dir);
+                let found = crate::platform::existing_lib_beside(
+                    dir,
+                    &c.name,
+                    crate::platform::host_lib_os(),
+                )?;
+                Some((c, dir.join(found)))
+            })
+            .collect()
+    }
+
     /// @PLN24 arc G — must a `#c` symbol declared in `file` be resolved at RUN
     /// time rather than linked?
     ///

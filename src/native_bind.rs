@@ -24,6 +24,11 @@
 //! shared roots (3, 4) hold only versioned subdirectories, so programs built against two
 //! versions of one library each load their own.
 //!
+//! The libraries are the native packages' own (a dynamic link), and the C libraries packages
+//! ship — a `[c] shim` or a file beside the package — that are not linked into the binary
+//! (@PLN197).  A row with no file is a C library that IS linked in; binding it only marks it
+//! present for `c_library_available`.
+//!
 //! Each symbol is looked up in ITS library's handle, never in a process-wide namespace, so
 //! two packages exporting one name cannot bind to each other's function; the @PLN26 rule
 //! that two packages may not DECLARE one symbol is still refused at codegen.
@@ -48,12 +53,30 @@ pub struct Symbol {
 }
 
 /// One native library a program links: the package and version it was built against, the
-/// file's name on this OS, and the functions the program calls in it.
+/// file's name on this OS, and the functions the program calls in it.  `c_name` is set for a
+/// C library a package ships (@PLN197): the name it goes by in the program's `__C_LIBS`
+/// table, so the `#c` resolver and `c_library_available` see it as loaded.  Empty for a
+/// package's own Rust library.
 pub struct Library {
     pub package: &'static str,
     pub version: &'static str,
     pub file: &'static str,
+    pub c_name: &'static str,
     pub symbols: &'static [Symbol],
+}
+
+/// The `__C_LIBS` names of the C libraries [`bind`] loaded.
+static BOUND_C: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+/// @PLN197 — did [`bind`] load the C library the program's `__C_LIBS` names `name`?  Then
+/// it is open, its symbols are in `c_libs`' loaded set, and the `#c` resolver must not go
+/// looking for it by name — which would fail, since its directory is not in the binary.
+#[must_use]
+pub fn is_bound_c(name: &str) -> bool {
+    BOUND_C
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&name)
 }
 
 /// Fill every slot of `libs` once, from the search order above.  A library found nowhere
@@ -143,6 +166,15 @@ fn candidates(lib: &Library, dirs: &[(PathBuf, bool)]) -> Vec<PathBuf> {
 
 #[cfg(feature = "native-extensions")]
 fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)]) -> Result<(), String> {
+    // A row with no file is a C library linked INTO the binary (@PLN197): nothing to load,
+    // only its name to mark present.
+    if lib.file.is_empty() {
+        BOUND_C
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(lib.c_name);
+        return Ok(());
+    }
     let mut refused = Vec::new();
     for path in candidates(lib, dirs) {
         if !crate::file_access::is_file(path.as_path()) {
@@ -172,6 +204,14 @@ fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)]) -> Result<(), Strin
         }
         // Kept for the process: the slots point into it.
         std::mem::forget(handle);
+        // A C library joins `c_libs`' loaded set too, so a `#c` symbol of its package that
+        // is resolved by name (a lazy one, or the slot fallback) finds it there.
+        if !lib.c_name.is_empty() && crate::c_libs::load_one(&path.to_string_lossy()) {
+            BOUND_C
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(lib.c_name);
+        }
         LOADED_FROM
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

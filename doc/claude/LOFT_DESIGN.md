@@ -447,6 +447,16 @@ program before it starts, with a message naming the package, the version it was 
 against, every directory searched and any other version that was there.  Guard:
 `tests/native.rs::a_dynamic_program_finds_its_libraries_where_loft_looks`.
 
+**A C library a package ships** — the `[c] shim` loft compiles, or a library file beside the
+package's `loft.toml` — goes with the program the same way.  A dynamic program finds it in
+the search order above, and `--out` copies it into `dist/`.  A static program has its code
+inside the binary when the library has a static archive: loft archives a shim itself, and a
+package may ship a `lib<name>.a` beside a prebuilt library.  One without an archive stays a
+file beside the static program.  A system library named by its soname (`libz.so.1`) is the
+system's to provide either way; to put one inside the binary, ship its source as shim
+sources.  On Windows a shim is not yet put inside a static binary: it travels beside it.
+Guard: `tests/native.rs::a_shipped_c_library_travels_with_the_program`.
+
 ### Closure capture: the value at definition, the write shared
 
 A captured scalar is taken by value when the closure is formed: a later write to the

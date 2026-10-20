@@ -11439,8 +11439,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `native_cabi_enabled()` keeps codegen and the linker flags in sync
             // (off on Windows, which stays on the rlib path).
             out.native_cabi = native_utils::native_cabi_enabled();
-            // @PLN195 — a dynamic program binds those libraries itself.
-            out.native_bind = out.native_cabi;
+            // @PLN195 / @PLN197 — a program binds, at start, every library it does not link
+            // into itself: the packages' under a dynamic link, and the C libraries packages
+            // ship that have no archive to link in.
+            out.native_bind = true;
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).

@@ -1760,7 +1760,7 @@ pub(crate) fn native_cabi_enabled() -> bool {
 /// `LOFT_LIB_PATH` (ahead of any the user set), never through a path written into the
 /// binary.  `None` when the program binds nothing itself.
 pub(crate) fn lib_path_env(data: &crate::data::Data) -> Option<std::ffi::OsString> {
-    if !native_cabi_enabled() || data.native_packages.is_empty() {
+    if package_libraries(data).is_empty() {
         return None;
     }
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
@@ -1791,12 +1791,12 @@ pub(crate) fn install_libraries(
         .join(".loft")
         .join("lib");
     let mut written = Vec::new();
-    for ((crate_name, pkg_dir), lib) in package_libraries_by_package(data) {
+    for (pkg_dir, fallback_name, lib) in package_libraries_by_package(data) {
         let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
         let package = manifest
             .as_ref()
             .and_then(|m| m.name.clone())
-            .unwrap_or_else(|| crate_name.clone());
+            .unwrap_or(fallback_name);
         let version = manifest
             .and_then(|m| m.version)
             .unwrap_or_else(|| "0".to_string());
@@ -1812,33 +1812,47 @@ pub(crate) fn install_libraries(
     Ok(written)
 }
 
-/// The library file of every native package the program links dynamically, resolved the way
-/// the link resolved it (`resolve_native_lib`).  Empty for a static link, which has none.
+/// Every library file the program needs beside it at run time, resolved the way the link
+/// resolved it: each native package's library under a dynamic link (`resolve_native_lib`),
+/// and each C library a package ships itself (@PLN197) — under a static link only the ones
+/// that have no static archive to link into the binary.
 fn package_libraries(data: &crate::data::Data) -> Vec<std::path::PathBuf> {
     package_libraries_by_package(data)
         .into_iter()
-        .map(|(_, lib)| lib)
+        .map(|(_, _, lib)| lib)
         .collect()
 }
 
-/// [`package_libraries`], each with the `(crate, package directory)` it belongs to.
+/// [`package_libraries`], each with its package directory and the name the package goes by
+/// when its manifest names none — the same fallback the bind table is written with: the
+/// crate name for a native package, the directory's name for a C library.
 fn package_libraries_by_package(
     data: &crate::data::Data,
-) -> Vec<(&(String, String), std::path::PathBuf)> {
-    if !native_cabi_enabled() {
-        return Vec::new();
-    }
-    data.native_packages
-        .iter()
-        .filter_map(|pkg| {
-            let (crate_name, pkg_dir) = pkg;
+) -> Vec<(String, String, std::path::PathBuf)> {
+    let dynamic = native_cabi_enabled();
+    let mut out = Vec::new();
+    if dynamic {
+        for (crate_name, pkg_dir) in &data.native_packages {
             let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
                 .and_then(|m| m.native)
                 .unwrap_or_else(|| crate_name.replace('-', "_"));
-            crate::extensions::resolve_native_lib(pkg_dir, &stem)
-                .map(|so| (pkg, std::path::PathBuf::from(so)))
-        })
-        .collect()
+            if let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) {
+                out.push((
+                    pkg_dir.clone(),
+                    crate_name.clone(),
+                    std::path::PathBuf::from(so),
+                ));
+            }
+        }
+    }
+    for (lib, path) in data.shipped_c_libraries() {
+        if !dynamic && loft::c_shim::archived_package(data, &lib.pkg_dir) {
+            continue;
+        }
+        let fallback = crate::file_access::file_name(lib.pkg_dir.as_str()).unwrap_or_default();
+        out.push((lib.pkg_dir.clone(), fallback, path));
+    }
+    out
 }
 
 /// @PLN195 — `--out <dir>` / `loft build native`: the program `built`, named `name`, and
@@ -2002,19 +2016,28 @@ pub(crate) fn add_c_library_flags(cmd: &mut Spawn, data: &crate::data::Data) {
         // Leaving the extension on made `-l dylib=sqlite_shim_<hash>.dll` open
         // `sqlite_shim_<hash>.dll.lib` — the exact `LNK1181` the Windows leg died
         // on, for a shim whose import library is `sqlite_shim_<hash>.lib`.
-        let stem = file
-            .strip_prefix("lib")
-            .unwrap_or(file)
-            .split(".so")
-            .next()
-            .unwrap_or(file)
-            .split(".dylib")
-            .next()
-            .unwrap_or(file)
-            .split(".dll")
-            .next()
-            .unwrap_or(file)
-            .to_string();
+        let stem = loft::c_shim::library_stem(file);
+        if crate::file_access::exists(&beside) {
+            // @PLN197 — a C library the package ships itself.  A dynamic program binds it
+            // at start from loft's search order (`native_bind`), so the link names it not
+            // at all; a static one links its archive into the binary when it has one.
+            if native_cabi_enabled() {
+                continue;
+            }
+            if let Some(archive) = loft::c_shim::static_archive_for(lib, &beside)
+                .filter(|_| loft::c_shim::archived_package(data, &lib.pkg_dir))
+            {
+                // The archive by its FULL PATH, which every linker reads as "link these
+                // objects".  `-l static=<stem>` lets the linker choose, and macOS `ld`
+                // chooses the `.dylib` of the same stem beside the archive — measured, the
+                // "static" binary still loaded the shim from `@rpath` — while the exact-name
+                // form (`+verbatim`, `-l:`) is one `ld64` does not have.  The path is the
+                // link's only; nothing of it is written into the binary.
+                cmd.push_arg(format!("-Clink-arg={}", archive.display()));
+            }
+            // Without an archive the program binds it at start, as a dynamic one does.
+            continue;
+        }
         if crate::file_access::exists(&beside)
             && let Some(parent) = beside.parent()
         {

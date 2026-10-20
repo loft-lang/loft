@@ -727,6 +727,9 @@ enum PackageLink {
     CAbi,
     /// @PLN195 — slots the program fills itself at start (`loft::native_bind`).
     Bound,
+    /// @PLN197 — `Crate` for the packages (a static link), while the program still binds,
+    /// at start, the C libraries packages ship that have no archive to link into it.
+    StaticBound,
 }
 
 /// Use this to drive Rust code generation from a compiled loft program.
@@ -1633,8 +1636,8 @@ pub struct Output<'a> {
     /// False for wasm32-wasip2 (links the cross-compiled rlib) and `wasm_browser`
     /// (host imports).
     pub native_cabi: bool,
-    /// @PLN195 — a host-native PROGRAM binds its package libraries itself: the header
-    /// declares each package function as a slot filled at start by
+    /// @PLN195 / @PLN197 — a host-native PROGRAM binds, at start, every library it does not
+    /// link into itself: the header declares each such function as a slot filled by
     /// `loft::native_bind::bind`, not as an `extern "C"` symbol the OS loader binds before
     /// `main`.  Off for a library unit (its host loads the libraries) and for every other
     /// target; [`Self::binds_libraries`] adds the rest of the condition.
@@ -8136,7 +8139,11 @@ fn loft_ckpt_report() {{
     /// How the header reaches the native packages' functions ([`PackageLink`]).
     fn package_link(&self) -> PackageLink {
         if self.binds_libraries() {
-            PackageLink::Bound
+            if self.native_cabi {
+                PackageLink::Bound
+            } else {
+                PackageLink::StaticBound
+            }
         } else if self.native_cabi {
             PackageLink::CAbi
         } else {
@@ -8145,14 +8152,66 @@ fn loft_ckpt_report() {{
     }
 
     /// @PLN195 — does this program bind its native libraries itself?  A host-native program
-    /// build asked for it (`native_bind`) and declares at least one package function: the
-    /// header then writes slots and a table instead of an `extern "C"` block, and `main`
-    /// fills them first.  A program that calls into no package is emitted as before.
+    /// build asked for it (`native_bind`) and declares at least one package function, or
+    /// uses a C library a package ships (@PLN197): the header then writes slots and a table
+    /// instead of `extern "C"` symbols, and `main` fills them first.  A program that calls
+    /// into neither is emitted as before.
     fn binds_libraries(&self) -> bool {
         self.native_bind
-            && self.native_cabi
             && !self.no_c_abi()
-            && (0..self.data.definitions()).any(|d| Self::is_bound_native(self.data, d))
+            && ((self.native_cabi
+                && (0..self.data.definitions()).any(|d| Self::is_bound_native(self.data, d)))
+                || !Self::bound_c_packages(self.data, true, !self.native_cabi).is_empty()
+                || !Self::linked_c_packages(self.data, !self.native_cabi).is_empty())
+    }
+
+    /// @PLN197 — under a static link, the packages whose C libraries are linked INTO the
+    /// binary from their archives.  They are in the bind table too, with no file: binding
+    /// one only marks it present, so `c_library_available` answers for it as it does for a
+    /// library that is loaded.
+    fn linked_c_packages(data: &Data, static_link: bool) -> Vec<String> {
+        if !static_link {
+            return Vec::new();
+        }
+        let mut pkgs: Vec<String> = Vec::new();
+        for (c, _) in data.shipped_c_libraries() {
+            if !pkgs.contains(&c.pkg_dir) && crate::c_shim::archived_package(data, &c.pkg_dir) {
+                pkgs.push(c.pkg_dir.clone());
+            }
+        }
+        pkgs
+    }
+
+    /// @PLN197 — the name a C library goes by in the emitted `__C_LIBS` table.  A shim is
+    /// registered under the absolute path loft built it at; a program that binds its
+    /// libraries itself names it by file only, so no directory of this machine is written
+    /// into the binary.  Every other name is the author's own string, kept as written,
+    /// since `c_library_available` is asked by that string.
+    fn emitted_c_lib_name(name: &str, native_bind: bool) -> String {
+        if native_bind && std::path::Path::new(name).is_absolute() {
+            crate::file_access::file_name(name).unwrap_or_else(|| name.to_string())
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// @PLN197 — the packages that ship a C library this program binds itself: their `#c`
+    /// symbols are slots in the bind table rather than `extern "C"` symbols the link names.
+    /// Under a static link a package whose libraries all have a static archive is not among
+    /// them — its code is linked into the binary (`c_shim::archived_package`).
+    fn bound_c_packages(data: &Data, bind: bool, static_link: bool) -> Vec<String> {
+        if !bind {
+            return Vec::new();
+        }
+        let mut pkgs: Vec<String> = Vec::new();
+        for (c, _) in data.shipped_c_libraries() {
+            if !pkgs.contains(&c.pkg_dir)
+                && (!static_link || !crate::c_shim::archived_package(data, &c.pkg_dir))
+            {
+                pkgs.push(c.pkg_dir.clone());
+            }
+        }
+        pkgs
     }
 
     /// A body-less `#native` function of a `[native] crate` package — the functions the
@@ -8164,16 +8223,25 @@ fn loft_ckpt_report() {{
             && data.native_symbol_crates.contains_key(def.native())
     }
 
-    /// @PLN195 — one package function as a slot.  The slot starts at a stub that binds the
-    /// libraries on first use (a unit whose `main` did not run `__loft_bind` first) and
-    /// reports the symbol by name if it is still unbound after that; the `__cabi_` caller
-    /// is an indirect call through it — measured as noise against the linked call (P0).
+    /// @PLN195 — one library function as a slot `__NB_<id>`, called through `caller` (the
+    /// name the call sites already write: `__cabi_<sym>` for a package function, `__c_<sym>`
+    /// for a `#c` one).  The slot starts at a stub that binds the libraries on first use (a
+    /// unit whose `main` did not run `__loft_bind` first) and reports the symbol by name if
+    /// it is still unbound after that; the caller is an indirect call through it — measured
+    /// as noise against the linked call (P0).
+    ///
+    /// `c_fallback` (@PLN197): a `#c` symbol is attributed to its PACKAGE, never to one of
+    /// its libraries (`c_signature::library_symbol_table`), so one the package's shipped
+    /// library does not export may be in a system library the package also declares; the
+    /// stub then asks the `#c` resolver, which knows those, before reporting it unbound.
     fn emit_bind_slot(
         w: &mut dyn Write,
-        native: &str,
+        id: &str,
+        caller: &str,
         link: &str,
         sig: &str,
         ret: &str,
+        c_fallback: bool,
     ) -> std::io::Result<()> {
         let params: Vec<(&str, &str)> = sig
             .split(", ")
@@ -8184,15 +8252,22 @@ fn loft_ckpt_report() {{
         let types = params.iter().map(|p| p.1).collect::<Vec<_>>().join(", ");
         writeln!(
             w,
-            "#[allow(non_upper_case_globals)]\nstatic __NB_{native}: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(__nb_first_{native} as *mut ());"
+            "#[allow(non_upper_case_globals)]\nstatic __NB_{id}: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(__nb_first_{id} as *mut ());"
+        )?;
+        let fallback = if c_fallback {
+            format!(
+                "if let Some(p) = loft::c_call::resolve_native({link:?}, __C_LIBS, __C_LIB_SYMS) {{ __NB_{id}.store(p.cast_mut(), std::sync::atomic::Ordering::Release); }} else "
+            )
+        } else {
+            String::new()
+        };
+        writeln!(
+            w,
+            "unsafe extern \"C\" fn __nb_first_{id}({sig}){ret} {{ __loft_bind(); if __NB_{id}.load(std::sync::atomic::Ordering::Acquire) == __nb_first_{id} as *mut () {{ {fallback}{{ loft::native_bind::unbound({link:?}, __NB_LIBS) }} }} unsafe {{ {caller}({names}) }} }}"
         )?;
         writeln!(
             w,
-            "unsafe extern \"C\" fn __nb_first_{native}({sig}){ret} {{ __loft_bind(); if __NB_{native}.load(std::sync::atomic::Ordering::Acquire) == __nb_first_{native} as *mut () {{ loft::native_bind::unbound({link:?}, __NB_LIBS) }} unsafe {{ __cabi_{native}({names}) }} }}"
-        )?;
-        writeln!(
-            w,
-            "#[inline(always)]\nunsafe fn __cabi_{native}({sig}){ret} {{ unsafe {{ std::mem::transmute::<*mut (), unsafe extern \"C\" fn({types}){ret}>(__NB_{native}.load(std::sync::atomic::Ordering::Relaxed))({names}) }} }}"
+            "#[inline(always)]\nunsafe fn {caller}({sig}){ret} {{ unsafe {{ std::mem::transmute::<*mut (), unsafe extern \"C\" fn({types}){ret}>(__NB_{id}.load(std::sync::atomic::Ordering::Relaxed))({names}) }} }}"
         )
     }
 
@@ -8205,10 +8280,16 @@ fn loft_ckpt_report() {{
         w: &mut dyn Write,
         data: &Data,
         reachable: &HashSet<u32>,
+        packages: bool,
+        c_packages: &[String],
+        linked_packages: &[String],
     ) -> std::io::Result<()> {
         let mut per_crate: std::collections::BTreeMap<&str, Vec<&str>> =
             std::collections::BTreeMap::new();
         for d in 0..data.definitions() {
+            if !packages {
+                break;
+            }
             if !Self::is_bound_native(data, d) || !(reachable.is_empty() || reachable.contains(&d))
             {
                 continue;
@@ -8241,7 +8322,7 @@ fn loft_ckpt_report() {{
             let file = crate::native_build::platform_lib_name(&stem);
             write!(
                 w,
-                "    loft::native_bind::Library {{ package: {package:?}, version: {version:?}, file: {file:?}, symbols: &["
+                "    loft::native_bind::Library {{ package: {package:?}, version: {version:?}, file: {file:?}, c_name: \"\", symbols: &["
             )?;
             for s in syms {
                 write!(
@@ -8252,11 +8333,87 @@ fn loft_ckpt_report() {{
             }
             writeln!(w, "] }},")?;
         }
+        Self::emit_bind_c_libraries(w, data, reachable, c_packages)?;
+        for (lib, _) in data.shipped_c_libraries() {
+            if linked_packages.contains(&lib.pkg_dir) {
+                writeln!(
+                    w,
+                    "    loft::native_bind::Library {{ package: \"\", version: \"\", file: \"\", c_name: {:?}, symbols: &[] }},",
+                    Self::emitted_c_lib_name(&lib.name, true)
+                )?;
+            }
+        }
         writeln!(w, "];")?;
         writeln!(
             w,
             "fn __loft_bind() {{ loft::native_bind::bind(__NB_LIBS); }}"
         )
+    }
+
+    /// @PLN197 — the C libraries packages ship, as bind-table rows: the package (its
+    /// directory's name when its manifest names none), its version, the library's file, the
+    /// name it goes by in `__C_LIBS` (so the `#c` resolver and `c_library_available` see it
+    /// as loaded), and the `#c` symbols the program can reach in that package.  A package
+    /// none of whose `#c` functions is reachable is not listed.
+    fn emit_bind_c_libraries(
+        w: &mut dyn Write,
+        data: &Data,
+        reachable: &HashSet<u32>,
+        c_packages: &[String],
+    ) -> std::io::Result<()> {
+        let target = crate::c_signature::CTarget::host();
+        for (lib, path) in data.shipped_c_libraries() {
+            if !c_packages.contains(&lib.pkg_dir) {
+                continue;
+            }
+            let mut syms: Vec<String> = Vec::new();
+            let mut used = false;
+            for d in 0..data.definitions() {
+                let def = data.def(d);
+                if def.c_sig.is_empty()
+                    || *def.code() != Value::Null
+                    || data.c_owner_pkg(def.position().file.as_str()) != Some(lib.pkg_dir.as_str())
+                    || !(reachable.is_empty() || reachable.contains(&d))
+                {
+                    continue;
+                }
+                used = true;
+                if data.c_symbol_is_lazy(def.position().file.as_str()) {
+                    continue;
+                }
+                if let Some(Ok(sig)) = crate::c_signature::of(data, d, target)
+                    && !syms.contains(&sig.symbol)
+                {
+                    syms.push(sig.symbol);
+                }
+            }
+            if !used {
+                continue;
+            }
+            let manifest = crate::manifest::read_manifest(&format!("{}/loft.toml", lib.pkg_dir));
+            let package = manifest
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .or_else(|| crate::file_access::file_name(lib.pkg_dir.as_str()))
+                .unwrap_or_default();
+            let version = manifest
+                .and_then(|m| m.version)
+                .unwrap_or_else(|| "0".to_string());
+            let file = crate::file_access::file_name(path.as_path()).unwrap_or_default();
+            let c_name = Self::emitted_c_lib_name(&lib.name, true);
+            write!(
+                w,
+                "    loft::native_bind::Library {{ package: {package:?}, version: {version:?}, file: {file:?}, c_name: {c_name:?}, symbols: &["
+            )?;
+            for s in &syms {
+                write!(
+                    w,
+                    "loft::native_bind::Symbol {{ name: {s:?}, slot: &__NB_c_{s} }}, "
+                )?;
+            }
+            writeln!(w, "] }},")?;
+        }
+        Ok(())
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -8269,8 +8426,12 @@ fn loft_ckpt_report() {{
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
     ) -> std::io::Result<()> {
-        let native_cabi = package_link != PackageLink::Crate;
+        let native_cabi = matches!(package_link, PackageLink::CAbi | PackageLink::Bound);
+        // `native_bind`: the packages' functions are slots; `c_bind`: the C libraries packages
+        // ship are bound at start too (always when the packages are, and under a static link
+        // for the ones with no archive to link in).
         let native_bind = package_link == PackageLink::Bound;
+        let c_bind = matches!(package_link, PackageLink::Bound | PackageLink::StaticBound);
         // Every `allow` here suppresses a rustc lint about GENERATED code, which a user
         // cannot act on and did not write: the emitter names every local whether or not
         // the body reads it, parenthesises defensively, and emits whatever the IR says.
@@ -8592,9 +8753,11 @@ extern crate loft;"
                     Self::emit_bind_slot(
                         w,
                         def.native(),
+                        &format!("__cabi_{}", def.native()),
                         data.link_symbol(def.native()),
                         &sig,
                         &ret,
+                        false,
                     )?;
                     continue;
                 }
@@ -8605,9 +8768,9 @@ extern crate loft;"
                 )?;
                 writeln!(w, "    fn __cabi_{}({sig}){ret};", def.native())?;
             }
-            if native_bind {
-                Self::emit_bind_table(w, data, reachable)?;
-            } else {
+            // The bind table is written at the end of the header, after the `#c` slots
+            // it also lists (@PLN197).
+            if !native_bind {
                 writeln!(w, "}}")?;
             }
         } else {
@@ -8687,6 +8850,8 @@ extern crate loft;"
             let target = crate::c_signature::CTarget::host();
             let mut declared_c: HashSet<String> = HashSet::new();
             let mut block = String::new();
+            let bound_pkgs = Self::bound_c_packages(data, c_bind, !native_cabi);
+            let mut slots: Vec<u8> = Vec::new();
             // @PLN24 arc G — a symbol from a package that declares an OPTIONAL
             // library cannot be declared `extern "C"`: an extern that is CALLED
             // is an undefined reference, and with the library off the link line
@@ -8762,11 +8927,33 @@ extern crate loft;"
                     let _ = writeln!(lazy, "}}");
                     continue;
                 }
+                // @PLN197 — a package that ships its C library: the symbol is a slot the
+                // program fills itself, under the same `__c_` name the call sites write.
+                if data
+                    .c_owner_pkg(def.position().file.as_str())
+                    .is_some_and(|p| bound_pkgs.iter().any(|b| b == p))
+                {
+                    let sig_text = (0..sig.params.len())
+                        .map(|i| format!("a{i}: {}", sig.params[i].rust_type()))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Self::emit_bind_slot(
+                        &mut slots,
+                        &format!("c_{}", sig.symbol),
+                        &format!("__c_{}", sig.symbol),
+                        &sig.symbol,
+                        &sig_text,
+                        &ret,
+                        true,
+                    )?;
+                    continue;
+                }
                 // Aliased like the `#native` block, and for the same reason: a
                 // C symbol may share the wrapper fn's name (E0428).
                 let _ = writeln!(block, "    #[link_name = \"{}\"]", sig.symbol);
                 let _ = writeln!(block, "    fn __c_{}({params}){ret};", sig.symbol);
             }
+            w.write_all(&slots)?;
             if !block.is_empty() {
                 writeln!(w, "unsafe extern \"C\" {{")?;
                 write!(w, "{block}")?;
@@ -8794,8 +8981,20 @@ extern crate loft;"
         // `c_library_available` — the very question a library is told to ask
         // before calling into C — fail to compile under `--html` (@PLN24 arc E).
         writeln!(w, "static __C_LIBS: &[(&str, &str)] = &[")?;
+        // @PLN197 — a library the program binds itself goes in by name alone: it is found
+        // through the bind search order, never through the package directory of this
+        // machine, which is therefore not written into the binary.
+        let bound_pkgs = Self::bound_c_packages(data, c_bind, !native_cabi);
+        let linked_pkgs = Self::linked_c_packages(data, c_bind && !native_cabi);
         for lib in &data.c_libraries {
-            writeln!(w, "    ({:?}, {:?}),", lib.name, lib.pkg_dir)?;
+            let bound = !lib.optional
+                && (bound_pkgs.contains(&lib.pkg_dir) || linked_pkgs.contains(&lib.pkg_dir));
+            writeln!(
+                w,
+                "    ({:?}, {:?}),",
+                Self::emitted_c_lib_name(&lib.name, c_bind),
+                if bound { "" } else { lib.pkg_dir.as_str() }
+            )?;
         }
         writeln!(w, "];")?;
         writeln!(w, "static __C_LIB_SYMS: &[(&str, &[&str])] = &[")?;
@@ -8804,8 +9003,15 @@ extern crate loft;"
         // right table is the empty one rather than a build failure.
         #[cfg(feature = "native-extensions")]
         for (lib, syms) in crate::c_signature::library_symbol_table(data) {
+            // A library linked into the binary lists no symbols: they are not in its dynamic
+            // symbol table, so a lookup by name could only report them missing.
+            let linked = data
+                .c_libraries
+                .iter()
+                .any(|c| c.name == lib && !c.optional && linked_pkgs.contains(&c.pkg_dir));
+            let lib = Self::emitted_c_lib_name(&lib, c_bind);
             write!(w, "    ({lib:?}, &[")?;
-            for s in &syms {
+            for s in syms.iter().filter(|_| !linked) {
                 write!(w, "{s:?}, ")?;
             }
             writeln!(w, "]),")?;
@@ -8813,6 +9019,9 @@ extern crate loft;"
         writeln!(w, "];")?;
         if !lazy.is_empty() {
             write!(w, "{lazy}")?;
+        }
+        if c_bind {
+            Self::emit_bind_table(w, data, reachable, native_bind, &bound_pkgs, &linked_pkgs)?;
         }
         Self::emit_ckpt_prelude(w, checkpoints)?;
         Ok(())
