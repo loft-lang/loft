@@ -300,11 +300,13 @@ impl Parser {
                 continue;
             }
             for p in crate::file_access::read_dir(l.as_str()).unwrap_or_default() {
-                let Some(name) = p.file_name() else { continue };
+                let Some(name) = crate::file_access::file_name(&p) else {
+                    continue;
+                };
                 if name.starts_with('.') {
                     continue;
                 }
-                let sub = dir.join(name);
+                let sub = dir.join(&name);
                 if crate::file_access::is_file(sub.join("loft.toml")) {
                     out.push(sub);
                 }

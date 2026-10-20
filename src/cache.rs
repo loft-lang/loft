@@ -964,6 +964,44 @@ pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> 
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
+/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
+/// there is no working `rustc`.  Asked once per process, and the ONE place loft asks it:
+/// a launch of `rustc` costs more than a warm start of loft itself, so a run that executes a
+/// program must never reach here.  `LOFT_TIMING=1` reports each launch (`rustc_probe=`), which
+/// is how a start-up that pays one shows it.
+#[must_use]
+pub fn rustc_version() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static VERSION: OnceLock<Option<String>> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            let started = std::time::Instant::now();
+            let version = crate::platform::process::Spawn::new(
+                crate::platform::process::Program::search("rustc"),
+            )
+            .arg("--version")
+            .run(b"")
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("rustc")
+                    .trim()
+                    .to_string()
+            });
+            if crate::platform::timing_enabled() {
+                eprintln!(
+                    "LOFT_TIMING rustc_probe={:.2}ms",
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            version
+        })
+        .as_deref()
+}
+
 /// The reason [`rustc_mismatch`] gives when there is no `rustc` at all — a missing toolchain,
 /// which no runtime rebuild can cure, as opposed to a changed one.
 pub const RUSTC_NOT_FOUND: &str = "rustc not found";
@@ -990,7 +1028,7 @@ pub fn rustc_mismatch() -> Option<&'static str> {
             if stamp.is_empty() {
                 return None;
             }
-            match crate::native_lib::rustc_version() {
+            match rustc_version() {
                 Some(v) if v == stamp.trim() => None,
                 Some(v) => Some(format!(
                     "rustc changed since this loft was built ({stamp} → {v})"
