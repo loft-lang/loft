@@ -196,13 +196,14 @@
         "default/",
         "tests/ownership_drop_gate.rs"
       ],
-      "check": "cargo test -q --test ownership_drop_gate -- --include-ignored",
+      "check": "cargo test -q --test ownership_drop_gate -- --include-ignored --test-threads=6",
       "check_first": true,
       "regen": [
-        "LOFT_BLESS_DROP_GATE=1 cargo test -q --test ownership_drop_gate -- --include-ignored"
+        "LOFT_BLESS_DROP_GATE=1 cargo test -q --test ownership_drop_gate -- --include-ignored --test-threads=6"
       ],
       "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand",
-      "check_exact": true
+      "check_exact": true,
+      "note": "six test threads: each of the gate's 23 tests spawns a pool of loft and rustc processes, and all at once took a 24-core box to load 150 and timed 20 of them out"
     },
     {
       "name": "reference-pages",
