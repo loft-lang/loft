@@ -23,12 +23,13 @@ with the units in build order and the file below that priced each.
 | `rules.md` | every rule, from the RULES' side: the declines traced on the benches, the shapes with no rule, the instruments' gaps | **AUDITED 2026-09-28**; its § Change is DONE the same day (the census counts 49 of 51 rewrites, the two native rewrites with no switch entry documented, seven homeless traces given a home, the `(R-Const)` panic filed as loft#1729 / D-rw-6); what is left is its § Optimise: the growth-blocked record pointer first, then the clauses each class file prices |
 | `apart.md` | the (R-Apart) instances, priced on the rows the design named: `mat4_mul` (instance 2) and `rig_world_frame3` (instance 3), plus a triage of every other throwaway-shaped row | **PRICED 2026-10-04, NOT BUILT** — instance 2 `mat4_mul` 38 → 4.9 ns a product (4.8× → 0.63× Rust); instance 3 is an INLINE BUFFER, never a bare `Vec` (a `Vec` was +37 %, a stack buffer −48 %) |
 | `recptr-remainder.md` | `(R-RecPtr)`'s growth refusals — the decline census's largest count — classified by cause and two forms hand-priced on `panel_build` and `composite_hash` | **MEASURED 2026-10-20, NOT BUILT**: neither form moved its row; the count is not the cost |
-| `handoff-2026-10-16.md` | the stream's state at the laptop's reset: built since, next in order, local-only state, checks after the upgrade | **CURRENT** resume point |
+| `handoff-2026-10-16.md` | the stream's state at the laptop's reset: built since, next in order, local-only state, checks after the upgrade | superseded by `handoff-2026-10-20.md` |
+| `handoff-2026-10-20.md` + `gap-sweep/` | `make gap-report` across the 47 routines over 3×: each row in twin units, the inlined runtime by mechanism | **CURRENT** resume point |
 | `over-9x.md` | the five rows over 9× on the 2026-10-05 run (`header`, `decode`, `flow_layout_full`, `draw_bezier`, `check_request`), by MECHANISM | **PRICED 2026-10-05, NOT BUILT** — every row reaches 3.6–4.8× by hand except `check_request` (≈5.5× by `decode`'s ladder, clearly under only with texts kept in their slots); four new rules drafted in rewrites.md § Proposed (`(R-FoldCompare)`, `(R-Destination)`, `(R-FnRefValue)`, `(R-ViewReturn)`) and seven clauses on existing ones; the edit scripts under `over-9x/` |
 
 ## Where to resume (2026-09-28 evening, branch `157-native-4x`)
 
-**Superseded by [`handoff-2026-10-16.md`](handoff-2026-10-16.md)** — the state when the laptop was
+**Superseded by [`handoff-2026-10-20.md`](handoff-2026-10-20.md)** (and before it [`handoff-2026-10-16.md`](handoff-2026-10-16.md)) — the state when the laptop was
 upgraded and restarted: what was built since, what is next, and what to check after.  The rest of this section is the 2026-09-28 resume point, kept as written.
 
 **The rules are audited** (`rules.md`) and its § Change is done: the census counts 49 of

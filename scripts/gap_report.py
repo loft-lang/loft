@@ -8,7 +8,8 @@
     scripts/gap_report.py … --n 3 --top 25 --out report.txt
 
 `--fn` names the function the routine's timed loop calls, the same name in the loft bench and
-in its Rust twin (`name=rust_name` where they differ).  Both binaries run under callgrind with
+in its Rust twin (`name=rust_name` where they differ; a loft method by its emitted name,
+`t_5Stage_pack_instances=pack_instances`).  Both binaries run under callgrind with
 collection toggled on that function (and its `__variant`s) only, so the counts are the
 routine's alone, per call.  The toggle is a toggle — a nested entry switches it off — so a
 RECURSIVE kernel is refused, and named through the op that calls it (cbor: `encode_op`).
@@ -31,6 +32,7 @@ The report has three parts, and the first is the one to read before any fix:
 Needs valgrind.  A report, never a gate.
 """
 import argparse
+import atexit
 import os
 import re
 import shutil
@@ -60,6 +62,9 @@ DECLINE_NOISE = (
 
 # Runtime symbol → the category its instructions are charged to.  First match wins.
 CATEGORIES = [
+    # A package's own `#native` Rust: unmangled, with no crate path.
+    ("the library's own #native Rust", r"^n_[a-z]"),
+    ("the bridge to it (loft_ffi, native_call, thread-locals)", r"loft_ffi::|loft::extensions::native_call|__tls_get_addr"),
     ("allocation (malloc/free/realloc)", r"\b(malloc|free|realloc|calloc|_int_malloc|_int_free|cfree|__libc_)"),
     ("block copy / fill (memcpy/memset/memmove)", r"(memcpy|memset|memmove|__memcpy|__memset|__memmove)"),
     ("store claim / free / grow", r"loft::store::|Store>::(claim|delete|free|resize|grow|set_free|valid)|database_named|free_named|op_database|OpDatabase|OpFreeRef|copy_claims|remove_claims"),
@@ -118,11 +123,11 @@ def build(a, work):
     traces = r.stderr.splitlines()
     # The kernel stays a function on both sides, so callgrind can switch collection on at its
     # entry: one call boundary per call each, the same on both.
-    for src_path, name in ((emitted, f"n_{a.loft_fn}"), (rs_src, a.rust_fn)):
+    for src_path, name in ((emitted, a.loft_sym), (rs_src, a.rust_fn)):
         if recursive(src_path, name):
             sys.exit(f"gap_report: `{name}` is recursive, and callgrind stops counting inside a nested "
                      "entry; name the bench function that calls it in the timed loop (cbor: --fn encode_op)")
-    keep_call(emitted, f"n_{a.loft_fn}")
+    keep_call(emitted, a.loft_sym)
     twin_src = os.path.join(work, "twin.rs")
     shutil.copy(rs_src, twin_src)
     keep_call(twin_src, a.rust_fn)
@@ -141,8 +146,8 @@ def recursive(path, fn):
     kernel's own recursion would go uncounted."""
     src = open(path, encoding="utf-8").read()
     bodies = {}
-    for m in re.finditer(r"\n(?:pub(?:\(crate\))? )?fn ([A-Za-z0-9_]+)\s*[<(]", src):
-        nxt = re.search(r"\n(?:pub(?:\(crate\))? )?fn ", src[m.end():])
+    for m in re.finditer(r"\n[ \t]*(?:pub(?:\(crate\))? )?fn ([A-Za-z0-9_]+)\s*[<(]", src):
+        nxt = re.search(r"\n[ \t]*(?:pub(?:\(crate\))? )?fn ", src[m.end():])
         bodies[m.group(1)] = src[m.end(): m.end() + nxt.start() if nxt else len(src)]
     family = {f for f in bodies if f == fn or f.startswith(fn + "__")}
     calls = {f: {g for g in bodies if re.search(rf"\b{re.escape(g)}\(", b)} for f, b in bodies.items()}
@@ -160,8 +165,9 @@ def recursive(path, fn):
 def keep_call(path, fn):
     src = open(path, encoding="utf-8").read()
     # The kernel and its specialised variants (`__rg`, `__ap`, …): a site may call either.
-    src, n = re.subn(rf"(\n)((?:pub(?:\(crate\))? )?fn {re.escape(fn)}(?:__[a-z0-9_]+)?\()",
-                     r"\1#[inline(never)]\n\2", src)
+    # A twin's kernel may be a method (`st.pack_instances()`), indented inside its `impl`.
+    src, n = re.subn(rf"(\n([ \t]*))((?:pub(?:\(crate\))? )?fn {re.escape(fn)}(?:__[a-z0-9_]+)?[<(])",
+                     r"\1#[inline(never)]\n\2\3", src)
     if n == 0:
         sys.exit(f"gap_report: no `fn {fn}(` in {path}")
     open(path, "w", encoding="utf-8").write(src)
@@ -171,7 +177,9 @@ def callgrind(binary, fn, n, cwd, work, tag):
     out = os.path.join(work, f"cg.{tag}")
     run(["valgrind", "--tool=callgrind", f"--callgrind-out-file={out}",
          "--compress-pos=no", "--compress-strings=no",
-         f"--toggle-collect={fn}", f"--toggle-collect={fn}__*", binary, "--n", str(n)], cwd=cwd)
+         # A generic kernel is named with its instance: `flow_layout_full::<…>`.
+         f"--toggle-collect={fn}", f"--toggle-collect={fn}__*", f"--toggle-collect={fn}::<*",
+         binary, "--n", str(n)], cwd=cwd)
     ann = run(["callgrind_annotate", "--inclusive=no", "--auto=no", "--threshold=100", out]).stdout
     total, rows = 0, []
     for line in ann.splitlines():
@@ -193,7 +201,7 @@ def callgrind(binary, fn, n, cwd, work, tag):
     # Calls of the kernel itself, to normalise per call: callgrind names a function once,
     # `cfn=(id) name`, and refers to it by id after that.
     names, calls, target = {}, 0, None
-    want = re.compile(fn.replace("*", ".*") + r"(__[a-z0-9_]+)?$")
+    want = re.compile(fn.replace("*", ".*") + r"(__[a-z0-9_]+|::<.*>)?$")
     for line in open(out, encoding="utf-8", errors="replace"):
         m = re.match(r"c?fn=(?:\((\d+)\))? ?(.*)", line)
         if m:
@@ -286,6 +294,26 @@ def loft_source_line(key):
         return ""
 
 
+_FN_DEF = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)")
+_sources = {}
+
+
+def enclosing_fn(path, nr):
+    """The runtime function an inlined line belongs to — the mechanism it is part of —
+    found by scanning back from the line to the nearest `fn`."""
+    if path not in _sources:
+        try:
+            _sources[path] = open(path, encoding="utf-8").read().splitlines()
+        except OSError:
+            _sources[path] = []
+    lines = _sources[path]
+    for i in range(min(nr, len(lines)) - 1, -1, -1):
+        m = _FN_DEF.match(lines[i])
+        if m:
+            return m.group(1)
+    return "(no line information)" if nr == 0 else "?"
+
+
 def category(sym):
     for name, pat in CATEGORIES:
         if re.search(pat, sym):
@@ -296,7 +324,7 @@ def category(sym):
 def emitted_functions(path):
     src = open(path, encoding="utf-8").read()
     fns = {}
-    for m in re.finditer(r"\nfn (n_[A-Za-z0-9_]+)\(", src):
+    for m in re.finditer(r"\nfn ((?:n_|t_\d)[A-Za-z0-9_]+)\(", src):
         start = m.start()
         nxt = re.search(r"\nfn ", src[start + 5:])
         end = start + 5 + nxt.start() if nxt else len(src)
@@ -313,17 +341,28 @@ def main():
     ap.add_argument("--n", type=int, default=2)
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--out")
+    ap.add_argument("--keep", action="store_true", help="keep the work directory (emitted Rust, callgrind output)")
     a = ap.parse_args()
     if not shutil.which("valgrind"):
         sys.exit("gap_report: valgrind is not installed")
     loft_fn, _, rust_fn = a.fn.partition("=")
     rust_fn = rust_fn or loft_fn
     a.loft_fn, a.rust_fn = loft_fn, rust_fn
+    # A loft function is emitted as `n_<name>`, a method under its own name (`t_5Stage_pack`).
+    a.loft_sym = loft_fn if re.match(r"t_\d", loft_fn) else f"n_{loft_fn}"
     work = tempfile.mkdtemp(prefix="gap_report_", dir=os.environ.get("TMPDIR"))
+    if a.keep:
+        print(f"gap_report: work directory {work}", file=sys.stderr)
+    else:
+        atexit.register(shutil.rmtree, work, True)
     cwd, emitted, native, twin, traces = build(a, work)
     run_dir = cwd if a.package else REPO
-    lt, lrows, lcalls = callgrind(native, f"*::n_{loft_fn}", a.n, run_dir, work, "loft")
+    lt, lrows, lcalls = callgrind(native, f"*::{a.loft_sym}", a.n, run_dir, work, "loft")
     rt, rrows, rcalls = callgrind(twin, f"*::{rust_fn}", a.n, run_dir, work, "rust")
+    for side, total, name in (("loft", lt, a.loft_sym), ("twin", rt, rust_fn)):
+        if not total:
+            sys.exit(f"gap_report: the {side} binary never entered `{name}`: a wrapper the compiler "
+                     "merged into the function it calls has no symbol left; name that function")
     if lcalls == 0 or rcalls == 0 or lcalls != rcalls:
         lcalls = rcalls = 1
         unit = "per run"
@@ -342,7 +381,7 @@ def main():
     emitted_self = 0
     fn_self = defaultdict(int)
     for c, sym in lrows:
-        m = re.match(r"native::(n_[A-Za-z0-9_]+)", sym)
+        m = re.match(r"native::([A-Za-z0-9_]+)", sym)
         if m:
             emitted_self += c
             fn_self[m.group(1)] += c
@@ -361,6 +400,12 @@ def main():
     p("     hottest inlined runtime lines:")
     for (f, nr), c in sorted(inlined_lines.items(), key=lambda kv: -kv[1])[:10]:
         p(f"  {c / lcalls:12,.0f}           {runtime_file(f)}:{nr}  {loft_source_line(f'{f}:{nr}')[:80]}")
+    by_fn = defaultdict(int)
+    for (f, nr), c in inlined_lines.items():
+        by_fn[f"{enclosing_fn(f, nr)}  ({runtime_file(f)})"] += c
+    p("     inlined runtime by the function it came from (the mechanism):")
+    for name, c in sorted(by_fn.items(), key=lambda kv: -kv[1])[:12]:
+        p(f"  {c / lcalls:12,.0f}           {name}")
     p("  runtime CALLED, by kind:")
     for name, c in sorted(by_cat.items(), key=lambda kv: -kv[1]):
         if c:
