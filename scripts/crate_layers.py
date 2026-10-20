@@ -32,6 +32,8 @@ sit above every layer.  Comments are skipped; code in `#[cfg(test)]` blocks is c
 because a test in a lower crate that names a higher one has to move too.
 """
 
+from __future__ import annotations
+
 import bisect
 import re
 import sys
