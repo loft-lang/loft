@@ -7237,73 +7237,7 @@ use #count instead"
     /// on each `vars.tp`) and swap the `Variable` structs — see the retbuf swap in
     /// `block_result`.  Do a 3-way `from→TMP→to` to swap two live indices atomically.
     pub(crate) fn renumber_frame_var(val: &mut Value, from: u16, to: u16) {
-        match val {
-            Value::Var(n) if *n == from => *n = to,
-            Value::Set(v, inner) => {
-                if *v == from {
-                    *v = to;
-                }
-                Self::renumber_frame_var(inner, from, to);
-            }
-            // `CallRef`'s first field is the fn-ref VARIABLE (remap it); `Call`'s is a
-            // def_nr (a definition, NOT a variable — leave it). Missing the CallRef var
-            // desyncs it from the swapped variable table → codegen's `generate_call_ref`
-            // reads a non-`Function` slot and panics (loft-lang/loft#568 default-on).
-            Value::CallRef(v, xs) => {
-                if *v == from {
-                    *v = to;
-                }
-                for x in xs {
-                    Self::renumber_frame_var(x, from, to);
-                }
-            }
-            Value::Call(_, xs) | Value::Insert(xs) | Value::Tuple(xs) | Value::Parallel(xs) => {
-                for x in xs {
-                    Self::renumber_frame_var(x, from, to);
-                }
-            }
-            Value::Block(bl) | Value::Loop(bl) => {
-                bl.result.renumber_frame_deps(from, to);
-                for op in &mut bl.operators {
-                    Self::renumber_frame_var(op, from, to);
-                }
-            }
-            Value::If(c, t, e) => {
-                Self::renumber_frame_var(c, from, to);
-                Self::renumber_frame_var(t, from, to);
-                Self::renumber_frame_var(e, from, to);
-            }
-            Value::Return(inner) | Value::Drop(inner) | Value::Yield(inner) => {
-                Self::renumber_frame_var(inner, from, to);
-            }
-            Value::Span(b) => Self::renumber_frame_var(&mut b.1, from, to),
-            Value::Iter(v, a, b, c) => {
-                if *v == from {
-                    *v = to;
-                }
-                Self::renumber_frame_var(a, from, to);
-                Self::renumber_frame_var(b, from, to);
-                Self::renumber_frame_var(c, from, to);
-            }
-            Value::TupleGet(v, _) => {
-                if *v == from {
-                    *v = to;
-                }
-            }
-            Value::TuplePut(v, _, inner) => {
-                if *v == from {
-                    *v = to;
-                }
-                Self::renumber_frame_var(inner, from, to);
-            }
-            Value::FnRef(_, v, ty) => {
-                if *v == from {
-                    *v = to;
-                }
-                ty.renumber_frame_deps(from, to);
-            }
-            _ => {}
-        }
+        val.renumber_frame_var(from, to);
     }
 
     fn remap_var_deep(val: &mut Value, from: u16, to: u16) {

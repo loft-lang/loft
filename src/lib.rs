@@ -373,6 +373,7 @@ pub mod rewrite_census;
 pub mod same_read;
 pub mod scopes;
 pub mod self_replace;
+pub mod shared_call;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;

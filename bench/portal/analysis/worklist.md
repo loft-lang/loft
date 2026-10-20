@@ -149,6 +149,15 @@ price is an edit of the emitted Rust or of the library source, timed interleaved
 | 4.16 | `truncate_to` | 3.6 k / 755 instr per push | the entry deep-copied into the timeline (~1035: two claims ~143 each, `copy_plain_vectors` ~372 of its own); the dropped entry released (~730: two deletes ~165 each, `release_plain_vectors` ~234); the entry's own build ~1130 (a push header and a reservation per push) | L3, the entry built in the timeline's element: **+30 % — REFUTED** (its vectors then grow element by element in the large, fragmented store; the reused loop record copies once at the exact size) | runtime tightening of the copy, the release and claim/delete *est.* −25 % → ≈ 3.2×; no structural lever found |
 | 4.44 | `field_add_cell` | 545 M / 123 M instr | keyed operations 55 %: ~440 instr each against hashbrown's ~200–300 — per call the entries header, the seed, the record words and the sub-record type re-read (~60), SipHash 52, the arena claim 52; rehash 54 M against 22 M (191 per moved entry); `mark_borders`' dirty inserts | the second bucket lookup removed (library form) −0.9 % — DROPPED | the keyed header held across a loop or call *est.* −8 %, a cheaper rehash *est.* −6 % → ≈ 3.9×; needs a line-level pass of the keyed runtime |
 
+**BUILT (2026-10-20)** — `pluginabi/request`'s decode once, as `(R-PureReuse)`'s SHARED-CALL
+clause (`formal/rewrites.md`): a total call two wrappers make is made once by the caller and
+handed to each wrapper's variant.  Native `request` 6.88 → 4.77 ms (−30.6 %; the hand-written
+form 4.72), hash 16387f10, interpreter −25 %; `check_request` unchanged.  It fires once crypto
+declares its decoder `#pure` (the lane's crypto 0.3.11 does not): a crypto release with the
+annotation and pluginabi's lock moved to it are what put it in the lane.  Found beside it and
+fixed: a decode root calling another root did not compile on `--native-release`
+(`LOFT_NO_PURE_REUSE=1` broke the bench), loft#2091.
+
 The common thread of the last three is the runtime's unit cost: a claim, a delete, a vector
 header resolution and a keyed probe each cost several times their `malloc` / `Vec` /
 hashbrown counterpart, and these rows are made of them.

@@ -199,41 +199,6 @@ impl SwPlan {
 
 // ---- quiet functions ----
 
-/// Operators that write a text or a store through one operand, beyond `pure_reuse`'s list.
-fn text_write_target(name: &str) -> Option<usize> {
-    match name {
-        "OpAppendText"
-        | "OpAppendStackText"
-        | "OpAppendCharacter"
-        | "OpAppendStackCharacter"
-        | "OpAppendTextBytes"
-        | "OpClearText"
-        | "OpClearStackText"
-        | "OpClearVector"
-        | "OpSetTextReplace"
-        | "OpFormatText"
-        | "OpFormatStackText"
-        | "OpFormatInt"
-        | "OpFormatStackInt"
-        | "OpFormatFloat"
-        | "OpFormatStackFloat"
-        | "OpFormatSingle"
-        | "OpFormatStackSingle"
-        | "OpFormatDatabase"
-        | "OpFormatStackDatabase"
-        | "OpPutRef"
-        | "OpPutText"
-        | "OpPutInt"
-        | "OpPutFloat"
-        | "OpPutSingle"
-        | "OpPutBool"
-        | "OpPutCharacter"
-        | "OpPutEnum"
-        | "OpPutNarrow" => Some(0),
-        _ => crate::pure_reuse::write_target(name),
-    }
-}
-
 /// Operators that release what their first operand names.
 fn is_free(name: &str) -> bool {
     matches!(
@@ -408,7 +373,7 @@ impl<'a> Quiet<'a> {
                         if args.first().is_some_and(|a| !owned(a)) {
                             why = Some(format!("{name} of a place it does not own"));
                         }
-                    } else if let Some(t) = text_write_target(name) {
+                    } else if let Some(t) = crate::pure_reuse::text_write_target(name) {
                         if args.get(t).is_none_or(|a| !owned(a)) {
                             why = Some(format!("{name} writes a place it does not own"));
                         }
@@ -804,7 +769,7 @@ fn writes_into(data: &Data, code: &Value, set: &HashSet<u16>) -> bool {
                 written_params(data, *callee)
                     .into_iter()
                     .any(|i| args.get(i).is_some_and(rooted))
-            } else if let Some(t) = text_write_target(name) {
+            } else if let Some(t) = crate::pure_reuse::text_write_target(name) {
                 args.get(t).is_some_and(rooted)
             } else {
                 is_free(name) && args.first().is_some_and(rooted)

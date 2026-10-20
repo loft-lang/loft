@@ -1,0 +1,187 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PureReuse`, the shared-call clause — a TOTAL call that two wrappers make on the same
+// arguments is made once, by their caller, and handed to each wrapper's variant.
+//
+// A request validated each base64 payload (`pa_is_base64(b)`: `b == "" || len(decode(b)) > 0`)
+// and then decoded it again to use it (`pa_cbytes(b)`: `CBytes { value: decode(b) }`).  Neither
+// wrapper is a read of the decode, so the projection clause could not share it; the decode is
+// TOTAL (a forwarding wrapper of a `#pure` native), so the caller now decodes once — before the
+// short circuit that might have skipped it — and calls each wrapper's variant with the vector.
+// Here the total function is `names(j)`, a forwarding wrapper of JSON's `#pure` `keys()`.
+//
+// What can go wrong: a value read after its argument changed (rebound, or a store it lives in
+// written), a call shared that was not total, a wrapper with an effect replaced, a path that
+// never made the call reading a value that was never computed, the copy into a record's field
+// missing.  The values are hand-computed; `tests/pure_reuse.rs` pins which bodies share.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-20), on --interpret and --native: an argument's rebinding not seen as a
+//   disturbance fails c3 (22 for 23) on both; every operator and a loop admitted as total
+//   shares c7, and the profitability test struck shares c9 — both leave the values right and
+//   move the pin's trace.  Reading the vector in place where the call filled a buffer is
+//   INERT here: every shape these cells reach copies at its consumer (a bound local, an
+//   appended field).  The form that needs the copy, a call that fills a byte field as a
+//   statement (`pa_cbytes`), needs a total producer of bytes, which only a library has —
+//   pluginabi's `request` bench caught it (its hash 16387f10 became 2332d0a2).
+//   CHANNEL: an assertion (c3) and the pin's trace (c7, c9).
+
+struct Hold { ks: vector<text> }
+
+// The total function: a forwarding wrapper of a `#pure` native.
+fn names(j: JsonValue) -> vector<text> { j.keys() }
+
+// Sharing wrappers: one call of `names` each, on their own parameter.
+fn has(j: JsonValue) -> boolean { len(names(j)) > 0 }
+fn count(j: JsonValue) -> integer { len(names(j)) }
+fn hold(j: JsonValue) -> Hold { Hold { ks: names(j) } }
+fn has_or(t: text, j: JsonValue) -> boolean { t == "" || len(names(j)) > 0 }
+fn grown(j: JsonValue) -> vector<text> {
+  v = names(j);
+  v += ["z"];
+  v
+}
+
+// Not sharing wrappers: two calls; a write to a parameter; a function that is not total.
+fn twice(j: JsonValue) -> integer { len(names(j)) + len(names(j)) }
+fn bump_count(j: JsonValue, w: vector<integer>) -> integer {
+  w += [1];
+  len(names(j))
+}
+fn names_l(j: JsonValue) -> vector<text> {
+  r: vector<text> = [];
+  for k in j.keys() { r += [k]; }
+  r
+}
+fn has_l(j: JsonValue) -> boolean { len(names_l(j)) > 0 }
+fn count_l(j: JsonValue) -> integer { len(names_l(j)) }
+
+// c1: check, then use — shares.  2 keys; the empty object returns early.
+fn c1(j: JsonValue) -> integer {
+  if !has(j) { return -1; }
+  count(j)
+}
+
+// c2: the first call stands after a short circuit (`t == ""` skips it) — shares, the call made
+// up front.  ("", 2 keys) 2; ("x", empty) -1; ("", empty) 0, the call the check never made.
+fn c2(t: text, j: JsonValue) -> integer {
+  if !has_or(t, j) { return -1; }
+  count(j)
+}
+
+// c3: the argument rebound between — not shared: 2 * 10 + 3.
+fn c3(j: JsonValue, k: JsonValue) -> integer {
+  x = j;
+  a = count(x);
+  x = k;
+  a * 10 + count(x)
+}
+
+// c4: a store written between that the caller did not make — not shared: 2*10 + 2 + 3.
+fn c4(j: JsonValue, w: vector<integer>) -> integer {
+  a = count(j);
+  w += [7];
+  a * 10 + count(j) + len(w)
+}
+
+// c5: a store the caller made written between — shares: 2 * 10 + 2.  The vector leaves in a
+// record, as `request`'s entries do, so it is the caller's own store and not a work buffer.
+struct Box5 { xs: vector<integer> }
+fn total5(b: Box5) -> integer { b.xs[0] * 10 + b.xs[1] }
+fn c5(j: JsonValue) -> integer {
+  a = count(j);
+  es: vector<integer> = [];
+  es += [a];
+  es += [count(j)];
+  total5(Box5 { xs: es })
+}
+
+// c5w: the vector between is a WORK BUFFER the caller supplies (it never leaves the frame),
+// not a store this function made — not shared: 2 * 10 + 2.
+fn c5w(j: JsonValue) -> integer {
+  a = count(j);
+  es: vector<integer> = [];
+  es += [a];
+  es[0] * 10 + count(j)
+}
+
+// c6: a wrapper that calls twice is no variant — not shared: 2 + 2.
+fn c6(j: JsonValue) -> integer {
+  if !has(j) { return -1; }
+  twice(j)
+}
+
+// c7: the inner function is not total (a loop) — not shared: 2.
+fn c7(j: JsonValue) -> integer {
+  if !has_l(j) { return -1; }
+  count_l(j)
+}
+
+// c8: a call of the total function itself beside a wrapper's — shares.
+fn c8(j: JsonValue) -> integer {
+  if len(names(j)) == 0 { return -1; }
+  count(j)
+}
+
+// c9: both calls in arms, neither always evaluated — not shared.  true 2, false 102.
+fn c9(j: JsonValue, b: boolean) -> integer {
+  r = 0;
+  if b { r = count(j); }
+  if !b { r = count(j) + 100; }
+  r
+}
+
+// c10: the leaving arm writes the return buffer; the vector itself is the result — shares.
+fn c10(j: JsonValue) -> vector<text> {
+  if !has(j) { return ["none"]; }
+  names(j)
+}
+
+// c11: three calls, one into a record's field — shares: 2*100 + 2*10 + 2; field "b", "a".
+fn c11(j: JsonValue) -> integer {
+  if !has(j) { return -1; }
+  h = hold(j);
+  assert(h.ks[0] == "b" && h.ks[1] == "a", "c11 field {h.ks[0]} {h.ks[1]}");
+  count(j) * 100 + len(h.ks) * 10 + len(names(j))
+}
+
+// c12: a wrapper that writes its parameter is no variant — not shared: 2 * 10 + 3.
+fn c12(j: JsonValue, w: vector<integer>) -> integer {
+  if !has(j) { return -1; }
+  bump_count(j, w) * 10 + len(w)
+}
+
+// c13: a wrapper that binds the vector and grows it — shares, and its variant grows a COPY:
+// 3 * 10 + 2, the caller's later count unchanged.
+fn c13(j: JsonValue) -> integer {
+  if !has(j) { return -1; }
+  g = grown(j);
+  assert(g[2] == "z", "c13 grown {g}");
+  len(g) * 10 + count(j)
+}
+
+fn main() {
+  j = json_parse("{{\"b\": 1, \"a\": 2}}");
+  k = json_parse("{{\"x\": 1, \"y\": 2, \"z\": 3}}");
+  e = json_parse("{{}}");
+  assert(c1(j) == 2 && c1(e) == -1, "c1 got {c1(j)} {c1(e)}");
+  assert(c2("", j) == 2 && c2("x", e) == -1 && c2("", e) == 0, "c2 got {c2(\"\", j)} {c2(\"x\", e)} {c2(\"\", e)}");
+  assert(c3(j, k) == 23, "c3 got {c3(j, k)}");
+  w4 = [1, 2];
+  assert(c4(j, w4) == 25 && len(w4) == 3, "c4 got {c4(j, [1, 2])} len={len(w4)}");
+  assert(c5(j) == 22 && c5w(j) == 22, "c5 got {c5(j)} {c5w(j)}");
+  assert(c6(j) == 4 && c6(e) == -1, "c6 got {c6(j)} {c6(e)}");
+  assert(c7(j) == 2 && c7(e) == -1, "c7 got {c7(j)} {c7(e)}");
+  assert(c8(j) == 2 && c8(e) == -1, "c8 got {c8(j)} {c8(e)}");
+  assert(c9(j, true) == 2 && c9(j, false) == 102, "c9 got {c9(j, true)} {c9(j, false)}");
+  v10 = c10(j);
+  assert(len(v10) == 2 && v10[0] == "b" && v10[1] == "a", "c10 got {v10}");
+  n10 = c10(e);
+  assert(len(n10) == 1 && n10[0] == "none", "c10 empty got {n10}");
+  assert(c11(j) == 222 && c11(e) == -1, "c11 got {c11(j)} {c11(e)}");
+  w12 = [1, 2];
+  assert(c12(j, w12) == 23 && len(w12) == 3, "c12 got {c12(j, [1, 2])} len={len(w12)}");
+  assert(c13(j) == 32 && c13(e) == -1, "c13 got {c13(j)} {c13(e)}");
+  println("done");
+}

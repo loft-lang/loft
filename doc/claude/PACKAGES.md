@@ -636,6 +636,15 @@ your registration on both backends (NATIVE_ARTIFACT_IDENTITY.md § Which symbol 
 links), so a remap is no longer *wrong* — but it still costs you every consumer
 whose cdylib loft cannot load, and it is free to avoid.
 
+**Mark a native `#pure` when its value is its only effect** — the answer depends on the
+arguments alone, it writes nothing, reads no clock, file or entropy, always returns and reports
+nothing: a hash, an encoder or decoder, a verifier.  The annotation goes on its own line after
+`#native`.  loft then computes two calls on unchanged arguments once, also when two small
+wrappers each make the call (a validate-then-use pair decodes once; `formal/rewrites.md`
+§ `(R-PureReuse)`, the shared-call clause).  A wrong `#pure` is a wrong program: a call loft
+merges or moves ahead of a test must not have been observable.  Leave it off a random source,
+a clock, I/O, and anything that can fail loudly.
+
 ### Three execution paths
 
 | Path | How native functions run |

@@ -30,7 +30,7 @@ use crate::fxhash::FxHashSet as HashSet;
 
 /// Operators that only read their operands and answer a value.
 pub(crate) fn reads_only(name: &str) -> bool {
-    const PREFIXES: [&str; 6] = ["OpGet", "OpLength", "OpConv", "OpCast", "OpEq", "OpNe"];
+    const PREFIXES: [&str; 4] = ["OpGet", "OpLength", "OpConv", "OpCast"];
     const ARITH: [&str; 18] = [
         "OpAdd",
         "OpMin",
@@ -52,6 +52,7 @@ pub(crate) fn reads_only(name: &str) -> bool {
         "OpMathFunc",
     ];
     PREFIXES.iter().any(|p| name.starts_with(p))
+        || crate::shared_call::comparison(name)
         || ARITH.iter().any(|p| name.starts_with(p))
         || matches!(
             name,
@@ -75,6 +76,50 @@ pub(crate) fn write_target(name: &str) -> Option<usize> {
         | "OpFinishRecord" | "OpSliceVector" => Some(0),
         n if n.starts_with("OpPush") => Some(0),
         _ => None,
+    }
+}
+
+/// Operators that write a text or a store through one operand, beyond [`write_target`]'s list.
+pub(crate) fn text_write_target(name: &str) -> Option<usize> {
+    match name {
+        "OpAppendText"
+        | "OpAppendStackText"
+        | "OpAppendCharacter"
+        | "OpAppendStackCharacter"
+        | "OpAppendTextBytes"
+        | "OpClearText"
+        | "OpClearStackText"
+        | "OpClearVector"
+        | "OpSetTextReplace"
+        | "OpFormatText"
+        | "OpFormatStackText"
+        | "OpFormatInt"
+        | "OpFormatStackInt"
+        | "OpFormatFloat"
+        | "OpFormatStackFloat"
+        | "OpFormatSingle"
+        | "OpFormatStackSingle"
+        | "OpFormatDatabase"
+        | "OpFormatStackDatabase"
+        | "OpPutRef"
+        | "OpPutText"
+        | "OpPutInt"
+        | "OpPutFloat"
+        | "OpPutSingle"
+        | "OpPutBool"
+        | "OpPutCharacter"
+        | "OpPutEnum"
+        | "OpPutNarrow" => Some(0),
+        _ => write_target(name),
+    }
+}
+
+/// Every operand an operator writes or consumes: [`write_target`]'s, a text's or a buffer's
+/// (the stream walk's list), and both sides of an adoption — the source gives up its storage.
+fn own_writes(name: &str) -> Option<Vec<usize>> {
+    match name {
+        "OpAdoptVector" => Some(vec![0, 1]),
+        n => text_write_target(n).map(|t| vec![t]),
     }
 }
 
@@ -146,13 +191,13 @@ fn body_ok(data: &Data, f: u32, free: &HashSet<u32>, cands: &HashSet<u32>) -> bo
                         ok = false;
                         return true;
                     }
-                } else if reads_only(name) {
-                } else if let Some(t) = write_target(name) {
-                    if args
-                        .get(t)
-                        .and_then(|a| root(a, data))
-                        .is_none_or(|r| ps.contains(&r))
-                    {
+                } else if reads_only(name) || crate::shared_call::pure_native(data, *d) {
+                } else if let Some(ts) = own_writes(name) {
+                    if ts.iter().any(|&t| {
+                        args.get(t)
+                            .and_then(|a| root(a, data))
+                            .is_none_or(|r| ps.contains(&r))
+                    }) {
                         ok = false;
                         return true;
                     }
@@ -456,38 +501,66 @@ fn copies_var(r: &Value, v: u16, data: &Data) -> bool {
     })
 }
 
-/// One call this pass can reuse: the effect-free function, its argument variables, and the
-/// read a wrapper applies (none for a bare call).
+/// One call this pass can reuse: the effect-free function and its argument variables.
 #[derive(Clone, PartialEq)]
 struct Key {
     inner: u32,
     args: Vec<u16>,
 }
 
-/// The reusable call `v` is — a call of a projection wrapper — and how its value is read.
-fn call_key(
-    v: &Value,
-    wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
-) -> Option<(Key, u32, Vec<Value>)> {
+/// How a reusable call reads the one value: a projection wrapper's read, a sharing
+/// wrapper's variant, or the call of the function itself.
+#[derive(Clone)]
+enum Site {
+    Read(u32, Vec<Value>),
+    Variant(u32),
+    Bare,
+}
+
+/// What the pass knows about the program's functions.
+struct Rules<'a> {
+    free: &'a HashSet<u32>,
+    total: &'a HashSet<u32>,
+    wrappers: &'a crate::fxhash::FxHashMap<u32, Projection>,
+    sharers: &'a crate::fxhash::FxHashMap<u32, crate::shared_call::Sharing>,
+}
+
+/// The reusable call `v` is and how its value is read.  A call of a TOTAL function is one
+/// itself only when its result is a vector handed back in a buffer local.
+fn site_of(v: &Value, r: &Rules, data: &Data) -> Option<(Key, Site)> {
     let Value::Call(w, wargs) = v.unspan() else {
         return None;
     };
-    let p = wrappers.get(w)?;
-    let mut args = Vec::new();
-    for &pos in &p.args {
-        let Value::Var(x) = wargs.get(pos)?.unspan() else {
-            return None;
-        };
-        args.push(*x);
+    let vars_at = |positions: &mut dyn Iterator<Item = usize>| -> Option<Vec<u16>> {
+        positions
+            .map(|p| match wargs.get(p)?.unspan() {
+                Value::Var(x) => Some(*x),
+                _ => None,
+            })
+            .collect()
+    };
+    if let Some(p) = r.wrappers.get(w) {
+        let args = vars_at(&mut p.args.iter().copied())?;
+        return Some((
+            Key {
+                inner: p.inner,
+                args,
+            },
+            Site::Read(p.read, p.consts.clone()),
+        ));
     }
-    Some((
-        Key {
-            inner: p.inner,
-            args,
-        },
-        p.read,
-        p.consts.clone(),
-    ))
+    if let Some(s) = r.sharers.get(w) {
+        let args = vars_at(&mut s.args.iter().copied())?;
+        return Some((Key { inner: s.f, args }, Site::Variant(*w)));
+    }
+    if r.total.contains(w)
+        && let Some(kbuf) = crate::shared_call::vector_buffer(data, *w)
+        && matches!(wargs.get(kbuf).map(Value::unspan), Some(Value::Var(_)))
+    {
+        let args = vars_at(&mut (0..wargs.len()).filter(|&i| i != kbuf))?;
+        return Some((Key { inner: *w, args }, Site::Bare));
+    }
+    None
 }
 
 /// The positions of a statement that are evaluated whenever the statement runs: the
@@ -508,142 +581,413 @@ fn always_evaluated<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
     }
 }
 
-/// Does `v` write a store, call a function this pass cannot see the effects of, or assign
-/// one of `vars`?
-fn disturbs(v: &Value, vars: &[u16], data: &Data, free: &HashSet<u32>) -> bool {
-    v.any_node(&mut |n| match n {
-        Value::Set(x, _) => vars.contains(x),
-        Value::Call(d, _) => {
+/// Does statement `s` hold a call of `key`, and is one of them always evaluated by it?
+fn sites_in(s: &Value, key: &Key, r: &Rules, data: &Data) -> (bool, bool) {
+    let mut always = Vec::new();
+    always_evaluated(s, &mut always);
+    let (mut has, mut alw) = (false, false);
+    s.walk(&mut |n| {
+        if site_of(n, r, data).is_some_and(|(k, _)| &k == key) {
+            has = true;
+            alw |= always.iter().any(|p| std::ptr::eq(p.unspan(), n.unspan()));
+        }
+    });
+    (has, alw)
+}
+
+/// Does an `if` arm leave the function — its last statement a `return`?  Nothing it does
+/// reaches a statement after the `if`.
+fn leaves(arm: &Value) -> bool {
+    match arm.unspan() {
+        Value::Return(_) => true,
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .rev()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            .is_some_and(leaves),
+        _ => false,
+    }
+}
+
+/// The context [`disturbs`] answers in: the caller's FRESH locals (rooted at a store the
+/// caller made after its arguments were bound) and whether the reused call's arguments are
+/// out of their reach (every one a parameter or a scalar).
+struct Reach<'a> {
+    fresh: &'a HashSet<u16>,
+    apart: bool,
+}
+
+/// Does `v` write a store the call's arguments may live in, call a function this pass
+/// cannot see the effects of, or assign one of the arguments?  With `beside`, a call of
+/// `key` itself is not looked into.  A write rooted at a fresh local is none of these when
+/// the arguments are apart; an arm that leaves the function reaches no later statement.
+///
+/// With `after`, what statement `v` does once a call of `key` inside it has been evaluated is
+/// not looked at either: a call or an assignment that takes the call's value acts after it.
+/// That answers whether the call there still reads what the first call read; whether a LATER
+/// call does is the question without `after`.
+fn disturbs(
+    v: &Value,
+    key: &Key,
+    data: &Data,
+    r: &Rules,
+    reach: &Reach,
+    beside: bool,
+    after: bool,
+) -> bool {
+    if beside && site_of(v, r, data).is_some_and(|(k, _)| &k == key) {
+        return false;
+    }
+    let deeper = |c: &Value| disturbs(c, key, data, r, reach, beside, after);
+    let takes_site = |c: &Value| after && contains_site(c, key, data, r);
+    match v.unspan() {
+        Value::Set(x, val) => (key.args.contains(x) && !takes_site(val)) || deeper(val),
+        Value::Call(d, args) => {
             let name = data.def(*d).name();
-            !(free.contains(d) || reads_only(name))
+            let this = if args.iter().any(takes_site)
+                || r.free.contains(d)
+                || data.def(*d).synthetic() == Some(crate::shared_call::VARIANT)
+                || reads_only(name)
+                || crate::shared_call::pure_native(data, *d)
+            {
+                false
+            } else if let Some(ts) = own_writes(name) {
+                !(reach.apart
+                    && ts.iter().all(|&t| {
+                        args.get(t)
+                            .and_then(|a| root(a, data))
+                            .is_some_and(|x| reach.fresh.contains(&x))
+                    }))
+            } else {
+                true
+            };
+            this || args.iter().any(deeper)
+        }
+        Value::If(test, then, els) => {
+            deeper(test) || (!leaves(then) && deeper(then)) || (!leaves(els) && deeper(els))
         }
         Value::CallRef(..) | Value::Yield(_) => true,
+        _ => {
+            let mut hit = false;
+            v.for_each_child(&mut |c| hit = hit || deeper(c));
+            hit
+        }
+    }
+}
+
+/// Does `v` hold a call of `key`?
+fn contains_site(v: &Value, key: &Key, data: &Data, r: &Rules) -> bool {
+    v.any_node(&mut |n| site_of(n, r, data).is_some_and(|(k, _)| &k == key))
+}
+
+/// The locals of a body that only ever hold a store the body made: assigned `null`, a
+/// literal, or a field, element or new record of another such local (the greatest fixed
+/// point: a local leaves the set once one assignment gives it anything else).
+fn fresh_locals(ops: &[Value], f: u32, data: &Data) -> HashSet<u16> {
+    let vars = &data.def(f).variables;
+    let mut sets: Vec<(u16, &Value)> = Vec::new();
+    for op in ops {
+        op.walk(&mut |n| {
+            if let Value::Set(x, v) = n {
+                sets.push((*x, v));
+            }
+        });
+    }
+    let mut fresh: HashSet<u16> = sets
+        .iter()
+        .map(|(x, _)| *x)
+        .filter(|x| !vars.is_argument(*x))
+        .collect();
+    loop {
+        let out: Vec<u16> = sets
+            .iter()
+            .filter(|(x, v)| fresh.contains(x) && !fresh_value(v, &fresh, data))
+            .map(|(x, _)| *x)
+            .collect();
+        if out.is_empty() {
+            return fresh;
+        }
+        for x in out {
+            fresh.remove(&x);
+        }
+    }
+}
+
+fn fresh_value(v: &Value, fresh: &HashSet<u16>, data: &Data) -> bool {
+    match v.unspan() {
+        Value::Null
+        | Value::Int(_)
+        | Value::Long(_)
+        | Value::Float(_)
+        | Value::Single(_)
+        | Value::Boolean(_)
+        | Value::Enum(..)
+        | Value::Text(_) => true,
+        Value::Var(y) => fresh.contains(y),
+        Value::Call(d, args) => {
+            let name = data.def(*d).name();
+            (name.starts_with("OpGet") || name == "OpNewRecord")
+                && args
+                    .first()
+                    .and_then(|a| root(a, data))
+                    .is_some_and(|x| fresh.contains(&x))
+        }
+        Value::Block(bl) => bl
+            .operators
+            .last()
+            .is_some_and(|l| fresh_value(l, fresh, data)),
         _ => false,
+    }
+}
+
+/// Can no store write reach the call's arguments except through a parameter's store: is
+/// every argument a parameter of `f`, or a scalar?
+fn apart(key: &Key, f: u32, data: &Data) -> bool {
+    let vars = &data.def(f).variables;
+    key.args.iter().all(|&a| {
+        vars.is_argument(a)
+            || matches!(
+                vars.tp(a).base(),
+                crate::data::Type::Integer(_)
+                    | crate::data::Type::Float
+                    | crate::data::Type::Single
+                    | crate::data::Type::Boolean
+                    | crate::data::Type::Character
+            )
     })
 }
 
 /// Reuse within one block's statements; answers whether it rewrote anything.
+///
+/// A key is taken from statement `i` and its later calls are collected up to the first
+/// statement that disturbs the arguments.  An effect-free call is reused when its first and
+/// later calls are each where their statement always evaluates them; a TOTAL one wherever
+/// they stand, as long as one of them is always evaluated, so the call computed up front is
+/// one a path would have made anyway.  `done` holds the keys already computed up front.
+#[allow(clippy::too_many_arguments)]
 fn reuse_in_block(
     ops: &mut Vec<Value>,
     f: u32,
     data: &mut Data,
-    free: &HashSet<u32>,
-    wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
+    db: &mut crate::database::Stores,
+    r: &Rules,
+    variants: &mut crate::fxhash::FxHashMap<u32, (u32, usize)>,
+    done: &mut Vec<Key>,
     trace: bool,
 ) -> bool {
-    // The first reusable call of each statement, with where it stands.
+    let fresh = fresh_locals(ops, f, data);
     for i in 0..ops.len() {
-        let mut first_positions = Vec::new();
-        always_evaluated(&ops[i], &mut first_positions);
-        let Some((key, ..)) = first_positions.iter().find_map(|p| call_key(p, wrappers)) else {
-            continue;
-        };
-        for j in i + 1..ops.len() {
-            let mut positions = Vec::new();
-            always_evaluated(&ops[j], &mut positions);
-            if !positions
-                .iter()
-                .any(|p| call_key(p, wrappers).is_some_and(|(k, ..)| k == key))
+        let mut keys: Vec<Key> = Vec::new();
+        ops[i].walk(&mut |n| {
+            if let Some((k, _)) = site_of(n, r, data)
+                && !done.contains(&k)
+                && !keys.contains(&k)
             {
-                // A statement between the two must disturb nothing the call reads.
-                if disturbs(&ops[j], &key.args, data, free) {
-                    break;
-                }
+                keys.push(k);
+            }
+        });
+        for key in keys {
+            let total = r.total.contains(&key.inner);
+            let (_, always_i) = sites_in(&ops[i], &key, r, data);
+            if !total && !always_i {
                 continue;
             }
-            // Statement `i` beyond its call — its arms — must disturb nothing either.
-            if disturbs_beside_call(&ops[i], &key, &key.args, data, free, wrappers) {
-                break;
+            let reach = Reach {
+                fresh: &fresh,
+                apart: apart(&key, f, data),
+            };
+            let mut later = Vec::new();
+            let mut any_always = always_i;
+            for (j, stmt) in ops.iter().enumerate().skip(i + 1) {
+                let (has, alw) = sites_in(stmt, &key, r, data);
+                if !has {
+                    if disturbs(stmt, &key, data, r, &reach, false, false) {
+                        break;
+                    }
+                    continue;
+                }
+                if !total && !alw {
+                    break;
+                }
+                if disturbs(stmt, &key, data, r, &reach, true, false) {
+                    // Disturbed only once its call has been evaluated: the last one reused.
+                    if !disturbs(stmt, &key, data, r, &reach, true, true) {
+                        later.push(j);
+                        any_always |= alw;
+                    }
+                    break;
+                }
+                later.push(j);
+                any_always |= alw;
             }
-            rewrite(ops, i, j, &key, f, data, wrappers);
+            if later.is_empty()
+                || !any_always
+                || disturbs(&ops[i], &key, data, r, &reach, true, false)
+            {
+                continue;
+            }
+            // A sharing wrapper's call needs the wrapper's variant.
+            let mut ok = true;
+            let mut need = Vec::new();
+            for &at in std::iter::once(&i).chain(&later) {
+                ops[at].walk(&mut |n| {
+                    if let Some((k, Site::Variant(w))) = site_of(n, r, data)
+                        && k == key
+                        && !variants.contains_key(&w)
+                        && !need.contains(&w)
+                    {
+                        need.push(w);
+                    }
+                });
+            }
+            for w in need {
+                match crate::shared_call::variant(data, db, w, &r.sharers[&w]) {
+                    Some(v) => {
+                        variants.insert(w, v);
+                    }
+                    None => ok = false,
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let shared = rewrite(ops, i, &later, &key, f, data, db, r, variants);
             if trace {
                 crate::loft_eprintln!(
-                    "[pure-reuse] {}: {} computed once",
+                    "[pure-reuse] {}: {} computed once{}",
                     data.def(f).name(),
-                    data.def(key.inner).name()
+                    data.def(key.inner).name(),
+                    if shared { ", shared" } else { "" }
                 );
             }
+            done.push(key);
             return true;
         }
     }
     false
 }
 
-/// Does statement `s`, apart from its reusable call itself, disturb the call's arguments?
-fn disturbs_beside_call(
-    s: &Value,
-    key: &Key,
-    vars: &[u16],
-    data: &Data,
-    free: &HashSet<u32>,
-    wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
-) -> bool {
-    s.any_node(&mut |n| {
-        if call_key(n, wrappers).is_some_and(|(k, ..)| &k == key) {
-            return false;
-        }
-        match n {
-            Value::Set(x, _) => vars.contains(x),
-            Value::Call(d, _) => {
-                let name = data.def(*d).name();
-                !(free.contains(d) || reads_only(name) || wrappers.contains_key(d))
-            }
-            Value::CallRef(..) | Value::Yield(_) => true,
-            _ => false,
-        }
-    })
-}
-
-/// Bind the call once before statement `i` and make both statements read it.
+/// Bind the call once before statement `i` and make it and every statement of `later` read
+/// it.  Answers whether a call other than a projection's read was replaced (the shared-call
+/// clause).
+#[allow(clippy::too_many_arguments)]
 fn rewrite(
     ops: &mut Vec<Value>,
     i: usize,
-    j: usize,
+    later: &[usize],
     key: &Key,
     f: u32,
     data: &mut Data,
-    wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
-) {
-    crate::rewrite_census::fired("R-PureReuse", 1);
+    db: &mut crate::database::Stores,
+    r: &Rules,
+    variants: &crate::fxhash::FxHashMap<u32, (u32, usize)>,
+) -> bool {
     let inner = data.def(key.inner);
     let ret_tp = inner.returned.without_deps();
-    let buf_tp = inner
-        .hidden_return_buffer_attr()
-        .map(|k| inner.attributes()[k].typedef.clone());
+    let kbuf = inner.hidden_return_buffer_attr();
+    let buf_tp = kbuf.map(|k| inner.attributes()[k].typedef.clone());
+    let vector = crate::shared_call::vector_buffer(data, key.inner).is_some();
     let vars = &mut data.definitions[f as usize].variables;
-    let local = vars.add_unique("reuse", &ret_tp, u16::MAX);
     let mut args: Vec<Value> = key.args.iter().map(|a| Value::Var(*a)).collect();
     let mut prelude = Vec::new();
-    if let Some(btp) = buf_tp {
-        let buf = vars.add_unique("reuse_buf", &btp, u16::MAX);
-        prelude.push(Value::Set(buf, Box::new(Value::Null)));
-        args.push(Value::Var(buf));
+    let mut prologue = None;
+    // The local is numbered before its buffer, as the parser binds `v = f(…)`.
+    let local = vars.add_unique("reuse", &ret_tp, u16::MAX);
+    if let (Some(k), Some(btp)) = (kbuf, &buf_tp) {
+        let buf = vars.add_unique("reuse_buf", btp, u16::MAX);
+        if vector {
+            // Declared in the body's prologue beside the parser's own buffers.
+            prologue = Some(Value::Set(buf, Box::new(Value::Null)));
+        } else {
+            prelude.push(Value::Set(buf, Box::new(Value::Null)));
+        }
+        args.insert(k.min(args.len()), Value::Var(buf));
     }
     prelude.push(Value::Set(local, Box::new(Value::Call(key.inner, args))));
-    for at in [i, j] {
-        replace_calls(&mut ops[at], key, local, wrappers);
+    let mut shared = false;
+    for &at in std::iter::once(&i).chain(later) {
+        shared |= replace_calls(&mut ops[at], key, local, data, r, variants);
     }
+    if vector && let Some(k) = kbuf {
+        let given_tp = ret_tp.clone();
+        if let crate::data::Type::Vector(content, _) = given_tp.base()
+            && let Some(tp) = data.vector_element_type(content, db)
+        {
+            let counts = crate::shared_call::buffer_uses(ops.iter());
+            let hit = std::cell::Cell::new(false);
+            for &at in std::iter::once(&i).chain(later) {
+                crate::shared_call::hand_in(
+                    &mut ops[at],
+                    data,
+                    &|c: &Value| {
+                        let is = site_of(c, r, data)
+                            .is_some_and(|(kk, s)| &kk == key && matches!(s, Site::Bare));
+                        hit.set(hit.get() || is);
+                        is
+                    },
+                    &Value::Var(local),
+                    k,
+                    tp,
+                    &|b| counts.throwaway(b),
+                    &given_tp,
+                );
+            }
+            shared |= hit.get();
+        }
+    }
+    crate::rewrite_census::fired(
+        if shared {
+            "R-PureReuse/shared"
+        } else {
+            "R-PureReuse"
+        },
+        1,
+    );
     for (offset, stmt) in prelude.into_iter().enumerate() {
         ops.insert(i + offset, stmt);
     }
+    if let Some(init) = prologue {
+        ops.insert(0, init);
+    }
+    shared
 }
 
-/// Replace each reusable call `key` in `v` by its read of `t`.
+/// Replace each projection read and sharing-wrapper call of `key` in `v` by its read of
+/// `local`: the read, or the variant handed `local`.  Answers whether a variant was called.
 fn replace_calls(
     v: &mut Value,
     key: &Key,
     local: u16,
-    wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
-) {
-    if let Some((k, read, consts)) = call_key(v, wrappers)
+    data: &Data,
+    r: &Rules,
+    variants: &crate::fxhash::FxHashMap<u32, (u32, usize)>,
+) -> bool {
+    if let Some((k, site)) = site_of(v, r, data)
         && &k == key
     {
-        let mut args = vec![Value::Var(local)];
-        args.extend(consts);
-        *v = Value::Call(read, args);
-        return;
+        match site {
+            Site::Read(read, consts) => {
+                let mut args = vec![Value::Var(local)];
+                args.extend(consts);
+                *v = Value::Call(read, args);
+                return false;
+            }
+            Site::Variant(w) => {
+                let (w2, at) = variants[&w];
+                if let Value::Call(_, wargs) = v.unspan() {
+                    let mut args = wargs.clone();
+                    args.insert(at.min(args.len()), Value::Var(local));
+                    *v = Value::Call(w2, args);
+                }
+                return true;
+            }
+            Site::Bare => return false,
+        }
     }
-    v.for_each_child_mut(&mut |c| replace_calls(c, key, local, wrappers));
+    let mut shared = false;
+    v.for_each_child_mut(&mut |c| shared |= replace_calls(c, key, local, data, r, variants));
+    shared
 }
 
 /// `LOFT_PURE_REUSE_DUMP=<fn>` — print the named function's body as the scope pass receives it.
@@ -669,17 +1013,33 @@ fn dump(data: &Data) {
 }
 
 /// The pass over the whole program.
-pub fn rewrite_program(data: &mut Data) {
+pub fn rewrite_program(data: &mut Data, db: &mut crate::database::Stores) {
     if crate::keys::pure_reuse_enabled() {
         let free = effect_free(data);
+        let total = crate::shared_call::total(data, &free);
         let mut wrappers = crate::fxhash::FxHashMap::default();
+        let mut sharers = crate::fxhash::FxHashMap::default();
+        // A variant changes which functions a call enters: not where a definition can change
+        // after its calls are compiled, nor where a run reports the functions it entered.
+        let variants_allowed = !data.open_world && !data.observes_entries;
         for w in candidates(data) {
             if let Some(p) = projection_of(data, w, &free) {
                 wrappers.insert(w, p);
+            } else if variants_allowed
+                && let Some(s) = crate::shared_call::sharing_of(data, w, &free, &total)
+            {
+                sharers.insert(w, s);
             }
         }
-        if !wrappers.is_empty() {
+        if !wrappers.is_empty() || !sharers.is_empty() || !total.is_empty() {
             let trace = crate::keys::trace_pure_reuse();
+            let rules = Rules {
+                free: &free,
+                total: &total,
+                wrappers: &wrappers,
+                sharers: &sharers,
+            };
+            let mut variants = crate::fxhash::FxHashMap::default();
             for f in candidates(data) {
                 if data.def(f).variables.done {
                     continue;
@@ -689,7 +1049,17 @@ pub fn rewrite_program(data: &mut Data) {
                     std::mem::replace(&mut data.definitions[f as usize].code, Value::Null);
                 if let Value::Block(bl) = &mut code {
                     let mut ops = std::mem::take(&mut bl.operators);
-                    while reuse_in_block(&mut ops, f, data, &free, &wrappers, trace) {}
+                    let mut done = Vec::new();
+                    while reuse_in_block(
+                        &mut ops,
+                        f,
+                        data,
+                        db,
+                        &rules,
+                        &mut variants,
+                        &mut done,
+                        trace,
+                    ) {}
                     bl.operators = ops;
                 }
                 data.definitions[f as usize].code = code;

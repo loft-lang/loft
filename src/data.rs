@@ -564,6 +564,80 @@ impl Value {
         }
     }
 
+    /// Renumber frame variable `from` to `to` throughout this IR: every `Var`, `Set`,
+    /// `CallRef`, tuple and iterator variable, and the frame deps of every block's result type.
+    /// A `Call`'s first field is a definition, not a variable, and is left alone.  The caller
+    /// renumbers the variable table's own type deps in tandem.
+    pub fn renumber_frame_var(&mut self, from: u16, to: u16) {
+        match self {
+            Value::Var(n) if *n == from => *n = to,
+            Value::Set(v, inner) => {
+                if *v == from {
+                    *v = to;
+                }
+                inner.renumber_frame_var(from, to);
+            }
+            // `CallRef`'s first field is the fn-ref VARIABLE (remap it); `Call`'s is a
+            // def_nr (a definition, NOT a variable — leave it). Missing the CallRef var
+            // desyncs it from the swapped variable table → codegen's `generate_call_ref`
+            // reads a non-`Function` slot and panics (loft-lang/loft#568 default-on).
+            Value::CallRef(v, xs) => {
+                if *v == from {
+                    *v = to;
+                }
+                for x in xs {
+                    x.renumber_frame_var(from, to);
+                }
+            }
+            Value::Call(_, xs) | Value::Insert(xs) | Value::Tuple(xs) | Value::Parallel(xs) => {
+                for x in xs {
+                    x.renumber_frame_var(from, to);
+                }
+            }
+            Value::Block(bl) | Value::Loop(bl) => {
+                bl.result.renumber_frame_deps(from, to);
+                for op in &mut bl.operators {
+                    op.renumber_frame_var(from, to);
+                }
+            }
+            Value::If(c, t, e) => {
+                c.renumber_frame_var(from, to);
+                t.renumber_frame_var(from, to);
+                e.renumber_frame_var(from, to);
+            }
+            Value::Return(inner) | Value::Drop(inner) | Value::Yield(inner) => {
+                inner.renumber_frame_var(from, to);
+            }
+            Value::Span(b) => b.1.renumber_frame_var(from, to),
+            Value::Iter(v, a, b, c) => {
+                if *v == from {
+                    *v = to;
+                }
+                a.renumber_frame_var(from, to);
+                b.renumber_frame_var(from, to);
+                c.renumber_frame_var(from, to);
+            }
+            Value::TupleGet(v, _) => {
+                if *v == from {
+                    *v = to;
+                }
+            }
+            Value::TuplePut(v, _, inner) => {
+                if *v == from {
+                    *v = to;
+                }
+                inner.renumber_frame_var(from, to);
+            }
+            Value::FnRef(_, v, ty) => {
+                if *v == from {
+                    *v = to;
+                }
+                ty.renumber_frame_deps(from, to);
+            }
+            _ => {}
+        }
+    }
+
     /// Plan-07 phase 1, step 1.B.0 — see through any number of nested
     /// `Value::Span` wrappers and return the inner non-Span node.
     ///
@@ -4197,7 +4271,9 @@ pub enum Purity {
     /// impure by the analyser to avoid false positives.
     #[default]
     Unknown,
-    /// `#pure` — no observable side effects, no parent-store writes.
+    /// `#pure` — the value is the only effect: no observable side effect, no parent-store
+    /// write, and (what a native's declaration also promises) it always returns and reports
+    /// nothing, so `@FR-R-PureReuse` may compute a call ahead of a test that skipped it.
     /// Always par-safe.
     Pure,
     /// `#impure(category)` — observable side effect, classified by
@@ -6961,6 +7037,34 @@ impl Data {
             synthetic: None,
         };
         self.definitions.push(new_def);
+        rec
+    }
+
+    /// A copy of function `of` under `name`, in `of`'s source: a VARIANT a rewrite builds
+    /// from it (`@FR-R-PureReuse`'s shared-call clause).  The copy is a function of its own —
+    /// unlinked from `of`'s parent chain, its code not yet compiled — that the caller then
+    /// changes; `of` itself is untouched.
+    ///
+    /// # Panics
+    /// When a definition named `name` already exists in `of`'s source.
+    pub fn add_variant_fn(&mut self, of: u32, name: &str, why: &'static str) -> u32 {
+        let rec = self.definitions();
+        let mut def = self.definitions[of as usize].clone();
+        assert!(
+            !self.def_names.contains(name, def.source),
+            "Dual definition of {name}"
+        );
+        self.def_names.insert(name, def.source, rec);
+        def.name = name.to_string();
+        def.variables.name = name.to_string();
+        def.parent = u32::MAX;
+        def.first_child = u32::MAX;
+        def.next_sibling = u32::MAX;
+        def.code_position = 0;
+        def.code_length = 0;
+        def.pub_visible = false;
+        def.synthetic = Some(why);
+        self.definitions.push(def);
         rec
     }
 

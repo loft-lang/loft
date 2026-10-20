@@ -5516,6 +5516,45 @@ native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  S
 `LOFT_NO_PURE_REUSE=1`, trace `LOFT_TRACE_PURE_REUSE=1`.  Site: `pure_reuse.rs`.  Guard
 `tests/scripts/a-pure-call-made-twice-is-computed-once.loft`, pin `tests/pure_reuse.rs`.
 
+```
+  (R-PureReuse)  THE SHARED-CALL CLAUSE.  A function is TOTAL when it is effect-free, has
+  shared         no loop, reaches no call of itself, uses only operators that read,
+                 compare or hand a buffer on (`OpClearVector`, `OpAdoptVector` into its
+                 own buffer) — none that can report a fault, so no checked arithmetic —
+                 and calls only total functions and natives declared `#pure`.  `#pure` on
+                 a native declares exactly this: its value is its only effect.  A
+                 SHARING WRAPPER of a total `f` whose result is a vector is an
+                 effect-free function of the same load whose body makes ONE call of `f`,
+                 on parameters it never assigns, into a buffer of its own.  In one block,
+                 calls of a total `f` on the same argument variables — each a sharing
+                 wrapper's call or a call of `f` itself, standing anywhere in their
+                 statements, at least one where its statement always evaluates it —
+                 with nothing between them, nor beside them in their statements, that
+                 rebinds an argument or writes a store other than one the function made
+                 itself (when every argument is a parameter or a scalar), are `f` called
+                 once into a fresh local before the first.  A call of `f` reads that
+                 local, or copies it into the buffer it was handed; a wrapper's call is
+                 its VARIANT's: the wrapper taking the vector as one more parameter,
+                 standing where its body called `f`.  An `if` arm that leaves the
+                 function is not between: no later call is reached from it.
+```
+
+**In words.** Applies in: the IR phase, beside the projection clause, both backends; not where a
+definition can change after its calls are compiled (`open_world`) nor where a run reports the
+functions it entered (`observes_entries`), since a variant is entered instead of its wrapper.
+Allowed because a total call answers the same value wherever it runs on unchanged arguments
+and adds neither an effect nor a report: computing it before a short circuit that would have
+skipped it costs only the work.  Profitable because one call stands where its statement
+always evaluates it — the path that reaches it makes that call anyway — so the extra call is
+paid only on a path that leaves in between, an error return.  A store the function made
+itself (assigned only `null`, a literal, or a field, element or new record of another such
+local) was made after the arguments were bound, so no argument can live in it; a write there
+cannot change what the call would answer.  What it removes: a request that validated each
+base64 payload (`pa_is_base64`) and then decoded it again to use (`pa_cbytes`) decoded every
+payload twice; native `request` 6.88 → 4.72 ms (−31 %), the hand-written form exactly.
+Trace `LOFT_TRACE_PURE_REUSE=1` (`…, shared`).  Site: `shared_call.rs`.  Guard
+`tests/scripts/a-call-two-wrappers-share-is-made-once.loft`, pin `tests/pure_reuse.rs`.
+
 ### Two equal reads in one statement are one read
 
 ```
