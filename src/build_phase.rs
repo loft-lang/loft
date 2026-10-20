@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// The compile action a target maps to — named by the target's `shape`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
-    /// `--native --check`: full native codegen + rustc compile, no run.
+    /// `--native-release --out dist`: the shipped program and its libraries in `dist/`.
     Native,
     /// `--html`: a self-contained browser page (wasm32-unknown-unknown).
     Html,
@@ -44,13 +44,13 @@ impl Shape {
         }
     }
 
-    /// The `loft` flags that drive this shape's compile.  `native` uses
-    /// `--check` so it compiles + reports without RUNNING the program (a build,
-    /// not an execution); `html` / `wasi` write their artifact file.
+    /// The `loft` flags that drive this shape's compile.  `native` writes the shipped
+    /// program and every library file it links into `dist/` (@PLN195) without RUNNING it
+    /// (a build, not an execution); `html` / `wasi` write their artifact file.
     #[must_use]
     pub fn compile_args(self) -> &'static [&'static str] {
         match self {
-            Shape::Native => &["--native", "--check"],
+            Shape::Native => &["--native-release", "--out", "dist"],
             Shape::Html => &["--html"],
             Shape::Wasi => &["--native-wasm"],
         }
@@ -255,7 +255,8 @@ fn describe(t: &ResolvedTarget) -> String {
 /// Drive `loft build`: resolve `requested` (or the default targets when empty),
 /// run the applicable `[[build.asset]]` steps (stale ones only, unless `force`),
 /// doctor-check each target's `requires`, and compile it by re-invoking this loft
-/// binary with the shape's flags on `entry` (from `project_dir`).  Returns `true`
+/// binary with the shape's flags on `entry` (from `project_dir`).  `install` also places a
+/// native target's libraries in the per-user root (`--install-libs`, @PLN195).  Returns `true`
 /// only if every asset and target succeeded.
 #[must_use]
 pub fn run(
@@ -264,6 +265,7 @@ pub fn run(
     manifest: &Manifest,
     project_dir: &Path,
     force: bool,
+    install: bool,
 ) -> bool {
     let names: Vec<String> = if requested.is_empty() {
         default_targets(manifest)
@@ -312,6 +314,11 @@ pub fn run(
         eprintln!("loft build: building `{name}` ({}) …", describe(&target));
         let status = Spawn::new(Program::os(&loft_exe))
             .args(target.shape.compile_args())
+            .args(if install && target.shape == Shape::Native {
+                &["--install-libs"][..]
+            } else {
+                &[]
+            })
             .arg(entry)
             .cwd(&PathText::from_os(project_dir))
             .status();
@@ -947,7 +954,7 @@ pub fn check(
     project_dir: &Path,
     force: bool,
 ) -> bool {
-    let build_ok = run(requested, entry, manifest, project_dir, force);
+    let build_ok = run(requested, entry, manifest, project_dir, force, false);
     let test_ok = run_test_phase(manifest, project_dir, force);
     build_ok && test_ok
 }

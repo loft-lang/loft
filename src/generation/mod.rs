@@ -718,6 +718,17 @@ pub struct HeldIndex {
     pub vector: String,
 }
 
+/// How generated code reaches a native package's functions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackageLink {
+    /// `extern crate <pkg>`: the package's rlib is linked into the unit (a static link, wasm).
+    Crate,
+    /// `extern "C"` symbols the OS loader binds from the package's library file.
+    CAbi,
+    /// @PLN195 — slots the program fills itself at start (`loft::native_bind`).
+    Bound,
+}
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -1622,6 +1633,12 @@ pub struct Output<'a> {
     /// False for wasm32-wasip2 (links the cross-compiled rlib) and `wasm_browser`
     /// (host imports).
     pub native_cabi: bool,
+    /// @PLN195 — a host-native PROGRAM binds its package libraries itself: the header
+    /// declares each package function as a slot filled at start by
+    /// `loft::native_bind::bind`, not as an `extern "C"` symbol the OS loader binds before
+    /// `main`.  Off for a library unit (its host loads the libraries) and for every other
+    /// target; [`Self::binds_libraries`] adds the rest of the condition.
+    pub native_bind: bool,
     /// @PLN26 phase 1 — `#native` symbols exported by 2+ packages.  A *reachable*
     /// call to one is rejected at native codegen (the flat C-ABI namespace can't
     /// disambiguate); two packages sharing an UNUSED symbol still build.  Computed
@@ -2595,6 +2612,7 @@ impl<'a> Output<'a> {
             wasm_browser: false,
             wasm_wasi: false,
             native_cabi: false,
+            native_bind: false,
             native_collisions: data
                 .native_symbol_collisions()
                 .into_iter()
@@ -8115,16 +8133,144 @@ fn loft_ckpt_report() {{
         w.write_all(buf)?;
         write!(w, "}})")
     }
+    /// How the header reaches the native packages' functions ([`PackageLink`]).
+    fn package_link(&self) -> PackageLink {
+        if self.binds_libraries() {
+            PackageLink::Bound
+        } else if self.native_cabi {
+            PackageLink::CAbi
+        } else {
+            PackageLink::Crate
+        }
+    }
+
+    /// @PLN195 — does this program bind its native libraries itself?  A host-native program
+    /// build asked for it (`native_bind`) and declares at least one package function: the
+    /// header then writes slots and a table instead of an `extern "C"` block, and `main`
+    /// fills them first.  A program that calls into no package is emitted as before.
+    fn binds_libraries(&self) -> bool {
+        self.native_bind
+            && self.native_cabi
+            && !self.no_c_abi()
+            && (0..self.data.definitions()).any(|d| Self::is_bound_native(self.data, d))
+    }
+
+    /// A body-less `#native` function of a `[native] crate` package — the functions the
+    /// C-ABI header declares (the filter of its loop, kept in one place for the table).
+    fn is_bound_native(data: &Data, d_nr: u32) -> bool {
+        let def = data.def(d_nr);
+        !def.native().is_empty()
+            && *def.code() == Value::Null
+            && data.native_symbol_crates.contains_key(def.native())
+    }
+
+    /// @PLN195 — one package function as a slot.  The slot starts at a stub that binds the
+    /// libraries on first use (a unit whose `main` did not run `__loft_bind` first) and
+    /// reports the symbol by name if it is still unbound after that; the `__cabi_` caller
+    /// is an indirect call through it — measured as noise against the linked call (P0).
+    fn emit_bind_slot(
+        w: &mut dyn Write,
+        native: &str,
+        link: &str,
+        sig: &str,
+        ret: &str,
+    ) -> std::io::Result<()> {
+        let params: Vec<(&str, &str)> = sig
+            .split(", ")
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| p.split_once(": "))
+            .collect();
+        let names = params.iter().map(|p| p.0).collect::<Vec<_>>().join(", ");
+        let types = params.iter().map(|p| p.1).collect::<Vec<_>>().join(", ");
+        writeln!(
+            w,
+            "#[allow(non_upper_case_globals)]\nstatic __NB_{native}: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(__nb_first_{native} as *mut ());"
+        )?;
+        writeln!(
+            w,
+            "unsafe extern \"C\" fn __nb_first_{native}({sig}){ret} {{ __loft_bind(); if __NB_{native}.load(std::sync::atomic::Ordering::Acquire) == __nb_first_{native} as *mut () {{ loft::native_bind::unbound({link:?}, __NB_LIBS) }} unsafe {{ __cabi_{native}({names}) }} }}"
+        )?;
+        writeln!(
+            w,
+            "#[inline(always)]\nunsafe fn __cabi_{native}({sig}){ret} {{ unsafe {{ std::mem::transmute::<*mut (), unsafe extern \"C\" fn({types}){ret}>(__NB_{native}.load(std::sync::atomic::Ordering::Relaxed))({names}) }} }}"
+        )
+    }
+
+    /// @PLN195 — the table `loft::native_bind::bind` fills the slots from: per package, its
+    /// name and version (the `<package>-<version>/` directory a shared root holds it in),
+    /// the library file's name on this OS, and the symbols the program can reach.  A
+    /// package none of whose functions is reachable is not listed, so its file is not
+    /// needed to run.  `__loft_bind` is the one entry point, called first by `main`.
+    fn emit_bind_table(
+        w: &mut dyn Write,
+        data: &Data,
+        reachable: &HashSet<u32>,
+    ) -> std::io::Result<()> {
+        let mut per_crate: std::collections::BTreeMap<&str, Vec<&str>> =
+            std::collections::BTreeMap::new();
+        for d in 0..data.definitions() {
+            if !Self::is_bound_native(data, d) || !(reachable.is_empty() || reachable.contains(&d))
+            {
+                continue;
+            }
+            let native = data.def(d).native();
+            let krate = data.native_symbol_crates[native].as_str();
+            let syms = per_crate.entry(krate).or_default();
+            if !syms.contains(&native) {
+                syms.push(native);
+            }
+        }
+        writeln!(w, "static __NB_LIBS: &[loft::native_bind::Library] = &[")?;
+        for (crate_name, pkg_dir) in &data.native_packages {
+            let ident = crate_name.replace('-', "_");
+            let Some(syms) = per_crate.get(ident.as_str()) else {
+                continue;
+            };
+            let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+            let package = manifest
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .unwrap_or_else(|| crate_name.clone());
+            let version = manifest
+                .as_ref()
+                .and_then(|m| m.version.clone())
+                .unwrap_or_else(|| "0".to_string());
+            let stem = manifest
+                .and_then(|m| m.native)
+                .unwrap_or_else(|| ident.clone());
+            let file = crate::native_build::platform_lib_name(&stem);
+            write!(
+                w,
+                "    loft::native_bind::Library {{ package: {package:?}, version: {version:?}, file: {file:?}, symbols: &["
+            )?;
+            for s in syms {
+                write!(
+                    w,
+                    "loft::native_bind::Symbol {{ name: {:?}, slot: &__NB_{s} }}, ",
+                    data.link_symbol(s)
+                )?;
+            }
+            writeln!(w, "] }},")?;
+        }
+        writeln!(w, "];")?;
+        writeln!(
+            w,
+            "fn __loft_bind() {{ loft::native_bind::bind(__NB_LIBS); }}"
+        )
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_file_header(
         w: &mut dyn Write,
         data: &Data,
         wasm_browser: bool,
         no_c_abi: bool,
-        native_cabi: bool,
+        package_link: PackageLink,
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
     ) -> std::io::Result<()> {
+        let native_cabi = package_link != PackageLink::Crate;
+        let native_bind = package_link == PackageLink::Bound;
         // Every `allow` here suppresses a rustc lint about GENERATED code, which a user
         // cannot act on and did not write: the emitter names every local whether or not
         // the body reads it, parenthesises defensively, and emits whatever the IR says.
@@ -8303,8 +8449,15 @@ extern crate loft;"
             // type-correct.  The opaque FFI types are named through loft's
             // own `loft_ffi` (`--extern loft_ffi`) — the only copy left in
             // the consumer now the cdylib's copy is sealed away.
+            //
+            // @PLN195 — or, when the program binds its libraries itself (`native_bind`), each
+            // symbol is a SLOT under the same `__cabi_` name instead, filled at start by
+            // `loft::native_bind::bind` from the table `emit_bind_table` writes below.  The call
+            // sites are the same either way.
             use std::fmt::Write as _;
-            writeln!(w, "unsafe extern \"C\" {{")?;
+            if !native_bind {
+                writeln!(w, "unsafe extern \"C\" {{")?;
+            }
             let mut declared = HashSet::new();
             for d_nr in 0..data.definitions() {
                 let def = data.def(d_nr);
@@ -8435,6 +8588,16 @@ extern crate loft;"
                 // implements it, which for a remapped binding is not the
                 // `#native` string.  The alias stays keyed on the `#native`
                 // string so call sites are unaffected.
+                if native_bind {
+                    Self::emit_bind_slot(
+                        w,
+                        def.native(),
+                        data.link_symbol(def.native()),
+                        &sig,
+                        &ret,
+                    )?;
+                    continue;
+                }
                 writeln!(
                     w,
                     "    #[link_name = \"{}\"]",
@@ -8442,7 +8605,11 @@ extern crate loft;"
                 )?;
                 writeln!(w, "    fn __cabi_{}({sig}){ret};", def.native())?;
             }
-            writeln!(w, "}}")?;
+            if native_bind {
+                Self::emit_bind_table(w, data, reachable)?;
+            } else {
+                writeln!(w, "}}")?;
+            }
         } else {
             // Emit extern crate declarations only for the native packages the
             // emitted (reachable) code actually calls (#307).  A library cdylib
@@ -8744,7 +8911,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
-            self.native_cabi,
+            self.package_link(),
             &self.reachable,
             self.checkpoints,
         )?;
@@ -8887,7 +9054,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
-            self.native_cabi,
+            self.package_link(),
             &reachable,
             self.checkpoints,
         )?;
@@ -9213,6 +9380,13 @@ extern crate loft;"
         };
         let _ = ckpt;
         let (prelude, args) = self.entry_call_extra_args();
+        // @PLN195 — a program that binds its native libraries itself fills the slots before
+        // anything runs.  Empty (and so byte-identical) for a program that links none.
+        let bind = if self.binds_libraries() {
+            "    __loft_bind();\n"
+        } else {
+            ""
+        };
         // #255 / @PLN9: bake the parse-time `#cwd` path-mode default.
         writeln!(
             w,
@@ -9252,7 +9426,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9293,7 +9467,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;

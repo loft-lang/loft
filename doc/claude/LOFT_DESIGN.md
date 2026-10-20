@@ -427,6 +427,26 @@ ignores it — an interpreted run loads libraries the same way either way.  A li
 in loft alone (`script`) is always compiled into the binary.  Guard:
 `tests/native.rs::a_static_link_ships_one_file_that_runs_alone`.
 
+**Shipping a dynamic program.**  `loft build native` (or `--out <dir>` on a native build)
+writes the program and every library file it uses into one directory — `dist/` — which runs
+wherever it is copied.  A dynamic program looks for each library in this order, the same on
+every OS:
+
+1. `LOFT_LIB_PATH`, a list of directories;
+2. its own directory;
+3. `~/.loft/lib/<package>-<version>/` (`LOFT_HOME` moves `~/.loft`);
+4. `/usr/local/lib/loft/<package>-<version>/` (`%ProgramData%\loft\lib\…` on Windows).
+
+No command-line argument is reserved for this, so a program's arguments are the same
+compiled or interpreted, and `LOFT_LIB_PATH` still reaches a program started through
+`/bin/sh` or a `#!` line on macOS.  The first two may also hold a library in a `<package>-<version>/` subdirectory.  The two
+shared roots hold libraries only by version, so programs built against different versions of
+one library each find their own.  `loft build --install` (or `--install-libs` on a native
+build) places a program's libraries in `~/.loft/lib/`.  A library found nowhere stops the
+program before it starts, with a message naming the package, the version it was built
+against, every directory searched and any other version that was there.  Guard:
+`tests/native.rs::a_dynamic_program_finds_its_libraries_where_loft_looks`.
+
 ### Closure capture: the value at definition, the write shared
 
 A captured scalar is taken by value when the closure is formed: a later write to the

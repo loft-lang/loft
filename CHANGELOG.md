@@ -144,6 +144,16 @@ loft, no `rustc`, no library file beside it.  Without it, such libraries stay se
 the binary loads at start, as before; `--dynamic` asks for that over a program's `#link
 static`.
 
+**A native program finds its libraries the same way on every OS.**  `loft build native` now
+writes `dist/`: the program and every library file it uses, a directory that runs wherever
+you copy it.  A program that keeps its libraries as separate files looks for them in a fixed
+order — `LOFT_LIB_PATH`, its own directory, then
+`~/.loft/lib/<package>-<version>/` and a system-wide root — instead of in a directory of the
+machine that built it.  `loft build --install` puts a program's libraries in `~/.loft/lib/`,
+where programs built against different versions of one library each find their own.  A
+missing library is a clear error naming the package, its version and where loft looked,
+rather than the OS loader's message.
+
 **A library can offer a few functions by their bare name.**  A library that auto-loads
 (`[triggers]` in its manifest) could already be reached by one of its methods or types with
 no `use`; it can now list *builders* — `builders = ["set"]` — and a bare `set(words)` in your

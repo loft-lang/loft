@@ -4959,6 +4959,156 @@ fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
     Ok(())
 }
 
+/// @PLN195 — a dynamic native program finds its libraries from a search order loft owns,
+/// not from a path the building machine wrote into it.  `--out` writes the program and its
+/// library side by side; copied to an empty directory with `LOFT_HOME` pointing at nothing,
+/// it runs.  The cells after it move the one library file and must each still answer — a
+/// shared root's `<package>-<version>/`, `LOFT_LIB_PATH` — and the controls take it away: alone, and
+/// beside a DIFFERENT version, the run must fail naming the package, the version and the
+/// directories searched.  The binary must not name the directory its library was built in.
+#[test]
+fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if find_loft_rlib().is_none() {
+        println!(
+            "a_dynamic_program_finds_its_libraries_where_loft_looks: skipped (no libloft.rlib / rustc)"
+        );
+        return Ok(());
+    }
+    let lib_dir = std::env::current_dir()?.join("tests/lib");
+    let library_file = format!(
+        "{}loft_native_scalar{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+    let root = std::env::temp_dir().join(format!("loft_lib_search_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    let src = root.join("src");
+    fa::create_dir_all(&src)?;
+    let program = src.join("p.loft");
+    fa::write(
+        &program,
+        "use native_scalar_pkg;\nfn main(args: vector<text>) { println(\"{native_scalar_pkg::native_answer()} {native_scalar_pkg::native_sentinel()} {len(args)}\"); }\n",
+    )?;
+    let dist = root.join("dist");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .args(["--native-release", "--dynamic", "--lib"])
+        .arg(&lib_dir)
+        .arg("--out")
+        .arg(&dist)
+        .arg(&program)
+        .env("LOFT_NATIVE_BIND", "loft")
+        .env("LOFT_TIMEOUT", "600")
+        .output()?;
+    assert!(
+        out.status.success(),
+        "--out failed:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let exe_name = format!("p{}", std::env::consts::EXE_SUFFIX);
+    let built_lib = dist.join(&library_file);
+    assert!(fa::is_file(&built_lib), "--out wrote no `{library_file}`");
+    // The directory the library was built in — the path a linked binary named as an rpath.
+    let build_dir = lib_dir
+        .join("native_scalar_pkg")
+        .join("native")
+        .join("target");
+    let needle = build_dir.to_string_lossy().into_owned();
+    let bytes = fa::read(dist.join(&exe_name))?;
+    assert!(
+        !bytes.windows(needle.len()).any(|w| w == needle.as_bytes()),
+        "the binary names the build directory `{needle}`"
+    );
+
+    let empty_home = root.join("home");
+    fa::create_dir_all(&empty_home)?;
+    let run = |dir: &Path, home: &Path, args: &[String], env: Option<&Path>| {
+        let mut cmd = loft::platform::process::harness_command(dir.join(&exe_name));
+        cmd.current_dir(dir)
+            .args(args)
+            .env("LOFT_HOME", home)
+            .env_remove("LOFT_LIB_PATH");
+        if let Some(e) = env {
+            cmd.env("LOFT_LIB_PATH", e);
+        }
+        cmd.output()
+    };
+    let place = |name: &str| -> std::io::Result<PathBuf> {
+        let d = root.join(name);
+        fa::create_dir_all(&d)?;
+        fa::copy(dist.join(&exe_name), d.join(&exe_name))?;
+        Ok(d)
+    };
+    let expect_ok = |cell: &str, o: std::process::Output| {
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout).trim(),
+            "42 -1 0",
+            "[{cell}] {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+
+    // Beside the binary: the copied dist directory.
+    let moved = place("moved")?;
+    fa::copy(&built_lib, moved.join(&library_file))?;
+    expect_ok("beside", run(&moved, &empty_home, &[], None)?);
+
+    // A shared root, by version.
+    let shared = root.join("shared");
+    let versioned = shared
+        .join(".loft")
+        .join("lib")
+        .join("native_scalar_pkg-0.1.0");
+    fa::create_dir_all(&versioned)?;
+    fa::copy(&built_lib, versioned.join(&library_file))?;
+    let alone = place("alone")?;
+    expect_ok("~/.loft/lib/<pkg>-<ver>", run(&alone, &shared, &[], None)?);
+
+    // The variable — and an argument the program is given stays the program's.
+    expect_ok("LOFT_LIB_PATH", run(&alone, &empty_home, &[], Some(&dist))?);
+    let arg = run(
+        &alone,
+        &empty_home,
+        &["--loft-lib-path=x".to_string()],
+        Some(&dist),
+    )?;
+    assert_eq!(
+        String::from_utf8_lossy(&arg.stdout).trim(),
+        "42 -1 1",
+        "an argument was taken from the program: {}",
+        String::from_utf8_lossy(&arg.stderr)
+    );
+
+    // Controls: nowhere, and only another version — each a loft error that names it all.
+    let other = root.join("other");
+    let wrong = other
+        .join(".loft")
+        .join("lib")
+        .join("native_scalar_pkg-0.0.9");
+    fa::create_dir_all(&wrong)?;
+    fa::copy(&built_lib, wrong.join(&library_file))?;
+    for (cell, home) in [("nowhere", &empty_home), ("another version", &other)] {
+        let o = run(&alone, home, &[], None)?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(1), "[{cell}] exit: {err}");
+        assert!(
+            err.contains("`native_scalar_pkg` 0.1.0") && err.contains("searched:"),
+            "[{cell}] the error names neither package nor version:\n{err}"
+        );
+        if cell == "another version" {
+            assert!(
+                err.contains("native_scalar_pkg-0.0.9"),
+                "[{cell}] the other version is not named:\n{err}"
+            );
+        }
+    }
+    let _ = fa::remove_dir_all(&root);
+    Ok(())
+}
+
 /// loft#907 — a `#native "sym"` its library implements under a DIFFERENT Rust
 /// name must reach that implementation on BOTH backends.
 ///

@@ -202,6 +202,16 @@ fn print_help() {
     println!(
         "  --dynamic                     link native libraries beside the binary (the default)"
     );
+    println!("  --out <dir>                   with a native build: write the program and every");
+    println!(
+        "                                library file it links into <dir>, which runs wherever"
+    );
+    println!("                                it is copied; the program is not run");
+    println!("  --install-libs                with a native build: place its libraries in");
+    println!(
+        "                                ~/.loft/lib/<package>-<version>/, where every program"
+    );
+    println!("                                built against that version finds them");
     println!(
         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
     );
@@ -338,6 +348,8 @@ fn print_help() {
     println!("                                build            — build [build] default-targets");
     println!("                                build html wasi  — build the named targets");
     println!("                                (targets: native | html | wasi | [build.target.*])");
+    println!("                                native writes dist/: the program and its libraries;");
+    println!("                                --install also places the libraries in ~/.loft/lib/");
     println!("  check [target...]             build + run the declared [[test]] phase (the gate)");
     println!(
         "                                (in a project; `check <file.loft>` compile-checks it)"
@@ -4300,6 +4312,7 @@ fn native_source_key_fingerprint(
     html_names.hash(&mut h);
     debug_name.hash(&mut h);
     native_utils::native_cabi_enabled().hash(&mut h);
+    native_utils::native_bind_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
     // Every runtime rlib a build could link, not the one it would choose: choosing asks the
@@ -4422,6 +4435,7 @@ fn exec_native_binary(
     if let (Some(dir), Some(data)) = (binary.parent(), data) {
         native_utils::stage_native_dlls(dir, data);
     }
+    let lib_path = data.and_then(native_utils::lib_path_env);
     // loft#865 — the loft-level profiler cannot follow the program here, and this
     // is the LAST point at which that is still certain: everything before it may
     // still `break 'native` and interpret after all, where the sampler does arm.
@@ -4459,6 +4473,10 @@ fn exec_native_binary(
             |n| data.expect("checked").def(n).position().file.to_string(),
         );
     cmd.push_env("LOFT_NATIVE_MAIN_FILE", &main_file);
+    // @PLN195 — where the libraries this build linked are: the program binds them itself.
+    if let Some(lib_path) = &lib_path {
+        cmd.push_env("LOFT_LIB_PATH", lib_path);
+    }
     // @PLN26 follow-up — run the native binary with cwd = source_dir so its
     // raw `std::fs` anchors where its loft `file()` does (the binary bakes
     // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
@@ -7393,6 +7411,10 @@ fn main() {
     let mut no_warnings = false;
     let mut deny_warnings = false;
     let mut check_only = false;
+    // @PLN195 — `--out <dir>`: write the native program and its libraries there.
+    let mut dist_dir: Option<String> = None;
+    // @PLN195 — `--install-libs`: place its libraries in the per-user root.
+    let mut install_libs = false;
     // Phase 6t Tier 4 — `--deps[=direct|=transitive]` walks the current
     // project's dep tree and runs `loft test` in each dep.  None = off,
     // Direct = only manifest.dependencies, Transitive = also deps-of-deps.
@@ -7607,6 +7629,23 @@ fn main() {
             // (`--static`, one file to ship) or beside it (`--dynamic`, the default).  Over
             // the program's own `#link` directive (`native_utils::link_by_flag`).
             native_utils::link_by_flag(a == "--static");
+        } else if a == "--out" || a.starts_with("--out=") {
+            // @PLN195 — a native build writes the program and every library file it links
+            // into one directory, which runs wherever it is copied (`native_utils::write_dist`).
+            let dir = if let Some(d) = a.strip_prefix("--out=") {
+                d.to_string()
+            } else if let Some(d) = argv.get(i) {
+                i += 1;
+                d.clone()
+            } else {
+                eprintln!("--out needs a directory");
+                std::process::exit(2);
+            };
+            dist_dir = Some(dir);
+        } else if a == "--install-libs" {
+            // @PLN195 — place the libraries a native build links in `~/.loft/lib/`, by
+            // version (`native_utils::install_libraries`).
+            install_libs = true;
         } else if a == "--lean" {
             // @PLN98 P2 — opt OUT of the live/debug tier: the generated Rust
             // carries no live-dispatch machinery (smallest binary, no
@@ -7875,11 +7914,16 @@ fn main() {
             let mut requested: Vec<String> = Vec::new();
             let mut entry_override: Option<String> = None;
             let mut force = false;
+            let mut install = false;
             while let Some(arg) = argv.get(i) {
                 if arg == "--force" || arg == "--fresh" {
                     // @PLN100 Slice 3 — rebuild every asset regardless of its
                     // fingerprint / TTL (a deterministic clean build; CI can pin it).
                     force = true;
+                } else if arg == "--install" {
+                    // @PLN195 — also place the native target's libraries in the per-user
+                    // root, `~/.loft/lib/<package>-<version>/`.
+                    install = true;
                 } else if arg.starts_with('-') {
                     break;
                 } else if fa::extension(std::path::Path::new(arg))
@@ -7910,7 +7954,7 @@ fn main() {
                 std::process::exit(1);
             }
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let ok = loft::build_phase::run(&requested, &entry, &manifest, &cwd, force);
+            let ok = loft::build_phase::run(&requested, &entry, &manifest, &cwd, force, install);
             std::process::exit(i32::from(!ok));
         } else if a == "test" {
             // PKG.6: `loft test [target]` — run package tests.
@@ -9230,6 +9274,8 @@ fn main() {
         && native_wasm.is_none()
         && native_android.is_none()
         && !check_only
+        && dist_dir.is_none()
+        && !install_libs
         && !dump_only
         && !introspect_mode
         && !sandbox_check_mode
@@ -11364,6 +11410,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `native_cabi_enabled()` keeps codegen and the linker flags in sync
             // (off on Windows, which stays on the rlib path).
             out.native_cabi = native_utils::native_cabi_enabled();
+            // @PLN195 — and whether the program binds those libraries itself.
+            out.native_bind = native_utils::native_bind_enabled();
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
@@ -12096,6 +12144,29 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             );
         }
 
+        if install_libs && let Err(e) = native_utils::install_libraries(&p.data) {
+            eprintln!("loft: --install-libs: {e}");
+            std::process::exit(1);
+        }
+        if install_libs && dist_dir.is_none() {
+            return;
+        }
+        if let Some(dir) = &dist_dir {
+            let built = if !no_cache && fa::exists(&cached_binary) {
+                &cached_binary
+            } else {
+                &binary
+            };
+            let name = fa::file_stem(std::path::Path::new(&abs_file))
+                .unwrap_or_else(|| "program".to_string());
+            if let Err(e) =
+                native_utils::write_dist(std::path::Path::new(dir), built, &name, &p.data)
+            {
+                eprintln!("loft: --out {dir}: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         if check_only {
             // --check --native: compile succeeded, report ok and exit.
             // @PLN18 08-S4 — the artifact path rides the ok line so the

@@ -398,6 +398,7 @@ pub mod fnref;
 pub mod generation;
 pub mod ir_shape;
 pub mod loop_shape;
+pub mod native_bind;
 pub mod native_build;
 pub mod op_layout;
 pub mod op_sets;

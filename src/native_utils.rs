@@ -1755,6 +1755,136 @@ pub(crate) fn native_cabi_enabled() -> bool {
     }
 }
 
+/// @PLN195 — does a DYNAMIC native program bind its package libraries itself
+/// (`loft::native_bind`, a search order loft owns, the same on every OS) rather than through
+/// the OS loader (`extern "C"` + rpath entries, DLL staging on Windows)?  `LOFT_NATIVE_BIND`
+/// chooses: `loft` or `link`.  A static link has nothing to bind.
+#[must_use]
+pub(crate) fn native_bind_enabled() -> bool {
+    native_cabi_enabled()
+        && matches!(
+            std::env::var("LOFT_NATIVE_BIND").ok().as_deref(),
+            Some("loft")
+        )
+}
+
+/// @PLN195 — the directories of the package libraries this program links, as the build
+/// resolved them, for a program the driver runs where it was built: they reach it through
+/// `LOFT_LIB_PATH` (ahead of any the user set), never through a path written into the
+/// binary.  `None` when the program binds nothing itself.
+pub(crate) fn lib_path_env(data: &crate::data::Data) -> Option<std::ffi::OsString> {
+    if !native_bind_enabled() || data.native_packages.is_empty() {
+        return None;
+    }
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    for lib in package_libraries(data) {
+        if let Some(dir) = lib.parent().map(std::path::Path::to_path_buf)
+            && !dirs.contains(&dir)
+        {
+            dirs.push(dir);
+        }
+    }
+    if let Some(user) = std::env::var_os("LOFT_LIB_PATH") {
+        dirs.extend(std::env::split_paths(&user));
+    }
+    std::env::join_paths(dirs).ok()
+}
+
+/// @PLN195 — `--install-libs` / `loft build --install`: every library file the program
+/// links, placed in the per-user root by version — `~/.loft/lib/<package>-<version>/` (moved
+/// by `LOFT_HOME`), where any dynamic program built against that version finds it.  Two
+/// versions of one library sit side by side there.  Returns the directories written.
+pub(crate) fn install_libraries(
+    data: &crate::data::Data,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let root = std::env::var_os("LOFT_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(dirs::home_dir)
+        .ok_or("no home directory to install into")?
+        .join(".loft")
+        .join("lib");
+    let mut written = Vec::new();
+    for ((crate_name, pkg_dir), lib) in package_libraries_by_package(data) {
+        let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+        let package = manifest
+            .as_ref()
+            .and_then(|m| m.name.clone())
+            .unwrap_or_else(|| crate_name.clone());
+        let version = manifest
+            .and_then(|m| m.version)
+            .unwrap_or_else(|| "0".to_string());
+        let dir = root.join(format!("{package}-{version}"));
+        crate::file_access::create_dir_all(dir.as_path()).map_err(|e| e.to_string())?;
+        let Some(file) = crate::file_access::file_name(lib.as_path()) else {
+            continue;
+        };
+        crate::file_access::copy(lib.as_path(), dir.join(file).as_path())
+            .map_err(|e| format!("{}: {e}", lib.display()))?;
+        written.push(dir);
+    }
+    Ok(written)
+}
+
+/// The library file of every native package the program links dynamically, resolved the way
+/// the link resolved it (`resolve_native_lib`).  Empty for a static link, which has none.
+fn package_libraries(data: &crate::data::Data) -> Vec<std::path::PathBuf> {
+    package_libraries_by_package(data)
+        .into_iter()
+        .map(|(_, lib)| lib)
+        .collect()
+}
+
+/// [`package_libraries`], each with the `(crate, package directory)` it belongs to.
+fn package_libraries_by_package(
+    data: &crate::data::Data,
+) -> Vec<(&(String, String), std::path::PathBuf)> {
+    if !native_cabi_enabled() {
+        return Vec::new();
+    }
+    data.native_packages
+        .iter()
+        .filter_map(|pkg| {
+            let (crate_name, pkg_dir) = pkg;
+            let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+                .and_then(|m| m.native)
+                .unwrap_or_else(|| crate_name.replace('-', "_"));
+            crate::extensions::resolve_native_lib(pkg_dir, &stem)
+                .map(|so| (pkg, std::path::PathBuf::from(so)))
+        })
+        .collect()
+}
+
+/// @PLN195 — `--out <dir>` / `loft build native`: the program `built`, named `name`, and
+/// every library file it links, side by side in `dir` — a directory that runs wherever it is
+/// copied, since the binary looks for its libraries beside itself and names no directory of
+/// the machine that built it.  A static link writes the binary alone.
+pub(crate) fn write_dist(
+    dir: &std::path::Path,
+    built: &std::path::Path,
+    name: &str,
+    data: &crate::data::Data,
+) -> Result<(), String> {
+    crate::file_access::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let exe = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    crate::file_access::copy(built, exe.as_path()).map_err(|e| e.to_string())?;
+    // The build cache keeps its binaries owner-only (`tighten_cache_binary`); a program
+    // written out to ship is an ordinary executable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        crate::file_access::set_permissions(exe.as_path(), std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
+    }
+    for lib in package_libraries(data) {
+        let Some(file) = crate::file_access::file_name(lib.as_path()) else {
+            continue;
+        };
+        crate::file_access::copy(lib.as_path(), dir.join(file).as_path())
+            .map_err(|e| format!("{}: {e}", lib.display()))?;
+    }
+    Ok(())
+}
+
 const LINK_UNSET: u8 = 0;
 const LINK_STATIC: u8 = 1;
 const LINK_DYNAMIC: u8 = 2;
@@ -1982,6 +2112,11 @@ pub(crate) fn add_native_extern_flags(
                 // loudly on the undefined symbol rather than silently mis-linking.
                 continue;
             };
+            // @PLN195 — a program that binds its libraries itself links none of them: the
+            // resolve above is kept, because it is what builds the library the program loads.
+            if native_bind_enabled() {
+                continue;
+            }
             let so_path = std::path::PathBuf::from(&so);
             if let Some(so_dir) = so_path.parent() {
                 // `-l dylib=<name>` derived from the RESOLVED file (strip the `lib`
@@ -2291,7 +2426,9 @@ pub(crate) fn stage_native_dlls(exe_dir: &std::path::Path, data: &crate::data::D
         return;
     }
     stage_c_library_dlls(exe_dir, data);
-    if !native_cabi_enabled() {
+    // A program that binds its libraries itself finds them through `LOFT_LIB_PATH`
+    // (`lib_path_env`), on Windows as everywhere else (@PLN195).
+    if !native_cabi_enabled() || native_bind_enabled() {
         return;
     }
     for (crate_name, pkg_dir) in &data.native_packages {
