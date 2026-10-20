@@ -190,10 +190,69 @@ struct NativeSig {
     ret: Option<ArgT>,
 }
 
-/// Side table: library index → (native symbol name, signature).
-/// Populated by `wire_native_fns`, read by the generic dispatcher.
+/// Side table: library index → (the generated bridge, signature), resolved ONCE by
+/// `wire_native_fns`.  The dispatcher reads it through [`cached_sig`], never per call.
 #[cfg(feature = "native-extensions")]
-static NATIVE_SIGS: Mutex<Option<HashMap<u16, (String, NativeSig)>>> = Mutex::new(None);
+type NativeSlot = (FnPtr, std::sync::Arc<NativeSig>);
+#[cfg(feature = "native-extensions")]
+static NATIVE_SIGS: Mutex<Option<HashMap<u16, NativeSlot>>> = Mutex::new(None);
+
+/// Bumped by every wiring pass that writes `NATIVE_SIGS` or `SHARED_SIGS`, so a thread's
+/// copy of a slot ([`cached_sig`]) is refetched after a rewire.
+#[cfg(feature = "native-extensions")]
+static SIGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A thread's copy of a wired-native table, indexed by library index: the generation it was
+/// filled under, and the slots it has met.
+#[cfg(feature = "native-extensions")]
+struct SigCache<V> {
+    generation: u64,
+    slots: Vec<Option<V>>,
+}
+
+#[cfg(feature = "native-extensions")]
+thread_local! {
+    static NATIVE_SIG_CACHE: std::cell::RefCell<SigCache<NativeSlot>> =
+        const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
+    static SHARED_SIG_CACHE: std::cell::RefCell<SigCache<SharedSlot>> =
+        const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
+}
+
+/// The wired slot for `lib_idx`: from this thread's copy, or — on a thread's first call to
+/// it, or after a rewire — from the shared table under its lock.  A native call reads its
+/// slot here once per call, so the per-call cost is an index, not a lock, a hash of the
+/// symbol and a clone of its signature (the lock is never held across the call itself,
+/// P245: a blocking native would serialise every `par` worker behind it).
+#[cfg(feature = "native-extensions")]
+fn cached_sig<V: Clone>(
+    cache: &'static std::thread::LocalKey<std::cell::RefCell<SigCache<V>>>,
+    table: &Mutex<Option<HashMap<u16, V>>>,
+    lib_idx: u16,
+) -> Option<V> {
+    let generation = SIGS_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    cache.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.generation != generation {
+            c.slots.clear();
+            c.generation = generation;
+        }
+        let at = usize::from(lib_idx);
+        if let Some(Some(v)) = c.slots.get(at) {
+            return Some(v.clone());
+        }
+        let v = table
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()?
+            .get(&lib_idx)?
+            .clone();
+        if c.slots.len() <= at {
+            c.slots.resize(at + 1, None);
+        }
+        c.slots[at] = Some(v.clone());
+        Some(v)
+    })
+}
 
 /// #303 — wire-time signature of a shared-store bridge function, derived from
 /// the ONE marshallability judgment (`native_gate::classify_bridge_attr`).
@@ -223,8 +282,9 @@ struct SharedSig {
 /// `shared_store_dispatch`.  Separate from `NATIVE_SIGS` because the ABI differs
 /// (a `*mut Stores` + `LibArg` bridge, not the `LoftStore`/raw-ptr marshalling).
 #[cfg(feature = "native-extensions")]
-static SHARED_SIGS: Mutex<Option<HashMap<u16, (FnPtr, std::sync::Arc<SharedSig>)>>> =
-    Mutex::new(None);
+type SharedSlot = (FnPtr, std::sync::Arc<SharedSig>);
+#[cfg(feature = "native-extensions")]
+static SHARED_SIGS: Mutex<Option<HashMap<u16, SharedSlot>>> = Mutex::new(None);
 
 /// Compute the argument type list and return type from a definition's signature.
 /// Returns `None` if the signature contains types that can't be auto-marshalled
@@ -543,10 +603,10 @@ pub fn wire_native_fns_for(
         // exercises a path the library's tests do not. Report it at load beside the
         // missing-cdylib report, naming the function, so the author sees it on the
         // first run rather than in a consumer's bug report.
-        if get_bridge(sym).is_none() {
+        let Some(bridge) = get_bridge(sym) else {
             bridgeless.push(sym.clone());
             continue;
-        }
+        };
 
         // Only wire if we can auto-marshal the signature.
         let sig = match compute_sig(data, d_nr) {
@@ -560,12 +620,13 @@ pub fn wire_native_fns_for(
             None => continue,
         };
 
-        // Store the signature for runtime dispatch.
-        sig_table.insert(lib_idx, (sym.clone(), sig));
+        // Store the bridge and signature for runtime dispatch.
+        sig_table.insert(lib_idx, (FnPtr(bridge), std::sync::Arc::new(sig)));
 
         // Replace the stub with the generic auto-marshal dispatcher.
         state.replace_static_fn(sym, native_auto_dispatch);
     }
+    SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
 
     if report_unresolved && !unresolved.is_empty() {
         report_unresolved_natives(data, &unresolved);
@@ -960,6 +1021,7 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
         for (_, lib_idx, ptr, sig) in &wired {
             table.insert(*lib_idx, (FnPtr(*ptr), std::sync::Arc::new(sig.clone())));
         }
+        SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
     // loft#715 — remember which symbol each slot dispatches to, so a fault raised
     // while the bridge is on the stack can NAME it.  Written once at wiring, read
@@ -998,15 +1060,9 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
     crate::call_frames::enter_shared_bridge(lib_idx);
-    let (bridge_ptr, sig) = {
-        let guard = SHARED_SIGS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let table = guard.as_ref().expect("SHARED_SIGS not initialized");
-        match table.get(&lib_idx) {
-            Some((p, s)) => (p.0, s.clone()),
-            None => panic!("no shared signature for lib_idx {lib_idx}"),
-        }
+    let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&SHARED_SIG_CACHE, &SHARED_SIGS, lib_idx)
+    else {
+        panic!("no shared signature for lib_idx {lib_idx}")
     };
 
     // Pop ONE stack slot per attribute (the call site pushes every attribute,
@@ -1189,37 +1245,93 @@ fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate:
     // Read the current library index from the thread-local.
     let lib_idx = crate::call_frames::current_lib_idx();
 
-    // P245: clone the (sym, sig) entry out of NATIVE_SIGS and DROP the
-    // mutex guard before invoking the native function.  The native fn
-    // may block (e.g. `n_tcp_accept` waits in `listener.accept()`) —
-    // holding the guard across the call serialises every parallel arm
-    // that calls into native code, manifesting as a hang on the
-    // sibling worker.  The Mutex is now used only for the table
-    // lookup itself, never for the call.
-    let (sym, sig) = {
-        let guard = NATIVE_SIGS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let sig_table = guard.as_ref().expect("NATIVE_SIGS not initialized");
-        match sig_table.get(&lib_idx) {
-            Some((s, sg)) => (s.clone(), sg.clone()),
-            None => panic!("no signature for lib_idx {lib_idx}"),
-        }
+    // Plan-74: dispatch goes through the generated `#[loft_native]` bridge the owning
+    // cdylib registered, resolved at wiring — a symbol without one is reported there
+    // (loft#886) and never wired, so its stub stays in place.
+    let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&NATIVE_SIG_CACHE, &NATIVE_SIGS, lib_idx)
+    else {
+        panic!("no signature for lib_idx {lib_idx}")
     };
-
-    // Plan-74: dispatch goes through the generated `#[loft_native]` bridge the
-    // owning cdylib registered.  The legacy ~98-arm raw-ptr marshaller is gone —
-    // every native library now ships a `loft_register_bridges_v1` table.  A
-    // symbol with no bridge is an un-migrated cdylib (a pre-bridge library
-    // version); rebuild/republish it against the bridge-capable `loft-ffi`.
-    let bridge_ptr = get_bridge(&sym).unwrap_or_else(|| {
-        panic!(
-            "native symbol '{sym}' has no marshal bridge — its cdylib predates \
-             the generated `#[loft_native]` bridge (loft-ffi `loft_register_bridges_v1`); \
-             rebuild the library against the bridge-capable loft-ffi"
-        );
-    });
     dispatch_via_bridge(stores, stack, bridge_ptr, &sig);
+}
+
+/// A native call's argument slots: on the stack up to [`ArgBuf::INLINE`], on the heap past it,
+/// so the common call allocates nothing.
+#[cfg(feature = "native-extensions")]
+enum ArgBuf<T: Copy> {
+    Inline([T; ArgBuf::<()>::INLINE], usize),
+    Heap(Vec<T>),
+}
+
+#[cfg(feature = "native-extensions")]
+impl<T: Copy> ArgBuf<T> {
+    const INLINE: usize = 8;
+
+    fn new(len: usize, fill: T) -> Self {
+        if len <= Self::INLINE {
+            Self::Inline([fill; ArgBuf::<()>::INLINE], len)
+        } else {
+            Self::Heap(vec![fill; len])
+        }
+    }
+
+    fn as_mut(&mut self) -> &mut [T] {
+        match self {
+            Self::Inline(a, len) => &mut a[..*len],
+            Self::Heap(v) => v,
+        }
+    }
+}
+
+#[cfg(all(test, feature = "native-extensions"))]
+mod dispatch_cache_tests {
+    use super::{ArgBuf, SIGS_GENERATION, SigCache, cached_sig};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static TABLE: Mutex<Option<HashMap<u16, u32>>> = Mutex::new(None);
+    thread_local! {
+        static CACHE: std::cell::RefCell<SigCache<u32>> =
+            const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
+    }
+
+    fn wire(lib_idx: u16, v: u32) {
+        TABLE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(lib_idx, v);
+        SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// A rewire of a slot this thread already called through must be seen on the next call:
+    /// two programs run one after another in one thread can give the same library index to
+    /// different natives, and a stale copy would call the first program's bridge.
+    #[test]
+    fn a_rewired_slot_is_never_served_from_the_stale_copy() {
+        wire(300, 11);
+        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(11));
+        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(11));
+        wire(300, 22);
+        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(22));
+        assert_eq!(cached_sig(&CACHE, &TABLE, 301), None);
+    }
+
+    /// Past the inline slots the buffer moves to the heap and keeps every argument.
+    #[test]
+    fn a_long_argument_list_keeps_every_slot() {
+        for len in [0, 1, ArgBuf::<u8>::INLINE, ArgBuf::<u8>::INLINE + 1, 20] {
+            let mut b = ArgBuf::new(len, 0u32);
+            for (i, s) in b.as_mut().iter_mut().enumerate() {
+                *s = u32::try_from(i).unwrap() * 3 + 1;
+            }
+            let got: Vec<u32> = b.as_mut().to_vec();
+            let want: Vec<u32> = (0..len)
+                .map(|i| u32::try_from(i).unwrap() * 3 + 1)
+                .collect();
+            assert_eq!(got, want, "len {len}");
+        }
+    }
 }
 
 /// Plan-25 F3: dispatch a native call through its generated `LoftBridgeFn`.
@@ -1243,6 +1355,7 @@ fn dispatch_via_bridge(
     // heap-typed ones up as ONE bridge call (`Stores::bridge_args`, @PLN174 F5): the store
     // the bridge is handed is the first argument's, a foreign vector is copied into it,
     // and a vector or record answer with nothing to pin takes a store minted for it.
+    #[derive(Clone, Copy)]
     enum Raw {
         Int(i64),
         Float(f64),
@@ -1250,33 +1363,35 @@ fn dispatch_via_bridge(
         Text(Str),
         Heap(crate::keys::DbRef),
     }
-    let mut raw: Vec<Raw> = Vec::with_capacity(sig.params.len());
-    for &t in sig.params.iter().rev() {
-        raw.push(match t {
+    let mut raw = ArgBuf::new(sig.params.len(), Raw::Int(0));
+    for (at, &t) in sig.params.iter().enumerate().rev() {
+        raw.as_mut()[at] = match t {
             ArgT::I32 | ArgT::I64 => Raw::Int(stores.get::<i64>(stack)),
             ArgT::F32 | ArgT::F64 => Raw::Float(stores.get::<f64>(stack)),
             ArgT::Bool => Raw::Bool(stores.get::<bool>(stack)),
             ArgT::Text => Raw::Text(stores.get::<Str>(stack)),
             ArgT::Ref | ArgT::Vec => Raw::Heap(stores.get::<crate::keys::DbRef>(stack)),
-        });
+        };
     }
-    raw.reverse();
+    let raw = raw.as_mut();
     let returns_ref = matches!(sig.ret, Some(ArgT::Ref | ArgT::Vec));
     let heap: Vec<(crate::keys::DbRef, bool)> = sig
         .params
         .iter()
-        .zip(&raw)
+        .zip(raw.iter())
         .filter_map(|(t, r)| match r {
             Raw::Heap(db) => Some((*db, *t == ArgT::Vec)),
             _ => None,
         })
         .collect();
-    let call = stores.bridge_args(&heap, returns_ref);
-    let (store_nr, minted) = (call.store_nr, call.minted);
-    let mut handed = call.handed.iter();
-    let mut args: Vec<LoftValue> = Vec::with_capacity(sig.params.len());
-    for (t, r) in sig.params.iter().zip(&raw) {
-        args.push(match (t, r) {
+    // A call with no store argument and no store answer — every scalar/text native — has
+    // nothing for `bridge_args` to pin, copy or mint, nor for `bridge_args_done` to undo.
+    let call = (!heap.is_empty() || returns_ref).then(|| stores.bridge_args(&heap, returns_ref));
+    let (store_nr, minted) = call.as_ref().map_or((0, false), |c| (c.store_nr, c.minted));
+    let mut handed = call.as_ref().map_or([].iter(), |c| c.handed.iter());
+    let mut args = ArgBuf::new(sig.params.len(), LoftValue::VOID);
+    for (at, (t, r)) in sig.params.iter().zip(raw.iter()).enumerate() {
+        args.as_mut()[at] = match (t, r) {
             // No pre-narrowing: pass the whole i64 cell; the bridge casts to
             // the impl's real width (i32/u16/…) per its Rust signature.
             (_, Raw::Int(i)) => LoftValue::int(*i),
@@ -1308,8 +1423,9 @@ fn dispatch_via_bridge(
                     pos: r.pos,
                 })
             }
-        });
+        };
     }
+    let args = args.as_mut();
     let ls = make_loft_store(stores, store_nr, minted);
 
     // CURRENT_STORES must be live for the bridge's ffi_claim/resize callbacks.
@@ -1332,7 +1448,9 @@ fn dispatch_via_bridge(
     unsafe { bridge(ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
 
     // The copies the foreign vector arguments took, and a store minted for a scalar answer.
-    stores.bridge_args_done(&call, returns_ref);
+    if let Some(call) = &call {
+        stores.bridge_args_done(call, returns_ref);
+    }
 
     // Write the tagged return to the stack (mirrors dispatch_call's returns).
     match ret.tag {
