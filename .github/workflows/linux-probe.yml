@@ -24,7 +24,9 @@ name: linux-probe
 
 on:
   push:
-    branches: [linux-probe]
+    # firewall02-scripting: ONE push, to verify this workflow on the branch that adds it
+    # (it cannot be dispatched before it reaches main); the next commit removes it.
+    branches: [linux-probe, firewall02-scripting]
   workflow_dispatch:
     inputs:
       filter:
