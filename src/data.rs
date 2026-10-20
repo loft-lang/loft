@@ -7582,7 +7582,7 @@ impl Data {
         self.def(d_nr)
             .attributes
             .get(a_nr)
-            .is_some_and(|a| matches!(a.typedef, Type::Enum(..)))
+            .is_some_and(|a| matches!(a.typedef.base(), Type::Enum(..)))
     }
 
     /// The attribute number of the VARIANT `name` of enum `d_nr` ([`Self::is_variant`]).
