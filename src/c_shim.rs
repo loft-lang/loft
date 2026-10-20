@@ -203,19 +203,21 @@ fn identity(
     ))
 }
 
-/// @PLN197 — the shim as a STATIC archive (`lib<stem>.a`), beside the shared library of the
-/// same sources, for a program that links its libraries into the binary (`--static`,
-/// `#link static`).  Built on demand: the interpreter and a dynamic program never need it.
-/// `Ok(None)` where this host does not link a C archive into a program
-/// (`platform::c_archive_file_name`); the static link then keeps the shim beside the binary.
+/// @PLN197 — the shim as a STATIC archive, beside the shared library of the same sources,
+/// for a program that links its libraries into the binary (`--static`, `#link static`).
+/// Built on demand: the interpreter and a dynamic program never need it.  Compiled by the
+/// host's shim archiver (`platform::shim_archiver`) — `cc` + `ar`, or MSVC `cl` + `lib` on
+/// Windows, whose program link cannot take the MinGW objects of the shared shim.  `Ok(None)`
+/// where this host has no archiver; the static link then keeps the shim beside the binary.
 ///
 /// # Errors
-/// As [`build`]: an unreadable source, no C compiler, a compile that fails, or no `ar`.
+/// As [`build`]: an unreadable source, no compiler, a compile that fails, or no archiver.
 pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::PathBuf>, String> {
     let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
-    let Some(name) = crate::platform::c_archive_file_name(&stem) else {
+    let Some(tools) = crate::platform::shim_archiver() else {
         return Ok(None);
     };
+    let name = tools.file_name(&stem);
     let archive = out_dir.join(&name);
     if crate::file_access::exists(&archive) {
         return Ok(Some(archive));
@@ -229,48 +231,48 @@ pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::Pa
         let _ = crate::file_access::remove_dir_all(&stage);
         Err(msg)
     };
+    // `cl` writes its diagnostics to stdout, `cc` and `ar` to stderr: the author needs
+    // them whichever it was.
+    let said = |o: &crate::platform::process::Ran| {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+        .trim_end()
+        .to_string()
+    };
+    let cc = cc_program();
     let mut objects = Vec::with_capacity(paths.len());
     for (i, p) in paths.iter().enumerate() {
         let obj = stage.join(format!("{i}.o"));
-        let out = Spawn::new(Program::os(cc_program()))
-            .arg("-O2")
-            .arg("-fPIC")
-            .arg("-c")
-            .arg(p)
-            .arg("-o")
-            .arg(&obj)
-            .run(b"");
-        match out {
+        match tools.compile(&cc, p, &obj).run(b"") {
             Ok(o) if o.status.success() => objects.push(obj),
-            Ok(o) => {
-                return fail(format!(
-                    "did not compile.\n{}",
-                    String::from_utf8_lossy(&o.stderr).trim_end()
-                ));
-            }
+            Ok(o) => return fail(format!("did not compile.\n{}", said(&o))),
             Err(e) => {
                 return fail(format!(
                     "`[c] shim` needs a C compiler and `{}` could not be run ({e})",
-                    cc_program()
+                    tools.compiler(&cc)
                 ));
             }
         }
     }
     let tmp = stage.join(&name);
-    let mut ar = Spawn::new(Program::os("ar"));
-    ar.push_arg("rcs").push_arg(&tmp);
-    for o in &objects {
-        ar.push_arg(o);
-    }
-    match ar.run(b"") {
+    match tools.archive(&tmp, &objects).run(b"") {
         Ok(o) if o.status.success() => {}
         Ok(o) => {
             return fail(format!(
-                "`ar` could not archive the shim.\n{}",
-                String::from_utf8_lossy(&o.stderr).trim_end()
+                "`{}` could not archive the shim.\n{}",
+                tools.archiver(),
+                said(&o)
             ));
         }
-        Err(e) => return fail(format!("a static link of a `[c] shim` needs `ar` ({e})")),
+        Err(e) => {
+            return fail(format!(
+                "a static link of a `[c] shim` needs `{}` ({e})",
+                tools.archiver()
+            ));
+        }
     }
     let published = crate::file_access::rename(&tmp, &archive).map_err(|e| {
         format!(
@@ -285,7 +287,8 @@ pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::Pa
 /// @PLN197 — the static archive of a C library a package ships, which a static native link
 /// puts into the binary: the package's `[c] shim`, archived on demand ([`archive`]), or a
 /// `lib<stem>.a` the package ships beside the shared library.  `None` when there is none, or
-/// where this host links no C archive into a program (`platform::c_archive_file_name`).
+/// where this host has no archive of that kind (`platform::shim_archiver`,
+/// `platform::c_archive_file_name`).
 #[must_use]
 pub fn static_archive_for(
     lib: &crate::data::CLibrary,

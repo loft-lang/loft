@@ -1642,6 +1642,154 @@ pub fn shim_cc_runtime_args() -> &'static [&'static str] {
     }
 }
 
+/// @PLN197 C — the tools that turn a `[c] shim` into the STATIC archive a static native link
+/// puts into the binary: one compiler run per source, then one archiver run.
+///
+/// On Windows the shared shim is a MinGW `cc` build, but its objects cannot go into the
+/// program: rustc's MSVC target links with `link.exe`, and MinGW objects call MinGW's own
+/// runtime helpers, which `link.exe` does not have.  So there the archive is compiled by
+/// MSVC `cl.exe` and bundled by `lib.exe` — present wherever rustc's MSVC target links,
+/// since they ship in the same Build Tools, and found the way rustc finds `link.exe`.
+pub enum ShimArchiver {
+    /// `cc -c` + `ar rcs`, writing `lib<stem>.a`.
+    Unix,
+    /// `cl /c` + `lib`, writing `<stem>.msvc-<key>.lib`, the key a hash of the `cl.exe`
+    /// path: the path carries the toolset version, and an archive built by one toolset is
+    /// not reused by another.  Never `<stem>.lib`, which is the shared shim's import library.
+    Msvc {
+        cl: MsvcTool,
+        lib: MsvcTool,
+        key: u64,
+    },
+}
+
+/// One MSVC tool and the environment (`INCLUDE`, `LIB`, `PATH`) it needs outside a
+/// developer prompt.
+pub struct MsvcTool {
+    path: std::path::PathBuf,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+}
+
+impl MsvcTool {
+    fn spawn(&self) -> process::Spawn {
+        let mut s = process::Spawn::new(process::Program::os(&self.path));
+        for (k, v) in &self.env {
+            s.push_env(k, v);
+        }
+        s
+    }
+}
+
+impl ShimArchiver {
+    /// The archive's file name for the shim `stem`.
+    #[must_use]
+    pub fn file_name(&self, stem: &str) -> String {
+        match self {
+            ShimArchiver::Unix => format!("lib{stem}.a"),
+            ShimArchiver::Msvc { key, .. } => format!("{stem}.msvc-{key:08x}.lib"),
+        }
+    }
+
+    /// The compiler, for a message that it could not be run.
+    #[must_use]
+    pub fn compiler(&self, cc: &str) -> String {
+        match self {
+            ShimArchiver::Unix => cc.to_string(),
+            ShimArchiver::Msvc { cl, .. } => cl.path.display().to_string(),
+        }
+    }
+
+    /// The archiver, for a message that it could not be run.
+    #[must_use]
+    pub fn archiver(&self) -> String {
+        match self {
+            ShimArchiver::Unix => "ar".to_string(),
+            ShimArchiver::Msvc { lib, .. } => lib.path.display().to_string(),
+        }
+    }
+
+    /// Compile `src` to the object `obj`; `cc` is the Unix compiler (`CC`, else `cc`).
+    #[must_use]
+    pub fn compile(
+        &self,
+        cc: &str,
+        src: &std::path::Path,
+        obj: &std::path::Path,
+    ) -> process::Spawn {
+        match self {
+            ShimArchiver::Unix => process::Spawn::new(process::Program::os(cc))
+                .arg("-O2")
+                .arg("-fPIC")
+                .arg("-c")
+                .arg(src)
+                .arg("-o")
+                .arg(obj),
+            // `/MD` is the C runtime rustc's MSVC target links (the DLL CRT); objects built
+            // for the static one would ask the link for a second CRT.
+            ShimArchiver::Msvc { cl, .. } => cl
+                .spawn()
+                .arg("/nologo")
+                .arg("/O2")
+                .arg("/MD")
+                .arg("/c")
+                .arg(src)
+                .arg(format!("/Fo{}", obj.display())),
+        }
+    }
+
+    /// Bundle `objects` into the archive `out`.
+    #[must_use]
+    pub fn archive(&self, out: &std::path::Path, objects: &[std::path::PathBuf]) -> process::Spawn {
+        let mut s = match self {
+            ShimArchiver::Unix => process::Spawn::new(process::Program::os("ar"))
+                .arg("rcs")
+                .arg(out),
+            ShimArchiver::Msvc { lib, .. } => lib
+                .spawn()
+                .arg("/nologo")
+                .arg(format!("/OUT:{}", out.display())),
+        };
+        s.push_args(objects);
+        s
+    }
+}
+
+/// @PLN197 C — the shim archiver of this host, or `None` where a static link keeps the shim
+/// beside the binary: a Windows target other than MSVC (`windows-gnu`, whose MinGW archive
+/// no runner exercises), or an MSVC one whose `cl.exe` / `lib.exe` cannot be found.
+#[must_use]
+pub fn shim_archiver() -> Option<&'static ShimArchiver> {
+    static ARCHIVER: OnceLock<Option<ShimArchiver>> = OnceLock::new();
+    ARCHIVER
+        .get_or_init(|| {
+            if !cfg!(windows) {
+                return Some(ShimArchiver::Unix);
+            }
+            let target = crate::cache::host_triple();
+            let cl = find_msvc_tool(&target, "cl.exe")?;
+            let lib = find_msvc_tool(&target, "lib.exe")?;
+            let key = crate::cache::stable_hash(&[cl.path.to_string_lossy().as_bytes()]);
+            Some(ShimArchiver::Msvc { cl, lib, key })
+        })
+        .as_ref()
+}
+
+/// An MSVC tool for `target`, with its environment: a developer prompt's when one is
+/// active, else the newest installed toolset's.  `None` for a non-MSVC `target`.
+#[cfg(windows)]
+fn find_msvc_tool(target: &str, tool: &str) -> Option<MsvcTool> {
+    let t = find_msvc_tools::find_tool(target, tool)?;
+    Some(MsvcTool {
+        path: t.path().to_path_buf(),
+        env: t.env().into_iter().cloned().collect(),
+    })
+}
+
+#[cfg(not(windows))]
+fn find_msvc_tool(_target: &str, _tool: &str) -> Option<MsvcTool> {
+    None
+}
+
 /// The extension of a shared library on this host, without the dot: `dll`, `dylib` or `so`.
 #[must_use]
 pub fn dll_extension() -> &'static str {
@@ -1758,10 +1906,11 @@ pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
     }
 }
 
-/// @PLN197 — the file name of a C library's STATIC archive, which a static native link puts
-/// into the binary (`-l static=<stem>`): `lib<stem>.a`.  `None` on Windows, where the shim's
-/// compiler is a MinGW `cc` whose archives rustc's MSVC target does not reliably link (its
-/// objects call MinGW's own helpers), so a static Windows program keeps the shim beside it.
+/// @PLN197 — the file name of the STATIC archive a package may ship beside a prebuilt C
+/// library, which a static native link puts into the binary: `lib<stem>.a`.  `None` on
+/// Windows, where the `.lib` beside a DLL is its import library and says nothing of the
+/// code; a static Windows program binds such a library beside it.  A `[c] shim` has its own
+/// archive ([`shim_archiver`]).
 #[must_use]
 pub fn c_archive_file_name(stem: &str) -> Option<String> {
     if cfg!(windows) {

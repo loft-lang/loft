@@ -5112,8 +5112,8 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
 /// the machine that built it.  The `c_abi` fixtures carry both kinds: `lcshim`'s `[c] shim`,
 /// which loft compiles, and `lcabi`'s prebuilt `liblc_types`.  Built with `--out`, both
 /// ways: the dynamic program finds both libraries beside itself through loft's search order;
-/// the static one has the shim's code INSIDE it (where this host links a C archive) and
-/// finds `liblc_types`, which has no archive, the same way.  Neither binary may name the
+/// the static one has the shim's code INSIDE it (on Windows compiled by MSVC `cl`, @PLN197 C)
+/// and finds `liblc_types`, which has no archive, the same way.  Neither binary may name the
 /// directory the packages were built in — the copy is renamed away before the moved runs,
 /// which must answer exactly as `--interpret` does.  Controls: the dynamic program without
 /// the shim beside it, and the static one without `liblc_types`, must each stop naming the
@@ -5180,7 +5180,15 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
     assert_eq!(want, "mod 2 owned shim-7 neg -5", "the oracle itself");
 
     let exe = format!("p{}", std::env::consts::EXE_SUFFIX);
-    let archives_link = loft::platform::c_archive_file_name("x").is_some();
+    // The shim goes INTO a static binary wherever the host has a shim archiver — everywhere
+    // but a Windows target other than MSVC.  An MSVC host without one is a failure, not a
+    // skip: it would leave the static `.exe` needing the shim DLL beside it.
+    let archives_link = loft::platform::shim_archiver().is_some();
+    let triple = loft::cache::host_triple();
+    assert!(
+        archives_link || triple.contains("windows-gnu"),
+        "no shim archiver on {triple} — a static program would keep its shim beside it"
+    );
     let needle = tree.to_string_lossy().into_owned();
     for (mode, flag) in [("dynamic", "--dynamic"), ("static", "--static")] {
         let dist = root.join(mode);

@@ -165,6 +165,11 @@ wasm_sync = { path = "wasm-sync" }
 [target.'cfg(unix)'.dependencies]
 libc               = "0.2"
 
+# @PLN197 C — finds MSVC `cl.exe` / `lib.exe` (and their INCLUDE / LIB) the way rustc finds
+# `link.exe`, so a static Windows program can hold its `[c] shim`.  cc's own finder, no deps.
+[target.'cfg(windows)'.dependencies]
+find-msvc-tools    = "0.1"
+
 # Line editor for the interactive REPL (arrow-key history, in-line editing).
 # Non-wasm only: the browser playground supplies its own editing, and rustyline
 # does not build for wasm32.  It reads the terminal directly; piped/file/test
