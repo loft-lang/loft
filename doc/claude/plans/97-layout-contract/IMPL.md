@@ -126,7 +126,8 @@ Goal: the store carries its schema + layout hash beside it; load classifies the 
   **expand→contract** — an intermediate **superset** schema so each step is a pure Add or Drop (E1),
   with the transform reduced to an **additive backfill** (compute new from old) while both coexist.
   Backfill hook = a loft function the programmer fills (scaffolded by F). Trigger: a shipped
-  reshape must preserve data.
+  reshape must preserve data.  Continued as [@PLN196](../196-store-upgrade.md): a store-to-store
+  converter from one upgrade map, with a rename in two upgrades.
 
 ## Phase F — Compiler migration aid *(the developer surface)*
 
