@@ -4,9 +4,9 @@ schema_version = 1
 
 [[package]]
 name = "graphics"
-version = "0.9.10"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.10/graphics-0.9.10.tar.gz"
-sha256 = "4145057b3a83e0da7bfdccca85ee266555cdb4ec2909bb26ed4196fd1d6807ff"
+version = "0.9.12"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.12/graphics-0.9.12.tar.gz"
+sha256 = "482390eeca7fb4479a9fef021c5b7742240eb0ab0d1519567d702db80f5a91f9"
 source = "registry"
 deps = ["glb", "mesh3d"]
 
@@ -34,8 +34,8 @@ source = "registry"
 
 [[package]]
 name = "assets"
-version = "0.4.2"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.4.2/assets-0.4.2.tar.gz"
-sha256 = "bcc1aaaa0acd8bd9f1bfc0d24d1a7ca4e5a7c81ee9a3250ff29bd26386935b74"
+version = "0.5.0"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.5.0/assets-0.5.0.tar.gz"
+sha256 = "9d9fd4fa61ae2ac705a337f74c31b6915e761148b58ecaf0b4def1be25acd18c"
 source = "registry"
 deps = ["shapes"]
