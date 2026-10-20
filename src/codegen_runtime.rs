@@ -215,7 +215,10 @@ fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Opti
 /// the end, an index out of range reported (`Stores::index_or_raise_runtime`) or, for `v[i]?`,
 /// null without a report.
 pub struct ApVec<const C: usize> {
-    d: [f64; C],
+    /// The inline slots: only `[0, min(n, C))` is ever read, and each of those was written by
+    /// a push — so the array is never filled up front, which cost a store of all `C` slots on
+    /// every call of a function that holds one, however few it pushed.
+    d: [std::mem::MaybeUninit<f64>; C],
     n: usize,
     spill: Vec<f64>,
 }
@@ -230,7 +233,7 @@ impl<const C: usize> ApVec<C> {
     #[must_use]
     pub const fn new() -> Self {
         ApVec {
-            d: [0.0; C],
+            d: [const { std::mem::MaybeUninit::uninit() }; C],
             n: 0,
             spill: Vec::new(),
         }
@@ -257,7 +260,7 @@ impl<const C: usize> ApVec<C> {
     #[inline]
     pub fn push(&mut self, v: f64) {
         if self.n < C {
-            self.d[self.n] = v;
+            self.d[self.n] = std::mem::MaybeUninit::new(v);
         } else {
             self.spill.push(v);
         }
@@ -266,13 +269,19 @@ impl<const C: usize> ApVec<C> {
 
     #[inline]
     fn at(&self, f: usize) -> f64 {
-        if f < C { self.d[f] } else { self.spill[f - C] }
+        if f < C {
+            // SAFETY: every caller passes `f < n`, and a slot under `min(n, C)` was pushed.
+            unsafe { self.d[f].assume_init() }
+        } else {
+            self.spill[f - C]
+        }
     }
 
     #[inline]
     fn at_mut(&mut self, f: usize) -> &mut f64 {
         if f < C {
-            &mut self.d[f]
+            // SAFETY: as `at` — `f < n`, so the slot holds a pushed value.
+            unsafe { self.d[f].assume_init_mut() }
         } else {
             &mut self.spill[f - C]
         }
