@@ -3648,7 +3648,42 @@ impl Output<'_> {
         // separates them is trip count, which is not a compile-time fact here.  Closing
         // that wants a model of the DUPLICATION cost (is this function small and hot
         // enough that a doubled body loses an inline?), not a larger constant.
-        if admitted.len() < 2 {
+        //
+        // An INDEX OFFSET does not count either: a single `+` or `-` of two leaves that is the
+        // index of an element read (`kb[oa + t]`).  The read tests its bounds whatever the
+        // index is, so a plain offset saves one predictable overflow branch and nothing the
+        // read does — measured on cbor `encode`'s key compare (`key_lt`, two such offsets in a
+        // loop of a few bytes, entered once per key pair): the checked loop without the guard
+        // and the plain loop measured the same, and the guard's evaluation per entry was
+        // −4.2 % of the whole encode.
+        let mut index_offsets: HashSet<usize> = HashSet::new();
+        for op in &lp.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(d, args) = n.unspan()
+                    && args.len() == 3
+                    && hoist::is_element_address(data, *d)
+                    && let Value::Call(a, aargs) = args[2].unspan()
+                    && matches!(
+                        (data.def(*a).name(), aargs.len()),
+                        (
+                            "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable",
+                            2
+                        )
+                    )
+                    && aargs.iter().all(|x| {
+                        matches!(x.unspan(), Value::Var(_) | Value::Int(_) | Value::Long(_))
+                    })
+                {
+                    index_offsets.insert(aargs.as_ptr() as usize);
+                }
+            });
+        }
+        if admitted
+            .iter()
+            .filter(|a| !index_offsets.contains(a))
+            .count()
+            < 2
+        {
             return Ok(ChainGuard::None);
         }
         // The nested loops' seeds and ends, bounded over the same leaves (no counters).

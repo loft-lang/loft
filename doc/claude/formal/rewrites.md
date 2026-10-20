@@ -2020,6 +2020,14 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  one-operator loops in `pil_hline` and `matches_at` cost
                  `fill_circle` and `fill_star` ~50 %, `wide_line` 22 % and `parse`
                  18 %, while six-operator `composite_layer` gains 30 %.  An
+                 INDEX OFFSET is not counted — a single `+` or `-` of two leaves that
+                 is an element read's index (`kb[oa + t]`): the read tests its bounds
+                 whatever the index, so the plain offset saves one predictable branch
+                 and nothing of the read; cbor's `key_lt`, two offsets in a loop of a
+                 few bytes entered per key pair, paid the guard on every compare
+                 (`encode` −4.1 % declined, `encode_bytes` −3.6 %, `check_request`
+                 −3.3 %; drawing `parse` +3.9 % with every function it runs
+                 byte-identical — code placement).  An
                  UNDER-approximation, and the residual is stated rather than hidden:
                  `hair_brush` has the same six operators as `composite_layer` and
                  LOSES ~8 %, so operator count does not separate them — trip count
