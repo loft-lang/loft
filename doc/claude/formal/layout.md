@@ -70,15 +70,20 @@ layout contract (which pins field/enum identity + order, not byte encoding).
 ### The layout function is total and shared
 
 ```
-  (L-Total)   layout(τ) is a TOTAL function of the finished type τ: every registered type has
-              exactly one (size, align, offset-vector), computed in src/data.rs + Stores::finish.
-              BOTH backends (interpreter store, native DbRef ABI) read these SAME offsets — a
-              backend that computes a different offset is a bug (D-op-1), not a second layout.
+  (L-Total)   layout(τ) is a TOTAL function of the finished type τ AND the program it is part
+              of: in one program every registered type has exactly one (size, align,
+              offset-vector), computed in src/data.rs + Stores::finish.  BOTH backends
+              (interpreter store, native DbRef ABI) read these SAME offsets — a backend that
+              computes a different offset is a bug (D-op-1), not a second layout.  The program
+              chooses between layouts in two places, each the smallest layout its use admits:
+              a fn-ref field's closure slot (L-Ref) and a record element's stride (H-LongRef).
 ```
 
-**In words.** There is one layout per type, and it is decided by the type alone (plus the fixed
-algorithm) — never by which backend, which run, or which call site reads it. This is what makes a
-store written by one build readable by another *of the same layout*.
+**In words.** There is one layout per type in a program, decided by the type and by how the
+program uses it — never by which backend, which run, or which call site reads it. The layout is
+an optimisation of the program as a whole, and `sizeof` is where it shows: the same declaration
+can measure differently in two programs. A store written by one program is readable by another
+*of the same layout*, which the store's layout identity checks (@PLN97) rather than assumes.
 
 ### Scalar and narrow-int widths
 
@@ -197,10 +202,12 @@ The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
               is a 4-byte RECORD POINTER into its own store.  A stored `reference<T>` field is
               the full 12-byte DbRef (Parts::DbRef, alignment 4): it may name a record in any
               store.  A ChildRec is a 4-byte co-located rec id; a fn-ref field is a 4-byte
-              function id followed by the ChildRec of its closure record.  An embedded struct
-              field is inline (L-Struct), not a pointer.  A collection's ELEMENT stride is
-              width(element), which for a record element is its size (L-Align: a multiple of
-              its alignment).
+              function id, followed by the ChildRec of its closure record where the program
+              assigns a capturing lambda to that field (4 bytes where it never does, 8 where it
+              does).  An embedded struct field is inline (L-Struct), not a pointer.  A
+              collection's ELEMENT stride is width(element), which for a record element is its
+              size (L-Align: a multiple of its alignment) — or the 4-byte record id where the
+              program links the element type (heap.md H-LongRef).
 ```
 
 **In words.** A collection field holds a small (4-byte) pointer, not the data inline, and a
