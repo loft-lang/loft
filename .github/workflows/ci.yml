@@ -595,9 +595,8 @@ jobs:
       # --all-targets` (all 445 test binaries), 7.6 to 8.5 min of each leg's 20 to 24, for a
       # test phase of 6 to 8 (CI_BUDGET.md § Each leg builds only the binaries it runs).  An
       # unsharded leg (push to main, the nightly matrix) still builds everything.  `html`
-      # says whether a binary of the leg runs an `--html` page — what the wasm target and
-      # the html rlib steps below are for — and `warm` is the `loft cache warm` flag naming
-      # the runtime rlibs (html, wasi) the leg's binaries need, so the warm-up builds no other.
+      # and `wasi` say whether a binary of the leg runs an `--html` page or builds for
+      # wasi — which runtime rlibs the step below builds, and the wasm target with them.
       - name: Shard
         id: shard
         shell: bash
@@ -605,15 +604,19 @@ jobs:
           if [ -n "${{ matrix.shard }}" ]; then
             echo "args=$(python3 scripts/ci_shards.py args ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
             echo "html=$(python3 scripts/ci_shards.py html ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
-            echo "warm=$(python3 scripts/ci_shards.py warm ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
+            echo "wasi=$(python3 scripts/ci_shards.py wasi ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
           else
             echo "args=--all-targets" >> "$GITHUB_OUTPUT"
             echo "html=true" >> "$GITHUB_OUTPUT"
-            echo "warm=" >> "$GITHUB_OUTPUT"
+            echo "wasi=true" >> "$GITHUB_OUTPUT"
           fi
           python3 scripts/ci_shards.py proof
+      # `cargo test --no-run`, not `cargo build`: nextest runs the TEST artefacts, and for
+      # `--lib` that is the crate compiled once more as its unit-test harness — a `cargo
+      # build --lib` makes the library only, and the test step then spent 2m08 compiling
+      # `loft` before its first test (run 39411552589, rest-c).
       - name: Build
-        run: cargo build ${{ steps.shard.outputs.args }}
+        run: cargo test --no-run ${{ steps.shard.outputs.args }}
 
       # No release build on a test leg: every test spawns the loft the test build made
       # (`CARGO_BIN_EXE_loft`, `target/debug/loft`), whose `--native` links the rlib beside
@@ -710,13 +713,27 @@ jobs:
         if: ${{ steps.shard.outputs.html == 'true' }}
         run: rustup target add wasm32-unknown-unknown
 
-      # Built into the `--html` shape's own directory, `target/loft/html` — the rlib `loft
-      # --html` links and the surface probe reads, where `make wasm`'s wasm-bindgen build cannot
-      # overwrite it.  A copy built anywhere else is a second build of the same rlib: the warm
-      # step below builds this one regardless (~40 s of the same compile).
-      - name: Build wasm rlib (for html_wasm tests)
-        if: ${{ steps.shard.outputs.html == 'true' }}
-        run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html
+      # The wasm runtime rlibs the leg's tests link — `loft --html` the html shape, built
+      # into its own `target/loft/html`; `--native-wasm` the wasi shape — each keyed on the
+      # running loft's build fingerprint (NATIVE.md), so built by that loft (`cache warm
+      # --runtime <shape>`) and only on a leg with a test that uses it.  SIDE BY SIDE: each
+      # is a release build of the crate for one target, 1m45 on the runner, and one of them
+      # does not saturate four cores; one after the other they were 3.7 min of every leg
+      # that needed both (run 39411552589).
+      - name: Build the wasm runtime rlibs the leg's tests link (html, wasi — side by side)
+        if: ${{ steps.shard.outputs.html == 'true' || steps.shard.outputs.wasi == 'true' }}
+        shell: bash
+        run: |
+          pids=""
+          if [ "${{ steps.shard.outputs.html }}" = "true" ]; then
+            ./target/debug/loft cache warm --runtime html & pids="$pids $!"
+          fi
+          if [ "${{ steps.shard.outputs.wasi }}" = "true" ]; then
+            ./target/debug/loft cache warm --runtime wasi & pids="$pids $!"
+          fi
+          for pid in $pids; do
+            wait "$pid" || echo "warn: a runtime rlib build failed — the first test that links it builds it itself"
+          done
 
       # The `--html` runtime rlib is keyed on loft's build fingerprint, which moves on every
       # commit; the warm step stamps the rlib built above with it.  Unwarmed, the first `--html` test in each
@@ -745,9 +762,9 @@ jobs:
       - name: Warm loft's --html runtime rlib and the tests' package cdylibs
         shell: bash
         run: |
-          cargo build ${{ steps.shard.outputs.args }}
-          ./target/debug/loft cache warm --from tests ${{ steps.shard.outputs.warm }} \
-            || echo "warn: cache warm failed — the first --html test will build the rlib itself"
+          cargo test --no-run ${{ steps.shard.outputs.args }}
+          ./target/debug/loft cache warm --from tests --no-runtime \
+            || echo "warn: cache warm failed — the first test needing a package cdylib builds it itself"
           for lib in tests/fixtures/libs/*/; do
             name=$(basename "$lib")
             [ -d "$lib/native" ] || continue

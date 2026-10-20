@@ -726,10 +726,16 @@ What `ci.yml` does:
   the SAME filterset for every leg (its shard argument is accepted and selects nothing);
   a single-slot group's member on a rest leg still runs in its one slot there.
   `proof` fails when a binary is in no leg or in two; it runs on every leg and in `make ci`.
-- The wasm target and the html rlib are built on the legs with a binary that runs a page
-  (`ci_shards.py html`), and `loft cache warm --from tests` takes the leg's
-  `--runtime html,wasi` / `--no-runtime` flag (`ci_shards.py warm`), so a leg whose
-  binaries use no runtime builds none — two release builds of ~1m45 each, before.
+- The wasm target and the runtime rlibs are built on the legs with a binary that uses
+  them (`ci_shards.py html` / `wasi`): the html and wasi shapes SIDE BY SIDE in one step
+  (`loft cache warm --runtime <shape>`, each a 1m45 release build of the crate for one
+  target that does not saturate the runner alone), and the warm-up proper runs
+  `--no-runtime` — a leg whose binaries use no runtime builds none, where every leg built
+  both, twice, before.
+- The build is `cargo test --no-run` with the leg's targets, not `cargo build`: nextest
+  runs the TEST artefacts, and for `--lib` that is the crate compiled once more as its
+  unit-test harness, which a `cargo build --lib` does not make — the test step then spent
+  two minutes compiling before its first test.
 - The Linux/macOS cargo cache keeps the registry, the git db and `~/.loft/build-cache`
   and no `target/`: a restore in seconds, and the half-minute of dependencies compiled
   cold.  The read-only restorers (`index-hygiene`, `leak-scan`, `viewer-smoke`, the

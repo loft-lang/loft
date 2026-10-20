@@ -5,7 +5,7 @@
 
     scripts/ci_shards.py args <shard>     # the cargo target flags of one leg: `--test a … [--lib --bin x]`
     scripts/ci_shards.py html <shard>     # `true` when a binary of the leg runs a `--html` page
-    scripts/ci_shards.py warm <shard>     # the `loft cache warm` runtime flag the leg needs
+    scripts/ci_shards.py wasi <shard>     # `true` when a binary of the leg builds for wasi
     scripts/ci_shards.py pack [--legs N]  # the rest legs' packs with their weights (a report)
     scripts/ci_shards.py proof            # every test binary is in exactly one leg, or exit 1
     scripts/ci_shards.py measure <junit>… # rewrite scripts/ci_shards.tsv from nextest junit reports
@@ -37,9 +37,9 @@ composes one filterset for every leg; the shard argument it takes no longer sele
   times, since nothing runs beside it.  A binary the table does not know packs at the
   table's median; the greedy pack (heaviest first, into the lightest leg) is deterministic,
   so every leg of one run agrees.  The binaries that need a wasm runtime rlib (`--html`
-  pages, wasi builds) are packed together into `rest-a`, so the html rlib and the warm-up's
-  runtime builds happen on that one leg and on no other; `warm` names the runtime rlibs
-  (`html`, `wasi`) a leg's binaries need, so the warm-up step builds no other.
+  pages, wasi builds) are packed together into `rest-a`, so the runtime rlib builds happen
+  on that one leg and on no other; `html` and `wasi` say which runtime a leg's binaries
+  need, so it builds no other.
 
 The partition is checked, not trusted: `proof` lists every test binary and fails when one is
 in no leg or in two.  A binary added to the repo lands in a rest leg by construction (the
@@ -75,11 +75,12 @@ TEST_THREADS = 4
 # `wasm32-unknown-unknown` target); one whose source builds for wasi needs that rlib.
 HTML_MARKS = ("--html", "html_wasm", ".html")
 WASI_MARKS = ("wasip2", "wasm32-wasi", "--native-wasm")
-# What the html rest leg pays before its tests start and the other rest legs do not — the
-# html rlib step and the two runtime builds of the warm-up, 4.7 min measured on run
-# 39400567382 — in the pack's unit (test seconds over `TEST_THREADS` threads): the leg
-# starts that much heavier, so the greedy pack hands it that much less.
-HTML_LEG_OVERHEAD = 4.7 * 60 * TEST_THREADS
+# What the runtime rest leg pays before its tests start and the other rest legs do not —
+# the wasm target, the runtime rlib builds and their warm-up: 3.5 min measured on run
+# 39411552589 (rest-a 11.0 min before its tests, rest-b 7.5) — in the pack's unit (test
+# seconds over `TEST_THREADS` threads): the leg starts that much heavier, so the greedy
+# pack hands it that much less.
+RUNTIME_LEG_OVERHEAD = 3.5 * 60 * TEST_THREADS
 
 
 def excluded_binaries() -> set[str]:
@@ -179,7 +180,7 @@ def packs() -> list[list[str]]:
     median = statistics.median(w.values()) if w else 1.0
     weight = {b: w.get(b, median) for b in rest}
     legs: list[list] = [[0.0, []] for _ in range(REST_LEGS)]
-    legs[0][0] = HTML_LEG_OVERHEAD
+    legs[0][0] = RUNTIME_LEG_OVERHEAD
     # The binaries that need a wasm runtime rlib first, all into leg 0, heaviest first —
     # the one rest leg that builds a runtime; then the others greedily.
     pinned = sorted((b for b in rest if runtimes(b)), key=lambda b: (-weight[b], b))
@@ -220,16 +221,6 @@ def leg_runtimes(shard: str) -> set[str]:
     for b in leg_binaries(shard):
         out |= runtimes(b)
     return out
-
-
-def warm_flag(shard: str) -> str:
-    """The `loft cache warm` flag naming the runtime rlibs this leg's binaries need."""
-    need = leg_runtimes(shard)
-    if not need:
-        return "--no-runtime"
-    if need == {"html", "wasi"}:
-        return ""
-    return "--runtime " + ",".join(sorted(need))
 
 
 def proof() -> int:
@@ -284,10 +275,8 @@ def main() -> int:
     cmd = a[0]
     if cmd == "args" and len(a) == 2:
         print(args(a[1]))
-    elif cmd == "html" and len(a) == 2:
-        print("true" if "html" in leg_runtimes(a[1]) else "false")
-    elif cmd == "warm" and len(a) == 2:
-        print(warm_flag(a[1]))
+    elif cmd in ("html", "wasi") and len(a) == 2:
+        print("true" if cmd in leg_runtimes(a[1]) else "false")
     elif cmd == "pack":
         w = weights()
         median = statistics.median(w.values()) if w else 1.0

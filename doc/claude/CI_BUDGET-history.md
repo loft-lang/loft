@@ -869,3 +869,12 @@ the balance, so the next cut was the release build itself: the twenty-two binari
 spawned `target/release/loft` (the html, engine_host and deliver_wasm suites among them,
 each skipping silently without it) now spawn the test build's loft like every other test,
 and the leg compiles the crate once.
+
+Without it (run 39411552589, green): corpus 14.7, heavy 16.9, rest-a 17.6, rest-b 16.8,
+rest-c 20.4 — four within budget.  Two costs remained in the logs: the leg holding `--lib`
+spent 2m08 inside its test step compiling the crate as its unit-test harness, which
+`cargo build --lib` had not made (so the build step is `cargo test --no-run`), and the
+three legs that link a runtime built the html and wasi rlibs one after the other, 1m45
+each on a four-core runner neither saturates (so they build side by side).  The rest packs
+were re-weighted from this run (rest-a 11.0 min before its tests, rest-b 7.5: the runtime
+leg's offset is 3.5 min).
