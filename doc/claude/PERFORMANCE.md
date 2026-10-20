@@ -76,11 +76,15 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    leaves the cache ([INTERPRETER_PERFORMANCE.md § What to
    optimise](INTERPRETER_PERFORMANCE.md#what-to-optimise-the-data-that-leaves-the-cache)).
    Name it from the CURRENT emission: a profile expires as rules land (a store share measured
-   before the work-buffer rules priced a fix that then measured level).  A store, copy or
-   check still in the emitted code is a rule that declined it, so before calling any cost
-   fundamental, run the rules' traces (`LOFT_TRACE_*`, [NATIVE_SWITCHES.md](NATIVE_SWITCHES.md)):
-   each names its decline and the reason, and the reason is the work item.  For now only
-   the null-integer cost is left alone (worklist § Focus).
+   before the work-buffer rules priced a fix that then measured level).  **`make gap-report
+   ARGS="--bench <lane> --fn <op>"`** does this for one routine: its instructions against
+   its twin's, split into what the loft lines compile to, the runtime inlined into them and
+   the runtime called, the loft lines that carry them, and every rule decline in those
+   functions — a store, copy or check still emitted is a rule that declined it, and the
+   reason is the work item.  Read its split before picking a fix: a step of 5–10 % on a
+   routine still a factor off its twin is working on the wrong row, and the missing piece
+   is wherever the rest of the gap lives.  For now only the null-integer cost is left alone
+   (worklist § Focus).
 4. **Hand-write the efficient form first** — in loft, or as the IR the rewrite would produce —
    for that one case, read what it compiles to on BOTH backends (`--interpret --dump`,
    `--native-emit`, `bench/portal/hand_price.sh`) and time it.  That is the prize, and the

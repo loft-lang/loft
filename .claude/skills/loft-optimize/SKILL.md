@@ -150,7 +150,11 @@ slower than the compiled program on the same code. So:
 - **Calling a cost fundamental.** "The memory model costs that" ends the search without
   looking. A copy or allocation still in the compiled code is usually a rule that declined it
   for a nameable reason; ask the rules (their traces) before accepting any cost as the price of
-  the language.
+  the language. `make gap-report` lists those declines per routine.
+- **Small steps on a routine still a factor off.** Five or ten percent at a time on a routine
+  several times slower than its twin means the work is going into the wrong part. First see
+  where the gap actually lives (`make gap-report`: the code's own work, the runtime inlined
+  into it, the runtime it calls), then work that part as a mechanism.
 - **A hand form that changes more than the rule would.** It prices a rewrite nobody can build:
   a hand form that also dropped a safety check measured twice what the lookups alone were
   worth. Change one thing per form, and split a gain by pricing its pieces apart.
