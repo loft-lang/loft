@@ -12528,6 +12528,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // that outlived its store, and a store nobody freed.  Reported at every site during the
     // run (so one run surfaces all of them), and turned into a non-zero exit here so a probe
     // can be a GATE rather than something someone has to read the output of.
+    loft::keys::strict_store_notice();
     if loft::keys::strict_stores() {
         let n = loft::keys::strict_store_violations();
         if n > 0 {

@@ -14,8 +14,10 @@
 # A price counts only when the hash is unchanged and two runs agree.  It is a CEILING for
 # the form, not a proof of the rewrite: the conditions under which the form is sound are the
 # rule's to state and the emitter's to validate (formal/rewrites.md).  The flags are the ones
-# `src/main.rs` passes for a shipped binary; `target/release` must be current
-# (`cargo build --release --lib --bin loft`, `make check-rlib`).
+# `src/main.rs` passes for a shipped binary; `target/release` must be current (it links the
+# DEVELOPMENT runtime, with `strict-stores`: a price is a difference, the absolute numbers are
+# `bench/stats.py`'s, which measures the production pair) — `cargo build --release --lib
+# --bin loft`, `make check-rlib`.
 #
 # A RUNTIME change (an edit to the rlib, not to the emitter) is A/B'd the same way without
 # editing any Rust: emit once, save `target/release/deps/libloft.rlib` from each build, copy

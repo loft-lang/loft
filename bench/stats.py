@@ -620,11 +620,25 @@ def main():
                          "routines together, once --n is calibrated on the picked ones")
     ap.add_argument("--no-pin", action="store_true")
     ap.add_argument("--show-samples", action="store_true", help="print every sample under its row")
-    ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(ROOT, "target/release/loft")))
-    ap.add_argument("--lib-dir", default=os.environ.get("LOFT_LIB_DIR", os.path.join(ROOT, "target/release")))
+    # The production pair by default (scripts/lean_build.sh): a lane measures what ships, so
+    # it runs the binary and runtime `make install` builds, not the development build with
+    # its debugging aids.  `--loft` / `--lib-dir` (or LOFT_BIN / LOFT_LIB_DIR) pick another
+    # pair — an A/B of a runtime change names both of its builds that way.
+    lean = os.path.join(ROOT, "target/install-lib/release")
+    ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(lean, "loft")))
+    ap.add_argument("--lib-dir", default=os.environ.get("LOFT_LIB_DIR", lean))
+    ap.add_argument("--no-lean-build", action="store_true",
+                    help="do not (re)build the production pair before measuring")
     ap.add_argument("--allow-declined-stdlib", action="store_true",
                     help="measure the interpreter even when its compiled stdlib is declined")
     a = ap.parse_args()
+    if os.path.realpath(a.lib_dir) == os.path.realpath(lean) and not a.no_lean_build:
+        # Cargo answers in a second when the pair is current; a stale pair would measure
+        # code that no longer exists.
+        r = subprocess.run([os.path.join(ROOT, "scripts", "lean_build.sh"), "--lib", "--bin", "loft"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            fail(f"scripts/lean_build.sh failed:\n{r.stderr[-2000:]}")
     # The janitor runs beside the builds this starts, detached (RUN_BOUNDS.md § Scratch hygiene).
     subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
 

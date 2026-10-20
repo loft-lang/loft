@@ -252,7 +252,7 @@ doctor:
 install-artifacts: check-targets all wasm-html-mt-lib
 	@cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random
 	@cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
-	@cargo build --release --lib --no-default-features --features mmap,random,threading,native-extensions,registry,remote-store --target-dir target/install-lib
+	@scripts/lean_build.sh --lib
 	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
@@ -261,7 +261,7 @@ install-artifacts: check-targets all wasm-html-mt-lib
 # native binary + lib; this adds the feature-complete install-lib rlib the copies
 # need.  Same stale-loft_ffi prune as the full target.
 install-artifacts-native: all
-	@cargo build --release --lib --no-default-features --features mmap,random,threading,native-extensions,registry,remote-store --target-dir target/install-lib
+	@scripts/lean_build.sh --lib
 	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
