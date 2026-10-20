@@ -395,6 +395,22 @@ the ~30-min Windows leg; reach for it when the change touches a platform seam.  
 release-gate` is the heavier sibling (every nightly against one commit, 60–90 min) and is
 release evidence, not a branch gate.
 
+**A question about a few tests on one platform is a focused probe, not a gate.**  Each runs
+a nextest filterset (or a bash snippet) on one runner, has no concurrency group — so it can
+run beside a `ci.yml` dispatch without cancelling it — and never saves a cache:
+
+```bash
+gh workflow run linux-probe.yml --ref <branch> -f filter='binary(native) or binary(n2_cdylib)'
+gh workflow run linux-probe.yml --ref <branch> -f run='readelf -d target/release/loft'
+gh workflow run win-cdylib.yml  --ref <branch> -f filter='binary(native)'   # both link modes
+gh workflow run windows-probe.yml --ref <branch> -f tests='--test native'  # cargo test args
+gh workflow run macos-probe.yml --ref <branch> -f filter='…'               # the native corpus
+```
+
+`linux-probe` restores the Linux leg's cache read-only and runs the tests the way `ci.yml`'s
+Test job does (dev profile, the `ci` nextest profile, the release rlib built first), so its
+answer is that leg's answer for the tests it selects.
+
 **The inner loop can die the same way, and earlier than the tests (2026-09-21).**  A
 `find_problems.sh --subject store` run that had passed two hours before was killed for
 memory while still COMPILING — a subject links tens of test binaries in parallel, and the
@@ -602,7 +618,7 @@ does not belong on a PR, however cheap it is.**
 | **Mondays 06:00** | `repro-build` — reproducible-build check (weekly, not nightly) | `schedule` |
 | **per PR + push to main** (`daily-build.yml`) | the four RELEASE bundles — `x86_64-pc-windows-msvc`, both Apple targets, `x86_64-unknown-linux-musl` — each through `scripts/make-release.sh`, smoke-tested by running a program out of the unzipped bundle, uploaded as a 30-day artifact.  Called the **daily build** because that is the term users know; the cadence is per PR, which at one or two PRs a day comes to the same thing.  **Advisory, never a required check** — a bundle leg must never block a merge the gate itself passed.  `concurrency: cancel-in-progress`, so a re-push replaces its predecessor rather than queueing.  Exists because release bundles are attached to `v*` tags ONLY, so between monthly releases the only way to run current loft was to compile it — which needs a machine that survives `codegen-units=1` on this crate, and a contributor whose laptop does not is what prompted it | `pull_request`, `push: main`, `workflow_dispatch` (one triple or all) |
 | **library repos** | one `library-ci` per repo, all callers of `library-ci-reusable.yml`, and **`ci / <package>` is a REQUIRED check on every repo's `main`** (41 contexts, one per package; `strict` off, so a PR need not be rebased onto a moved `main`, and `enforce_admins` off, so the owner's direct pushes to `main` still land — the way every library fix reaches it today): the per-package test matrix, plus a repo-level **`unreleased work`** job — a branch ahead of the default branch with no PR, a PR nobody has touched, or a `loft.toml` version the registry has never seen, each red after 14 days without activity (`scripts/unreleased-work.py`, `stale-days` to tune) | `push: main`, `pull_request` |
-| **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
+| **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR; and the focused probes — `linux-probe`, `windows-probe`, `win-cdylib`, `macos-probe` — which answer a few tests on one platform (§ When the local gate is unreliable) | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
 
 ### A test that spawns a pool declares its share

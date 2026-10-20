@@ -1,0 +1,106 @@
+# The FOCUSED Linux probe — the counterpart of windows-probe.yml and win-cdylib.yml for
+# ubuntu-latest.  A question about Linux behaviour (a loader, a link, an ELF detail) is
+# answered here in minutes, on one runner, from any branch — NOT a PR gate, and it never
+# saves a cache.
+#
+# The full Linux leg (`gh workflow run ci.yml -f os=ubuntu-latest`) is the wrong tool for a
+# question about a few tests: it runs ~25 minutes of every job, and because ci.yml cancels
+# an in-progress run of the same branch, it cannot run beside a Windows dispatch of ci.yml
+# without one cancelling the other.  This workflow has no such concurrency group.
+#
+#   gh workflow run linux-probe.yml --ref <branch> -f filter='binary(native) and test(/dynamic/)'
+#   gh workflow run linux-probe.yml --ref <branch> -f run='readelf -d target/release/loft'
+#
+# `filter` is a cargo-nextest filterset (the same language as win-cdylib.yml's input); the
+# tests run on the dev profile under the `ci` nextest profile, exactly as ci.yml's Test job
+# runs them, so a result here is a result there.  `run` is bash, run INSTEAD of the tests,
+# for a question whose answer is an artefact rather than a test result.
+name: linux-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'cargo-nextest filterset, e.g. `binary(native) or binary(n2_cdylib)`.'
+        required: false
+        default: ''
+      run:
+        description: 'bash to run on the Linux runner after the build (runs INSTEAD of the tests).'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: '1'
+  LOFT_SUITE_DIR: loft-suite
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_HTTP_MULTIPLEXING: 'false'
+  CARGO_NET_RETRY: '10'
+  CARGO_INCREMENTAL: '0'
+  # As ci.yml: the native-test binary cache lives under target/, so the restored cache
+  # carries it and a native test does not recompile what the last CI run compiled.
+  LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
+
+jobs:
+  probe:
+    name: Linux probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      # The same system libraries ci.yml's Test job installs, so a test that needs one does
+      # not fail here for a reason it would not fail for there.
+      - name: Install mold + ALSA + headless GL + sqlite + binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
+      # Read-only restore of the Linux leg's own cache: a restore matches a save only with
+      # the IDENTICAL path list, so this list is ci.yml's, unchanged.  Never saved from here.
+      - name: Restore cargo registry and build (ci.yml's Linux cache)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      # The native tests link loft's RELEASE rlib and drive the release binary, as in ci.yml.
+      - name: Build (release loft binary + lib for integration tests)
+        run: cargo build --release --lib --bin loft
+      - name: Install cargo-nextest
+        if: inputs.filter != ''
+        uses: taiki-e/install-action@nextest
+      - name: Run the requested tests
+        if: inputs.filter != ''
+        env:
+          FILTER: ${{ inputs.filter }}
+        run: |
+          echo "nextest filter: $FILTER"
+          cargo nextest run --profile ci --no-fail-fast -E "$FILTER"
+      - name: Run the requested shell
+        if: inputs.run != ''
+        env:
+          PROBE: ${{ inputs.run }}
+        run: |
+          echo "--- probe ---"
+          echo "$PROBE"
+          echo "-------------"
+          # A probe is usually several questions; one dead command must not end the run.
+          set +e
+          bash -c "$PROBE"
+          echo "probe exit: $?"
+      - name: Nothing was asked
+        if: inputs.filter == '' && inputs.run == ''
+        run: |
+          echo "linux-probe: give a nextest filter (-f filter=…) or a shell (-f run=…)." >&2
+          exit 1
