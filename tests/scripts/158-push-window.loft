@@ -59,6 +59,11 @@
 // assumed a push to a by-value parameter reaches the caller's row); the values above are
 // the measured ones.  Restored byte-identically (`git diff` empty against the pre-sabotage
 // commit): interpret / native / every switch / LOFT_HOIST_VERIFY=1 green.
+// The s-cells' storage test (hand-measured, 2026-10-20): admitting every pair of scalar
+// vectors whatever their storage admits s2 and s3 and changes NO value, with or without
+// LOFT_HOIST_VERIFY=1 — nor in a loop, a record field or a vector element replacing its own
+// source: no caller here hands the source's store in as the buffer.  Like the third clause
+// above it can only decline, so no cell guards it and none is claimed to.
 
 struct Bag { items: vector<integer>, count: integer }
 
@@ -309,6 +314,64 @@ fn b1() {
   assert(len(h) == 40 && tot(h[0]?) + tot(h[1]?) + tot(h[2]?) + tot(h[3]?) == 18375, "b2");
 }
 
+// s1-s4 — the pushed vector is the RETURN BUFFER the caller offered, and the body reads a
+// parameter vector.  A parameter can name that buffer, so it declines — unless both are
+// vectors of plain scalars with different ELEMENT STORAGE, which the type checker never lets
+// be one vector (loft#751) and which name no store through their elements.  s1 (`vector<u8>`
+// read, `vector<integer>` pushed) and s4 (the reverse) take the window; s2 (the same
+// storage, the result replacing its own source) and s3 (the same storage under another
+// spelling: `integer limit(0, 255)` beside `u8`) keep the header.
+//   s1: n=40 is sum (7i mod 256) + sum i = (5460 - 3*256) + 780 = 5472; n=45 reads past m
+//       (absent, so 0) and adds 40+..+44 = 210: 5682.
+//   s2: [1,2,3,4] doubled twice: 20, then 40.   s3: [10,20,255] halved: 5+10+127 = 142.
+//   s4: [300,5,256,511] & 255 = 44+5+0+255 = 304; m itself untouched: 1072.
+fn totb(v: const vector<u8>) -> integer { t = 0; for x in v { t += x; } t }
+fn s1_mk(m: const vector<u8>, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [(m[i] ?? 0) + i]; }
+  out
+}
+fn s1() {
+  b: vector<u8> = [for i in 0..40 { (i * 7) % 256 }];
+  x = s1_mk(b, 40); y = s1_mk(b, 45);
+  println("s1 {len(x)} {tot(x)} {len(y)} {tot(y)} {len(b)}");
+  assert(len(x) == 40 && tot(x) == 5472 && len(y) == 45 && tot(y) == 5682 && len(b) == 40, "s1");
+}
+fn s2_mk(m: const vector<integer>, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [(m[i] ?? 0) * 2]; }
+  out
+}
+fn s2() {
+  v: vector<integer> = [1, 2, 3, 4];
+  v = s2_mk(v, 4); a = tot(v);
+  v = s2_mk(v, 4);
+  println("s2 {a} {len(v)} {tot(v)}");
+  assert(a == 20 && len(v) == 4 && tot(v) == 40, "s2");
+}
+fn s3_mk(m: const vector<integer limit(0, 255)>, n: integer) -> vector<u8> {
+  out: vector<u8> = [];
+  for i in 0..n { out += [((m[i] ?? 0) / 2) & 255]; }
+  out
+}
+fn s3() {
+  w: vector<u8> = [10, 20, 255];
+  w = s3_mk(w, 3);
+  println("s3 {len(w)} {totb(w)}");
+  assert(len(w) == 3 && totb(w) == 142, "s3");
+}
+fn s4_mk(m: const vector<integer>, n: integer) -> vector<u8> {
+  out: vector<u8> = [];
+  for i in 0..n { out += [(m[i] ?? 0) & 255]; }
+  out
+}
+fn s4() {
+  m: vector<integer> = [300, 5, 256, 511];
+  r = s4_mk(m, 4);
+  println("s4 {len(r)} {totb(r)} {tot(m)}");
+  assert(len(r) == 4 && totb(r) == 304 && tot(m) == 1072, "s4");
+}
+
 // r1 — `(R-Base)`'s growth condition, found on the way: a loop that appends a VECTOR
 // element (no struct, so its mint keeps the runtime's append and earns no push header)
 // beside a read of a SIBLING field of the same record.  The append grows the record's
@@ -331,6 +394,6 @@ fn r1() {
 fn main() {
   w1(); w2(); w3(); w4(); w5(); w6(); w7(); w8(); w9(); w10(); w11(); w12();
   d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8();
-  a1(); b1(); r1();
+  a1(); b1(); s1(); s2(); s3(); s4(); r1();
   println("push window ok");
 }

@@ -7158,6 +7158,12 @@ fn window_parts_ok(
             // that field, and stays a possible viewer.
             let record_view = plain_record_type(data, vars.tp(x))
                 .is_some_and(|tp| stores.is_some_and(|st| !st.owns_heap(tp)));
+            // A vector of plain scalars stored apart from every root (`vector<u8>` beside a
+            // pushed `vector<integer>`) reaches no store through its elements and cannot BE
+            // a root: element storage is part of a vector's type (`(C-Refl)`, D-types-26).
+            let scalar_vector_apart = roots
+                .iter()
+                .all(|&r| scalar_vector_apart(vars.tp(x), vars.tp(r)));
             !roots.contains(&x)
                 && !facts.is_some_and(|f| roots.iter().all(|&r| f.distinct(x, r)))
                 && !is_scalar(vars.tp(x))
@@ -7165,6 +7171,7 @@ fn window_parts_ok(
                 && !owned_local(vars, x)
                 && !separate_parameter
                 && !record_view
+                && !scalar_vector_apart
         })
         .collect();
     for part in parts {
@@ -9014,6 +9021,18 @@ fn is_scalar(tp: &Type) -> bool {
             | Type::Character
             | Type::Enum(_, false, _)
     )
+}
+
+/// Two vectors of plain scalars whose ELEMENT STORAGE differs — never one vector, because
+/// the type checker refuses one where the other is declared (loft#751, `(C-Refl)` decided on
+/// storage), and neither can name a store through its elements.  `same_element_storage`
+/// answers `true` for any pair it does not compare (an integer and a float), so only a
+/// definite `false` counts — the safe direction for a test that admits a window.
+fn scalar_vector_apart(a: &Type, b: &Type) -> bool {
+    let (Type::Vector(ea, _), Type::Vector(eb, _)) = (a.peel_link(), b.peel_link()) else {
+        return false;
+    };
+    is_scalar(ea) && is_scalar(eb) && !ea.same_element_storage(eb)
 }
 
 /// `@FR-R-LazySplit` — one `for piece in text.split(c)` loop that takes its pieces straight
