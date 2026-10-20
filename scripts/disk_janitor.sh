@@ -23,7 +23,12 @@
 # space is under LOW_GB (50).  One janitor at a time (flock); a second one leaves.
 #
 # Per checkout (every git worktree of ~/workspace/loft, and every ~/workspace/loft* checkout):
-#   1. `cargo sweep --time 3` — artefacts no build used in 3 days (--time 1 under LOW_GB)
+#   1. `cargo sweep --time 3` — artefacts no build used in 3 days (--time 1 under LOW_GB) —
+#      then `cargo sweep --maxsize` down to the newest TARGET_KEEP_GB (100) by last use: a
+#      feature or flag change rebuilds every test binary under a new hash, and the superseded
+#      set is as recent as the build that replaced it, so no age rule reaches it (measured
+#      2026-10-20: 175 GB of superseded test binaries in one checkout's target/debug/deps
+#      filled the disk inside a day; one complete build is well under the cap)
 #   2. incremental sessions older than a day
 #   3. `.loft/cache` entries under tests/ older than 2 days
 #   4. everything else git IGNORES that nothing wrote for 3 days (1 under LOW_GB), unless the
@@ -38,7 +43,9 @@
 # meanwhile waits the seconds a sweep takes, and a checkout whose lock a build already holds is
 # left for the next round.  A process working inside a checkout that holds no lock — a test
 # binary, a `loft --native` run linking the rlib — also leaves it for the next round.
-# Box-wide: scripts/sweep_scratch.sh over every scratch location loft writes (its own standing
+# Box-wide: every checkout's gate scratch (/var/tmp/loft-test-scratch-<tag>) whose gate is not
+# alive and that nothing wrote for 3 days (1 under LOW_GB) — a parked checkout's finished
+# runs, 133 GB of them on 2026-10-20 — then scripts/sweep_scratch.sh over every scratch location loft writes (its own standing
 # rules), `loft-tmp-cleanup` for the RAM /tmp when installed, and perf's ~/.debug older than 14
 # days.  Never a file outside those; in a working tree never a tracked file, never an
 # untracked file git does not ignore, never what the keep-list names.
@@ -51,6 +58,7 @@ set -u
 LOW_GB=${LOFT_JANITOR_LOW_GB:-50}
 CRIT_GB=${LOFT_JANITOR_CRIT_GB:-15}
 EVERY_MIN=${LOFT_JANITOR_EVERY_MIN:-60}
+TARGET_KEEP_GB=${LOFT_JANITOR_TARGET_KEEP_GB:-100}
 WORKSPACE=${LOFT_JANITOR_WORKSPACE:-$HOME/workspace}
 STATE="$HOME/.cache/loft-janitor"
 mode=run; force=0; dry=0; background=0
@@ -154,6 +162,7 @@ sweep_target() {
   local co=$1
   if cargo sweep --version >/dev/null 2>&1; then
     (cd "$co" && run cargo sweep --time "$sweep_days" >/dev/null 2>&1)
+    [ -d "$co/target" ] && (cd "$co" && run cargo sweep --maxsize "${TARGET_KEEP_GB}GB" >/dev/null 2>&1)
   fi
   for inc in "$co"/target/*/incremental; do
     [ -d "$inc" ] && run find "$inc" -mindepth 1 -maxdepth 1 -mtime +1 -exec rm -rf {} +
@@ -188,6 +197,17 @@ for d in "$WORKSPACE"/*/; do
   busy "$d" || sweep_ignored "$d"
 done
 
+# Every checkout's gate scratch: emptied when its gate is not alive (the pid file
+# find_problems.sh writes, liveness-tested) and nothing in it is newer than the sweep age.
+# A live or recent run is never touched; the directory itself stays, as find_problems expects.
+for gs in /var/tmp/loft-test-scratch-*; do
+  [ -d "$gs" ] || continue
+  tag=${gs#/var/tmp/loft-test-scratch-}
+  pid=$(cat "/tmp/loft_test.$tag.pid" 2>/dev/null)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && continue
+  [ -n "$(find "$gs" -mindepth 1 -mtime "-$sweep_days" -print -quit 2>/dev/null)" ] && continue
+  run find "$gs" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+done
 # Box-wide scratch, by the standing rules of the one script that owns them.
 sweeper="$WORKSPACE/loft/scripts/sweep_scratch.sh"
 [ -x "$sweeper" ] || sweeper="$(dirname "${BASH_SOURCE[0]}")/sweep_scratch.sh"
