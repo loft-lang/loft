@@ -1411,6 +1411,22 @@ pub fn pure_reuse_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PURE_REUSE"))
 }
 
+/// `LOFT_NO_BOUND_APPEND=1` — `k = f(…); …; dst += k` keeps the bind and the copy
+/// (`@FR-R-BoundAppend` off): the first bisect step for a wrong length or content of a vector
+/// built by appending call results bound first.
+#[must_use]
+pub fn bound_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BOUND_APPEND"))
+}
+
+/// `LOFT_TRACE_BOUND_APPEND=1` — name each append `bound_append` moves to its call.
+#[must_use]
+pub fn trace_bound_append() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_BOUND_APPEND"))
+}
+
 /// `LOFT_TRACE_PURE_REUSE=1` — name each call `pure_reuse` computes once.
 #[must_use]
 pub fn trace_pure_reuse() -> bool {

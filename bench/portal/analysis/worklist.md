@@ -187,6 +187,16 @@ stores were ~40 % of the row's profile; `keybuf` + E1 *est.* −15–20 % (≈ 3
 next.  What stays is the focus's exception (the null-integer reads and C120's arithmetic) and
 store indirection where no header can be held.
 
+BUILT after the inspection: `keybuf` — `(R-WorkBuffer)`'s `copy_bound` no longer reads a copy
+inside a loop as the single bind, so the accumulator is lent by the caller (correct, and level
+here: 7.04 → 7.03 ms — the store share above was measured before the work-buffer rules; also
+promotes graphics' `bl_ends`); E1 — `(R-BoundAppend)`: `k = encode(key); …; keybuf += k` is
+`keybuf += encode(key)` with the lengths served from before the growth, and `(R-AppendTwin)` now
+admits a lent work buffer as its destination, so `encode__ap` builds each key in `keybuf`:
+`encode` 4.54× → 3.73× in the lane (−17.8 %, the hand form exactly), pluginabi `request` −3.5 %,
+everything else level.  Left: `encode`'s arm buffers, the `key_lt` span clause (−4 %), the
+null-integer reads (the focus's exception).
+
 Built today on the row: `(R-GuardedChain)`'s guard is no longer evaluated per call for a loop
 whose chains are only index offsets — `key_lt`, a loop of a few bytes per key pair, paid the
 guard closure on every compare (−4.1 % by hand, −2.5 % in the lane).  PRICED, not built: `key_lt`

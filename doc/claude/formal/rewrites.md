@@ -3342,7 +3342,9 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  R-ElemFirst; `a.items = v`, which the move elision builds straight into
                  the field through its staging local), the return buffer, which adopts
                  the local (R-RetAdopt), or another local — and a local bound PURELY as
-                 a copy of another vector (`v = s.v`: one copy in, no push or insert),
+                 a copy of another vector (`v = s.v`: one copy in, no push or insert,
+                 and that copy outside every loop — a copy repeated by a loop is an
+                 accumulator, `keybuf += k`, which no copy elision borrows),
                  which the copy elision's borrow tiers and the transparent link remove
                  outright — every one of those rewrites asks for a local, and a buffer
                  would turn a saved copy into a paid one; a local declared INSIDE a loop, whose
@@ -5990,7 +5992,9 @@ the verify switch.
                  local whose dependencies reach it: a caller never hands a buffer one
                  of its other arguments reaches (loft#1895).  A twin emits the IR's
                  own semantics — no adoption of B by a result local (R-RetAdopt) and
-                 no refill — so what admission read is what runs.
+                 no refill — so what admission read is what runs.  A WORK BUFFER the
+                 caller lends (R-WorkBuffer) is admitted as X like a local: each call
+                 site lends its own, so no other argument can be a view of it.
 ```
 
 **In words.**  A builder clears the buffer it is handed and writes its result into it, and a
@@ -6002,6 +6006,32 @@ Native only; the interpreter copies and is the reference.
 **BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
 `emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
 `loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
+
+### A call result bound first and appended later is appended where it is made
+
+```
+  (R-BoundAppend) in one block, `k = f(args); S; dst += k` — k a local bound ONCE, to
+                 a call of a function answering a vector through its hidden buffer;
+                 dst a local or a parameter of vector type; every statement of S
+                 mentioning k, dst and every local whose dependencies reach dst only as
+                 the operand of a length, rebinding neither, and leaving nothing early
+                 (no `return`, `break`, `continue`, `yield`); k mentioned nowhere else —
+                 is `b0 = len(dst); dst += f(args); kl = len(dst) - b0; S'`, S' reading
+                 `len(dst)` as b0 and `len(k)` as kl.
+```
+
+**In words.**  The append the original makes after S is made before it, which only a statement
+of S could tell: by reading dst — which it does only through its length, served from before
+the growth — or by never reaching the append, which no statement of S can.  The rewritten
+append is (R-AppendTwin)'s shape, so on native f builds its result after dst's elements, and
+neither k's buffer nor the copy exists; the interpreter makes the same calls in the same order
+with one local fewer.  cbor's `encode_map` encodes each key into k, records its offset and
+length, and appends it: `encode` 7.04 → 5.78 ms native (−17.9 %, the hand-written form exactly),
+hash unchanged.  `LOFT_NO_BOUND_APPEND=1` keeps the bind and the copy;
+`LOFT_TRACE_BOUND_APPEND=1` names each append moved.  Site: `src/bound_append.rs`, in the scope
+pass's IR phase beside `(R-PureReuse)`.  Guard
+`tests/scripts/a-bound-result-appended-later-is-appended-where-it-is-made.loft`, pin
+`tests/bound_append.rs`.
 
 ### A call whose result is moved whole into an element builds it there
 

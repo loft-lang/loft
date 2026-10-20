@@ -2073,7 +2073,7 @@ fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
 /// buffer the caller mints per call site and hands to this call alone, so nothing but this
 /// activation reaches it — exclusive, as the owned local it was.  Argument slots follow
 /// attribute order.
-fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
+pub(crate) fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
     let def = data.def(def_nr);
     def.variables()
         .arguments()

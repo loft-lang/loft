@@ -842,20 +842,31 @@ fn admit(
 }
 
 /// Is `v` filled only by one whole copy of another vector (see `Walk::copy_bound`)?
+///
+/// A copy inside a LOOP builds the vector up — `keybuf += k` once per key, cbor's
+/// `encode_map` — however many copies the code spells: it is an accumulator, which no copy
+/// elision borrows, and never the single bind `a = s.v` this answer exists to keep a local.
 fn copy_bound(code: &Value, data: &Data, v: u16) -> bool {
-    let (mut copies, mut builds) = (0, 0);
-    code.walk(&mut |x| {
+    fn count(x: &Value, data: &Data, v: u16, in_loop: bool, copies: &mut u32, builds: &mut u32) {
         if let Value::Call(d, args) = x
             && args.first().is_some_and(|a| is_var(a, v))
         {
             let name = data.def(*d).name();
             if copied_from_at_1(name) {
-                copies += 1;
+                if in_loop {
+                    *builds += 1;
+                } else {
+                    *copies += 1;
+                }
             } else if name.starts_with("OpPush") || name == "OpInsertVector" {
-                builds += 1;
+                *builds += 1;
             }
         }
-    });
+        let inner = in_loop || matches!(x, Value::Loop(_));
+        x.for_each_child(&mut |c| count(c, data, v, inner, copies, builds));
+    }
+    let (mut copies, mut builds) = (0, 0);
+    count(code, data, v, false, &mut copies, &mut builds);
     copies == 1 && builds == 0
 }
 

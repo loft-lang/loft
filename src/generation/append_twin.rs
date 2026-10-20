@@ -386,7 +386,13 @@ pub fn call_site<'a>(
     };
     let vars = data.def(d_nr).variables();
     let own = buffer(data, d_nr);
-    if vars.is_argument(root) && own.is_none_or(|b| !views(vars, b).contains(&root)) {
+    // A WORK BUFFER the caller lends (`@FR-R-WorkBuffer`) is this frame's alone — each call
+    // site lends its own — so no other argument can be a view of it, which is all the
+    // parameter decline guards against.
+    if vars.is_argument(root)
+        && own.is_none_or(|b| !views(vars, b).contains(&root))
+        && !super::hoist::work_buffer_arg(data, d_nr, root)
+    {
         decline("the destination is a parameter");
         return None;
     }
