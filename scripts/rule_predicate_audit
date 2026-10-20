@@ -98,7 +98,7 @@ fn index_of(sites: Sites, key: text) -> integer {
 }
 
 fn collect(root: text, min_len: integer, sites: Sites) {
-  for p in root.walk(".rs") {
+  for p in root.walk_sorted(".rs", links: false) {
     src = file(p).content() ?? "";
     rel = p[root.size() + 1..];
     n = src.size();
