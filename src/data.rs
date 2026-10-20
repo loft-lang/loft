@@ -7883,7 +7883,8 @@ impl Data {
                     }
                     // A bare enum field with no `= <variant>` — `JsonValue` aside: a field of
                     // it captures whatever JSON stands there, so a parse always gives it one.
-                    if let Type::Enum(e, _, _) = &ftp
+                    if !matches!(ftp, Type::Optional(_))
+                        && let Type::Enum(e, _, _) = ftp.base()
                         && !self.def(*e).name.starts_with("__")
                         && self.def(*e).name != "JsonValue"
                     {
