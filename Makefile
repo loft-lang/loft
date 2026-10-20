@@ -182,7 +182,10 @@ help:
 	  | sed 's/^# \{0,1\}//'
 
 all:
-	@rustfmt src/*.rs --edition 2024
+	@# `cargo fmt`, not `rustfmt src/*.rs`: the latter also reformats the `include!`d
+	@# generated sources cargo fmt never reaches (src/compiled_stdlib_gen.rs), which left
+	@# every `make install` with a dirty tree and a stale-stdlib test failure.
+	@cargo fmt
 	@RUSTFLAGS=-g cargo build --release
 
 check-targets:
