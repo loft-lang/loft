@@ -74,7 +74,7 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
         return;
     }
     let root = repo_root();
-    let loft = root.join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;

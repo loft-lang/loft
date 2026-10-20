@@ -28,7 +28,7 @@ const PORT_BASE: u16 = 18088;
 const TICK_US: u32 = 200_000;
 
 fn loft_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft")
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 struct Guard(Option<Child>);

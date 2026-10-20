@@ -104,18 +104,20 @@ fn spawn_server(script: &str) -> Guard {
     fa::write(pkg.join("loft.lock"), SERVER_LOCK).expect("write lock");
     let tmp = pkg.join(format!("eh_aud_{}_{name}", std::process::id()));
     fa::write(&tmp, src).expect("write fixture copy");
-    let child = loft::platform::process::harness_command(root().join("target/release/loft"))
-        .env("LOFT_OFFLINE", "1") // hermetic: no registry fetches, installed-only
-        .args(["--interpret", "--no-warnings", "--lib"])
-        .arg(root().join("lib"))
-        .arg(&tmp)
-        .current_dir(&pkg)
-        // Captured, not nulled: when the server dies at startup on a CI
-        // box, ws_connect's panic prints these (the only forensics there).
-        .stdout(Stdio::from(fa::create(server_log_path("out")).unwrap()))
-        .stderr(Stdio::from(fa::create(server_log_path("err")).unwrap()))
-        .spawn()
-        .expect("spawn server");
+    let child = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_loft"
+    )))
+    .env("LOFT_OFFLINE", "1") // hermetic: no registry fetches, installed-only
+    .args(["--interpret", "--no-warnings", "--lib"])
+    .arg(root().join("lib"))
+    .arg(&tmp)
+    .current_dir(&pkg)
+    // Captured, not nulled: when the server dies at startup on a CI
+    // box, ws_connect's panic prints these (the only forensics there).
+    .stdout(Stdio::from(fa::create(server_log_path("out")).unwrap()))
+    .stderr(Stdio::from(fa::create(server_log_path("err")).unwrap()))
+    .spawn()
+    .expect("spawn server");
     Guard(Some(child))
 }
 
@@ -139,7 +141,7 @@ fn server_available() -> bool {
     if fa::write(&probe, body).is_err() {
         return false;
     }
-    loft::platform::process::harness_command(root().join("target/release/loft"))
+    loft::platform::process::harness_command(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .env("LOFT_OFFLINE", "1")
         .args(["--interpret", "--no-warnings"])
         .arg(&probe)
@@ -270,7 +272,7 @@ fn scenario(port: u16) -> (Vec<String>, Vec<String>) {
 
 #[test]
 fn kernel_port_matches_original() {
-    if !fa::exists(root().join("target/release/loft")) {
+    if !fa::exists(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))) {
         eprintln!("skipping: release loft not built");
         return;
     }

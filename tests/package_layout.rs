@@ -297,12 +297,14 @@ fn struct_fields_resolve_in_use_loaded_package() {
 #[test]
 fn declared_dep_beats_same_named_package_file() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = loft::platform::process::harness_command(root.join("target/release/loft"))
-        .args(["--interpret", "--no-warnings"])
-        .arg(root.join("tests/fixtures/dep_shadow/consumer/shadowlib.loft"))
-        .current_dir(&root)
-        .output()
-        .expect("run the dep_shadow consumer fixture");
+    let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_loft"
+    )))
+    .args(["--interpret", "--no-warnings"])
+    .arg(root.join("tests/fixtures/dep_shadow/consumer/shadowlib.loft"))
+    .current_dir(&root)
+    .output()
+    .expect("run the dep_shadow consumer fixture");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(

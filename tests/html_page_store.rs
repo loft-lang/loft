@@ -111,7 +111,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
         eprintln!("SKIP: python3 not installed");
         return;
     };
-    let loft = repo_root().join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;

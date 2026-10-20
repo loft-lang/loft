@@ -615,26 +615,19 @@ jobs:
       - name: Build
         run: cargo build ${{ steps.shard.outputs.args }}
 
-      # Defensive build step: some integration tests spawn
-      # `target/release/loft` directly (e.g. via Command::new helpers)
-      # and assume the release binary exists.  `cargo build
-      # --all-targets` builds dev profile only.
-      #
-      # `--lib` ensures the canonical `target/release/libloft.rlib`
-      # is built (cargo only places the canonical artifact when
-      # `--lib` is explicit; `--bin loft` alone only puts the
-      # hashed version in `target/release/deps/`).  Without the
-      # canonical lib, loft's `--native` mode falls back to the
-      # deps directory and rustc can't resolve transitive deps
-      # like rand_core (E0463 on macOS/Windows).
-      - name: Build (release loft binary + lib for integration tests)
-        run: cargo build --release --lib --bin loft
+      # No release build on a test leg: every test spawns the loft the test build made
+      # (`CARGO_BIN_EXE_loft`, `target/debug/loft`), whose `--native` links the rlib beside
+      # it in `deps/`.  Until 2026-10-20 twenty-two binaries spawned `target/release/loft`
+      # instead and skipped silently without it, so every leg compiled the crate a second
+      # time in release (2.2 to 3.2 min) and warmed the wasm runtimes for both binaries.
 
       # A rewrite that stopped firing where it used to (a condition tightened by a fix) fails
       # here, naming the rule and the bench: the count of admissions over the benches is a
       # pure function of the compiler (`scripts/rewrite_census.py`).  Seconds; once per run.
       - name: Rewrite census
         if: ${{ runner.os == 'Linux' && (matrix.shard == 'corpus' || matrix.shard == '' || matrix.shard == null) }}
+        env:
+          LOFT_BIN: ./target/debug/loft
         run: python3 scripts/rewrite_census.py
 
       # @P229 G3 reliability fix: pre-build every native lib package
@@ -690,7 +683,7 @@ jobs:
           done
           # Half 2 — every installed registry package's cdylib, through the same
           # resolver the tests reach (so the artefact and its freshness stamp match).
-          ./target/release/loft --prebuild-natives || true
+          ./target/debug/loft --prebuild-natives || true
 
       # no-default-features check only needs to run on one OS — ubuntu
       # covers it at a fraction of the Windows job's time.  Use `cargo
@@ -747,16 +740,14 @@ jobs:
       # Measured: `w1_1_html_export_produces_file` took 238 s on ubuntu and 353 s on macOS
       # (past the duration gate) building the rlib inside the suite; warmed by the suite's own
       # binary it takes under a second.  `cargo build --tests` is that binary with the test
-      # build's feature set, and nextest reuses it rather than building again.  The release
-      # binary is warmed too: `html_asyncify` drives `target/release/loft`.
+      # build's feature set, and nextest reuses it rather than building again.  It is the only
+      # binary a test spawns, so the only one warmed.
       - name: Warm loft's --html runtime rlib and the tests' package cdylibs
         shell: bash
         run: |
           cargo build ${{ steps.shard.outputs.args }}
-          for loft in ./target/release/loft ./target/debug/loft; do
-            "$loft" cache warm --from tests ${{ steps.shard.outputs.warm }} \
-              || echo "warn: cache warm with $loft failed — the first --html test will build the rlib itself"
-          done
+          ./target/debug/loft cache warm --from tests ${{ steps.shard.outputs.warm }} \
+            || echo "warn: cache warm failed — the first --html test will build the rlib itself"
           for lib in tests/fixtures/libs/*/; do
             name=$(basename "$lib")
             [ -d "$lib/native" ] || continue

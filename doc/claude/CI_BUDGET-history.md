@@ -859,3 +859,13 @@ the html leg pays 4.7 min of runtime builds before its first test.  Both went in
 weights; the `heavy-serial` members that run no page (`n2_cdylib`, `n3_parity`,
 `n3_use_native`, `multiplayer_v2`) went to the rest legs, where their one slot runs beside
 the wide tests, and `native` whole to `corpus`.
+
+So re-cut (run 39406514698, green): heavy 16.1 and corpus 18.1 within budget; the rest
+legs 21.3 / 21.5 / 22.5 with test phases of 6.6 / 10.5 / 12.1 — the warm-up on the two
+no-runtime legs down from 5.5 to 2.0 min, and each rest leg still paying about 11 min
+before its first test: build 4.0–4.4, the release build 3.0–3.2, warm-up 2, checkout and
+tooling 1.5.  Three legs' fixed costs plus 29 min of tests divided by three is 20 whatever
+the balance, so the next cut was the release build itself: the twenty-two binaries that
+spawned `target/release/loft` (the html, engine_host and deliver_wasm suites among them,
+each skipping silently without it) now spawn the test build's loft like every other test,
+and the leg compiles the crate once.

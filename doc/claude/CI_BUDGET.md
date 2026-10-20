@@ -696,14 +696,19 @@ an hour and a half of wall clock for a release that happens monthly.
 
 ## Each leg builds only the binaries it runs
 
-**Rule: a test leg builds the test binaries it runs and nothing else, restores no
-`target/`, and builds no wasm runtime its binaries do not use.**  Of a leg's wall, the
-test phase was a third and the rest was build: every leg compiled all 445 test binaries
-and ran its share, restored a whole `target/` that made the build no faster (the
-dependencies are half a minute of a cold build; the rest is loft and its test crates, which
-change with every commit), and warmed two wasm runtime rlibs whether or not a test of the
-leg ran a page (the measurements: [the history companion § Where a test leg's minutes
-went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).
+**Rule: a test leg builds the test binaries it runs and nothing else — one compile of the
+crate, no release build — restores no `target/`, and builds no wasm runtime its binaries
+do not use.**  Of a leg's wall, the test phase was a third and the rest was build: every
+leg compiled all 445 test binaries and ran its share, compiled the crate a second time in
+release because twenty-two binaries spawned `target/release/loft` (and skipped silently
+without it), restored a whole `target/` that made the build no faster (the dependencies
+are half a minute of a cold build; the rest is loft and its test crates, which change with
+every commit), and warmed two wasm runtime rlibs for each of the two binaries whether or
+not a test of the leg ran a page (the measurements: [the history companion § Where a test
+leg's minutes went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).  Every test
+spawns the loft its own build made (`CARGO_BIN_EXE_loft`), whose `--native` links the
+rlib beside it in `deps/`; a test that wants the release binary is a test of the release
+row, not of the gate.
 
 What `ci.yml` does:
 

@@ -77,7 +77,7 @@ fn run_harness(
         eprintln!("SKIP: wasm32-unknown-unknown target not installed");
         return None;
     }
-    let loft_bin = repo_root().join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release`)");
         return None;

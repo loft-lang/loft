@@ -45,7 +45,7 @@ fn project_root() -> std::path::PathBuf {
 }
 
 fn loft_binary() -> std::path::PathBuf {
-    project_root().join("target/release/loft")
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn baseline_present() -> bool {

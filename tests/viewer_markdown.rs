@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 const VIEWER_PORT: u16 = 18765;
 
 fn loft_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft")
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn project_root() -> PathBuf {

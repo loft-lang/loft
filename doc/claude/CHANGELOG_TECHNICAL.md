@@ -38,10 +38,15 @@ All notable changes to the loft language and interpreter.
   (its shard argument selects nothing), the wasm target and html rlib are built only where
   a page test runs, `loft cache warm` takes `--runtime html,wasi` / `--no-runtime` so a
   leg builds no runtime its binaries do not use, and the Linux/macOS cargo cache carries no
-  `target/`.  Measured before: every leg built all 445 test binaries (7.6 to 8.5 min),
-  restored an 11 GB cache (4 to 6 min) that made the build no faster and warmed two wasm
-  runtimes (1m45 each) whether a test used them or not, for a test phase of 6 to 8 min.
-  `proof` (a binary in exactly one leg) runs on every leg and in `make ci`.
+  `target/`.  No release build on a test leg either: the twenty-two test binaries that
+  spawned `target/release/loft` (the html, engine_host and deliver_wasm suites among them,
+  each skipping silently without it) spawn the test build's loft (`CARGO_BIN_EXE_loft`)
+  like every other test, so the crate compiles once per leg.  Measured before: every leg
+  built all 445 test binaries (7.6 to 8.5 min), compiled the crate again in release (2.2 to
+  3.2), restored an 11 GB cache (4 to 6 min) that made the build no faster and warmed two
+  wasm runtimes (1m45 each) for each of two binaries whether a test used them or not, for a
+  test phase of 6 to 8 min.  `proof` (a binary in exactly one leg) runs on every leg and in
+  `make ci`.
 - `scripts/ci_timing.py legs <run>` / `leg <run> <name>`: each test leg's queue wait, its
   steps of half a minute or more and its total against the 20-minute budget; every leg
   writes its own table to its job summary (CI_BUDGET.md § Each leg builds only the
