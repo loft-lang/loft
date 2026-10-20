@@ -163,10 +163,10 @@ fn c10() {
   println("c10 {s}");
 }
 
-// c11 — a hidden return buffer minted per ACTIVATION of its caller: on native every `Mix`
-// literal is a complete-write mint (`OpDatabaseNP`) and `mk`'s buffer is minted once per
-// activation of `c5`, so c1–c10 CAPTURE the image on native and never use it; this cell
-// re-activates the caller thirty times, so the image is used on both backends.
+// c11 — a hidden return buffer minted per ACTIVATION of its caller, re-activated thirty
+// times.  On native every `Mix` mint here is a complete write (`OpDatabaseNP`) — since
+// `@FR-R-CompleteWrite`'s buffer clause, `mk`'s buffer too — so the native half of the pin
+// (`tests/prefill_image.rs`) runs with `LOFT_NO_COMPLETE_WRITE=1`, where it prefills.
 fn wrap(i: integer) -> integer {
   m = mk(i);
   assert(m.n == -1 && m.s == "" && m.b == null && m.sh == null && m.c == null, "c11 {i}");

@@ -55,7 +55,13 @@ const VERIFY: &[(&str, &str)] = &[
     ("LOFT_POISON_CLAIM", "1"),
     ("LOFT_STRICT_STORES", "1"),
 ];
+/// On native every mint of these cells is a complete write (`@FR-R-CompleteWrite`, its buffer
+/// clause included), which prefills nothing: the native half of the pin runs with that rewrite
+/// off, so its mints prefill and the image is used and checked.
+const NATIVE_PREFILLS: (&str, &str) = ("LOFT_NO_COMPLETE_WRITE", "1");
+
 const VERIFY_NATIVE: &[(&str, &str)] = &[
+    NATIVE_PREFILLS,
     ("LOFT_PREFILL_VERIFY", "1"),
     ("LOFT_POISON", "1"),
     ("LOFT_POISON_CLAIM", "1"),
@@ -134,6 +140,9 @@ fn the_image_changes_no_mint() {
 fn image_uses(mode: &str) -> usize {
     let mut cmd = loft();
     cmd.arg(mode).arg(cells()).env("LOFT_TRACE_PREFILL", "1");
+    if mode == "--native" {
+        cmd.env(NATIVE_PREFILLS.0, NATIVE_PREFILLS.1);
+    }
     let out = cmd.output().expect("spawn loft");
     assert!(
         out.status.success(),
@@ -149,9 +158,9 @@ fn image_uses(mode: &str) -> usize {
 #[test]
 fn the_cells_use_the_image_on_both_backends() {
     // A cell that only CAPTURES the image proves nothing about it — and on `--native`
-    // every literal is a complete-write mint that never prefills, so c1–c10 capture
-    // `Mix`'s image there and never use it; c11's re-activated caller is what makes the
-    // native half of the verify pin above non-vacuous.  Both backends must USE the image.
+    // every mint of the cells is a complete write that never prefills (since the buffer
+    // clause, c11's re-activated caller too), so the native half runs with that rewrite off
+    // (`NATIVE_PREFILLS`).  Both backends must USE the image.
     let interpret = image_uses("--interpret");
     let native = image_uses("--native");
     assert!(
