@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I67 — Opcode implementations
 
 //! Decimal numbers written straight into the text that receives them.
 //!

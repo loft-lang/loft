@@ -116,10 +116,10 @@ pub(crate) fn text_write_target(name: &str) -> Option<usize> {
 
 /// Every operand an operator writes or consumes: [`write_target`]'s, a text's or a buffer's
 /// (the stream walk's list), and both sides of an adoption — the source gives up its storage.
-fn own_writes(name: &str) -> Option<Vec<usize>> {
+fn own_writes(name: &str) -> Option<[Option<usize>; 2]> {
     match name {
-        "OpAdoptVector" => Some(vec![0, 1]),
-        n => text_write_target(n).map(|t| vec![t]),
+        "OpAdoptVector" => Some([Some(0), Some(1)]),
+        n => text_write_target(n).map(|t| [Some(t), None]),
     }
 }
 
@@ -193,7 +193,7 @@ fn body_ok(data: &Data, f: u32, free: &HashSet<u32>, cands: &HashSet<u32>) -> bo
                     }
                 } else if reads_only(name) || crate::shared_call::pure_native(data, *d) {
                 } else if let Some(ts) = own_writes(name) {
-                    if ts.iter().any(|&t| {
+                    if ts.iter().flatten().any(|&t| {
                         args.get(t)
                             .and_then(|a| root(a, data))
                             .is_none_or(|r| ps.contains(&r))
@@ -654,7 +654,7 @@ fn disturbs(
                 false
             } else if let Some(ts) = own_writes(name) {
                 !(reach.apart
-                    && ts.iter().all(|&t| {
+                    && ts.iter().flatten().all(|&t| {
                         args.get(t)
                             .and_then(|a| root(a, data))
                             .is_some_and(|x| reach.fresh.contains(&x))
@@ -776,7 +776,8 @@ fn reuse_in_block(
     done: &mut Vec<Key>,
     trace: bool,
 ) -> bool {
-    let fresh = fresh_locals(ops, f, data);
+    // Asked only once a statement holds a reusable call: most bodies hold none.
+    let mut fresh: Option<HashSet<u16>> = None;
     for i in 0..ops.len() {
         let mut keys: Vec<Key> = Vec::new();
         ops[i].walk(&mut |n| {
@@ -793,8 +794,9 @@ fn reuse_in_block(
             if !total && !always_i {
                 continue;
             }
+            let fresh = fresh.get_or_insert_with(|| fresh_locals(ops, f, data));
             let reach = Reach {
-                fresh: &fresh,
+                fresh,
                 apart: apart(&key, f, data),
             };
             let mut later = Vec::new();
@@ -1031,7 +1033,11 @@ pub fn rewrite_program(data: &mut Data, db: &mut crate::database::Stores) {
                 sharers.insert(w, s);
             }
         }
-        if !wrappers.is_empty() || !sharers.is_empty() || !total.is_empty() {
+        // A call of a total function is a site of its own only when it hands back a vector.
+        let bare = total
+            .iter()
+            .any(|&f| crate::shared_call::vector_buffer(data, f).is_some());
+        if !wrappers.is_empty() || !sharers.is_empty() || bare {
             let trace = crate::keys::trace_pure_reuse();
             let rules = Rules {
                 free: &free,
@@ -1041,7 +1047,17 @@ pub fn rewrite_program(data: &mut Data, db: &mut crate::database::Stores) {
             };
             let mut variants = crate::fxhash::FxHashMap::default();
             for f in candidates(data) {
-                if data.def(f).variables.done {
+                // Most bodies call nothing this pass reuses: a scan that allocates nothing
+                // skips them before anything is set up for them.
+                if data.def(f).variables.done
+                    || !data.def(f).code().any_node(&mut |n| {
+                        matches!(n, Value::Call(d, _)
+                            if wrappers.contains_key(d)
+                                || sharers.contains_key(d)
+                                || (total.contains(d)
+                                    && crate::shared_call::vector_buffer(data, *d).is_some()))
+                    })
+                {
                     continue;
                 }
                 let _in = crate::rewrite_census::InBody::enter("ir", &data.def(f).name.clone());
