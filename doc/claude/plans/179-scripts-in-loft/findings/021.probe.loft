@@ -1,0 +1,17 @@
+// finding 021 — the shape of a line-scanning port's own loop, with no library in it: 200k
+// OPL-like lines split on spaces, each field told apart by its first character.  It holds
+// while that takes longer than the bar (ms, best of 5 by the driver); the same loop in Python
+// takes about 245 ms.
+fn main() {
+  line = "n1 v1 dV c0 t2024-01-01T00:00:00Z i1 uu T x4.8951 y52.3702 Tname=Amsterdam,amenity=station";
+  xs = 0;
+  ys = 0;
+  for _i in 0..200000 {
+    for field in line.split(' ') {
+      if field == "" { continue; }
+      kind = field[0];
+      if kind == 'x' { xs += 1; } else if kind == 'y' { ys += 1; }
+    }
+  }
+  println("{xs} {ys}");
+}

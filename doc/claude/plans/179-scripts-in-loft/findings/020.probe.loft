@@ -1,0 +1,18 @@
+// finding 020 — a walk of tests/ over the stdlib's own primitives, as `script`'s `walk` does
+// it: one `files()` per directory, one `is_symlink` per directory met.  It holds while that
+// takes longer than the bar (ms, best of 5 by the driver); Python's `os.scandir` walk of the
+// same tree takes about 60 ms.
+#cwd
+fn walk(dir: text) -> integer {
+  n = 0;
+  for f in file(dir).files() {
+    if f.format == Format.Directory {
+      if !is_symlink(f.path) { n += walk(f.path); }
+    } else {
+      n += 1;
+    }
+  }
+  n
+}
+
+fn main() { println("{walk("tests")}"); }
