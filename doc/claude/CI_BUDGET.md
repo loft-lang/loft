@@ -407,7 +407,8 @@ gh workflow run windows-probe.yml --ref <branch> -f tests='--test native'  # car
 gh workflow run macos-probe.yml --ref <branch> -f filter='…'               # the native corpus
 ```
 
-`linux-probe` restores the Linux leg's cache read-only and runs the tests the way `ci.yml`'s
+`linux-probe` restores the Linux leg's cache read-only — a cache only a push to `main` saves,
+so it starts cold whenever that one has been evicted — and runs the tests the way `ci.yml`'s
 Test job does (dev profile, the `ci` nextest profile, the release rlib built first), so its
 answer is that leg's answer for the tests it selects.  GitHub dispatches a workflow by name
 only once the file is on `main`; before that, a push of the commit to the probe's own branch
