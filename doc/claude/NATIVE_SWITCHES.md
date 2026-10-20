@@ -472,7 +472,9 @@ a local length, and writes the record's length once when the loop ends (`push` 4
 −80 %) — and is the first bisect step for a wrong element or length out of a counted push
 loop or a comprehension on native.  A view of a plain NO-HEAP record named in the body (a
 `pts[i]?` element of another vector) is no viewer of the length and does not decline the
-window, and a builder's tuple copied into the fresh element is the slot's own write; the
+window, nor does a vector of plain scalars stored apart from the pushed one (a `vector<u8>`
+parameter read into a returned `vector<integer>`); a builder's tuple copied into the fresh
+element is the slot's own write; the
 window's other-statement test is asked as the header hoist asks it (in-place tier, variable
 table).  `LOFT_TRACE_PUSH_FILL=1` names the clause that declined a window.  ⚠ `LOFT_HOIST_VERIFY=1` checks the window's base and its frozen header at every
 push, but CANNOT see what the admission exists to prevent — a runtime reader meeting the

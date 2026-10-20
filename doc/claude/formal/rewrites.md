@@ -677,6 +677,11 @@ header it leaves) and `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM`
 prevent: a runtime READER meeting the lagging length changes nothing, so there is no stale
 fact to compare — the interpreter is the falsifier, through the cells.  The looser
 reading of `owned_local` is (R-Alias)'s own and is recorded here, not narrowed on suspicion.
+A parameter can name the return buffer the caller offered, so beside a pushed return buffer a
+parameter read declines — except a vector of plain scalars whose element storage differs from
+the pushed vector's (`Type::same_element_storage`, `hoist::scalar_vector_apart`): `(C-Refl)`
+decides on storage, so the two are never one vector, and neither names a store through its
+elements (cells s1–s4).
 Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `hoist::push_window_ok`, `Output::push_reserve` / `push_window_close` /
 `active_push_window`, the `Value::Loop` emission in `emit.rs` (the order), the registry's

@@ -556,7 +556,7 @@
 18_consumer_crawler	-	R-MaskRange	1
 18_consumer_crawler	-	R-Mint	17
 18_consumer_crawler	-	R-Push	27
-18_consumer_crawler	-	R-PushFill	14
+18_consumer_crawler	-	R-PushFill	16
 18_consumer_crawler	-	R-Range	339
 18_consumer_crawler	-	R-RangedCall	29
 18_consumer_crawler	-	R-RecPtr	8
@@ -673,7 +673,7 @@ assets	b3cb7445f	R-LitDiv	14
 assets	b3cb7445f	R-LoopBuffer	1
 assets	b3cb7445f	R-Mint	24
 assets	b3cb7445f	R-Push	14
-assets	b3cb7445f	R-PushFill	14
+assets	b3cb7445f	R-PushFill	15
 assets	b3cb7445f	R-PushRec	2
 assets	b3cb7445f	R-Range	147
 assets	b3cb7445f	R-RangedCall	15
