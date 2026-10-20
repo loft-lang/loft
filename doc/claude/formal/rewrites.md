@@ -1319,6 +1319,13 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  use grows, moves or frees a store.  A view part declines the
                  write (its append may grow the store), and a view whose block
                  already holds an address reads and writes through that one.
+                 THE ELEMENT CLAUSE: a whole value record copied into an element
+                 `P[i]` of a vector at a pure path derives the element where it
+                 writes it — one header read, the in-range test, the element's
+                 reference and its address both from the record and the index —
+                 and an index out of range takes the element read itself, so its
+                 raise and the null it answers are that read's.  Pre-evaluation
+                 asks the same question and leaves the element read in place.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1339,7 +1346,12 @@ the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_vie
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and
-`Output::write_tuple_through_address` (the tuple clause), `vector::rec_ptr` / `rec_get` /
+`Output::write_tuple_through_address` (the tuple clause), `Output::element_copy_dest` and
+`OpCopyRecordEmitter::copy` (the element clause: the reference used to come back from
+`vec_get_or_raise_runtime` and the address out of that reference — `map_set_hex` in
+`slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
+switch `LOFT_NO_ELEMENT_ADDRESS`, guard
+`tests/scripts/a-record-written-into-an-element-is-addressed-once.loft`), `vector::rec_ptr` / `rec_get` /
 `rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
 `loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft`, pins
 `tests/record_ptr.rs`.  The `for e in v` loop

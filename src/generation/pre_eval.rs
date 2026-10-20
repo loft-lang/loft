@@ -757,6 +757,15 @@ impl Output<'_> {
             // the fused emission ignores that binding, and the read would then happen
             // twice.  Both sides ask `fused_element_read`, so they cannot disagree about
             // which shape is fused.  Only the index and the field can still hold work.
+            // `@FR-R-RecPtr`'s element clause — a value record copied into `P[i]` derives
+            // the element where it writes it; lifted, the reference would come back through
+            // `vec_get_or_raise_runtime` and the address out of it.  Both sides ask
+            // `element_copy_dest`; the path is pure, so only the index can hold work.
+            if self.data.def(*d_nr).name() == "OpCopyRecord"
+                && let Some((_, index, _)) = self.element_copy_dest(vals)
+            {
+                return self.collect_pre_evals_inner(index, result);
+            }
             if let Some(fused) = self.fused_element_read(self.data.def(*d_nr).name(), vals) {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);

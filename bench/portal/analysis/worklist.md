@@ -158,6 +158,25 @@ annotation and pluginabi's lock moved to it are what put it in the lane.  Found 
 fixed: a decode root calling another root did not compile on `--native-release`
 (`LOFT_NO_PURE_REUSE=1` broke the bench), loft#2091.
 
+**`slope_path_with_undo`, the lookups, RE-PRICED and part BUILT (2026-10-20).**  The −27.5 % above
+was a hand form that also replaced `chunk_idx_32` / `hex_idx_32`'s checked arithmetic with
+plain `div_euclid` / `rem_euclid` — a change `@C120` rules out.  With the arithmetic kept, the
+two helpers price at −15.2 % (200.9 → 170.3 µs), split as: the WRITE `sh_c.ck_hexes[idx] = h`
+−7.1 % and the READ `return gh_c.ck_hexes[idx]?` −5.8 %.  Not the scan: its compares read
+through `rec_get` on the held address, and raw loads there measured slower.  Not the `?`
+discharge (inert).  Not a missed inline (`#[inline(always)]` on `vec_get_or_raise_runtime`,
+`get_vector`, `rec_ptr`: each inert).  The write's cost is the element's reference coming back
+from `vec_get_or_raise_runtime` and its address read back out of it (time, not instructions:
+−25 M instructions over the program against the read's −339 M).
+BUILT: `(R-RecPtr)`'s ELEMENT clause (`LOFT_NO_ELEMENT_ADDRESS`) — the element derived where the
+value record is written, one header read, its reference and address from the record and the
+index: 4.52× → 4.26× in the lane (−5.7 %, hash 3f61de).  PRICED, NOT BUILT: the read's two
+header reads shared (−4.8 %, the guard's `len` and the arm's element read): an `if` statement
+clause on the loop gate fired at 6 other sites and moved nothing, and here the gate declines
+the arm (its `?` fallback mints and frees a temporary), so it needs a write analysis that
+proves the arm's writes land only in fresh temporaries.  Dropped.  What is left is the chunk
+walk the twin shares and the checked arithmetic.
+
 The common thread of the last three is the runtime's unit cost: a claim, a delete, a vector
 header resolution and a keyed probe each cost several times their `malloc` / `Vec` /
 hashbrown counterpart, and these rows are made of them.

@@ -879,6 +879,14 @@ pub struct Output<'a> {
     /// `LOFT_NO_PARAM_RECORD_PTR=1` — `@FR-R-RecPtr`'s parameter clause off: a record
     /// parameter's field accesses resolve the store each, as before the clause.
     pub param_record_ptr_disabled: bool,
+    /// `LOFT_NO_ELEMENT_ADDRESS=1` — `@FR-R-RecPtr`'s element clause off: a value record
+    /// written into `v[i]` takes its element through `vec_get_or_raise_runtime` and its
+    /// address back out of the reference ([`Output::element_copy_dest`]).
+    pub element_address_disabled: bool,
+    /// Set while a tuple is written into an element whose address the element clause
+    /// derived beside its reference (`__cp` beside `__cd`): the tuple write takes that address
+    /// instead of reading it back out of `__cd`.
+    pub element_ptr_held: bool,
     /// Header local → the local holding its vector's `DbRef`, bound beside it at a loop
     /// prelude.  Keyed by the header's NAME, which is unique per hoist, so no frame has to
     /// be pushed and popped in step with `vec_headers`.
@@ -2371,6 +2379,9 @@ impl<'a> Output<'a> {
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
+            element_address_disabled: std::env::var("LOFT_NO_ELEMENT_ADDRESS")
+                .is_ok_and(|v| v != "0"),
+            element_ptr_held: false,
             guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             held_index_subst: HashMap::new(),
             held_index_ncc: HashMap::new(),
@@ -6666,6 +6677,58 @@ impl Output<'_> {
     /// view whose block already holds an address (its setters use that one), when the
     /// destination lies inside a value local (a tuple has no address), and under
     /// `LOFT_NO_RECORD_PTR`.  A field of another kind keeps its setter, to the same bytes.
+    /// `@FR-R-RecPtr`'s tuple clause, the ELEMENT half — a whole value record copied into an
+    /// element `P[i]` of a vector at a pure path (`OpCopyRecord(local, OpGetVector(P, size,
+    /// i), tp)`), written through the address: the vector, its index and its size, when the
+    /// tuple write would serve the copy through one address.  The element is then derived in
+    /// place ONCE — one header read, the in-range test, its reference and its address both
+    /// from the record and the index — where its reference used to come back from
+    /// `vec_get_or_raise_runtime` and its address out of that reference, a round trip that
+    /// cost `map_set_hex` 5.6 % of `slope_path_with_undo`.  An index out of range takes
+    /// `vec_get_or_raise_runtime` itself, so the raise and the null it answers are its own.
+    /// Pre-evaluation asks the same question, so the element read it would lift stays here
+    /// and only the index is searched for work.
+    pub(crate) fn element_copy_dest<'a>(
+        &self,
+        args: &'a [Value],
+    ) -> Option<(&'a Value, &'a Value, u32)> {
+        if self.record_ptr_disabled || self.element_address_disabled {
+            return None;
+        }
+        let [src, dst, _] = args else {
+            return None;
+        };
+        let Value::Var(v) = src.unspan() else {
+            return None;
+        };
+        let d = *self.value_record_locals.get(v)?;
+        let fields = &self.value_records.types.get(&d)?.fields;
+        if fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
+            || fields
+                .iter()
+                .all(|(_, rt)| hoist::setter_kind(hoist::value_setter(rt)).is_none())
+        {
+            return None;
+        }
+        let Value::Call(op, eargs) = dst.unspan() else {
+            return None;
+        };
+        if self.data.def(*op).name() != "OpGetVector" {
+            return None;
+        }
+        let [vector, size, index] = &eargs[..] else {
+            return None;
+        };
+        hoist::vector_path(self.data, vector)?;
+        if self.in_value_local(vector) {
+            return None;
+        }
+        let Value::Int(size) = size.unspan() else {
+            return None;
+        };
+        Some((vector, index, u32::try_from(*size).ok().filter(|s| *s > 0)?))
+    }
+
     /// Is `v` a value local or a sub-record of one (`(R-ValueLocal)`): a TUPLE, or a range of
     /// one, with no record and so no address — its field accessors name tuple elements.
     pub(crate) fn in_value_local(&self, v: &Value) -> bool {
@@ -6703,10 +6766,15 @@ impl Output<'_> {
             self.output_code_inner(w, dst)?;
             write!(w, "; ")?;
         }
+        if !self.element_ptr_held {
+            write!(
+                w,
+                "let __cp = vector::rec_ptr(&__cd, &stores.allocations); "
+            )?;
+        }
         write!(
             w,
-            "let __cp = vector::rec_ptr(&__cd, &stores.allocations); \
-             let __cl = vector::rec_locked(&__cd, &stores.allocations); "
+            "let __cl = vector::rec_locked(&__cd, &stores.allocations); "
         )?;
         for (i, ((off, rt), kind)) in fields.iter().zip(&kinds).enumerate() {
             if let Some(ty) = kind {

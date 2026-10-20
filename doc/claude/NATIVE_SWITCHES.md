@@ -324,6 +324,13 @@ rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loo
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, default-ON, generation
+time, `--native` only) writes a value record into `v[i]` through the element read and its
+address taken back out of the reference — with it off, the element is derived where it is
+written: one header read, the in-range test, the reference and the address both from the
+record and the index (`map_set_hex` −5.6 % of `slope_path_with_undo`).  The first bisect step
+for a value record written into the wrong element, or an out-of-range write that raised
+twice or not at all.
 **`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
 `--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
 store, the record and the text at each read again — with it off, the view's address from
