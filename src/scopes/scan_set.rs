@@ -137,6 +137,9 @@ fn plain_element_read(value: &Value, data: &Data) -> Option<Value> {
 /// its copy arm asks; `@FR-B-Copy`)?  The copy is a structure this function OWNS
 /// (`@FR-H-Copy-Lease`) however its SOURCE is owned — a parameter's included — so the record a
 /// later rebind displaces is `v`'s own, and its hook runs then (`@FR-H-Drop`, loft#2080).
+/// Not for a copy `@FR-H-Copy-Refuse` refuses — a droppable inside it has no `OpCopy` — which
+/// only runs with that refusal switched off (`LOFT_NO_LEASE_REFUSE`): no lease was taken, so the
+/// copy shares the source's resource and its release is the source owner's.
 fn var_bind_copies(function: &Function, data: &Data, v: u16, value: &Value) -> bool {
     let Value::Var(src) = value.unspan() else {
         return false;
@@ -144,6 +147,7 @@ fn var_bind_copies(function: &Function, data: &Data, v: u16, value: &Value) -> b
     function.tp(v).depend().is_empty()
         && function.tp(v).base().heap_def_nr().is_some()
         && function.record_copy_source(data, v, *src).is_some()
+        && !crate::lease::copy_reach(data, function.tp(v)).refused
 }
 
 impl Scopes<'_> {
