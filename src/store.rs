@@ -33,7 +33,8 @@
 //! - **Positive** → claimed record; magnitude = size in words (incl. header).
 //! - **Negative** → free block; magnitude = size in words.
 //!
-//! Free blocks are tracked in a `BTreeMap` for gap-based allocation.
+//! Free blocks are tracked in an LLRB tree kept inside the free blocks themselves, for
+//! best-fit allocation.
 //! Adjacent free blocks are merged on `delete` to reduce fragmentation.
 //!
 //! Record 0 is the store header; record 1 (`PRIMARY`) is the main record

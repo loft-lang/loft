@@ -129,7 +129,9 @@ No second wire vocabulary.
 
 It works because of one fact: **nothing inside a store is a `DbRef`**. A text's
 bytes, a vector's element block, a child record are all plain `u32` record ids
-(`Stores::relocate_ptr_fields` is the exhaustive list). A record graph is
+(`Stores::relocate_ptr_fields` is the exhaustive list). The one stored field that
+IS a `DbRef` is a `reference<T>` into another store ([formal/heap.md](formal/heap.md),
+the cross-store pointer): its store number means nothing on the other side. A record graph is
 therefore independent of the address it is mapped at **and** of the store number
 it is registered under, so each side names the arena with its own index and no
 pointer is ever translated.
