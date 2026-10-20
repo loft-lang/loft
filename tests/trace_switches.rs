@@ -5,6 +5,7 @@
 //! trace line that dereferences a context the program does not have (the fuse trace named
 //! `self.context` inside a constant's initialiser, outside any function) is an internal
 //! compiler error under the switch and invisible without it.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
 const PROGRAM: &str = r#"
@@ -30,12 +31,12 @@ fn trace_switches() -> Vec<String> {
     let mut names = std::collections::BTreeSet::new();
     let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
     while let Some(dir) = stack.pop() {
-        for e in std::fs::read_dir(&dir).expect("read src") {
-            let p = e.expect("entry").path();
-            if p.is_dir() {
+        for e in fa::read_dir(&dir).expect("read src") {
+            let p = e.os_spelling();
+            if fa::is_dir(&p) {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                let src = std::fs::read_to_string(&p).unwrap_or_default();
+            } else if fa::has_extension(&p, "rs") {
+                let src = fa::read_to_string(&p).unwrap_or_default();
                 for part in src.split("\"LOFT_TRACE_").skip(1) {
                     let name: String = part
                         .chars()
@@ -80,7 +81,7 @@ fn every_trace_switch_at_once_leaves_the_program_unchanged() {
     );
     let file =
         std::env::temp_dir().join(format!("loft_trace_switches_{}.loft", std::process::id()));
-    std::fs::write(&file, PROGRAM).expect("write program");
+    fa::write(&file, PROGRAM).expect("write program");
     for backend in ["--interpret", "--native"] {
         let (plain, err, ok) = run(backend, &file, &[]);
         assert!(
@@ -94,5 +95,5 @@ fn every_trace_switch_at_once_leaves_the_program_unchanged() {
             "{backend} with every trace switch:\n{traced}\n{tail}"
         );
     }
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
 }
