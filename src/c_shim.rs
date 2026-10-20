@@ -332,6 +332,45 @@ pub fn archived_package(data: &crate::data::Data, pkg_dir: &str) -> bool {
             .all(|(c, path)| static_archive_for(c, path).is_some())
 }
 
+/// @PLN197 — which `#c` symbols the C libraries a package ships DEFINE, asked of their
+/// shared form on the build machine.  A package that also declares an optional library has
+/// every `#c` symbol resolved by name at run time (`Data::c_symbol_is_lazy`), and under a
+/// static link that cannot reach its archived shim: nothing references the archive's
+/// objects at link time, so the linker leaves them out.  The symbols the shipped libraries
+/// define are declared `extern "C"` instead, which links them; the rest stay lazy, for the
+/// optional library.  The shared library and the archive are built from the same sources,
+/// so they define the same symbols.  The libraries are loaded once per package.
+#[derive(Default)]
+pub struct ShippedExports {
+    #[cfg(feature = "native-extensions")]
+    loaded: std::collections::HashMap<String, Vec<libloading::Library>>,
+}
+
+impl ShippedExports {
+    /// Does a C library the package at `pkg_dir` ships define `symbol`?
+    #[cfg(feature = "native-extensions")]
+    pub fn defines(&mut self, data: &crate::data::Data, pkg_dir: &str, symbol: &str) -> bool {
+        let libs = self.loaded.entry(pkg_dir.to_string()).or_insert_with(|| {
+            data.shipped_c_libraries()
+                .into_iter()
+                .filter(|(c, _)| c.pkg_dir == pkg_dir)
+                // SAFETY: the package's own library, the one `--interpret` loads to run it.
+                .filter_map(|(_, path)| unsafe { crate::file_access::load_library(&path) }.ok())
+                .collect()
+        });
+        libs.iter().any(|l| {
+            // SAFETY: only the address is asked for; nothing is called through it.
+            unsafe { l.get::<*const ()>(symbol.as_bytes()) }.is_ok()
+        })
+    }
+
+    /// Without a loader nothing can be attributed: every symbol stays lazy.
+    #[cfg(not(feature = "native-extensions"))]
+    pub fn defines(&mut self, _data: &crate::data::Data, _pkg_dir: &str, _symbol: &str) -> bool {
+        false
+    }
+}
+
 /// `libfoo.so.5` / `libfoo.dylib` / `foo.dll` / `libfoo.a` -> `foo`: the library's name as
 /// `-l` takes it — the file's name without the `lib` the linker adds back and without any
 /// extension or version.

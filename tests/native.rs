@@ -3488,9 +3488,17 @@ fn a_lazy_read_gives_one_answer_down_rust_and_down_loft() -> std::io::Result<()>
     ];
 
     let mut first: Option<String> = None;
-    for backend in ["--interpret", "--native"] {
+    // `--static` too (@PLN197): the `sqlite` fixture's shim is linked INTO that binary, and
+    // the package's optional library makes every one of its symbols lazy — a symbol the
+    // shim defines must still be reached, not looked up by a name nothing exported.
+    for (backend, link) in [
+        ("--interpret", None),
+        ("--native", None),
+        ("--native", Some("--static")),
+    ] {
+        let backend = link.map_or_else(|| backend.to_string(), |l| format!("{backend} {l}"));
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .arg(backend)
+            .args(backend.split(' '))
             .arg("--no-warnings")
             .arg("--lib")
             .arg(&libdir)

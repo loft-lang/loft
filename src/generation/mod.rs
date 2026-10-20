@@ -8851,6 +8851,8 @@ extern crate loft;"
             let mut declared_c: HashSet<String> = HashSet::new();
             let mut block = String::new();
             let bound_pkgs = Self::bound_c_packages(data, c_bind, !native_cabi);
+            let linked_pkgs = Self::linked_c_packages(data, !native_cabi);
+            let mut shipped_exports = crate::c_shim::ShippedExports::default();
             let mut slots: Vec<u8> = Vec::new();
             // @PLN24 arc G — a symbol from a package that declares an OPTIONAL
             // library cannot be declared `extern "C"`: an extern that is CALLED
@@ -8881,7 +8883,17 @@ extern crate loft;"
                     ref t => format!(" -> {}", t.rust_type()),
                 };
                 use std::fmt::Write as _;
-                if data.c_symbol_is_lazy(def.position().file.as_str()) {
+                // @PLN197 — a package linked INTO the binary from its archive, whose
+                // optional library makes its symbols lazy: the ones its shim defines are
+                // declared like a required symbol.  A lazy lookup would find nothing — the
+                // linker pulls an archive's objects in only for a symbol the program
+                // references, and a symbol looked up by name is not one.
+                let file = def.position().file.as_str();
+                let archived = data.c_owner_pkg(file).is_some_and(|p| {
+                    linked_pkgs.iter().any(|l| l == p)
+                        && shipped_exports.defines(data, p, &sig.symbol)
+                });
+                if data.c_symbol_is_lazy(file) && !archived {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
