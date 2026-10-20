@@ -1,5 +1,5 @@
 {
-  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file. `ci: true` marks an artefact that is a pure function of the tree — no pin, no judgement — which `.github/workflows/derive.yml` regenerates on a runner and commits back (`scripts/derive_ci.py` runs exactly those, in this order); a ratchet never carries it. A `paths` entry may be a glob (`doc/lib-*.html`).",
+  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `check_first` runs the check before re-deriving and stops the join when it fails; `check_exact` says that check compares every line, so its passing leaves nothing to re-derive. `regen_checks` marks a regen that refuses (exits non-zero, writing nothing) exactly when the check would fail, so the check is not asked again. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file. `ci: true` marks an artefact that is a pure function of the tree — no pin, no judgement — which `.github/workflows/derive.yml` regenerates on a runner and commits back (`scripts/derive_ci.py` runs exactly those, in this order); a ratchet never carries it. A `paths` entry may be a glob (`doc/lib-*.html`).",
   "artefacts": [
     {
       "name": "compiled-stdlib",
@@ -79,11 +79,11 @@
         "bench/"
       ],
       "check": "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py",
-      "check_first": true,
       "regen": [
-        "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py --bless"
+        "cargo build -q --bin loft --profile probe --target-dir target/probe && LOFT_BIN=target/probe/probe/loft python3 scripts/rewrite_census.py --bless-unless-drop"
       ],
-      "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline"
+      "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline",
+      "regen_checks": true
     },
     {
       "name": "target-surface",
@@ -201,7 +201,8 @@
       "regen": [
         "LOFT_BLESS_DROP_GATE=1 cargo test -q --test ownership_drop_gate -- --include-ignored"
       ],
-      "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand"
+      "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand",
+      "check_exact": true
     },
     {
       "name": "reference-pages",
