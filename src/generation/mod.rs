@@ -36,6 +36,8 @@ pub(crate) mod ops;
 mod pre_eval;
 pub mod range;
 mod ranged_call;
+pub mod stream_walk;
+mod stream_walk_emit;
 mod text;
 pub mod view_return;
 
@@ -1220,6 +1222,14 @@ pub struct Output<'a> {
     /// `@FR-R-DecodeView`'s structure clause — the positional plan, and the twin being
     /// emitted (`decode_structure_emit`).
     pub ps: decode_structure::PsPlan,
+    /// `@FR-R-StreamWalk` — the walks a callee's stream twin runs in place of a vector.
+    pub sw: stream_walk::SwPlan,
+    /// The stream twin being emitted: its producer and twin index.
+    pub sw_twin: Option<(u32, usize)>,
+    /// The walks whose closures are being emitted, innermost last.
+    pub sw_frames: Vec<stream_walk_emit::SwFrame>,
+    /// Numbers each walk's closure parameters apart.
+    pub sw_serial: usize,
     pub ps_mode: Option<decode_structure_emit::PsMode>,
     pub ps_shapes: Vec<(Value, String)>,
     pub ps_walk: usize,
@@ -2477,6 +2487,10 @@ impl<'a> Output<'a> {
             apart_twin: false,
             dv: decode_view::DvPlan::default(),
             ps: decode_structure::PsPlan::default(),
+            sw: stream_walk::SwPlan::default(),
+            sw_twin: None,
+            sw_frames: Vec::new(),
+            sw_serial: 0,
             ps_mode: None,
             ps_shapes: Vec::new(),
             ps_walk: 0,
@@ -10294,6 +10308,8 @@ extern crate loft;"
                 // `@FR-R-DecodeView`'s structure clause rides on the region the view clause
                 // admitted: its roots, its frame parameters and its view types.
                 self.ps = decode_structure::plan(self.data, self.stores, &self.dv);
+                // `@FR-R-StreamWalk` — a vector its caller walks once, streamed.
+                self.sw = stream_walk::plan(self.data, &self.reachable);
             }
             self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
@@ -10343,8 +10359,7 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
-            self.output_dv_twins(w, dnr, program_store.as_ref())?;
-            self.output_ps_twins(w, dnr, program_store.as_ref())?;
+            self.output_plan_twins(w, dnr, program_store.as_ref())?;
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
@@ -10356,6 +10371,18 @@ extern crate loft;"
                 return Ok(());
             }
         }
+    }
+    /// The twins the view plans ask for beside `dnr`: the decode view's, the structure
+    /// clause's, and the stream walks' (`@FR-R-StreamWalk`).
+    fn output_plan_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        self.output_dv_twins(w, dnr, program_store)?;
+        self.output_ps_twins(w, dnr, program_store)?;
+        self.output_sw_twins(w, dnr, program_store)
     }
 
     /// `@FR-R-DecodeView` — a region function's `__dv` twin beside it, and its inputs twin.
@@ -11147,7 +11174,7 @@ extern crate loft;"
         let saved_hoist = self.hoist_disabled;
         // A positional twin keeps its function clause header and no loop hoist: the loops it
         // keeps build nothing, and the ones it drops are not there to hold a header across.
-        if self.ps_mode.is_some() {
+        if self.ps_mode.is_some() || self.sw_twin.is_some() {
             self.hoist_disabled = true;
         }
         self.apart_ctx = self.apart_ctx_for(def_nr);
@@ -11301,7 +11328,9 @@ extern crate loft;"
             )?;
         }
         let twin = self.twin.clone();
-        let ps_name = self.ps_signature_name();
+        let ps_name = self
+            .ps_signature_name()
+            .or_else(|| self.sw_signature_name());
         write!(
             w,
             "{}fn {}{}{}{}{}(cell: &std::cell::UnsafeCell<Stores>{}",
@@ -11334,7 +11363,7 @@ extern crate loft;"
             value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def))
         };
         for (i, a) in def.attributes().iter().enumerate() {
-            if dropped == Some(i) {
+            if dropped == Some(i) || self.sw_param_dropped(def_nr, i) {
                 continue;
             }
             // `@FR-R-DecodeView`'s structure clause — a positional twin takes a position
@@ -11408,8 +11437,13 @@ extern crate loft;"
                 write!(w, ", __ip_{k}: *const u8, __il_{k}: bool")?;
             }
         }
-        write!(w, "{}) ", self.ps_trailing_params())?;
-        if *def.returned() != Type::Void {
+        write!(
+            w,
+            "{}{}) ",
+            self.ps_trailing_params(),
+            self.sw_trailing_params()
+        )?;
+        if *def.returned() != Type::Void && self.sw_twin.is_none() {
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
@@ -11449,6 +11483,8 @@ extern crate loft;"
         vdb_prologue.push_str(&self.dv_prologue(def_nr));
         let ps_prologue = self.ps_prologue(def_nr);
         vdb_prologue.push_str(&ps_prologue);
+        let sw_prologue = self.sw_prologue(def_nr);
+        vdb_prologue.push_str(&sw_prologue);
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin
@@ -11534,7 +11570,8 @@ extern crate loft;"
                 // position stops depending on where the null-init landed.
                 let is_iter_scratch = vars.name(v).contains("hash_scratch");
                 // A position local a positional twin's prologue bound is not bound again.
-                if self.ps_mode.is_some() && self.declared.contains(&v) {
+                if (self.ps_mode.is_some() || self.sw_twin.is_some()) && self.declared.contains(&v)
+                {
                     continue;
                 }
                 if !vars.is_argument(v)
@@ -11692,7 +11729,8 @@ extern crate loft;"
                 if matches!(
                     self.ps_param(def_nr, i),
                     decode_structure_emit::PsParam::Dropped
-                ) {
+                ) || self.sw_param_dropped(def_nr, i)
+                {
                     continue;
                 }
                 // @PLN157 § V-aa — an admitted fn has no return buffer, so it has no

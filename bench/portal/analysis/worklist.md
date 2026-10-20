@@ -122,6 +122,12 @@ profile share and never hand-priced (such a figure has paid about two thirds, §
 | 4.23 | cbor `encode_bytes` | `encode__ap` 78 %: `head__ap` 35 % (one to nine bytes, each run through `push_header` 9 % and `reserve_more` 11 %), `append_bytes` 17 %.  The twin reads 76–96 µs between runs, so this row is noisy | L8, the head written through the caller's held window with the payload reserved with it (−25 % *est.*); X9 −3 % (priced) | ≈ 3.1× (*est.*) |
 | 4.14 | `forms_upto` | spread over the library: `form_admissible` 25 %, `form_closes` 21 %, `form_canon` 15 %, `form_write` 8 %; the key text built by formatting integers ~12 % (`format_long`, `core::fmt`), stores ~8 %, `malloc`/`free` ~6 % | L1 (−10 % *est.*); L2 (−6 % *est.*); the helpers line by line (unpriced) | ≈ 3.5× (*est.*) |
 
+**Built since** (A/B on this laptop, each side on its own rlib): **L1** — numbers formatted
+in place (`ops/number_text.rs`): `panel_build` 4.23× → 3.72×, `forms_upto` 4.10× → 3.80×.
+**F2** — `(R-StreamWalk)`, the walk twin as a general rule: `flow_layout_full` 4.60× → **2.98×**
+(the height loop's twin reads only the style, so F1 comes with it).  A text set reads its
+value in place (`Store::holds_bytes`): −1.8 % of `panel_build`'s instructions, no wall move.
+
 The levers, by reach — each a compiler or runtime rule, never a library rewrite for speed
 (`formal/performance.md` `(Perf-Cure)`):
 

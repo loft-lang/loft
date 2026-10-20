@@ -2876,6 +2876,54 @@ Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_lon
 `codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
 below, for an element that owns no heap.
 
+### A vector its caller walks once is never built
+
+```
+  (R-StreamWalk)  `v = P(a…); for i in 0..len(v) { … }` — a call of a function P that
+                  answers `vector<T>` for a record T, bound to a local that the next
+                  statement mentioning it walks once by index — runs as P's STREAM TWIN
+                  with the walk's body as its closure: P's own body runs, and each append
+                  it would have made hands the values it would have stored in the fields
+                  the body reads to the body, at that append.  No vector, no record and no
+                  text of an element is built.  Admitted when: P's result vector is
+                  mentioned only by its buffer's plumbing, by its appends (a mint, a set of
+                  each field from a value, a finish) and by `return`; every field the body
+                  reads is set by every append and is an `integer`, `float`, `single` or
+                  `text`, whose round trip through the store answers the value stored; the
+                  body mentions the vector, the index and the element only as `v[i]?` read
+                  for a field; nothing in it leaves the walk (`break`, `continue`,
+                  `return`, `yield`); P and the body are QUIET — every write lands in a
+                  place the function owns (a local borrowing only what it owns, a buffer
+                  it is handed to write), every call is of a quiet function, every
+                  function value dispatches only to quiet functions without captures; and
+                  neither the body nor a statement between the call and the walk writes a
+                  variable the call reads or a local borrowing from one.  The local is
+                  otherwise mentioned only by its null init and frees.  Native release
+                  build only.
+```
+
+**In words.** The plain form runs P to its end — a buffer refilled, a record claimed and a
+text copied in per element — and then reads each element back once.  The twin interleaves
+P's steps with the body's, which can change a value only if one side sees the other's
+progress.  P is quiet, so it reports, prints and writes nothing the body can read; the
+body is quiet and writes nothing the call reads, so P reads at each step what it would
+have read before the body ever ran — and P reaches data only through its arguments, which
+is why the arguments and every view of them are what the body must leave alone.  The
+values handed over are the values the append would have stored, and each admitted field
+kind reads back what was stored, so the body reads the same values in the same order.  A
+field the body does not read is not handed over, so the twin need not compute it.  The
+call moves down to the walk, past statements that write nothing it reads.  The twin is
+emitted without loop hoists, since a header it held across its loop would not survive a
+body that grows a store.
+
+**BUILT** (`generation::stream_walk` the plan, `generation::stream_walk_emit` the twins and
+the walks; `LOFT_NO_STREAM_WALK=1`, `LOFT_TRACE_STREAM_WALK=1`).  zttext's
+`flow_layout_full` (`slice_runs` walked by `token_width` and twice by `place_line`):
+**4.60× → 2.98× of Rust**, hash unchanged.  Not admitted yet: a walk by `for e in v`, a
+narrow integer, enum, boolean or character field, a body that reads the index, a walk
+that leaves early.  Guard `tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft`
+(`@falsify-tier: native-release`), pin `tests/stream_walk.rs`.
+
 ### A keyed insert writes the entry its key names
 
 ```

@@ -162,6 +162,13 @@ impl Output<'_> {
         {
             return Ok(());
         }
+        // `@FR-R-StreamWalk` — a walked element's field read, a stream twin's `return`.
+        if (self.sw_twin.is_some() || !self.sw_frames.is_empty())
+            && let Some(code) = node.native()
+            && self.sw_expr(w, code)?
+        {
+            return Ok(());
+        }
         // `@FR-R-DecodeView` — a span field's write and a span text's read, in the same
         // dispatch for the same reason.
         if !self.dv.region.is_empty()
@@ -4084,6 +4091,11 @@ impl Output<'_> {
             // `@FR-R-DecodeView`'s structure clause — a statement the positional twin drops,
             // before pre-evaluation can lift anything out of it.
             if self.ps_mode.is_some() && self.ps_skip(v) {
+                continue;
+            }
+            // `@FR-R-StreamWalk` — a stream twin's dropped statement or an append it hands
+            // over, a consumer's call and walk, a walked element's binding.
+            if !self.sw.is_empty() && self.sw_statement(w, operators, vnr)? {
                 continue;
             }
             if apart_skip.is_some_and(|next| vnr < next) {

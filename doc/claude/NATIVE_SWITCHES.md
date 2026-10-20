@@ -537,6 +537,14 @@ answer out of a decoder's caller on a release build, after `LOFT_NO_DECODE_VIEW`
 **`LOFT_TRACE_DECODE_STRUCTURE=1`** names each producer and root admitted and each decline with
 its reason; `=2` also prints each consumer's IR.
 
+**`LOFT_NO_STREAM_WALK=1`** (`@FR-R-StreamWalk`, default-ON, generation time, `--native-release`
+and every build that does not ship the live tier) builds every vector a caller walks once —
+with it off, a function answering a vector of records that its caller binds and walks by
+index runs as its stream twin, handing each element's fields to the walk's body at the
+append, and no vector is built.  First bisect step for a wrong value, order or count out of
+such a walk on a release build; **`LOFT_TRACE_STREAM_WALK=1`** names every producer and walk
+admitted or declined, with why.
+
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that

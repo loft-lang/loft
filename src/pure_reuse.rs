@@ -29,7 +29,7 @@ use crate::data::{Data, DefType, Value};
 use crate::fxhash::FxHashSet as HashSet;
 
 /// Operators that only read their operands and answer a value.
-fn reads_only(name: &str) -> bool {
+pub(crate) fn reads_only(name: &str) -> bool {
     const PREFIXES: [&str; 6] = ["OpGet", "OpLength", "OpConv", "OpCast", "OpEq", "OpNe"];
     const ARITH: [&str; 18] = [
         "OpAdd",
@@ -67,7 +67,7 @@ fn reads_only(name: &str) -> bool {
 }
 
 /// Operators that write into the store one argument names: that argument's index.
-fn write_target(name: &str) -> Option<usize> {
+pub(crate) fn write_target(name: &str) -> Option<usize> {
     match name {
         "OpCopyRecord" => Some(1),
         n if n.starts_with("OpSet") => Some(0),
