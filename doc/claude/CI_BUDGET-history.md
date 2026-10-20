@@ -843,6 +843,19 @@ dependencies are half a minute of a cold build (89 crates before `Compiling loft
 rest is loft and its test crates, which change with every commit.  The cure is
 [CI_BUDGET.md § Each leg builds only the binaries it runs](CI_BUDGET.md#each-leg-builds-only-the-binaries-it-runs):
 `scripts/ci_shards.py` packs the rest into three legs by the seconds in
-`scripts/ci_shards.tsv` (rest-a 154 binaries incl. the 22 wasm-building ones, rest-b 136,
-rest-c 144, 1 378 s of test time on the heaviest), each leg builds only its pack, and the
-cargo cache keeps the registry and no `target/`.
+`scripts/ci_shards.tsv`, each leg builds only its pack, and the cargo cache keeps the
+registry and no `target/`.
+
+The first run so built (39400567382, 2026-10-20) read, per leg: build 2.9–4.3 min (was
+7.6–11.3), cache restore gone (was 4–6), the release build 2.2–3.2, the warm-up 2.4–5.7 —
+on the two legs with no page test, two release builds of a wasm runtime rlib nothing there
+used, 1m45 each — and test phases of 2.3 (corpus), 9.8 (heavy: `html_wasm` four-wide for
+5.1 min, then the `heavy-serial` chain for 5.2, which cannot overlap it on four threads),
+4.5 / 8.4 / 13.6 (rest-a/b/c).  Totals 14.5, 22.6, 15.1, 22.8, 27.6: two legs within
+budget.  The rest packs had been weighted by summed test seconds from an earlier run, and
+the sums lied twice: a test under `threads-required` takes the whole runner for its
+duration (`ownership_drop_gate`'s 23 cells, 10 s each, serialised rest-c for 3 min), and
+the html leg pays 4.7 min of runtime builds before its first test.  Both went into the
+weights; the `heavy-serial` members that run no page (`n2_cdylib`, `n3_parity`,
+`n3_use_native`, `multiplayer_v2`) went to the rest legs, where their one slot runs beside
+the wide tests, and `native` whole to `corpus`.

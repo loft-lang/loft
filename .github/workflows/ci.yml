@@ -588,24 +588,28 @@ jobs:
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
 
-      # Which test binaries THIS leg builds and runs (`scripts/ci_shards.py`): the heavy and
-      # corpus legs their single-slot groups, each rest leg its pack of the remainder, weighted
-      # by measured test seconds — so a leg builds only what it runs.  Measured before: every
-      # leg ran `cargo build --all-targets` (all 445 test binaries), 7.6 to 8.5 min of each
-      # leg's 20 to 24, for a test phase of 6 to 8 (CI_BUDGET.md § Each leg builds only the
-      # binaries it runs).  An unsharded leg (push to main, the nightly matrix) still builds
-      # everything.  `wasm` says whether any binary of the leg builds a `--html` page, which
-      # is what the wasm target and the html rlib below are for.
+      # Which test binaries THIS leg builds and runs (`scripts/ci_shards.py`): `corpus` the
+      # whole `native` binary, `heavy` the other single-slot binaries that drive an `--html`
+      # page, each rest leg its pack of the remainder, weighted by measured test seconds — so
+      # a leg builds only what it runs.  Measured before: every leg ran `cargo build
+      # --all-targets` (all 445 test binaries), 7.6 to 8.5 min of each leg's 20 to 24, for a
+      # test phase of 6 to 8 (CI_BUDGET.md § Each leg builds only the binaries it runs).  An
+      # unsharded leg (push to main, the nightly matrix) still builds everything.  `html`
+      # says whether a binary of the leg runs an `--html` page — what the wasm target and
+      # the html rlib steps below are for — and `warm` is the `loft cache warm` flag naming
+      # the runtime rlibs (html, wasi) the leg's binaries need, so the warm-up builds no other.
       - name: Shard
         id: shard
         shell: bash
         run: |
           if [ -n "${{ matrix.shard }}" ]; then
             echo "args=$(python3 scripts/ci_shards.py args ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
-            echo "wasm=$(python3 scripts/ci_shards.py needs-wasm ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
+            echo "html=$(python3 scripts/ci_shards.py html ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
+            echo "warm=$(python3 scripts/ci_shards.py warm ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
           else
             echo "args=--all-targets" >> "$GITHUB_OUTPUT"
-            echo "wasm=true" >> "$GITHUB_OUTPUT"
+            echo "html=true" >> "$GITHUB_OUTPUT"
+            echo "warm=" >> "$GITHUB_OUTPUT"
           fi
           python3 scripts/ci_shards.py proof
       - name: Build
@@ -710,7 +714,7 @@ jobs:
       # (rlib never built) instead of skipping.  Building everywhere closes
       # that gap and actually exercises `--html` cross-platform.
       - name: Install wasm target (for html_wasm tests)
-        if: ${{ steps.shard.outputs.wasm == 'true' }}
+        if: ${{ steps.shard.outputs.html == 'true' }}
         run: rustup target add wasm32-unknown-unknown
 
       # Built into the `--html` shape's own directory, `target/loft/html` — the rlib `loft
@@ -718,7 +722,7 @@ jobs:
       # overwrite it.  A copy built anywhere else is a second build of the same rlib: the warm
       # step below builds this one regardless (~40 s of the same compile).
       - name: Build wasm rlib (for html_wasm tests)
-        if: ${{ steps.shard.outputs.wasm == 'true' }}
+        if: ${{ steps.shard.outputs.html == 'true' }}
         run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html
 
       # The `--html` runtime rlib is keyed on loft's build fingerprint, which moves on every
@@ -750,7 +754,7 @@ jobs:
         run: |
           cargo build ${{ steps.shard.outputs.args }}
           for loft in ./target/release/loft ./target/debug/loft; do
-            "$loft" cache warm --from tests \
+            "$loft" cache warm --from tests ${{ steps.shard.outputs.warm }} \
               || echo "warn: cache warm with $loft failed — the first --html test will build the rlib itself"
           done
           for lib in tests/fixtures/libs/*/; do

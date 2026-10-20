@@ -442,6 +442,10 @@ fn print_help() {
     println!(
         "                                                 — build what a run will need, first"
     );
+    println!("                                     [--runtime html,wasi | --no-runtime]");
+    println!(
+        "                                                 — only these wasm runtime rlibs, or none"
+    );
     println!("                                a rerun reuses its parse, a dev build included;");
     println!("                                LOFT_NO_CACHE=1 parses fresh and caches nothing");
     println!("  generate [path]               generate Rust stubs for #native declarations");
@@ -4661,8 +4665,16 @@ fn handle_cache(argv: &[String], i: &mut usize) {
 ///
 /// Never fails the caller. A package that cannot be warmed is simply built by the test that
 /// needs it, exactly as before, so this is an optimisation with no new failure mode.
-fn cache_warm(argv: &[String], from: usize) {
-    let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+/// `cache warm`'s arguments: the packages wanted (`--from <dir>` collects a tree's, a bare
+/// name adds one) and the runtime rlibs — `None` for every shape whose target is installed,
+/// `Some(names)` for `--runtime html,wasi`, and `--no-runtime` the empty list: a CI leg that
+/// runs no `--html` or wasi test skips two release builds of ~1m45 each (`ci_shards.py warm`).
+fn cache_warm_args(
+    argv: &[String],
+    from: usize,
+) -> (std::collections::BTreeSet<String>, Option<Vec<String>>) {
+    let mut wanted = std::collections::BTreeSet::new();
+    let mut runtimes: Option<Vec<String>> = None;
     let mut idx = from;
     while idx < argv.len() {
         let a = argv[idx].as_str();
@@ -4671,11 +4683,23 @@ fn cache_warm(argv: &[String], from: usize) {
                 collect_used_packages(std::path::Path::new(dir), &mut wanted);
                 idx += 1;
             }
+        } else if a == "--no-runtime" {
+            runtimes = Some(Vec::new());
+        } else if a == "--runtime" {
+            if let Some(list) = argv.get(idx + 1) {
+                runtimes = Some(list.split(',').map(|s| s.trim().to_string()).collect());
+                idx += 1;
+            }
         } else if !a.starts_with('-') {
             wanted.insert(a.to_string());
         }
         idx += 1;
     }
+    (wanted, runtimes)
+}
+
+fn cache_warm(argv: &[String], from: usize) {
+    let (wanted, runtimes) = cache_warm_args(argv, from);
 
     let mut built = 0usize;
     let mut skipped = 0usize;
@@ -4694,6 +4718,12 @@ fn cache_warm(argv: &[String], from: usize) {
         native_utils::WasmRuntimeShape::Wasi,
         native_utils::WasmRuntimeShape::Html,
     ] {
+        if runtimes
+            .as_ref()
+            .is_some_and(|names| !names.iter().any(|n| n == shape.name()))
+        {
+            continue;
+        }
         if !installed.lines().any(|l| l.trim() == shape.triple()) {
             println!(
                 "  skip  {} — {} not installed",

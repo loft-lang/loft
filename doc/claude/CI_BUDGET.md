@@ -696,25 +696,35 @@ an hour and a half of wall clock for a release that happens monthly.
 
 ## Each leg builds only the binaries it runs
 
-**Rule: a test leg builds the test binaries it runs and nothing else, and restores no
-`target/`.**  Of a leg's wall, the test phase was a third and the rest was build: every
-leg compiled all 445 test binaries and ran its share, and a restore of the whole
-`target/` took minutes without making the build faster, because the dependencies are
-half a minute of a cold build and the rest is loft and its test crates, which change
-with every commit (the measurement: [the history companion § Where a test leg's minutes
+**Rule: a test leg builds the test binaries it runs and nothing else, restores no
+`target/`, and builds no wasm runtime its binaries do not use.**  Of a leg's wall, the
+test phase was a third and the rest was build: every leg compiled all 445 test binaries
+and ran its share, restored a whole `target/` that made the build no faster (the
+dependencies are half a minute of a cold build; the rest is loft and its test crates, which
+change with every commit), and warmed two wasm runtime rlibs whether or not a test of the
+leg ran a page (the measurements: [the history companion § Where a test leg's minutes
 went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).
 
 What `ci.yml` does:
 
-- **`scripts/ci_shards.py`** owns the leg → binaries map.  `heavy` and `corpus` keep their
-  membership from `ci_test_filter.py`; the rest is packed into `rest-a/b/c` by the measured
-  seconds in `scripts/ci_shards.tsv` (greedy, heaviest first; a binary the table does not
-  know packs at the median), the wasm-building binaries together in `rest-a`.  The `Shard`
-  step answers each leg's `--test …` flags; `Build`, the warm-up and both nextest passes
-  take them, so the build and the run select one set, and `--partition slice` is gone.
+- **`scripts/ci_shards.py` decides the leg a binary runs on, and nothing else does.**
+  `corpus` runs the whole `native` binary (the script corpus, each chunk taking the whole
+  runner, and native's other single-slot tests); `heavy` runs the other single-slot binaries
+  that drive an `--html` page (`html_wasm`, `wasm_debug_relay`, `multiplayer_v3`); the rest
+  — every other `tests/*.rs`, the unit tests, the bin targets' tests — is packed into
+  `rest-a/b/c` by the measured seconds in `scripts/ci_shards.tsv`, a test that takes the
+  whole runner (`threads-required`) counted four times, since nothing runs beside it.  The
+  binaries that need a wasm runtime are packed together into `rest-a`, which starts the pack
+  with the measured cost of building those runtimes so it is handed that much less.  The
+  `Shard` step answers each leg's `--test …` flags; `Build`, the warm-up and both nextest
+  passes take them, so the build and the run select one set.  `ci_test_filter.py` composes
+  the SAME filterset for every leg (its shard argument is accepted and selects nothing);
+  a single-slot group's member on a rest leg still runs in its one slot there.
   `proof` fails when a binary is in no leg or in two; it runs on every leg and in `make ci`.
-- The wasm target and the html rlib are built on the legs that have a wasm-building binary
-  (`heavy`, `corpus`, `rest-a`) and skipped on the others.
+- The wasm target and the html rlib are built on the legs with a binary that runs a page
+  (`ci_shards.py html`), and `loft cache warm --from tests` takes the leg's
+  `--runtime html,wasi` / `--no-runtime` flag (`ci_shards.py warm`), so a leg whose
+  binaries use no runtime builds none — two release builds of ~1m45 each, before.
 - The Linux/macOS cargo cache keeps the registry, the git db and `~/.loft/build-cache`
   and no `target/`: a restore in seconds, and the half-minute of dependencies compiled
   cold.  The read-only restorers (`index-hygiene`, `leak-scan`, `viewer-smoke`, the
@@ -726,7 +736,7 @@ What `ci.yml` does:
 Three rest legs and not more: a leg that builds its own 140 binaries starts its tests in a
 fraction of the old build, so the budget is met by making each leg quick, not by adding
 runners — a fourth leg would have cost a runner for every run to shave a minute.  Re-pack
-when a rest leg pulls away from the others: `scripts/ci_shards.py measure <junit>…` from the
+when a leg pulls away from the others: `scripts/ci_shards.py measure <junit>…` from the
 run's `nextest-junit-*` artifacts rewrites the table, `pack` shows the result.
 
 ## What to optimise and split
