@@ -158,6 +158,41 @@ annotation and pluginabi's lock moved to it are what put it in the lane.  Found 
 fixed: a decode root calling another root did not compile on `--native-release`
 (`LOFT_NO_PURE_REUSE=1` broke the bench), loft#2091.
 
+**Focus, for now (owner, 2026-10-20).**  Everything loft does is a target for optimisation.
+The one overhead left alone for the moment is the null-integer cost — the sentinel test on a
+read that may be null, and arithmetic that answers null rather than wrapping (C120) — and that
+too is removed later wherever it can be proved away (ranges, in-range reads).  Store creation,
+store indirection, copies, a reference built and read back, lock tests: none of these is a
+reason a row stays over its bar.  An answer of the form *"the store model costs that"* is
+therefore not an analysis — find the rule that declined the work and why.
+
+**cbor `encode` inspected (2026-10-20, at e8b405937, 4.56×).**  The question was why it could not
+reach the Rust twin.  The twin passes one `&mut Vec` down the recursion and keeps its local
+tables on the stack; loft's `encode` returns a vector per level and keeps its locals in stores.
+Most of those stores are ALREADY removed by existing rules, and each that remains has a named
+decline (`LOFT_TRACE_WORK_BUFFER=1`):
+
+| store, minted per call | removed or declined, and by what | the cure |
+|---|---|---|
+| `koff`, `klen`, `ranks` in `encode_map` | removed: `(R-WorkBuffer)`, the caller lends them | — |
+| `head`'s buffer | removed: refilled, not minted (`OpDatabaseRefill`) | — |
+| `buf += encode(value)` | removed: `encode__ap` appends in place (`(R-AppendTwin)`) | — |
+| `keybuf` in `encode_map` | declined by `(R-WorkBuffer)`: "bound as a copy of another vector" — `copy_bound` reads a vector whose only fill is ONE whole copy as the bind `a = s.v`, and `keybuf += k` stands INSIDE the key loop: an accumulator, not a bind | count a copy inside a loop as building (narrow fix to `copy_bound`) |
+| `k` (`__ref_2`), `k = encode(key)` | declined: "its callee is on a cycle with this function" — `encode` ↔ `encode_map` recurse, so a buffer the caller lends cannot be shared between activations | E1: `k = encode(key); …; keybuf += k` → `encode__ap` straight into `keybuf`, `len(k)` the growth; no `k` exists, so the recursion does not matter.  Priced earlier at −15.5 % |
+| `encode`'s result buffers of the map and array arms (`__ref_5`…`__ref_8`) | declined: "its result is not a view of this buffer alone" (×2), "handed to more than one call", "its call is not the value of a bind" | unpriced — one look per arm |
+
+The recursion is the only structural obstacle, and it binds ONE buffer, which E1 removes rather
+than lends — the twin's own answer (`encode(v, out)` writes every level into one vector).  The
+stores were ~40 % of the row's profile; `keybuf` + E1 *est.* −15–20 % (≈ 3.8×), the arm buffers
+next.  What stays is the focus's exception (the null-integer reads and C120's arithmetic) and
+store indirection where no header can be held.
+
+Built today on the row: `(R-GuardedChain)`'s guard is no longer evaluated per call for a loop
+whose chains are only index offsets — `key_lt`, a loop of a few bytes per key pair, paid the
+guard closure on every compare (−4.1 % by hand, −2.5 % in the lane).  PRICED, not built: `key_lt`
+testing both key spans in range once at entry and comparing with plain loads, −7.9 % in all
+(−4 % beyond the guard fix) — a span clause of the loop emitter.
+
 **`slope_path_with_undo`, the lookups, RE-PRICED and part BUILT (2026-10-20).**  The −27.5 % above
 was a hand form that also replaced `chunk_idx_32` / `hex_idx_32`'s checked arithmetic with
 plain `div_euclid` / `rem_euclid` — a change `@C120` rules out.  With the arithmetic kept, the
