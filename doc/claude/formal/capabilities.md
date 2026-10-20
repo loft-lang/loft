@@ -64,7 +64,7 @@ gated.
 
 ```
   (Cap-Trusted)  ctx = trusted                                           ⟹  P ; ctx ⊢ e ✓
-  (Cap-Own)      owned(e)                                                ⟹  P ; ctx ⊢ e ✓
+  (Cap-Own)      owned(e) ;  e ≠ call f with gate(f) ≠ ⊥                  ⟹  P ; ctx ⊢ e ✓
   (Cap-Call)     e = call f ;  gate(f) = g#r ;  ( g#r ∈ P  ∨  lib(f) ∈ P.libs )
                                                                           ⟹  P ; restricted ⊢ e ✓
   (Cap-Safe)     e = call f ;  f ∈ stdlib ;  gate(f) = ⊥                  ⟹  P ; restricted ⊢ e ✓
@@ -81,7 +81,9 @@ gated.
 
 **In words.** Outside the sandbox nothing is gated (`Cap-Trusted`). Inside it, anything a
 script does to data **it owns** is free (`Cap-Own`) — only reaching into the *host* is
-checked. An ungated STDLIB function is safe — it computes only on its arguments — so any
+checked.  A call of a gated function is reaching into the host whatever its arguments are: the
+gate guards what the function DOES (`read_file("notes.txt")` reads a file though its argument
+is a literal the script owns), so such a call is judged by `Cap-Call`, never by `Cap-Own`. An ungated STDLIB function is safe — it computes only on its arguments — so any
 profile may call it (`Cap-Safe`): every stdlib function that reaches the host carries a gate
 (`fs#…`, `env#read`, `time#read`, `io#append` for the output stream, `process#update` for
 `exit`, `thread#update` for `par` and `parallel { … }`, `host#read` / `host#append`), and
