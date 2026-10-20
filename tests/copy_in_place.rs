@@ -29,7 +29,9 @@ const EXPECTED: &[(&str, Row, Row)] = &[
     ("n_c4", (2, 1, 0), (2, 1, 0)),
     ("n_c5", (0, 0, 0), (0, 0, 0)),
     // Two vectors: both headers held across the copy (the read walk hoisted before too).
-    ("n_c6", (2, 3, 0), (1, 1, 0)),
+    // One copy of the loop body: `b[9 - i]`'s offset is no chain the guard pays back
+    // (R-GuardedChain), so `e`'s record is addressed once.
+    ("n_c6", (2, 2, 0), (1, 1, 0)),
     ("n_c7", (1, 1, 0), (0, 0, 0)),
     // c8's write-back loop discharges a NESTED-record element (`Vtx { pos: V3, … }`), which
     // the hidden-buffer allowance took only for an all-scalar record until @PLN158 P1
