@@ -127,6 +127,11 @@ in place (`ops/number_text.rs`): `panel_build` 4.23× → 3.72×, `forms_upto` 4
 **F2** — `(R-StreamWalk)`, the walk twin as a general rule: `flow_layout_full` 4.60× → **2.98×**
 (the height loop's twin reads only the style, so F1 comes with it).  A text set reads its
 value in place (`Store::holds_bytes`): −1.8 % of `panel_build`'s instructions, no wall move.
+**PRICED and DROPPED** — `@FR-R-Apart` instance 3 for full-width `vector<integer>` locals:
+cbor `encode` 4.66× → 4.26×, but drawing's image routines 2–3.5× slower (`render_marks` +255 %,
+`resize` +220 %): their whole-image integer buffers lost the store's reservation, held base
+and fill, and the IR cannot tell a 20-element table from a pixel buffer.  Kept from it: the
+inline slots are no longer zero-filled per call.
 
 The levers, by reach — each a compiler or runtime rule, never a library rewrite for speed
 (`formal/performance.md` `(Perf-Cure)`):
