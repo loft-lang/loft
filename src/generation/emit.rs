@@ -4587,6 +4587,18 @@ impl Output<'_> {
                     // clear, append, yield the buffer — so it arrives here whenever a block's
                     // scope frees follow its value tail.
                     let block_braces = matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2);
+                    // loft#2075 — a value `if` whose arms both assign a local not yet declared
+                    // gets that local's `let` from `pre_declare_branch_vars`, written just
+                    // before the `if` — which here is INSIDE the initialiser: `let _ret = let
+                    // mut var_pr__1: (i64, String) = …`, a syntax error (loft#1475 met the
+                    // same shape for a fn-ref through the return-hoist).  A tuple pattern's
+                    // alternatives reach it: `(1, pr) | (2, _)` assigns the tuple capture `pr`
+                    // in every arm, the absent arm its all-null tuple.  Declared here instead,
+                    // as statements of this same block, so the `if` finds them declared and
+                    // the scope is the one the `if` would have given them.
+                    if let Value::If(_, true_v, false_v) = v.unspan() {
+                        self.pre_declare_branch_vars(w, true_v, false_v)?;
+                    }
                     write!(w, "let _ret = ")?;
                     if block_braces {
                         write!(w, "{{ ")?;

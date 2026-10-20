@@ -6897,13 +6897,13 @@ impl Parser {
                     let opt = Type::optional(tp);
                     self.vars.set_type(v_nr, opt.clone());
                     if !first_names.contains(&name) {
-                        arm_stmts.push(v_set(v_nr, self.null(&opt)));
+                        arm_stmts.push(v_set(v_nr, self.absent_capture(&opt)));
                     }
                     for (names_i, (_, stmts_i, _)) in
                         branch_names.iter().zip(multi_branches.iter_mut())
                     {
                         if !names_i.contains(&name) {
-                            stmts_i.push(v_set(v_nr, self.null(&opt)));
+                            stmts_i.push(v_set(v_nr, self.absent_capture(&opt)));
                         }
                     }
                 }
@@ -10220,7 +10220,7 @@ impl Parser {
                 continue;
             }
             self.vars.defined(v_nr);
-            let mut acc = self.null(&var_type);
+            let mut acc = self.absent_capture(&var_type);
             for (bi, branch) in branches.iter().enumerate().rev() {
                 if let Some((pos, vdef, attr)) =
                     branch.iter().enumerate().find_map(|(j, (_, vd, fields))| {
@@ -10508,7 +10508,7 @@ impl Parser {
             // if tag==V0 { f@V0 } else if tag==V1 { f@V1 } … else <null>.  A branch
             // lacking `f` is simply skipped — its tag falls through to the null else,
             // which is exactly the `option<T>` null a partial-overlap capture wants.
-            let mut acc = self.null(&var_type);
+            let mut acc = self.absent_capture(&var_type);
             for (disc, vdef, fields) in alts.iter().rev() {
                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
                     let read = if *attr_idx == usize::MAX {
@@ -13099,11 +13099,11 @@ impl Parser {
             let opt = Type::optional(tp.clone());
             self.vars.set_type(*slot, opt.clone());
             if !first_set.contains(name) {
-                first_bindings.push(v_set(*slot, self.null(&opt)));
+                first_bindings.push(v_set(*slot, self.absent_capture(&opt)));
             }
             for (binds_i, _, names) in &mut alternatives {
                 if !names.contains(name) {
-                    binds_i.push(v_set(*slot, self.null(&opt)));
+                    binds_i.push(v_set(*slot, self.absent_capture(&opt)));
                 }
             }
         }

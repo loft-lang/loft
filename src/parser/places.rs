@@ -769,6 +769,38 @@ impl Parser {
         }
     }
 
+    /// `@FR-P-Opt-Ty` / `@FR-P-Alt-Diff` with `@FR-T-Absent` — the value a pattern capture
+    /// holds where its pattern did NOT bind it: the null of its promoted `τ?`.
+    ///
+    /// For a TUPLE that null has a form of its own — the in-flight absent tuple, every member
+    /// null — and [`null`](Parser::null) has none for it: its catch-all answers `Value::Null`,
+    /// which pushes nothing.  So an absent `pr: (integer, text)` capture read whatever the stack
+    /// held (`pr.0 ?? -1` answered 0, a `text` member SIGSEGVed formatting it) and `--native`
+    /// assigned `()` to an `(i64, String)` (E0308) — at every capture site alike, the slice
+    /// optional group, both alternation forms, the arm-level or-patterns and the tuple-pattern
+    /// alternatives (loft#2075).  A member is in a value position inside the tuple, so it takes
+    /// [`null_value`](Parser::null_value) (a nested tuple recurses).  Every other capture type
+    /// keeps `null`'s answer unchanged: only the STACK tuple spelling has no null of its own,
+    /// and a capture is typed by its field's declared type, which names a tuple that way.
+    pub(crate) fn absent_capture(&mut self, tp: &Type) -> Value {
+        let Type::Tuple(members) = tp.base() else {
+            return self.null(tp);
+        };
+        let members = members.clone();
+        Value::Tuple(
+            members
+                .iter()
+                .map(|m| {
+                    if matches!(m.base(), Type::Tuple(_)) {
+                        self.absent_capture(m)
+                    } else {
+                        self.null_value(m)
+                    }
+                })
+                .collect(),
+        )
+    }
+
     /// loft#793/loft#936 — the null a VALUE POSITION delivers for `tp`:
     /// `null()`, plus the store-pointer sentinel for every remaining
     /// DbRef-backed heap type (the collections, and a struct-enum — whose
