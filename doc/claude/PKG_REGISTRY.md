@@ -368,8 +368,10 @@ consumer's machine.  Layout:
 
 - TTL: 1 hour by default.
 - Re-fetched when `index.json.fetched_at` is older than 1 hour, OR
-  when `loft install --refresh` is passed, OR when a requested
-  package is missing from the cached index.
+  when `loft install --refresh` is passed, OR when the cached index
+  cannot satisfy a `use` — the package is missing from it, or no version
+  in range is (`install::auto_install_if_in_catalog`; only that miss pays
+  the fetch, and a failed fetch leaves the cached answer standing).
 - Conditional GET via the cached `index.json.etag` — if the
   registry hasn't changed, the response is 304 and no bytes
   transfer.  **Designed, not implemented**: `fetch_index` sends no

@@ -240,13 +240,22 @@ pub fn install_one(
         // any declared runtime system libs.
         let host = crate::cache::host_triple();
         let available: Vec<String> = r.version.binaries.keys().cloned().collect();
-        report.surface.push(format!(
-            "{} {}: {}",
-            r.name,
-            r.version.semver,
-            prebuilt_status(&host, &available, got_prebuilt)
-        ));
-        if let Some(m) = crate::manifest::read_manifest(&dir.join("loft.toml").to_string_lossy()) {
+        let manifest = crate::manifest::read_manifest(&dir.join("loft.toml").to_string_lossy());
+        // Only a package with Rust code of its own — a library stem, a `[native]` crate, or a
+        // library compiled to one — builds anything: a package that is loft alone was told
+        // it "needs rustc", which it never does.
+        let builds_native = |m: &crate::manifest::Manifest| {
+            m.native.is_some() || m.native_crate.is_some() || m.compile.as_deref() == Some("native")
+        };
+        if !available.is_empty() || manifest.as_ref().is_some_and(builds_native) {
+            report.surface.push(format!(
+                "{} {}: {}",
+                r.name,
+                r.version.semver,
+                prebuilt_status(&host, &available, got_prebuilt)
+            ));
+        }
+        if let Some(m) = manifest {
             if !m.runtime_libs.is_empty() {
                 report.surface.push(format!(
                     "  runtime libraries: {}",
@@ -1086,6 +1095,15 @@ fn build_lockfile(graph: &[ResolvedPackage]) -> LockFile {
     lock
 }
 
+/// Why [`auto_install_if_in_catalog`] could not supply a package.
+#[derive(Debug)]
+pub struct AutoInstallFailure {
+    pub message: String,
+    /// The index the refusal was decided on was fetched in that call: the registry was
+    /// reached and holds nothing that fits, as opposed to being unreachable.
+    pub registry_answered: bool,
+}
+
 /// Auto-install fallback fired by the parser's `use X;` resolution
 /// chain (@PLAN12 Phase 6.6).
 ///
@@ -1105,7 +1123,8 @@ fn build_lockfile(graph: &[ResolvedPackage]) -> LockFile {
 /// # Errors
 ///
 /// Surfaces any error from `install_one` — network failure, sig
-/// mismatch, tarball corruption, lockfile write failure.
+/// mismatch, tarball corruption, lockfile write failure — with whether the
+/// registry was asked in this call ([`AutoInstallFailure`]).
 /// `constraint` is the root project's declared version requirement for `name`
 /// (e.g. `Some("=0.1.0")`), threaded through so a source-level `use` honours the
 /// consumer's pin instead of always resolving the latest release.  `None` keeps
@@ -1114,20 +1133,50 @@ pub fn auto_install_if_in_catalog(
     name: &str,
     constraint: Option<&str>,
     opts: &InstallOptions,
-) -> Result<Option<InstallReport>, String> {
+) -> Result<Option<InstallReport>, AutoInstallFailure> {
     // Load the index FIRST so we can check membership without
     // committing to a network fetch for the tarball.  load_index
     // honours `opts.offline` — if true, only uses cached index.
-    let index = load_index(opts)?;
+    let (idx_path, _, _) = registry_index::index_paths();
+    let from_cache = !opts.offline && !opts.refresh && !index_stale(&idx_path);
+    let mut index = load_index(opts).map_err(|message| AutoInstallFailure {
+        message,
+        registry_answered: false,
+    })?;
+    // Was this index fetched in this call?  Then a refusal below is the registry's own.
+    let mut registry_answered = !opts.offline && !from_cache;
     // The toolchain is in the index but is not a library, so it is not something a bare
     // `use` should ever pull in.  Falling through (rather than erroring) is what keeps
     // publishing the entry from changing the meaning of an existing program: before the
     // entry existed `use loft;` was a miss here and went on to the parser's remaining
     // resolution strategies, and it still does.
-    if name == crate::self_update::TOOLCHAIN_PKG || !index.packages.contains_key(name) {
+    if name == crate::self_update::TOOLCHAIN_PKG {
         return Ok(None);
     }
-    let report = install_one(name, constraint, opts)?;
+    // A cached index is up to its TTL old, so a release published since is not in it: a
+    // `use` it cannot satisfy — a package it does not list, or no version in range — asks
+    // the registry once before it fails, rather than failing for up to an hour on a release
+    // that is out.  Only a miss pays the fetch, and a fetch that fails leaves the cached
+    // answer standing.  The refreshed index is on disk afterwards, so `install_one` reads it
+    // as the fresh cache it now is.
+    if from_cache
+        && (!index.packages.contains_key(name)
+            || resolve_named(&index, name, constraint, opts).is_err())
+        && let Ok(fresh) = load_index(&InstallOptions {
+            refresh: true,
+            ..opts.clone()
+        })
+    {
+        index = fresh;
+        registry_answered = true;
+    }
+    if !index.packages.contains_key(name) {
+        return Ok(None);
+    }
+    let report = install_one(name, constraint, opts).map_err(|message| AutoInstallFailure {
+        message,
+        registry_answered,
+    })?;
     for (n, v) in &report.installed {
         eprintln!("[registry] installed {n} {v}");
     }

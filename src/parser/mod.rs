@@ -734,6 +734,11 @@ pub struct Parser {
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
     cache_unmet: std::collections::HashMap<String, String>,
+    /// The `use` ids an auto-install asked the registry for and was refused — the index it
+    /// decided on was fetched in that call — so the "not found" message says the registry
+    /// has nothing in range rather than that it could not be asked.
+    #[cfg(feature = "registry")]
+    registry_refused: std::collections::HashSet<String>,
     /// Tier-1 text-method trigger map: `method name -> providing package`,
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
@@ -1957,6 +1962,8 @@ impl Parser {
             program_scope: None,
             program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
+            #[cfg(feature = "registry")]
+            registry_refused: std::collections::HashSet::new(),
             auto_use_trigger_map: None,
             auto_use_ambiguous: std::collections::HashMap::new(),
             auto_use_type_map: std::collections::HashMap::new(),

@@ -1047,6 +1047,204 @@ fn a_sidecar_pin_decides_the_install_and_is_not_rewritten() {
     );
 }
 
+/// Build `name` at each of `versions` as a pure-loft package (plus `extra` manifest lines),
+/// returning one index entry per version, as `"<version>":{…}` JSON members.
+fn publish_versions(tmp: &Path, name: &str, versions: &[&str], extra: &str) -> Vec<String> {
+    versions
+        .iter()
+        .map(|version| {
+            let src = tmp.join(format!("src-{name}-{version}"));
+            write_file(
+                &src.join("loft.toml"),
+                &format!(
+                    "[package]\nname = \"{name}\"\nversion = \"{version}\"\nloft = \">=0.8\"\n\n\
+                     [library]\nentry = \"src/{name}.loft\"\n{extra}"
+                ),
+            );
+            write_file(
+                &src.join(format!("src/{name}.loft")),
+                &format!("pub fn id() -> text {{ return \"{name}-{version}\"; }}\n"),
+            );
+            let out = loft::package::package_create(&src, Some(tmp)).expect("package_create");
+            format!(
+                r#""{version}":{{"url":"{}","sha256":"{}","size":{},"loft":">=0.8",
+                   "published":"2026-10-20T00:00:00Z"}}"#,
+                common::file_url(&out.tarball),
+                out.sha256,
+                out.size
+            )
+        })
+        .collect()
+}
+
+fn index_of(packages: &[(&str, &[String])]) -> String {
+    let body: Vec<String> = packages
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                r#""{n}":{{"description":"probe","versions":{{{}}}}}"#,
+                v.join(",")
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"schema_version":1,"packages":{{{}}}}}"#,
+        body.join(",")
+    )
+}
+
+/// A release published after the index was cached is reached by a `use` that needs it.
+///
+/// The cached index lives for an hour, and auto-install read it without asking whether a
+/// `use` it could not satisfy had been published since: `script` 0.4.0 went out, and for
+/// the next hour `use script;` under `script = ">=0.4"` failed with "no version satisfies"
+/// — and with "the registry could not be asked", which it never tried to.
+///
+/// Cells, each against an index cached BEFORE the registry changed: a newer version of a
+/// listed package; a package the cached index does not list at all; and the refusals — a
+/// range nothing published satisfies, online (the registry WAS asked, after a refresh) and
+/// offline (it was not).
+#[test]
+fn a_release_published_since_the_index_was_cached_is_installed() {
+    let tmp = tmpdir("published_since_cached");
+    let home_dir = tmpdir("published_since_cached_home");
+    let old = publish_versions(&tmp, "freshpkg", &["0.1.0"], "");
+    let both = publish_versions(&tmp, "freshpkg", &["0.1.0", "0.2.0"], "");
+    let newcomer = publish_versions(&tmp, "newpkg", &["0.1.0"], "");
+    let index = tmp.join("index.json");
+    write_file(&index, &index_of(&[("freshpkg", &old)]));
+
+    let (_home, _lh) = HomeGuard::set(&home_dir);
+    let (_reg, _lr) = RegUrlGuard::set(&common::file_url(&index));
+    let cached = loft::install::InstallOptions {
+        allow_unsigned: true,
+        skip_lockfile: true,
+        ..Default::default()
+    };
+    // Cache the index as it was: fresh, so nothing re-fetches it by age.
+    loft::install::load_index(&loft::install::InstallOptions {
+        refresh: true,
+        ..cached.clone()
+    })
+    .expect("cache the old index");
+    // Then the registry moves on.
+    write_file(
+        &index,
+        &index_of(&[("freshpkg", &both), ("newpkg", &newcomer)]),
+    );
+
+    let got =
+        |r: Result<Option<loft::install::InstallReport>, loft::install::AutoInstallFailure>| {
+            r.map(|o| {
+                o.map(|rep| {
+                    rep.installed
+                        .iter()
+                        .chain(rep.skipped_cached.iter())
+                        .map(|(n, v)| format!("{n} {v}"))
+                        .collect::<Vec<_>>()
+                })
+            })
+        };
+    let newer = got(loft::install::auto_install_if_in_catalog(
+        "freshpkg",
+        Some(">=0.2"),
+        &cached,
+    ));
+    let unlisted = got(loft::install::auto_install_if_in_catalog(
+        "newpkg", None, &cached,
+    ));
+    let online_refusal =
+        loft::install::auto_install_if_in_catalog("freshpkg", Some(">=0.3"), &cached);
+    let offline_refusal = loft::install::auto_install_if_in_catalog(
+        "freshpkg",
+        Some(">=0.3"),
+        &loft::install::InstallOptions {
+            offline: true,
+            ..cached.clone()
+        },
+    );
+
+    drop(_reg);
+    drop(_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+
+    assert_eq!(
+        newer.expect("freshpkg >=0.2"),
+        Some(vec!["freshpkg 0.2.0".to_string()]),
+        "0.2.0 was published after the index was cached; a `use` that needs it must reach it"
+    );
+    assert_eq!(
+        unlisted.expect("newpkg"),
+        Some(vec!["newpkg 0.1.0".to_string()]),
+        "a package published after the index was cached is a registry package, not a miss"
+    );
+    let online = online_refusal.expect_err("nothing satisfies >=0.3");
+    assert!(
+        online.registry_answered,
+        "online, the refusal came from a fresh index — the registry was asked: {}",
+        online.message
+    );
+    let offline = offline_refusal.expect_err("nothing satisfies >=0.3 offline either");
+    assert!(
+        !offline.registry_answered,
+        "offline, the registry was not asked: {}",
+        offline.message
+    );
+}
+
+/// `loft install` names a toolchain need only for a package that builds Rust code.
+///
+/// The prebuilt-status line was written for every installed package, so a library that is
+/// loft alone (`script`) was reported as "no prebuilt published — builds from source on
+/// first use (needs rustc)", a need it does not have.  A package that declares a native
+/// library stem keeps the line.
+#[test]
+fn install_reports_a_rustc_need_only_for_a_native_package() {
+    let tmp = tmpdir("install_native_line");
+    let home_dir = tmpdir("install_native_line_home");
+    let pure = publish_versions(&tmp, "purepkg", &["0.1.0"], "");
+    let native = publish_versions(&tmp, "nativepkg", &["0.1.0"], "native = \"nativepkg\"\n");
+    let index = tmp.join("index.json");
+    write_file(
+        &index,
+        &index_of(&[("purepkg", &pure), ("nativepkg", &native)]),
+    );
+
+    let (_home, _lh) = HomeGuard::set(&home_dir);
+    let (_reg, _lr) = RegUrlGuard::set(&common::file_url(&index));
+    let opts = loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        skip_lockfile: true,
+        ..Default::default()
+    };
+    let pure_report = loft::install::install_one("purepkg", None, &opts).expect("purepkg");
+    let native_report = loft::install::install_one("nativepkg", None, &opts).expect("nativepkg");
+
+    drop(_reg);
+    drop(_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+
+    assert!(
+        !pure_report
+            .surface
+            .iter()
+            .any(|l| l.contains("rustc") || l.contains("prebuilt")),
+        "a pure-loft package builds nothing: {:?}",
+        pure_report.surface
+    );
+    assert!(
+        native_report
+            .surface
+            .iter()
+            .any(|l| l.starts_with("nativepkg 0.1.0:") && l.contains("prebuilt")),
+        "a native package still says whether it needs a toolchain: {:?}",
+        native_report.surface
+    );
+}
+
 // ── loft#1048 — the advisories feed goes through the same trust gate as the index ──
 //
 // Two holes that `install.rs` had closed for the registry index and that were never
