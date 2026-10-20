@@ -2342,7 +2342,7 @@ impl Parser {
 
     pub(crate) fn write_to_file(
         &mut self,
-        file_var: u16,
+        file_var: Value,
         val: Value,
         val_type: &Type,
         cast_alias: u32,
@@ -2428,7 +2428,7 @@ impl Parser {
         let var_ref = self.cl("OpCreateStack", &[Value::Var(temp_var)]);
         let write = self.cl(
             "OpWriteFile",
-            &[Value::Var(file_var), var_ref, Value::Int(i32::from(db_tp))],
+            &[file_var, var_ref, Value::Int(i32::from(db_tp))],
         );
         Value::Insert(vec![assign, write])
     }

@@ -9826,12 +9826,12 @@ use a separate collection or add after the loop"
                 {
                     self.validate_write(&to, &lhs_parent, op);
                 }
-                // Handle `f += X` for File variables before type-changing logic.
-                if op == "+="
-                    && self.is_file_var_type(&f_type)
-                    && let Value::Var(file_v) = to
-                {
-                    self.append_to_file(code, file_v);
+                // Handle `f += X` for a File place before type-changing logic: a local or a
+                // FIELD (`b.h += "y"`), which the local it could be read into takes the same
+                // write as (loft#2088).
+                if op == "+=" && self.is_file_var_type(&f_type) {
+                    let file = to.clone();
+                    self.append_to_file(code, file);
                     return Type::Void;
                 }
                 // record closure association if the RHS was a capturing lambda.
@@ -10093,7 +10093,7 @@ use a separate collection or add after the loop"
         }
     }
 
-    pub(crate) fn append_to_file(&mut self, code: &mut Value, file_v: u16) {
+    pub(crate) fn append_to_file(&mut self, code: &mut Value, file_v: Value) {
         let mut rhs_code = Value::Null;
         let mut unused = Type::Null; // parent_tp, this is normally used to unpack the vector fill
         // Clear any leftover cast marker so we only pick up a cast parsed as
