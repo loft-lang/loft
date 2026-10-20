@@ -1856,12 +1856,7 @@ pub(crate) fn write_dist(
     crate::file_access::copy(built, exe.as_path()).map_err(|e| e.to_string())?;
     // The build cache keeps its binaries owner-only (`tighten_cache_binary`); a program
     // written out to ship is an ordinary executable.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        crate::file_access::set_permissions(exe.as_path(), std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
-    }
+    let _ = crate::platform::set_permission_bits(exe.as_path(), 0o755);
     for lib in package_libraries(data) {
         let Some(file) = crate::file_access::file_name(lib.as_path()) else {
             continue;

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I74 — CDylib extension loader: where a native program finds its libraries
 //! Where a native program finds its libraries (@PLN195).
 //!
 //! A dynamic native program keeps each native package's Rust as a separate library file
