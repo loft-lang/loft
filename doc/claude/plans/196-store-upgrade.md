@@ -173,6 +173,20 @@ The new program reads the converted store on `--interpret` and on `--native`.
 Steps 0 and 1 settle the design: if the two producers cannot agree, or the
 description-driven reader cannot reproduce `copy_claims`, the plan changes before step 2.
 
+## Acceptance — the setup the claim is made in
+
+The plan is done when this works end to end, because it is where the owner will claim it: an
+IDE in the browser, linked to a running game or simulation, with a local optimisation service
+building in the background.  The programmer adds a field and an index to a struct the running
+world holds; the service rebuilds; the world crosses into the new build through the converter
+with its references, hashes and sorted collections intact (today's JSON snapshot restores them
+to defaults); and a change the map refuses shows its reason in the IDE while the game keeps
+running the old build.  It rests on the background rebuild and the browser swap of
+[08-live-build-swap.md](18-engine-host/08-live-build-swap.md) (S4, S6), and on the browser front
+end of the server-backed IDE ([@PLN16](https://github.com/loft-lang/plans/issues/16) M5e), not
+the serverless playground of [@PLN62](https://github.com/loft-lang/plans/issues/62), which
+cannot host a real game.
+
 ## Open questions (owner)
 
 1. **The rename source syntax** for step 1 (for example a field annotation naming its source
