@@ -7402,7 +7402,7 @@ use #count instead"
             let mut max_size = 0i32;
             for a_nr in 0..self.data.attributes(*parent_d_nr) {
                 let variant_name = self.data.attr_name(*parent_d_nr, a_nr);
-                let variant_d_nr = self.data.def_nr(&variant_name);
+                let variant_d_nr = self.data.variant_of(*parent_d_nr, &variant_name);
                 if variant_d_nr != u32::MAX {
                     let variant_known = self.data.def(variant_d_nr).known_type();
                     let s = i32::from(self.database.size(variant_known));

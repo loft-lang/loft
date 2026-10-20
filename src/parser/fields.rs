@@ -32,7 +32,9 @@ impl Parser {
             return None;
         }
         let name = self.data.attr_name(dnr, fnr);
-        let variant = self.data.def_nr(&name);
+        // The variant of THIS enum: two enums may share a variant name, and a bare
+        // `def_nr` answers the first one declared (loft#2097).
+        let variant = self.data.variant_of(dnr, &name);
         if variant == u32::MAX
             || self.data.def_type(variant) != DefType::EnumValue
             || self.data.def(variant).attributes().is_empty()
@@ -812,7 +814,7 @@ impl Parser {
             let parent_is_mixed = matches!(self.data.def(dnr).returned(), Type::Enum(_, true, _));
             if parent_is_mixed && !self.first_pass && matches!(expr, Value::Enum(_, _)) {
                 let variant_name = self.data.attr_name(dnr, fnr);
-                let variant_d_nr = self.data.def_nr(&variant_name);
+                let variant_d_nr = self.data.variant_of(dnr, &variant_name);
                 if variant_d_nr != u32::MAX && self.data.def(variant_d_nr).known_type() != u16::MAX
                 {
                     let ret = self.data.def(dnr).returned().clone();
