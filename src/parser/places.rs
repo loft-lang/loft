@@ -774,7 +774,7 @@ impl Parser {
     /// that fills its width (`u8`, `i16`) gives one code to its null when nullable (`@FR-N-Reserve`:
     /// `u8?` holds 0..=254), so a present top value read null wherever the capture went; the
     /// capture keeps the RANGE and drops the forced width, which a nullable `limit` range answers
-    /// with a spare code beside it (owner ruling 2026-10-20).
+    /// with a spare code beside it.
     pub(super) fn capture_optional(tp: &Type) -> Type {
         // A field already nullable is its own capture type: its values are those `τ?` holds.
         if matches!(tp, Type::Optional(_)) {

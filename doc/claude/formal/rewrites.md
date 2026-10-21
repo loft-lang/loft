@@ -1352,9 +1352,9 @@ the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_vie
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and
 `Output::write_tuple_through_address` (the tuple clause), `Output::element_copy_dest` and
-`OpCopyRecordEmitter::copy` (the element clause: the reference used to come back from
-`vec_get_or_raise_runtime` and the address out of that reference — `map_set_hex` in
-`slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
+`OpCopyRecordEmitter::copy` (the element clause: one derivation of the reference and the
+address, where a `vec_get_or_raise_runtime` reference and an address read out of it would be a
+round trip — `map_set_hex` in `slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
 switch `LOFT_NO_ELEMENT_ADDRESS`, guard
 `tests/scripts/a-record-written-into-an-element-is-addressed-once.loft`), `vector::rec_ptr` / `rec_get` /
 `rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and

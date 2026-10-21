@@ -556,7 +556,7 @@ impl Parser {
     /// definitions that package declares take part.  A consumer's member of a new spelling
     /// joins the library's set for a BARE call (`@FR-Disp-Key`), and a qualified call is the
     /// author saying which package's definition they mean — so what it reaches does not
-    /// depend on whether the consumer imported with `*` (owner ruling 2026-10-20).
+    /// depend on whether the consumer imported with `*`.
     pub(crate) fn select_qualified_overload(
         &mut self,
         source: u16,

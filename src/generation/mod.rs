@@ -6738,9 +6738,9 @@ impl Output<'_> {
     /// i), tp)`), written through the address: the vector, its index and its size, when the
     /// tuple write would serve the copy through one address.  The element is then derived in
     /// place ONCE — one header read, the in-range test, its reference and its address both
-    /// from the record and the index — where its reference used to come back from
-    /// `vec_get_or_raise_runtime` and its address out of that reference, a round trip that
-    /// cost `map_set_hex` 5.6 % of `slope_path_with_undo`.  An index out of range takes
+    /// from the record and the index — rather than a reference from
+    /// `vec_get_or_raise_runtime` and an address read out of it, a round trip that costs
+    /// `map_set_hex` 5.6 % of `slope_path_with_undo`.  An index out of range takes
     /// `vec_get_or_raise_runtime` itself, so the raise and the null it answers are its own.
     /// Pre-evaluation asks the same question, so the element read it would lift stays here
     /// and only the index is searched for work.
