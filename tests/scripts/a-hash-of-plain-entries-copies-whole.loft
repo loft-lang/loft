@@ -5,8 +5,8 @@
 // the release alone.  Hand-computed values; both backends.
 //
 // @falsified-at: hand-measured (sabotage, 2026-10-21) — the skip placed in the walk itself
-// copied an empty hash: h1 answered 0 entries and sum 0, h2's equality held, gridmesh's
-// collect_dirty_inputs hashed b21ef769 against 2c5dd633.
+// copied an empty hash: h1 answered `0 0 1001 -1` and failed; gridmesh's collect_dirty_inputs
+// hashed b21ef769 against the twin's 2c5dd633.
 
 struct P { k: integer, v: integer }
 struct Box { h: hash<P[k]>, tag: integer }
