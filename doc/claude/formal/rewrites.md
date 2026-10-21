@@ -6464,6 +6464,13 @@ before (`LOFT_STORE_CENSUS`).
    the claims gone.  Switch `LOFT_NO_HAND_OVER=1`; trace `LOFT_TRACE_HAND_OVER=1` naming
    each pair admitted or declined.
 
+**The division (owner, 2026-10-21).**  The vector hand-over is this rule's canonical case:
+storage whose size is only known at run time, kept across statements, where the block and its
+capacity are worth carrying from the dying value to the new one.  It may serve more shapes,
+but a separate FIXED-SIZE object — a record whose fields are scalars, or a value whose size the
+type fixes — is not one of them: it lives on the stack (`(R-Apart)`), where it needs no block
+to hand over at all.
+
 **Beside `(R-Apart)` — the store against the stack.**  The limits above are a stack slot's:
 one function, the only holder, the old value dead before the new one is built.  They describe
 the hand-over PAIR, not the value whose blocks change hands, and the two rules split on that.
