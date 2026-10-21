@@ -1040,11 +1040,11 @@ pub fn find_hash_entry<P: PageProvider>(
     // `(Col-Tag)` — the table's slot width is in its header.
     let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
     let sb = if flags & crate::hash::TAGGED != 0 { 8 } else { crate::hash::SLOT_BYTES };
-    let stride = flags & !(crate::hash::TAGGED | crate::hash::INLINE);
+    let stride = crate::hash::stride_of(flags);
     // `(Col-Inline)` — an inline table's entry is in the table record, at its bucket.
     let inline = flags & crate::hash::INLINE != 0;
     let elms = if inline {
-        crate::hash::inline_count(room - crate::hash::RESERVED_WORDS, stride)
+        crate::hash::inline_count_of(flags)
     } else {
         crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
     };
@@ -1127,8 +1127,7 @@ pub fn hash_bucket_addrs<P: PageProvider>(
     let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
     let sb = if flags & crate::hash::TAGGED != 0 { 8 } else { crate::hash::SLOT_BYTES };
     let elms = if flags & crate::hash::INLINE != 0 {
-        let stride = flags & !(crate::hash::TAGGED | crate::hash::INLINE);
-        crate::hash::inline_count(room - crate::hash::RESERVED_WORDS, stride)
+        crate::hash::inline_count_of(flags)
     } else {
         crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
     };

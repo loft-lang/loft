@@ -891,6 +891,18 @@ pub fn hash_growth_frees_the_table_it_replaces() {
     // stranded tables, and one record per entry on top.
     let (large, large_n) = claims_for(2000);
 
+    // `(Col-Inline)` — a table that keeps its entries in its record claims that record and
+    // nothing else, at any size: the root and the one live table, whatever it grew through.
+    if loft::hash::hash_inline() {
+        assert_eq!(
+            (small, large),
+            (2, 2),
+            "an inline table should claim root + table at {small_n} and {large_n} entries — \
+             a table it replaced was never given back"
+        );
+        return;
+    }
+
     assert_eq!(
         small,
         expect(small_n),

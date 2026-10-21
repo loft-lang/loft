@@ -323,6 +323,31 @@ What remains of the row is the walk: 22 ns per element through `OpStep` → `ste
 `arena::slot` and two field reads, against the twin's 6 ns `HashMap` lookup — the
 record-backed element read, § What is left's territory, not the sort.
 
+## What the tagged and inline tables bought (2026-10-22, LOCAL — a format change, not pushed)
+
+`(Col-Tag)` and `(Col-Inline)` (`formal/collections.md`, PROPOSED; C105 being revisited) on
+`field_add_cell`, `stats.py` on x86-64: 4.21× → 3.19× (the tag: a probe compares the digest's
+low word before it reads an entry; the count read from the header) → 2.62× (entries in the
+bucket table, the one-integer-key paths checked once and walked in place, the key position a
+constant the emitter hands in) → **2.28×**.  `build_index` 1.63× → 1.31×,
+`collect_dirty_inputs` 2.82× → 2.66×; every hash matches its twin.
+
+**The last step was not instructions.**  Moving the walks into the caller took 4.5 % of the
+instructions and none of the cycles.  A cycle profile showed why: the walk answered an
+`Option<DbRef>` through memory, written a field at a time (`u16`, `u32`, `u32`) and read
+back as one eight-byte load — a store the processor cannot forward to that load, about a
+sixth of `field_add_cell`'s cycles in three such sites.  Inlined always, and the filing of a
+miss answering a POSITION (a register) rather than a reference, cycles fell 1.79 G → 1.62 G
+against the twin's 0.73 G.  The same shape is left wherever a `DbRef` temporary has its
+address taken on a cold path (a `&(DbRef { … })` handed to a runtime function whose error
+arm escapes it): LLVM keeps the whole temporary in memory and the hot copy stalls — 3.5 % of
+the routine at the `xs` append.  A runtime entry that takes `DbRef` BY VALUE, its cold arm
+out of line, is the general cure; not built.
+
+Read cycles before instructions: `perf record -e cycles` and `perf annotate` put the samples
+on the instruction AFTER a stalled load, so a hot `mov %rax,0x20(%rsp)` straight after an
+eight-byte read of a just-written stack slot is this stall, not the move.
+
 ## What is left
 
 A lookup is 444 instructions against Rust's 177, and ~3.5× in time — the time ratio is
