@@ -171,7 +171,7 @@ impl Parser {
         if !default {
             self.data.source = crate::data::MAIN_SOURCE;
         }
-        self.lambda_counter = 0;
+        self.lambda_counters.clear();
         self.fn_lambdas.clear();
         self.parse_file();
         self.resolve_deferred_unknowns();
@@ -222,7 +222,7 @@ impl Parser {
             if !default {
                 self.data.source = crate::data::MAIN_SOURCE;
             }
-            self.lambda_counter = 0;
+            self.lambda_counters.clear();
             self.fn_lambdas.clear();
             Self::load_main_file(&mut self.lexer, filename, content);
             self.parse_file();
@@ -1406,7 +1406,7 @@ impl Parser {
         if !default {
             self.data.source = crate::data::MAIN_SOURCE;
         }
-        self.lambda_counter = 0;
+        self.lambda_counters.clear();
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
         if !default && self.program_entry.is_none() {
@@ -1427,7 +1427,7 @@ impl Parser {
             if !default {
                 self.data.source = crate::data::MAIN_SOURCE;
             }
-            self.lambda_counter = 0;
+            self.lambda_counters.clear();
             self.fn_lambdas.clear();
             self.lexer.parse_string(content, filename);
             self.parse_file();
@@ -1462,7 +1462,7 @@ impl Parser {
         self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.data.reset();
-        self.lambda_counter = 0;
+        self.lambda_counters.clear();
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
         self.parse_file();
@@ -1477,7 +1477,7 @@ impl Parser {
             self.deferred_import_misses.clear();
             self.resolutions.clear();
             self.data.reset();
-            self.lambda_counter = 0;
+            self.lambda_counters.clear();
             self.fn_lambdas.clear();
             self.lexer.parse_string(content, filename);
             self.parse_file();
@@ -1708,7 +1708,7 @@ impl Parser {
         // input carrying a lambda minted `__lambda_0` again while the first input's
         // definition was still in the session: *"Cannot redefine '__lambda_0'"*, so a session
         // could hold one lambda and no more.
-        let lambda_base = self.lambda_counter;
+        let lambda_base = self.lambda_counters.clone();
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
         self.member_access.clear();
@@ -1733,7 +1733,7 @@ impl Parser {
         self.resolutions.clear();
         self.data.reset();
         // Pass 2 mints the same names pass 1 did, so it starts where pass 1 started.
-        self.lambda_counter = lambda_base;
+        self.lambda_counters = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;
@@ -1782,7 +1782,7 @@ impl Parser {
         self.resolutions.clear();
         // The counter continues, as `parse_str`'s does and for the same reason: the session
         // still holds the definitions the previous input minted.
-        let lambda_base = self.lambda_counter;
+        let lambda_base = self.lambda_counters.clone();
         self.fn_lambdas.clear();
         self.data.source = source;
         self.parse_file();
@@ -1796,7 +1796,7 @@ impl Parser {
         self.deferred_unknown.clear();
         self.deferred_import_misses.clear();
         self.resolutions.clear();
-        self.lambda_counter = lambda_base;
+        self.lambda_counters = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;

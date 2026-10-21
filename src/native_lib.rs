@@ -587,7 +587,7 @@ pub fn trace_partition(data: &Data, pkg_dir: &str) {
 ///
 /// The candidate filter must exclude **synthetic** functions, not just lambdas: a
 /// `pub fn`'s parse sprays `pub_visible` over every def it creates (`parser/mod.rs`),
-/// so a nested lambda (`__lambda_N`) is also `pub_visible` — but it is a *fn-ref*
+/// so a nested lambda (`__lambda_<fn>_<k>`) is also `pub_visible` — but it is a *fn-ref*
 /// target the script cannot name, never a direct-`Call` dispatch target.  The
 /// `__`-prefix is the codebase's synthetic-name convention (same marker
 /// `native_gate` uses for synthetic params), so excluding it covers the whole class
@@ -601,7 +601,7 @@ pub fn mark_library_native(data: &mut Data, pkg_dir: &str) -> HashSet<u32> {
 
 /// Is `stored_name` (an `n_<name>` definition name) a compiler-generated
 /// (synthetic) function — i.e. its user-facing name starts with `__` (lambdas
-/// `__lambda_N`, and any future synthetic kind)?  Such functions are never a
+/// `__lambda_<fn>_<k>`, and any future synthetic kind)?  Such functions are never a
 /// script-callable public API, so they are not auto-native dispatch targets.
 fn is_synthetic_name(stored_name: &str) -> bool {
     stored_name
@@ -2649,8 +2649,7 @@ pub fn cached_or_build_shared_cdylib(
 /// code writes a function value's `d_nr` as a literal (a fn-ref dispatch arm, a `FnRef` it
 /// makes), and the interpreter hands it values of ITS numbering, so an artifact serves only
 /// a program that numbers those functions the same way.  A library's functions are numbered
-/// before the script's, so editing the script does not change this.  Names alone would not
-/// do: a lambda's name is its position in the parse (`__lambda_N`).
+/// before the script's, so editing the script does not change this.
 fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
     use std::hash::{Hash, Hasher};
     let roots: Vec<u32> = export_set.iter().copied().collect();

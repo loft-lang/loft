@@ -692,8 +692,8 @@ impl Parser {
     /// DECLARED with no return type has, and the opposite meaning: a placeholder waiting to
     /// be filled rather than a decision that nothing comes back.
     ///
-    /// The name is the test the parser already uses for "is this a lambda" (`n___lambda_N`,
-    /// minted by `lambda_counter` in the same order on both passes).
+    /// The name is the test the parser already uses for "is this a lambda" (`n___lambda_…`,
+    /// minted by [`Parser::next_lambda_name`] in the same order on both passes).
     fn def_infers_its_return(&self) -> bool {
         self.context != u32::MAX
             && self

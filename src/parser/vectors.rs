@@ -1635,13 +1635,38 @@ or build a local and use that."
         }
     }
 
+    /// The name of the lambda about to be parsed: `__lambda_<enclosing>_<k>`, the `k`-th
+    /// lambda of the enclosing function, so a library's lambdas are named by the library
+    /// alone and not by whatever a program parsed before its `use` (@PLN199 G0-0).  A lambda
+    /// inside a lambda counts in the function the outer one belongs to, and `k` is all
+    /// digits, so the enclosing name is what lies between the prefix and the last `_`, and
+    /// no two functions' lambdas share a name.  Outside any function: `__lambda_<k>`.
+    pub(crate) fn next_lambda_name(&mut self) -> String {
+        let root = if self.context == u32::MAX {
+            String::new()
+        } else {
+            let name = self.data.def(self.context).name();
+            match name.strip_prefix("n___lambda_") {
+                Some(rest) => rest.rsplit_once('_').map_or("", |(r, _)| r).to_string(),
+                None => name.strip_prefix("n_").unwrap_or(name).to_string(),
+            }
+        };
+        let k = self.lambda_counters.entry(root.clone()).or_insert(0);
+        let name = if root.is_empty() {
+            format!("__lambda_{k}")
+        } else {
+            format!("__lambda_{root}_{k}")
+        };
+        *k += 1;
+        name
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
         if self.discovering > 0 {
             return self.lambda_signature();
         }
-        let lambda_name = format!("__lambda_{}", self.lambda_counter);
-        self.lambda_counter += 1;
+        let lambda_name = self.next_lambda_name();
         let stored_name = format!("n_{lambda_name}");
 
         let outer_context = self.context;
@@ -1946,8 +1971,7 @@ or build a local and use that."
             self.skip_short_lambda(expect_close);
             return Type::Unknown(0);
         }
-        let lambda_name = format!("__lambda_{}", self.lambda_counter);
-        self.lambda_counter += 1;
+        let lambda_name = self.next_lambda_name();
         let stored_name = format!("n_{lambda_name}");
 
         // Capture hint types before entering the new context.  The overload set this lambda is

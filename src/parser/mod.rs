@@ -1150,10 +1150,10 @@ pub struct Parser {
     /// and pass 1 is exactly when a capturing source has to be RECORDED for the attribute
     /// to get its split layout at all (loft#1072).
     fn_ref_read_attr: Option<(u32, usize)>,
-    /// Counter incremented each time a lambda expression is parsed.
-    /// Lambda names are `__lambda_N`; the same N is produced on both passes because the counter
-    /// advances identically in both passes (same token order → same parse order).
-    pub lambda_counter: u32,
+    /// The next lambda ordinal per enclosing function, keyed by that function's name
+    /// ([`Parser::next_lambda_name`]).  The same names come out of both passes because each
+    /// function's body is parsed in the same token order on both.
+    pub lambda_counters: HashMap<String, u32>,
     /// The single **expected type** — the `⇐` checking mode (formal `(T-Chk)`) pushed into
     /// the value currently being parsed, where the operand's own `var_tp` does not already
     /// carry it (a call argument, a function return-body tail, an `f#read` RHS).  Set before
@@ -2014,7 +2014,7 @@ impl Parser {
             expr_not_null: false,
             expr_not_null_name: String::new(),
             fn_ref_read_attr: None,
-            lambda_counter: 0,
+            lambda_counters: HashMap::new(),
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
             unhinted_set: None,

@@ -159,7 +159,7 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 /// `label` stays interpreted — with no user-facing error and the script calling all alike.
 ///
 /// Also verifies the synthetic-exclusion invariant: `apply_inc`'s nested lambda
-/// (`__lambda_N`, made `pub_visible` by the enclosing `pub fn`) is NOT a dispatch
+/// (`__lambda_apply_inc_0`, made `pub_visible` by the enclosing `pub fn`) is NOT a dispatch
 /// target — it is a fn-ref target, not script-callable public API — so no
 /// `loft_shared_n___lambda` symbol appears in the cdylib.
 // @speed 1.2
@@ -243,6 +243,83 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(native_auto);
+}
+
+/// @PLN199 G0-0 — a library's lambdas are named by the library alone.  A lambda is
+/// `__lambda_<enclosing fn>_<k>`, so a second `use` parsed before `mathmixed` — one whose
+/// own function carries a lambda — leaves `mathmixed`'s lambda names as they were.  A table
+/// that maps a library's functions by name (what a prebuilt artifact needs) depends on it.
+#[test]
+fn a_librarys_lambda_names_do_not_depend_on_what_was_parsed_before_it() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("loft_n3_lambda_names_{pid}"));
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
+    let lib = private_lib(&tmp, &["mathmixed"]);
+    fa::create_dir_all(lib.join("lead/src")).unwrap();
+    fa::write(
+        lib.join("lead/loft.toml"),
+        "[package]\nname = \"lead\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/lead.loft\"\n",
+    )
+    .unwrap();
+    fa::write(
+        lib.join("lead/src/lead.loft"),
+        "pub fn lead_step(x: integer) -> integer {\n\
+         \x20   f = fn(a: integer) -> integer { a * 2 };\n\
+         \x20   f(x)\n\
+         }\n",
+    )
+    .unwrap();
+    let alone = tmp.join("alone.loft");
+    fa::write(
+        &alone,
+        "use mathmixed::*;\nfn main() { println(\"{apply_inc(10)} {label(4)}\"); }\n",
+    )
+    .unwrap();
+    let after = tmp.join("after.loft");
+    fa::write(
+        &after,
+        "use lead::*;\nuse mathmixed::*;\n\
+         fn main() { println(\"{apply_inc(10)} {label(4)} {lead_step(5)}\"); }\n",
+    )
+    .unwrap();
+    let lambdas = |prog: &std::path::Path, expect: &str| -> Vec<String> {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(prog)
+            .env("LOFT_LOG", "static")
+            .output()
+            .expect("run the loft binary");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let all = format!("{stdout}{}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "loft exited non-zero:\n{all}");
+        assert_eq!(stdout.lines().last(), Some(expect), "program output");
+        let mut names: Vec<String> = all
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|w| w.starts_with("n___lambda_"))
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let mathmixed = ["n___lambda_apply_inc_0", "n___lambda_label_0"];
+    // apply_inc(10) = 11, label(4) = 40, lead_step(5) = 10.
+    let a = lambdas(&alone, "11 40");
+    let b = lambdas(&after, "11 40 10");
+    assert_eq!(a, mathmixed, "mathmixed's lambdas, used alone");
+    assert_eq!(
+        b,
+        [
+            "n___lambda_apply_inc_0",
+            "n___lambda_label_0",
+            "n___lambda_lead_step_0"
+        ],
+        "mathmixed's lambdas keep their names behind a library with a lambda of its own"
+    );
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// `LOFT_TRACE_NATIVE_GATE=1` names, per `use`d library, how many of the functions a script
