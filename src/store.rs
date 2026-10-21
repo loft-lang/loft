@@ -7514,26 +7514,38 @@ mod tests {
     fn a_text_from_its_own_store_survives_the_claim_that_moves_it() {
         let long = "the quick brown fox jumps over the lazy dog ".repeat(20);
         for how in 0..3 {
-            let mut store = store_with(false);
-            let rec = store.claim(2);
-            store.set_u32_raw(rec, 4, 0);
-            let src = store.set_str(&long);
-            let before = store.ptr;
-            let val = store.get_str(src);
-            let got = match how {
-                0 => store.set_str(val),
-                1 => store.set_str_ptr(val.as_ptr(), val.len()),
-                _ => {
-                    store.refill_str(rec, 4, val);
-                    store.get_u32_raw(rec, 4)
+            // `realloc` may grow a block in place, and then this case proves nothing.  A
+            // block allocated right after the store's own makes in-place growth unlikely;
+            // a few attempts make a move certain enough, and none at all is a failure.
+            let mut moved = false;
+            for _attempt in 0..8 {
+                let mut store = store_with(false);
+                let rec = store.claim(2);
+                store.set_u32_raw(rec, 4, 0);
+                let src = store.set_str(&long);
+                let blocker = vec![0u8; 64];
+                let before = store.ptr;
+                let val = store.get_str(src);
+                let got = match how {
+                    0 => store.set_str(val),
+                    1 => store.set_str_ptr(val.as_ptr(), val.len()),
+                    _ => {
+                        store.refill_str(rec, 4, val);
+                        store.get_u32_raw(rec, 4)
+                    }
+                };
+                assert_eq!(
+                    store.get_str(got),
+                    long,
+                    "case {how}: the copy reads the source text"
+                );
+                drop(blocker);
+                if store.ptr != before {
+                    moved = true;
+                    break;
                 }
-            };
-            assert_ne!(store.ptr, before, "case {how}: the claim moved the store");
-            assert_eq!(
-                store.get_str(got),
-                long,
-                "case {how}: the copy reads the source text"
-            );
+            }
+            assert!(moved, "case {how}: no attempt's claim moved the store");
         }
     }
 

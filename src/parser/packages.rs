@@ -248,6 +248,15 @@ impl Parser {
         Self::probe_loft_lib_flat(id, &mut f);
         self.probe_loft_lib_manifest(id, &mut f);
         self.probe_user_installed(id, &mut f);
+        // A flat `<id>.loft` in the script's own directory is a file the author put beside
+        // the program (PACKAGES.md § Resolution order, step 1), so it is probed before the
+        // registry: probed after it, a box that happened to cache a same-named package
+        // bound that package instead, and a fixture library beside a test asked the
+        // network about its own name on every run.
+        Self::probe_cur_dir_flat(id, cur_dir, &mut f);
+        if blocked(&f) {
+            f = format!("{id}.loft");
+        }
         // loft#968 — everything above resolves from something the project SAYS: a path it
         // declares, a `--lib` directory it was given, a sidecar lock it pinned.  What
         // follows resolves from the registry, which is a property of the BOX.  So this is
@@ -283,7 +292,6 @@ impl Parser {
         if !named_by_the_project && file_exists(&f) {
             self.undeclared_registry_dep(id, &cur_script);
         }
-        Self::probe_cur_dir_flat(id, cur_dir, &mut f);
         Self::probe_base_dir_flat(id, base_dir, &mut f);
         if blocked(&f) {
             f = format!("{id}.loft");

@@ -128,7 +128,17 @@ leak:ThreadLocalVariables
 # lifetime state Apple never frees, reachable at exit; Linux verifies with no such framework,
 # so this line is a macOS-only no-op there.  First seen on lib/audience_crystal's
 # 01-editor-helpers.loft (nightly run 37767550180, 14 of its 15 allocations).
-leak:__SecTrustSettingsCopyCertificates
+# The anchor is the bare PUBLIC name: the same 64-byte libdispatch continuation is also
+# allocated by a `dispatch_async` directly under the public `SecTrustSettingsCopyCertificates`
+# frame, with no `__`-prefixed internal frame on the stack, and the bare name is a substring
+# of both spellings.
+leak:SecTrustSettingsCopyCertificates
+
+# macOS libdispatch: the reply to that same Security.framework XPC request arrives on a
+# workloop thread, and `_dispatch_mach_msg_async_reply_wrap` allocates its continuation
+# there — a stack with no loft, Rust or HTTP frame at all.  Apple's queue state, reachable
+# at exit; loft sends no mach messages of its own, so nothing of loft's can match it.
+leak:_dispatch_mach_msg_async_reply_wrap
 
 # macOS CoreAnalytics' at-exit barrier: `CoreAnalytics::Client::sendExitBarrierWithTimeoutSync`
 # `dispatch_async`s one 64-byte block from Apple's own `atExitHandler`, after which nothing
