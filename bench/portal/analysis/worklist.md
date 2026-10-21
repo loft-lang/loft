@@ -239,6 +239,27 @@ unchanged (≈ 2.6×); no claim and no delete per push.  Written up as the rule 
 with its rotate clause, its limits and the work to admit it (`formal/rewrites.md` § A dying
 value's blocks are handed to the value built after it).
 
+**`truncate_to` under the two rules (2026-10-21).**  One call's 300 pushes, simulated from the
+driver: 162 STEADY (the timeline full, nothing truncated: the oldest entry dies after the
+append), 30 TRUNCATING (three entries die before the append), 108 GROWING (nothing dies in the
+call: the first 50, and the two after each truncation).
+- Rotate clause, steady pushes: no claim, no delete — the priced −34.0 % covers exactly these.
+- Canonical vector hand-over, truncating pushes: the first dropped entry's vectors go to the
+  new entry (no claim for it); the other two entries are released.  *est.* −2 %.
+- Growing pushes: claims stay — the blocks the truncation freed are wanted one and two calls
+  later, which needs a holder across calls (`@C125`).
+- Fixed-size objects on the stack (`(R-Apart)`): the `Timeline` shell (a vector reference and
+  the cursor) and the `Stroke` shell `e` (two vector references) — `history_push`'s reads and
+  writes of `h.cursor` and the entries header, and the driver's `e.painted` / `e.markers`
+  paths, become frame accesses.  *est.* −5 %.  The elements (`PaintedDelta`, `MarkerDelta`)
+  are inline in their vectors and stay there.
+Allocations per push after all three: 0.72 claims and 0.4 deletes, from 2.03 and 1.69 — under
+the twin's 2 `malloc`s.  Landing ≈ 2.4× (−40 %).  What then remains: `e`'s vector build (~600
+instructions a push: a header per push, the reservation, the refill's clears — the dynamic
+part, kept), the growing pushes' copies, and the keep's shift on non-steady pushes.  Build
+order: the callee effects visible in `history_push` (inline or a keep summary), the rotate
+clause, the canonical hand-over, the stack shells.
+
 **Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
 table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
 (`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection
