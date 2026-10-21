@@ -217,6 +217,21 @@ delete ~140) and carries a copy and a release walk.  Allocating LESS than the tw
 representation without a heap block per small vector (a short vector held inside its record),
 which would remove the claim, the copy and the delete together: a design question.
 
+**`truncate_to` against the two allocation levers (fewer than the twin; reuse an old structure).**
+Per push: the driver's `e` (`undo_entry_empty()`, three `e.painted` and one `e.markers` push) is
+REFILLED in place (`(R-RefillBuffer)`): 0 claims, where the twin's fresh `Vec`s make 2 `malloc`s —
+loft already does less there.  `h.entries += [hp_entry]` copies the entry into the timeline's store:
+2 claims and 384 bytes, where the twin MOVES its `Vec`s (0).  `drop_oldest` / `truncate_to` (one
+in-place keep each, `(R-Compact)`) release the dropped entries' blocks: 1.69 deletes, the twin's
+`drain` frees the same.  The released blocks ARE reused — the next push's two claims pop them off
+the exact-size lists (`(H-Park)`) — but through a delete and a claim (~290 instructions a pair)
+where a direct hand-over would cost ~20.  Doing less than the twin needs the dropped entry handed
+to the new one directly: either the entry MOVED (it lives in another store, so a move is a copy
+and a release: X10, +16 %) or the drop before the append so the new entry is copied into the
+dropped one's blocks (`clone_from`) — a reorder of `history_push`'s statements no rule proves
+today.  Keeping released blocks as spares in a vector's tail for the next append would make
+every vector release path know about them: the model complication `@C125` rules out.
+
 **Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
 table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
 (`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection
