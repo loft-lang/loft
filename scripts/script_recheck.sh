@@ -15,8 +15,9 @@
 #                     plan's own bar (README § The bar), and one no machine or load moves:
 #                     an absolute bar measured the box as much as the language
 #   over:MS           the probe itself takes more than MS ms interpreted, best of 5
-# After each probe the driver rewrites the finding's `checked:` (the loft commit) and
-# `holds:` (yes | no) lines.  A finding whose probe says `no` is the one to look at: the
+# When a probe's verdict differs from the finding's `holds:` (yes | no), the driver rewrites
+# that line and `checked:` (the loft commit that established it); an unchanged verdict
+# leaves the file alone.  A finding whose probe says `no` is the one to look at: the
 # reason it recorded no longer measures, so it is fixed, or the probe needs a new name.
 # Bash today because it runs programs; strand 4's `run` ports it.
 set -uo pipefail
@@ -104,11 +105,18 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
   # Through a temp file: `sed -i` takes a mandatory suffix on macOS and none on GNU, so a
   # bare `-i` edits nothing on one of them and the register never moves.
   rewrite() { sed "$1" "$f" > "$tmp.w" && mv "$tmp.w" "$f"; }
-  rewrite "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/"
-  grep -q '^checked:' "$f" || rewrite "s/^ref:\(.*\)/ref:\1\
+  # Written only when the verdict CHANGES: `checked:` names the commit that established the
+  # current answer, not the last run, so a recheck that confirms what a finding says leaves
+  # it untouched — rewriting every probed finding's commit on every run was a diff of noise.
+  was=$(sed -n 's/^holds: *//p' "$f" | head -1)
+  if [ "$was" != "$holds" ]; then
+    rewrite "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/"
+    grep -q '^checked:' "$f" || rewrite "s/^ref:\(.*\)/ref:\1\
 checked: $sha/"
-  grep -q '^holds:' "$f" || rewrite "s/^checked:\(.*\)/checked:\1\
+    grep -q '^holds:' "$f" || rewrite "s/^checked:\(.*\)/checked:\1\
 holds: $holds/"
+    echo "  CHANGED: $(basename "$f") — holds: ${was:-unset} → $holds"
+  fi
   [ "$holds" = no ] && { stale=$((stale + 1)); echo "  NO LONGER HOLDS: $(basename "$f")"; }
 done
 echo "rechecked $n findings at $sha, $stale no longer hold"
