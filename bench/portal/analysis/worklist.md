@@ -151,6 +151,21 @@ the portal row by the price; *est.* marks a share read off the profile, never ti
 | 4.21 | `field_add_cell` | 4.3× (3.5 k / 810 per paint) | keyed 2.45 twins of 4.33: ~4.3 keyed operations a paint at ~260 instructions each against hashbrown's; fixed metadata per operation (`keyed_entry_long` 64, `Entries::of` 37, `read_seed` 17, `sub_record_type` 14); rehash 191 per moved entry (10 %).  The hash is SipHash-1-3 on both sides | none timed | the metadata held per hash per call *est.* −13 %, a cheaper rehash *est.* −7 % → ≈ 3.4×.  Under 3× needs the table itself: a hash tag in the bucket so a mismatch and a rehash read no record — the placement contract (`crate::placement::HASH`), a decision |
 | 4.18 | `slope_path_with_undo` | 5.0× (2.3 k / 460 per step) | the emitted lines alone are 1.57 twins: `chunk_idx_32` / `hex_idx_32`, six per helper call, are the null-checked `%`, `/` and `-` of `@C120` (12.7 % of the instructions); the store's growth zero-fills (`resize_store` → memset, 5 %); `rec_and_len` out of line | the read's two header reads shared −4.8 % (2026-10-20) | −4.8 % and the growth without the fill *est.* −5 % → ≈ 3.8×; the arithmetic is the focus's exception (−12 %, the 2026-10-20 hand form) → ≈ 3.3× |
 
+**`truncate_to`, continued (2026-10-21).**  Per push, at the tip: 3 511 instructions against
+the twin's 790 — the entry's copy into the timeline 963 (`OpCopyRecord` → `copy_plain_vectors`,
+two claims and two block copies), the dropped entries' release 696 (`keep_vector_range` →
+`release_plain_vectors`, two deletes), the claims ~150 and deletes ~140 each against
+`malloc`/`free`'s ~30–50, and the store's per-access checks spread through all of it (~330 a
+push in bounds tests alone).  BUILT: `OpCopyRecord`'s fresh-slot fast path for a record of
+plain vectors (`Stores::copy_fresh_plain`) −3.7 % by runtime swap (the hand form that skipped
+`OpCopyRecord` whole priced −6.4 %, but skipped the fn-ref flag it must take).  PRICED AND
+DROPPED: the parked lists' header, footer and links written raw after one bound of the block,
+`truncate_to` +2.5 %, `panel_build` −1.5 %.  Not worth pricing: a typed release, since
+`remove_claims` already takes `release_plain_vectors` first (~37 a push left).  Building the
+entry where the timeline keeps it is not admissible here as written: `history_push` truncates
+BEFORE it appends, so an entry placed first would be cut by the truncation.  What is left is
+the allocator's unit cost; the row stands near 3.9×.
+
 Read together: `binary_read` is one emitter clause from the bar.  `encode_bytes` and
 `truncate_to` stand on the runtime's unit cost of an append and of a claim/release pair, and
 reach ≈ 3× only with every lever.  `field_add_cell` and `slope_path_with_undo` do not reach
