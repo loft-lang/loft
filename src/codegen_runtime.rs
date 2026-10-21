@@ -1527,6 +1527,26 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         }
         return;
     }
+    // A record of plain vectors copied into a FRESH slot of another store that keeps its
+    // source: the bytes and the plan's vector blocks (`Stores::copy_fresh_plain`), without
+    // the general path's dispatch.  A whole store root (its parse errors travel), a foreign
+    // source, and a traced or checked copy take the general path.  The fn-ref hand-off flag
+    // is taken as the general path takes it; with the source kept, its answer is unused there
+    // too.
+    let raw = tp as u16;
+    if raw & (crate::keys::COPY_FREE_SOURCE | crate::keys::COPY_FRESH_DEST)
+        == crate::keys::COPY_FRESH_DEST
+        && (to.rec, to.pos) != (1, 8)
+        && (data.store_nr as usize) < stores.allocations.len()
+        && !stores.allocations[data.store_nr as usize].is_foreign()
+        && !crate::keys::trace_copy()
+        && !stores.copy_check_enabled()
+    {
+        let _ = cr_take_fnref_borrowed(data.store_nr);
+        if stores.copy_fresh_plain(&data, &to, raw & crate::keys::COPY_TP_MASK) {
+            return;
+        }
+    }
     // `@FR-R-FlatCopy` — a record that owns no heap is its bytes: the release of the
     // destination's claims and the walk of the source's both find nothing, so a copy that
     // keeps its source is the block copy alone.  The fn-ref hand-off flag is still taken, as
