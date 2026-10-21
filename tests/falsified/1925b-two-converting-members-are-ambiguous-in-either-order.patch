@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 668a7df3c..54d503b96 100644
+index 11defdbef..109ef31c2 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -7021,25 +7021,6 @@ impl Data {
+@@ -7148,25 +7148,6 @@ impl Data {
          &self.possible[start]
      }
  
@@ -29,10 +29,10 @@ index 668a7df3c..54d503b96 100644
      /// path walks, asked with the arity and receiver instead of the name alone.
      ///
 diff --git a/src/parser/convert.rs b/src/parser/convert.rs
-index 8ff36bae7..6df596dd8 100644
+index a7c7cde48..bde98c91a 100644
 --- a/src/parser/convert.rs
 +++ b/src/parser/convert.rs
-@@ -1236,7 +1236,11 @@ impl Parser {
+@@ -1240,7 +1240,11 @@ impl Parser {
                          return true;
                      }
                  }
@@ -46,10 +46,10 @@ index 8ff36bae7..6df596dd8 100644
                  // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
                  // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),
 diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
-index e76dea3cb..3f6e3dcbe 100644
+index 1ee5d82ff..1a50a2dca 100644
 --- a/src/parser/dispatch.rs
 +++ b/src/parser/dispatch.rs
-@@ -99,7 +99,7 @@ impl Parser {
+@@ -126,7 +126,7 @@ impl Parser {
          {
              // @FR-C-Var — a variant satisfies its enum: the one widening the enum lattice has.
              WIDENED
@@ -58,8 +58,8 @@ index e76dea3cb..3f6e3dcbe 100644
              CONVERTED
          } else {
              return None;
-@@ -112,28 +112,6 @@ impl Parser {
-         Some(base.saturating_add(step))
+@@ -144,28 +144,6 @@ impl Parser {
+         })
      }
  
 -    /// `@FR-Disp-Applicable` — does a call's argument of type `arg` reach a `param` slot through
@@ -87,7 +87,7 @@ index e76dea3cb..3f6e3dcbe 100644
      /// Every overload of `name` that takes the routed argument types, with its rank vector,
      /// or `None` when the name has no overload set or an argument has no spelling.
      fn ranked_overloads(
-@@ -699,9 +677,6 @@ impl Parser {
+@@ -766,9 +744,6 @@ impl Parser {
          at: Option<&crate::lexer::Position>,
      ) {
          let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
@@ -97,7 +97,7 @@ index e76dea3cb..3f6e3dcbe 100644
          let text = match sel {
              Selection::Ambiguous(taken) => {
                  let by: Vec<String> = taken
-@@ -735,29 +710,11 @@ impl Parser {
+@@ -802,29 +777,11 @@ impl Parser {
              }
              _ => return,
          };

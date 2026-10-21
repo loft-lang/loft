@@ -9,9 +9,8 @@
 //   the mixed record read `ok=false email=` after the misfit (nothing after it was written),
 //   the misfit vector read `[1]` for `[1,null,3,null]`
 // @falsified-by: tests/falsified/2028-both-parse-forms-name-every-mismatch-on-the-record.patch
-//   — the text read back to its first-misfit stop, the walkers back to the one error, the
-//   staged wrapper no longer filing; scored by hand on the fixing commit's parent, both
-//   backends; the `--patch` run is the runner's
+//   — the text read keeps only its first misfit (`failed.truncate(1)`), the narrowest form of
+//   the one-error read the fix replaced; the `--patch` run is the runner's
 // CHANNEL: assertion — the counts and the values read differ, nothing crashes.
 // ARMED: LOFT_POISON=1 and the leak check are not needed; the counts are the signal.
 // WITNESS: on the patched tree `one-step three` fails first with `1`, then `staged three`
