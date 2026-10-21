@@ -135,6 +135,28 @@ prefill on both sides of the call: `panel_build` 3.67× → 3.44×.
 4.66×.  Store creation is ~950 instructions (12 % of `encode`) spread over slot bookkeeping,
 `Store::init` and a fresh store's first claim through the tree path; no single fold moves it
 more than ~2 %.
+#### The five rows over 4× at `bc9b9d724`, re-analysed on the production runtime (2026-10-21)
+
+`scripts/gap_report.py --lean` (callgrind on the `target/install-lib` runtime, the one
+`bench/stats.py` measures), then each lever as a hand form of the emitted Rust,
+`hand_price.sh` with `HAND_PRICE_REL=target/install-lib/release`, 11 interleaved rounds
+pinned to the fastest core with the first dropped, every hash unchanged.  "Lands at" multiplies
+the portal row by the price; *est.* marks a share read off the profile, never timed.
+
+| × | row | loft / twin instr | where the excess goes | priced | lands at |
+|--:|---|---|---|---|---|
+| 4.11 | `binary_read` | 14.8× (125 / 8.5 per element) | `(R-FileHold)` already holds the cursor; the push takes `push_hoisted` because `(R-PushFill)`'s window declines: "the body names `bf`, which may view the pushed vector".  `bf` is reached only by `(R-InPlace)`'s typed file read, which writes the File record's cursor fields and never claims | the window over `while i < n`, reserved `n - i` up front: **−29.6 %** | **≈ 2.89×** |
+| 4.01 | cbor `encode_bytes` | 5.0× | `head__ap` 37 % inclusive: ~367 instructions to write a 3-byte head (`pre_alloc_vector`, `reserve_more`, two `push_header`, the window, its close, each resolving the header); the payload's `append_bytes` resolves it again; the recursion's frame per item | the run of k bytes as ONE `append_bytes` of a stack array **−10.1 %**; the variant tag read once instead of five times −2.7 % alone, nothing on top; head and payload as one append (the ceiling of `(R-PushFill)` across the call, L8) **−21.0 %**.  REFUTED: reserving head + payload exactly before the head, **+14 %** (an exact reserve per text gives up the doubling) | ≈ 3.17× at the L8 ceiling; the per-item call frame (`cr_call_push_lean`, the guard, eight `OpFreeRef` tests) *est.* −5 % → ≈ 3.0× |
+| 4.10 | `truncate_to` | 4.5× (3.5 k / 790 per push) | the entry deep-copied into the timeline (`h.entries += [hp_entry]`, ~970 a push); the dropped entry released (~500 in `drop_oldest`, ~210 in `truncate_to`); `e`'s store minted per iteration (~125); the claim / delete pair of the allocator under all of it (25 % of the instructions) | nothing new; L3 (built in place) stays REFUTED at +30 % without a reservation | runtime tightening of copy, release, claim and delete *est.* −25 % → ≈ 3.1×; L3 with the `for j in 0..3` reservation is the untried structural form |
+| 4.21 | `field_add_cell` | 4.3× (3.5 k / 810 per paint) | keyed 2.45 twins of 4.33: ~4.3 keyed operations a paint at ~260 instructions each against hashbrown's; fixed metadata per operation (`keyed_entry_long` 64, `Entries::of` 37, `read_seed` 17, `sub_record_type` 14); rehash 191 per moved entry (10 %).  The hash is SipHash-1-3 on both sides | none timed | the metadata held per hash per call *est.* −13 %, a cheaper rehash *est.* −7 % → ≈ 3.4×.  Under 3× needs the table itself: a hash tag in the bucket so a mismatch and a rehash read no record — the placement contract (`crate::placement::HASH`), a decision |
+| 4.18 | `slope_path_with_undo` | 5.0× (2.3 k / 460 per step) | the emitted lines alone are 1.57 twins: `chunk_idx_32` / `hex_idx_32`, six per helper call, are the null-checked `%`, `/` and `-` of `@C120` (12.7 % of the instructions); the store's growth zero-fills (`resize_store` → memset, 5 %); `rec_and_len` out of line | the read's two header reads shared −4.8 % (2026-10-20) | −4.8 % and the growth without the fill *est.* −5 % → ≈ 3.8×; the arithmetic is the focus's exception (−12 %, the 2026-10-20 hand form) → ≈ 3.3× |
+
+Read together: `binary_read` is one emitter clause from the bar.  `encode_bytes` and
+`truncate_to` stand on the runtime's unit cost of an append and of a claim/release pair, and
+reach ≈ 3× only with every lever.  `field_add_cell` and `slope_path_with_undo` do not reach
+3× inside the current focus: one needs a change to the keyed table's layout, the other the
+null-integer arithmetic proved away.
+
 #### The five rows over 4× at `4cc416af4`, analysed (2026-10-20)
 
 Callgrind per op against the twin, compiled from the release emission with line tables; a

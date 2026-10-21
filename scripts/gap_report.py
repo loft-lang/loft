@@ -6,6 +6,7 @@
     scripts/gap_report.py --bench 17_consumer_moros_dryopea --fn c_slope_path
     scripts/gap_report.py --package ../loft-bench-libs/loft-libs-core/cbor --fn encode_op
     scripts/gap_report.py … --n 3 --top 25 --out report.txt
+    scripts/gap_report.py … --lean      # the production runtime (target/install-lib), as stats.py
 
 `--fn` names the function the routine's timed loop calls, the same name in the loft bench and
 in its Rust twin (`name=rust_name` where they differ; a loft method by its emitted name,
@@ -44,6 +45,8 @@ from collections import defaultdict
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOFT = os.path.join(REPO, "target", "release", "loft")
 HAND_PRICE = os.path.join(REPO, "bench", "portal", "hand_price.sh")
+# The production runtime (`scripts/lean_build.sh`): without the development-only features.
+LEAN_REL = os.path.join(REPO, "target", "install-lib", "release")
 
 # Trace switches that print per RUN or per token rather than per decision: left off.
 NOISY_TRACES = {
@@ -134,7 +137,10 @@ def build(a, work):
     rs_src = twin_src
     native = os.path.join(work, "native")
     hp = [HAND_PRICE, emitted, native] + ([args] if package else [])
-    run(hp, cwd=REPO, env=dict(os.environ, HAND_PRICE_RUSTFLAGS="-C debuginfo=line-tables-only"))
+    hp_env = dict(os.environ, HAND_PRICE_RUSTFLAGS="-C debuginfo=line-tables-only")
+    if a.lean:
+        hp_env["HAND_PRICE_REL"] = LEAN_REL
+    run(hp, cwd=REPO, env=hp_env)
     twin = os.path.join(work, "twin")
     run(["rustc", "-O", "--edition=2021", "-o", twin, rs_src])
     return cwd, emitted, native, twin, traces
@@ -342,7 +348,12 @@ def main():
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--out")
     ap.add_argument("--keep", action="store_true", help="keep the work directory (emitted Rust, callgrind output)")
+    ap.add_argument("--lean", action="store_true",
+                    help="profile the production runtime (target/install-lib), not target/release")
     a = ap.parse_args()
+    if a.lean:
+        global LOFT
+        LOFT = os.path.join(LEAN_REL, "loft")
     if not shutil.which("valgrind"):
         sys.exit("gap_report: valgrind is not installed")
     loft_fn, _, rust_fn = a.fn.partition("=")

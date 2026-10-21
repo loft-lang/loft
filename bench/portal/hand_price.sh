@@ -37,7 +37,9 @@
 #
 # Only the source and the output are replaced, and the symbols are kept (a profile needs them).
 # HAND_PRICE_RUSTFLAGS adds flags to either compile (`-C debuginfo=line-tables-only`, which
-# scripts/gap_report.py uses to charge instructions to loft lines).
+# scripts/gap_report.py uses to charge instructions to loft lines).  HAND_PRICE_REL names the
+# build directory to link instead of `target/release`: `target/install-lib/release` is the
+# production runtime (`scripts/lean_build.sh`), the one `bench/stats.py` measures.
 set -euo pipefail
 read -r -a extra <<< "${HAND_PRICE_RUSTFLAGS:-}"
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
@@ -63,11 +65,11 @@ if [ $# -eq 3 ]; then
   exit
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-rel="$root/target/release"
+rel="${HAND_PRICE_REL:-$root/target/release}"
 ffi="$(ls -t "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | head -1 || true)"
 ring="$(ls -d "$rel"/build/ring-*/out 2>/dev/null | head -1 || true)"
 if [ ! -f "$rel/deps/libloft.rlib" ] || [ -z "$ffi" ]; then
-  echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft" >&2
+  echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft (scripts/lean_build.sh --lib --bin loft for target/install-lib)" >&2
   exit 2
 fi
 args=(--edition=2024 -o "$2" "$1" -C opt-level=3 -C codegen-units=1
