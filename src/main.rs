@@ -12571,6 +12571,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             std::process::exit(1);
         }
     }
+    // The definition table the run reads, handed over rather than copied.  `execute_argv`
+    // keeps it as an `Arc`, and passing `&p.data` deep-copied all of it — every stdlib
+    // definition — to start each run, then dropped the copy: ~0.7 ms of a warm `hello`
+    // (@PLN179 finding 001).
+    let mut data = std::sync::Arc::new(p.data);
     if main_nr == u32::MAX && !dump_only {
         // No main() — execute each zero-parameter user `test_*()` function
         // INDIVIDUALLY with a fresh `state.database` per call.  This
@@ -12594,8 +12599,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // `--dump` skips this path — it wants the bytecode of the user
         // functions as parsed, not a synthetic execution.
         let mut test_names: Vec<String> = Vec::new();
-        for d_nr in start_def..p.data.definitions() {
-            let def = p.data.def(d_nr);
+        for d_nr in start_def..data.definitions() {
+            let def = data.def(d_nr);
             // The no-`main` fallback runs every zero-param void user function
             // (the #358 contract — see `tests/arc_e_program_cache.rs`).  The one
             // exclusion is `#native` host imports: a used LIBRARY's zero-param
@@ -12625,7 +12630,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `free_bits` — `find_free_slot` would then return the stale `max`
             // value as the first allocation slot, and `State::new`'s initial
             // `db.database(1000)` would panic with `allocations[max]` OOB.
-            let clean_data = p.data.clone();
+            let clean_data = (*data).clone();
             let clean_db = state.database.clone();
             let mut byte_code_secs = 0.0;
             let mut run_secs = 0.0;
@@ -12661,11 +12666,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             log_config::LogConfig::static_only()
         };
         let mut log = std::io::stderr();
-        let _ = state.dump_bytecode(&mut log, &config, &mut p.data);
+        let _ = state.dump_bytecode(
+            &mut log,
+            &config,
+            std::sync::Arc::get_mut(&mut data).expect("the run has not shared the table yet"),
+        );
     } else if std::env::var("LOFT_LOG").is_ok() {
         let config = log_config::LogConfig::from_env();
         let mut log = std::io::stderr();
-        if let Err(e) = state.execute_log(&mut log, "main", &config, &p.data) {
+        if let Err(e) = state.execute_log(&mut log, "main", &config, &data) {
             eprintln!("Execution error: {e}");
             std::process::exit(1);
         }
@@ -12675,13 +12684,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // session inherits the RESOLVED stdlib dir — a relative "default"
         // only exists when the cwd happens to be a loft checkout (#346).
         if std::env::var_os("LOFT_LIVE_RELOAD").is_some() {
-            loft::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &p.data);
+            loft::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
         }
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.
         state.arm_profiler();
         let t_run = std::time::Instant::now();
-        state.execute_argv("main", &p.data, &user_args);
+        state.execute_argv("main", &data, &user_args);
         // FY.3: native desktop frame loop — gl_swap_buffers sets frame_yield,
         // causing execute_argv to return. Resume until the program finishes.
         while state.database.frame_yield {
@@ -12712,17 +12721,17 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // @PLN140 — the profiling reports. Outside the leak guard on purpose: a run that
     // ended in a fault still spent its time and its memory somewhere, and that is
     // often exactly what is being asked. Both are silent unless armed.
-    state.report_alloc_sites(&p.data);
-    state.report_profile(&p.data);
+    state.report_alloc_sites(&data);
+    state.report_profile(&data);
     // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
     loft::op_census::write(&loft::op_census::Names {
-        operator: &|op| p.data.operator_name(op).map(str::to_owned),
-        function: &|d_nr| p.data.def(d_nr).name().to_string(),
+        operator: &|op| data.operator_name(op).map(str::to_owned),
+        function: &|d_nr| data.def(d_nr).name().to_string(),
     });
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {
-        loft::stack_census::report(Some(&p.data));
+        loft::stack_census::report(Some(&data));
     }
     // @PLN154 phase 1 — the stack shadow's verdict.  It prints on a CLEAN run too: silence
     // is the result this instrument exists to make trustworthy, and a detector that says
@@ -12781,6 +12790,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     if state.database.run_failed() {
         std::process::exit(1);
     }
+    // The table is not freed on the way out: the process is ending, and freeing it was a
+    // third of a warm `hello`'s exit (@PLN179 finding 001).  Plain memory with no `Drop`
+    // effect, unlike the run's stores, which `state` still drops — a durable store writes its
+    // clean-close sidecar there.
+    std::mem::forget(data);
 }
 
 /// Where `loft test` looks for a package's tests, and the prefix it prints.

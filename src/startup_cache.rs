@@ -632,6 +632,18 @@ pub fn save_program(
     let mut paths: Vec<&String> = p.parsed_sources.iter().chain(&manifests).collect();
     paths.sort_unstable();
     paths.dedup();
+    // The stdlib's own files are pinned by the `stdk` line — a hash of exactly
+    // `default_dir/*.loft`, memoised by size and mtime — so they are not listed again:
+    // re-hashing their 240 kB on every warm start was most of its manifest check (@PLN179
+    // finding 001).  An edit to one changes the key, and the load misses there first.
+    let stdlib = crate::file_access::plain_canonical(std::path::Path::new(default_dir));
+    paths.retain(|src| {
+        let src = std::path::Path::new(src.as_str());
+        !crate::file_access::has_extension(src, "loft")
+            || src
+                .parent()
+                .is_none_or(|d| crate::file_access::plain_canonical(d) != stdlib)
+    });
     let mut lines = String::new();
     // @PLN11 G2/M6 — pin the build signature first so a binary upgrade
     // invalidates this bundle (see `manifest_matches`).

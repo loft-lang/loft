@@ -829,6 +829,46 @@ fn an_edited_stdlib_function_is_never_served_from_a_cache() {
     let _ = fa::remove_dir_all(&root);
 }
 
+/// A program's manifest names the program's own sources, never the stdlib's: those are pinned
+/// by its `stdk` line, and listing them again made every warm start re-hash all of
+/// `default/` — 240 kB, most of the manifest check (@PLN179 finding 001).  The cells above are
+/// what keeps that sound: an edited, added or removed stdlib file is still never served.
+#[test]
+fn a_program_manifest_lists_no_stdlib_source() {
+    let (root, _dflt) = scratch_stdlib("manifest");
+    let cache = root.join("cache");
+    let script = root.join("prog.loft");
+    fa::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    warm_through_an_edit(&script, &root, &cache);
+    let manifests: Vec<String> = fa::read_dir(cache.join("loft"))
+        .expect("cache dir")
+        .into_iter()
+        .filter(|p| fa::has_extension(p, "manifest"))
+        .map(|p| fa::read_to_string(&p).expect("manifest"))
+        .collect();
+    let _ = fa::remove_dir_all(&root);
+    assert!(
+        !manifests.is_empty(),
+        "the warm runs wrote no program manifest"
+    );
+    for m in &manifests {
+        let sources: Vec<&str> = m
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .filter(|(h, _)| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+            .map(|(_, path)| path)
+            .collect();
+        assert!(
+            sources.iter().any(|s| s.ends_with("prog.loft")),
+            "the program's own source must be listed: {sources:?}"
+        );
+        assert!(
+            !sources.iter().any(|s| s.contains("/default/")),
+            "the stdlib is pinned by `stdk`, not listed: {sources:?}"
+        );
+    }
+}
+
 #[test]
 fn an_added_stdlib_file_is_seen_after_an_edit_loop() {
     let (root, dflt) = scratch_stdlib("add");
