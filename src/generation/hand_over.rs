@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator
 //! `@FR-R-HandOver`'s rotate clause — an append to a full vector beside the drop of its oldest
 //! element is one step on the elements already there.
 //!

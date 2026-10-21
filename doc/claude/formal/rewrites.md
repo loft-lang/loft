@@ -6520,7 +6520,7 @@ meets each by the run-time test above).
    the claims gone.  Switch `LOFT_NO_HAND_OVER=1`; trace `LOFT_TRACE_HAND_OVER=1` naming
    each pair admitted or declined.
 
-**The division (owner, 2026-10-21).**  The vector hand-over is this rule's canonical case:
+**The division (an owner ruling).**  The vector hand-over is this rule's canonical case:
 storage whose size is only known at run time, kept across statements, where the block and its
 capacity are worth carrying from the dying value to the new one.  It may serve more shapes,
 but a separate FIXED-SIZE object — a record whose fields are scalars, or a value whose size the

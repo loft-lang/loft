@@ -3407,8 +3407,8 @@ impl Parser {
             // `@FR-F-FaultSafe` (@C142) — formatting never traps: a fault in the hole yields
             // the null VALUE (no op halts, @C80) and the hole renders it as a plain `null`.
             // It is reported as the same fault anywhere else is (`@FR-E-Report`): the hole
-            // keeps the plain op, so `"{a / b}"` and `"{v[9]}"` log their line (owner,
-            // 2026-10-21).  A `??` inside the hole still takes the silent peer.
+            // keeps the plain op, so `"{a / b}"` and `"{v[9]}"` log their line.  A `??` inside
+            // the hole still takes the silent peer.
             self.un_ref(&mut tp, &mut format);
             // @P376 — the format expression resolved to `Unknown`: a directly
             // interpolated unresolved name (`print("{zzz}")`, zzz undefined)
