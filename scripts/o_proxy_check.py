@@ -108,7 +108,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # construction is still a site that frees on the proxy, and a check that stops seeing it stops
 # saying anything about it.  Measured: the fold took `9 of 29 reach a free` to `3 of 23` before
 # this line was added, which reads like an improvement and is a blinding.
-PROXY = re.compile(r"depend\(\)\.is_empty\(\)|proxy_says_owned\s*\(")
+PROXY = re.compile(r"depend\(\)\.is_empty\(\)|has_no_deps\(\)|proxy_says_owned\s*\(")
 # The same read, one statement apart: `let deps = <…>.depend();` and a later `deps.is_empty()`.
 # The one-expression spelling is the common one, and reading only it left this check blind to a
 # form the tree already uses twice (`ownership_cfg.rs`'s Check B, `control.rs`'s arm-return

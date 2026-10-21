@@ -2567,6 +2567,29 @@ impl Type {
         }
     }
 
+    /// `self.depend().is_empty()` without building the list: the same variants, the same
+    /// `Optional`/`&` transparency and a tuple's union of its members.  The ownership
+    /// predicates ask it of every bind the scope pass meets, where the list was built only to be
+    /// found empty.
+    #[must_use]
+    pub fn has_no_deps(&self) -> bool {
+        match self {
+            Type::Text(dep)
+            | Type::Reference(_, dep)
+            | Type::Index(_, _, dep)
+            | Type::Radix(_, _, dep)
+            | Type::Trie(_, _, dep)
+            | Type::Hash(_, _, dep)
+            | Type::Sorted(_, _, dep)
+            | Type::Enum(_, _, dep)
+            | Type::Vector(_, dep)
+            | Type::Function(_, _, dep, ..) => dep.is_empty(),
+            Type::RefVar(tp) | Type::Optional(tp) => tp.has_no_deps(),
+            Type::Tuple(elems) => elems.iter().all(Type::has_no_deps),
+            _ => true,
+        }
+    }
+
     #[must_use]
     /// The single fact @FR-O-Deps names: every store-lifetime decision — free placement,
     /// adopt-vs-copy, move-vs-clone, drop — reads THIS, and re-deriving any of them from a
