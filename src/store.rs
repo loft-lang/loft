@@ -1146,7 +1146,10 @@ impl Store {
         // (0xc0000374).
         let size = size.max(2);
         let l = Layout::from_size_align(size as usize * 8, 8).expect("Problem");
-        let ptr = unsafe { A.alloc_zeroed(l) };
+        // Not zeroed (`@FR-H-Claim`, `@C137`): a claim promises no value, and nothing reads a
+        // word it did not write.  The program reads only claimed memory, which
+        // `LOFT_POISON_CLAIM=1` fills with garbage under test.
+        let ptr = unsafe { A.alloc(l) };
         // The value used on is the GUARDED one: an allocation that failed is null.
         let ptr = if ptr.is_null() {
             std::alloc::handle_alloc_error(l)
@@ -2817,9 +2820,8 @@ impl Store {
         } else {
             grown
         };
-        if bytes > old_bytes {
-            unsafe { self.ptr.add(old_bytes).write_bytes(0, bytes - old_bytes) };
-        }
+        // The grown tail is not zeroed, for the reason `Store::new` gives: it joins the free
+        // space, whose headers the allocator writes (`@FR-H-Claim`).
         self.size = size;
         // @PLN154 — the shadow spans the buffer, so it grows with it.  The new bytes are
         // tagged unwritten, which is what they are: nothing has been put there yet.  The
