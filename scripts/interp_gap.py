@@ -58,7 +58,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 # The shipped tier's rustc arguments, the list loft compiles in.
-RELEASE_ARGS = [x.strip() for x in (ROOT / "src" / "native_release_args.txt").read_text().splitlines()
+RELEASE_ARGS = [x.strip() for x in (ROOT / "src" / "native_release_args.txt").read_text(encoding="utf-8").splitlines()
                 if x.strip() and not x.strip().startswith("#")]
 BENCH = ROOT / "bench"
 

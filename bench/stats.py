@@ -77,7 +77,7 @@ ROOT = os.path.dirname(HERE)
 def release_rustc_args():
     """The shipped tier's rustc arguments (`src/native_release_args.txt`, the list loft
     compiles in), then `LOFT_NATIVE_RELEASE_FLAGS` as loft appends it."""
-    with open(os.path.join(ROOT, "src", "native_release_args.txt")) as f:
+    with open(os.path.join(ROOT, "src", "native_release_args.txt"), encoding="utf-8") as f:
         args = [x.strip() for x in f if x.strip() and not x.strip().startswith("#")]
     return args + os.environ.get("LOFT_NATIVE_RELEASE_FLAGS", "").split()
 
