@@ -2280,7 +2280,8 @@ fn raw_i64(base: *const u8, off: u32) -> i64 {
 /// The base of inline table `claim`, its bucket count and stride, when the table is inline and
 /// its record holds what its header says — the one bounds test every access below stands on:
 /// each offset is a bucket below `count` or an entry field below `stride`, inside the record.
-#[inline]
+#[inline(always)]
+#[allow(clippy::inline_always)]
 fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32, u32)> {
     let words = store.record_words(claim);
     if words <= RESERVED_WORDS || u64::from(claim) + u64::from(words) > u64::from(store.capacity_words()) {
@@ -2299,13 +2300,22 @@ fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32,
     Some((base, count, stride))
 }
 
-/// [`entry_one_int`] on an inline table: `None` where the general path must answer (not
-/// inline, or a miss that grows the table first), else its answer.
+/// [`entry_one_int`] on an inline table whose key is the 8-byte integer at `kp`: `None` where
+/// the general path must answer (not inline, or a miss that grows the table first), else its
+/// answer.  The walk is inlined at the caller; filing a miss is [`inline_insert_int`].
+///
+/// Inlined ALWAYS, not for the call it saves: a call takes `hash` by address and answers its
+/// `Option<DbRef>` through memory, written a field at a time and read back eight bytes at a
+/// time — a store the processor cannot forward to that load, and the stall was a sixth of
+/// `field_add_cell`'s cycles.  Inlined, the reference never leaves the registers.
+#[inline(always)]
+#[allow(clippy::inline_always)]
 pub fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &mut [Store]) -> Option<DbRef> {
     let store = keys::store(hash, stores);
     let (base, count, stride) = inline_checked(store, claim, kp)?;
     let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
-    let tag = tag_of(keys::ints_hash(&[value], seed));
+    // `long_hash(v)` is `ints_hash(&[v])` by construction: one seeded word, one key word.
+    let tag = tag_of(keys::long_hash(value, seed));
     let (mask, e0) = (count - 1, ent0(count));
     let mut at = tag & mask;
     for _ in 0..count {
@@ -2321,9 +2331,32 @@ pub fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &
         }
         at = (at + 1) & mask;
     }
+    let pos = inline_insert_int(hash, claim, count, stride, at, tag, kp, value, stores);
+    (pos != 0).then_some(DbRef { store_nr: hash.store_nr, rec: claim, pos })
+}
+
+/// File `value` at bucket `at`, the empty bucket [`inline_entry_int`]'s walk ended on, and
+/// answer the entry's position — `0` when the walk ended without one or the table is due to
+/// grow: the general path files it.  A position and not a reference, so the answer comes back
+/// in a register (see [`inline_entry_int`] on what a reference through memory costs).
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn inline_insert_int(
+    hash: &DbRef,
+    claim: u32,
+    count: u32,
+    stride: u32,
+    at: u32,
+    tag: u32,
+    kp: u32,
+    value: i64,
+    stores: &mut [Store],
+) -> u32 {
+    let base = unsafe { keys::store(hash, stores).base_ptr().add(claim as usize * 8) }.cast_const();
+    let e0 = ent0(count);
     let len = raw_u32(base, LEN_FLD);
     if raw_u32(base, BUCKET0 + at * 8) != 0 || is_full(len + raw_u32(base, arena::FREE_FLD), count) {
-        return None;
+        return 0;
     }
     let store = keys::mut_store(hash, stores);
     let base = unsafe { store.base_ptr().add(claim as usize * 8) };
@@ -2337,11 +2370,13 @@ pub fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &
         base.add(pos as usize).write_bytes(0, stride as usize);
         base.add((pos + kp) as usize).cast::<i64>().write_unaligned(value);
     }
-    Some(DbRef { store_nr: hash.store_nr, rec: claim, pos })
+    pos
 }
 
 /// [`find_long`] on an inline table with an 8-byte integer key: `None` where the general walk
-/// must answer, else the entry (record 0 for a miss).
+/// must answer, else the entry (record 0 for a miss).  Inlined always, as [`inline_entry_int`].
+#[inline(always)]
+#[allow(clippy::inline_always)]
 pub fn inline_find_int(store: &Store, store_nr: u16, claim: u32, kp: u32, value: i64) -> Option<DbRef> {
     let (base, count, stride) = inline_checked(store, claim, kp)?;
     let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);

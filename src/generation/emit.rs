@@ -3523,9 +3523,15 @@ impl Output<'_> {
             let key = key.unwrap_or_else(|| "i64::MIN".to_string());
             // The field's offset and element type resolved here, where they are constants.
             let (off, etp) = self.stores.keyed_field_consts(ke.parent_tp, ke.field);
+            // An 8-byte integer key's position, for the inline walk; a narrow key takes none.
+            let kp = self.stores.types[etp as usize]
+                .keys
+                .first()
+                .filter(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2))
+                .map_or(u32::MAX, |k| u32::from(k.position));
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_long_at(&({coll}), {}_u16, {}_u16, {off}_u32, {etp}_u16, ({key}) as i64);",
+                "let __ke{site}: DbRef = stores.keyed_entry_long_at(&({coll}), {}_u16, {}_u16, {off}_u32, {etp}_u16, {kp}_u32, ({key}) as i64);",
                 ke.parent_tp, ke.field
             )?;
         }
