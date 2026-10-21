@@ -3580,6 +3580,23 @@ impl Stores {
         true
     }
 
+    /// The deep copy of a record whose owners are plain vectors into a FRESH slot of another
+    /// store: the record's bytes, then each vector's block claimed and copied by the type's
+    /// plan ([`Self::copy_plain_vectors`]) — what `OpCopyRecord` reaches for such a record
+    /// after its general dispatch, without it.  A fresh slot holds nothing to release.
+    /// `false`, with nothing done, for any other type and for a copy within one store.
+    pub(crate) fn copy_fresh_plain(&mut self, rec: &DbRef, to: &DbRef, tp: u16) -> bool {
+        if rec.store_nr == to.store_nr || !self.owns_plain_vectors(tp) {
+            return false;
+        }
+        let size = u32::from(self.size(tp));
+        self.copy_block(rec, to, size);
+        if !self.copy_plain_vectors(rec, to, tp) {
+            self.copy_claims(rec, to, tp);
+        }
+        true
+    }
+
     pub(super) fn copy_claims_seq_vector(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         let content_tp = match &self.types[tp as usize].parts {
             Parts::Vector(v) | Parts::Sorted(v, _) => *v,
