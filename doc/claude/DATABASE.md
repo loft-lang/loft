@@ -172,7 +172,7 @@ per record type, in the program or in a separate upgrade module run with
 ```loft
 struct Item { id: integer, count: integer }       // release 3.0; 2.0 moved label into count
 struct ItemBefore2 { label: text }                // the stored fields the routine reads
-fn upgrade(from: Version, old: ItemBefore2, item: Item) {
+fn upgrade(from: Release, old: ItemBefore2, item: Item) {
   if from < "2.0" { item.count = len(old.label) }
 }
 ```

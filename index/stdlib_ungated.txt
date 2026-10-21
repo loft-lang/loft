@@ -380,6 +380,11 @@ n_store_lazy_clear
 n_store_lazy_error
 n_store_lazy_faults
 n_store_memory
+n_store_upgrade_owed_from
+n_store_upgrade_owed_next
+n_store_upgrade_owed_old
+n_store_upgrade_owed_record
+n_store_upgrade_routine
 n_store_verify
 n_struct_from_jsonvalue
 n_struct_to_json
@@ -393,6 +398,7 @@ n_unprotect_store_frees
 n_vector_sum_int
 n_yield_frame
 t_10FileResult_ok
+t_12Release#text_compare
 t_16AssertValue#1#g1_to_text
 t_16AssertValue#1#g2_OpEq
 t_4File_position
@@ -424,6 +430,7 @@ t_4text_split_text
 t_4text_starts_with
 t_4text_starts_with_at
 t_4text_to_lowercase
+t_4text_to_release
 t_4text_to_text
 t_4text_to_uppercase
 t_4text_trim
@@ -506,6 +513,8 @@ t_6sorted_len
 t_6vector_clear
 t_6vector_join
 t_6vector_len
+t_7Release_compare
+t_7Release_to_text
 t_7boolean_to_text
 t_7integer_abs
 t_7integer_clamp

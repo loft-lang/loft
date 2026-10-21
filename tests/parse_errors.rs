@@ -5237,7 +5237,7 @@ fn sort_in_a_generic_needs_the_bound() {
 /// against two right-hand types makes `compare` an overload set holding every type's members,
 /// and a bare `T` fits any member's parameters; it met `Ordered` through `D`'s `compare(D, D)`,
 /// so `sort` in an unbounded generic compiled in any program holding such a struct — every
-/// program, once the stdlib's `Version` compared against a text.
+/// program, once the stdlib's `Release` compared against a text.
 #[test]
 fn another_types_compare_set_does_not_meet_a_bare_variables_bound() {
     code!("struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")

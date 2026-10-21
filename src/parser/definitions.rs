@@ -8458,13 +8458,13 @@ impl Parser {
     }
 
     /// `@FR-L-Upgrade-Routine`, @PLN196 step 9 — every `upgrade` routine the program wrote:
-    /// `fn upgrade(from: Version, old: O, item: T)`, with `O` and `T` structs.  A store older
+    /// `fn upgrade(from: Release, old: O, item: T)`, with `O` and `T` structs.  A store older
     /// than the program's release runs it on each record of `T` it converts.  Several, one
     /// per `T`, are an overload set.
     #[must_use]
     pub fn upgrade_routine_defs(data: &crate::data::Data) -> Vec<UpgradeRoutineDef> {
         // One routine is a plain function; several are an overload set, which joins its
-        // members to `Version` as methods and is keyed by the bare name.
+        // members to `Release` as methods and is keyed by the bare name.
         let mut candidates = data.overload_routines("upgrade");
         let single = data.def_nr("n_upgrade");
         if single != u32::MAX && !candidates.contains(&single) {
@@ -8497,7 +8497,7 @@ impl Parser {
                 .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
                 .map(|a| a.name.as_str())
                 .collect();
-            if data.def(version).name() != "Version" || fields != ["major", "minor", "patch"] {
+            if data.def(version).name() != "Release" || fields != ["major", "minor", "patch"] {
                 continue;
             }
             out.push(UpgradeRoutineDef {
@@ -9661,13 +9661,13 @@ pub(crate) fn visit_constant_vars(val: &mut Value, f: &mut dyn FnMut(&mut u16)) 
     }
 }
 
-/// @PLN196 step 9 — one `upgrade(from: Version, old: O, item: T)` routine
+/// @PLN196 step 9 — one `upgrade(from: Release, old: O, item: T)` routine
 /// ([`Parser::upgrade_routine_defs`]).
 #[derive(Clone, Copy, Debug)]
 pub struct UpgradeRoutineDef {
     /// The routine.
     pub routine: u32,
-    /// The stdlib `Version` struct.
+    /// The stdlib `Release` struct.
     pub version: u32,
     /// `O`: the stored fields it reads.
     pub old: u32,

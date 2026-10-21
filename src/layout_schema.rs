@@ -104,7 +104,7 @@ pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
 /// when the baseline was last accepted.  `version` is this release (empty: none recorded).
 #[must_use]
 pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -> String {
-    let had: std::collections::BTreeMap<&str, &str> = previous
+    let recorded: std::collections::BTreeMap<&str, &str> = previous
         .lines()
         .filter_map(|l| l.split_once(" since "))
         .collect();
@@ -117,7 +117,7 @@ pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -
             continue;
         }
         let head = format!("{tp}.{field} <- {}", paths.join(", "));
-        let since = had.get(head.as_str()).copied().unwrap_or(version);
+        let since = recorded.get(head.as_str()).copied().unwrap_or(version);
         out.push_str(&head);
         if !since.is_empty() {
             out.push_str(" since ");
@@ -204,7 +204,7 @@ pub fn lost_sources(
             out.push(format!(
                 "{dropped} is dropped, and {from} computes {target} from it: a store older than \
                  that holds no {target} and would lose the value — write \
-                 `fn upgrade(from: Version, old: <the old fields>, item: {tp})`, or {floor_cure}"
+                 `fn upgrade(from: Release, old: <the old fields>, item: {tp})`, or {floor_cure}"
             ));
         }
     }

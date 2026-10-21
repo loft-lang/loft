@@ -449,7 +449,7 @@ build is refused by this rule or converted by the upgrade map
                       and leaves it byte for byte as it was.  A store that records no release
                       predates the recording and passes the floor.
   (L-Upgrade-Routine) a program may write, per record type T, one
-                      fn upgrade(from: Version, old: O, item: T) with O a struct.  Each record
+                      fn upgrade(from: Release, old: O, item: T) with O a struct.  Each record
                       of T converted from a store whose release is older than the program's
                       (or unrecorded) is passed to it once, after its carried fields and its
                       added fields' defaults, with from = the store's release.  For such a
@@ -479,7 +479,7 @@ store cannot show — a value an intermediate release computed from a field the 
 drops — is caught where the drop is written: the baseline remembers what each computed field
 was made of, so `loft layout check` names the field, the computed one and the release, and
 asks for the routine or the floor.  Versions compare as
-numbers (`Version`, `default/02_files.loft`), so `10.0` comes after `9.0`. A binary file written with `f#write` is not a store: its records carry the WIRE width
+numbers (`Release`, `default/02_files.loft`), so `10.0` comes after `9.0`. A binary file written with `f#write` is not a store: its records carry the WIRE width
 — the sum of the field widths, with no padding — so its format does not follow the store
 layout, and `f#read` infers a record count from the same width.
 

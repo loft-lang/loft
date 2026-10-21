@@ -7411,7 +7411,7 @@ impl Data {
         // type's members of the form, and `params_fit` lets a type variable stand for anything,
         // so a struct declaring `compare` against two right-hand types made a bare `T` meet
         // `Ordered` through that struct's `compare(D, D)`: `sort` in an unbounded generic was
-        // admitted in every program once the stdlib declared one (`Version`).
+        // admitted in every program once the stdlib declared one (`Release`).
         let receiver = self.type_def_nr(&base);
         let variant_of = |v: u32, e: u32| {
             v != u32::MAX && self.def(v).def_type == DefType::EnumValue && self.def(v).parent == e

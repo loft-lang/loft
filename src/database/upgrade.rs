@@ -65,15 +65,15 @@ struct Run<'m> {
     routines: &'m Routines,
     /// The release the store records, for the routine's `from`.
     from: &'m str,
-    /// The store the routines' `old` records and their `Version` live in, made on first use
-    /// and released once every routine ran; its first record is the `Version`.
+    /// The store the routines' `old` records and their `Release` live in, made on first use
+    /// and released once every routine ran; its first record is the `Release`.
     scratch: Option<u16>,
     /// Filling a routine's `old` record: its elements are copies, never the record a stored
     /// reference names.
     projecting: bool,
 }
 
-/// @PLN196 step 9 — the `upgrade(from: Version, old: O, item: T)` routine the programmer
+/// @PLN196 step 9 — the `upgrade(from: Release, old: O, item: T)` routine the programmer
 /// wrote for record type `T` (the key of [`Routines`]): it runs on every record of `T` that a
 /// store older than this program's release is converted with, after the fields carried by
 /// name and the added fields' defaults.
@@ -81,7 +81,7 @@ struct Run<'m> {
 pub struct Routine {
     /// The type of `old`: the stored fields the routine reads, filled by name.
     pub old: u16,
-    /// The type of `from`, the stdlib `Version`.
+    /// The type of `from`, the stdlib `Release`.
     pub version: u16,
     /// The function a caller without the drain calls it through (`__upgrade_<T>`).
     pub name: String,
@@ -899,7 +899,7 @@ impl Stores {
         Ok(())
     }
 
-    /// The scratch store of `run`'s routines, made on first use with the `Version` of the
+    /// The scratch store of `run`'s routines, made on first use with the `Release` of the
     /// release the store records as its first record.
     fn upgrade_scratch(&mut self, run: &mut Run, version_tp: u16) -> u16 {
         if let Some(sc) = run.scratch {
@@ -1052,7 +1052,7 @@ pub(crate) struct Owed {
     /// Each record owing a fill, with the key of the field it owes; for a routine call
     /// ([`routine_key`]), also its `old` record.
     fills: Vec<(DbRef, i64, DbRef)>,
-    /// The `Version` the routine calls are told the store's release with.
+    /// The `Release` the routine calls are told the store's release with.
     from: Option<DbRef>,
     /// The store the routines' records are in, released by [`Stores::owed_finish`].
     scratch: Option<u16>,
@@ -1237,7 +1237,7 @@ impl Stores {
         } else {
             format!(
                 "the store was written by {written}: {e}; a routine \
-                 `fn upgrade(from: Version, old: <the old fields>, item: <the type>)` can carry \
+                 `fn upgrade(from: Release, old: <the old fields>, item: <the type>)` can carry \
                  it across"
             )
         }
@@ -1390,16 +1390,21 @@ impl Stores {
             .map_or(DbRef::NULL, |&(_, _, o)| o)
     }
 
-    /// The `Version` an owed routine call is told the store's release with.
+    /// The `Release` an owed routine call is told the store's release with.
     #[must_use]
     pub fn owed_from(&self) -> DbRef {
         self.owed.from.unwrap_or(DbRef::NULL)
     }
 
     /// @PLN196 step 9 — register the `upgrade` routine of record type `tp`: its `old` struct
-    /// `old` and the `Version` type `version`.  The drain's wrapper registers every routine
+    /// `old` and the `Release` type `version`.  The drain's wrapper registers every routine
     /// before the load it follows, so the converter knows which records owe one.
     pub fn upgrade_routine(&mut self, tp: u16, old: u16, version: u16) {
+        // A program can call this itself: numbers that name no type register nothing.
+        let n = self.types_len();
+        if tp >= n || old >= n || version >= n {
+            return;
+        }
         self.upgrade_routines.insert(
             tp,
             Routine {

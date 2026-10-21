@@ -1408,7 +1408,7 @@ fn writer_v1(types: &str) -> String {
 const V3: &str = "struct Item { id: integer, count: integer }\nstruct S { size: integer, items: vector<Item> }\n";
 
 /// The routines a v3 program writes: one per converted type, an overload set.
-const V3_ROUTINES: &str = "struct ItemBefore2 { label: text }\nstruct SBefore2 { tag: text }\nfn upgrade(from: Version, old: ItemBefore2, item: Item) {\n  if from < \"2.0\" { item.count = len(old.label) }\n}\nfn upgrade(from: Version, old: SBefore2, item: S) {\n  if from < \"2.0\" { item.size = len(old.tag) * 100 }\n}\n";
+const V3_ROUTINES: &str = "struct ItemBefore2 { label: text }\nstruct SBefore2 { tag: text }\nfn upgrade(from: Release, old: ItemBefore2, item: Item) {\n  if from < \"2.0\" { item.count = len(old.label) }\n}\nfn upgrade(from: Release, old: SBefore2, item: S) {\n  if from < \"2.0\" { item.size = len(old.tag) * 100 }\n}\n";
 
 fn reader_s(types: &str) -> String {
     format!(
@@ -1474,7 +1474,7 @@ fn cell_a_skipped_version_without_a_routine_is_refused() {
                 && out == "not loaded\n"
                 && err.contains("the store was written by 1.0")
                 && err.contains("looks like a rename")
-                && err.contains("fn upgrade(from: Version"),
+                && err.contains("fn upgrade(from: Release"),
             "{mode:?}: ({code})\n{out}\n{err}"
         );
     }
@@ -1510,7 +1510,7 @@ fn cell_a_newer_store_runs_no_routine() {
     let v2 = "struct Item { id: integer, label: text, count: integer = len($.label) * 100 }\nstruct S { tag: text, size: integer = 5, items: vector<Item> }\n";
     let dir = write_store_as("skip_newer", "4.0", &writer_v1(v2));
     manifest(&dir, "3.0", "");
-    let routine = "struct ItemOld { label: text }\nfn upgrade(from: Version, old: ItemOld, item: Item) {\n  item.count += 1;\n}\n";
+    let routine = "struct ItemOld { label: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) {\n  item.count += 1;\n}\n";
     loft::file_access::write(dir.join("b.loft"), reader_s(&format!("{V3}{routine}"))).unwrap();
     reads("skip_newer", &dir, "5 10:100 20:400 30:700\n", "from 4.0");
     let _ = loft::file_access::remove_dir_all(&dir);
@@ -1523,7 +1523,7 @@ fn cell_a_newer_store_runs_no_routine() {
 fn cell_a_routine_field_the_store_lacks_is_absent() {
     let dir = write_store_as("skip_absent", "1.0", &writer_v1(V1));
     manifest(&dir, "3.0", "");
-    let routine = "struct ItemOld { label: text, note: text }\nfn upgrade(from: Version, old: ItemOld, item: Item) {\n  item.count = len(old.label) + len(old.note) * 1000;\n}\nfn upgrade(from: Version, old: ItemOld, item: S) { item.size = 9 }\n";
+    let routine = "struct ItemOld { label: text, note: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) {\n  item.count = len(old.label) + len(old.note) * 1000;\n}\nfn upgrade(from: Release, old: ItemOld, item: S) { item.size = 9 }\n";
     // `ItemOld` reads `label` from a stored `S` too: S has no `label`, so nothing there.
     let types = V3.to_string();
     loft::file_access::write(dir.join("b.loft"), reader_s(&format!("{types}{routine}"))).unwrap();
@@ -1629,13 +1629,13 @@ fn cell_a_store_without_a_recorded_release_passes_the_floor() {
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 
-/// Case 10: `Version` orders releases by number and compares against the text of one.
+/// Case 10: `Release` orders releases by number and compares against the text of one.
 #[test]
 fn version_orders_releases_by_number() {
     let dir = cell_dir("version_order");
     loft::file_access::write(
         dir.join("b.loft"),
-        "fn main() {\n  a = \"10.0\" as Version;\n  b = \"9.2.7\" as Version;\n  println(\"{a > b} {a < \\\"9.0\\\"} {b < \\\"9.10\\\"} {\\\"2\\\" as Version == \\\"2.0.0\\\" as Version} {b}\");\n}\n",
+        "fn main() {\n  a = \"10.0\" as Release;\n  b = \"9.2.7\" as Release;\n  println(\"{a > b} {a < \\\"9.0\\\"} {b < \\\"9.10\\\"} {\\\"2\\\" as Release == \\\"2.0.0\\\" as Release} {b}\");\n}\n",
     )
     .unwrap();
     reads("version_order", &dir, "true false true true 9.2.7\n", "");
@@ -1705,7 +1705,7 @@ fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
         )
     };
     let types = "struct W { events: integer, label: integer }\n";
-    let routine = "struct WOld { name: text }\nfn upgrade(from: Version, old: WOld, item: W) { item.label = len(old.name) }\n";
+    let routine = "struct WOld { name: text }\nfn upgrade(from: Release, old: WOld, item: W) { item.label = len(old.name) }\n";
     let main = "fn main() {\n  w = W { events: 0 };\n  println(\"{w.events}\");\n}\n";
     for native in [false, true] {
         let (code, err) = check("2.0", &format!("{types}{routine}{main}"), native);
@@ -1774,7 +1774,7 @@ fn layout_check_refuses_a_dropped_source() {
     assert!(
         code == 1
             && out.contains("refused: Inner.label is dropped, and 2.0 computes Item.count from it")
-            && out.contains("fn upgrade(from: Version, old: <the old fields>, item: Item)")
+            && out.contains("fn upgrade(from: Release, old: <the old fields>, item: Item)")
             && out.contains("raise `data_compatible_with` to \"2.0\"")
             && !out.contains("Item.tag from it"),
         "({code})\n{out}"
@@ -1795,7 +1795,7 @@ fn layout_check_dropped_source_is_cured_by_a_routine_or_the_floor() {
             && out.contains("refused: Item.note is dropped, and 2.0 computes Item.tag from it"),
         "in-record ({code})\n{out}"
     );
-    let routine = "struct ItemOld { note: text }\nfn upgrade(from: Version, old: ItemOld, item: Item) { if from < \"2.0\" { item.tag = len(old.note) } }\n";
+    let routine = "struct ItemOld { note: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) { if from < \"2.0\" { item.tag = len(old.note) } }\n";
     let (code, out) = layout_as(&dir, "check", "3.0", "", &format!("{v3}{routine}"));
     assert!(
         code == 0 && !out.contains("refused"),

@@ -75,12 +75,12 @@ load" for a change every loader in fact refuses.
   the manifest's existing `data_compatible_with`, and `data_bridge` names the release a
   refusal sends the user to (`Release::admits`, `src/database/release.rs`); every loader
   asks it where a sidecar becomes a verdict (`verdict_for_sidecar_text`), and the converter
-  asks it before anything is read.  A routine `upgrade(from: Version, old: O, item: T)` (an
+  asks it before anything is read.  A routine `upgrade(from: Release, old: O, item: T)` (an
   overload set, one per `T`) runs on each record of `T` converted from a store older than
   the program, after its carried fields and defaults: the parser gives each a wrapper
   `__upgrade_<T>`, registers the routines before every wrapped load, and the drain calls
   them; `loft layout upgrade` calls them through the host.  `old` is filled by name into a
-  scratch store released after the drain.  `Version` is a stdlib struct ordered by number,
+  scratch store released after the drain.  `Release` is a stdlib struct ordered by number,
   compared against a text with `operator compare`.  Rules: `(L-Release)`,
   `(L-Upgrade-Routine)`, `(L-Upgrade-Old)` in formal/layout.md.  A live rebuild's check
   (`world_upgrade_plan`) takes the same decision from the release the running world
