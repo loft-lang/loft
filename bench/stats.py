@@ -221,7 +221,11 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         raise BuildFailed(f"{pkg_dir}: no bench/bench.loft")
     cmds = {}
     if "native" in lanes:
-        run_checked([loft, "--native-release", "bench/bench.loft", "--n", "2"],
+        # `--install-libs`: since @PLN195 the binary binds its packages' native libraries at
+        # start, and run straight from the cache below it has no driver to hand it their
+        # directories (`LOFT_LIB_PATH`); installed by version under `~/.loft/lib/` it finds
+        # them the way any built program does.
+        run_checked([loft, "--native-release", "--install-libs", "bench/bench.loft", "--n", "2"],
                     f"{pkg_dir}: loft --native-release", times, "native-release", reserve_gb,
                     cwd=pkg_dir)
         cache = os.path.join(bench_dir, ".loft", "cache")
