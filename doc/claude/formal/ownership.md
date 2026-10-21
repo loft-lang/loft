@@ -55,6 +55,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ```
   (O-Owner)     SINGLE OWNER.  Every heap store has exactly one owner at any moment.
+            The copy (B-Copy) makes at a bind is the one owner's store: a record answered by a
+            fn-ref call whose target is unresolved is owned once, by the local that takes it,
+            whichever function the value holds — a loop over such calls holds one store per
+            pass, never one per evaluation (loft#1659).
   (O-Move)      MOVE ON RETURN.  A returned heap value's ownership transfers to the
                 caller's binding; the callee never frees what it transfers.  If the return
                 *borrows* a parameter, the return type records it (`{Attr(param)}`) and the
@@ -77,6 +81,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 Two channels, each answering one question.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
+                A VIEW owns nothing, so the derivation never frees one: a field hoisted out of a
+                literal into a work-ref is a projection of its argument (B-View) and the scope
+                exit leaves it (loft#1683), as it leaves a carried record passed through an
+                inline rebuild (loft#1701).
   (O-Buffer)    A HIDDEN RETURN BUFFER IS THE CALLER'S STORE, WITNESSED BY THE LOCAL
                 THAT ADOPTS IT.  The `__ref_N` a caller passes for a callee's record
                 result belongs to the caller, and the callee either fills it and hands
@@ -345,6 +353,10 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 staged it frees it after the statement that copied the value out.
                 `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) is the gate: a free of
                 any other never-free binding, by any live spelling, is a RED.
+                The veto reaches the transition free (O-Detach) as it reaches every other
+                spelling: a flagged binding is never detached by a free, so what it names is
+                released by its owner — a local whose assignments mix ownership through its
+                owner witness (loft#1336).
   (O-Unknown)   the oracle may answer that it DERIVED NOTHING (`use_analysis::Own::Unknown`),
                 and that answer is neither a free licence nor a refusal: it obliges the
                 reader to DECIDE.  Two shapes reach it — a `CallRef` whose target cannot be
@@ -368,6 +380,11 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 cannot hoist defers the detach past the assignment.  Detaching before the
                 reads is never admissible, and DECLINING the detach to avoid the hazard
                 trades the wrong answer for a retained store rather than resolving it.
+                WHICH store the detach frees is (O-Latest)'s answer, the latest assignment at
+                that loop depth — a nullable local's displaced store included (loft#1085) —
+                and a literal-backing accumulator repointed at a destination the frame does
+                not own is detached before the scope-exit sweep (loft#1331); a store a closure
+                shares (L-CapHeap) is not the local's, so its rebind does not detach it at all.
   (O-Witness)   A LOCAL WHOSE ASSIGNMENTS MIX OWNERSHIP CARRIES A RUNTIME OWNER WITNESS.
                 A binding carries ONE dep list, flow-insensitively, and it records
                 whichever assignment parsed LAST — so where one assignment hands a

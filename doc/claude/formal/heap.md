@@ -259,6 +259,9 @@ only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](
                is unaffected and keeps aliasing (@PLN130 F2/F4/F8).  This is the plain-bind
                answer; an explicit `&` is DECLINED at compile time instead (B-Ref-Reshape),
                because a copy is not what it asked for.
+               The step is (B-View)'s own, so it is taken whatever the view is of — a struct, a
+               struct-ENUM element (loft#1693) — and whichever frame disturbs the container, a
+               callee's growth or removal included (the loft#164 cells), on both backends.
   (H-CopySelf)  ⟨write(p, read(p)), σ⟩ → ⟨(), σ⟩    a whole value delivered onto the PLACE that
                already holds it — a record copied onto itself, a vector delivered into the slot
                whose handle it is — is a no-op: the heap is unchanged, nothing is released and
@@ -664,6 +667,10 @@ installed, which the frame does own.
              binding at that loop depth, never the type's deps list — and the hook runs for
              that record (loft#1362).  A closure that leaves its frame takes the release of
              its captures over, hooks included (L-CapOwn, loft#1609).
+             The ARM is the scope (B-Scope), so a local a statement binds inside an `if` arm, a
+             loop body, a `match` arm or a block runs its hook at that block's `}` (loft#1600),
+             and a vector bound in both arms of an `if` is each arm's own, released at the end
+             of the arm that ran from the backing that arm's bind filled (loft#1607).
   (H-Lease)  a structure whose type OWNS a droppable — the type declares `OpDrop`, or holds
              a member that does, at any depth — holds its OWN lease on the resource, and
              two structures are two drops.  A copy makes a second structure, so it takes a

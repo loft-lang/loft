@@ -206,6 +206,10 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                (`(N-Join)`) say nothing.
 
   inference — declared vs inferred storage (the "by definition vs by use" split)
+               The hard error for a narrow width is (I-Narrow)'s refusal seen from the slot:
+               an `integer` value — plain, a `match` join, a value-`if`, an `else if` arm —
+               stored into a `u8` is refused as an implicit narrowing before any null could
+               collide (loft#1379, loft#1380).
   (N-Decl)     a DECLARED slot `x: τ` is a COMMITMENT: `x = e` checks `e ⇐ τ`. If e:τ? it is
                `(N-Store)`-illegal — declaring non-null FORBIDS a later nullable write.
                The check `e ⇐ τ` is (I-Narrow)'s where τ is a narrower integer than e's type —
@@ -542,6 +546,9 @@ old auto-`τ?` reading. Design record:
             `tests/nullable_ret_buffer.rs::every_dense_and_nullable_pair_takes_one_road`
             gates it: a pair that differs outside those two places fails, unless its nullable
             half names the absence it handles (`@ABSENCE`) or the issue that tracks it (`@OPEN`).
+            The copy (B-Copy) makes is one such road: a whole-record copy tests its source for
+            absence whatever the two are typed, so a copy of a dense slot that (N-Store) let a
+            null into under its warning is null (loft#1997), as the copy of a `τ?` local is.
 
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys

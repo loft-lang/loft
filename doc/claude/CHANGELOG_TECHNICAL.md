@@ -20,7 +20,15 @@ All notable changes to the loft language and interpreter.
   `B-Ref-Alias` and `T-Cons`; `B-Ref-Uniform` with `B-Ref-Intro`; `L-CapOwn` with `H-Drop`;
   then `O-NoDiverge` with `B-Copy`, `O-Complete` with `O-NoDiverge`, `O-Buffer` with `O-Move`
   and `R-Reuse`, `L-CapHeap` with `O-Latest` and `L-CapOwn` — every pair three or more
-  defect-born cells cited together.
+  defect-born cells cited together; then the sixteen every pair two cells cited: `L-Null`
+  with `L-Null-Tag`; `B-Copy` with `L-Null` and `H-Copy`; `N-Road` with `B-Copy` and
+  `N-Store`; `O-Owner` with `B-Copy`; `R-ReturnField` with `N-Road`; `H-Materialise` with
+  `B-View`; `B-View` with `B-View-Depth`; `O-Derived` with `B-View`; `H-Drop` with
+  `B-Scope`; `B-Ref-Alias` with `B-View` and `B-Ref-Reshape`; `O-Override` with
+  `O-Detach`; `O-Detach` with `O-Latest` and `L-CapHeap`; `L-Escape` with `L-CapOwn`;
+  `F-Ret` with `F-Call` and `O-NoDiverge`; `N-Store` with `I-Narrow`; `L-CapOwn` with
+  `L-CapOne`.  The connectives the check reads grew to consequences (`so`, `because`,
+  `decides`, `never`, …), since a composition states what follows as often as when.
 - `rule_tags.py pairs` reads a rule named bare or in backticks as well as in parentheses or
   by tag (517 pairs named, from 311), tells a STATED composition (the naming sentence carries a
   conditional or ordering connective: 302) from a cross-reference, and `--unstated` lists the

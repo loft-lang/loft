@@ -156,17 +156,21 @@ DEF_DEV = re.compile(
 )
 # A CITATION is `@FR-<Rule>`, boundary-exact so `@FR-B-View` does not match `@FR-B-View-Base`.
 CITE = re.compile(r"@FR-([A-Z][A-Za-z0-9-]{1,40})(?![-A-Za-z0-9])")
-# The connectives that make a sentence naming a second rule a COMPOSITION: it says when or
-# which — a condition ("where", "when", "while", "unless", "until"), an order ("before",
-# "after", "then", "first", "instead", "governs", "yields", "wins", "over", "overrides",
-# "precedence", "takes over", "exempt", "refinement"), or that none is needed ("regardless",
+# The connectives that make a sentence naming a second rule a COMPOSITION: it says when,
+# which, or what follows — a condition ("where", "when", "while", "unless", "until"), an
+# order ("before", "after", "then", "first", "instead", "governs", "yields", "wins", "over",
+# "overrides", "precedence", "takes over", "exempt", "refinement"), a consequence of the two
+# ("so", "because", "since", "hence", "therefore", "decides", "answer", "never", "whatever",
+# "included", "no exception", "read off", "hands"), or that none is needed ("regardless",
 # "either order", "commute", "independent of", "exactly as").  `pairs` reads it; a bare
-# cross-reference carries none of these.
+# cross-reference ("this is H-Copy", "see (X)") carries none of these.
 ORDERING = re.compile(
     r"\b(if|where|when|whenever|while|unless|until|before|after|then|first|instead|governs?|"
     r"yields?|wins|loses|over|overrides?|precedence|takes over|exempt|refinement|regardless|"
     r"either order|commutes?|independent(?:ly)? of|exactly as|the same as|as .* says|"
-    r"applies|does not apply|never applies|only (?:where|when|if))\b", re.I)
+    r"applies|does not apply|never applies|only (?:where|when|if)|so|because|since|hence|"
+    r"therefore|decides?|answers?|never|whatever|included|no exception|read (?:off|from)|"
+    r"hands?)\b", re.I)
 
 
 def defined_rules():

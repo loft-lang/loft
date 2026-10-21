@@ -149,12 +149,20 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   a nullable whole-value bind copies like its dense twin (loft#1319) — and the
                   `&` of (B-Ref-Alias) overrides both into a link.  A tuple literal copies every
                   heap member the same way (T-Cons, loft#1674).
+                  A copy of an ABSENT value is absent: (L-Null) keeps the sentinel in the same
+                  bytes, so the copy carries it — a materialised `value struct` view keeps its
+                  absence (loft#1472) — and (H-Copy) is the store side of the same bind: a local
+                  bound from a vector constant copies it into a store of its own (loft#1686).
   (B-Ref-Alias)   the `&τ` annotation makes ANY binding — scalar OR heap — a live LINK
                   to the source instead of a copy.  `d = &v` / `d = &self.data` ALIAS the
                   vector: `d[i] = x` (and `d += …`) write THROUGH to the source, which is
                   NON-OWNING (the source frees the store).  `&` is how you OPT INTO
                   aliasing; without it a heap bind copies.  This is B-Ref-Write for a
                   vector lvalue.
+                  A `&` projection is a LINK where the plain projection is (B-View)'s view: it
+                  never materialises — a disturbance of its container is (B-Ref-Reshape)'s
+                  refusal instead — and `&`, the view and the copy are the three answers a
+                  binding has, decided by the spelling and the shape alone (loft#201).
   (B-Ref-Repoint) `p = &q` on a variable that IS a `&τ` link RE-POINTS the link to `q`:
                   the link's own slot takes the new cell, the old source is neither
                   written nor released (a link owns nothing, B-Ref-Alias), and reads
@@ -196,6 +204,11 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   `for` over a collection of handles) is a view on the same terms: it names
                   the member's frame, and the member releases it ([coroutines.md](coroutines.md)
                   G-Hold).
+                  Its refinement for an index read and a nested field read is (B-View-Depth),
+                  and the materialisation on a disturbance is the same for both: a view
+                  assigned back onto its own source (`w = Outer { inner: a }`) takes its copy
+                  at the bind (loft#1184), and the nullability of the bound value changes
+                  nothing (loft#1319).
   (B-View-Base)   a projection off a BORROWED base is a VIEW at EVERY element type — not only
                   a struct-typed one.  `for b in bv { c = b.vecf; … }` aliases exactly as
                   `c = b.strf` does, and so does a tuple element.  Ownership of the BASE is the

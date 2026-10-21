@@ -281,6 +281,11 @@ struct's own layout.
               not-null form; absence is a sentinel IN those bytes (i64::MIN / nullref), never an
               extra byte or a moved offset.  Nullability is a SCHEMA fact (semantics), not a
               LAYOUT fact.
+              Where τ reserves no value to spend, (L-Null-Tag) takes over — a struct stored
+              INLINE: a `vector` or keyed element, an embedded field, a tuple member, a
+              `value struct` — and nowhere else: a stored `reference<T>?` is still a pointer
+              spending `nullref` (loft#1316), and a `value struct` is nullable through its
+              tag (loft#1471).
 ```
 
 **In words.** Making a field nullable does not change the bytes — the "missing" value is a

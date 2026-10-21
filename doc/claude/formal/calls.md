@@ -241,11 +241,17 @@ and compiles. This is the only static rejection at a call site besides `F-Arity`
              EXCEPTION: a `&T` return (binding.md) is an explicit borrow of an addressable input.
              A result that BORROWS a visible argument — the `{Attr(param)}` return of (O-Move) —
              is not fresh, and (B-Copy) copies it at the bind that takes it, reassigned or
-             chosen by an `if`, on both backends; a return that borrows a closure's own capture
+             chosen by an `if`, on both backends (O-NoDiverge); a return that borrows a
+             closure's own capture
              is declined rather than copied (loft#1353).  The return is the JOIN of every
              delivery site, each early `return` and the tail, per specialisation (G-Mono): a
              parameter returned on one path and a fresh value on another hand the caller an
              owned value on both, the bind guarded by store identity (loft#1884).
+             Every `return` is such a delivery, an early one included: an owned text result
+             reaches the caller's hidden `&text` buffer from `return <call>`, `return a ??
+             b` and `return t[0][0]` as from the tail (loft#1338), and what the frame
+             minted and did not deliver is freed by (F-Call)'s drop — never both for one
+             buffer (loft#1357).
 ```
 
 **In words.** Two calls to the same function give you two independent results — mutating one never

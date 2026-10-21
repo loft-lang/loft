@@ -4171,6 +4171,10 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  witnessed free or copying with the source freed, so a callee whose other exit
                  writes the buffer is fine — the witness settles which store came back per
                  execution.
+                 A hand-over of a NULL root is null: the copy a `return` makes of `o.inner`
+                 tests its source, and the rewrite reads that test where it admits the exit, so
+                 the field of a record that is not there is not there on either road (N-Road,
+                 loft#2006).
   (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
                  element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
                  literal's fields into that place instead of building the literal in
