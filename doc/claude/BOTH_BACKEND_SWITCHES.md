@@ -757,6 +757,12 @@ parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WI
 keeps the tail in the tree again (read per store at construction) and is the first bisect step
 for a store-layout fault or a claim that hands out a live block.
 
+**A text loop variable borrows its element on both backends (`@FR-R-TextBorrow`,
+@PLN198):** the interpreter binds `for p in words` over a `vector<text>` as a `Str` view under
+the native generator's own admission, where it copied each element into a `String`;
+**`LOFT_NO_TEXT_BORROW=1`** restores the copy on both.  The switch and the admission are
+written up in [NATIVE_SWITCHES.md](NATIVE_SWITCHES.md).
+
 **A claim on an empty tree bumps the wilderness (default-ON, both backends,
 `@FR-H-Wilderness`):** while the free tree holds nothing the wilderness is the only block a
 best fit could choose, so the claim is carved off its front directly — `bump_tail`'s twin for a

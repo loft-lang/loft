@@ -216,8 +216,9 @@ to a plain local that is only read (`len(parts)`, `parts[i]`, `for p in parts`) 
 binding block is a TABLE of slices over the text, never a vector — and is the first bisect
 step for a wrong length, piece or walk out of a split bound to a name.
 `LOFT_TRACE_SPLIT_TABLE=1` names each bind admitted and each declined with its reason.
-**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time, `--native`
-only) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
+**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time; `--native`,
+and since @PLN198 the interpreter for a walk of a real vector — its slot holds the element's
+`Str`, bound by `OpPutText` and read by `OpArgText`, from the same admission) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
 copy its element into a `String` again — with it off, `p` is bound as the `&str` the
 element read answers and read bare, where the body reads it only as a text VALUE (an
 operand at a `text` position, the source of a bind into another slot), never writes,

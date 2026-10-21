@@ -272,6 +272,12 @@ pub struct Variable {
     /// releases only the callee's per-execution minted store, by identity at scope exit.
     /// Set by `scopes::scan_set`, read by both backends' copy arms (`is_view_elided`).
     view_elided: bool,
+    /// @PLN198 (`@FR-R-TextBorrow`) — a text loop variable that BORROWS its element: its
+    /// slot holds a 16-byte `Str` view, as a `text` parameter's does, not an owned `String`.
+    /// Set when the function is compiled to bytecode, from the native generator's own
+    /// predicate, so it is never stored with the IR.  A reader of the slot's layout asks
+    /// [`Function::holds_str`].
+    text_view: bool,
     /// A hidden return buffer whose store is minted at its first use on the path that runs
     /// (`@FR-O-LazyBuffer`), always behind `OpRefIsNull(v)`.  For a VECTOR buffer the entry
     /// null-init writes the null sentinel and the later `Set(v, Null)` is the mint (both
@@ -1036,6 +1042,7 @@ impl Function {
                 captured: r.captured,
                 caller_hidden_buf: r.caller_hidden_buf,
                 view_elided: r.view_elided,
+                text_view: false,
                 lazy_buffer: r.lazy_buffer,
                 deferred_first_bind: r.deferred_first_bind,
                 linked_narrow: r.linked_narrow,
@@ -2992,6 +2999,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
@@ -3055,6 +3063,7 @@ impl Function {
             const_binding: self.variables[var as usize].const_binding,
             value_const: self.variables[var as usize].value_const,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
@@ -3104,6 +3113,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
@@ -3154,6 +3164,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
@@ -4237,6 +4248,26 @@ impl Function {
     #[must_use]
     pub fn is_lazy_buffer(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].lazy_buffer
+    }
+
+    /// @PLN198 — mark text loop variable `var_nr` as a view of its element
+    /// ([`Self::is_text_view`]).
+    pub fn mark_text_view(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].text_view = true;
+    }
+
+    /// Whether `var_nr` is a text loop variable that borrows its element (@PLN198).
+    #[must_use]
+    pub fn is_text_view(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].text_view
+    }
+
+    /// Does `var_nr`'s frame slot hold a 16-byte `Str` — a `text` parameter, or a text view
+    /// (@PLN198) — rather than a 24-byte `String`?  The one question every reader of a text
+    /// slot's LAYOUT asks; `is_argument` alone answered it until a local could be a view.
+    #[must_use]
+    pub fn holds_str(&self, var_nr: u16) -> bool {
+        self.is_argument(var_nr) || self.is_text_view(var_nr)
     }
 
     /// Whether `var_nr`'s copy from its borrowing call is elided — see

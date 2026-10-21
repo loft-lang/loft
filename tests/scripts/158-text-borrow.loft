@@ -1,7 +1,9 @@
 // `@FR-R-TextBorrow` — the loop variable of `for p in vector<text>` (and of a lazily split
-// text) BORROWS its element on `--native`: no `String` is built per element, and the walk
+// text) BORROWS its element — on `--native`, and since @PLN198 on the interpreter too (a walk
+// of a real vector; a lazy split's pieces are native's alone): no `String` per element, and the walk
 // holds the vector's header, length and base like any other.  Every cell hand-computes its
-// value; the interpreter copies the element as the IR spells it and is the oracle.  The
+// value, which is the oracle: since @PLN198 the interpreter borrows the same walks (its slot
+// holds a `Str`, as a text parameter's does), so neither backend is the other's.  The
 // cells walk the axes the rewrite has: what the BODY does with `p` (size, compare, prefix,
 // format, bind to another local, match on it, hand it to a user function by value, walk its
 // characters, split it again), what must DECLINE and still answer right (a rebind of `p`,

@@ -4243,9 +4243,10 @@ impl State {
     /// is_argument)` in the current suspension's frame — the shared slot lookup
     /// behind both the frame-value reads and writes.  The address is the variable's
     /// fixed slot (`stack_cur.pos + args_base + vars.stack(i)`), the same one
-    /// [`render_frame_local`](Self::render_frame_local) reads.  `is_argument`
-    /// distinguishes a text **arg** (a 16-byte `Str` borrow) from a text **local**
-    /// (a 24-byte owned `String`), which the edit path writes differently.  `None`
+    /// [`render_frame_local`](Self::render_frame_local) reads.  The flag
+    /// distinguishes a slot holding a 16-byte `Str` borrow — a text **arg**, or a text view
+    /// (@PLN198, `Function::holds_str`) — from a text **local** (a 24-byte owned `String`),
+    /// which the edit path writes differently.  `None`
     /// if there is no current frame or no local of that name.
     fn frame_slot(
         &self,
@@ -4263,7 +4264,7 @@ impl State {
             self.stack_cur.rec,
             at,
             vars.tp(i).clone(),
-            vars.is_argument(i),
+            vars.holds_str(i),
         ))
     }
 
@@ -6098,7 +6099,7 @@ impl State {
         }
         let byte_range = |i: u16| -> (u32, u32) {
             let at = u32::from(vars.stack(i));
-            let ctx = if vars.is_argument(i) {
+            let ctx = if vars.holds_str(i) {
                 crate::data::Context::Argument
             } else {
                 crate::data::Context::Variable
@@ -6229,7 +6230,9 @@ impl State {
                 // `FrameEntry` carries the variable number precisely so a reader can ask
                 // this; nothing else in the frame view can.
                 let narrow = data.def(d_nr).variables.linked_narrow_slot(e.var_nr);
-                self.render_frame_local(frame_base, e.slot, &e.tp, e.is_argument, data, narrow)
+                // The slot's LAYOUT: a text view (@PLN198) holds a `Str` as an argument does.
+                let str_slot = data.def(d_nr).variables.holds_str(e.var_nr);
+                self.render_frame_local(frame_base, e.slot, &e.tp, str_slot, data, narrow)
             };
             locals.push((e.name, rendered));
         }

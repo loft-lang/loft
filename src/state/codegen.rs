@@ -157,6 +157,10 @@ impl State {
         let logging =
             !crate::file_access::is_stdlib_source(data.def(def_nr).position().file.as_str());
         let console = false; //logging;
+        // @PLN198 — before the table is copied into the generator: the text loop variables
+        // that borrow their element, which every emitter below and every reader of the frame
+        // asks about (`Function::holds_str`).
+        Self::mark_text_views(def_nr, data);
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
         // `@FR-R-FrameHeadroom` — this function's height starts from nothing.
@@ -1733,6 +1737,30 @@ impl State {
         self.code_add(dep_offset + step);
     }
 
+    /// @PLN198 (`@FR-R-TextBorrow`) — mark this function's text loop variables that BORROW
+    /// their element: `for p in words` whose rest reads `p` only as a text value and writes
+    /// no store.  The admission is the native generator's own
+    /// ([`crate::generation::hoist::borrowed_text_walks`]), asked without the walks only the
+    /// native generator lowers (a lazy split's pieces, a split table), so both backends
+    /// borrow the same walks of a real vector.  The element's bytes live in the vector's
+    /// store, which an admitted body never writes, so the `Str` stays valid for the
+    /// iteration.  `LOFT_NO_TEXT_BORROW=1` keeps the copy here as it does there.
+    fn mark_text_views(def_nr: u32, data: &mut Data) {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0")) {
+            return;
+        }
+        let views = crate::generation::hoist::borrowed_text_walks(
+            data,
+            def_nr,
+            &std::collections::BTreeSet::new(),
+            &std::collections::BTreeMap::new(),
+        );
+        for v in views.keys() {
+            data.def_mut(def_nr).variables.mark_text_view(*v);
+        }
+    }
+
     pub(super) fn gen_set_first_text(&mut self, stack: &mut Stack, v: u16, value: &Value) {
         // Plan-04 Phase B.2: positional init.  Emit OpReserveFrame(n) +
         // OpInitText(slot_offset) instead of the compound OpText.  This
@@ -1749,9 +1777,13 @@ impl State {
             self.code_add(advance);
             stack.grow(advance);
         }
-        let slot_offset = stack.position - pos;
-        stack.add_op("OpInitText", self);
-        self.code_add(slot_offset);
+        // A text view (@PLN198) owns no `String`: nothing to start, and `set_var` puts the
+        // element's `Str` into the slot.
+        if !stack.function.is_text_view(v) {
+            let slot_offset = stack.position - pos;
+            stack.add_op("OpInitText", self);
+            self.code_add(slot_offset);
+        }
         if let Value::Text(s) = value {
             if !s.is_empty() {
                 self.set_var(stack, v, value);
@@ -4857,6 +4889,14 @@ impl State {
             self.emit_push_null_ref(stack);
             return stack.data.def(op).returned().clone();
         }
+        // @PLN198 — a text view owns nothing to free: its `Str` points into the vector.
+        if name == "OpFreeText"
+            && let [arg] = parameters
+            && let Value::Var(v) = arg.unspan()
+            && stack.function.is_text_view(*v)
+        {
+            return stack.data.def(op).returned().clone();
+        }
         // `@FR-T-Record` — a tuple local's text MEMBER freed at scope exit
         // (`scopes::tuple_members::tuple_text_member_frees`): every owned text leaf under it.
         if name == "OpFreeText"
@@ -5135,7 +5175,7 @@ impl State {
             _ => return None,
         };
         let at = self.code_pos;
-        let arg = u8::from(stack.function.is_argument(src));
+        let arg = u8::from(stack.function.holds_str(src));
         let src_pos = stack.var_pos(src);
         let idx_pos = idx.map(|i| stack.var_pos(i));
         stack.add_op(
@@ -5246,7 +5286,7 @@ impl State {
         {
             return false;
         }
-        let arg = u8::from(f.is_argument(w.src));
+        let arg = u8::from(f.holds_str(w.src));
         stack.function.set_stack_allocated(c);
         let at = self.code_pos;
         let positions = [
@@ -5582,8 +5622,16 @@ impl State {
             Type::Boolean => stack.add_op("OpVarBool", self),
             Type::Single => stack.add_op("OpVarSingle", self),
             Type::Float => stack.add_op("OpVarFloat", self),
+            // A parameter and a text view (@PLN198) hold a `Str`; a local text a `String`.
             Type::Text(_) => {
-                stack.add_op(if argument { "OpArgText" } else { "OpVarText" }, self);
+                stack.add_op(
+                    if argument || stack.function.is_text_view(variable) {
+                        "OpArgText"
+                    } else {
+                        "OpVarText"
+                    },
+                    self,
+                );
             }
             Type::Vector(tp, _) => {
                 let typedef: &Type = tp;
@@ -6477,6 +6525,9 @@ impl State {
             // The empty literal never reaches here — it returned above, before the
             // push, so that the push and the op that consumes it stay one decision
             // (loft#908).
+            // A text view (@PLN198) takes the element's `Str` as it is; an owned text appends
+            // it into its own `String`.
+            Type::Text(_) if stack.function.is_text_view(var) => stack.add_op("OpPutText", self),
             Type::Text(_) => stack.add_op("OpAppendText", self),
             Type::Vector(_, _)
             | Type::Reference(_, _)
