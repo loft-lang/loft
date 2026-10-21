@@ -77,3 +77,8 @@ tools/indexer/rewrite_links.py	--help
 scripts/stability_read.py	--help
 scripts/decline_census.py	--help
 scripts/ci_shards.py	--help
+bench/portal/analysis/gap-sweep/mechanisms.py	--help
+bench/portal/analysis/gap-sweep/summary.py	--help
+bench/portal/analysis/gap-sweep/sweep.sh	--help
+scripts/gap_report.py	--help
+scripts/lean_build.sh	--help

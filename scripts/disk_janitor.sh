@@ -200,10 +200,12 @@ done
 # Every checkout's gate scratch: emptied when its gate is not alive (the pid file
 # find_problems.sh writes, liveness-tested) and nothing in it is newer than the sweep age.
 # A live or recent run is never touched; the directory itself stays, as find_problems expects.
+# The pid file's directory is find_problems.sh's `PID_FILE`, and must stay that one.
+pid_dir=/tmp
 for gs in /var/tmp/loft-test-scratch-*; do
   [ -d "$gs" ] || continue
   tag=${gs#/var/tmp/loft-test-scratch-}
-  pid=$(cat "/tmp/loft_test.$tag.pid" 2>/dev/null)
+  pid=$(cat "${pid_dir}/loft_test.$tag.pid" 2>/dev/null)
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && continue
   [ -n "$(find "$gs" -mindepth 1 -mtime "-$sweep_days" -print -quit 2>/dev/null)" ] && continue
   run find "$gs" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null

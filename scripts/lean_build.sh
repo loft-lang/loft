@@ -15,6 +15,10 @@
 #                                                     # the pair a perf lane runs
 #   scripts/lean_build.sh --bin loft --target <triple>  # a release bundle's binary
 set -euo pipefail
+if [ "${1:-}" = "--help" ]; then
+  echo "usage: scripts/lean_build.sh <cargo build args>  — the production feature list, into target/install-lib"
+  exit 0
+fi
 cd "$(dirname "$0")/.."
 exec cargo build --release --no-default-features \
   --features mmap,random,threading,native-extensions,registry,remote-store \

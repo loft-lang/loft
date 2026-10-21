@@ -11,7 +11,7 @@ def key(label):
     return label[:10]
 rows=[]; tot=collections.Counter(); lead=collections.Counter()
 for f in sorted(glob.glob(S+'/*.txt')):
-    t=open(f).read(); name=os.path.basename(f)[:-4]
+    t=open(f, encoding="utf-8").read(); name=os.path.basename(f)[:-4]
     m=re.search(r"loft ([\d,]+) instructions (per \w+) · twin ([\d,]+) · ([\d.]+)×",t)
     if not m: continue
     lt=int(m[1].replace(',','')); tw=int(m[3].replace(',',''))
@@ -29,5 +29,7 @@ print(f"{'routine (instructions, twin = 1.00)':34} {'×':>5} "+' '.join(f"{c[:7]
 for x,n,r in rows:
     print(f"{n:34} {x:5.2f} "+' '.join(f"{r.get(c,0):7.2f}" if r.get(c,0)>=0.05 else f"{'·':>7}" for c in cols))
 n=len(rows)
+if not n:
+    sys.exit(0)  # no reports in OUT yet
 print(f"{'MEAN over '+str(n):34} {sum(x for x,_,_ in rows)/n:5.2f} "+' '.join(f"{tot[c]/n:7.2f}" for c in cols))
 print("\nthe largest row per routine:", dict(lead.most_common()))

@@ -6,7 +6,7 @@ import re,glob,os,collections,sys
 S=sys.argv[1] if len(sys.argv)>1 else "/tmp/gap-sweep"
 agg=collections.Counter(); cnt=collections.Counter(); where=collections.defaultdict(list); n=0
 for f in glob.glob(S+'/*.txt'):
-    t=open(f).read()
+    t=open(f, encoding="utf-8").read()
     m=re.search(r"twin ([\d,]+) ·",t)
     if not m or 'by the function it came from' not in t: continue
     n+=1; tw=int(m[1].replace(',',''))
