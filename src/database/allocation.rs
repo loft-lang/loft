@@ -6012,12 +6012,25 @@ impl Stores {
             | Parts::ShortRaw(..) => {}
             _ => {
                 let walk = self.owned_walk(db, tp, false);
+                // `(Col-Inline)` — an inline table's live bytes are its header, its slots and
+                // the entries its occupied slots name; an empty bucket's entry bytes are a gap,
+                // as a vector's capacity past its length is.
+                let inline = if matches!(self.types[tp as usize].parts, Parts::Hash(..)) {
+                    block_at(db).filter(|&t| crate::hash::is_inline(store, t))
+                } else {
+                    None
+                };
+                if let Some(t) = inline {
+                    crate::hash::inline_live_spans(store, t, |from, len| {
+                        Self::mark_bytes(live, from, len);
+                    });
+                }
                 for r in walk
                     .container_rec
                     .into_iter()
                     .chain(walk.extra_recs.iter().copied())
                 {
-                    if r < cap {
+                    if r < cap && Some(r) != inline {
                         let words = store.read::<i32>(r, 0).unsigned_abs() as usize;
                         Self::mark_bytes(live, r as usize * 8, words * 8);
                     }

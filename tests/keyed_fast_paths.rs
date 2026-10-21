@@ -126,8 +126,9 @@ fn a_hash_lookup_by_one_integer_key_takes_the_typed_entry() {
         ("n_test_158_hash_in_a_group", 3, 0),          // a hash in a group is still a hash
     ] {
         let b = body(&rust, name);
+        // An 8-byte key's lookup carries its position (`OpGetHashLongAt`); both are typed.
         assert_eq!(
-            b.matches("OpGetHashLong(").count(),
+            b.matches("OpGetHashLong(").count() + b.matches("OpGetHashLongAt(").count(),
             typed,
             "{name}: typed lookups"
         );
@@ -167,6 +168,7 @@ fn a_hash_lookup_by_one_integer_key_takes_the_typed_entry() {
     let off = emit("general", &[("LOFT_NO_TYPED_KEYED", "1")]);
     assert_eq!(
         off.matches("OpGetHashLong(").count()
+            + off.matches("OpGetHashLongAt(").count()
             + off.matches("OpGetHashText(").count()
             + off.matches("OpGetHashInts(").count(),
         0,
@@ -176,6 +178,7 @@ fn a_hash_lookup_by_one_integer_key_takes_the_typed_entry() {
         off.matches("OpGetRecord(").count(),
         rust.matches("OpGetRecord(").count()
             + rust.matches("OpGetHashLong(").count()
+            + rust.matches("OpGetHashLongAt(").count()
             + rust.matches("OpGetHashText(").count()
             + rust.matches("OpGetHashInts(").count(),
         "and nothing else moved"
