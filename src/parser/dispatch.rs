@@ -110,7 +110,7 @@ impl Parser {
         // The base relation first, then the nullability step on top of it.
         let base: Rank = if same {
             EXACT
-        } else if let (Type::Integer(_), Type::Integer(_)) = (a, p)
+        } else if let (Type::Integer(_), Type::Integer(_)) = (arg.base(), param.base())
             && crate::keys::element_key_enabled()
         {
             // `@FR-C-Int` — an integer into a range that holds all of it is the widening the

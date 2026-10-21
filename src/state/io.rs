@@ -424,6 +424,7 @@ impl State {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "one read, both file backends")]
     pub fn read_file(&mut self) {
         let bytes = self.get_stack::<i64>() as i32;
         let val = self.get_stack::<DbRef>();

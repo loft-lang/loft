@@ -131,7 +131,8 @@ fn the_returned_text_is_read_before_the_free() {
         .nth(1)
         .expect("the generated function must be in the introspect output");
     let read = body
-        .find("vec_get_or_raise_runtime")
+        // `vec_get_or_raise_at_runtime` since C80 (the read names its line), or the bare form.
+        .find("vec_get_or_raise")
         .expect("the element read must be emitted");
     let free = body
         .find("OpFreeRef(cell,var___vdb_1")

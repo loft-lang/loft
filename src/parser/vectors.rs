@@ -3250,7 +3250,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if capturers >= 2 {
                 // At the SECOND closure that captures it — the one that makes the variable
                 // shared — not wherever the lexer stands when the function ends (loft#2089).
-                let at = self.data.def(capturing[1]).position().clone();
+                let at = *self.data.def(capturing[1]).position();
                 diagnostic_at!(
                     self.lexer,
                     &at,
@@ -7321,7 +7321,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// Only a NAMED non-argument local is copied.  A vector ARGUMENT aliases the caller by design
     /// (`@FR-B-Ref-Alias` — a parameter reaches the source), so copying it here would change what
     /// the caller sees; and a member that is already a fresh value has no source to diverge from.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn tuple_member_owned_copy(&mut self, val: &mut Value, tp: &Type) -> Option<Type> {
         if self.first_pass {
             return None;

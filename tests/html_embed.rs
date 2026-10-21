@@ -425,7 +425,8 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
         return;
     };
     let abs = dir.join("assets/page.store");
-    let abs = abs.to_string_lossy();
+    // Spelled with `/`: a Windows path's `\` is a TOML escape, refused before the path is.
+    let abs = abs.to_string_lossy().replace('\\', "/");
 
     let build = |manifest: &str| -> (bool, bool, String) {
         fa::write(dir.join("loft.toml"), manifest).expect("write manifest");

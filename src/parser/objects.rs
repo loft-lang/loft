@@ -5078,7 +5078,11 @@ impl Parser {
         tp: &Type,
         hoists: &mut Vec<Value>,
     ) -> Option<u16> {
-        let record = matches!(tp, Type::Reference(d, deps)
+        // A nullable field keeps the temp: its copy would have to keep the null arm.
+        if matches!(tp, Type::Optional(_)) {
+            return None;
+        }
+        let record = matches!(tp.base(), Type::Reference(d, deps)
             if !deps.is_pointer_marker() && self.data.def_type(*d) == DefType::Struct);
         let place = match value.unspan() {
             Value::Var(_) => true,

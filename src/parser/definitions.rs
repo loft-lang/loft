@@ -995,7 +995,7 @@ impl Parser {
             if nr == 253 {
                 // Reported at the 255th variant — the one refused — not after the comma that
                 // closes the 254th (loft#2089).
-                let at = self.lexer.peek_pos().clone();
+                let at = *self.lexer.peek_pos();
                 diagnostic_at!(
                     self.lexer,
                     &at,

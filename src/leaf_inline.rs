@@ -558,6 +558,8 @@ fn located(ops: &[Value], file: crate::lexer::FileName, line: u32) -> Vec<Value>
                 pos: 1,
             };
             match o {
+                // Already located: the blocks inside it take ITS line.
+                Value::Span(sp) => Value::Span(Box::new((sp.0, locate(&sp.1, file, sp.0.line)))),
                 Value::Set(x, e) => Value::Set(*x, Box::new(spanned(locate(e, file, at), pos))),
                 Value::Return(e) => Value::Return(Box::new(spanned(locate(e, file, at), pos))),
                 other => spanned(locate(other, file, at), pos),
@@ -569,6 +571,8 @@ fn located(ops: &[Value], file: crate::lexer::FileName, line: u32) -> Vec<Value>
 /// `v` with the blocks inside it located (see [`located`]).
 fn locate(v: &Value, file: crate::lexer::FileName, line: u32) -> Value {
     match v {
+        // A spanned value keeps its span; the blocks inside it take its line.
+        Value::Span(sp) => Value::Span(Box::new((sp.0, locate(&sp.1, file, sp.0.line)))),
         Value::Block(b) => Value::Block(Box::new(Block {
             operators: located(&b.operators, file, line),
             ..(**b).clone()

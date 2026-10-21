@@ -353,9 +353,12 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     // 3. Run it BOUNDED. `timeout` exits 124 when it has to kill the child, which is what
     //    the unconditional `thread::spawn` produced — and is why the assertion below names
     //    a stall specifically rather than reporting a generic non-zero exit.
-    let run = loft::platform::process::harness_command("timeout")
-        .arg("180")
-        .arg("node")
+    //    Through `sh`, the shell `which` asked: on Windows a bare `timeout` resolves to
+    //    `TIMEOUT.EXE`, which takes no command and refused the call.
+    let run = loft::platform::process::harness_command("sh")
+        .arg("-c")
+        .arg("exec timeout 180 node \"$@\"")
+        .arg("sh")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
         .arg(&wasm)
         .env("LOFT_PAGED_FILE", &store)
