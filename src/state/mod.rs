@@ -523,6 +523,10 @@ pub struct State {
     /// pc alone and a *read* at the same pc as an assignment's start overwrites the
     /// assignment's entry, which is why it is read-dominated.
     pub(crate) store_spans: Vec<(u32, u32, u16)>,
+    /// loft#2121 — the lowest call-stack depth a halt ABANDONS.  Frames below it belong to
+    /// a caller that continues after the fault is contained ([`State::run_until_return`]),
+    /// so a halt releases only the text buffers of frames at or above it.
+    pub(crate) halt_floor: usize,
     /// Plan-07 phase 1 step 1.20 / phase 3 — pc → (source position, end pc) table
     /// populated by codegen on every `Value::Span` it walks.  Runtime
     /// fault printers (div-by-zero, OOB, null deref, panic call) look up
@@ -924,6 +928,7 @@ impl State {
             line_numbers: BTreeMap::new(),
             scope_spans: Vec::new(),
             store_spans: Vec::new(),
+            halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
             entered_fns: None,
@@ -6753,7 +6758,100 @@ impl State {
                 err.crossed_placement = false;
             }
         }
+        // `u32::MAX` means an inner dispatch loop already halted and released.
+        if self.code_pos != u32::MAX {
+            self.release_halted_texts();
+        }
         self.code_pos = u32::MAX;
+    }
+
+    /// loft#2121 — a halt skips the scope-exit `FreeText`s, so the frames it abandons
+    /// release their text buffers here instead: otherwise every `String` a halted frame
+    /// held (a failing assert's formatted message, a callee's returned text) is lost.
+    ///
+    /// Only a slot that certainly holds a `String` is touched, because the frame is not
+    /// zeroed and a stale slot from an earlier frame would be a double free.  So a slot is
+    /// released only when [`frame_view`](Self::frame_view) answers `Held` from the exact
+    /// scope and store spans (never its reference-range fallback), it is an owned `text`
+    /// local rather than an argument, and no local of another type shares its bytes.  The
+    /// release is `FreeText`'s own (clear and shrink), which leaves an empty `String`, so
+    /// a slot two halted loops both reach is released twice harmlessly.
+    #[cold]
+    #[inline(never)]
+    fn release_halted_texts(&mut self) {
+        let n = self.call_stack.len();
+        let mut slots = Vec::new();
+        {
+            let handle = &self.data_ptr;
+            let Some(data) = handle.get() else {
+                return;
+            };
+            // A deep recursion halts with thousands of frames at one call site, and each
+            // selection scans the program's spans: answer each (function, pc) once.
+            let mut seen: FxHashMap<(u32, u32), Vec<u16>> = FxHashMap::default();
+            for i in self.halt_floor.min(n)..n {
+                let frame = &self.call_stack[i];
+                if frame.d_nr == u32::MAX {
+                    continue;
+                }
+                let pc = if i + 1 == n {
+                    self.code_pos
+                } else {
+                    self.call_stack[i + 1].call_pos
+                };
+                let offs = seen
+                    .entry((frame.d_nr, pc))
+                    .or_insert_with(|| self.halted_text_slots(frame.d_nr, pc, data));
+                slots.extend(offs.iter().map(|&off| frame.args_base + u32::from(off)));
+            }
+        }
+        for at in slots {
+            self.free_text_at(at);
+        }
+    }
+
+    /// The frame offsets of the owned `text` locals of `d_nr` that certainly hold a
+    /// `String` at `pc` — the selection [`Self::release_halted_texts`] documents.
+    fn halted_text_slots(&self, d_nr: u32, pc: u32, data: &crate::data::Data) -> Vec<u16> {
+        let def = data.def(d_nr);
+        let vars = &def.variables;
+        let (start, end) = (def.code_position, def.code_position + def.code_length);
+        if !self
+            .scope_spans
+            .iter()
+            .any(|&(s, e, _)| s >= start && s < end && pc >= s && pc < e)
+        {
+            return Vec::new();
+        }
+        let bytes = |i: u16| {
+            let ctx = if vars.is_argument(i) {
+                crate::data::Context::Argument
+            } else {
+                crate::data::Context::Variable
+            };
+            let at = u32::from(vars.stack(i));
+            (at, at + u32::from(crate::variables::size(vars.tp(i), &ctx)))
+        };
+        let owned_text = |i: u16| !vars.is_argument(i) && matches!(vars.tp(i), Type::Text(_));
+        let n = vars.count();
+        self.frame_view(d_nr, pc, data)
+            .into_iter()
+            .filter(|e| {
+                e.state == LocalState::Held
+                    && owned_text(e.var_nr)
+                    && vars.scope(e.var_nr) != u16::MAX
+            })
+            .filter(|e| {
+                let (lo, hi) = bytes(e.var_nr);
+                (0..n).all(|j| {
+                    j == e.var_nr || vars.stack(j) == u16::MAX || owned_text(j) || {
+                        let (jlo, jhi) = bytes(j);
+                        !(jlo < hi && lo < jhi)
+                    }
+                })
+            })
+            .map(|e| e.slot)
+            .collect()
     }
 
     pub fn raise(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
@@ -8528,6 +8626,7 @@ impl State {
             line_numbers: BTreeMap::new(),
             scope_spans: Vec::new(),
             store_spans: Vec::new(),
+            halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
             entered_fns: None,
@@ -8595,6 +8694,9 @@ impl State {
         // already carrying, which is the opposite of what it is for.
         let outer_error = self.database.runtime_error.take();
         let outer_fatal = self.database.had_fatal;
+        // A fault in the callee is contained and the caller continues, so a halt in
+        // there may release only the callee's frames (loft#2121).
+        let outer_floor = std::mem::replace(&mut self.halt_floor, depth);
 
         let args_base = self.stack_pos;
         for a in args {
@@ -8616,6 +8718,7 @@ impl State {
             // cannot be entered is unreachable, not absent.
             self.database.runtime_error = outer_error;
             self.database.had_fatal = outer_fatal;
+            self.halt_floor = outer_floor;
             self.stack_pos = saved_stack_pos;
             self.code_pos = saved_code_pos;
             return Err("the call stack is too deep to run a fetch here".to_string());
@@ -8638,20 +8741,22 @@ impl State {
         let inner_error = self.database.runtime_error.take();
         self.database.runtime_error = outer_error;
         self.database.had_fatal = outer_fatal;
+        // The callee's frames are abandoned here, and this loop halts without the
+        // dispatch loops' `attach_halt_frames`, so their texts are released at this
+        // point, while the floor still spares the caller (loft#2121).
+        if inner_error.is_some() && self.code_pos != u32::MAX {
+            self.release_halted_texts();
+        }
+        self.halt_floor = outer_floor;
         if let Some(err) = inner_error {
             // Contained. The frames the callee left behind are dropped and the
             // caller's position restored, so the outer program continues with
             // every local intact.
             //
-            // **What it does NOT do is release what those frames held.** A
-            // frame's locals are freed by the scope-exit bytecode the fault
-            // skipped, so there is no runtime teardown to run here, and
-            // truncating abandons whatever the aborted callee had allocated
-            // (@PLN133 P4 measured exactly one store per contained fault). A
-            // traversal over an unreachable source therefore leaks once per
-            // failed fetch — which is the long-running case arc C's sticky
-            // counter exists for, so it is a real debt rather than a cosmetic
-            // one, and it is recorded as such rather than papered over.
+            // The scope-exit bytecode the fault skipped is replaced in two halves:
+            // the abandoned frames' texts were released above, and the stores the
+            // callee created are released by the caller that watched for them
+            // (`lazy_fetch_through_loft`'s `lazy_watch_end`).
             self.call_stack.truncate(depth);
             self.stack_pos = saved_stack_pos;
             self.code_pos = saved_code_pos;

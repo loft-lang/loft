@@ -132,6 +132,30 @@ fn a_yielding_main_finishes_under_the_test_runner() {
     );
 }
 
+/// loft#2121 — a failed `assert` or a `panic` halts before the scope-exit frees, so the
+/// halt itself releases the texts its abandoned frames hold: the frame top, a loop body and
+/// a branch, a callee beneath its caller, a generic instance.  The guard's last function runs
+/// after five halts and must still compute its own texts.
+#[test]
+fn a_halted_frame_releases_the_texts_it_holds() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/2121-a-halted-frame-releases-the-texts-it-holds.loft")
+        .to_string_lossy()
+        .into_owned();
+    let (ok, stdout, stderr) = run(
+        &["--interpret", "--tests", &path],
+        &[("LOFT_TEXT_TIMELINE", "1")],
+    );
+    assert!(
+        ok && stdout.contains("test result: ok. 6 passed"),
+        "every halt must report its message and the last function must pass\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("NO text leak"),
+        "a halted frame left a text buffer it held unreleased\nstderr:\n{stderr}"
+    );
+}
+
 fn arrived_absence_script() -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft")
