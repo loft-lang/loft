@@ -116,7 +116,9 @@ fn hdr(store: &Store, claim: u32) -> Hdr {
     let flags = store.get_u32_raw(claim, STRIDE_FLD);
     let stride = flags & !(TAGGED | INLINE);
     if flags & INLINE != 0 {
-        Hdr { count: inline_count(words, stride), sb: 8, stride, inline: true }
+        // The count is recorded when the table is made (`inline_create`, `inline_rebuild`):
+        // deriving it from the words is a division per access.
+        Hdr { count: store.get_u32_raw(claim, arena::DIR_FLD), sb: 8, stride, inline: true }
     } else {
         let sb = if flags & TAGGED != 0 { 8 } else { SLOT_BYTES };
         Hdr { count: slots_in(words, sb), sb, stride, inline: false }
@@ -710,10 +712,15 @@ pub fn entry_one_int(
     }
     let at = bucket?;
     if h.inline {
-        let (claim, at) = inline_slot_for(hash, claim, tag, stores);
-        let store = keys::mut_store(hash, stores);
-        let entry = inline_file(store, hash.store_nr, claim, at, tag, true);
-        store.set_int(entry.rec, entry.pos + kp, value);
+        let used = store.get_u32_raw(claim, LEN_FLD) + store.get_u32_raw(claim, arena::FREE_FLD);
+        let entry = if is_full(used, count) {
+            let (claim, at) = inline_slot_for(hash, claim, tag, stores);
+            inline_file(keys::mut_store(hash, stores), hash.store_nr, claim, at, tag, true)
+        } else {
+            // The walk above ended at this empty bucket: it is the one the entry takes.
+            inline_file_at(keys::mut_store(hash, stores), hash.store_nr, claim, count, width, at, tag, true)
+        };
+        keys::mut_store(hash, stores).set_int(entry.rec, entry.pos + kp, value);
         return Some(entry);
     }
     let length = store.get_u32_raw(claim, LEN_FLD);
@@ -2053,7 +2060,8 @@ fn inline_create(store: &mut Store, count: u32, stride: u32) -> u32 {
     }
     store.set_u32_raw(claim, arena::NEXT_FLD, 1);
     store.set_u32_raw(claim, STRIDE_FLD, stride | TAGGED | INLINE);
-    let count = hdr(store, claim).count;
+    let count = inline_count(store.record_words(claim) - RESERVED_WORDS, stride);
+    store.set_u32_raw(claim, arena::DIR_FLD, count);
     zero_slots(store, claim, count);
     claim
 }
@@ -2071,7 +2079,8 @@ fn inline_rebuild(hash: &DbRef, claim: u32, want: u32, stores: &mut [Store]) -> 
         let v = store.get_u32_raw(claim, fld);
         store.set_u32_raw(new_claim, fld, v);
     }
-    store.set_u32_raw(new_claim, arena::DIR_FLD, 0);
+    let new_count = inline_count(store.record_words(new_claim) - RESERVED_WORDS, h.stride);
+    store.set_u32_raw(new_claim, arena::DIR_FLD, new_count);
     store.set_u32_raw(new_claim, arena::FREE_FLD, 0);
     let nh = hdr(store, new_claim);
     zero_slots(store, new_claim, nh.count);
@@ -2133,6 +2142,23 @@ fn inline_slot_for(hash: &DbRef, claim: u32, tag: u32, stores: &mut [Store]) -> 
 /// the entry.
 fn inline_file(store: &mut Store, store_nr: u16, claim: u32, at: u32, tag: u32, zero: bool) -> DbRef {
     let h = hdr(store, claim);
+    inline_file_at(store, store_nr, claim, h.count, h.stride, at, tag, zero)
+}
+
+/// [`inline_file`] with the table's count and stride already read.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn inline_file_at(
+    store: &mut Store,
+    store_nr: u16,
+    claim: u32,
+    count: u32,
+    stride: u32,
+    at: u32,
+    tag: u32,
+    zero: bool,
+) -> DbRef {
+    let h = Hdr { count, sb: 8, stride, inline: true };
     let seq = store.get_u32_raw(claim, arena::NEXT_FLD).max(1);
     store.set_u32_raw(claim, arena::NEXT_FLD, seq + 1);
     put_slot(store, claim, 8, at, seq, tag);
