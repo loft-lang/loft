@@ -1,0 +1,68 @@
+// A hash whose entries own no heap is copied, compared and released whole: a copy files every
+// entry, an equality compares every entry, and releasing it frees its arena and empties its
+// field.  The release skips the per-entry walk for such a type (`Stores::remove_claims_mode`);
+// the walk's list is also what a copy re-files and an equality compares, so the skip lives in
+// the release alone.  Hand-computed values; both backends.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-21) — the skip placed in the walk itself
+// copied an empty hash: h1 answered 0 entries and sum 0, h2's equality held, gridmesh's
+// collect_dirty_inputs hashed b21ef769 against 2c5dd633.
+
+struct P { k: integer, v: integer }
+struct Box { h: hash<P[k]>, tag: integer }
+
+fn fill(b: &Box, n: integer, base: integer) {
+  for i in 0..n { b.h += [P { k: i, v: base + i }]; }
+}
+
+fn sum_v(b: const Box) -> integer {
+  s = 0;
+  for p in b.h { s += p.v; }
+  s
+}
+
+// h1 — a copy holds every entry: 1000 entries, v = 5 + i, sum = 1000*5 + 999*1000/2 = 504500.
+// After the original gains a key and changes one, the copy is unchanged.
+fn h1() {
+  a = Box { h: [], tag: 1 };
+  fill(a, 1000, 5);
+  b = a;
+  a.h += [P { k: 5000, v: 1 }];
+  a.h[3].v = 77;
+  println("h1 {len(b.h)} {sum_v(b)} {len(a.h)} {b.h[3].v ?? -1}");
+  assert(len(b.h) == 1000 && sum_v(b) == 504500 && len(a.h) == 1001 && (b.h[3].v ?? -1) == 8, "h1");
+}
+
+// h2 — two boxes with the same entries are equal; one changed entry makes them differ.
+fn h2() {
+  a = Box { h: [], tag: 2 };
+  c = Box { h: [], tag: 2 };
+  fill(a, 300, 10);
+  fill(c, 300, 10);
+  same = a == c;
+  c.h[150].v = 0;
+  diff = a == c;
+  println("h2 {same} {diff}");
+  assert(same && !diff, "h2");
+}
+
+// h3 — released and refilled in a loop: each pass empties the field and fills 200 entries,
+// v = r*1000 + i; the last pass (r = 4) sums 200*4000 + 199*200/2 = 819900.
+fn h3() {
+  a = Box { h: [], tag: 3 };
+  s = 0;
+  for r in 0..5 {
+    a.h = [];
+    fill(a, 200, r * 1000);
+    s = sum_v(a);
+  }
+  println("h3 {len(a.h)} {s}");
+  assert(len(a.h) == 200 && s == 819900, "h3");
+}
+
+fn main() {
+  h1();
+  h2();
+  h3();
+  println("plain hash ok");
+}
