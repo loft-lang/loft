@@ -1278,37 +1278,8 @@ impl State {
                 if !attr.hidden {
                     continue;
                 }
-                let buf = match &attr.typedef {
-                    crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _) => {
-                        // For struct returns, the body's `cv = Type{...}`
-                        // OpDatabase reuses the slot (clear + claim).
-                        // `null()` provides a real slot with rec=0 — the
-                        // claim succeeds and sets rec=1.
-                        self.database.null()
-                    }
-                    crate::data::Type::Vector(elm_tp, _) => {
-                        // Vector body's `v = []` does NOT OpDatabase var_v;
-                        // it expects rec != 0 (else pre_alloc_vector is a
-                        // no-op, leaving the vector empty — probe 59 INT
-                        // would read seq[0] as null).  Allocate a fresh
-                        // store with a properly-claimed vector record.
-                        let elm_name = elm_tp.name(data);
-                        let tp_name = format!("main_vector<{elm_name}>");
-                        let tp_id = self.database.name(&tp_name);
-                        if tp_id == u16::MAX {
-                            self.database.null()
-                        } else {
-                            let sz = u32::from(self.database.size(tp_id));
-                            let r = self.database.database(sz);
-                            self.database.allocations[r.store_nr as usize].set_known_type(tp_id);
-                            self.database
-                                .store_mut(&r)
-                                .set_u32_raw(r.rec, 4, u32::from(tp_id));
-                            self.database.set_default_value(tp_id, &r);
-                            r
-                        }
-                    }
-                    _ => continue,
+                let Some(buf) = self.hidden_return_buffer(data, &attr.typedef) else {
+                    continue;
                 };
                 // loft#717 — accumulate the stack movement the push ACTUALLY made
                 // rather than the 12 bytes a `DbRef` measures.  `put_stack` steps a
@@ -1379,6 +1350,46 @@ impl State {
         self.fnref_calls
             .push((frame_depth, self.database.stores_allocated));
         self.fn_call(d_nr as u32, total, code_pos);
+    }
+
+    /// The store a fn-ref call site hands a callee for its hidden return buffer of type
+    /// `typedef`, or `None` for an attribute that is no such buffer — shared by
+    /// [`Self::fn_call_ref_to`] and [`Self::call_back`], which set up the same frame.
+    fn hidden_return_buffer(
+        &mut self,
+        data: &crate::data::Data,
+        typedef: &crate::data::Type,
+    ) -> Option<DbRef> {
+        // Through `base()`, though a hidden buffer is spelled bare even for a nullable return
+        // (`__retbuf: P` for `-> P?`, measured): the `?` is the value's, not the storage's.
+        match typedef.base() {
+            // For struct returns, the body's `cv = Type{...}` OpDatabase reuses the slot
+            // (clear + claim).  `null()` provides a real slot with rec=0 — the claim succeeds
+            // and sets rec=1.
+            crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _) => {
+                Some(self.database.null())
+            }
+            // Vector body's `v = []` does NOT OpDatabase var_v; it expects rec != 0 (else
+            // pre_alloc_vector is a no-op, leaving the vector empty — probe 59 INT would read
+            // seq[0] as null).  Allocate a fresh store with a properly-claimed vector record.
+            crate::data::Type::Vector(elm_tp, _) => {
+                let elm_name = elm_tp.name(data);
+                let tp_name = format!("main_vector<{elm_name}>");
+                let tp_id = self.database.name(&tp_name);
+                if tp_id == u16::MAX {
+                    return Some(self.database.null());
+                }
+                let sz = u32::from(self.database.size(tp_id));
+                let r = self.database.database(sz);
+                self.database.allocations[r.store_nr as usize].set_known_type(tp_id);
+                self.database
+                    .store_mut(&r)
+                    .set_u32_raw(r.rec, 4, u32::from(tp_id));
+                self.database.set_default_value(tp_id, &r);
+                Some(r)
+            }
+            _ => None,
+        }
     }
 
     /// `OpDropFnRef(fn_var)` — run the drop cascade of the closure record the fn-ref at
@@ -8591,9 +8602,30 @@ impl State {
             self.stack_high = self.stack_high.max(self.stack_pos);
             self.stack_pos = saved_sp;
         }
+        // A heap result is delivered through the callee's hidden return buffer, set up and
+        // recorded as `fn_call_ref_to` does for an interpreted fn-ref call — so the callee's
+        // own release (`release_fnref_bufs`) frees a buffer it did not hand back — at the
+        // depth the callee's frame will occupy.
+        let depth = u32::try_from(self.call_stack.len()).unwrap_or(u32::MAX);
+        let fnref_bufs_before = self.fnref_bufs.len();
+        let mut heap_bufs: Vec<DbRef> = Vec::new();
+        for a in def.attributes() {
+            if a.hidden
+                && !a.work_buffer
+                && let Some(b) = self.hidden_return_buffer(data, &a.typedef)
+            {
+                self.fnref_bufs.push((depth, b));
+                heap_bufs.push(b);
+            }
+        }
+        if !heap_bufs.is_empty() {
+            self.fnref_calls
+                .push((depth, self.database.stores_allocated));
+        }
         let push = |st: &mut Self| {
             let mut at = 0;
             let mut buf = 0;
+            let mut heap = 0;
             for a in def.attributes() {
                 if a.name == "__closure" {
                     st.put_stack(closure);
@@ -8602,6 +8634,11 @@ impl State {
                 if a.hidden && crate::native_gate::is_text_work_buffer(&a.typedef) {
                     st.put_stack(bufs[buf]);
                     buf += 1;
+                    continue;
+                }
+                if a.hidden && !a.work_buffer && heap < heap_bufs.len() {
+                    st.put_stack(heap_bufs[heap]);
+                    heap += 1;
                     continue;
                 }
                 let arg = args[at];
@@ -8635,6 +8672,25 @@ impl State {
             }
             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
             Type::Boolean => ret.scalar = i64::from(self.reenter_ret::<u8>(d_nr, pos, push)),
+            t if crate::data::is_dbref(t) => {
+                let r = self.reenter_ret::<DbRef>(d_nr, pos, push);
+                // The callee's release handed the store it returned one frame up, to the
+                // interpreter frame that called the library — but the compiled caller holds
+                // it now, and claims it when it was minted in the call (`cr_fnref_minted`).
+                // Left there too, both would free it.  A capture is claimed by neither.
+                let mut at = fnref_bufs_before.min(self.fnref_bufs.len());
+                while at < self.fnref_bufs.len() {
+                    if self.fnref_bufs[at].1.store_nr == r.store_nr {
+                        self.fnref_bufs.remove(at);
+                    } else {
+                        at += 1;
+                    }
+                }
+                // The borrowed-return marker is for the interpreter's next bind; this value
+                // binds in compiled code, which keeps its own (`FNREF_BORROWED`).
+                self.fnref_borrowed_return = None;
+                ret.dbref = r;
+            }
             _ => ret.scalar = self.reenter_ret::<i64>(d_nr, pos, push),
         }
         for b in bufs {

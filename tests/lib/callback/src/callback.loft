@@ -10,6 +10,19 @@ pub fn hold_and_call(f: fn(integer) -> integer, n: integer) -> integer {
 }
 pub fn twice_lib(x: integer) -> integer { x * 2 }
 pub fn label_with(f: fn(integer) -> text, n: integer) -> text { "[{f(n)}]" }
+pub fn rec_sum(f: fn(integer) -> Box2, n: integer) -> integer { p = f(n); p.a + p.b }
+pub fn vec_sum(f: fn(integer) -> vector<integer>, n: integer) -> integer {
+  s = 0;
+  for x in f(n) { s += x; }
+  s
+}
+pub fn keep_all(f: fn(integer) -> Box2, n: integer) -> integer {
+  ps: vector<Box2> = [];
+  for i in 0..n { ps += [f(i)]; }
+  t = 0;
+  for p in ps { t += p.b; }
+  t
+}
 pub fn shout(s: text) -> text { "{s}!" }
 pub fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
 pub fn apply_text(f: fn(text, integer) -> integer, s: text) -> integer { f(s, 3) }

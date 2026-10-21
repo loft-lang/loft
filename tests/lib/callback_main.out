@@ -6,4 +6,6 @@ returned 15 back 16
 loop 15
 par 606
 text [t8] [p9] [v3!] 6445
+closure 34 46
+heap 33 15 7 6 10 60 5497500
 holders 14

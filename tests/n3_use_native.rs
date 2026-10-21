@@ -154,7 +154,7 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 
 /// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where two
 /// public functions compile (`triple`, and `apply_inc`, which calls through a function
-/// value, @PLN199 C2) and one does not (`label`, whose function value returns a record the
+/// value, @PLN199 C2) and one does not (`label`, whose function value returns a `single` the
 /// compiled library cannot be called back with).  The gate splits the library silently —
 /// `label` stays interpreted — with no user-facing error and the script calling all alike.
 ///
@@ -234,7 +234,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     );
     assert!(
         !lib_rs.contains("loft_shared_n_label"),
-        "label (a record-returning function value) must NOT be dispatched native — it stays interpreted"
+        "label (a `single`-returning function value) must NOT be dispatched native — it stays interpreted"
     );
     assert!(
         !lib_rs.contains("loft_shared_n___lambda"),
@@ -253,10 +253,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 /// [`GATEFULL_INTERPRETED`] is what still runs interpreted, with the reason.  The list is
 /// exact: a step of the plan that compiles one more shape deletes its line here, and a
 /// function that silently drops back to the interpreter adds one and fails.
-const GATEFULL_INTERPRETED: &[(&str, &str)] = &[(
-    "n_local_lambda_rec",
-    "a call through a function value of a signature the interpreter cannot be called back with",
-)];
+const GATEFULL_INTERPRETED: &[(&str, &str)] = &[];
 
 /// The callable functions the trace counts for `gatefull`: its thirty-three non-generic `pub fn`s,
 /// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs

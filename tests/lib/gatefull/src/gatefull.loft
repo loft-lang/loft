@@ -55,8 +55,7 @@ pub fn local_lambda_text(x: integer) -> text {
     f = fn(a: integer) -> text { "n{a}" };
     f(x)
 }
-// A function value with a HEAP result, which the interpreter cannot be called back with (it
-// needs a return buffer): this one stays interpreted (`fnref::upcall_carries`).
+// A function value with a HEAP result: the call back hands the callee a return buffer.
 pub fn local_lambda_rec(x: integer) -> integer {
     f = fn(a: integer) -> Ck { Ck { k: a, v: a * 3 } };
     f(x).v

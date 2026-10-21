@@ -285,6 +285,28 @@ loft build and `rustc` is absent.
 - The trace guard asserts `n of n` with no per-function line.
 - NATIVE.md § N9's open row lists what remains, if anything.
 
+## Standing work — the remaining shapes, as needed
+
+Each shape below still declines, and runs interpreted: the answer is right, only slower.  None
+is scheduled.  One is lifted when a consumer or a profile meets it — the trace
+(`LOFT_TRACE_NATIVE_GATE=1`) names the function and the reason.
+
+| shape | where it declines |
+|---|---|
+| `&text`, `&vector`, `&(…)` parameters | `native_gate::is_ref_scalar` |
+| a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |
+| a tuple yield | `generator_crosses` |
+| a function value with a `&T` parameter, or a keyed-collection result | `fnref::upcall_carries` |
+
+The procedure, the one every step above followed:
+1. A `gatefull` function with the shape, a call in `gatefull_main.loft` with its value computed
+   by hand in `gatefull_main.out`, and the function added to `GATEFULL_INTERPRETED`
+   (`tests/n3_use_native.rs`) with its reason — the guard then pins the decline.
+2. Lift the decline at its home, and carry the shape through whatever the bridge, the
+   dispatcher or the call back needs; delete the line from `GATEFULL_INTERPRETED`.
+3. The parity guard on every mode (`tests/n3_parity.rs`), the store counts against the
+   interpreter, and the guard falsified by reverting the lift.
+
 ## Order
 
 A0 → A1, A2, B1, B2, E1 (each small and independent) → A3, A4 → C0 → C1 → C2 → D1 → D2 → D3 →

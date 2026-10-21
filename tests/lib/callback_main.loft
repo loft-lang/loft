@@ -13,6 +13,20 @@ fn fl(x: float, b: boolean) -> float { if b { x * 4.0 } else { 0.0 } }
 fn rec(b: Box2) -> integer { b.a * 10 + b.b }
 fn work(x: integer) -> integer { apply(churn, x) }
 fn tag(n: integer) -> text { "t{n * 2}" }
+fn fresh(n: integer) -> Box2 { Box2 { a: n, b: n * 10 } }
+fn nums(n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [i]; }
+  out
+}
+fn other(n: integer) -> vector<integer> { nums(n + 1) }
+// The store `fresh` returns is the compiled caller's, freed when `rec_sum` ends; the closure
+// record minted next may take its slot, and must survive `close_over`'s return.
+fn close_over(n: integer) -> fn(integer) -> integer {
+  x = rec_sum(fresh, n);
+  base = x;
+  fn(k: integer) -> integer { k + base }
+}
 fn via_lib(n: integer) -> text { shout("v{n}") }
 fn main() {
   println("hold {hold_and_call(churn, 5)}");
@@ -33,6 +47,14 @@ fn main() {
   tl = 0;
   for i in 0..1000 { tl += len(label_with(tag, i)); }
   println("text {label_with(tag, 4)} {label_with(tcap, 9)} {label_with(via_lib, 3)} {tl}");
+  held = Box2 { a: 7, b: 8 };
+  hcap = fn(n: integer) -> Box2 { held };
+  hl = 0;
+  for i in 0..1000 { hl += rec_sum(fresh, i) + vec_sum(nums, 3); }
+  cg = close_over(3);
+  ch = close_over(4);
+  println("closure {cg(1)} {ch(2)}");
+  println("heap {rec_sum(fresh, 3)} {rec_sum(hcap, 1)} {held.a} {vec_sum(nums, 4)} {vec_sum(other, 4)} {keep_all(fresh, 4)} {hl}");
   hs = [Holder { f: sq, v: 2 }, Holder { f: twice_lib, v: 5 }];
   println("holders {par_holders(hs)}");
 }

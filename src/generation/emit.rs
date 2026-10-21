@@ -2093,6 +2093,7 @@ impl Output<'_> {
             }
             Type::Float => "f64::from_bits(__ur.scalar as u64)",
             Type::Boolean => "(__ur.scalar as u8)",
+            t if crate::data::is_dbref(t) => "__ur.dbref",
             _ => "__ur.scalar",
         };
         write!(w, "{read} }}")
