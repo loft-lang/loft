@@ -2872,12 +2872,12 @@ impl Parser {
         // `@FR-Op-Def` — an `operator` whose name backs no form is refused in the second pass by
         // the name as written; its definition takes a private name so that it collides with
         // nothing first (`operator index(…)` met the stdlib's `index`, loft#2089).
-        let written_name = fn_name.clone();
-        let fn_name = if is_operator && !self.default && Self::backs_no_form(&fn_name) {
-            format!("__refused_operator_{fn_name}")
-        } else {
-            fn_name
-        };
+        let (fn_name, written_name) =
+            if is_operator && !self.default && Self::backs_no_form(&fn_name) {
+                (format!("__refused_operator_{fn_name}"), Some(fn_name))
+            } else {
+                (fn_name, None)
+            };
         // Marked or not: an unmarked `fn to_<t>` is what `as` names in its refusal (`@FR-Op-Mark`).
         if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
             self.data.user_operator_conversions = true;
@@ -3176,7 +3176,8 @@ impl Parser {
             Type::Void
         };
         if is_operator && !self.first_pass {
-            self.check_operator_definition(&written_name, &arguments, &result);
+            let written = written_name.as_deref().unwrap_or(&fn_name);
+            self.check_operator_definition(written, &arguments, &result);
         }
         if !is_operator && !self.first_pass && !self.default {
             self.report_retired_operator_function(&fn_name, &arguments);
