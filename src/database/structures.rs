@@ -488,7 +488,17 @@ impl Stores {
         let at = rec.pos + u32::from(k.position);
         self.store_mut(&rec).set_int(rec.rec, at, key);
         self.record_finish(data, &rec, parent_tp, field);
-        rec
+        self.filed(&rec)
+    }
+
+    /// Where `rec` lives after `record_finish` filed it: the inline hash entry its staged bytes
+    /// were copied into (`(Col-Inline)`), or `rec` itself.
+    #[must_use]
+    pub fn filed(&self, rec: &DbRef) -> DbRef {
+        match self.last_filed {
+            Some((staged, filed)) if staged == *rec => filed,
+            _ => *rec,
+        }
     }
 
     /// The constants a keyed field's entry needs, resolved where the emitter knows the field:
@@ -591,7 +601,7 @@ impl Stores {
         let text = store.set_str(key);
         store.set_u32_raw(rec.rec, at, text);
         self.record_finish(data, &rec, parent_tp, field);
-        rec
+        self.filed(&rec)
     }
 
     /**
@@ -1387,21 +1397,23 @@ impl Stores {
                     } => {
                         self.displace_keyed(data, &existing, tp, c, secondary);
                         displaced = Some(existing);
-                        hash::add(
+                        let filed = hash::add(
                             data,
                             rec,
                             &mut self.allocations,
                             &self.types[tp as usize].keys,
                         );
+                        self.last_filed = (filed != *rec).then_some((*rec, filed));
                     }
                     hash::Probed::Unknown => {
                         displaced = self.dedup_keyed(data, rec, tp, c, secondary);
-                        hash::add(
+                        let filed = hash::add(
                             data,
                             rec,
                             &mut self.allocations,
                             &self.types[tp as usize].keys,
                         );
+                        self.last_filed = (filed != *rec).then_some((*rec, filed));
                     }
                 }
             }

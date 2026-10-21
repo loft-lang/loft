@@ -441,6 +441,9 @@ pub struct Stores {
     /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
     /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
     pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
+    /// `(Col-Inline)` — the last staged entry `record_finish` copied into an inline hash, and
+    /// the entry it became ([`Stores::filed`]).
+    pub(crate) last_filed: Option<(DbRef, DbRef)>,
     /// `@FR-H-RefHome` — the copies [`Stores::evacuate`] made while a store is about to be
     /// freed: `((the record copied, the store it was copied into), the copy)`, so two holders
     /// in one store that named one record name one copy.  Forgotten when the copied record's
@@ -782,6 +785,7 @@ impl Clone for Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            last_filed: None,
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
@@ -1562,6 +1566,7 @@ impl Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            last_filed: None,
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: upgrade::Routines::new(),
