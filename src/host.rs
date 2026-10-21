@@ -276,6 +276,7 @@ impl Program {
     }
 
     /// The fill function of each (type, field) whose default the program must run.
+    /// Only [`Program::upgrade_file`] asks, which a build without `mmap` does not have.
     #[cfg(feature = "mmap")]
     fn upgrade_fills(&self) -> crate::database::Fills {
         let mut fills = crate::database::Fills::new();

@@ -260,6 +260,17 @@ part, kept), the growing pushes' copies, and the keep's shift on non-steady push
 order: the callee effects visible in `history_push` (inline or a keep summary), the rotate
 clause, the canonical hand-over, the stack shells.
 
+**`truncate_to` under the two rules, BUILT and measured (2026-10-21).**  The rotate clause:
+52.1 → 43.2 µs, **−17.1 %** (≈ 4.2× → ≈ 3.5×), hash unchanged, interleaved on one core; looped
+alone 1.01 → 0.85 s.  The hand price's −34 % also dropped the `truncate_to` call and `e`'s
+build, which the clause keeps (`truncate_to` is now 4 % of `history_push`, `rotate_into` 9 %).
+The canonical hand-over on truncating pushes measured a LOSS — −16.6 % with it against −17.1 %
+without, `history_push`'s own code 13.3 % → 18.5 % of the profile — and is not built: on the
+exact-size free lists a release then a claim of one plan already reuses the block, so a
+hand-over pays only where it also removes bookkeeping.  Not yet built: the stack shells
+(`(R-Apart)` for `Timeline` and `Stroke`, *est.* −5 %) and `e` built apart (*est.* −12–15 %),
+which together are the rest of the distance to ≈ 2.4×.
+
 **Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
 table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
 (`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection

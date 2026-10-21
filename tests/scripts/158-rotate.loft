@@ -12,8 +12,9 @@
 // `LOFT_NO_HAND_OVER=1` must answer the same.  Pinned by tests/hand_over_rotate.rs.
 //
 // @falsified-at: hand-measured (sabotage, 2026-10-21) — `rotate_into` with the slot rotate
-// removed failed c1, c3, c4 and c7 (the copy stayed first); `__nk` called as the plain
-// `drop_old` failed c1, c3, c4 and c7 (one element short, the cursor one lower).
+// removed failed c1, c3 and c7 (the copy stayed first; c4's one slot has nothing to move);
+// the `__nk` twin emitted WITH its keep failed c1, c3, c4 and c7 (the cursor off, elements
+// lost).
 
 struct P { q: integer, r: integer }
 struct M { q: integer }
@@ -202,4 +203,5 @@ fn main() {
   c7();
   c9();
   c12();
+  println("rotate ok");
 }

@@ -10919,15 +10919,22 @@ extern crate loft;"
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
-        // A twin's body asks for twins of either kind; until neither kind is left.
-        loop {
-            self.output_append_twins(w, program_store.as_ref())?;
-            let dest = self.output_dest_twins(w, program_store.as_ref())?;
-            let nk = self.output_nokeep_twins(w, program_store.as_ref())?;
-            if !self.output_vr_twins(w, program_store.as_ref())? && !dest && !nk {
-                return Ok(());
-            }
-        }
+        // A twin's body asks for twins of any kind; until no kind is left.
+        while self.output_twin_pass(w, program_store.as_ref())? {}
+        Ok(())
+    }
+
+    /// One pass over the twin kinds a twin's body may ask for, each kind run every pass:
+    /// `true` while a pass emitted a destination, `__nk` or view-return twin.
+    fn output_twin_pass(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        self.output_append_twins(w, program_store)?;
+        let dest = self.output_dest_twins(w, program_store)?;
+        let nokeep = self.output_nokeep_twins(w, program_store)?;
+        Ok(self.output_vr_twins(w, program_store)? || dest || nokeep)
     }
     /// The twins the view plans ask for beside `dnr`: the decode view's, the structure
     /// clause's, and the stream walks' (`@FR-R-StreamWalk`).
