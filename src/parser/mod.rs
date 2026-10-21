@@ -1346,6 +1346,11 @@ pub struct Parser {
     pub(crate) init_field_tracking: bool,
     /// #91: field names accessed via $ during the current init(expr) parse.
     pub(crate) init_field_deps: Vec<String>,
+    /// @PLN196 step 9 — the paths of the stored fields the field default being parsed reads
+    /// through `$` (`label`, `inner.label`), and each read already built with its path, so a
+    /// read of a read extends it.
+    pub(crate) default_paths: Vec<String>,
+    pub(crate) default_path_reads: Vec<(Value, String, u32)>,
     /// Whether the init(expr) being parsed mentions `$` at all.
     ///
     /// Separate from [`Self::init_field_deps`], which records the RESOLVED field a `$.x`
@@ -2044,6 +2049,8 @@ impl Parser {
             referenced_assigned: crate::fxhash::FxHashSet::default(),
             init_field_tracking: false,
             init_field_deps: Vec::new(),
+            default_paths: Vec::new(),
+            default_path_reads: Vec::new(),
             init_reads_record: false,
             dollar_record: None,
             upgrade_fills: false,

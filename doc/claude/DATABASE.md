@@ -185,6 +185,14 @@ refuses stores written before 2.0 (retiring the routine's older branches), and
 by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one*.
 A store that records no release passes the floor.
 
+`loft layout check` catches the move at the edit that loses it (`@FR-L-Upgrade-Source`):
+`loft layout accept` — and `loft package`, the release step of a library and of an application
+alike — records in the baseline
+(`layout.lock` beside `loft.toml`, committed with the release) which stored fields each computed field reads
+(`Item.count <- inner.label since 2.0`), and a later build that drops one of them is refused —
+*Inner.label is dropped, and 2.0 computes Item.count from it* — until the build has an
+`upgrade` routine for `Item` or `data_compatible_with` is `"2.0"` or later.
+
 #### What the file's SIZE and BYTES mean (loft#710)
 
 A persisted store used to be the arena's whole **capacity**, so its size said how

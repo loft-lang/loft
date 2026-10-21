@@ -708,8 +708,7 @@ impl Deriver<'_> {
                 format!(
                     "`{name}` loses {} and gains {} in one upgrade, which looks like a rename; \
                      keep the old field, give the new one a default that reads it \
-                     (`new: T = $.old`), upgrade, then remove the old one; or write \
-                     `fn upgrade(from: Version, old: <the old fields>, item: {name})`",
+                     (`new: T = $.old`), upgrade, then remove the old one",
                     dropped.join(", "),
                     added.join(", ")
                 ),

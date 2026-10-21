@@ -58,7 +58,16 @@ pub struct LayoutIdentity {
     /// program recorded none, in a version-1 sidecar and in a baseline.  Never part of the
     /// identity: two releases with one layout read each other's stores raw.
     pub version: String,
+    /// @PLN196 step 9 (`@FR-L-Upgrade-Source`) — in a project BASELINE only: per computed
+    /// field, the stored fields its default reads and the release that first recorded it,
+    /// one line each (`Item.count <- inner.label since 2.0`).  `loft layout check` refuses a
+    /// later release that drops one of them while older stores still need the value.  Empty
+    /// in a store's sidecar.
+    pub sources: String,
 }
+
+/// Where the default sources start, after the facts (a baseline only).
+const SOURCES_FENCE: &str = "--sources--\n";
 
 const SIDECAR_MAGIC: &str = "LOFT-DSCHEMA";
 /// Version 2 adds the `root=` header and the facts section after the dump; a version-1
@@ -84,6 +93,7 @@ impl LayoutIdentity {
             facts,
             slot: None,
             version: String::new(),
+            sources: String::new(),
         }
     }
 
@@ -121,6 +131,7 @@ impl LayoutIdentity {
             && self.facts.is_empty()
             && self.slot.is_none()
             && self.version.is_empty()
+            && self.sources.is_empty()
         {
             // Nothing version 2 adds: the version-1 text, byte for byte.
             return format!(
@@ -141,8 +152,13 @@ impl LayoutIdentity {
             use std::fmt::Write as _;
             let _ = writeln!(root_line, "version={}", self.version);
         }
+        let sources = if self.sources.is_empty() {
+            String::new()
+        } else {
+            format!("{SOURCES_FENCE}{}", self.sources)
+        };
         format!(
-            "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}{root_line}--\n{}{FACTS_FENCE}{}",
+            "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}{root_line}--\n{}{FACTS_FENCE}{}{sources}",
             self.layout_hash, self.dump, self.facts
         )
     }
@@ -183,6 +199,10 @@ impl LayoutIdentity {
         } else {
             (rest.to_string(), String::new())
         };
+        let (facts, sources) = match facts.split_once(SOURCES_FENCE) {
+            Some((f, s)) => (f.to_string(), s.to_string()),
+            None => (facts, String::new()),
+        };
         Some(LayoutIdentity {
             layout_hash: layout_hash?,
             dump,
@@ -191,6 +211,7 @@ impl LayoutIdentity {
             facts,
             slot,
             version,
+            sources,
         })
     }
 }
@@ -439,12 +460,24 @@ pub fn check_beside(
 // against a committed BASELINE and reports what an upgrade of a store written under it
 // would do, from the upgrade map (@PLN196, `crate::database::UpgradeMap`).
 
-/// The project's committed layout baseline — `.loft/layout.lock` beside
-/// `loft.toml`. The compiler diffs the current type table against it to detect a
-/// schema change; `accept` (a filled migration) rewrites it.
+/// The project's committed layout baseline — `layout.lock` beside `loft.toml`, as
+/// `loft.lock` is.  The compiler diffs the current type table against it to detect a schema
+/// change; `accept` rewrites it.  It was `.loft/layout.lock`, inside the directory every loft
+/// command fills with caches and every project ignores, so a baseline could never be
+/// committed; [`read_baseline`] still reads one there when the new file is absent.
 #[must_use]
 pub fn baseline_path(project_dir: &Path) -> PathBuf {
-    project_dir.join(".loft").join("layout.lock")
+    project_dir.join("layout.lock")
+}
+
+/// The baseline's text: [`baseline_path`], else the earlier `.loft/layout.lock`.
+#[must_use]
+pub fn read_baseline(project_dir: &Path) -> Option<String> {
+    crate::file_access::read_to_string(baseline_path(project_dir))
+        .or_else(|_| {
+            crate::file_access::read_to_string(project_dir.join(".loft").join("layout.lock"))
+        })
+        .ok()
 }
 
 impl LayoutIdentity {
@@ -467,11 +500,14 @@ pub fn check_against_baseline(
     project_dir: &Path,
     current: &LayoutIdentity,
 ) -> std::io::Result<SchemaVerdict> {
-    check_file(
-        &baseline_path(project_dir),
-        current,
-        &crate::database::Release::default(),
-    )
+    let path = baseline_path(project_dir);
+    let legacy = project_dir.join(".loft").join("layout.lock");
+    let read = if !crate::file_access::exists(&path) && crate::file_access::exists(&legacy) {
+        legacy
+    } else {
+        path
+    };
+    check_file(&read, current, &crate::database::Release::default())
 }
 
 /// Leads every computed `layout_schema::nullability_schema` so "computed, no nullable
@@ -492,6 +528,7 @@ mod tests {
             facts: String::new(),
             slot: None,
             version: String::new(),
+            sources: String::new(),
         }
     }
 
@@ -505,6 +542,7 @@ mod tests {
             facts: String::new(),
             slot: None,
             version: String::new(),
+            sources: String::new(),
         }
     }
 

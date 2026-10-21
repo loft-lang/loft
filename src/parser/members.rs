@@ -77,6 +77,55 @@ impl Parser {
     }
 
     pub(super) fn get_field(&mut self, d_nr: u32, f_nr: usize, code: Value) -> Value {
+        // @PLN196 step 9 — while a field default is parsed, the path of every stored field it
+        // reads through `$` (`inner.label`), so `loft layout accept` can record where a
+        // computed field's value comes from (`@FR-L-Upgrade-Source`).
+        let base = if self.init_field_tracking && f_nr != usize::MAX {
+            if code == Value::Var(0) {
+                Some(String::new())
+            } else {
+                // The receiver may wrap the read it continues (a conversion, a null guard).
+                self.default_path_reads
+                    .iter()
+                    .rev()
+                    .find(|(v, _, of)| *of == d_nr && Self::holds_node(&code, v))
+                    .map(|(_, p, _)| p.clone())
+            }
+        } else {
+            None
+        };
+        let read = self.get_field_read(d_nr, f_nr, code);
+        if let Some(base) = base {
+            let name = self.data.attr_name(d_nr, f_nr);
+            let path = if base.is_empty() {
+                name
+            } else {
+                format!("{base}.{name}")
+            };
+            if !self.default_paths.contains(&path) {
+                self.default_paths.push(path.clone());
+            }
+            // The struct the read's value is, so only a read OF it extends the path.
+            let of = match self.data.attr_type(d_nr, f_nr).base() {
+                Type::Reference(d, _) => *d,
+                _ => u32::MAX,
+            };
+            self.default_path_reads.push((read.clone(), path, of));
+        }
+        read
+    }
+
+    /// Is `needle` `v` or a node anywhere inside it?
+    fn holds_node(v: &Value, needle: &Value) -> bool {
+        if v == needle {
+            return true;
+        }
+        let mut found = false;
+        v.for_each_child(&mut |c| found |= !found && Self::holds_node(c, needle));
+        found
+    }
+
+    fn get_field_read(&mut self, d_nr: u32, f_nr: usize, code: Value) -> Value {
         // @PLN165 D5 — a field of an OPEN instance has no position until a monomorph names
         // the instance; the read is deferred to it.  So is one a generic struct's OWN
         // declaration reads (a field `assert`, a default over `$`), bound to each instance

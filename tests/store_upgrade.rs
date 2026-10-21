@@ -1669,3 +1669,248 @@ fn cell_a_conversion_refused_part_way_leaves_nothing_owed() {
     }
     let _ = loft::file_access::remove_dir_all(&dir);
 }
+
+/// The in-process case: a live rebuild checks the next build against the running world, whose
+/// sidecar records the EXACT release of the instance that runs it.  The same decision as a
+/// load: built as a later release with a routine, the world converts; without one the drop and
+/// the add are refused naming that release; rebuilt as the SAME release (the edit loop) the
+/// routine does not run, and the one-step rule stands.  `--check` on both backends.
+#[test]
+fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
+    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"abcd\" };\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let dir = write_store_as("rebuild_release", "1.0", writer);
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        side.contains("\nversion=1.0\n"),
+        "the world records its release:\n{side}"
+    );
+    let check = |version: &str, src: &str, native: bool| -> (i32, String) {
+        manifest(&dir, version, "");
+        loft::file_access::write(dir.join("next.loft"), src).unwrap();
+        let mut args = vec!["--check"];
+        if native {
+            args.push("--native");
+        }
+        args.push("next.loft");
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args(&args)
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_CHECK_WORLD", dir.join("a.store.dschema"))
+            .output()
+            .expect("loft runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let types = "struct W { events: integer, label: integer }\n";
+    let routine = "struct WOld { name: text }\nfn upgrade(from: Version, old: WOld, item: W) { item.label = len(old.name) }\n";
+    let main = "fn main() {\n  w = W { events: 0 };\n  println(\"{w.events}\");\n}\n";
+    for native in [false, true] {
+        let (code, err) = check("2.0", &format!("{types}{routine}{main}"), native);
+        assert!(
+            code == 0 && err.contains("the running world converts to this build"),
+            "native={native}: a later release with a routine takes over ({code}):\n{err}"
+        );
+        let (code, err) = check("2.0", &format!("{types}{main}"), native);
+        assert!(
+            code == 1
+                && err.contains("the store was written by 1.0")
+                && err.contains("looks like a rename"),
+            "native={native}: without a routine the build is refused ({code}):\n{err}"
+        );
+        let (code, err) = check("1.0", &format!("{types}{routine}{main}"), native);
+        assert!(
+            code == 1 && err.contains("looks like a rename") && !err.contains("written by"),
+            "native={native}: the same release keeps the one-step rule ({code}):\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+// ── Step 9: the baseline records where a computed field's value comes from ─────────────────
+//
+// `loft layout accept` writes, beside the layout, the stored fields each computed field's
+// default reads and the release that started computing it (`@FR-L-Upgrade-Source`).  A later
+// release that drops one of them is refused by `loft layout check` — at the edit, before any
+// store meets it — unless an `upgrade` routine for the struct or a floor at that release says
+// what happens to older stores.
+
+/// `loft layout <sub> prog.loft` in `dir` as release `version` with extra manifest lines.
+fn layout_as(
+    dir: &std::path::Path,
+    sub: &str,
+    version: &str,
+    extra: &str,
+    src: &str,
+) -> (i32, String) {
+    manifest(dir, version, extra);
+    loft::file_access::write(dir.join("prog.loft"), src).unwrap();
+    let (code, out, err) = run_loft(dir, &["layout", sub, "prog.loft"]);
+    (code, format!("{out}{err}"))
+}
+
+const SRC_V2: &str = "struct Inner { label: text, size: integer }\nstruct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
+const SRC_V3: &str = "struct Inner { size: integer }\nstruct Item { id: integer, note: text, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
+
+/// Cases 2 and 7: the sources are recorded, and a drop across records is refused naming the
+/// dropped field, the computed one and the release; the in-record case (`note`, cell below)
+/// is the same check.
+#[test]
+fn layout_check_refuses_a_dropped_source() {
+    let dir = cell_dir("src_cross");
+    let (code, out) = layout_as(&dir, "accept", "2.0", "", SRC_V2);
+    assert_eq!(code, 0, "{out}");
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock")).unwrap();
+    assert!(
+        lock.contains("\nversion=2.0\n")
+            && lock.contains(
+                "--sources--\nItem.count <- inner.label since 2.0\nItem.tag <- note since 2.0\n"
+            ),
+        "the baseline records the sources:\n{lock}"
+    );
+    let (code, out) = layout_as(&dir, "check", "3.0", "", SRC_V3);
+    assert!(
+        code == 1
+            && out.contains("refused: Inner.label is dropped, and 2.0 computes Item.count from it")
+            && out.contains("fn upgrade(from: Version, old: <the old fields>, item: Item)")
+            && out.contains("raise `data_compatible_with` to \"2.0\"")
+            && !out.contains("Item.tag from it"),
+        "({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 1, and cases 3 and 4: the in-record drop is refused too, and each cure clears it — a
+/// routine for the struct, or a floor at the release that started computing the field.
+#[test]
+fn layout_check_dropped_source_is_cured_by_a_routine_or_the_floor() {
+    let dir = cell_dir("src_cures");
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", SRC_V2).0, 0);
+    let v3 = "struct Inner { label: text, size: integer }\nstruct Item { id: integer, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
+    let (code, out) = layout_as(&dir, "check", "3.0", "", v3);
+    assert!(
+        code == 1
+            && out.contains("refused: Item.note is dropped, and 2.0 computes Item.tag from it"),
+        "in-record ({code})\n{out}"
+    );
+    let routine = "struct ItemOld { note: text }\nfn upgrade(from: Version, old: ItemOld, item: Item) { if from < \"2.0\" { item.tag = len(old.note) } }\n";
+    let (code, out) = layout_as(&dir, "check", "3.0", "", &format!("{v3}{routine}"));
+    assert!(
+        code == 0 && !out.contains("refused"),
+        "a routine cures it ({code})\n{out}"
+    );
+    let (code, out) = layout_as(&dir, "check", "3.0", "data_compatible_with = \"2.0\"\n", v3);
+    assert!(
+        code == 0 && !out.contains("refused"),
+        "the floor cures it ({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 5: a line keeps the release that FIRST recorded it across later accepts, so the floor
+/// is compared with when the value started being computed; and case 6, a drop nothing was
+/// computed from is a plain removal.
+#[test]
+fn layout_check_source_release_carries_forward() {
+    let dir = cell_dir("src_since");
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", SRC_V2).0, 0);
+    assert_eq!(layout_as(&dir, "accept", "2.3", "", SRC_V2).0, 0);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock")).unwrap();
+    assert!(
+        lock.contains("\nversion=2.3\n") && lock.contains("Item.count <- inner.label since 2.0\n"),
+        "the release a line started in is kept:\n{lock}"
+    );
+    let (code, out) = layout_as(
+        &dir,
+        "check",
+        "3.0",
+        "data_compatible_with = \"2.3\"\n",
+        SRC_V3,
+    );
+    assert!(
+        code == 0 && !out.contains("refused"),
+        "floor 2.3 >= 2.0 ({code})\n{out}"
+    );
+    let (code, out) = layout_as(
+        &dir,
+        "check",
+        "3.0",
+        "data_compatible_with = \"1.5\"\n",
+        SRC_V3,
+    );
+    assert!(
+        code == 1 && out.contains("2.0 computes Item.count"),
+        "floor 1.5 < 2.0 ({code})\n{out}"
+    );
+    // Dropping `size`, which no default reads, is a plain removal.
+    let v3b = "struct Inner { label: text }\nstruct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
+    let (code, out) = layout_as(&dir, "check", "3.0", "", v3b);
+    assert!(
+        code == 0 && out.contains("Inner.size removed") && !out.contains("refused"),
+        "an unrelated drop ({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// A library release records its baseline: `loft package` writes `layout.lock` beside
+/// `loft.toml` — where it is committed, unlike the cache directory `.loft/` — with the
+/// release and the sources, before the tarball; `--tarball-only`, a byte comparison, writes
+/// nothing.
+#[test]
+fn loft_package_records_the_release_baseline() {
+    let dir = cell_dir("pkg_baseline");
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"cellpkg\"\nversion = \"2.0\"\nloft = \">=0.8\"\n",
+    )
+    .unwrap();
+    loft::file_access::create_dir_all(dir.join("src")).unwrap();
+    loft::file_access::write(
+        dir.join("src/cellpkg.loft"),
+        "pub struct Item { pub id: integer, pub label: text, pub count: integer = len($.label) }\n",
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["package", "--tarball-only", "."]);
+    assert_eq!(code, 0, "tarball-only:\n{out}\n{err}");
+    assert!(
+        !loft::file_access::exists(dir.join("layout.lock")),
+        "a byte comparison records nothing"
+    );
+    let _ = run_loft(&dir, &["package", "."]);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock"))
+        .unwrap_or_else(|_| panic!("no layout.lock beside loft.toml"));
+    assert!(
+        lock.contains("\nversion=2.0\n")
+            && lock.contains("--sources--\nItem.count <- label since 2.0\n"),
+        "the release's baseline:\n{lock}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// An application releases the same way: a manifest with no `[library]` section, its program
+/// at the default entry, `loft package` records the baseline of the types that program reaches.
+#[test]
+fn loft_package_records_an_applications_baseline() {
+    let dir = cell_dir("app_baseline");
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"cellgame\"\nversion = \"0.0.2\"\nloft = \">=0.8\"\n",
+    )
+    .unwrap();
+    loft::file_access::create_dir_all(dir.join("src")).unwrap();
+    loft::file_access::write(
+        dir.join("src/cellgame.loft"),
+        "struct Unit { id: integer, hp: integer, hp_max: integer = $.hp }\nfn main() { u = Unit { id: 1, hp: 5 }; println(\"{u.hp_max}\"); }\n",
+    )
+    .unwrap();
+    let _ = run_loft(&dir, &["package", "."]);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock"))
+        .unwrap_or_else(|_| panic!("no layout.lock beside the application's loft.toml"));
+    assert!(
+        lock.contains("\nversion=0.0.2\n") && lock.contains("Unit.hp_max <- hp since 0.0.2\n"),
+        "the application's baseline:\n{lock}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}

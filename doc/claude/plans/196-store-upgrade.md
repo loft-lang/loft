@@ -82,16 +82,27 @@ load" for a change every loader in fact refuses.
   them; `loft layout upgrade` calls them through the host.  `old` is filled by name into a
   scratch store released after the drain.  `Version` is a stdlib struct ordered by number,
   compared against a text with `operator compare`.  Rules: `(L-Release)`,
-  `(L-Upgrade-Routine)`, `(L-Upgrade-Old)` in formal/layout.md.  Guards: the `cell_a_*`
-  step-9 cells in `tests/store_upgrade.rs`.  Two readings of the design that differ from its
-  wording, for the owner: (1) the routine runs for every store older than the program, not
+  `(L-Upgrade-Routine)`, `(L-Upgrade-Old)` in formal/layout.md.  A live rebuild's check
+  (`world_upgrade_plan`) takes the same decision from the release the running world
+  records — the exact old version — so a build it admits is a swap that converts.  Guards:
+  the `cell_a_*` step-9 cells in `tests/store_upgrade.rs`.  Two readings of the design that
+  differ from its wording (owner, 2026-10-21: no preference, provided in-process
+  replacements are right): (1) the routine runs for every store older than the program, not
   only those older than "the previous release" — the program has no record of which release
   that was, and the routine's own `from` branches decide; (2) a field of `old` the stored
   record lacks takes its default (what a constructor writes for an omitted field) rather than a refusal, because a refusal would refuse every store
   written after that field was dropped (a v3 store opened by v4 with a routine that reads
-  `label` for `from < 2.0`).  Not covered: a value moved ACROSS records (a default reading
-  `$.inner.x`, then `Inner.x` dropped) is not refused without a routine, since the drop and
-  the add are in different records.
+  `label` for `from < 2.0`).  A value an intermediate release computed and the next one drops — in one record or across
+  records (`$.inner.x`) — cannot be seen in the store; `loft layout accept` records what each
+  computed field reads and the release that started it (`--sources--` in the baseline), and
+  `loft layout check` refuses the drop unless a routine for that struct or a floor at that
+  release covers it (`(L-Upgrade-Source)`, the `layout_check_*` cells).  The baseline moved to `layout.lock` beside `loft.toml`: at `.loft/layout.lock` it sat in
+  the cache directory every project ignores, so it could never be committed (the old path is
+  still read).  A library release records it — `loft package` runs `accept` on the entry
+  before the tarball (owner, 2026-10-21: written at release time), and an APPLICATION
+  releases through the same command (owner, 2026-10-22): its manifest is the same `[package]`
+  shape, so `loft package` records the baseline of the types its entry program reaches.  A
+  stored type only a side program declares is not recorded.
 
 ## Goal
 

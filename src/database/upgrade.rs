@@ -202,12 +202,7 @@ impl Stores {
         owe: bool,
         (routines, from): (&Routines, &str),
     ) -> Result<(u16, PendingFills, Option<u16>), String> {
-        let roots: Vec<u16> = std::iter::once(new_root)
-            .chain(routines.values().map(|r| r.old))
-            .collect();
-        let new = self.layout_descriptor(&roots);
-        let lift: BTreeMap<u16, u16> = routines.iter().map(|(t, r)| (*t, r.old)).collect();
-        let map = UpgradeMap::derive_with(old, old_root, &new, new_root, whole_copies, &lift);
+        let map = self.upgrade_map(old, old_root, new_root, whole_copies, routines);
         if let Some(r) = map.refusals.first() {
             return Err(format!("{}: {}", r.path, r.reason));
         }
@@ -1134,18 +1129,10 @@ impl Stores {
         }
         // A store older than this program goes through the routines; one the program wrote,
         // or a later release wrote, is converted by name alone.
-        let none = Routines::new();
-        let routines = if self.release().is_newer_than(&id.version) {
-            routines
-        } else {
-            &none
-        };
-        let roots: Vec<u16> = std::iter::once(new_root)
-            .chain(routines.values().map(|r| r.old))
-            .collect();
-        let new = self.layout_descriptor(&roots);
-        let lift: BTreeMap<u16, u16> = routines.iter().map(|(t, r)| (*t, r.old)).collect();
-        let changes = UpgradeMap::derive_with(&old, old_root, &new, new_root, true, &lift).changes;
+        let routines = &self.routines_for(&id.version, routines);
+        let changes = self
+            .upgrade_map(&old, old_root, new_root, true, routines)
+            .changes;
         let store = crate::store::Store::from_bytes(bytes)
             .ok_or_else(|| format!("{what} is not a store image"))?;
         let old_slot = self.adopt_store(store);
@@ -1162,13 +1149,7 @@ impl Stores {
         );
         drop(self.take_store(old_slot));
         self.release_slot(old_slot);
-        let (new_slot, pending, scratch) = result.map_err(|e| {
-            if id.version.is_empty() || !self.release().is_newer_than(&id.version) {
-                e
-            } else {
-                format!("the store was written by {}: {e}", id.version)
-            }
-        })?;
+        let (new_slot, pending, scratch) = result.map_err(|e| self.refusal_for(&id.version, e))?;
         // The new image's references name the slot it was built in, and it is now this
         // release's store.
         let mut current = current;
@@ -1192,8 +1173,13 @@ impl Stores {
     /// # Errors
     /// Why the world cannot be carried into this program: a layout this build cannot read, a
     /// world type this program does not define, or the upgrade map's first refusal.
-    pub fn world_upgrade_plan(&self, sidecar: &str) -> Result<WorldPlan, String> {
+    pub fn world_upgrade_plan(
+        &self,
+        sidecar: &str,
+        routines: &Routines,
+    ) -> Result<WorldPlan, String> {
         let (id, old, old_root) = recorded_layout(sidecar, "the running world")?;
+        self.release().admits(&id.version)?;
         let name = old.names[&old_root].clone();
         let new_root = *self.names.get(&name).ok_or_else(|| {
             format!("the running world is a `{name}`, which this build does not define")
@@ -1202,12 +1188,59 @@ impl Stores {
         if current.layout_hash == id.layout_hash && current.dump == id.dump {
             return Ok(WorldPlan::Same);
         }
-        let new = self.layout_descriptor(&[new_root]);
-        let map = UpgradeMap::derive(&old, old_root, &new, new_root);
+        // The world records the release of the instance that runs it: the same decision as a
+        // load of a store that release wrote (@FR-L-Upgrade-Routine).
+        let routines = self.routines_for(&id.version, routines);
+        let map = self.upgrade_map(&old, old_root, new_root, true, &routines);
         if let Some(r) = map.refusals.first() {
-            return Err(format!("{}: {}", r.path, r.reason));
+            return Err(self.refusal_for(&id.version, format!("{}: {}", r.path, r.reason)));
         }
         Ok(WorldPlan::Converts(map.changes))
+    }
+
+    /// `@FR-L-Upgrade-Routine` — the routines that run on a store whose recorded release is
+    /// `written`: every one for a store older than this program (or one that records no
+    /// release), none for a store this release or a later one wrote.  The ONE home of that
+    /// decision, which the converter, the loaders and a live rebuild's check all ask.
+    fn routines_for(&self, written: &str, routines: &Routines) -> Routines {
+        if self.release().is_newer_than(written) {
+            routines.clone()
+        } else {
+            Routines::new()
+        }
+    }
+
+    /// The upgrade map from the layout `old` (rooted at `old_root`) to this program's
+    /// `new_root`, with each of `routines` admitting its record type's lost-and-gained fields
+    /// and filling its `old` struct.
+    fn upgrade_map(
+        &self,
+        old: &LayoutDesc,
+        old_root: u16,
+        new_root: u16,
+        whole_copies: bool,
+        routines: &Routines,
+    ) -> UpgradeMap {
+        let roots: Vec<u16> = std::iter::once(new_root)
+            .chain(routines.values().map(|r| r.old))
+            .collect();
+        let new = self.layout_descriptor(&roots);
+        let lift: BTreeMap<u16, u16> = routines.iter().map(|(t, r)| (*t, r.old)).collect();
+        UpgradeMap::derive_with(old, old_root, &new, new_root, whole_copies, &lift)
+    }
+
+    /// A conversion's refusal `e` for a store written by release `written`: one older than
+    /// this program names that release and the routine that could carry it across.
+    fn refusal_for(&self, written: &str, e: String) -> String {
+        if written.is_empty() || !self.release().is_newer_than(written) {
+            e
+        } else {
+            format!(
+                "the store was written by {written}: {e}; a routine \
+                 `fn upgrade(from: Version, old: <the old fields>, item: <the type>)` can carry \
+                 it across"
+            )
+        }
     }
 
     /// `@FR-L-Sound` — `store_load` of a file written under an older layout (@PLN196, open

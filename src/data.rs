@@ -5726,6 +5726,12 @@ pub struct Data {
     /// `operator` or not; `x as T` asks for one only then, so a program without conversions
     /// pays nothing at its casts.
     pub user_operator_conversions: bool,
+    /// @PLN196 step 9 (`@FR-L-Upgrade-Source`) — per (struct, field) whose default reads the
+    /// record, the paths of the stored fields it reads (`inner.label`).  What `loft layout
+    /// accept` records beside the baseline, so a later release that drops one is told which
+    /// computed field it came from.  Not part of a program image: only the layout command
+    /// reads it, from a fresh parse.
+    pub default_sources: std::collections::BTreeMap<(String, String), Vec<String>>,
     /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
     /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
     /// forever.  A refused program does not run, so this needs no place in the image.
@@ -6470,6 +6476,7 @@ impl Data {
             source: STD_SOURCE,
             value_structs: HashSet::new(),
             user_operator_conversions: false,
+            default_sources: std::collections::BTreeMap::new(),
             refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),

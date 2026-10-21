@@ -295,26 +295,6 @@ impl Program {
         fills
     }
 
-    /// @PLN196 step 9 — each `upgrade` routine the program wrote, by the record type it
-    /// converts.
-    #[cfg(feature = "mmap")]
-    fn upgrade_routines(&self) -> crate::database::Routines {
-        parser::Parser::upgrade_routine_defs(&self.data)
-            .into_iter()
-            .map(|r| {
-                let kt = |d: u32| self.data.def(d).known_type();
-                (
-                    kt(r.item),
-                    crate::database::Routine {
-                        old: kt(r.old),
-                        version: kt(r.version),
-                        name: parser::Parser::upgrade_routine_name(&self.data, r.item),
-                    },
-                )
-            })
-            .collect()
-    }
-
     /// @PLN196 — upgrade the store file at `path` into this program's layout, running the
     /// program's own default for every added field whose default is not a constant: per
     /// upgraded record, after the fields it carried, in declaration order — as a constructor
@@ -328,7 +308,7 @@ impl Program {
         path: &std::path::Path,
     ) -> Result<crate::database::FileUpgrade, String> {
         let fills = self.upgrade_fills();
-        let routines = self.upgrade_routines();
+        let routines = parser::Parser::upgrade_routines(&self.data);
         let Some((job, pending)) = self
             .state
             .database

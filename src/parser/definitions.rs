@@ -7498,6 +7498,26 @@ impl Parser {
     /// has no frame, and replayed at every construction site.
     ///
     /// Answers whether a default was consumed.
+    /// `@FR-L-Upgrade-Source` — keep the stored fields field `a_name` of `d_nr`'s default
+    /// reads (`Data::default_sources`): the paths the parse of the default met, less any that
+    /// is only the way to a longer one.  Pass 2's answer replaces pass 1's.
+    fn record_default_sources(&mut self, d_nr: u32, a_name: &str) {
+        let paths = std::mem::take(&mut self.default_paths);
+        self.default_path_reads.clear();
+        let mut leaves: Vec<String> = paths
+            .iter()
+            .filter(|p| !paths.iter().any(|q| q.starts_with(&format!("{p}."))))
+            .cloned()
+            .collect();
+        leaves.sort();
+        let key = (self.data.def(d_nr).name().to_string(), a_name.to_string());
+        if leaves.is_empty() {
+            self.data.default_sources.remove(&key);
+        } else {
+            self.data.default_sources.insert(key, leaves);
+        }
+    }
+
     pub(crate) fn parse_stored_default(
         &mut self,
         d_nr: u32,
@@ -7512,6 +7532,8 @@ impl Parser {
         // for circular-init detection (same as init(expr) path).
         self.init_field_tracking = true;
         self.init_field_deps.clear();
+        self.default_paths.clear();
+        self.default_path_reads.clear();
         self.init_reads_record = false;
         // @PLN22 Phase 1 — hint the field's enum so a bare variant
         // default (`level: Level = Warning`) resolves against the
@@ -7538,6 +7560,7 @@ impl Parser {
                 || (self.unresolved_names, self.unresolved_types) != unresolved_before);
         self.expected = Type::Unknown(0);
         self.init_field_tracking = false;
+        self.record_default_sources(d_nr, a_name);
         if a_type.is_unknown() {
             *a_type = tp.clone();
         }
@@ -8447,14 +8470,14 @@ impl Parser {
         if single != u32::MAX && !candidates.contains(&single) {
             candidates.push(single);
         }
-        let strukt = |t: &Type| match t {
+        let strukt = |t: &Type| match t.base() {
             Type::Reference(d, _) if data.def_type(*d) == DefType::Struct => Some(*d),
             _ => None,
         };
         let mut out = Vec::new();
         for r in candidates {
             let def = data.def(r);
-            if def.def_type() != DefType::Function || !matches!(def.returned(), Type::Void) {
+            if def.def_type() != DefType::Function || !matches!(def.returned().base(), Type::Void) {
                 continue;
             }
             let [from, old, item] = def.attributes() else {
@@ -8471,7 +8494,7 @@ impl Parser {
                 .def(version)
                 .attributes()
                 .iter()
-                .filter(|a| !matches!(a.typedef, Type::Routine(_)))
+                .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
                 .map(|a| a.name.as_str())
                 .collect();
             if data.def(version).name() != "Version" || fields != ["major", "minor", "patch"] {
@@ -8485,6 +8508,26 @@ impl Parser {
             });
         }
         out
+    }
+
+    /// Each `upgrade` routine by the record type it converts, as the store layer takes them:
+    /// the converter on a load, `loft layout upgrade`, and a live rebuild's world check.
+    #[must_use]
+    pub fn upgrade_routines(data: &crate::data::Data) -> crate::database::Routines {
+        Self::upgrade_routine_defs(data)
+            .into_iter()
+            .map(|r| {
+                let kt = |d: u32| data.def(d).known_type();
+                (
+                    kt(r.item),
+                    crate::database::Routine {
+                        old: kt(r.old),
+                        version: kt(r.version),
+                        name: Self::upgrade_routine_name(data, r.item),
+                    },
+                )
+            })
+            .collect()
     }
 
     /// The function an `upgrade` routine for struct `item` is called through:

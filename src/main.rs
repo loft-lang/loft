@@ -6672,7 +6672,7 @@ fn parse_baseline(
 
 /// @PLN97 Phase F — `loft layout <accept|check> <file>`: the compiler migration
 /// aid as an explicit, opt-in command (a normal build pays nothing). `accept`
-/// records the program's current layout as the baseline (`.loft/layout.lock`);
+/// records the program's current layout as the baseline (`layout.lock` beside `loft.toml`);
 /// `check` diffs the current layout against it and, on an actionable change,
 /// prints the diagnostic + writes a migration outline to fill.
 fn run_layout_command(sub: &str, file: &str) -> i32 {
@@ -6693,14 +6693,29 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
 
     let roots = loft::layout_schema::program_roots(&p.data);
     // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
-    let identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
-    let project = abs
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .to_path_buf();
+    let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
+    // The baseline sits beside `loft.toml`; a program with no manifest keeps it beside itself.
+    let project =
+        loft::resolution_scope::project_root(&abs.to_string_lossy()).unwrap_or_else(|| {
+            abs.parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf()
+        });
+    let release = loft::database::Release::of_source_dir(&project.to_string_lossy());
 
     match sub {
-        "accept" => match identity.write_baseline(&project) {
+        // @PLN196 step 9 — the baseline records the release it was accepted as and where each
+        // computed field's value comes from, carrying forward when each line first appeared.
+        "accept" => match {
+            let previous = ss::read_baseline(&project)
+                .and_then(|t| ss::LayoutIdentity::from_sidecar(&t))
+                .map(|id| id.sources)
+                .unwrap_or_default();
+            identity.version.clone_from(&release.version);
+            identity.sources =
+                loft::layout_schema::render_sources(&p.data, &previous, &release.version);
+            identity.write_baseline(&project)
+        } {
             Ok(()) => {
                 println!(
                     "loft layout: recorded baseline ({} user types)",
@@ -6721,7 +6736,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             // Nothing changed, so nothing to say.
             Ok(ss::SchemaVerdict::Match) => 0,
             Ok(ss::SchemaVerdict::Changed(_)) => {
-                layout_upgrade_report(&project, &p.database, &roots, file)
+                layout_upgrade_report(&project, &p.database, &p.data, &roots, file, &release)
             }
             // A baseline is read with no release floor.
             Ok(ss::SchemaVerdict::Refused(why)) => {
@@ -6729,9 +6744,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 1
             }
             Ok(ss::SchemaVerdict::Unreadable) => {
-                eprintln!(
-                    "loft layout: baseline unreadable — delete `.loft/layout.lock` and re-accept."
-                );
+                eprintln!("loft layout: baseline unreadable — delete `layout.lock` and re-accept.");
                 1
             }
             Err(e) => {
@@ -6743,6 +6756,26 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             eprintln!("loft layout: unknown subcommand `{other}` (use `accept` or `check`)");
             1
         }
+    }
+}
+
+/// `loft package`'s baseline step: `loft layout accept` on the package's entry, when it
+/// declares types.  A failure is reported and does not stop the release.
+#[cfg(feature = "registry")]
+fn record_release_baseline(pkg_path: &std::path::Path) {
+    let Some(m) = loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy())
+    else {
+        return;
+    };
+    let Some(entry) = m.entry_or_default() else {
+        return;
+    };
+    let entry = pkg_path.join(entry);
+    if !fa::exists(&entry) {
+        return;
+    }
+    if run_layout_command("accept", &entry.to_string_lossy()) != 0 {
+        eprintln!("loft package: the layout baseline was not recorded");
     }
 }
 
@@ -6813,23 +6846,26 @@ fn upgrade_each(program: &mut loft::host::Program, stores: &[String]) -> i32 {
 fn layout_upgrade_report(
     project: &std::path::Path,
     db: &loft::database::Stores,
+    data: &loft::data::Data,
     roots: &[u16],
     file: &str,
+    release: &loft::database::Release,
 ) -> i32 {
     use loft::database::{LayoutDesc, UpgradeMap};
-    let text = fa::read_to_string(loft::schema_sidecar::baseline_path(project)).unwrap_or_default();
+    let text = loft::schema_sidecar::read_baseline(project).unwrap_or_default();
     let old = loft::schema_sidecar::LayoutIdentity::from_sidecar(&text)
         .ok_or_else(|| "the baseline is not a layout file".to_string())
         .and_then(|id| {
             let mut d = LayoutDesc::from_dump(&id.dump)?;
             d.apply_facts(&id.facts)?;
-            Ok(d)
+            Ok((d, id.sources))
         });
-    let old = match old {
+    let (old, sources) = match old {
         Ok(d) => d,
         Err(e) => {
             eprintln!(
-                "loft layout: the baseline cannot be read by this version of loft ({e}) —                  re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
+                "loft layout: the baseline cannot be read by this version of loft ({e}) — \
+                 re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
             );
             return 1;
         }
@@ -6864,6 +6900,8 @@ fn layout_upgrade_report(
             ));
         }
     }
+    // @PLN196 step 9 — a dropped field a computed field was made from (`@FR-L-Upgrade-Source`).
+    refused.extend(loft::layout_schema::lost_sources(data, &sources, release));
     changes.sort();
     changes.dedup();
     refused.sort();
@@ -8811,6 +8849,13 @@ fn main() {
                 } else {
                     std::env::current_dir().unwrap_or_default()
                 };
+                // @PLN196 step 9 — a release records its layout and where each computed field's
+                // value comes from (`@FR-L-Upgrade-Source`), so the next release's `loft layout
+                // check` can tell what an older store still needs.  Before the tarball, which
+                // then carries it; never for a byte comparison.
+                if !tarball_only {
+                    record_release_baseline(&pkg_path);
+                }
                 match loft::package::package_create(&pkg_path, None) {
                     Ok(out) => {
                         let stdout = std::io::stdout();
@@ -10206,7 +10251,11 @@ fn main() {
     {
         let plan = fa::read_to_string(&world)
             .map_err(|e| format!("{world}: {e}"))
-            .and_then(|text| state.database.world_upgrade_plan(&text));
+            .and_then(|text| {
+                state
+                    .database
+                    .world_upgrade_plan(&text, &parser::Parser::upgrade_routines(&p.data))
+            });
         match plan {
             Ok(loft::database::WorldPlan::Same) => {}
             Ok(loft::database::WorldPlan::Converts(changes)) => {
