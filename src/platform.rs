@@ -1642,6 +1642,39 @@ pub fn shim_cc_runtime_args() -> &'static [&'static str] {
     }
 }
 
+/// The output a diagnostic switch names — `LOFT_OP_CENSUS=<file>` and its siblings (the op
+/// n-grams, the rewrite, decline and store censuses) — read once by each: `None` when unset
+/// or empty; `-`, standard error, for `1`, `true` or `-`, which is how every other `LOFT_*`
+/// switch is armed; otherwise the path, made absolute against the directory loft was
+/// launched in (`file_access::launch_dir` — a program run changes into its own).  A relative path used to be resolved as a PROGRAM's file is, against the
+/// program's own directory, so `LOFT_OP_CENSUS=1` left a file named `1` beside the program,
+/// inside the user's tree.
+#[must_use]
+pub fn env_output(name: &str) -> Option<String> {
+    let v = std::env::var(name).ok().filter(|v| !v.is_empty())?;
+    if matches!(v.as_str(), "1" | "true" | "-") {
+        return Some("-".to_string());
+    }
+    if crate::file_access::is_absolute(v.as_str()) {
+        return Some(v);
+    }
+    Some(
+        crate::file_access::launch_dir()
+            .map_or_else(|| v.clone(), |d| d.join(&v).to_string_lossy().into_owned()),
+    )
+}
+
+/// Write `contents` to a [`env_output`] target — standard error for `-` — saying `what` could
+/// not be written when the file cannot be.
+pub fn write_env_output(target: &str, contents: &str, what: &str) {
+    if target == "-" {
+        eprint!("{contents}");
+    } else if let Err(e) = crate::file_access::write(target, contents) {
+        // The error names the file.
+        eprintln!("loft: cannot write {what}: {e}");
+    }
+}
+
 /// A raw tick count from the CPU's own counter, for a test that runs on every op and must
 /// cost next to nothing: the profiler's "did the op that just ended run long?"
 /// ([`crate::profiler::Profiler::op_boundary`]).  Monotonic on one thread, in units only

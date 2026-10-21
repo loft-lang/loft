@@ -214,6 +214,45 @@ fn a_frame_driven_program_is_profiled_after_its_first_frame() {
     );
 }
 
+/// A census switch armed as every other `LOFT_*` switch is — `=1` — prints to standard
+/// error, and a relative file name lands in the current directory.  Both used to resolve
+/// as a PROGRAM's file does, against the program's directory: `LOFT_OP_CENSUS=1` left a
+/// file named `1` beside the program, inside the user's tree.
+#[test]
+fn a_census_switch_writes_where_its_user_expects() {
+    let root = std::env::temp_dir().join(format!("loft_census_out_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    let (prog_dir, cwd) = (root.join("prog"), root.join("cwd"));
+    fa::create_dir_all(&prog_dir).expect("prog dir");
+    fa::create_dir_all(&cwd).expect("cwd");
+    let program = prog_dir.join("p.loft");
+    fa::write(&program, "fn main() { println(\"ok\"); }\n").expect("program");
+    let run = |value: &str| {
+        loft::platform::process::harness_command(loft_bin())
+            .arg("--interpret")
+            .arg(&program)
+            .current_dir(&cwd)
+            .env("LOFT_OP_CENSUS", value)
+            .output()
+            .expect("spawn loft")
+    };
+    let armed = run("1");
+    let err = String::from_utf8_lossy(&armed.stderr);
+    assert!(err.contains("n_main\tOp"), "`=1` prints the census:\n{err}");
+    assert!(
+        !fa::exists(prog_dir.join("1")),
+        "and leaves no file named `1` beside the program"
+    );
+    let _ = run("census.tsv");
+    let in_cwd = fa::exists(cwd.join("census.tsv"));
+    let beside = fa::exists(prog_dir.join("census.tsv"));
+    let _ = fa::remove_dir_all(&root);
+    assert!(
+        in_cwd && !beside,
+        "a relative name is the current directory's (cwd {in_cwd}, beside the program {beside})"
+    );
+}
+
 /// A profiler that cannot name `main` names nothing: four out of five real programs
 /// would also pass an instrument that simply reported the deepest frame.
 #[test]

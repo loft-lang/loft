@@ -82,12 +82,8 @@ struct Census {
 
 fn ngram_target() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        std::env::var("LOFT_OP_NGRAMS")
-            .ok()
-            .filter(|p| !p.is_empty())
-    })
-    .as_deref()
+    PATH.get_or_init(|| crate::platform::env_output("LOFT_OP_NGRAMS"))
+        .as_deref()
 }
 
 fn pack(ops: &[u16]) -> u64 {
@@ -128,9 +124,7 @@ impl Census {
 fn target() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(|| {
-        let p = std::env::var("LOFT_OP_CENSUS")
-            .ok()
-            .filter(|p| !p.is_empty());
+        let p = crate::platform::env_output("LOFT_OP_CENSUS");
         if p.is_some() {
             ARMED.store(true, Ordering::Relaxed);
         }
@@ -280,10 +274,7 @@ fn write_ngrams(names: &Names) {
     for (n, row) in rows {
         let _ = writeln!(out, "{n}\t{row}");
     }
-    // The error names the file.
-    if let Err(e) = crate::file_access::write(path, out) {
-        crate::loft_eprintln!("loft: cannot write the op n-grams: {e}");
-    }
+    crate::platform::write_env_output(path, &out, "the op n-grams");
 }
 
 /// How the census names what it counted: an operator by its opcode, a function by its
@@ -329,9 +320,6 @@ pub fn write(names: &Names) {
             }
         }
     });
-    // The error names the file.
-    if let Err(e) = crate::file_access::write(path, out) {
-        crate::loft_eprintln!("loft: cannot write the op census: {e}");
-    }
+    crate::platform::write_env_output(path, &out, "the op census");
     write_ngrams(names);
 }

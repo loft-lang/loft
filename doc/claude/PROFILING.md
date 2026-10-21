@@ -67,7 +67,8 @@ route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
 
 ## What the interpreter executes, per routine (`LOFT_OP_CENSUS`)
 
-**`LOFT_OP_CENSUS=<file>`** (`--interpret`) counts every operator exactly. There is no
+**`LOFT_OP_CENSUS=<file>`** (`--interpret`) counts every operator exactly. (`=1` prints it to
+stderr; a relative name is the directory loft was launched in — as for every census switch.) There is no
 sampling. Each op is keyed by the line of the entry function it ran under (its call site
 from `main`, or its own line in `main`), by the function it belongs to, and by the operator.
 Beside each count go the bytes the op moved through the store's block routes: `copy`

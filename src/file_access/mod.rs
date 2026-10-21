@@ -516,13 +516,24 @@ pub fn create_new(path: impl HostPath) -> io::Result<std::fs::File> {
     run(path, |p| std::fs::File::create_new(p))
 }
 
-/// Make `path` the process's current directory.
+/// Make `path` the process's current directory.  The first change records the directory
+/// the process was launched in ([`launch_dir`]).
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn set_current_dir(path: impl HostPath) -> io::Result<()> {
+    let _ = launch_dir();
     let path = &*path.to_path_text();
     run(path, |p| std::env::set_current_dir(p))
+}
+
+/// The directory the process was launched in — its current directory before loft first
+/// changed it (a program run anchors file access at its own directory).  What a path the
+/// USER typed, outside any program (`LOFT_OP_CENSUS=out.tsv`), is relative to.
+#[must_use]
+pub fn launch_dir() -> Option<std::path::PathBuf> {
+    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| std::env::current_dir().ok()).clone()
 }
 
 /// Load the dynamic library `name`.  A name with a separator is a FILE (relative to the
