@@ -1049,7 +1049,8 @@ pub fn OpGetRecord(
 /// `@FR-R-TypedKeyed` — [`OpGetHashLong`] with the key's byte position handed in by the
 /// emitter: an inline table (`(Col-Inline)`) answers from one checked walk, and every other
 /// table — or a lazy-bound collection's miss, which fetches — takes [`OpGetHashLong`].
-#[inline]
+#[inline(always)]
+#[allow(clippy::inline_always)]
 pub fn OpGetHashLongAt(
     cell: &std::cell::UnsafeCell<Stores>,
     data: DbRef,
@@ -1071,6 +1072,12 @@ pub fn OpGetHashLongAt(
             return found.or_null();
         }
     }
+    get_hash_long_slow(cell, data, db_tp, key)
+}
+
+/// [`OpGetHashLongAt`] past its inline walk — kept out of line so the walk inlines alone.
+#[inline(never)]
+fn get_hash_long_slow(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, db_tp: i32, key: i64) -> DbRef {
     OpGetHashLong(cell, data, db_tp, key)
 }
 

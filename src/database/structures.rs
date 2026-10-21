@@ -512,11 +512,46 @@ impl Stores {
     }
 
     /// [`Self::keyed_entry_long`] with the field's offset and element type handed in as the
-    /// emitter resolved them ([`Self::keyed_field_consts`]): [`hash::entry_one_int`] on the
+    /// emitter resolved them ([`Self::keyed_field_consts`]), and `key_pos` — the byte position
+    /// of an 8-byte integer key, `u32::MAX` for a narrower one.  An inline table
+    /// (`(Col-Inline)`) answers from one checked walk inlined here; everything else is
+    /// [`Self::keyed_entry_long_slow`].
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    #[allow(clippy::inline_always)]
+    pub fn keyed_entry_long_at(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        field_off: u32,
+        elem_tp: u16,
+        key_pos: u32,
+        key: i64,
+    ) -> DbRef {
+        if key_pos != u32::MAX && self.live_scratches.is_empty() && !keys::keyed_verify() {
+            let d = DbRef {
+                store_nr: data.store_nr,
+                rec: data.rec,
+                pos: data.pos + field_off,
+            };
+            if let Some(store) = self.allocations.get(d.store_nr as usize) {
+                let claim = store.collection_rec(d.rec, d.pos);
+                if claim != 0
+                    && let Some(rec) = crate::hash::inline_entry_int(&d, claim, key_pos, key, &mut self.allocations)
+                {
+                    return rec;
+                }
+            }
+        }
+        self.keyed_entry_long_slow(data, parent_tp, field, field_off, elem_tp, key)
+    }
+
+    /// [`Self::keyed_entry_long_at`] past its inline walk: [`hash::entry_one_int`] on the
     /// table, and the general entry where it answers `None` (no table yet, a table that
     /// borrows its entries, a sort in flight over this collection).
-    #[inline]
-    pub fn keyed_entry_long_at(
+    #[inline(never)]
+    fn keyed_entry_long_slow(
         &mut self,
         data: &DbRef,
         parent_tp: u16,
@@ -531,19 +566,6 @@ impl Stores {
                 rec: data.rec,
                 pos: data.pos + field_off,
             };
-            // `(Col-Inline)` — the table checked once and walked in place, the key's position
-            // a constant: no key list, no kind, no second header read.
-            let key_pos = self.types[elem_tp as usize].keys.first().map(|k| u32::from(k.position));
-            if let Some(kp) = key_pos
-                && (d.store_nr as usize) < self.allocations.len()
-            {
-                let claim = self.allocations[d.store_nr as usize].collection_rec(d.rec, d.pos);
-                if claim != 0
-                    && let Some(rec) = crate::hash::inline_entry_int(&d, claim, kp, key, &mut self.allocations)
-                {
-                    return rec;
-                }
-            }
             if let Some(rec) = crate::hash::entry_one_int(
                 &d,
                 &mut self.allocations,
