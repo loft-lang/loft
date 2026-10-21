@@ -5247,7 +5247,9 @@ fn another_types_compare_set_does_not_meet_a_bare_variables_bound() {
 /// The control: the struct's own `compare(D, D)` still meets `Ordered` for `D`.
 #[test]
 fn a_types_own_compare_in_a_set_meets_its_bound() {
-    code!("struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T: Ordered>(v: vector<T>) -> vector<T> { sort(v); v }\nfn test() { s = g([D { ms: 3 }, D { ms: 1 }, D { ms: 2 }]); assert(\"{s[0].ms}{s[1].ms}{s[2].ms}\" == \"123\", \"sorted by its own compare\"); }");
+    code!(
+        "struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T: Ordered>(v: vector<T>) -> vector<T> { sort(v); v }\nfn test() { s = g([D { ms: 3 }, D { ms: 1 }, D { ms: 2 }]); assert(\"{s[0].ms}{s[1].ms}{s[2].ms}\" == \"123\", \"sorted by its own compare\"); }"
+    );
 }
 
 /// @PLN165 E5 — a `#builtin` method's callback is typed by the special form's hint, in both
