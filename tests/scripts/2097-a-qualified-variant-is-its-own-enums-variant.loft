@@ -15,6 +15,7 @@
 // @falsified-at: 18594597b — interpret: `Pq2.Item`'s `v` read 6, not 42, and `Pr1.Item` matched
 //   no `Pr1::Item` arm — every `X.Item` was built from `Pq1.Item`, the first `Item` declared.
 // CHANNEL: the asserts.
+// WITNESS: `Pq2.Item.v = 6`.
 // HOLDS: the unit variants beside them.
 
 enum Pq1 { NoneA, Item { v: text = "x", w: text = "y" } }

@@ -37,16 +37,18 @@ const ALIASES: &[(&str, &str, bool)] = &[
 /// `(function, jumps with the rotation on, off)`: each rotated loop trades its jump back for
 /// the one entering at its test, and drops the jump past its exit.
 const JUMPS: &[(&str, usize, usize)] = &[
+    // Absolute counts include one jump per assert with a built message (its `if`, loft#2090);
+    // what the test is about is the difference, which the rotation alone moves.
     ("n_first_over", 1, 2),
     ("n_from", 1, 2),
-    ("n_test_while", 2, 3),
-    ("n_test_zero_rounds", 6, 11),
-    ("n_test_continue_while", 3, 4),
-    ("n_test_inner_continue_and_break", 7, 11),
-    ("n_test_inclusive_variable_end", 3, 4),
-    ("n_test_comprehension", 3, 4),
-    ("n_test_filtered", 4, 5),
-    ("n_test_condition_count", 2, 3),
+    ("n_test_while", 3, 4),
+    ("n_test_zero_rounds", 7, 12),
+    ("n_test_continue_while", 4, 5),
+    ("n_test_inner_continue_and_break", 8, 12),
+    ("n_test_inclusive_variable_end", 4, 5),
+    ("n_test_comprehension", 5, 6),
+    ("n_test_filtered", 5, 6),
+    ("n_test_condition_count", 3, 4),
 ];
 
 fn loft(args: &[&str], cells: &str, env: &[(&str, &str)]) -> (String, String, bool) {

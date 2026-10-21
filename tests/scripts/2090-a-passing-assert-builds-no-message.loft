@@ -13,6 +13,7 @@
 // @falsified-at: 18594597b — interpret and native: the counter read 1000 (every passing assert
 //   built its message).
 // CHANNEL: the asserts, and the expected failure's message.
+// WITNESS: `assertion failed: fixed message` — the counter's own assert, at 1000.
 // HOLDS: a constant-message and a no-message assert pass as before.
 
 struct Calls { n: integer }
@@ -36,4 +37,12 @@ fn test_a_failing_assert_reports_the_message_it_builds() {
   c = Calls { n: 0 };
   i = 7;
   assert(i < 0, "{noted(c, i)} is below zero");
+}
+
+// The passing branch names the condition by its source text, and a line whose quote sits in a
+// backtick literal left that text unclosed: the compiler panicked slicing past the line.
+fn test_a_quote_in_a_backtick_literal_on_the_assert_line() {
+  q = "x";
+  assert(q != `"`, "quote: {q}");
+  assert(q == "x", "a,b {q}");
 }

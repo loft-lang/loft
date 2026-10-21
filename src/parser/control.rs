@@ -20672,19 +20672,30 @@ impl Parser {
                     end += 1;
                 }
             }
-            let expr = line[after..end].trim();
+            // An assert whose `(` does not close on this line, or whose last string escape
+            // ends it, leaves `end` past the line: the text is then the rest of the line.
+            let expr = line[after..end.min(bytes.len())].trim();
             // If it contains a comma, only take up to the first top-level comma
-            // (the rest is the user message argument).
+            // (the rest is the user message argument).  A comma inside a string literal is
+            // part of the condition.
             let mut comma_depth = 0;
+            let mut in_string = false;
+            let mut escaped = false;
             for (i, b) in expr.bytes().enumerate() {
+                if in_string {
+                    match b {
+                        _ if escaped => escaped = false,
+                        b'\\' => escaped = true,
+                        b'"' => in_string = false,
+                        _ => {}
+                    }
+                    continue;
+                }
                 match b {
+                    b'"' => in_string = true,
                     b'(' | b'[' | b'{' => comma_depth += 1,
                     b')' | b']' | b'}' => comma_depth -= 1,
                     b',' if comma_depth == 0 => return expr[..i].trim().to_string(),
-                    b'"' => {
-                        // skip — don't count commas inside strings
-                        // (simplified: the expression without message has no commas at top level)
-                    }
                     _ => {}
                 }
             }
