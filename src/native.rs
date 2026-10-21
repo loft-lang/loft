@@ -93,6 +93,9 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     #[cfg(feature = "mmap")]
     ("n_store_persist_copy", n_store_persist_copy),
     ("n_store_load", n_store_load),
+    ("n_store_upgrade_owed_next", n_store_upgrade_owed_next),
+    ("n_store_upgrade_owed_record", n_store_upgrade_owed_record),
+    ("n_store_upgrade_owed_finish", n_store_upgrade_owed_finish),
     ("n_store_verify", n_store_verify),
     ("n_store_reclaim", n_store_reclaim),
     ("n_store_release", n_store_release),
@@ -1295,6 +1298,23 @@ fn n_store_load(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
     let v_ref = stores.get::<DbRef>(stack);
     let ok = stores.load_path(v_ref.store_nr, std::path::Path::new(v_path.str()));
+    stores.put(stack, ok);
+}
+
+/// Interpreter handlers for the drain after a converting load (@PLN196): the next owed
+/// fill's key, its record, and the end of the drain.
+fn n_store_upgrade_owed_next(stores: &mut Stores, stack: &mut DbRef) {
+    let k = stores.owed_next();
+    stores.put(stack, k);
+}
+
+fn n_store_upgrade_owed_record(stores: &mut Stores, stack: &mut DbRef) {
+    let r = stores.owed_record();
+    stores.put(stack, r);
+}
+
+fn n_store_upgrade_owed_finish(stores: &mut Stores, stack: &mut DbRef) {
+    let ok = stores.owed_finish();
     stores.put(stack, ok);
 }
 

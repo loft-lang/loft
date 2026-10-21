@@ -325,27 +325,49 @@ fn write_store(name: &str, writer: &str) -> std::path::PathBuf {
     dir
 }
 
-/// An upgrade that must succeed: B reads `expect` on both backends.
+/// Run `b.loft` on both backends and require `expect` on stdout.
+#[track_caller]
+fn reads(name: &str, dir: &std::path::Path, expect: &str, when: &str) {
+    for mode in [&[][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(dir, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, expect),
+            "{name} {mode:?} {when}: the reader saw\n{out}\n{err}"
+        );
+    }
+}
+
+/// The store file and its sidecar, to compare before and after.
+fn store_bytes(dir: &std::path::Path) -> (Vec<u8>, Vec<u8>) {
+    (
+        loft::file_access::read(dir.join("a.store")).unwrap(),
+        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
+    )
+}
+
+/// An upgrade that must succeed: B reads `expect` on both backends — first from the OLD file,
+/// which its `store_load` converts in memory and leaves as it was, then from the file
+/// `loft layout upgrade` converted.
 #[track_caller]
 fn upgrades(name: &str, writer: &str, reader: &str, expect: &str) {
     let dir = write_store(name, writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let before = store_bytes(&dir);
+    reads(name, &dir, expect, "converting in memory");
+    assert!(
+        store_bytes(&dir) == before,
+        "{name}: a converting store_load changed the file"
+    );
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!(code, 0, "{name}: the upgrade was refused:\n{out}\n{err}");
     assert!(
         loft::file_access::exists(dir.join("a.store.old")),
         "{name}: the old store is kept"
     );
-    for mode in [&[][..], &["--native"][..]] {
-        let mut args: Vec<&str> = mode.to_vec();
-        args.push("b.loft");
-        let (code, out, err) = run_loft(&dir, &args);
-        assert_eq!(
-            (code, out.as_str()),
-            (0, expect),
-            "{name} {mode:?}: the reader saw\n{out}\n{err}"
-        );
-    }
+    reads(name, &dir, expect, "after the upgrade");
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 
@@ -354,20 +376,24 @@ fn upgrades(name: &str, writer: &str, reader: &str, expect: &str) {
 fn upgrade_refused(name: &str, writer: &str, reader: &str, reason: &str) {
     let dir = write_store(name, writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
-    let before = (
-        loft::file_access::read(dir.join("a.store")).unwrap(),
-        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
-    );
+    let before = store_bytes(&dir);
+    // The reader's own `store_load` refuses it too, with the same reason.
+    for mode in [&[][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0 && out.starts_with("not loaded") && err.contains(reason),
+            "{name} {mode:?}: store_load must refuse with `{reason}` ({code}):\n{out}\n{err}"
+        );
+    }
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!(code, 1, "{name}: expected a refusal:\n{out}\n{err}");
     assert!(
         err.contains(reason),
         "{name}: missing `{reason}` in:\n{err}"
     );
-    let after = (
-        loft::file_access::read(dir.join("a.store")).unwrap(),
-        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
-    );
+    let after = store_bytes(&dir);
     assert!(
         before == after,
         "{name}: a refused upgrade changed the store"
@@ -1075,4 +1101,109 @@ fn cell_expression_defaults_fill_hash_entries() {
         &reader,
         &format!("2\n{FILLED_INK}\n{FILLED_PEN}\n"),
     );
+}
+
+// @PLN196 step 8 — the loads that convert by themselves.
+
+const ITEM_V1: &str = "struct Item { id: integer, name: text }\n";
+const ITEM_V2: &str = "struct Item { id: integer, name: text, price: integer = 10, title: text = \"{$.id}: {$.name}\" }\n";
+const ITEM_V3: &str = "struct Item { id: integer, name: text, price: integer = 10, title: text = \"{$.id}: {$.name}\", stock: integer = $.price * 3 }\n";
+
+/// Version 1 binds `a.store` with four items, `id = 1..4`, `name = "n1".."n4"`.
+fn item_writer() -> String {
+    format!(
+        "{ITEM_V1}fn main() {{\n  h: hash<Item[id]> = [];\n  for i in 1..5 {{ h += [Item {{ id: i, name: \"n{{i}}\" }}]; }}\n  println(\"saved {{store_persist_bind(h, \\\"a.store\\\")}}\");\n}}\n"
+    )
+}
+
+/// `store_persist_bind` of an older file upgrades the FILE in place: the call answers true with
+/// every field filled (a constant, a format string over `$`, an expression over another
+/// default), the original is kept as `a.store.old`, and what the program writes afterwards is
+/// in the file.  A second upgrade replaces that `.old` with the file it upgraded, so one
+/// upgrade back stays on disk.  Interpreter for the first upgrade, native for the second.
+#[test]
+fn cell_bind_upgrades_the_file_in_place_and_keeps_one_old() {
+    let dir = write_store("bind_in_place", &item_writer());
+    let v1 = store_bytes(&dir);
+    let binder = |types: &str, show: &str| {
+        format!(
+            "{types}fn main() {{\n  h: hash<Item[id]> = [];\n  if !store_persist_bind(h, \"a.store\") {{ println(\"not bound\"); return; }}\n  for e in h {{ println({show}); }}\n  h += [Item {{ id: 9, name: \"late\" }}];\n}}\n"
+        )
+    };
+    loft::file_access::write(
+        dir.join("b.loft"),
+        binder(ITEM_V2, "\"{e.id} {e.price} [{e.title}]\""),
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["b.loft"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            "1 10 [1: n1]\n2 10 [2: n2]\n3 10 [3: n3]\n4 10 [4: n4]\n"
+        ),
+        "the first bind upgrades:\n{out}\n{err}"
+    );
+    let old = (
+        loft::file_access::read(dir.join("a.store.old")).unwrap(),
+        loft::file_access::read(dir.join("a.store.old.dschema")).unwrap(),
+    );
+    assert!(
+        old == v1,
+        "a.store.old is the version-1 file, byte for byte"
+    );
+    let v2 = store_bytes(&dir);
+    loft::file_access::write(
+        dir.join("c.loft"),
+        binder(ITEM_V3, "\"{e.id} {e.price} [{e.title}] {e.stock}\""),
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["--native", "c.loft"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            "1 10 [1: n1] 30\n2 10 [2: n2] 30\n3 10 [3: n3] 30\n4 10 [4: n4] 30\n9 10 [9: late] 30\n"
+        ),
+        "the second bind upgrades the first one's file, with the record it added:\n{out}\n{err}"
+    );
+    let old = (
+        loft::file_access::read(dir.join("a.store.old")).unwrap(),
+        loft::file_access::read(dir.join("a.store.old.dschema")).unwrap(),
+    );
+    assert!(old == v2, "a.store.old is now the version-2 file: one .old");
+    for gone in [
+        "a.store.upgrade",
+        "a.store.upgrade.dschema",
+        "a.store.old.old",
+    ] {
+        assert!(
+            !loft::file_access::exists(dir.join(gone)),
+            "{gone}: no half-swapped file and no second .old"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Two converting loads in one program: each fills its own records, and the second starts
+/// with nothing left owed from the first.
+#[test]
+fn cell_two_converting_loads_in_one_program() {
+    let dir = write_store("two_loads", &item_writer());
+    let reader = format!(
+        "{ITEM_V2}fn main() {{\n  a: hash<Item[id]> = [];\n  b: hash<Item[id]> = [];\n  if !store_load(a, \"a.store\") {{ println(\"not loaded\"); return; }}\n  a[2].price = 77;\n  if !store_load(b, \"a.store\") {{ println(\"not loaded\"); return; }}\n  println(\"{{a[2].price}} [{{a[3].title}}] {{b[2].price}} [{{b[4].title}}] {{len(a)}} {{len(b)}}\");\n}}\n"
+    );
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let before = store_bytes(&dir);
+    reads(
+        "two_loads",
+        &dir,
+        "77 [3: n3] 10 [4: n4] 4 4\n",
+        "two loads",
+    );
+    assert!(
+        store_bytes(&dir) == before,
+        "store_load leaves the file as it was"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
 }

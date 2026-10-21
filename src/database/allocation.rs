@@ -3102,6 +3102,7 @@ impl Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            owed: super::upgrade::Owed::default(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -4798,6 +4799,11 @@ impl Stores {
         } else {
             None
         };
+        // A file written under an older layout is converted and upgraded in place (@PLN196,
+        // open question 3); the drain after this call finishes the bind.
+        if exists && self.layout_changed(slot, path) {
+            return self.converted(slot, path, "store_persist_bind", Self::bind_upgraded);
+        }
         if exists && !self.schema_gate_ok(slot, path, "store_persist_bind") {
             return false;
         }
@@ -5047,6 +5053,11 @@ impl Stores {
         let slot_idx = slot as usize;
         if slot_idx >= self.allocations.len() {
             return false;
+        }
+        // A file written under an older layout is converted in memory (@PLN196, open
+        // question 3); the file is left as it is.
+        if self.layout_changed(slot, path) {
+            return self.converted(slot, path, "store_load", Self::load_upgraded);
         }
         if !self.schema_gate_ok(slot, path, "store_load") {
             return false;
@@ -6616,6 +6627,39 @@ impl Stores {
             return true;
         };
         Self::layout_verdict_ok(&verdict, &path.display().to_string(), builtin)
+    }
+
+    /// Does the sidecar beside `path` record a layout other than the one `slot` is read
+    /// through — a store an upgrade can carry across (`@FR-L-Sound`)?
+    fn layout_changed(&self, slot: u16, path: &std::path::Path) -> bool {
+        self.slot_layout_identity(slot).is_some_and(|current| {
+            matches!(
+                crate::schema_sidecar::check_beside(path, &current),
+                Ok(crate::schema_sidecar::SchemaVerdict::Changed(_))
+            )
+        })
+    }
+
+    /// Run `convert` for a whole-image load of a store written under an older layout, and
+    /// answer whether it took; a refusal says why on stderr, as a layout refusal does.
+    fn converted(
+        &mut self,
+        slot: u16,
+        path: &std::path::Path,
+        builtin: &str,
+        convert: fn(&mut Self, u16, &std::path::Path) -> Result<(), String>,
+    ) -> bool {
+        match convert(self, slot, path) {
+            Ok(()) => true,
+            Err(why) => {
+                crate::loft_eprintln!(
+                    "{builtin}: refusing {} — it was written with an older layout, and it \
+                     cannot be converted to this program's: {why}.",
+                    path.display()
+                );
+                false
+            }
+        }
     }
 
     /// [`schema_gate_ok`](Self::schema_gate_ok) for a store image fetched from `url`: the

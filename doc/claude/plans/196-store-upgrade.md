@@ -261,7 +261,7 @@ in both directions (measured), so a hash-only flip needs no conversion of its ow
 | 5 | Expression defaults fill added fields: the converter calls the default the constructor calls, per upgraded record, after the carried fields; a rename is two upgrades, one-step refused. | A rename, a unit change and a combination cell (hand-computed per record, both backends); step 1 then step 2 ends with the values under the new name; the one-step pair is refused with a reason that names the step-1 default; a constant default still takes the direct write. |
 | 6 | References re-pointed; cross-store refused. | A reference cell reads the same record after the upgrade; the cross-store cell refuses. |
 | 7 | Every save writes the version-2 sidecar; a binary build prints its description; `loft layout upgrade <store>`: new file beside, atomic swap, old kept. | A refusal and an interrupted run both leave the old store byte-identical. |
-| 8 | **Callers**: `store_load` offering the upgrade, the whole-program swap carrying the world through the converter instead of the JSON snapshot ([`08-live-build-swap.md`](18-engine-host/08-live-build-swap.md) loses references, hashes and sorted collections there), and the wasm build. | The swap scenarios keep a world with a hash and a reference; the converter builds for `wasm32` and passes the matrix there. |
+| 8 | **Callers**: `store_load` converting an older layout in memory (open question 3), the whole-program swap carrying the world through the converter instead of the JSON snapshot ([`08-live-build-swap.md`](18-engine-host/08-live-build-swap.md) loses references, hashes and sorted collections there), and the wasm build. | The swap scenarios keep a world with a hash and a reference; the converter builds for `wasm32` and passes the matrix there. |
 
 Steps 0 and 1 settle the design: if the two producers cannot agree, or the
 description-driven reader cannot reproduce `copy_claims`, the plan changes before step 2.
@@ -287,11 +287,18 @@ runs a full game or a long simulation, which is its goal.  The converter builds 
    field's default, which may be an expression over `$`, fills it on upgrade.
 2. **Does `loft layout check` exit non-zero** on a refused upgrade, so a project's CI gates on
    it?
-3. **Upgrade on load:** offered automatically by `store_load`, or only through
-   `loft layout upgrade`?
-4. **Which structures count as long-lived** and publish a description: saved stores and the
-   swap world for certain; also every global store of a running program, so a hot reload of a
-   changed struct can upgrade it in place?
+3. ~~Upgrade on load~~ — answered (owner, 2026-10-21): `store_load` converts an older layout
+   IN MEMORY.  The call answers true with every added field filled by its default, the file
+   on disk keeps its old layout until the program writes it, and a change the upgrade map
+   refuses still answers false with the reason.  `store_persist_bind` on an older file
+   upgrades the FILE in place (owner, 2026-10-21): the converted store is written beside it
+   and swapped in, the original is kept as `<path>.old`, and only then is the store bound —
+   after every added field holds its default, so no file on disk ever lacks one.  Upgrading
+   the same file again replaces that `.old`: one upgrade back stays on disk.
+4. ~~Which structures count as long-lived~~ — answered (owner, 2026-10-21): saved stores, the
+   swap world, and every global store of a running program.  A hot reload of a changed struct
+   converts the live data in place with the same converter; a change the map refuses keeps
+   the old program running and says why.
 
 ## Cross-arc dependencies
 

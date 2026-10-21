@@ -38,7 +38,7 @@ pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
 pub use journal::Journal;
 pub use types::Type;
-pub use upgrade::{FileUpgrade, FileUpgradeJob, Fills, PendingFills};
+pub use upgrade::{FileUpgrade, FileUpgradeJob, Fills, PendingFills, owed_key};
 pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 
 /// Store index reserved for compile-time constant data (vectors, long strings).
@@ -441,6 +441,11 @@ pub struct Stores {
     /// in one store that named one record name one copy.  Forgotten when the copied record's
     /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
     pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
+    /// @PLN196 — what the last converting `store_load` / `store_persist_bind` still owes:
+    /// the records whose added field has a computed default, which the program's drain fills
+    /// right after the call, and a bind that is finished once they are.  Runtime-only:
+    /// `clone` starts it empty.
+    pub(crate) owed: upgrade::Owed,
     /// `@FR-G-Arg-Rebind` — the stores a live generator frame names as an ARGUMENT:
     /// `(store_nr, frames holding it, orphaned)`.  The caller and the frame share the value
     /// (`@FR-G-Arg-Share`), and it is released when BOTH are done with it: a free while a
@@ -766,6 +771,7 @@ impl Clone for Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            owed: upgrade::Owed::default(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -1543,6 +1549,7 @@ impl Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            owed: upgrade::Owed::default(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),

@@ -8237,10 +8237,12 @@ impl Parser {
         // `(H-Copy-Lease)`'s cascades are independent of the drop ones and can exist in a program
         // that declares no `OpDrop`, so they are made before the drop pass's early return.
         self.synth_copy_cascades();
-        // @PLN196 — likewise the fill functions a store upgrade calls, when asked for.
+        // @PLN196 — likewise the fill functions a store upgrade calls, when asked for, and the
+        // drain after every whole-image load, which calls them for a converting load.
         if self.upgrade_fills {
             self.synth_upgrade_fills();
         }
+        self.synth_upgrade_drain();
         // Cheap exit for the overwhelmingly common program: no `OpDrop` anywhere means no
         // type can own a droppable, so nothing below can fire.
         // …and a generator handle held by a record or a collection (loft#1585), which its
@@ -8429,6 +8431,164 @@ impl Parser {
         self.data.definitions[f_nr as usize].variables = built;
         self.context = outer_context;
         self.data.def_used(f_nr);
+    }
+
+    /// @PLN196 step 8 — a `store_load` or `store_persist_bind` of a file written under an
+    /// older layout converts it (open question 3), and an added field whose default the
+    /// program must compute is left owed (`Stores::owed_next`).  So every call of either is
+    /// wrapped in `__upgrade_drain(call)`, which fills each owed field through its fill
+    /// function ([`Self::synth_upgrade_fills`]) and then finishes the call
+    /// (`Stores::owed_finish`): a bind upgrades its file only after every field holds its
+    /// default.  A program that calls neither gets no drain.
+    fn synth_upgrade_drain(&mut self) {
+        let loads: Vec<u32> = ["n_store_load", "n_store_persist_bind"]
+            .iter()
+            .map(|n| self.data.def_nr(n))
+            .filter(|&n| n != u32::MAX)
+            .collect();
+        if loads.is_empty() {
+            return;
+        }
+        let mut drain = self.data.def_nr("n___upgrade_drain");
+        let callers: Vec<u32> = (0..self.data.definitions())
+            .filter(|&d| d != drain && Self::calls_unwrapped(&self.data.def(d).code, &loads, drain))
+            .collect();
+        if callers.is_empty() {
+            return;
+        }
+        if drain == u32::MAX {
+            self.synth_upgrade_fills();
+            drain = self.synth_drain_fn();
+        }
+        for d in callers {
+            let mut code =
+                std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
+            Self::wrap_loads(&mut code, &loads, drain);
+            self.data.definitions[d as usize].code = code;
+        }
+    }
+
+    /// Does `v` call one of `loads` outside a `drain` call?
+    fn calls_unwrapped(v: &Value, loads: &[u32], drain: u32) -> bool {
+        match v {
+            Value::Call(d, _) if *d == drain => false,
+            Value::Call(d, _) if loads.contains(d) => true,
+            _ => {
+                let mut found = false;
+                v.for_each_child(&mut |c| found |= Self::calls_unwrapped(c, loads, drain));
+                found
+            }
+        }
+    }
+
+    /// Wrap every call of one of `loads` in `v` that is not wrapped yet in `drain(call)`.
+    fn wrap_loads(v: &mut Value, loads: &[u32], drain: u32) {
+        match v {
+            Value::Call(d, _) if *d == drain => {}
+            Value::Call(d, args) if loads.contains(d) => {
+                for a in args.iter_mut() {
+                    Self::wrap_loads(a, loads, drain);
+                }
+                let call = std::mem::replace(v, Value::Null);
+                *v = Value::Call(drain, vec![call]);
+            }
+            _ => v.for_each_child_mut(&mut |c| Self::wrap_loads(c, loads, drain)),
+        }
+    }
+
+    /// `fn __upgrade_drain(ok: boolean) -> boolean`: take each owed fill and call the fill
+    /// function its key names, then finish the call it follows.
+    ///
+    /// ```text
+    /// loop {
+    ///   k = store_upgrade_owed_next();
+    ///   if k < 0 { break }
+    ///   if k == <key of T.f> { __fill_T__f(store_upgrade_owed_record()) } else if …
+    /// }
+    /// if store_upgrade_owed_finish() { ok } else { false }
+    /// ```
+    fn synth_drain_fn(&mut self) -> u32 {
+        let natives = [
+            "n_store_upgrade_owed_next",
+            "n_store_upgrade_owed_record",
+            "n_store_upgrade_owed_finish",
+        ]
+        .map(|n| self.data.def_nr(n));
+        let [next, record, finish] = natives;
+        let pos = *self.data.def(self.data.def_nr("n_store_load")).position();
+        let f_nr = self
+            .data
+            .add_def("n___upgrade_drain", &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Boolean);
+        let _ = self
+            .data
+            .add_attribute(&mut self.lexer, f_nr, "ok", Type::Boolean);
+        let mut vars = Function::new("__upgrade_drain", pos.file.as_str());
+        let ok = vars.add_variable("ok", &Type::Boolean, &mut self.lexer);
+        vars.become_argument(ok);
+        let k = vars.add_variable("k", &crate::data::I64, &mut self.lexer);
+        vars.defined(k);
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        // Every fill, by the key the converter owes it under (`database::owed_key`).
+        let mut arms = Value::Null;
+        for (key, fill) in self.upgrade_fill_keys().into_iter().rev() {
+            let lit = i32::try_from(key).map_or(Value::Long(key), Value::Int);
+            let test = self.cl("OpEqInt", &[Value::Var(k), lit]);
+            let call = Value::Call(fill, vec![Value::Call(record, Vec::new())]);
+            arms = v_if(test, call, arms);
+        }
+        let done = self.cl("OpLtInt", &[Value::Var(k), Value::Int(0)]);
+        let step = vec![
+            crate::data::v_set(k, Value::Call(next, Vec::new())),
+            v_if(done, Value::Break(0), Value::Null),
+            arms,
+        ];
+        let body = vec![
+            crate::data::v_loop(step, "upgrade drain"),
+            v_if(
+                Value::Call(finish, Vec::new()),
+                Value::Var(ok),
+                Value::Boolean(false),
+            ),
+        ];
+        self.finish_body(v_block(body, Type::Boolean, "block"), Type::Boolean);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
+        f_nr
+    }
+
+    /// Each fill function [`Self::synth_upgrade_fills`] made, with the key the converter owes
+    /// its field under: the struct's type and the field's position in it.
+    fn upgrade_fill_keys(&self) -> Vec<(i64, u32)> {
+        let mut keys = Vec::new();
+        for d_nr in 0..self.data.definitions() {
+            let kt = self.data.def(d_nr).known_type();
+            if self.data.def_type(d_nr) != DefType::Struct || kt == u16::MAX {
+                continue;
+            }
+            let crate::database::Parts::Struct(fields) = &self.database.types[kt as usize].parts
+            else {
+                continue;
+            };
+            for a_nr in 0..self.data.def(d_nr).attributes().len() {
+                let fill = self.data.def_nr(&format!(
+                    "n_{}",
+                    Self::upgrade_fill_name(&self.data, d_nr, a_nr)
+                ));
+                let name = &self.data.def(d_nr).attributes()[a_nr].name;
+                if fill == u32::MAX {
+                    continue;
+                }
+                if let Some(i) = fields.iter().position(|f| &f.name == name) {
+                    keys.push((crate::database::owed_key(kt, i as u16), fill));
+                }
+            }
+        }
+        keys
     }
 
     /// The `self` parameter type of a type's cascade — a struct-enum carries its

@@ -56,6 +56,9 @@ struct Run<'m> {
     fills: &'m Fills,
     /// Every record that still owes one of those fills, in conversion order.
     pending: Vec<(DbRef, String)>,
+    /// Owe every added field the converter could not fill itself to the running program's
+    /// drain ([`Owed`]), instead of to `fills`.
+    owe: bool,
 }
 
 /// @PLN196 step 5 — per (new type, field name), the function that writes that field's
@@ -119,6 +122,31 @@ impl Stores {
         whole_copies: bool,
         fills: &Fills,
     ) -> Result<(u16, PendingFills), String> {
+        self.upgrade_store_run(
+            slot,
+            old,
+            old_root,
+            new_root,
+            self_slot,
+            whole_copies,
+            fills,
+            false,
+        )
+    }
+
+    /// [`Stores::upgrade_store_with`], owing the added fields to [`Owed`] when `owe` is set.
+    #[allow(clippy::too_many_arguments)]
+    fn upgrade_store_run(
+        &mut self,
+        slot: u16,
+        old: &LayoutDesc,
+        old_root: u16,
+        new_root: u16,
+        self_slot: Option<u16>,
+        whole_copies: bool,
+        fills: &Fills,
+        owe: bool,
+    ) -> Result<(u16, PendingFills), String> {
         let new = self.layout_descriptor(&[new_root]);
         let map = UpgradeMap::derive_with(old, old_root, &new, new_root, whole_copies);
         if let Some(r) = map.refusals.first() {
@@ -135,6 +163,7 @@ impl Stores {
                 fixups: Vec::new(),
                 fills,
                 pending: Vec::new(),
+                owe,
             };
             let new_slot = self.upgrade_into_new_store(&mut run, slot, new_root)?;
             Ok((new_slot, run.pending))
@@ -383,6 +412,8 @@ impl Stores {
                         FieldFrom::Default => {
                             if let Some(f) = run.fills.get(&(new_tp, nname.clone())) {
                                 run.pending.push((*to, f.clone()));
+                            } else if run.owe {
+                                self.owed.fills.push((*to, owed_key(new_tp, i as u16)));
                             }
                             self.write_absent_value(ncontent, new_tp, i as u16, &field_to);
                         }
@@ -784,45 +815,63 @@ pub enum FileUpgrade {
     },
 }
 
-#[cfg(feature = "mmap")]
-impl Stores {
-    /// @PLN196 step 7 — upgrade the store FILE at `path` to this program's type `new_root`
-    /// (or, when `None`, the type of the stored root's name): the new image and its sidecar
-    /// are written beside the store, then swapped in by rename, and the old pair is kept as
-    /// `<path>.old`.  A refusal, or a failure anywhere before the swap, leaves the store and
-    /// its sidecar byte for byte as they were.
-    ///
-    /// A field whose default is not a constant needs the program to run it; this entry has
-    /// no program, so such an upgrade goes through [`crate::host::Program::upgrade_file`].
-    ///
-    /// # Errors
-    /// Why the store cannot be upgraded: no recorded layout, a layout this build cannot read,
-    /// a refusal of the upgrade map, or an I/O failure.
-    pub fn upgrade_file(
-        &mut self,
-        path: &std::path::Path,
-        new_root: Option<u16>,
-    ) -> Result<FileUpgrade, String> {
-        match self.upgrade_file_begin(path, new_root, &Fills::new())? {
-            None => Ok(FileUpgrade::Current),
-            Some((job, _)) => self.upgrade_file_finish(job),
-        }
-    }
+/// A store file converted into a new slot by [`Stores::upgrade_image`].
+struct Converted {
+    /// The new layout, recording the slot the new store's references name.
+    current: crate::schema_sidecar::LayoutIdentity,
+    changes: Vec<String>,
+    new_slot: u16,
+    pending: PendingFills,
+}
 
-    /// The first half of [`Stores::upgrade_file`]: read the store and its recorded layout,
-    /// convert it into a new store in this table, and answer the job and the records that
-    /// still owe an expression default (`fills`).  `None` when the store is already current.
-    /// Nothing is written to disk; [`Stores::upgrade_file_finish`] does that, and
-    /// [`Stores::upgrade_file_abandon`] drops the job instead.
+/// The key a drain matches an owed fill by: the new type and the field's position in it.
+/// `Parser::synth_upgrade_drain` computes the same key for each fill function it calls.
+#[must_use]
+pub fn owed_key(tp: u16, field: u16) -> i64 {
+    (i64::from(tp) << 16) | i64::from(field)
+}
+
+/// @PLN196 step 8 — what a converting load still owes the running program.  The converter
+/// fills every added field it can (a constant default, or absence); a default the program
+/// must compute is listed here, and the drain the parser puts after every `store_load` and
+/// `store_persist_bind` (`Parser::synth_upgrade_drain`) walks the list with
+/// [`Stores::owed_next`] and [`Stores::owed_record`], calls each field's fill function, and
+/// ends with [`Stores::owed_finish`].
+#[derive(Default)]
+pub(crate) struct Owed {
+    /// Each record owing a fill, with the key of the field it owes.
+    fills: Vec<(DbRef, i64)>,
+    /// How many of `fills` the drain has taken.
+    at: usize,
+    /// A bind waiting for the fills before its file is upgraded.
+    bind: Option<OwedBind>,
+}
+
+/// A `store_persist_bind` of a file written under an older layout: the converted store is
+/// in `slot`, in memory, and the file is written only after every owed fill ran.
+pub(crate) struct OwedBind {
+    slot: u16,
+    path: std::path::PathBuf,
+    /// The new layout, recording `slot`.
+    current: crate::schema_sidecar::LayoutIdentity,
+    /// What `slot` held before the bind, put back if the bind cannot finish.
+    before: crate::store::Store,
+}
+
+impl Stores {
+    /// Convert the store FILE at `path` (and its sidecar) into a new slot under this
+    /// program's type `new_root` (or the type of the stored root's name), and answer it;
+    /// `None` when the store already has this layout.  Nothing on disk changes.
     ///
     /// # Errors
     /// As [`Stores::upgrade_file`].
-    pub fn upgrade_file_begin(
+    fn upgrade_image(
         &mut self,
         path: &std::path::Path,
         new_root: Option<u16>,
         fills: &Fills,
-    ) -> Result<Option<(FileUpgradeJob, PendingFills)>, String> {
+        owe: bool,
+    ) -> Result<Option<Converted>, String> {
         use crate::schema_sidecar::{LayoutIdentity, dschema_path};
         let side = dschema_path(path);
         let text = crate::file_access::read_to_string(&side).map_err(|_| {
@@ -868,23 +917,251 @@ impl Stores {
         let store = crate::store::Store::from_bytes(&bytes)
             .ok_or_else(|| format!("{} is not a store image", path.display()))?;
         let old_slot = self.adopt_store(store);
-        let result =
-            self.upgrade_store_with(old_slot, &old, old_root, new_root, id.slot, true, fills);
+        let result = self.upgrade_store_run(
+            old_slot, &old, old_root, new_root, id.slot, true, fills, owe,
+        );
         drop(self.take_store(old_slot));
         self.release_slot(old_slot);
         let (new_slot, pending) = result?;
         // The new image's references name the slot it was built in.
         let mut current = current;
         current.slot = Some(new_slot);
-        Ok(Some((
-            FileUpgradeJob {
-                path: path.to_path_buf(),
-                current,
-                changes,
-                new_slot,
-            },
+        Ok(Some(Converted {
+            current,
+            changes,
+            new_slot,
             pending,
-        )))
+        }))
+    }
+
+    /// `@FR-L-Sound` — `store_load` of a file written under an older layout (@PLN196, open
+    /// question 3): convert it in memory into `slot`.  The file is not touched; the records
+    /// that owe a computed default are listed in [`Owed`] for the program's drain.
+    ///
+    /// # Errors
+    /// Why the store cannot be converted; `slot` keeps what it held.
+    pub(crate) fn load_upgraded(
+        &mut self,
+        slot: u16,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        self.owed = Owed::default();
+        let root = self.allocations[slot as usize].known_type;
+        let c = self
+            .upgrade_image(path, Some(root), &Fills::new(), true)?
+            .ok_or_else(|| "its recorded layout could not be compared".to_string())?;
+        let before = self.place_converted(slot, c.new_slot)?;
+        drop(before);
+        Ok(())
+    }
+
+    /// `store_persist_bind` of a file written under an older layout: convert it in memory
+    /// into `slot`, and leave the file to [`Stores::owed_finish`], which upgrades it in place
+    /// once the drain has filled every owed field.
+    ///
+    /// # Errors
+    /// As [`Stores::load_upgraded`].
+    pub(crate) fn bind_upgraded(
+        &mut self,
+        slot: u16,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        self.owed = Owed::default();
+        let root = self.allocations[slot as usize].known_type;
+        let c = self
+            .upgrade_image(path, Some(root), &Fills::new(), true)?
+            .ok_or_else(|| "its recorded layout could not be compared".to_string())?;
+        let before = self.place_converted(slot, c.new_slot)?;
+        let mut current = c.current;
+        current.slot = Some(slot);
+        self.owed.bind = Some(OwedBind {
+            slot,
+            path: path.to_path_buf(),
+            current,
+            before,
+        });
+        Ok(())
+    }
+
+    /// Move the converted store in `new_slot` into `slot`, keeping `slot`'s bookkeeping, and
+    /// make every reference and owed record that named `new_slot` name `slot`; answer what
+    /// `slot` held.
+    fn place_converted(&mut self, slot: u16, new_slot: u16) -> Result<crate::store::Store, String> {
+        let mut store = self.take_store(new_slot);
+        self.release_slot(new_slot);
+        let s = &self.allocations[slot as usize];
+        store.set_known_type(s.known_type);
+        store.free = s.free;
+        store.set_created_at(s.created_at);
+        store.last_op_at = s.last_op_at;
+        store.pinned = s.pinned;
+        let before = std::mem::replace(&mut self.allocations[slot as usize], store);
+        if let Err(why) = self.rebase_stored_refs(slot, Some(new_slot)) {
+            let converted = std::mem::replace(&mut self.allocations[slot as usize], before);
+            drop(converted);
+            self.owed = Owed::default();
+            return Err(why);
+        }
+        for (r, _) in &mut self.owed.fills {
+            if r.store_nr == new_slot {
+                r.store_nr = slot;
+            }
+        }
+        Ok(before)
+    }
+
+    /// The key of the next owed fill ([`owed_key`]), or -1 when the drain has taken them all;
+    /// its record is [`Stores::owed_record`].
+    pub fn owed_next(&mut self) -> i64 {
+        match self.owed.fills.get(self.owed.at) {
+            Some(&(_, key)) => {
+                self.owed.at += 1;
+                key
+            }
+            None => -1,
+        }
+    }
+
+    /// The record of the owed fill [`Stores::owed_next`] last answered.
+    #[must_use]
+    pub fn owed_record(&self) -> DbRef {
+        self.owed
+            .at
+            .checked_sub(1)
+            .and_then(|i| self.owed.fills.get(i))
+            .map_or(
+                DbRef {
+                    store_nr: u16::MAX,
+                    rec: 0,
+                    pos: 0,
+                },
+                |&(r, _)| r,
+            )
+    }
+
+    /// End a drain: forget the owed fills, and finish a waiting bind by upgrading its file
+    /// in place.  Answers whether the call the drain follows still succeeds — false only
+    /// when a bind could not write its file, which leaves the file and `slot` as they were
+    /// before the call.
+    pub fn owed_finish(&mut self) -> bool {
+        let bind = std::mem::take(&mut self.owed).bind;
+        let Some(bind) = bind else {
+            return true;
+        };
+        self.finish_bind(bind)
+    }
+
+    #[cfg(feature = "mmap")]
+    fn finish_bind(&mut self, bind: OwedBind) -> bool {
+        let OwedBind {
+            slot,
+            path,
+            current,
+            before,
+        } = bind;
+        let written = self
+            .store_image(slot)
+            .ok_or_else(|| "the upgraded store did not form an image".to_string())
+            .and_then(|image| swap_in_upgrade(&path, &image, &current));
+        if let Err(why) = written {
+            let converted = std::mem::replace(&mut self.allocations[slot as usize], before);
+            drop(converted);
+            crate::loft_eprintln!(
+                "store_persist_bind: could not upgrade {} — {why}.",
+                path.display()
+            );
+            return false;
+        }
+        drop(before);
+        // The file now has this program's layout, so this binds it as any current file.
+        self.bind_path(slot, &path)
+    }
+
+    #[cfg(not(feature = "mmap"))]
+    fn finish_bind(&mut self, bind: OwedBind) -> bool {
+        let converted = std::mem::replace(&mut self.allocations[bind.slot as usize], bind.before);
+        drop(converted);
+        false
+    }
+}
+
+/// Write `image` and its sidecar beside the store at `path`, then swap them in; the old pair
+/// is kept as `<path>.old`, replacing an earlier `.old`, so one upgrade back stays on disk.
+/// At every moment one complete store with its own sidecar sits at `path`.
+#[cfg(feature = "mmap")]
+fn swap_in_upgrade(
+    path: &std::path::Path,
+    image: &[u8],
+    current: &crate::schema_sidecar::LayoutIdentity,
+) -> Result<std::path::PathBuf, String> {
+    use crate::schema_sidecar::dschema_path;
+    let side = dschema_path(path);
+    let with = |suffix: &str| {
+        let mut p = path.as_os_str().to_owned();
+        p.push(suffix);
+        std::path::PathBuf::from(p)
+    };
+    let (next, kept) = (with(".upgrade"), with(".old"));
+    let io = |e: std::io::Error| e.to_string();
+    super::allocation::write_image_atomic(&next, image).map_err(io)?;
+    current.write_beside(&next).map_err(io)?;
+    crate::file_access::rename(path, &kept).map_err(io)?;
+    crate::file_access::rename(&side, dschema_path(&kept)).map_err(io)?;
+    crate::file_access::rename(&next, path).map_err(io)?;
+    crate::file_access::rename(dschema_path(&next), &side).map_err(io)?;
+    Ok(kept)
+}
+
+#[cfg(feature = "mmap")]
+impl Stores {
+    /// @PLN196 step 7 — upgrade the store FILE at `path` to this program's type `new_root`
+    /// (or, when `None`, the type of the stored root's name): the new image and its sidecar
+    /// are written beside the store, then swapped in by rename, and the old pair is kept as
+    /// `<path>.old`.  A refusal, or a failure anywhere before the swap, leaves the store and
+    /// its sidecar byte for byte as they were.
+    ///
+    /// A field whose default is not a constant needs the program to run it; this entry has
+    /// no program, so such an upgrade goes through [`crate::host::Program::upgrade_file`].
+    ///
+    /// # Errors
+    /// Why the store cannot be upgraded: no recorded layout, a layout this build cannot read,
+    /// a refusal of the upgrade map, or an I/O failure.
+    pub fn upgrade_file(
+        &mut self,
+        path: &std::path::Path,
+        new_root: Option<u16>,
+    ) -> Result<FileUpgrade, String> {
+        match self.upgrade_file_begin(path, new_root, &Fills::new())? {
+            None => Ok(FileUpgrade::Current),
+            Some((job, _)) => self.upgrade_file_finish(job),
+        }
+    }
+
+    /// The first half of [`Stores::upgrade_file`]: read the store and its recorded layout,
+    /// convert it into a new store in this table, and answer the job and the records that
+    /// still owe an expression default (`fills`).  `None` when the store is already current.
+    /// Nothing is written to disk; [`Stores::upgrade_file_finish`] does that, and
+    /// [`Stores::upgrade_file_abandon`] drops the job instead.
+    ///
+    /// # Errors
+    /// As [`Stores::upgrade_file`].
+    pub fn upgrade_file_begin(
+        &mut self,
+        path: &std::path::Path,
+        new_root: Option<u16>,
+        fills: &Fills,
+    ) -> Result<Option<(FileUpgradeJob, PendingFills)>, String> {
+        Ok(self.upgrade_image(path, new_root, fills, false)?.map(|c| {
+            (
+                FileUpgradeJob {
+                    path: path.to_path_buf(),
+                    current: c.current,
+                    changes: c.changes,
+                    new_slot: c.new_slot,
+                },
+                c.pending,
+            )
+        }))
     }
 
     /// Write a begun upgrade's new store beside the old one and swap it in; the old pair is
@@ -893,27 +1170,10 @@ impl Stores {
     /// # Errors
     /// An I/O failure; the store at `path` is the old one until the first rename succeeds.
     pub fn upgrade_file_finish(&mut self, job: FileUpgradeJob) -> Result<FileUpgrade, String> {
-        use crate::schema_sidecar::dschema_path;
         let image = self.store_image(job.new_slot);
         self.upgrade_file_abandon(&job);
         let image = image.ok_or_else(|| "the upgraded store did not form an image".to_string())?;
-        let path = job.path.as_path();
-        let side = dschema_path(path);
-        // Beside, then swapped: the old pair is renamed away first, so at every moment one
-        // complete store with its own sidecar sits at `path`, or the old one does.
-        let with = |suffix: &str| {
-            let mut p = path.as_os_str().to_owned();
-            p.push(suffix);
-            std::path::PathBuf::from(p)
-        };
-        let (next, kept) = (with(".upgrade"), with(".old"));
-        let io = |e: std::io::Error| e.to_string();
-        super::allocation::write_image_atomic(&next, &image).map_err(io)?;
-        job.current.write_beside(&next).map_err(io)?;
-        crate::file_access::rename(path, &kept).map_err(io)?;
-        crate::file_access::rename(&side, dschema_path(&kept)).map_err(io)?;
-        crate::file_access::rename(&next, path).map_err(io)?;
-        crate::file_access::rename(dschema_path(&next), &side).map_err(io)?;
+        let kept = swap_in_upgrade(&job.path, &image, &job.current)?;
         Ok(FileUpgrade::Upgraded {
             kept,
             changes: job.changes,
