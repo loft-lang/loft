@@ -69,7 +69,8 @@ n_gen(cell, n) -> Box<dyn LoftCoroutine>       // the caller registers it: alloc
 
 ## Phase A — the signature lists
 
-**A0 — the probe library and its guards.**  `tests/lib/gatefull/` with the cells of the
+**A0 — the probe library and its guards.**  The interpreted and mixed legs pass
+`--interpret`: a bare `loft prog.loft` compiles the whole program.  `tests/lib/gatefull/` with the cells of the
 scratch probe this plan was measured on (`plain`, `ret_sorted`, `ret_index`, `ret_hash`,
 `ret_tuple`, `arg_tuple`, `arg_ref`, `arg_fn`, `ret_fn`, `local_lambda`, `gen`, `sum_gen`,
 `par_sum`, `generic`, `uses_generic`).  The trace test asserts the ten interpreted lines
@@ -84,16 +85,15 @@ native function returns a fresh store with no hidden destination.
   and a 1000-call loop holds the live-store count flat (`store_memory()`).
 
 **A2 — a returned text the function does not own** (a field read, a literal; loft#773).  The
-inner function's `Str` points into a store or into the cdylib's static data, and both outlive
-the call.
-- Bridge (`bridge_write_ret`, the `Text` arm): with no `WorkText` attribute, write the inner
-  `Str` into `(*ret).text_ptr/len` instead of requiring a work buffer.  In dest mode it still
-  copies into `bridge_text_dest`.
-- Dispatcher (`shared_store_dispatch`, the `Some(ArgT::Text)` arm without `self_dest`): push
-  `Str { ptr: ret.text_ptr, len: ret.text_len }` instead of the empty `Str` it degrades to.
-- Gate: drop the `text_ret_has_buffer` decline.
-- Check: the call used in place (an argument, a format hole), which is where loft#773 showed.
-  A literal's bytes stay valid because the cdylib handle is never closed (`probe_and_mark_exports`).
+inner function returns an owned `String` (`--native-emit`: `c.nm.to_string()`), so the bridge
+has no pointer to hand back; what it lacks is the caller's destination.
+- Parser: `Parser::crosses_text_bridge` gives a value-position call to a BUFFERLESS text
+  function (`Definition::returns_bufferless_text`) of a library to be compiled, or of the
+  compiled stdlib (`Parser::compiled_bridges`, named by the driver), the temporary
+  `wrap_value_text_dest` makes — `is_cdylib_text_call` reads `def.native`, set only after
+  parsing.
+- Codegen: `try_text_dest_pass` gains the cdylib arm `w += lib_fn()` needs.
+- Gate: the `text_ret_has_buffer` decline is gone.
 
 **A3 — tuple parameters.**  The interpreter holds the tuple's elements contiguously on the
 stack; native takes the tuple by value.
