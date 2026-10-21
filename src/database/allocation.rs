@@ -4881,6 +4881,13 @@ impl Stores {
                 Some(b) => b,
                 None => return false,
             };
+            if crate::keys::env_set("LOFT_STORE_LIVE_DIGEST") {
+                let (digest, n) = self.live_digest(slot);
+                crate::loft_eprintln!(
+                    "loft: live-digest {digest:016x} bytes {n} {}",
+                    path.display()
+                );
+            }
             if std::fs::write(path, &padded).is_err() {
                 return false;
             }
@@ -5585,6 +5592,125 @@ impl Stores {
             }
         }
         true
+    }
+
+    /// A digest of the bytes of store `slot` its value holds IN ACTIVE USE, and how many bytes
+    /// that is — a test instrument (`LOFT_STORE_LIVE_DIGEST=1`), not a format.  A saved image
+    /// is the store's buffer, and the buffer also holds bytes no reader ever reads: a vector's
+    /// capacity past its length, a text's tail past its length, the free space.  A claim
+    /// promises no value (`@FR-H-Claim`), so those bytes differ from run to run while every
+    /// value is the same; two images hold the same data exactly when their live bytes agree.
+    /// Live: each block's header word, a record's fields, a vector's header and its `length`
+    /// elements, a text's header and its bytes, and the whole of a keyed collection's table
+    /// and entry arena (built to read 0 as empty, so they hold no stale bytes).
+    pub fn live_digest(&self, slot: u16) -> (u64, u64) {
+        let Some(store) = self.allocations.get(slot as usize) else {
+            return (0, 0);
+        };
+        let bytes = store.capacity_words() as usize * 8;
+        let mut live = vec![false; bytes];
+        let root = DbRef {
+            store_nr: slot,
+            rec: 1,
+            pos: 8,
+        };
+        Self::mark_bytes(&mut live, 8, 4);
+        self.mark_live(&root, store.known_type, &mut live, 0);
+        // SAFETY: `capacity_words() * 8` is the buffer the store owns.
+        let raw = unsafe { std::slice::from_raw_parts(store.base_ptr(), bytes) };
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut n = 0u64;
+        for (i, (&b, &l)) in raw.iter().zip(&live).enumerate() {
+            if l {
+                n += 1;
+                for x in (i as u64).to_le_bytes().into_iter().chain([b]) {
+                    h ^= u64::from(x);
+                    h = h.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+        }
+        (h, n)
+    }
+
+    fn mark_bytes(live: &mut [bool], from: usize, len: usize) {
+        let end = from.saturating_add(len).min(live.len());
+        if from < end {
+            live[from..end].iter_mut().for_each(|b| *b = true);
+        }
+    }
+
+    /// [`Self::live_digest`]'s walk: mark the live bytes of the value of type `tp` at `db`.
+    fn mark_live(&self, db: &DbRef, tp: u16, live: &mut [bool], depth: u32) {
+        if depth > 64 || tp as usize >= self.types.len() || db.rec == 0 {
+            return;
+        }
+        let store = self.store(db);
+        let cap = store.capacity_words();
+        let at = db.rec as usize * 8 + db.pos as usize;
+        // The id a field holds, when it names a block inside the store.
+        let block_at = |db: &DbRef| -> Option<u32> {
+            let r = store.get_u32_raw(db.rec, db.pos);
+            (r != 0 && !Self::owned_edge_absent(r) && r < cap).then_some(r)
+        };
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                Self::mark_bytes(live, at, usize::from(self.size(tp)));
+                for f in fields {
+                    let child = DbRef {
+                        store_nr: db.store_nr,
+                        rec: db.rec,
+                        pos: db.pos + u32::from(f.position),
+                    };
+                    self.mark_live(&child, f.content, live, depth + 1);
+                }
+            }
+            Parts::Base if tp == super::TEXT_TP => {
+                if let Some(r) = block_at(db) {
+                    let len = store.get_u32_raw(r, 4) as usize;
+                    Self::mark_bytes(live, r as usize * 8, 8 + len);
+                }
+            }
+            Parts::Vector(v) | Parts::Sorted(v, _) => {
+                let v = *v;
+                if let Some(r) = block_at(db) {
+                    let len = store.get_u32_raw(r, 4);
+                    let size = u32::from(self.size(v));
+                    Self::mark_bytes(live, r as usize * 8, 8 + (len as usize) * size as usize);
+                    for i in 0..len {
+                        let elem = DbRef {
+                            store_nr: db.store_nr,
+                            rec: r,
+                            pos: 8 + size * i,
+                        };
+                        self.mark_live(&elem, v, live, depth + 1);
+                    }
+                }
+            }
+            Parts::Base
+            | Parts::Enum(_)
+            | Parts::Byte(..)
+            | Parts::Short(..)
+            | Parts::Int(..)
+            | Parts::IntRaw(..)
+            | Parts::ShortRaw(..) => {}
+            _ => {
+                let walk = self.owned_walk(db, tp, false);
+                for r in walk
+                    .container_rec
+                    .into_iter()
+                    .chain(walk.extra_recs.iter().copied())
+                {
+                    if r < cap {
+                        let words = store.read::<i32>(r, 0).unsigned_abs() as usize;
+                        Self::mark_bytes(live, r as usize * 8, words * 8);
+                    }
+                }
+                for c in &walk.children {
+                    Self::mark_bytes(live, c.child.rec as usize * 8, 4);
+                    self.mark_live(&c.child, c.child_tp, live, depth + 1);
+                }
+            }
+        }
     }
 
     /// The release plan of `tp` ([`RelSlot`]), derived on the first ask and cached on its row.

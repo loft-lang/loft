@@ -1910,6 +1910,33 @@ fn persist_size_at(path: &Path, n: u32, per: u32, mode: &str, seed: Option<&str>
     (bytes, stdout.trim().to_string())
 }
 
+/// [`persist_size`], answering the live digest of the image it wrote (`live_digest_line`).
+fn persist_live_digest(test: &str, n: u32, per: u32, mode: &str, seed: Option<&str>) -> String {
+    let path = scratch(test).join("size.store");
+    let script = workspace_root().join("tests/scripts/store_persist_size_710.loft");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    cmd.arg("--interpret")
+        .arg(&script)
+        .env("LOFT_PERSIST_TEST_PATH", &path)
+        .env("LOFT_PERSIST_TEST_N", n.to_string())
+        .env("LOFT_PERSIST_TEST_PER", per.to_string())
+        .env("LOFT_PERSIST_TEST_MODE", mode)
+        .env("LOFT_STORE_LIVE_DIGEST", "1")
+        .current_dir(workspace_root());
+    match seed {
+        Some(s) => cmd.env("LOFT_HASH_SEED", s),
+        None => cmd.env_remove("LOFT_HASH_SEED"),
+    };
+    let out = cmd.output().expect("failed to invoke loft binary");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("persist true"),
+        "{mode} failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    live_digest_line(&String::from_utf8_lossy(&out.stderr))
+}
+
 /// loft#710 — a persisted store's size must follow what it HOLDS.
 ///
 /// It did not: the image was the arena's whole capacity, so the file carried
@@ -2225,12 +2252,40 @@ fn b0_run(
     tag: &str,
     seed: Option<&str>,
 ) -> B0 {
+    b0_run_full(backend, path, order, damage, mode, tag, seed).0
+}
+
+/// The digest of the bytes a persisted store holds IN ACTIVE USE, from the
+/// `LOFT_STORE_LIVE_DIGEST=1` line its write prints (`Stores::live_digest`) — what two images
+/// are compared by.  A saved image is the store's buffer, which also carries bytes no reader
+/// reads (a vector's capacity past its length, a text's tail): a claim promises no value, so
+/// those differ between runs that store the same data.
+fn live_digest_line(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("loft: live-digest "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no live-digest line:\n{stderr}"))
+        .to_string()
+}
+
+/// [`b0_run`], and the live digest of the image the run wrote (empty when it wrote none).
+fn b0_run_full(
+    backend: &str,
+    path: &Path,
+    order: &str,
+    damage: &str,
+    mode: &str,
+    tag: &str,
+    seed: Option<&str>,
+) -> (B0, String) {
     let script = workspace_root().join("tests/scripts/store_digest_b0.loft");
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", path)
         .env("LOFT_PERSIST_TEST_MODE", mode)
+        .env("LOFT_STORE_LIVE_DIGEST", "1")
         .env("B0_ORDER", order)
         .env("B0_DAMAGE", damage)
         .env("B0_N", "200")
@@ -2261,12 +2316,19 @@ fn b0_run(
         }
         panic!("no `{key}` in `{line}`");
     };
-    B0 {
+    let b0 = B0 {
         count: num("count"),
         sum: num("sum"),
         xor: num("xor"),
         sound: line.ends_with("sound true"),
-    }
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let live = if stderr.contains("loft: live-digest ") {
+        live_digest_line(&stderr)
+    } else {
+        String::new()
+    };
+    (b0, live)
 }
 
 /// @PLN123 B0 — the oracle arc B will be built against, calibrated BEFORE any
@@ -2313,6 +2375,17 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
         let run = |file: &str, order: &str, damage: &str, mode: &str, want: &str, seed| {
             b0_run(backend, &dir.join(file), order, damage, mode, want, seed)
         };
+        let run_live = |file: &str, order: &str, seed| {
+            b0_run_full(
+                backend,
+                &dir.join(file),
+                order,
+                "none",
+                "",
+                "persisted",
+                seed,
+            )
+        };
 
         // Same 200 records, five representations.  Every run pins the bucket
         // seed, because an unseeded hash draws a RANDOM one per process (the
@@ -2332,10 +2405,12 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
             ("inter.store", "interleaved", "7", "evens then odds"),
             ("seed1.store", "forward", "1", "a different bucket seed"),
         ];
-        let mut images: Vec<Vec<u8>> = Vec::new();
+        // Each image by the bytes it holds in active use (`live_digest_line`): the gaps a
+        // claim leaves unwritten differ from run to run and are no part of the data.
+        let mut images: Vec<String> = Vec::new();
         let mut base: Option<B0> = None;
         for (file, order, seed, what) in reps {
-            let got = run(file, order, "none", "", "persisted", Some(seed));
+            let (got, live) = run_live(file, order, Some(seed));
             assert!(got.sound, "{backend}: {what} must verify");
             assert!(
                 got.count == 200 && got.sum != 0 && got.xor != 0,
@@ -2349,16 +2424,20 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
                      moved with the layout would report arc B's rebuild as data loss"
                 ),
             }
-            images.push(fa::read(dir.join(file)).expect("store file"));
+            images.push(live);
         }
         let base = base.expect("five representations");
 
         // The controls for the claim above.  Negative: same order, same seed,
-        // byte-identical — so the harness is deterministic and the differences
+        // the same live bytes — so the harness is deterministic and the differences
         // below are attributable rather than noise.
+        assert!(
+            !images[0].is_empty(),
+            "{backend}: the persist printed no live digest"
+        );
         assert_eq!(
             images[0], images[1],
-            "{backend}: two identical runs must produce identical bytes, or \
+            "{backend}: two identical runs must store identical live bytes, or \
              nothing measured here can be attributed to anything"
         );
         // Positive: each lever really does reach the stored bytes, so the
@@ -2371,7 +2450,7 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
         ] {
             assert_ne!(
                 images[0], images[i],
-                "{backend}: {lever} did not reach the stored bytes, so the \
+                "{backend}: {lever} did not reach the stored live bytes, so the \
                  digest's invariance across it proves nothing"
             );
         }
@@ -3136,23 +3215,29 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
 /// control: without it, two identical files would prove nothing about the seed.
 #[test]
 fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
+    // An image is compared by the bytes it holds in ACTIVE USE (`live_digest_line`): the gaps
+    // a claim leaves unwritten (a vector's capacity past its length) are no part of the data
+    // and differ between runs.  The file's LENGTH is layout, and stays compared.
     let read = |dir: &str, seed: Option<&str>| {
-        persist_size(dir, 120, 30, "interleaved", seed);
-        fa::read(scratch_existing(dir).join("size.store")).expect("store file")
+        let digest = persist_live_digest(dir, 120, 30, "interleaved", seed);
+        let len = fa::metadata(scratch_existing(dir).join("size.store"))
+            .expect("store file")
+            .len();
+        (len, digest)
     };
     let a = read("seed710_a", Some("12345"));
     let b = read("seed710_b", Some("12345"));
-    assert_eq!(a.len(), b.len(), "same seed, same data: same length");
+    assert_eq!(a.0, b.0, "same seed, same data: same length");
     assert!(
         a == b,
-        "same seed, same data must give byte-identical bytes"
+        "same seed, same data must give the same live bytes: {a:?} vs {b:?}"
     );
 
     let c = read("seed710_c", None);
     let d = read("seed710_d", None);
     assert!(
         c != d,
-        "without LOFT_HASH_SEED the bytes must still vary — otherwise this test proves nothing"
+        "without LOFT_HASH_SEED the live bytes must still vary — otherwise this test proves nothing"
     );
 
     // loft#856 — the SPELLING is part of the contract, and only the decimal one was covered.
@@ -3169,9 +3254,7 @@ fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
     let dec = read("seed710_dec", Some("81985529216486895"));
     assert!(
         hex == dec,
-        "`0x0123456789abcdef` and its decimal spelling must be the same seed: {} vs {} bytes",
-        hex.len(),
-        dec.len()
+        "`0x0123456789abcdef` and its decimal spelling must be the same seed: {hex:?} vs {dec:?}"
     );
     assert!(
         hex != c,
