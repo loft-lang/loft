@@ -2702,7 +2702,10 @@ impl Output<'_> {
                 val_un,
                 crate::data::Value::Int(_) | crate::data::Value::Long(_)
             );
-            let yield_code = self.generate_expr_buf(val)?;
+            let yield_code = match self.fn_number_code(val).filter(|_| is_bare_dnr) {
+                Some(code) => code,
+                None => self.generate_expr_buf(val)?,
+            };
             if is_bare_dnr {
                 writeln!(
                     w,
@@ -3436,6 +3439,7 @@ impl Output<'_> {
                     }
                     let val_code = self.generate_expr_buf(val)?;
                     if self.yield_collect_fnref {
+                        let val_code = self.fn_number_code(val).unwrap_or(val_code);
                         let push = self.eager_fnref_push(val, &val_code);
                         writeln!(w, "    {push};")?;
                     } else if let Some(tp) = snapshot_tp {

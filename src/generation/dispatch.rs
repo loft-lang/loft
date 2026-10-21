@@ -2482,6 +2482,8 @@ impl Output<'_> {
                         let src = self.var_place(*v);
                         write!(w, "{src}.clone()")?;
                     }
+                } else if wrap_fn_ref {
+                    self.emit_fn_number(w, to)?;
                 } else {
                     self.output_code_inner(w, to)?;
                 }

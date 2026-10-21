@@ -197,11 +197,18 @@ impl Output<'_> {
             ValueType::Int => {
                 if self.fn_ref_context {
                     // in fn-ref context (if-else branch), emit tuple.
-                    return write!(
-                        w,
-                        "({}_i32 as u32, loft::keys::DbRef::NULL)",
-                        node.int_value()
-                    );
+                    return match u32::try_from(node.int_value()) {
+                        Ok(d_nr) => write!(
+                            w,
+                            "({} as u32, loft::keys::DbRef::NULL)",
+                            self.fn_lit_as(d_nr, "i32")
+                        ),
+                        Err(_) => write!(
+                            w,
+                            "({}_i32 as u32, loft::keys::DbRef::NULL)",
+                            node.int_value()
+                        ),
+                    };
                 } else if self.i32_literal_context {
                     // tp-number / field-index / flag-enum slot: runtime wants i32.
                     return write!(w, "{}_i32", node.int_value());
@@ -301,7 +308,9 @@ impl Output<'_> {
                     let mut buf: Vec<u8> = Vec::new();
                     self.output_code_node(&mut buf, inner)?;
                     let code = String::from_utf8_lossy(&buf).into_owned();
-                    let push = self.eager_fnref_push(&inner.to_owned_value(), &code);
+                    let owned = inner.to_owned_value();
+                    let code = self.fn_number_code(&owned).unwrap_or(code);
+                    let push = self.eager_fnref_push(&owned, &code);
                     write!(w, "{push}")?;
                 } else if let Some(kinds) = self.yield_collect_kinds.clone() {
                     // A by-value tuple yield: push each element's `i64` image FLAT, in the
@@ -383,13 +392,13 @@ impl Output<'_> {
             // a null sentinel when non-capturing.
             ValueType::FnRef => {
                 let clos_var = node.fnref_clos_var();
-                let d_nr = node.fnref_dnr();
+                let d_nr = u32::try_from(node.fnref_dnr()).unwrap_or(u32::MAX);
                 if clos_var != u16::MAX {
                     // The closure record's PLACE — a struct field in a generator (loft#1587).
                     let place = self.var_place(clos_var);
-                    return write!(w, "({d_nr}_u32, {place})");
+                    return write!(w, "({}, {place})", self.fn_lit(d_nr));
                 }
-                return write!(w, "({d_nr}_u32, loft::keys::DbRef::NULL)");
+                return write!(w, "({}, loft::keys::DbRef::NULL)", self.fn_lit(d_nr));
             }
             ValueType::Parallel => {
                 // One Rust closure per arm, handed to `n_parallel_block_native`, which
@@ -678,7 +687,14 @@ impl Output<'_> {
                     if as_block {
                         write!(w, "{{ ")?;
                     }
-                    self.output_code_node(w, e)?;
+                    match e
+                        .native()
+                        .and_then(|v| self.fn_number_code(v))
+                        .filter(|_| needs_fn_pair)
+                    {
+                        Some(code) => write!(w, "{code}")?,
+                        None => self.output_code_node(w, e)?,
+                    }
                     if as_block {
                         write!(w, " }}")?;
                     }
@@ -1817,7 +1833,7 @@ impl Output<'_> {
             d_nr, has_closure, ..
         } in &candidates
         {
-            write!(w, " {d_nr}_u32 => ")?;
+            write!(w, " {} => ", self.fn_arm(*d_nr))?;
             // P227: text-return arms wrap each call result with
             // `.to_string()` so heterogeneous candidate Rust signatures
             // (some return `Str`, some return `String`) collapse to a
@@ -2224,6 +2240,55 @@ impl Output<'_> {
     )]
     pub(super) fn type_lit_as(&self, tp: u16, ty: &str) -> String {
         format!("{tp}_{ty}")
+    }
+
+    /// @PLN199 G0b-1 — the literal a function number (a definition's `d_nr`, the first half
+    /// of a function value) is written as.  Every site that writes one goes through here,
+    /// [`Self::fn_lit_as`] or [`Self::fn_arm`], so the code a library artifact carries can
+    /// name its functions by a table filled when it loads instead.
+    pub(super) fn fn_lit(&self, d_nr: u32) -> String {
+        self.fn_lit_as(d_nr, "u32")
+    }
+
+    /// [`Self::fn_lit`] at the integer type `ty` the surrounding code casts from.
+    #[expect(
+        clippy::unused_self,
+        reason = "a library artifact reads its ids through `self` (@PLN199 G0b-2)"
+    )]
+    pub(super) fn fn_lit_as(&self, d_nr: u32, ty: &str) -> String {
+        format!("{d_nr}_{ty}")
+    }
+
+    /// The pattern of the `match` arm that dispatches a function value to function `d_nr`.
+    pub(super) fn fn_arm(&self, d_nr: u32) -> String {
+        self.fn_lit(d_nr)
+    }
+
+    /// The code of `v` when it is a bare function number — an integer constant where a
+    /// function value or a routine is expected — written by [`Self::fn_lit_as`] at the width
+    /// a constant takes here; `None` for anything else.
+    pub(super) fn fn_number_code(&self, v: &Value) -> Option<String> {
+        match v.unspan() {
+            Value::Int(n) if !self.fn_ref_context => {
+                let ty = if self.i32_literal_context {
+                    "i32"
+                } else {
+                    "i64"
+                };
+                u32::try_from(*n).ok().map(|d| self.fn_lit_as(d, ty))
+            }
+            Value::Long(n) => u32::try_from(*n).ok().map(|d| self.fn_lit_as(d, "i64")),
+            _ => None,
+        }
+    }
+
+    /// Emit `v`, which holds a function number: through [`Self::fn_number_code`] when it is a
+    /// constant, as any expression otherwise.
+    pub(super) fn emit_fn_number(&mut self, w: &mut dyn Write, v: &Value) -> std::io::Result<()> {
+        match self.fn_number_code(v) {
+            Some(code) => write!(w, "{code}"),
+            None => self.output_code_inner(w, v),
+        }
     }
 
     /// Emit an operator argument that is a type id ([`super::TYPE_ID_PARAMS`]): a constant one

@@ -79,7 +79,11 @@ impl OpEmitter for OpDropFnRefEmitter {
             "{{ let __df = {vn}; if __df.1.rec != 0 && stores.allocations.get(__df.1.store_nr as usize).is_some_and(|s| !s.is_free()) {{ match __df.0 {{ "
         )?;
         for (lambda, cascade) in arms {
-            write!(ctx.w, "{lambda}_u32 => {cascade}(cell, __df.1), ")?;
+            write!(
+                ctx.w,
+                "{} => {cascade}(cell, __df.1), ",
+                ctx.output.fn_arm(lambda)
+            )?;
         }
         write!(ctx.w, "_ => {{}} }} }} }}")
     }

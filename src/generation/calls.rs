@@ -745,12 +745,12 @@ impl Output<'_> {
                 && matches!(def_fn.attributes()[idx].typedef, Type::Routine(_));
             if param_is_fnref && matches!(v, Value::Int(_)) {
                 let mut buf = Vec::new();
-                self.output_code_inner(&mut buf, v)?;
+                self.emit_fn_number(&mut buf, v)?;
                 let s = String::from_utf8(buf).unwrap();
                 write!(w, "({s} as u32, loft::keys::DbRef::NULL)")?;
             } else if param_is_routine && matches!(v, Value::Int(_)) {
                 let mut buf = Vec::new();
-                self.output_code_inner(&mut buf, v)?;
+                self.emit_fn_number(&mut buf, v)?;
                 let s = String::from_utf8(buf).unwrap();
                 write!(w, "{s} as u32")?;
             } else {
