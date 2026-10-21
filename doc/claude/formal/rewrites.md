@@ -441,7 +441,9 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  candidate under — a scalar or a text, a local that owns its own
                  store, a parameter while the root is no return buffer, a view of a
                  plain NO-HEAP record (it reads fields and never a length, and the
-                 window's slots lie past every element it can name); a vector view
+                 window's slots lie past every element it can name), a `File` named
+                 only as the file of a scalar read (R-InPlace) beside roots that are
+                 vectors of scalars; a vector view
                  taken before the loop fails it — and every other statement, and
                  every pushed value, GROWS no store (the header hoist's own
                  allowances: an in-place scalar set, a discharge buffer's mint and
@@ -681,7 +683,12 @@ A parameter can name the return buffer the caller offered, so beside a pushed re
 parameter read declines — except a vector of plain scalars whose element storage differs from
 the pushed vector's (`Type::same_element_storage`, `hoist::scalar_vector_apart`): `(C-Refl)`
 decides on storage, so the two are never one vector, and neither names a store through its
-elements (cells s1–s4).
+elements (cells s1–s4).  So does a `File` parameter the body names only as the file of a
+scalar read (`(R-InPlace)`'s read clause, `hoist::names_beside_file_reads`), while every root
+is a vector of scalars: the read writes the File record's own cursor fields in place, never a
+vector's length, and claims nothing, and a record is never an element of such a vector.  Any
+other mention — `bf#next`, `bf` handed to a call — keeps the header (cells f1–f4; the
+crawler's `binary_read` −29.4 %).
 Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `hoist::push_window_ok`, `Output::push_reserve` / `push_window_close` /
 `active_push_window`, the `Value::Loop` emission in `emit.rs` (the order), the registry's
