@@ -1625,12 +1625,10 @@ Check the allocations and structure of the hash table.
 # Panics
 When the structure is not correctly filled
 */
-/// Count the live records in a hash table.
-///
-/// Walks the bucket array (same loop as `records()` but counting
-/// instead of collecting).  O(room) where `room` is the bucket array
-/// length, typically ~1.5× the live-record count.  Returns 0 for an
-/// uninitialised hash (no claim allocated yet).
+/// Count the live records in a hash table: the header's live count (`LEN_FLD`), which every
+/// insert, removal and rebuild maintains and [`validate`] checks against the occupied slots.
+/// It used to walk the bucket array, so `len(h)` cost a pass over the whole table.  Returns 0
+/// for an absent or uninitialised hash.
 ///
 /// Powers `len(h)` for `hash<T[key]>` (P192).
 #[must_use]
@@ -1644,15 +1642,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
     if claim == 0 {
         return 0;
     }
-    let count = elms(keys::store(hash_ref, stores), claim);
-    let sb = slot_bytes(keys::store(hash_ref, stores), claim);
-    let mut total: u32 = 0;
-    for i in 0..count {
-        if keys::store(hash_ref, stores).get_u32_raw(claim, BUCKET0 + i * sb) != 0 {
-            total += 1;
-        }
-    }
-    total
+    keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD)
 }
 
 /// Byte size of a hash's bucket table — the full table, holes included
