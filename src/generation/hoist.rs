@@ -7164,6 +7164,14 @@ fn window_parts_ok(
             let scalar_vector_apart = roots
                 .iter()
                 .all(|&r| scalar_vector_apart(vars.tp(x), vars.tp(r)));
+            // A `File` the body only READS a scalar from (`@FR-R-InPlace`'s read clause):
+            // the read touches the File record's own cursor fields in place, never a
+            // vector's length, and claims nothing.  A record cannot be an element of a
+            // vector of scalars, so beside such roots the File cannot view one.
+            let file_read_only = roots.iter().all(|&r| scalar_vector(vars.tp(r)))
+                && parts
+                    .iter()
+                    .all(|p| !names_beside_file_reads(p, x, data, vars));
             !roots.contains(&x)
                 && !facts.is_some_and(|f| roots.iter().all(|&r| f.distinct(x, r)))
                 && !is_scalar(vars.tp(x))
@@ -7172,6 +7180,7 @@ fn window_parts_ok(
                 && !separate_parameter
                 && !record_view
                 && !scalar_vector_apart
+                && !file_read_only
         })
         .collect();
     for part in parts {
@@ -9033,6 +9042,43 @@ fn scalar_vector_apart(a: &Type, b: &Type) -> bool {
         return false;
     };
     is_scalar(ea) && is_scalar(eb) && !ea.same_element_storage(eb)
+}
+
+/// A vector whose elements are plain scalars (seen through `&` and `τ?`).
+fn scalar_vector(tp: &Type) -> bool {
+    matches!(tp.peel_link(), Type::Vector(e, _) if is_scalar(e))
+}
+
+/// Does `n` name `x` anywhere but as the file operand of a scalar file read
+/// ([`scalar_file_read`])?  The read's other operands are asked like any subtree, and every
+/// other spelling of a mention is [`Value::names_var_here`]'s — so the fallback is a
+/// mention, the answer that keeps the window closed.
+fn names_beside_file_reads(
+    n: &Value,
+    x: u16,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> bool {
+    let n = n.unspan();
+    if let Value::Call(d, args) = n
+        && (*d as usize) < data.definitions.len()
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(f)) if *f == x)
+        && scalar_file_read(data, data.def(*d).name(), args, Some(vars))
+    {
+        return args[1..]
+            .iter()
+            .any(|a| names_beside_file_reads(a, x, data, vars));
+    }
+    if n.names_var_here(x) {
+        return true;
+    }
+    let mut found = false;
+    n.for_each_child(&mut |c| {
+        if !found && names_beside_file_reads(c, x, data, vars) {
+            found = true;
+        }
+    });
+    found
 }
 
 /// `@FR-R-LazySplit` — one `for piece in text.split(c)` loop that takes its pieces straight

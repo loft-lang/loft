@@ -67,6 +67,14 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_s2_mk", 0, 0, 2),
     ("n_s3_mk", 0, 0, 2),
     ("n_s4_mk", 2, 2, 0),
+    // A File parameter beside the return buffer: named only as the file of a scalar read,
+    // it cannot view a vector of scalars (f4); a `#next` read beside the read is a mention
+    // (f2).  f1's reader is a call here — this tier does not inline it — and the release tier
+    // pin below takes its window.  f3 pushes records, which the clause does not reach.
+    ("n_f1_mk", 0, 0, 1),
+    ("n_f2_mk", 0, 0, 1),
+    ("n_f3_mk", 0, 0, 0),
+    ("n_f4_mk", 1, 1, 0),
     // `(R-Base)`'s growth condition: a mint left on its templates is still a growth.
     ("n_r1", 0, 0, 0),
 ];
@@ -98,17 +106,21 @@ fn cells() -> PathBuf {
 }
 
 fn emit(tag: &str, env: &[(&str, &str)]) -> String {
+    emit_tier(tag, &[], env)
+}
+
+/// [`emit`] with the tier's flags in front (`--native-release`: the IR rewrites run).
+fn emit_tier(tag: &str, tier: &[&str], env: &[(&str, &str)]) -> String {
     // One file per TEST: the tests run on threads of one process.
     let out =
         std::env::temp_dir().join(format!("loft_push_window_{}_{tag}.rs", std::process::id()));
-    let status = loft(
-        &[
-            "--native-emit",
-            out.to_str().unwrap(),
-            cells().to_str().unwrap(),
-        ],
-        env,
+    let mut args: Vec<&str> = tier.to_vec();
+    let (out_s, cells_s) = (
+        out.to_str().unwrap().to_string(),
+        cells().to_str().unwrap().to_string(),
     );
+    args.extend(["--native-emit", &out_s, &cells_s]);
+    let status = loft(&args, env);
     assert!(
         fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
@@ -296,6 +308,22 @@ fn the_verify_form_checks_every_windowed_push_and_the_close() {
             && w1.contains("stores.push_window_close::<true>("),
         "LOFT_HOIST_VERIFY=1 emits the checking form of the push and the close:\n{w1}"
     );
+}
+
+#[test]
+fn a_file_read_through_a_one_line_reader_takes_the_window_on_the_release_tier() {
+    // The crawler's `read_i16_vec`: `out += [f_read(bf)]` with `f_read` a one-line
+    // `bf#read(2) as i16 as integer`.  The release tier inlines the reader, so `bf` is named
+    // only as the file of a scalar read and the window opens; f2's `bf#next` still keeps
+    // the header there.
+    let got = counts(&emit_tier("release", &["--native-release"], &[]));
+    for (name, want) in [("n_f1_mk", (1, 1, 0, 1)), ("n_f2_mk", (0, 0, 1, 0))] {
+        assert_eq!(
+            got.get(name).copied().unwrap_or_default(),
+            want,
+            "{name}: (windows, windowed pushes, header pushes, closes) on --native-release"
+        );
+    }
 }
 
 #[test]
