@@ -491,6 +491,49 @@ impl Stores {
         rec
     }
 
+    /// The constants a keyed field's entry needs, resolved where the emitter knows the field:
+    /// its byte offset in the parent record (0 for `field == u16::MAX`, the collection being
+    /// the value itself) and its element type ([`Self::keyed_entry_long_at`]).
+    #[must_use]
+    pub fn keyed_field_consts(&self, parent_tp: u16, field: u16) -> (u32, u16) {
+        let tp = self.sub_record_type(parent_tp, field);
+        let d = self.field_ref(&DbRef { store_nr: 0, rec: 0, pos: 0 }, parent_tp, field);
+        (d.pos, tp)
+    }
+
+    /// [`Self::keyed_entry_long`] with the field's offset and element type handed in as the
+    /// emitter resolved them ([`Self::keyed_field_consts`]): [`hash::entry_one_int`] on the
+    /// table, and the general entry where it answers `None` (no table yet, a table that
+    /// borrows its entries, a sort in flight over this collection).
+    #[inline]
+    pub fn keyed_entry_long_at(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        field_off: u32,
+        elem_tp: u16,
+        key: i64,
+    ) -> DbRef {
+        if self.live_scratches.is_empty() && !keys::keyed_verify() {
+            let d = DbRef {
+                store_nr: data.store_nr,
+                rec: data.rec,
+                pos: data.pos + field_off,
+            };
+            if let Some(rec) = crate::hash::entry_one_int(
+                &d,
+                &mut self.allocations,
+                &self.types[elem_tp as usize].keys,
+                key,
+                data.rec,
+            ) {
+                return rec;
+            }
+        }
+        self.keyed_entry_long(data, parent_tp, field, key)
+    }
+
     /// [`Self::keyed_entry_long`] for a hash keyed by one to four integer parts
     /// (`@FR-R-KeyedEntry`'s compound clause): [`Self::keyed_entry_ints`] on the hash the field
     /// holds.
@@ -1299,11 +1342,12 @@ impl Stores {
                     self.verify_probe(data, rec, tp, &probed);
                 }
                 match probed {
-                    hash::Probed::Free { bucket, index } => hash::add_at(
+                    hash::Probed::Free { bucket, index, tag } => hash::add_at(
                         data,
                         rec,
                         bucket,
                         index,
+                        tag,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     ),

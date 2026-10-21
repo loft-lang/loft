@@ -61,7 +61,9 @@ doubled table and a persisted-format break; in-table entries move on growth and 
 
 **Revisit when.** A like-for-like measurement (same access order, same working set on both sides)
 still shows a large gap; or reference stability into a keyed collection is given up; or the bucket
-table's width changes for another reason.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c105--a-hash-lookup-keeps-its-two-random-reads-no-hash-in-slot-no-entries-in-the-bucket-table).
+table's width changes for another reason.  **Being revisited:** the keyed class's
+like-for-like gap (gridmesh `field_add_cell` 4.25×, its hashbrown-table ceiling ≈ 1.55×) is
+measured against `formal/collections.md` (Col-Tag) and (Col-Inline), both PROPOSED.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c105--a-hash-lookup-keeps-its-two-random-reads-no-hash-in-slot-no-entries-in-the-bucket-table).
 **Catalogue:** @F7 (`hash<T[keys]>` keyed collection).
 
 ## C113 — two `index` collections over one element type and key are refused, not made to work

@@ -593,7 +593,17 @@ impl Stores {
                     // alone, since walking into it would free that collection's text
                     // and vectors out from under it.
                     let owned = hash::owns_entries(self.store(rec), cur);
-                    for (entry, ours) in hash::entries(rec, &self.allocations) {
+                    // Entries the arena handed out of a type that owns no heap have
+                    // nothing to recurse into: the chunks below free them whole, so the
+                    // walk over every entry is skipped.  A borrowed entry is still listed:
+                    // a table that borrows walks as before.
+                    let plain = owned && !self.owns_heap(v);
+                    let listed = if plain {
+                        Vec::new()
+                    } else {
+                        hash::entries(rec, &self.allocations)
+                    };
+                    for (entry, ours) in listed {
                         if owned && !ours {
                             continue;
                         }
@@ -3343,7 +3353,8 @@ impl Stores {
                     *problems += 1;
                     return;
                 }
-                let elms = (room - crate::hash::RESERVED_WORDS) * 2;
+                let sb = crate::hash::slot_bytes(store, cur);
+                let elms = (room - crate::hash::RESERVED_WORDS) * 8 / sb;
                 // @PLN135 arc H — a slot holds an arena INDEX for a hash that owns its
                 // entries, and a record number for one that borrows them (a secondary
                 // index).  The stride the table records is the discriminator, and the
@@ -3361,8 +3372,7 @@ impl Stores {
                     return;
                 }
                 for i in 0..elms {
-                    let slot =
-                        store.get_u32_raw(cur, crate::hash::BUCKET0 + i * crate::hash::SLOT_BYTES);
+                    let slot = store.get_u32_raw(cur, crate::hash::BUCKET0 + i * sb);
                     if slot == 0 {
                         continue;
                     }
