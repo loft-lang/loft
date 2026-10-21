@@ -10192,6 +10192,31 @@ fn main() {
     // interpreter dispatches to.  Must run before any codegen below.
     extensions::resolve_native_impl_symbols(&mut p.data);
 
+    // @PLN196 step 8 — a live rebuild hands the running world's layout to the build of the
+    // next instance (`live_rebuild::spawn_build`).  A world this program cannot be carried
+    // into refuses the BUILD, before any code is generated, so the swap is never offered and
+    // the running build keeps serving.
+    if p.diagnostics.level() < Level::Error
+        && let Ok(world) = std::env::var("LOFT_CHECK_WORLD")
+    {
+        let plan = fa::read_to_string(&world)
+            .map_err(|e| format!("{world}: {e}"))
+            .and_then(|text| state.database.world_upgrade_plan(&text));
+        match plan {
+            Ok(loft::database::WorldPlan::Same) => {}
+            Ok(loft::database::WorldPlan::Converts(changes)) => {
+                eprintln!("loft-live: the running world converts to this build:");
+                for c in changes {
+                    eprintln!("  {c}");
+                }
+            }
+            Err(why) => {
+                eprintln!("loft-live: this build cannot take over the running world — {why}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // --check: parse + compile only, report errors and exit.
     // When combined with --native, fall through to the native pipeline
     // which will compile but not run the binary.

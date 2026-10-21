@@ -829,6 +829,42 @@ fn read_store_file(path: &std::path::Path) -> Result<(String, Vec<u8>), String> 
     Ok((text, bytes))
 }
 
+/// What a build of this program would do with a world whose layout a sidecar records
+/// ([`Stores::world_upgrade_plan`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorldPlan {
+    /// The layout is this program's: the world is read as it is.
+    Same,
+    /// The world converts; the changes, one per line of `UpgradeMap::changes`.
+    Converts(Vec<String>),
+}
+
+/// The layout a `.dschema` text records, read back into its description, with the id of the
+/// store's root in it.  `what` names the store in an error.
+fn recorded_layout(
+    sidecar: &str,
+    what: &str,
+) -> Result<(crate::schema_sidecar::LayoutIdentity, LayoutDesc, u16), String> {
+    let id = crate::schema_sidecar::LayoutIdentity::from_sidecar(sidecar)
+        .ok_or_else(|| format!("{what}.dschema is not a layout file"))?;
+    let mut old = LayoutDesc::from_dump(&id.dump)?;
+    old.apply_facts(&id.facts)?;
+    // Version 2 names the root; version 1 leaves it to be read from the closure, where it is
+    // the one type nothing else refers to.
+    let named = old
+        .names
+        .iter()
+        .find(|(_, n)| !id.root.is_empty() && **n == id.root)
+        .map(|(k, _)| *k);
+    let roots = named.map_or_else(|| old.unreferenced(), |r| vec![r]);
+    let [old_root] = roots[..] else {
+        return Err(format!(
+            "{what}.dschema does not say which of its types is the store's root"
+        ));
+    };
+    Ok((id, old, old_root))
+}
+
 /// A store file converted into a new slot by [`Stores::upgrade_image`].
 struct Converted {
     /// The new layout, recording the slot the new store's references name.
@@ -907,23 +943,7 @@ impl Stores {
         owe: bool,
     ) -> Result<Option<Converted>, String> {
         use crate::schema_sidecar::LayoutIdentity;
-        let id = LayoutIdentity::from_sidecar(sidecar)
-            .ok_or_else(|| format!("{what}.dschema is not a layout file"))?;
-        let mut old = LayoutDesc::from_dump(&id.dump)?;
-        old.apply_facts(&id.facts)?;
-        // Version 2 names the root; version 1 leaves it to be read from the closure, where
-        // it is the one type nothing else refers to.
-        let named = old
-            .names
-            .iter()
-            .find(|(_, n)| !id.root.is_empty() && **n == id.root)
-            .map(|(k, _)| *k);
-        let roots = named.map_or_else(|| old.unreferenced(), |r| vec![r]);
-        let [old_root] = roots[..] else {
-            return Err(format!(
-                "{what}.dschema does not say which of its types is the store's root"
-            ));
-        };
+        let (id, old, old_root) = recorded_layout(sidecar, what)?;
         let old_name = old.names[&old_root].clone();
         let new_root = match new_root {
             Some(r) => r,
@@ -955,6 +975,33 @@ impl Stores {
             new_slot,
             pending,
         }))
+    }
+
+    /// @PLN196 step 8 — what a build of THIS program would do with the running world whose
+    /// layout `sidecar` records: read it as it is, convert it, or refuse it.  A live rebuild
+    /// asks this when it compiles the next instance (`LOFT_CHECK_WORLD`), so a refused change
+    /// fails the BUILD and the swap is never offered; the swap then only carries out a plan
+    /// already known to hold.  The world's type is found by name.
+    ///
+    /// # Errors
+    /// Why the world cannot be carried into this program: a layout this build cannot read, a
+    /// world type this program does not define, or the upgrade map's first refusal.
+    pub fn world_upgrade_plan(&self, sidecar: &str) -> Result<WorldPlan, String> {
+        let (id, old, old_root) = recorded_layout(sidecar, "the running world")?;
+        let name = old.names[&old_root].clone();
+        let new_root = *self.names.get(&name).ok_or_else(|| {
+            format!("the running world is a `{name}`, which this build does not define")
+        })?;
+        let current = crate::schema_sidecar::LayoutIdentity::of(self, &[new_root]);
+        if current.layout_hash == id.layout_hash && current.dump == id.dump {
+            return Ok(WorldPlan::Same);
+        }
+        let new = self.layout_descriptor(&[new_root]);
+        let map = UpgradeMap::derive(&old, old_root, &new, new_root);
+        if let Some(r) = map.refusals.first() {
+            return Err(format!("{}: {}", r.path, r.reason));
+        }
+        Ok(WorldPlan::Converts(map.changes))
     }
 
     /// `@FR-L-Sound` — `store_load` of a file written under an older layout (@PLN196, open

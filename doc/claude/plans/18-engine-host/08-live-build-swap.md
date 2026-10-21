@@ -215,9 +215,15 @@ Rollback if the new build fails to boot.  **SHIPPED**:
   the store converter (`load_path`).  Hashes, sorted collections and
   references survive; a changed struct converts in place, every added field
   taking its default (a computed one through the drain the parser puts after
-  `swap_world`).  A change the converter refuses ends the new build before it
-  is ready, which the old build reads as a failed swap: it keeps serving and
-  the reason is on the new build's stderr.  A world that shares its store
+  `swap_world`).  **Whether the world can be carried is decided when the next
+  instance is COMPILED, never at the swap** (owner, 2026-10-21): `swap_world`
+  records the world's layout, the background rebuild hands it to the build
+  (`LOFT_CHECK_WORLD`), and the build derives the upgrade map before it
+  generates any code.  A refused change fails the build with the reason, so
+  `rebuild_status` reports failed and the swap is never offered; a build that
+  passed carries a plan already known to hold.  The new build's own refusal
+  at `swap_world` (it exits before ready, the old build keeps serving) stays
+  only as the backstop.  A world that shares its store
   with other data goes over as JSON (`show_json` out,
   `populate_struct_from_jsonvalue` in: scalars, texts, vectors and inline
   structs; missing fields null, extra ignored).  `LOFT_NO_SWAP_IMAGE=1` sends every

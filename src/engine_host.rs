@@ -2105,6 +2105,15 @@ thread_local! {
     static SWAP: RefCell<SwapPhase> = const { RefCell::new(SwapPhase::Idle) };
     /// The snapshot root registered by `swap_world`: (record, known_type).
     static WORLD_ROOT: std::cell::Cell<Option<(DbRef, u16)>> = const { std::cell::Cell::new(None) };
+    /// The registered world's layout sidecar, when it goes over as an image.
+    static WORLD_LAYOUT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// The layout of the world `swap_world` registered, as sidecar text, for a live rebuild to
+/// check the next instance against; `None` when no world goes over as an image.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn world_layout() -> Option<String> {
+    WORLD_LAYOUT.with(|l| l.borrow().clone())
 }
 
 /// `swap_world(w)` — name the world record: registers it as the snapshot
@@ -2120,6 +2129,13 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
         return false;
     }
     WORLD_ROOT.with(|r| r.set(Some((w, kt))));
+    // The layout a live rebuild checks the next instance against (@PLN196 step 8).  Only a
+    // world that is its store's root goes over as an image; one that shares its store goes
+    // over as JSON and is not checked.
+    let layout = (stores.allocations[w.store_nr as usize].known_type == kt).then(|| {
+        crate::schema_sidecar::LayoutIdentity::of_store(stores, w.store_nr, kt).to_sidecar()
+    });
+    WORLD_LAYOUT.with(|l| *l.borrow_mut() = layout);
     let Ok(snap_path) = std::env::var("LOFT_RESUME") else {
         return false;
     };

@@ -1286,3 +1286,75 @@ fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
     }
     let _ = loft::file_access::remove_dir_all(&dir);
 }
+
+/// A live rebuild decides at COMPILE time whether the next instance can take over the running
+/// world (owner, 2026-10-21): the build is checked against the world's layout
+/// (`LOFT_CHECK_WORLD`, written by `live_rebuild::spawn_build`), so a refused change fails the
+/// BUILD and the swap is never offered.  An unchanged world checks silently, a grown one names
+/// what converts, a refused one fails with the reason — under `--check --native` too, before
+/// any code is generated.
+#[test]
+fn cell_a_rebuild_checks_the_running_world_before_it_compiles() {
+    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"a\" };\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let dir = write_store("rebuild_check", writer);
+    let check = |name: &str, src: &str, native: bool| -> (i32, String, String) {
+        loft::file_access::write(dir.join(format!("{name}.loft")), src).unwrap();
+        let mut args = vec!["--check"];
+        if native {
+            args.push("--native");
+        }
+        let file = format!("{name}.loft");
+        args.push(&file);
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args(&args)
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_CHECK_WORLD", dir.join("a.store.dschema"))
+            .output()
+            .expect("loft runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    // Every version builds the world without naming `name`, whose type is what changes.
+    let main = "fn main() {\n  w = W { events: 0 };\n  println(\"{w.events}\");\n}\n";
+    let (code, out, err) = check(
+        "same",
+        &format!("struct W {{ events: integer, name: text }}\n{main}"),
+        false,
+    );
+    assert_eq!((code, out.as_str()), (0, "ok\n"), "unchanged:\n{err}");
+    assert!(
+        !err.contains("loft-live"),
+        "an unchanged world checks silently:\n{err}"
+    );
+    let (code, out, err) = check(
+        "grown",
+        &format!(
+            "struct W {{ events: integer, name: text, bonus: integer = $.events * 10 }}\n{main}"
+        ),
+        false,
+    );
+    assert_eq!((code, out.as_str()), (0, "ok\n"), "grown:\n{err}");
+    assert!(
+        err.contains("the running world converts to this build") && err.contains("bonus"),
+        "a grown world names what converts:\n{err}"
+    );
+    for native in [false, true] {
+        let (code, out, err) = check(
+            "refused",
+            &format!("struct W {{ events: integer, name: integer }}\n{main}"),
+            native,
+        );
+        assert!(
+            code == 1
+                && out.is_empty()
+                && err.contains("this build cannot take over the running world")
+                && err.contains("name"),
+            "native={native}: a refused world fails the build with the reason ({code}):\n{out}\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
