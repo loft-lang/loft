@@ -1642,6 +1642,56 @@ pub fn shim_cc_runtime_args() -> &'static [&'static str] {
     }
 }
 
+/// A raw tick count from the CPU's own counter, for a test that runs on every op and must
+/// cost next to nothing: the profiler's "did the op that just ended run long?"
+/// ([`crate::profiler::Profiler::op_boundary`]).  Monotonic on one thread, in units only
+/// [`ticks_per_milli`] can turn into time — never a wall clock, never compared across
+/// threads.  `Instant::now()` is a library call of ~20 ns here, which on every op tripled a
+/// profiled run and skewed its shares toward op-dense code.  [`ticks_per_milli`] converts.
+#[inline]
+#[must_use]
+pub fn ticks() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let t: u64;
+        // SAFETY: CNTVCT_EL0 is the virtual counter, readable from user space on every OS
+        // loft runs on for this architecture; the read has no side effect.
+        unsafe {
+            std::arch::asm!("mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack, preserves_flags));
+        }
+        t
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: RDTSC has no side effect and is available on every x86-64 CPU.
+        unsafe { std::arch::x86_64::_rdtsc() }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        static START: OnceLock<std::time::Instant> = OnceLock::new();
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_nanos() as u64
+    }
+}
+
+/// How many [`ticks`] make a millisecond on this machine, measured once against the clock
+/// (24 000 for Apple silicon's counter, millions for an x86 TSC).
+#[must_use]
+pub fn ticks_per_milli() -> u64 {
+    static RATE: OnceLock<u64> = OnceLock::new();
+    *RATE.get_or_init(|| {
+        let (t0, i0) = (ticks(), std::time::Instant::now());
+        while i0.elapsed() < std::time::Duration::from_micros(500) {}
+        let dt = u128::from(ticks().wrapping_sub(t0));
+        let ns = i0.elapsed().as_nanos().max(1);
+        u64::try_from(dt * 1_000_000 / ns)
+            .unwrap_or(u64::MAX)
+            .max(1)
+    })
+}
+
 /// @PLN197 C — the tools that turn a `[c] shim` into the STATIC archive a static native link
 /// puts into the binary: one compiler run per source, then one archiver run.
 ///

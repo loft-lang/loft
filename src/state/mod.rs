@@ -5825,11 +5825,26 @@ impl State {
     fn profile_tick(&mut self, pc: u32) {
         // The frames are read BEFORE the profiler is borrowed mutably, so the two
         // never overlap and the sampler needs no access to the rest of `State`.
+        let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) else {
+            return;
+        };
+        if !p.cpu_armed() {
+            return;
+        }
+        // @PLN179 finding 022 — the op that just ended ran long (a native, a sort, a read):
+        // its time goes to ITS position, not to wherever the next sample lands.  A native
+        // adds no loft frame, so the frames are still the ones it ran under.
+        if let Some(long) = p.op_boundary(pc) {
+            let frames = self.profile_frames();
+            if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
+                p.settle_op(long, &frames);
+            }
+        }
         let due = self
             .debug
             .as_deref_mut()
             .and_then(|d| d.prof.as_mut())
-            .is_some_and(|p| p.cpu_armed() && p.tick());
+            .is_some_and(|p| p.tick());
         if !due {
             return;
         }
