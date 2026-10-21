@@ -6370,6 +6370,99 @@ Its planted defect hands every part of an entry at the key's position; the pin
 of both forms under `LOFT_HOIST_VERIFY=1` the clause names is not built: the switch A/B and
 the interpreter are its falsifiers.
 
+### A dying value's blocks are handed to the value built after it
+
+```
+  (R-HandOver)   in one function, a value d of type τ that DIES at a statement D — a local
+                 rebound or leaving scope, an element dropped by a keep, a remove or a
+                 truncation — and a value n of type τ BUILT at a statement B into d's
+                 store, a copy into a fresh slot or a literal mint: when D precedes B on
+                 every path, nothing between them reads d, and d is the only holder of
+                 its owned blocks, n is built INTO d's blocks — each owned block whose
+                 capacity holds n's length for it is overwritten in place, and neither
+                 d's release of it nor n's claim of one happens; a block that does not
+                 fit is released and claimed as before.  THE ROTATE CLAUSE: in
+                 `v += [n]; S; drop the first k of v`, S reading no element of v and
+                 the drop count k answered by `len(v)` alone, the pair is decided at run
+                 time before the append: where k would be exactly the count appended,
+                 n is built into v[0]'s blocks and v's slots rotate left by that count;
+                 otherwise the statements run as written.
+```
+
+**In words.**  A release and a claim of the same kind of block, back to back, is the store
+handing a block to itself through its free lists — about 290 instructions a pair where the
+hand-over costs a compare and a copy.  Rust gets it from ownership: `clone_from`, or a `Vec`
+moved out of a dropped slot.  Here the compiler can prove it statically, because the death and
+the birth sit in one function and the dying value is the only holder of what it owns.  The
+claim promises no value (`@FR-H-Claim`), so writing n into blocks d wrote before is the same
+program; the observable content is n's in both forms, and every length is n's.  The ROTATE
+clause covers the bounded-history shape — append the newest, drop the oldest — where the death
+comes AFTER the birth in the source: when the drop takes exactly what the append added, the
+two statements leave the same vector whether the oldest dies first or last, so the oldest's
+blocks take the newest and the slots rotate instead of shifting.
+
+**Priced** (dryopea `truncate_to`, the emitted `history_push` edited by hand: when the
+timeline is full and nothing is truncated, `hp_entry`'s two vectors are copied into entry 0's
+blocks and the slots rotate by one): 53.7 → 35.4 µs per op, **−34.0 %**, hash unchanged — about
+3.95× → 2.6×.  Each push then claims and deletes nothing; it made 2.03 claims and 1.69 deletes
+before (`LOFT_STORE_CENSUS`).
+
+**What it may not do — the limitations.**
+
+- **One function, one store.**  d and n meet in one function body, and n is built in d's
+  store.  A value that dies in one CALL and a value of its type built in the NEXT one
+  (`truncate_to`'s oldest entry, dropped by push N, against push N+1's append) is out of
+  reach: handing the blocks across the calls needs something to hold them between, a second
+  kind of object `@C125` rules out.  The rotate clause exists because inside one call the
+  same pair is reachable.
+- **Death before birth, or a reorder the clause proves.**  Outside the rotate clause, D must
+  precede B on every path.  The rotate clause proves its reorder from the shape alone (no
+  element read between, the count from the length) and still decides at run time.
+- **The only holder.**  d may have no outstanding view (`(R-View)`, a borrowed element) and
+  no stored reference: a record a stored reference named keeps its position
+  (`@FR-H-Removed`, the store's tombstones), so a d in the store's referenced set is
+  released and n claims, as written.  The run-time test is that set's membership.
+- **It fits.**  A block is reused only where its capacity holds n's length; a longer n takes
+  the release and the claim for that block alone.
+- **Plain vectors first.**  τ starts as a record whose owners are plain vectors — the plan
+  `Stores::copy_plain_vectors` already reads.  Texts (a text record holds a length and its
+  bytes, the same shape) are the next step, nested collections after.
+- **No holder outlives the pair.**  The hand-over happens inside the one runtime call that
+  makes it; a reused block is never free and never unowned, so no store walk, leak count or
+  image sees a new state.
+
+**The work to admit it into routines.**
+
+1. **The death and birth sites, named in the IR.**  Deaths: `OpFreeRef` of a local, a
+   rebind's release, `(R-Compact)`'s keep and its dropped range, a remove, a truncation.
+   Births: `OpCopyRecord` into a `COPY_FRESH_DEST` slot, a literal mint, a
+   `(R-RefillBuffer)` refill.  One pass in the scope phase pairs them by type plan and root
+   store, with dominance (D before B on every path) and a use scan (no read of d between).
+2. **Callee effects at the caller.**  `history_push`'s death is inside `drop_oldest` and
+   `truncate_to`, calls whose bodies are one `(R-Compact)` keep each.  The pass needs the
+   keep visible at the call: the callee inlined (`(R-InlineLeaf)` declines it today: "a
+   non-scalar variable"), or a summary of the callee as `keep range [k, len) of
+   h.entries`.
+3. **The runtime halves.**  `Stores::copy_into_plain(src, dst, tp) -> bool`: the fit test per
+   plan field, the copy, `false` with nothing done when any field does not fit or d is in
+   the referenced set; and `keep_vector_range`'s rotate form, which moves the dropped
+   slot's bytes to the tail instead of releasing what it owns.
+4. **The rotate recogniser.**  `v += [n]; S; if len(v) > K { drop_first(v, len(v) - K) }`
+   with S scalar-only on v: the guard `len(v) == K` (and, here, the cursor test that the
+   truncation drops nothing) computed before the append, the hand-over form in its arm, the
+   statements as written in the other.
+5. **Guards.**  Cells: a view into the dying entry held past D (declines); a stored
+   reference to it (tombstone, declines); an n longer than d's blocks (falls back per block);
+   a drop count that is not the appended count (rotate declines); the interpreter as
+   oracle, `LOFT_POISON=1` and `LOFT_POISON_CLAIM=1`, the leak check, and the census showing
+   the claims gone.  Switch `LOFT_NO_HAND_OVER=1`; trace `LOFT_TRACE_HAND_OVER=1` naming
+   each pair admitted or declined.
+
+**Status: PROPOSED.**  Priced on `truncate_to`; the shape it needs (a release and a claim of
+one type plan inside one call) is what `LOFT_STORE_CENSUS` shows as claims ≈ deletes per
+operation — `panel_build` (≈ 19 a frame), `emit_to_material`, `build_walls` — the next rows to
+check it against.
+
 ### Proposed clauses on existing rules
 
 Each extends a rule above with one admission the measured rows need; the rule's own switch,
