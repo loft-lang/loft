@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! @PLN162 step 14 — `Disp-World` in the OPEN profile (`LOFT_LIVE_RELOAD=1`), end to end: a
+//! @PLN162 step 14 — `@FR-Disp-World` in the OPEN profile (`LOFT_LIVE_RELOAD=1`), end to end: a
 //! RUNNING program whose loop calls an overload set, and the set changed under it.
 //!
 //! The rule: a specialisation selected in an earlier world must not run once a definition
@@ -404,7 +404,7 @@ fn a_new_name_is_still_skipped() {
     }
 }
 
-/// @PLN165 B7 — `Disp-World`'s stated limit: a set that holds a GENERIC keeps its static calls
+/// @PLN165 B7 — `@FR-Disp-World`'s stated limit: a set that holds a GENERIC keeps its static calls
 /// direct (no per-spelling stub — `stub_admissible` declines), so an overload added mid-run
 /// could reach the dynamic sites and not the static ones.  The add is refused whole and every
 /// site keeps answering in the world it started in: the static (Slime, IceWall) site and the

@@ -1384,7 +1384,7 @@ pub(crate) fn open_world() -> bool {
 }
 
 impl Parser {
-    /// `Disp-World` (@PLN162 step 14): the specialisation `old` — a `__sel_` stub or a
+    /// `@FR-Disp-World` (@PLN162 step 14): the specialisation `old` — a `__sel_` stub or a
     /// `__dyn_` dispatcher — built AGAIN in world `world`, as a new def `<old>__w<world>` over
     /// the same routed types with every leaf selected from the set as it is now, for the
     /// reload host to swap in behind the old def's number.  `None` when the new world cannot

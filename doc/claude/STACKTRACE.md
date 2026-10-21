@@ -31,7 +31,7 @@ A frame's `line` is the line of the CALL that entered it — the call site in th
 before it — and the entry frame, which no loft call entered, answers `0`; so does a frame
 entered from another thread (a `par` worker's first frame) or from a compiler-synthesised
 call (ST-4).  Where a frame is running now is the next frame's `line`.  Both backends answer
-the same numbers (`loft-suite/attic/scripts/1753-a-stack-frame-line-is-the-call-that-entered-it.loft`).
+the same numbers (`loft-suite/rules/rewrites/R-CallLine/1753-a-stack-frame-line-is-the-call-that-entered-it.loft`).
 `file` and `function` name the frame's own function.
 
 ---

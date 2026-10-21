@@ -532,7 +532,7 @@ def guard_tags(rules):
     """The rules an active guard names: a test under GUARD_DIRS citing the rule, or a rewrite
     census row admitting it.  The ONE answer to "is this rule guarded", so `coverage` and
     `worklist` cannot disagree about it."""
-    named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+    named = {t for t in guard_citations() if t in rules}
     return named | {t for t in census_rules() if t in rules}
 
 
@@ -541,6 +541,8 @@ def guard_inputs_line():
     same as a count over all of them (the suite checkout absent read 231 where both read
     412, and nothing said why)."""
     dirs = ", ".join(_rel(d) if d.startswith(ROOT) else d for d in GUARD_DIRS)
+    if not os.environ.get("GUARD_DIRS"):
+        dirs += ", #[cfg(test)] modules under " + ", ".join(_rel(d) for d in CITE_DIRS)
     line = f"  guard inputs: {dirs}; rewrite census {_rel(CENSUS) if os.path.exists(CENSUS) else 'ABSENT'}"
     if not os.environ.get("GUARD_DIRS") and not os.path.isdir(SUITE_RULES):
         line += (f"\n  ⚠ the language suite is not beside this tree ({_rel(SUITE_DIR)}, LOFT_SUITE_DIR): the "
@@ -580,6 +582,61 @@ def citations_in(dirs, exts):
 def citations():
     """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
     return citations_in(CITE_DIRS, CITE_EXTS)
+
+
+TEST_ATTR = re.compile(r"^\s*#\[cfg\(test\)\]\s*$")
+TEST_MOD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
+NOT_CODE = re.compile(r'//.*$|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])\'')
+
+
+def unit_test_citations():
+    """{tag: [(file, line)]} for the citations inside a `#[cfg(test)] mod … { … }` block of a
+    `.rs` file under CITE_DIRS: a unit test beside the code it tests is a guard like one under
+    tests/ (the allocator's H-Carve/H-Park/H-ScanIndex/H-Wilderness are verified only there,
+    and read as unguarded while their tests cited them).  The block ends where its braces
+    balance, counted outside comments and string or char literals; one that never balances
+    runs to the end of the file, where a test module sits."""
+    out = collections.defaultdict(list)
+    for d in CITE_DIRS:
+        for path in glob.glob(os.path.join(d, "**/*.rs"), recursive=True):
+            try:
+                lines = open(path, encoding="utf-8", errors="replace").readlines()
+            except (FileNotFoundError, IsADirectoryError):
+                continue
+            n = 0
+            while n < len(lines):
+                if not TEST_ATTR.match(lines[n]):
+                    n += 1
+                    continue
+                m = n + 1
+                while m < len(lines) and lines[m].lstrip().startswith(("#[", "///", "//!")):
+                    m += 1
+                if m >= len(lines) or not TEST_MOD.match(lines[m]):
+                    n += 1
+                    continue
+                depth = 0
+                end = len(lines)
+                for k in range(m, len(lines)):
+                    code = NOT_CODE.sub("", lines[k])
+                    depth += code.count("{") - code.count("}")
+                    for tag in CITE.findall(lines[k]):
+                        out[tag].append((_rel(path), k + 1))
+                    if depth <= 0 and k > m:
+                        end = k + 1
+                        break
+                n = end
+    return out
+
+
+def guard_citations():
+    """{tag: [(file, line)]} for every citation an active guard makes: a test under GUARD_DIRS,
+    or a unit test in a `#[cfg(test)]` module of the source tree.  The ONE collector of guard
+    sites, so `coverage`, `worklist` and `pairs` read the same set."""
+    out = citations_in(GUARD_DIRS, GUARD_EXTS)
+    if not os.environ.get("GUARD_DIRS"):
+        for tag, where in unit_test_citations().items():
+            out[tag].extend(where)
+    return out
 
 
 # ---- claims: the limitation sentences of the hand-written reference docs (@PLN176) ----
@@ -1062,9 +1119,9 @@ def main():
         # never that the guard would fail without it.  Say that in the output rather than let
         # the column heading promise a property nobody measured.
         ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
-        named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+        named = {t for t in guard_citations() if t in rules}
         census = {t for t in census_rules() if t in rules}
-        grd = named | census
+        grd = guard_tags(rules)
         total = len(rules)
         pct = (lambda k: 100.0 * k / total if total else 0.0)
         print(f"{total} defined rules\n")
@@ -1181,7 +1238,7 @@ def main():
                 if b in rules and b != a:
                     pairs.add(tuple(sorted((a, b))))
         files = collections.defaultdict(set)
-        for tag, where in citations_in(GUARD_DIRS, GUARD_EXTS).items():
+        for tag, where in guard_citations().items():
             if tag in rules:
                 files[tag] = {f for f, _n in where}
 

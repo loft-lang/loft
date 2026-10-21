@@ -5923,7 +5923,7 @@ between binding and P (declines); x formatted once besides the compare (declines
 on two branches (declines); s non-ASCII with the P in a loop (the written form, built
 once — `LOFT_ALLOC_SITES` counts one build).
 
-### A text local built in its work buffer is a view of it
+### A text local built in its work buffer is a view of it — PROPOSED
 
 ```
   (R-WorkView)   a text LOCAL x whose every binding is the value of a text BUILD
