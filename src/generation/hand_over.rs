@@ -1,57 +1,54 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `@FR-R-HandOver` — a dying element's vectors are handed to the element appended beside it.
+//! `@FR-R-HandOver`'s rotate clause — an append to a full vector beside the drop of its oldest
+//! element is one step on the elements already there.
 //!
-//! `history_push(h, e)` appends a copy of `e` to `h.entries` and lets a callee drop an element
-//! of the same vector — `truncate_to(h, c)` before the append, `drop_oldest(h, n)` after it.
-//! The copy claims a block for each of the entry's vectors; the drop releases the same kinds
-//! of blocks.  Here the emitter TAKES the dying element's blocks before the drop: each owned
-//! vector's slot in the element is set to 0, so the drop frees nothing of it, and the copy
-//! writes the new element's vectors into the taken blocks (`Stores::hand_over_detach`,
-//! `Stores::hand_over_copy`).  Every statement still runs as written, in its order; only the
-//! blocks change hands.
+//! `history_push(h, e)` appends a copy of `e` to `h.entries`, then, past a depth K, lets a
+//! callee drop the oldest: `<append of a copy to h.F>; S; if K < len(h.F) { g(h, len(h.F) -
+//! K) }`, `g` a SUFFIX keep — its body keeps `[n, len)` of its first parameter's field F
+//! (`(R-Compact)`'s `OpKeepVectorRange`) and reads F nowhere else.  When `len(h.F) == K`
+//! before the append, the sequence claims a slot, claims a block per vector of the copy,
+//! finishes the record, moves K elements one place forward and frees the oldest element's
+//! blocks.  The rotate does the same in place (`Stores::rotate_into`): the copy is written
+//! into the oldest element — its vectors into the blocks that element already owns — and the
+//! slots rotate left by one.  S runs, then `g`'s body without its keep (`g__nk`), which runs
+//! whatever else `g` does (`h.cursor -= n`).  A vector of any other length, a source the
+//! rotate cannot take, takes the statements as written.
 //!
-//! Two shapes, each with the condition under which the drop CERTAINLY happens — the element
-//! taken is otherwise left with empty vectors, so that condition is tested at run time before
-//! anything is taken:
+//! `g`'s early returns are PROVED false for `n = 1` and `len = K >= 1`, atom by atom; a
+//! condition this module cannot prove declines the site.  S is run in both branches, so it
+//! declares nothing and touches neither the vector nor a call.  `LOFT_NO_HAND_OVER=1` keeps
+//! the statements as written; `LOFT_TRACE_HAND_OVER=1` names each site.  Native only: the
+//! interpreter runs the statements as written, and is the oracle the rotate is checked by.
 //!
-//! - **Before the append** — `f(h, c); <append of a copy to h.F>`, `f` a PREFIX keep: its body
-//!   keeps `[0, n)` of its first parameter's field F (`(R-Compact)`'s `OpKeepVectorRange`) and
-//!   does nothing else that reads F.  When `0 <= c < len(h.F)`, element c dies in `f`.
-//! - **After the append** — `<append of a copy to h.F>; S; if K < len(h.F) { g(h, len(h.F) -
-//!   K) }`, `g` a SUFFIX keep (keeps `[n, len)`), S reading neither F nor anything a call could
-//!   reach.  When `len(h.F) + 1 > K` before the append, element 0 dies in `g`.
-//!
-//! The callee's early return (`if len <= n { return }`, `if n <= 0 || len < n { return }`)
-//! is PROVED false under the condition, atom by atom; a condition this module cannot prove
-//! declines the site.  `LOFT_NO_HAND_OVER=1` keeps the plain copy; `LOFT_TRACE_HAND_OVER=1`
-//! names each site.  Native only: the interpreter runs the statements with their own claims.
+//! The rule's other clause, a dying element's blocks TAKEN for an append beside a truncation
+//! (`truncate_to(h, c)` before the append), was built and measured a loss: the exact-size
+//! free lists already hand a freed block to the next claim, so the take saved a claim and a
+//! free that cost what the take costs (`bench/portal/analysis/worklist.md`, truncate_to).
 use crate::data::{Data, Value};
 use crate::database::Stores;
 
-/// Which element dies, and where.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// `f(h, c)` before the append: element `c` (the callee's count argument) dies.
-    Before,
-    /// `if K < len(h.F) { g(h, len(h.F) - K) }` after the append: element 0 dies when
-    /// `len + 1 > K` before it.
-    After { k: i64 },
-}
-
-/// An admitted site.
+/// An admitted rotate site.
 pub struct Site<'a> {
-    pub kind: Kind,
-    /// The statement the take is emitted in front of.
-    pub at: usize,
-    /// The vector the element dies in, as the caller names it: `OpGetField(h, pos, tp)`.
+    /// The depth: the length at which the append drops the oldest element.
+    pub k: i64,
+    /// The index of the `if` statement, the last of the range.
+    pub last: usize,
+    /// The suffix-keep callee.
+    pub g: u32,
+    /// The vector, as the caller names it: `OpGetField(h, pos, tp)`.
     pub vector: Value,
-    /// `Before`: the index expression (the callee's count argument).
-    pub index: Option<&'a Value>,
-    /// The copy statement that writes the new element: `OpCopyRecord(src, elm, tp)`.
+    /// The copy statement that writes the appended element: `OpCopyRecord(src, elm, tp)`.
     pub copy: &'a Value,
     /// The element type.
     pub elem_tp: u16,
+    /// The record copied, and the vector's owner `h`.
+    pub src: &'a Value,
+    pub owner: &'a Value,
+    /// The statements between the append and the `if` (S), and every statement of the range
+    /// as written.
+    pub between: Vec<&'a Value>,
+    pub range: Vec<&'a Value>,
 }
 
 fn name(data: &Data, d: u32) -> &str {
@@ -113,50 +110,17 @@ enum Term {
     K(i64),
 }
 
-/// What the site's condition guarantees about the count `n` and the length `L`.
-#[derive(Clone, Copy)]
-enum Facts {
-    /// `Before`: `0 <= n < L`.
-    Prefix,
-    /// `After`: `1 <= n <= L`.
-    Suffix,
-}
-
-impl Facts {
-    /// Is `a > b` (strict) or `a >= b` (not strict) certain?
-    fn proves(self, a: Term, b: Term, strict: bool) -> bool {
-        let (lo_n, lo_l) = match self {
-            Facts::Prefix => (0, 1),
-            Facts::Suffix => (1, 1),
-        };
-        match (a, b) {
-            (Term::K(x), Term::K(y)) => {
-                if strict {
-                    x > y
-                } else {
-                    x >= y
-                }
-            }
-            (Term::Len, Term::N) => match self {
-                Facts::Prefix => true,
-                Facts::Suffix => !strict,
-            },
-            (Term::N, Term::K(y)) => {
-                if strict {
-                    lo_n > y
-                } else {
-                    lo_n >= y
-                }
-            }
-            (Term::Len, Term::K(y)) => {
-                if strict {
-                    lo_l > y
-                } else {
-                    lo_l >= y
-                }
-            }
-            _ => false,
-        }
+/// Is `a > b` (strict) or `a >= b` (not strict) certain when the callee runs with `n = 1` and
+/// `len = K >= 1` — what a rotate site calls it with?  `Len` is known only from below.
+fn proves(a: Term, b: Term, strict: bool) -> bool {
+    let cmp = |x: i64, y: i64| if strict { x > y } else { x >= y };
+    match (a, b) {
+        (Term::K(x), Term::K(y)) => cmp(x, y),
+        (Term::N, Term::K(y)) => cmp(1, y),
+        (Term::Len, Term::K(y)) => cmp(1, y),
+        (Term::Len, Term::N) => !strict,
+        (Term::K(x), Term::N) => cmp(x, 1),
+        _ => false,
     }
 }
 
@@ -170,20 +134,22 @@ fn term(data: &Data, v: &Value, field: (i64, i64)) -> Option<Term> {
     is_len(data, v, 0, field).then_some(Term::Len)
 }
 
-/// Is the condition `c` certainly false under `facts`?  An `or` (`if a true else b`) is false
-/// when both sides are; an atom `a <= b` when `a > b` is certain, `a < b` when `a >= b` is.
-fn certainly_false(data: &Data, c: &Value, field: (i64, i64), facts: Facts) -> bool {
+/// Is the condition `c` certainly false at a rotate's call (`proves`)?  An `or` (`if a true
+/// else b`) is false when both sides are; an atom `a <= b` when `a > b` is certain, `a < b`
+/// when `a >= b` is.  Any other shape answers no, which declines the site: an unproved
+/// early return could skip the rest of the callee's body, which the rotate runs.
+fn certainly_false(data: &Data, c: &Value, field: (i64, i64)) -> bool {
     if let Value::If(a, t, b) = c.unspan()
         && matches!(t.unspan(), Value::Boolean(true))
     {
-        return certainly_false(data, a, field, facts) && certainly_false(data, b, field, facts);
+        return certainly_false(data, a, field) && certainly_false(data, b, field);
     }
     for (op, strict) in [("OpLeInt", true), ("OpLtInt", false)] {
         if let Some([a, b]) = call(data, c, op) {
             let (Some(a), Some(b)) = (term(data, a, field), term(data, b, field)) else {
                 return false;
             };
-            return facts.proves(a, b, strict);
+            return proves(a, b, strict);
         }
     }
     false
@@ -204,12 +170,12 @@ fn touches_field_or_calls(data: &Data, v: &Value, p: u16, pos: i64) -> bool {
     })
 }
 
-/// The keep a callee makes of its first parameter's vector field: `(kind, pos, field tp,
-/// element tp)`, `kind` `true` for a prefix keep `[0, n)`, `false` for a suffix keep
-/// `[n, len)`.  `None` unless the body is: null inits of locals, early returns whose
-/// conditions the site's facts prove false, ONE `(R-Compact)` keep, and statements that
-/// read neither the field nor anything a call could reach.
-fn keep_of(data: &Data, f: u32) -> Option<(bool, i64, i64, u16)> {
+/// The suffix keep a callee makes of its first parameter's vector field — `[n, len)` —
+/// as `(pos, field tp, element tp)`.  `None` unless the body is: null inits of locals, early
+/// returns proved false at a rotate's call, ONE `(R-Compact)` keep, and statements that read
+/// neither the field nor anything a call could reach.  Every other shape is `None`: a
+/// statement this cannot read might observe the element the rotate kept in place.
+fn keep_of(data: &Data, f: u32) -> Option<(i64, i64, u16)> {
     let def = data.def(f);
     let vars = def.variables();
     if !(vars.is_argument(0) && vars.is_argument(1)) || (2..vars.count()).any(|v| vars.is_argument(v)) {
@@ -220,7 +186,7 @@ fn keep_of(data: &Data, f: u32) -> Option<(bool, i64, i64, u16)> {
     };
     let ops = flat(&b.operators);
     // Find the keep first: it names the field every other test is about.
-    let mut keep: Option<(usize, bool, (i64, i64), u16)> = None;
+    let mut keep: Option<(usize, (i64, i64), u16)> = None;
     for (i, o) in ops.iter().enumerate() {
         let Value::If(_, then, _) = o.unspan() else {
             continue;
@@ -233,22 +199,19 @@ fn keep_of(data: &Data, f: u32) -> Option<(bool, i64, i64, u16)> {
                 && let Some(field) = field_of(data, v, 0)
                 && let Some(etp) = int_of(etp).and_then(|t| u16::try_from(t).ok())
             {
-                let prefix = int_of(lo) == Some(0) && matches!(hi.unspan(), Value::Var(1));
-                let suffix = matches!(lo.unspan(), Value::Var(1)) && is_len(data, hi, 0, field);
-                if prefix || suffix {
-                    found = Some((prefix, field, etp));
+                if matches!(lo.unspan(), Value::Var(1)) && is_len(data, hi, 0, field) {
+                    found = Some((field, etp));
                 }
             }
         });
-        if let Some((prefix, field, etp)) = found {
+        if let Some((field, etp)) = found {
             if keep.is_some() {
                 return None;
             }
-            keep = Some((i, prefix, field, etp));
+            keep = Some((i, field, etp));
         }
     }
-    let (ki, prefix, field, etp) = keep?;
-    let facts = if prefix { Facts::Prefix } else { Facts::Suffix };
+    let (ki, field, etp) = keep?;
     for (i, o) in ops.iter().enumerate() {
         if i == ki {
             continue;
@@ -260,7 +223,7 @@ fn keep_of(data: &Data, f: u32) -> Option<(bool, i64, i64, u16)> {
                     && matches!(els.unspan(), Value::Null)
                     && then.any_node(&mut |n| matches!(n, Value::Return(_))) =>
             {
-                if !certainly_false(data, c, field, facts) {
+                if !certainly_false(data, c, field) {
                     return None;
                 }
             }
@@ -269,7 +232,7 @@ fn keep_of(data: &Data, f: u32) -> Option<(bool, i64, i64, u16)> {
             _ => return None,
         }
     }
-    Some((prefix, field.0, field.1, etp))
+    Some((field.0, field.1, etp))
 }
 
 /// The append group starting at `ops[at]`: `elm = OpNewRecord(h, ptp, fld)`, a FRESH copy
@@ -319,57 +282,26 @@ fn vector_of(data: &Data, h: &Value, pos: i64, tp: i64) -> Option<Value> {
     })
 }
 
-/// A pure read for an index: a literal, a variable, or a scalar field read of one.
-fn pure(data: &Data, v: &Value) -> bool {
-    !v.any_node(&mut |n| match n {
-        Value::Call(d, _) => !matches!(name(data, *d), "OpGetInt" | "OpGetLong"),
-        Value::CallRef(..) | Value::Set(..) => true,
-        _ => false,
-    })
-}
-
-/// The hand-over site starting at `operators[at]`, if there is one.
+/// The rotate site starting at `operators[at]`, if there is one.
 pub fn site<'a>(operators: &'a [Value], at: usize, data: &Data, stores: &Stores) -> Option<Site<'a>> {
     if !crate::keys::hand_over_enabled() {
         return None;
     }
-    // Indices into the flattened list map back to `operators` only where nothing was
-    // flattened: a site is recognised among top-level statements alone.
     let ops: Vec<&Value> = operators.iter().collect();
-    let here = ops.get(at)?;
-    // BEFORE: `f(h, c)` then the append.
-    if let Value::Call(f, args) = here.unspan()
-        && let [h, c] = &args[..]
-        && matches!(h.unspan(), Value::Var(_))
-        && pure(data, c)
-        && let Some((true, pos, vtp, etp)) = keep_of(data, *f)
-    {
-        let mut next = at + 1;
-        while matches!(ops.get(next).map(|o| o.unspan()), Some(Value::Line(_))) {
-            next += 1;
-        }
-        if let Some((_, copy, h2, apos, tp)) = append_group(&ops, next, data, stores)
-            && h2.unspan() == h.unspan()
-            && apos == pos
-            && tp == etp
-        {
-            return Some(Site {
-                kind: Kind::Before,
-                at,
-                vector: vector_of(data, h, pos, vtp)?,
-                index: Some(c),
-                copy,
-                elem_tp: etp,
-            });
-        }
-        return None;
-    }
-    // AFTER: the append, S, then `if K < len(h.F) { g(h, len(h.F) - K) }`.
+    // ROTATE: the append, S, then `if K < len(h.F) { g(h, len(h.F) - K) }`.
     let (mut next, copy, h, pos, tp) = append_group(&ops, at, data, stores)?;
     let hv = match h.unspan() {
         Value::Var(x) => *x,
         _ => return None,
     };
+    let Value::Set(elm, _) = ops[at].unspan() else {
+        return None;
+    };
+    let src = match copy.unspan() {
+        Value::Call(_, a) => a.first()?,
+        _ => return None,
+    };
+    let mut between = Vec::new();
     loop {
         let o = ops.get(next)?;
         match o.unspan() {
@@ -381,7 +313,7 @@ pub fn site<'a>(operators: &'a [Value], at: usize, data: &Data, stores: &Stores)
                 let k = int_of(kv)?;
                 let lf = call(data, lenv, "t_6vector_len")?;
                 let (fpos, vtp) = field_of(data, lf.first()?, hv)?;
-                if fpos != pos {
+                if fpos != pos || k < 1 || !plain_vector(stores, vtp) {
                     return None;
                 }
                 let Value::Block(b) = then.unspan() else {
@@ -402,23 +334,66 @@ pub fn site<'a>(operators: &'a [Value], at: usize, data: &Data, stores: &Stores)
                 if int_of(k2) != Some(k) || !is_len(data, l2, hv, (pos, vtp)) {
                     return None;
                 }
-                let (false, gpos, _, etp) = keep_of(data, *g)? else {
-                    return None;
-                };
+                let (gpos, _, etp) = keep_of(data, *g)?;
                 if gpos != pos || etp != tp {
                     return None;
                 }
+                // The temporary the append names is the range's own: nothing after it reads it.
+                if ops[next + 1..]
+                    .iter()
+                    .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(x) if x == elm)))
+                {
+                    return None;
+                }
                 return Some(Site {
-                    kind: Kind::After { k },
-                    at,
+                    k,
+                    last: next,
+                    g: *g,
                     vector: vector_of(data, h, pos, vtp)?,
-                    index: None,
                     copy,
                     elem_tp: etp,
+                    src,
+                    owner: h,
+                    between,
+                    range: ops[at..=next].to_vec(),
                 });
             }
-            _ if !touches_field_or_calls(data, o, hv, pos) => next += 1,
+            // S: run in both branches, so it declares nothing (`Value::Set`) a later
+            // statement could read, and touches neither the vector nor a call.
+            _ if !touches_field_or_calls(data, o, hv, pos)
+                && !o.any_node(&mut |n| matches!(n, Value::Set(..))) =>
+            {
+                between.push(*o);
+                next += 1;
+            }
             _ => return None,
         }
     }
+}
+
+/// Is the vector type `vtp` a plain `vector` (no order, no key) — the one kind whose slots a
+/// rotate may move?
+fn plain_vector(stores: &Stores, vtp: i64) -> bool {
+    usize::try_from(vtp)
+        .ok()
+        .and_then(|t| stores.types.get(t))
+        .is_some_and(|t| matches!(t.parts, crate::database::Parts::Vector(_)))
+}
+
+/// The keep statement of a suffix-keep callee (by node address), which its `__nk` twin skips.
+pub fn keep_statement(data: &Data, g: u32) -> Option<usize> {
+    let Value::Block(b) = data.def(g).code() else {
+        return None;
+    };
+    let mut found = None;
+    for o in flat(&b.operators) {
+        if let Value::If(_, then, _) = o.unspan()
+            && then.any_node(&mut |n| {
+                matches!(n, Value::Call(d, _) if name(data, *d) == "OpKeepVectorRange")
+            })
+        {
+            found = Some(std::ptr::from_ref(o.unspan()) as usize);
+        }
+    }
+    found
 }

@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 mod allocation;
-pub use allocation::{HandOver, SLICE_UNCAPPED};
+pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
 mod field_groups;

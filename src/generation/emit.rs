@@ -3099,79 +3099,66 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
-    /// `@FR-R-HandOver` — take the dying element's blocks into `__ho_N` before the statement
-    /// that drops it; the copy of the appended element ([`Self::output_hand_over_copy`])
-    /// writes into them.  The take is decided at run time on the condition under which the
-    /// drop certainly happens (`super::hand_over::Kind`), and takes nothing otherwise.
-    fn output_hand_over_take(
+    /// `@FR-R-HandOver`'s rotate clause: when the vector is full (`Stores::rotate_into`
+    /// admits it), the copy goes into the oldest element and the slots rotate, S runs, and the
+    /// suffix-keep callee's `__nk` twin runs the rest of its body; otherwise every statement of
+    /// the range as written.
+    fn output_rotate_site(
         &mut self,
         w: &mut dyn Write,
         site: &super::hand_over::Site<'_>,
     ) -> std::io::Result<()> {
+        let (k, g) = (site.k, site.g);
         let vec = self.expr_string(&site.vector)?;
-        self.hoist_counter += 1;
-        let n = self.hoist_counter;
+        let src = self.expr_string(site.src)?;
         let etp = site.elem_tp;
-        let take = match &site.kind {
-            super::hand_over::Kind::Before => {
-                let i = self.expr_string(site.index.expect("a Before site names its index"))?;
-                format!("{{ let __i: i64 = ({i}) as i64; stores.hand_over_detach(&({vec}), __i, {etp}_u16) }}")
-            }
-            super::hand_over::Kind::After { k } => format!(
-                "{{ let __v: DbRef = {vec}; let __l = i64::from(vector::length_vector(&__v, &stores.allocations)); if __l + 1 > {k}_i64 {{ stores.hand_over_detach(&__v, 0, {etp}_u16) }} else {{ None }} }}"
-            ),
-        };
         self.indent(w)?;
         writeln!(
             w,
-            "let mut __ho_{n}: Option<loft::database::HandOver> = {take}; //@FR-R-HandOver take"
+            "if stores.rotate_into(&({vec}), &({src}), {etp}_u16, {k}_i64) {{ //@FR-R-HandOver rotate"
         )?;
-        self.hand_over_copies
-            .entry(std::ptr::from_ref(site.copy.unspan()) as usize)
-            .or_default()
-            .push(n as usize);
+        self.indent += 1;
+        for s in &site.between {
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        let owner = site.owner.clone();
+        let call = Value::Call(g, vec![owner, Value::Int(1)]);
+        if let Value::Call(_, a) = &call {
+            self.nk_site_next = Some((g, a.as_ptr() as usize));
+        }
+        self.indent(w)?;
+        self.output_code_inner(w, &call)?;
+        writeln!(w, "; //@FR-R-HandOver the drop without its keep")?;
+        assert!(
+            self.nk_site_next.take().is_none(),
+            "@FR-R-HandOver: the rotate's call of {} was emitted without its twin's name — the \
+             plain callee would drop an element the rotate kept",
+            self.data.def(g).name()
+        );
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        self.indent += 1;
+        for s in &site.range {
+            if matches!(s.unspan(), Value::Line(_)) {
+                continue;
+            }
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
         if crate::keys::trace_hand_over() {
             eprintln!(
-                "hand-over: {} {:?} admitted",
-                self.data.def(self.def_nr).name(),
-                site.kind
+                "hand-over: {} rotate (K {k}) admitted",
+                self.data.def(self.def_nr).name()
             );
         }
         crate::rewrite_census::fired("R-HandOver", 1);
-        Ok(())
-    }
-
-    /// `@FR-R-HandOver` — the copy of the appended element, into the blocks the first holder
-    /// that took any holds; a further holder's blocks are released, since only one element is
-    /// written.  The copy as written where none took and where the hand-over refuses.
-    fn output_hand_over_copy(
-        &mut self,
-        w: &mut dyn Write,
-        copy: &Value,
-        holders: &[usize],
-    ) -> std::io::Result<()> {
-        let Value::Call(_, args) = copy.unspan() else {
-            self.indent(w)?;
-            self.output_code_inner(w, copy)?;
-            return writeln!(w, ";");
-        };
-        let src = self.expr_string(&args[0])?;
-        let dst = self.expr_string(&args[1])?;
-        let tp = match args[2].unspan() {
-            Value::Int(t) => (*t as u16) & crate::keys::COPY_TP_MASK,
-            _ => u16::MAX,
-        };
-        let plain = self.expr_string(copy)?;
-        self.indent(w)?;
-        let held = holders
-            .iter()
-            .map(|n| format!("__ho_{n}.take()"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        writeln!(
-            w,
-            "{{ let mut __done = false; for __o in [{held}] {{ if let Some(__h) = __o {{ if __done {{ stores.hand_over_release(&({dst}), &__h); }} else {{ __done = stores.hand_over_copy(&({src}), &({dst}), {tp}_u16, &__h); }} }} }} if !__done {{ {plain}; }} }} //@FR-R-HandOver copy into the taken blocks"
-        )?;
         Ok(())
     }
 
@@ -4152,6 +4139,10 @@ impl Output<'_> {
             if repeat_skip.is_some_and(|last| vnr <= last) {
                 continue;
             }
+            // `@FR-R-HandOver`'s rotate clause — the `__nk` twin drops its keep statement.
+            if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
+                continue;
+            }
             // `@FR-R-DecodeView`'s structure clause — a statement the positional twin drops,
             // before pre-evaluation can lift anything out of it.
             if self.ps_mode.is_some() && self.ps_skip(v) {
@@ -4189,22 +4180,14 @@ impl Output<'_> {
                 self.refill_text_pending = Some((b, tp, block_serial));
                 continue;
             }
-            // `@FR-R-HandOver` — the copy that writes an element appended beside a drop takes
-            // the dying element's blocks, where the take before the drop held them.
-            if let Some(holders) = self
-                .hand_over_copies
-                .remove(&(std::ptr::from_ref(v.unspan()) as usize))
-            {
-                self.output_hand_over_copy(w, v, &holders)?;
-                continue;
-            }
-            // `@FR-R-HandOver` — an element that dies beside an append gives its vectors' blocks
-            // to it: taken here, before the statement that drops it, which then frees nothing
-            // of them.  The statement itself is emitted as written below.
+            // `@FR-R-HandOver`'s rotate clause — an append to a full vector beside the drop of
+            // its oldest element, as one step on the elements already there.
             if !self.in_coroutine_body
                 && let Some(site) = super::hand_over::site(operators, vnr, self.data, self.stores)
             {
-                self.output_hand_over_take(w, &site)?;
+                self.output_rotate_site(w, &site)?;
+                repeat_skip = Some(site.last);
+                continue;
             }
             // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
             // one fill of the tail; the two statements stand as the fallback for a count or a

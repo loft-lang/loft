@@ -954,9 +954,14 @@ pub struct Output<'a> {
     /// `__inv`/`__rg` twin.  Still armed after that statement is an emission fault.
     /// The third member is the serial of the block that armed it.
     pub refill_text_pending: Option<(u16, u16, usize)>,
-    /// `@FR-R-HandOver` — copy statements (by node address) whose new element takes the blocks
-    /// a dying element gave up, each with the number of its `__ho_N` holder.
-    pub hand_over_copies: HashMap<usize, Vec<usize>>,
+    /// `@FR-R-HandOver`'s rotate clause — the suffix-keep callees whose `__nk` twin (the body
+    /// without its keep) a rotate site calls, the ones emitted, the keep statement the twin
+    /// being emitted skips, and the rotate site's call waiting for its name.
+    pub nk_requests: Vec<u32>,
+    pub nk_emitted: HashSet<u32>,
+    pub nk_skip: Option<usize>,
+    pub nk_twin: bool,
+    pub nk_site_next: Option<(u32, usize)>,
     /// The refill twins calls have asked for, and the ones already emitted.
     pub rt_requests: Vec<u32>,
     pub rt_emitted: HashSet<u32>,
@@ -2434,7 +2439,11 @@ impl<'a> Output<'a> {
             refill_elements_disabled: std::env::var("LOFT_NO_REFILL_ELEMENTS")
                 .is_ok_and(|v| v != "0"),
             refill_text_pending: None,
-            hand_over_copies: HashMap::new(),
+            nk_requests: Vec::new(),
+            nk_emitted: HashSet::new(),
+            nk_skip: None,
+            nk_twin: false,
+            nk_site_next: None,
             rt_requests: Vec::new(),
             rt_emitted: HashSet::new(),
             append_twin_buf: None,
@@ -10898,7 +10907,8 @@ extern crate loft;"
         loop {
             self.output_append_twins(w, program_store.as_ref())?;
             let dest = self.output_dest_twins(w, program_store.as_ref())?;
-            if !self.output_vr_twins(w, program_store.as_ref())? && !dest {
+            let nk = self.output_nokeep_twins(w, program_store.as_ref())?;
+            if !self.output_vr_twins(w, program_store.as_ref())? && !dest && !nk {
                 return Ok(());
             }
         }
@@ -11031,6 +11041,32 @@ extern crate loft;"
             self.output_refill_twins(w, program_store)?;
         }
         Ok(())
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause — the `__nk` twins rotate sites asked for: each
+    /// suffix-keep callee's body without its keep statement, which the rotate has done.
+    fn output_nokeep_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        let mut any = false;
+        while let Some(at) = self
+            .nk_requests
+            .iter()
+            .position(|r| !self.nk_emitted.contains(r))
+        {
+            let d = self.nk_requests[at];
+            self.nk_emitted.insert(d);
+            self.nk_skip = hand_over::keep_statement(self.data, d);
+            self.nk_twin = true;
+            let r = self.output_function(w, d, program_store);
+            self.nk_twin = false;
+            self.nk_skip = None;
+            r?;
+            any = true;
+        }
+        Ok(any)
     }
 
     /// `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
@@ -11879,6 +11915,8 @@ extern crate loft;"
                 "__vr"
             } else if self.apart_twin {
                 "__apv"
+            } else if self.nk_twin {
+                "__nk"
             } else {
                 ""
             },
