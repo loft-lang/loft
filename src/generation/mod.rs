@@ -28,6 +28,7 @@ mod dispatch;
 mod emit;
 pub mod file_hold;
 pub use crate::fnref;
+pub mod hand_over;
 pub mod hoist;
 pub mod keyed_entry;
 pub mod keyed_place;
@@ -953,6 +954,9 @@ pub struct Output<'a> {
     /// `__inv`/`__rg` twin.  Still armed after that statement is an emission fault.
     /// The third member is the serial of the block that armed it.
     pub refill_text_pending: Option<(u16, u16, usize)>,
+    /// `@FR-R-HandOver` — copy statements (by node address) whose new element takes the blocks
+    /// a dying element gave up, each with the number of its `__ho_N` holder.
+    pub hand_over_copies: HashMap<usize, Vec<usize>>,
     /// The refill twins calls have asked for, and the ones already emitted.
     pub rt_requests: Vec<u32>,
     pub rt_emitted: HashSet<u32>,
@@ -2430,6 +2434,7 @@ impl<'a> Output<'a> {
             refill_elements_disabled: std::env::var("LOFT_NO_REFILL_ELEMENTS")
                 .is_ok_and(|v| v != "0"),
             refill_text_pending: None,
+            hand_over_copies: HashMap::new(),
             rt_requests: Vec::new(),
             rt_emitted: HashSet::new(),
             append_twin_buf: None,

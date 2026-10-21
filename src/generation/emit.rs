@@ -3099,6 +3099,82 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
+    /// `@FR-R-HandOver` — take the dying element's blocks into `__ho_N` before the statement
+    /// that drops it; the copy of the appended element ([`Self::output_hand_over_copy`])
+    /// writes into them.  The take is decided at run time on the condition under which the
+    /// drop certainly happens (`super::hand_over::Kind`), and takes nothing otherwise.
+    fn output_hand_over_take(
+        &mut self,
+        w: &mut dyn Write,
+        site: &super::hand_over::Site<'_>,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(&site.vector)?;
+        self.hoist_counter += 1;
+        let n = self.hoist_counter;
+        let etp = site.elem_tp;
+        let take = match &site.kind {
+            super::hand_over::Kind::Before => {
+                let i = self.expr_string(site.index.expect("a Before site names its index"))?;
+                format!("{{ let __i: i64 = ({i}) as i64; stores.hand_over_detach(&({vec}), __i, {etp}_u16) }}")
+            }
+            super::hand_over::Kind::After { k } => format!(
+                "{{ let __v: DbRef = {vec}; let __l = i64::from(vector::length_vector(&__v, &stores.allocations)); if __l + 1 > {k}_i64 {{ stores.hand_over_detach(&__v, 0, {etp}_u16) }} else {{ None }} }}"
+            ),
+        };
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut __ho_{n}: Option<loft::database::HandOver> = {take}; //@FR-R-HandOver take"
+        )?;
+        self.hand_over_copies
+            .entry(std::ptr::from_ref(site.copy.unspan()) as usize)
+            .or_default()
+            .push(n as usize);
+        if crate::keys::trace_hand_over() {
+            eprintln!(
+                "hand-over: {} {:?} admitted",
+                self.data.def(self.def_nr).name(),
+                site.kind
+            );
+        }
+        crate::rewrite_census::fired("R-HandOver", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-HandOver` — the copy of the appended element, into the blocks the first holder
+    /// that took any holds; a further holder's blocks are released, since only one element is
+    /// written.  The copy as written where none took and where the hand-over refuses.
+    fn output_hand_over_copy(
+        &mut self,
+        w: &mut dyn Write,
+        copy: &Value,
+        holders: &[usize],
+    ) -> std::io::Result<()> {
+        let Value::Call(_, args) = copy.unspan() else {
+            self.indent(w)?;
+            self.output_code_inner(w, copy)?;
+            return writeln!(w, ";");
+        };
+        let src = self.expr_string(&args[0])?;
+        let dst = self.expr_string(&args[1])?;
+        let tp = match args[2].unspan() {
+            Value::Int(t) => (*t as u16) & crate::keys::COPY_TP_MASK,
+            _ => u16::MAX,
+        };
+        let plain = self.expr_string(copy)?;
+        self.indent(w)?;
+        let held = holders
+            .iter()
+            .map(|n| format!("__ho_{n}.take()"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            w,
+            "{{ let mut __done = false; for __o in [{held}] {{ if let Some(__h) = __o {{ if __done {{ stores.hand_over_release(&({dst}), &__h); }} else {{ __done = stores.hand_over_copy(&({src}), &({dst}), {tp}_u16, &__h); }} }} }} if !__done {{ {plain}; }} }} //@FR-R-HandOver copy into the taken blocks"
+        )?;
+        Ok(())
+    }
+
     /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): the run's bytes built in
     /// a stack array and appended by ONE `vector::append_bytes`, which resolves the vector's
     /// header once — where the window form resolved it in the pre-allocation, the
@@ -4112,6 +4188,23 @@ impl Output<'_> {
                 )?;
                 self.refill_text_pending = Some((b, tp, block_serial));
                 continue;
+            }
+            // `@FR-R-HandOver` — the copy that writes an element appended beside a drop takes
+            // the dying element's blocks, where the take before the drop held them.
+            if let Some(holders) = self
+                .hand_over_copies
+                .remove(&(std::ptr::from_ref(v.unspan()) as usize))
+            {
+                self.output_hand_over_copy(w, v, &holders)?;
+                continue;
+            }
+            // `@FR-R-HandOver` — an element that dies beside an append gives its vectors' blocks
+            // to it: taken here, before the statement that drops it, which then frees nothing
+            // of them.  The statement itself is emitted as written below.
+            if !self.in_coroutine_body
+                && let Some(site) = super::hand_over::site(operators, vnr, self.data, self.stores)
+            {
+                self.output_hand_over_take(w, &site)?;
             }
             // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
             // one fill of the tail; the two statements stand as the fallback for a count or a
