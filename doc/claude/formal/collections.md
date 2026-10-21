@@ -496,6 +496,26 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
                 rebuilds — and can take up to twice the bucket array an exact size would.  The ONE
                 place a digest becomes a bucket is `hash::home_bucket`, for the writer and the paged
                 reader alike.
+  (Col-Tag)     PROPOSED (reopens @C105) — a hash table's bucket slot carries, beside the entry it
+                names, a TAG: the low 32 bits of the key's digest.  A probe compares the tag before
+                it reads the entry, so a walk past other keys reads the bucket array only, and the
+                one entry it reads is the one it answers; a rebuild places every entry from its tag
+                alone (the home bucket of a power-of-two table is the tag's low bits), reading no
+                key and hashing nothing.  Entries do not move — a stored reference, a view and a
+                group member see what they saw — so it holds for every hash.  The table records its
+                slot width in its header: a table written before, with untagged slots, is read as
+                it was written and rebuilt tagged when it next grows.
+  (Col-Inline)  PROPOSED (reopens @C105) — a hash whose element type T is ADMITTED keeps its entries
+                IN the bucket table, beside their tags: a probe and the entry it answers share the
+                table, a growth and a removal's back-shift MOVE entries.  T is admitted when (1) no
+                `reference<T>` field exists in the program (heap.md H-LongRef: nothing stored names
+                an entry), (2) no other collection shares T's records (Col-Group), and (3) no view
+                into an entry is live across an insert into or a removal from the same table — the
+                disturbance rule vectors obey (binding.md B-Disturb), asked of every table of T.  A T
+                that fails any of the three keeps (Col-Tag)'s layout: the condition costs the
+                rewrite, never a value.  Decided per type when the program's types are finished; a
+                store loaded by a program that does not admit a type it holds inline converts the
+                table on load, the one place records may move.
 ```
 *Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`).
 

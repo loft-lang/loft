@@ -3737,11 +3737,14 @@ impl Output<'_> {
             )?;
         } else {
             let key = key.unwrap_or_else(|| "i64::MIN".to_string());
+            // The field's offset and element type resolved here, where they are constants.
+            let (off, etp) = self.stores.keyed_field_consts(ke.parent_tp, ke.field);
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}, {}_u16, ({key}) as i64);",
+                "let __ke{site}: DbRef = stores.keyed_entry_long_at(&({coll}), {}, {}_u16, {off}_u32, {}, ({key}) as i64);",
                 self.type_lit_u16(ke.parent_tp),
-                ke.field
+                ke.field,
+                self.type_lit_u16(etp)
             )?;
         }
         for wr in &writes {

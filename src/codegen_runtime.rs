@@ -1046,6 +1046,7 @@ pub fn OpGetRecord(
 ///
 /// # Panics
 /// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+#[inline]
 pub fn OpGetHashLong(
     cell: &std::cell::UnsafeCell<Stores>,
     data: DbRef,
