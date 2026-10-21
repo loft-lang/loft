@@ -70,6 +70,16 @@ pub fn gen_buf(n: integer) -> iterator<integer> {
         yield len(buf) + buf[len(buf) - 1];
     }
 }
+// A generator handed IN: the script's (interpreted) or the library's own.
+pub fn total_gen(g: iterator<integer>) -> integer {
+    s = 0;
+    for v in g { s += v; }
+    s
+}
+pub fn first_over(g: iterator<integer>, k: integer) -> integer {
+    for v in g { if v > k { return v; } }
+    -1
+}
 pub fn sum_gen(n: integer) -> integer {
     s = 0;
     for v in gen(n) { s += v; }

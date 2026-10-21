@@ -8437,6 +8437,63 @@ impl State {
     ///
     /// # Panics
     /// When the callee yields mid-call (not supported in v1).
+    /// @PLN199 D3 — advance the interpreted generator `gen_ref` for compiled code, and answer
+    /// the bytes it yielded, or nothing when it is exhausted.  The resume entry beside
+    /// [`Self::reenter_ret`], which asserts its callee does not yield: the advance runs above
+    /// every live frame with the stop sentinel as the address the generator yields back to,
+    /// then restores the PC and the stack.  The yield's size is the generator's own
+    /// (`coroutine_layout::next_operands` of its element type).
+    pub(crate) fn advance_for_native(&mut self, gen_ref: DbRef) -> Vec<u8> {
+        if !self.coroutine_slot_matches(&gen_ref) || self.coroutine_exhausted(&gen_ref) {
+            return Vec::new();
+        }
+        let d_nr = self.coroutines[gen_ref.rec as usize]
+            .as_ref()
+            .map_or(u32::MAX, |f| f.d_nr);
+        let handle = self.data_ptr.clone();
+        let Some(elem) = handle
+            .get()
+            .and_then(|data| match data.def(d_nr).returned().base() {
+                crate::data::Type::Iterator(elem, _) => Some((**elem).clone()),
+                _ => None,
+            })
+        else {
+            return Vec::new();
+        };
+        let packed = crate::coroutine_layout::next_operands(&elem).0;
+        let size = (packed & 0xFF) as usize;
+        let saved_pos = self.code_pos;
+        let saved_sp = self.stack_pos;
+        let base = self.stack_high.next_multiple_of(8);
+        self.stack_pos = base;
+        self.put_stack(gen_ref);
+        self.push_frame(CallFrame {
+            d_nr,
+            call_pos: 0,
+            args_base: base,
+            args_size: 0,
+        });
+        self.code_pos = u32::MAX;
+        self.coroutine_next(packed as u32);
+        if self.code_pos == u32::MAX {
+            self.call_stack.pop();
+        } else {
+            let yielded = self.resume();
+            assert!(
+                !yielded,
+                "advance_for_native: the generator suspended the frame"
+            );
+        }
+        let exhausted = self.coroutine_exhausted(&gen_ref);
+        let mut out = vec![0u8; size];
+        let store = self.database.store(&self.stack_cur);
+        let src = store.addr::<u8>(self.stack_cur.rec, self.stack_cur.pos + base);
+        unsafe { std::ptr::copy_nonoverlapping(src, out.as_mut_ptr(), size) };
+        self.code_pos = saved_pos;
+        self.stack_pos = saved_sp;
+        if exhausted { Vec::new() } else { out }
+    }
+
     /// @PLN199 C2 — a compiled library's call through a function value whose callee it does
     /// not carry: a function of the script, or of a library compiled apart.  Runs `d_nr` with
     /// `args` (its visible parameters, in order) and `closure`, through [`Self::reenter_ret`]

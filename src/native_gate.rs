@@ -254,6 +254,11 @@ fn is_bridge_type(t: &Type) -> bool {
     if let Type::RefVar(inner) = t.base() {
         return is_ref_scalar(inner);
     }
+    // @PLN199 D3 — a generator handle, interpreted or compiled: both advance through the
+    // host's table (`codegen_runtime::CoroutineHost`).
+    if let Type::Iterator(elem, _) = t.base() {
+        return generator_crosses(elem);
+    }
     is_scalar_type(t)
         || matches!(
             t.base(),

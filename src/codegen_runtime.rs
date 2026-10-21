@@ -5833,7 +5833,7 @@ fn release_native_held(idx: usize, stores: &mut Stores) {
 /// every heap argument it was handed (`@FR-G-Arg-Rebind`), the native twin of the bytecode
 /// VM's `State::hold_arg_stores`.
 #[must_use]
-pub fn alloc_coroutine_held(
+fn alloc_coroutine_held_here(
     cell: &std::cell::UnsafeCell<Stores>,
     coro: Box<dyn LoftCoroutine>,
 ) -> DbRef {
@@ -5873,7 +5873,7 @@ fn set_native_holds(idx: usize, holds: u32) {
 /// `OpCoroutineRetain` — one more holder for the generator `gen_ref` names (`(G-Hold)`,
 /// loft#1708).  A handle naming no live generator takes nothing.  Answers the handle.
 #[must_use]
-pub fn coroutine_retain(gen_ref: DbRef) -> DbRef {
+fn coroutine_retain_here(gen_ref: DbRef) -> DbRef {
     let live = NATIVE_COROUTINES.with(|c| native_coroutine_live(&c.borrow(), gen_ref));
     if live {
         NATIVE_COROUTINE_HOLDS.with(|h| {
@@ -5903,7 +5903,7 @@ fn native_coroutine_live(
 /// `pos` carries the generation stamp: a coroutine reference addresses no store, so the
 /// field is free, and the handle then names the generator rather than the index it occupies.
 #[must_use]
-pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
+fn alloc_coroutine_here(coro: Box<dyn LoftCoroutine>) -> DbRef {
     let generation = NATIVE_COROUTINE_GENERATION.with(|g| {
         let cur = g.get();
         g.set(cur.wrapping_add(1).max(1));
@@ -6046,7 +6046,7 @@ pub fn coroutine_release_snapshots(stores: &mut Stores, snap: &mut DbRef) {
 /// Free a native coroutine handle: release the heap locals the generator still owns, then
 /// its slot.  A handle whose generator already exhausted names a frame that is gone, and
 /// the generation check keeps this off whatever inherited the slot (loft#835).
-pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
+fn free_native_coroutine_here(gen_ref: DbRef, stores: &mut Stores) {
     // Take the generator OUT of the table before running its cleanup: `drop_stores` frees
     // stores, and a nested generator handle among them re-enters this table.
     let taken = NATIVE_COROUTINES.with(|c| {
@@ -6131,7 +6131,7 @@ fn advance_native<R>(
 
 /// Advance a native coroutine and return the yielded value as `i64`.
 /// Frees the coroutine slot automatically when it is exhausted.
-pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+fn coroutine_next_i64_here(gen_ref: DbRef, stores: &mut Stores) -> i64 {
     advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
         let val = coro.next_i64(stores);
         (val, val == COROUTINE_EXHAUSTED && coro.done())
@@ -6141,7 +6141,7 @@ pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
 /// Advance a generator through the unified store-backed yield channel
 /// (@P327 native).  Writes the yielded value's bytes into `dest` and
 /// returns true; returns false and frees the slot on exhaustion.
-pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]) -> bool {
+fn coroutine_next_into_here(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]) -> bool {
     advance_native(gen_ref, stores, false, |coro, stores| {
         let ok = coro.next_into(stores, dest);
         (ok, !ok)
@@ -6152,7 +6152,7 @@ pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]
 /// `DbRef`, or the null-DbRef sentinel (store_nr=u16::MAX, rec=0) when
 /// exhausted.  Frees the coroutine slot automatically on exhaustion,
 /// mirroring `coroutine_next_i64` (@P326).
-pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+fn coroutine_next_dbref_here(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     // Null sentinel matches `vector::null_ref` and `OpNullRefSentinel`: store_nr == u16::MAX
     // is the universal "no record" indicator.  The for-loop's `OpCoroutineExhausted(gen)`
     // check also flips to true here because exhaustion frees the slot.
@@ -6165,7 +6165,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
 /// Advance a text-yielding native coroutine.  Returns the yielded `String`,
 /// or `STRING_NULL` (`"\0"`) when exhausted.  Frees the coroutine slot
 /// automatically on exhaustion, mirroring `coroutine_next_i64`.
-pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+fn coroutine_next_text_here(gen_ref: DbRef, stores: &mut Stores) -> String {
     advance_native(
         gen_ref,
         stores,
@@ -6180,11 +6180,114 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
 
 /// Test whether a native coroutine has been exhausted (its slot freed).
 #[must_use]
-pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool {
+fn coroutine_is_exhausted_here(gen_ref: DbRef) -> bool {
     NATIVE_COROUTINES.with(|c| {
         let coroutines = c.borrow();
         !native_coroutine_live(&coroutines, gen_ref)
     })
+}
+
+/// @PLN199 D2 — the native coroutine table's entry points as a value: the host's own
+/// (`HERE`), which a library cdylib's copy of this module forwards to once its host
+/// installed them (`forward_coroutines`).  Every `static` and `thread_local!` here
+/// exists once per copy of libloft, so without the forward a library's generator handle and
+/// the host's named two different tables.  Rust fn pointers, as `Box<dyn LoftCoroutine>`
+/// crosses: one rlib builds both sides.
+#[derive(Clone, Copy)]
+pub struct CoroutineHost {
+    pub alloc_held: fn(&std::cell::UnsafeCell<Stores>, Box<dyn LoftCoroutine>) -> DbRef,
+    pub alloc: fn(Box<dyn LoftCoroutine>) -> DbRef,
+    pub retain: fn(DbRef) -> DbRef,
+    pub free: fn(DbRef, &mut Stores),
+    pub next_i64: fn(DbRef, &mut Stores) -> i64,
+    pub next_into: fn(DbRef, &mut Stores, &mut [i64]) -> bool,
+    pub next_dbref: fn(DbRef, &mut Stores) -> DbRef,
+    pub next_text: fn(DbRef, &mut Stores) -> String,
+    pub exhausted: fn(DbRef) -> bool,
+}
+
+impl CoroutineHost {
+    /// This copy's own table.
+    pub const HERE: CoroutineHost = CoroutineHost {
+        alloc_held: alloc_coroutine_held_here,
+        alloc: alloc_coroutine_here,
+        retain: coroutine_retain_here,
+        free: free_native_coroutine_here,
+        next_i64: coroutine_next_i64_here,
+        next_into: coroutine_next_into_here,
+        next_dbref: coroutine_next_dbref_here,
+        next_text: coroutine_next_text_here,
+        exhausted: coroutine_is_exhausted_here,
+    };
+}
+
+/// The table a library cdylib's copy forwards to: its host's (`forward_coroutines`).
+static FORWARD: std::sync::OnceLock<CoroutineHost> = std::sync::OnceLock::new();
+
+/// Forward this copy's coroutine table to `host`'s.  Called from a library cdylib's
+/// `loft_shared_init` only; never in the host, whose own table this is.
+pub fn forward_coroutines(host: CoroutineHost) {
+    let _ = FORWARD.set(host);
+}
+
+/// The table this copy uses: its host's inside a library cdylib, its own otherwise.
+#[inline]
+fn coroutines() -> CoroutineHost {
+    FORWARD.get().copied().unwrap_or(CoroutineHost::HERE)
+}
+
+/// [`alloc_coroutine`] for a generator call: the frame also takes a hold on the store of
+/// every heap argument it was handed (`@FR-G-Arg-Rebind`), the native twin of the bytecode
+/// VM's `State::hold_arg_stores`.
+#[must_use]
+pub fn alloc_coroutine_held(
+    cell: &std::cell::UnsafeCell<Stores>,
+    coro: Box<dyn LoftCoroutine>,
+) -> DbRef {
+    (coroutines().alloc_held)(cell, coro)
+}
+
+/// Store a native coroutine generator and return a `DbRef` that identifies it.
+#[must_use]
+pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
+    (coroutines().alloc)(coro)
+}
+
+/// `OpCoroutineRetain` — one more holder for the generator `gen_ref` names (`(G-Hold)`).
+#[must_use]
+pub fn coroutine_retain(gen_ref: DbRef) -> DbRef {
+    (coroutines().retain)(gen_ref)
+}
+
+/// Free a generator handle: release the heap locals the generator still owns, then its slot.
+pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
+    (coroutines().free)(gen_ref, stores);
+}
+
+/// Advance a generator and return the yielded value as `i64` (`COROUTINE_EXHAUSTED` at end).
+pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+    (coroutines().next_i64)(gen_ref, stores)
+}
+
+/// Advance a generator through the unified store-backed yield channel (@P327 native).
+pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]) -> bool {
+    (coroutines().next_into)(gen_ref, stores, dest)
+}
+
+/// Advance a Reference-yielding generator (`DbRef::NULL` at end).
+pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+    (coroutines().next_dbref)(gen_ref, stores)
+}
+
+/// Advance a text-yielding generator (`STRING_NULL` at end).
+pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+    (coroutines().next_text)(gen_ref, stores)
+}
+
+/// Test whether a generator has been exhausted (its slot freed).
+#[must_use]
+pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool {
+    (coroutines().exhausted)(gen_ref)
 }
 
 // ── FS-B  File-system dispatch helpers ───────────────────────────────────────

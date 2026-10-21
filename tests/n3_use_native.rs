@@ -258,10 +258,10 @@ const GATEFULL_INTERPRETED: &[(&str, &str)] = &[(
     "a call through a function value of a signature the interpreter cannot be called back with",
 )];
 
-/// The callable functions the trace counts for `gatefull`: its twenty-eight non-generic `pub fn`s,
+/// The callable functions the trace counts for `gatefull`: its thirty non-generic `pub fn`s,
 /// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs
 /// the `Numeric` bound declares (`t_6T_6_g1_OpMin`, …).
-const GATEFULL_CALLABLE: usize = 33;
+const GATEFULL_CALLABLE: usize = 35;
 
 #[test]
 fn the_native_gate_trace_names_what_stays_interpreted_and_why() {

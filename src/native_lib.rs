@@ -33,6 +33,7 @@
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
+use crate::keys::DbRef;
 pub(crate) use crate::native_gate::is_text_work_buffer;
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashSet};
@@ -744,6 +745,10 @@ pub struct HostTable {
     /// @PLN199 C2 — call the function value `(d_nr, closure.dbref)` with the `n` visible
     /// arguments at `args`, in the interpreter running this bridge call, writing its result
     /// into `ret` (`State::call_back`).
+    /// @PLN199 D2 — the host's coroutine table, which a library cdylib's own copy of
+    /// `codegen_runtime` forwards to once installed, so a generator handle means the same
+    /// frame on both sides.
+    pub coroutines: crate::codegen_runtime::CoroutineHost,
     pub call_ref: unsafe extern "C" fn(
         stores: *mut Stores,
         d_nr: u32,
@@ -755,14 +760,92 @@ pub struct HostTable {
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 3;
+pub const HOST_ABI: u32 = 4;
 
 /// The table this process hands to every library cdylib it loads.
 pub static HOST_TABLE: HostTable = HostTable {
     abi: HOST_ABI,
     coroutine_adopt: host_coroutine_adopt,
+    coroutines: HOST_COROUTINES,
     call_ref: host_call_ref,
 };
+
+/// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
+/// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
+/// thread's bridge call for one of the interpreter's (`COROUTINE_STORE`), which a library is
+/// handed only through such a call.
+const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
+    crate::codegen_runtime::CoroutineHost {
+        alloc_held: crate::codegen_runtime::CoroutineHost::HERE.alloc_held,
+        alloc: crate::codegen_runtime::CoroutineHost::HERE.alloc,
+        retain: host_coroutine_retain,
+        free: host_coroutine_free,
+        next_i64: host_coroutine_next_i64,
+        next_into: crate::codegen_runtime::CoroutineHost::HERE.next_into,
+        next_dbref: host_coroutine_next_dbref,
+        next_text: crate::codegen_runtime::CoroutineHost::HERE.next_text,
+        exhausted: host_coroutine_exhausted,
+    };
+
+/// The interpreter an interpreted generator handle belongs to, or `None` for a compiled one.
+fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::state::State> {
+    if gen_ref.store_nr != crate::database::COROUTINE_STORE {
+        return None;
+    }
+    let state = crate::extensions::host_state();
+    assert!(
+        !state.is_null(),
+        "an interpreted generator was advanced from compiled code outside a call from the \
+         interpreter"
+    );
+    Some(unsafe { &mut *state })
+}
+
+fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+    let Some(st) = interpreter_for(gen_ref) else {
+        return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
+    };
+    // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
+    let v = st.advance_for_native(gen_ref);
+    match v.len() {
+        0 => crate::codegen_runtime::COROUTINE_EXHAUSTED,
+        1 => i64::from(v[0]),
+        _ => i64::from_ne_bytes(v[..8].try_into().unwrap_or_default()),
+    }
+}
+
+fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+    let Some(st) = interpreter_for(gen_ref) else {
+        return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
+    };
+    let v = st.advance_for_native(gen_ref);
+    if v.len() < std::mem::size_of::<DbRef>() {
+        DbRef::NULL
+    } else {
+        unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<DbRef>()) }
+    }
+}
+
+fn host_coroutine_exhausted(gen_ref: DbRef) -> bool {
+    match interpreter_for(gen_ref) {
+        Some(st) => st.coroutine_exhausted(&gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref),
+    }
+}
+
+fn host_coroutine_retain(gen_ref: DbRef) -> DbRef {
+    match interpreter_for(gen_ref) {
+        Some(st) => st.coroutine_retain(gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref),
+    }
+}
+
+fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
+    match interpreter_for(gen_ref) {
+        Some(st) => st.free_coroutine(&gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.free)(gen_ref, stores),
+    }
+}
 
 /// [`HostTable::call_ref`] — the interpreter is the one `State::invoke_native` recorded for
 /// this thread's bridge call, or, on a compiled library's own worker thread, one made over
@@ -820,6 +903,7 @@ pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable) 
         return 0;
     }
     let _ = __HOST.set(table);
+    loft::codegen_runtime::forward_coroutines(table.coroutines);
     1
 }
 
@@ -1314,6 +1398,8 @@ fn bridge_read(t: &Type, slot: &str) -> String {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => format!("{slot}.dbref"),
+        // @PLN199 D3 — a generator handle in the host's table, or the interpreter's.
+        Type::Iterator(_, _) => format!("{slot}.dbref"),
         // @PLN199 C1 — a function value: the `(d_nr, closure)` pair `--native` passes.
         Type::Function(..) => format!("({slot}.scalar as u32, {slot}.dbref)"),
         // @PLN199 A4 — `&T` to a scalar: a pointer into the slot the caller's `DbRef` names,

@@ -5,6 +5,8 @@ use gatefull::*;
 
 fn twice(a: integer) -> integer { a * 2 }
 
+fn script_gen(n: integer) -> iterator<integer> { for i in 0..n { yield i + 1; } }
+
 fn main() {
     println("plain {plain(7)}"); // 21
     s = ret_sorted(3);
@@ -75,6 +77,9 @@ fn main() {
     for _ in 0..200 { for v in gen_buf(50) { if v > 10 { break; } gb += v; } }
     println("gen_rec {gr} gen_buf {gb}"); // 0+101+204+309 = 614, 200 * 15 = 3000
     println("sum_gen {sum_gen(4)}"); // 60
+    // 1 + 2 + 3 + 4 = 10 and the library's own 60; the first over 5 of 1.. is 6, of 0, 10, … over
+    // 25 is 30, the generator abandoned mid-way.
+    println("total_gen {total_gen(script_gen(4))} {total_gen(gen(4))} {first_over(script_gen(100), 5)} {first_over(gen(100), 25)}");
     println("par_sum {par_sum([1, 2, 3])}"); // 3 + 6 + 9 = 18
     println("par_block {par_block(7)}"); // the arm prints "arm 14" first; 7 * 2 + 1 = 15
     println("uses_generic {uses_generic(5)}"); // 20
