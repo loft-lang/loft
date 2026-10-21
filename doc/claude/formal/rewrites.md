@@ -6458,6 +6458,27 @@ before (`LOFT_STORE_CENSUS`).
    the claims gone.  Switch `LOFT_NO_HAND_OVER=1`; trace `LOFT_TRACE_HAND_OVER=1` naming
    each pair admitted or declined.
 
+**Beside `(R-Apart)` — the store against the stack.**  The limits above are a stack slot's:
+one function, the only holder, the old value dead before the new one is built.  They describe
+the hand-over PAIR, not the value whose blocks change hands, and the two rules split on that.
+A value that lives and dies inside one frame — built, read, handed down, never kept — needs no
+store at all: `(R-Apart)` holds it in the frame (no claim, no release, no DbRef, no bounds test
+per access) and converts it at its first boundary.  A value that outlives the frame — an entry
+a collection keeps across calls — must be in a store, and only there can its blocks be handed
+on.  In `truncate_to` both occur: the driver's `e` is frame-local (built each iteration, read by
+`history_push`, copied into the timeline, refilled) and is a stack candidate, while the
+timeline's entries live fifty pushes and are this rule's.  `e` claims nothing today
+(`(R-RefillBuffer)`) but its build through the store still costs ~530 instructions a push
+(~15 %: headers resolved per push, the refill's clears, the copy's reads of `e`'s blocks); held
+apart it is a few writes, and the conversion is the copy into the timeline the rule already
+makes (*est.* −12–15 % beside the hand-over's −34 %, ≈ 2.2–2.3×).  `(R-Apart)` does not reach `e`
+because its instances are `float` vectors built by fixed-length literals; a record of vectors
+of RECORDS, built by pushes, needs the instance-3 form (an inline buffer with a heap spill) for
+record elements and a twin of `history_push` taking the apart value.  `panel_build` is the
+purer case: its whole panel is frame-local (built, hit-tested, read, rebound each frame), so
+the ~19 claims and ~19 deletes a frame vanish with `(R-Apart)` alone — once it holds texts and
+vectors of texts, which it does not yet.
+
 **Status: PROPOSED.**  Priced on `truncate_to`; the shape it needs (a release and a claim of
 one type plan inside one call) is what `LOFT_STORE_CENSUS` shows as claims ≈ deletes per
 operation — `panel_build` (≈ 19 a frame), `emit_to_material`, `build_walls` — the next rows to
