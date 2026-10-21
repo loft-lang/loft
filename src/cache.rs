@@ -856,6 +856,25 @@ pub fn rustflags_fingerprint() -> u64 {
     rustflags_fp_of(env!("LOFT_BUILD_RUSTFLAGS"))
 }
 
+/// `LOFT_NATIVE_RELEASE_FLAGS` — extra `rustc` arguments for the SHIPPED tier
+/// (`--native-release` and every generated library cdylib), split on whitespace: a
+/// MEASUREMENT switch for trying a code-generation flag over a whole portal run
+/// (`-C llvm-args=-align-all-functions=6`) before it is made a default.  Empty when unset.
+/// Every cache key that names a release binary folds [`native_release_flags_fingerprint`],
+/// so a run with other flags never adopts this one's binary.
+#[must_use]
+pub fn native_release_flags() -> Vec<String> {
+    std::env::var("LOFT_NATIVE_RELEASE_FLAGS")
+        .map(|v| v.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// The fingerprint of [`native_release_flags`]: what a cached release artifact's key folds.
+#[must_use]
+pub fn native_release_flags_fingerprint() -> u64 {
+    rustflags_fp_of(&native_release_flags().join(" "))
+}
+
 /// Pure core of [`rustflags_fingerprint`] (takes the flag string so it is testable).
 fn rustflags_fp_of(flags: &str) -> u64 {
     use std::hash::{Hash, Hasher};

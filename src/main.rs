@@ -4318,6 +4318,7 @@ fn native_source_key_fingerprint(
     native_utils::native_cabi_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
+    loft::cache::native_release_flags().hash(&mut h);
     // Every runtime rlib a build could link, not the one it would choose: choosing asks the
     // live `rustc` which copy it can read (loft#2033), a process launch this key — computed
     // on the way to EXECUTING a cached binary — has no use for.  A change to either copy
@@ -11725,6 +11726,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `--native-release` because the debug build was cached.
             native_release.hash(&mut h);
             native_debug.hash(&mut h);
+            loft::cache::native_release_flags().hash(&mut h);
             // Include modification times of native package rlibs and loft's
             // own rlib so the cache invalidates when dependencies are rebuilt.
             if let Some(lib_dir) = loft_lib_dir() {
@@ -11898,6 +11900,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // its own.  Semantics runs (`--native`, the test runner) keep the
                 // faster compile.
                 cmd.push_args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
+                cmd.push_args(loft::cache::native_release_flags());
             }
             // Layer 1: strip the linked binary (~36MB → ~1MB; the bulk is
             // debug info from libloft.rlib + std).  Skipped when the user

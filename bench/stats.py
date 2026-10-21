@@ -190,7 +190,9 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
         run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
                      os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit", times,
                     "native-emit", reserve_gb)
-        run_checked(["rustc", "-C", "opt-level=3", "-C", "codegen-units=1", "--edition=2024",
+        # `LOFT_NATIVE_RELEASE_FLAGS`: the shipped tier's extra flags, as loft passes them.
+        extra = os.environ.get("LOFT_NATIVE_RELEASE_FLAGS", "").split()
+        run_checked(["rustc", "-C", "opt-level=3", "-C", "codegen-units=1", *extra, "--edition=2024",
                      "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
                      "-o", exe, rs], f"{bench}: rustc (native lane)", times, "native-rustc",
                     reserve_gb)

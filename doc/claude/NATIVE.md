@@ -64,7 +64,10 @@ Three tiers, and the split is deliberate (owner's rule, 2026-09-08):
 A performance lane measures exactly what a shipped binary gets, and never the semantics
 build — the RUNTIME included: `bench/stats.py` (and through it the portal and `perf-check`)
 runs the binary and runtime pair `scripts/lean_build.sh` builds, `make install`'s feature
-list, which leaves out the debugging aids (`strict-stores`).  The numbers behind the split, on the drawing pass consumer lane: the lean
+list, which leaves out the debugging aids (`strict-stores`).  `LOFT_NATIVE_RELEASE_FLAGS` adds
+`rustc` arguments to the shipped tier and the in-repo performance lanes alike, folded into
+every release cache key: a candidate flag is measured over a whole portal run before it is
+made a default (`cache::native_release_flags`).  The numbers behind the split, on the drawing pass consumer lane: the lean
 tier alone took `hash` 4.7M → 1.2M ns/op, `hair` −55 %, `wide_line` −32 %, `composite`
 −16 %, `lock` −13 %, `smooth` −19 %; `codegen-units=1` on top −3–5 % broadly and −15–20 %
 on `hash`; opt-level 3 alone and `-C target-cpu=native` moved nothing.  The runtime rlib
