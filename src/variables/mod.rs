@@ -5495,8 +5495,7 @@ impl Function {
         // exists — the conjunction was written out at six of them and each had to be taught
         // the veto separately, so a second spelling of the ownership half would drift the same
         // way.
-        (self.tp(v).has_no_deps() || self.deps_are_guarded_backings(v))
-            && !self.is_skip_free(v)
+        (self.tp(v).has_no_deps() || self.deps_are_guarded_backings(v)) && !self.is_skip_free(v)
     }
 
     /// Is `v` a text temp that STAGES a value across the statement or the return that reads
