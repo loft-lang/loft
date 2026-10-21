@@ -3526,7 +3526,19 @@ impl State {
             frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
-        crate::parallel::run_parallel_block(&self.database, program, &positions, &parent_snapshot);
+        // loft#2112 — where an arm's closing `OpReturn` reads its return address: the
+        // running frame's slot, just above its arguments (`fn_call`).  The worker stops there.
+        let ret_slot = self
+            .call_stack
+            .last()
+            .map_or(4, |f| f.args_base + u32::from(f.args_size));
+        crate::parallel::run_parallel_block(
+            &self.database,
+            program,
+            &positions,
+            &parent_snapshot,
+            ret_slot,
+        );
         // `@FR-R-DispatchStop` — a worker's fatal is noticed after the join.
         if crate::parallel::worker_fatal_pending() {
             self.database
@@ -9618,7 +9630,7 @@ impl State {
     /// Execute a void function at `fn_pos` with no arguments.
     /// Used by `parallel {}` arms.
     pub fn execute_at_void(&mut self, fn_pos: u32) {
-        self.execute_at_void_with_snapshot(fn_pos, &[]);
+        self.execute_at_void_with_snapshot(fn_pos, &[], 4);
     }
 
     /// Execute a void function at `fn_pos` after seeding the worker's
@@ -9634,13 +9646,19 @@ impl State {
     /// downstream SIGSEGV).
     ///
     /// The snapshot is overlaid on the worker's stack starting at
-    /// offset 4 (replacing the worker's freshly-pushed return
-    /// sentinel — the parent's bytes at that offset already encode
-    /// whatever return PC the parent function was using, which is
-    /// the right value for `fn_return` to read at the end of the
-    /// arm body).  An empty snapshot keeps the worker's own
-    /// `u32::MAX` sentinel and runs as before.
-    pub fn execute_at_void_with_snapshot(&mut self, fn_pos: u32, parent_snapshot: &[u8]) {
+    /// offset 4, and then `ret_slot` — the return-address slot of the
+    /// frame the arm runs in, where its closing `OpReturn` reads — is set
+    /// to the `u32::MAX` sentinel that ends the run.  The parent's bytes
+    /// there are the address the parent itself returns to, which for any
+    /// frame but `main`'s is real code in the caller: the worker ran on
+    /// into it against a copy of the parent's stack (loft#2112).  An
+    /// empty snapshot keeps the worker's own sentinel at offset 4.
+    pub fn execute_at_void_with_snapshot(
+        &mut self,
+        fn_pos: u32,
+        parent_snapshot: &[u8],
+        ret_slot: u32,
+    ) {
         self.stack_pos = 4;
         self.put_stack(u32::MAX); // return sentinel — possibly overwritten below
         if !parent_snapshot.is_empty() {
@@ -9661,6 +9679,8 @@ impl State {
             // stack_pos so variable reads resolve at the right
             // offsets.  Snapshot length = parent_stack_pos - 4.
             self.stack_pos = 4 + parent_snapshot.len() as u32;
+            let store = self.database.store_mut(&self.stack_cur);
+            *store.addr_mut::<u32>(self.stack_cur.rec, self.stack_cur.pos + ret_slot) = u32::MAX;
         }
         self.code_pos = fn_pos;
         self.run_to_return(0);

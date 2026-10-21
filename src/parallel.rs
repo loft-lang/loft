@@ -1530,6 +1530,7 @@ pub fn run_parallel_block(
     program: WorkerProgram,
     arm_positions: &[u32],
     parent_snapshot: &Arc<Vec<u8>>,
+    ret_slot: u32,
 ) {
     if arm_positions.is_empty() {
         return;
@@ -1544,7 +1545,7 @@ pub fn run_parallel_block(
                 let snapshot = Arc::clone(parent_snapshot);
                 s.spawn(move || {
                     let mut state = prog.new_state(worker_stores);
-                    state.execute_at_void_with_snapshot(pos, &snapshot);
+                    state.execute_at_void_with_snapshot(pos, &snapshot, ret_slot);
                 });
             }
         });
@@ -1554,7 +1555,7 @@ pub fn run_parallel_block(
         // Sequential fallback (WASM or threading disabled).
         for &pos in arm_positions {
             let mut state = program.new_state(unsafe { stores.clone_for_light_worker() });
-            state.execute_at_void_with_snapshot(pos, parent_snapshot.as_ref());
+            state.execute_at_void_with_snapshot(pos, parent_snapshot.as_ref(), ret_slot);
         }
     }
 }

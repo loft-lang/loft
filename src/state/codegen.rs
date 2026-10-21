@@ -1678,9 +1678,14 @@ impl State {
             let offset = (arm_start - join_pos) as u16;
             self.code_put(arm_offset_positions[i], offset);
             self.gen_drop(arm, stack);
-            // OpReturn — arm is a void "function"
+            // OpReturn — arm is a void "function".  It discards the enclosing frame the way
+            // the function's own return does (`self.arguments`), so it reads the return
+            // address from that frame's slot, which the worker has set to the stop sentinel
+            // (`State::execute_at_void_with_snapshot`).  With `arguments = 0` it read the
+            // first ARGUMENT as the address, and outside `main` the worker ran on into code
+            // that was never its own (loft#2112).
             stack.add_op("OpReturn", self);
-            self.code_add(0u16); // arguments = 0
+            self.code_add(self.arguments);
             self.code_add(0u16); // return_size = 0
             self.code_add(stack.position);
         }
