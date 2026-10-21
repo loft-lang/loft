@@ -232,6 +232,13 @@ dropped one's blocks (`clone_from`) — a reorder of `history_push`'s statements
 today.  Keeping released blocks as spares in a vector's tail for the next append would make
 every vector release path know about them: the model complication `@C125` rules out.
 
+**`truncate_to`: the direct hand-over, PRICED (2026-10-21).**  `history_push` edited by hand so
+that, when the timeline is full and nothing is truncated, `hp_entry`'s two vectors are copied
+into the oldest entry's blocks and the slots rotate by one: 53.7 → 35.4 µs, **−34.0 %**, hash
+unchanged (≈ 2.6×); no claim and no delete per push.  Written up as the rule `(R-HandOver)`
+with its rotate clause, its limits and the work to admit it (`formal/rewrites.md` § A dying
+value's blocks are handed to the value built after it).
+
 **Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
 table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
 (`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection
