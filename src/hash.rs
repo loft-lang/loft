@@ -155,12 +155,6 @@ pub fn slots_in(words: u32, sb: u32) -> u32 {
     }
 }
 
-/// A table's header read once: its bucket count, its slot width and its entry stride.
-#[inline]
-fn header(store: &Store, claim: u32) -> (u32, u32, u32) {
-    let h = hdr(store, claim);
-    (h.count, h.sb, h.stride)
-}
 
 /// The tag a key's digest leaves in a tagged slot: its low 32 bits, which hold the home
 /// bucket of every power-of-two table up to 2^32 buckets (`home_bucket` masks them).
@@ -1463,11 +1457,12 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
-    let (count, sb, _) = header(store, claim);
+    let h = hdr(store, claim);
+    let (count, sb) = (h.count, h.sb);
     let digest = keys::long_hash(value, read_seed(store, claim));
     let tag = tag_of(digest);
     let home = home_bucket(digest, count);
-    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let entries = Entries::from_hdr(store, claim, hash_ref.store_nr, &h);
     let p = u32::from(key.position);
     (found.rec, found.pos) = match kind {
         1 => {
@@ -1528,10 +1523,11 @@ pub fn find_ints(
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
-    let (count, sb, _) = header(store, claim);
+    let h = hdr(store, claim);
+    let (count, sb) = (h.count, h.sb);
     let digest = keys::ints_hash(values, read_seed(store, claim));
     let home = home_bucket(digest, count);
-    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let entries = Entries::from_hdr(store, claim, hash_ref.store_nr, &h);
     (found.rec, found.pos) = probe(store, claim, count, sb, home, tag_of(digest), &entries, |r, b| {
         keys.iter()
             .zip(values)
@@ -1560,10 +1556,11 @@ pub fn find_str(hash_ref: &DbRef, stores: &[Store], key: &Key, value: &str) -> O
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
-    let (count, sb, _) = header(store, claim);
+    let h = hdr(store, claim);
+    let (count, sb) = (h.count, h.sb);
     let digest = keys::str_hash(value, read_seed(store, claim));
     let home = home_bucket(digest, count);
-    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let entries = Entries::from_hdr(store, claim, hash_ref.store_nr, &h);
     let k = keys::FastKey::Str(u32::from(key.position), value);
     (found.rec, found.pos) = probe(store, claim, count, sb, home, tag_of(digest), &entries, |r, b| {
         k.matches(store, r, b)
