@@ -399,7 +399,8 @@ impl Output<'_> {
             // record is minted here, as the callee's exit mints it.
             write!(
                 w,
-                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
+                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {}); }} ",
+                self.type_lit(tp)
             )?;
             self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
             write!(w, "__vd }}")?;
@@ -511,7 +512,11 @@ impl Output<'_> {
             return Ok((false, true));
         }
         let name = super::sanitize(self.data.def(self.def_nr).variables().name(buf));
-        write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
+        write!(
+            w,
+            "{{ stores.remove_claims(&(var_{name}), {}); ",
+            self.type_lit_u16(tp)
+        )?;
         Ok((true, false))
     }
 
@@ -881,6 +886,10 @@ impl Output<'_> {
                 }
                 if let Some(respelled) = tuple_arg_place {
                     write!(w, "{respelled}")?;
+                } else if param_is_narrow
+                    && super::TYPE_ID_PARAMS.contains(&def_fn.attributes()[idx].name.as_str())
+                {
+                    self.emit_type_slot(w, v)?;
                 } else if param_is_narrow {
                     self.emit_i32_slot(w, v)?;
                 } else {
@@ -1206,6 +1215,19 @@ impl Output<'_> {
                 {
                     let inner = self.generate_expr_buf(&vals[a_nr])?;
                     res = replace_placeholder(&res, &name, &format!("(&*({inner}))"));
+                    continue;
+                }
+                // A constant type id (`TYPE_ID_PARAMS`) is written by `type_lit_as`, at the
+                // narrow width the parameter declares.
+                if super::TYPE_ID_PARAMS.contains(&a.name.as_str())
+                    && let Value::Int(n) = vals[a_nr].unspan()
+                    && let Ok(tp) = u16::try_from(*n)
+                    && !res.contains(&format!("u32::from({name})"))
+                    && let ty @ ("u8" | "u16" | "i8" | "i16" | "i32" | "u32") =
+                        rust_type(&a.typedef, &Context::Result).as_str()
+                {
+                    let lit = self.type_lit_as(tp, ty);
+                    res = replace_placeholder(&res, &name, &format!("({lit})"));
                     continue;
                 }
                 let mut with = self.generate_expr_buf(&vals[a_nr])?;

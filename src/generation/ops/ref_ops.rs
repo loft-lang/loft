@@ -862,7 +862,7 @@ fn emit_copy_plain(
             write!(ctx.w, ", ")?;
             ctx.emit_ref(dst)?;
             write!(ctx.w, ", ")?;
-            ctx.emit_i32_slot(tp_val)?;
+            ctx.emit_type_slot(tp_val)?;
             write!(ctx.w, ")")?;
         }
     }

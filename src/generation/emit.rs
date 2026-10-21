@@ -1861,11 +1861,11 @@ impl Output<'_> {
             let arm_allocs_buf = vec_hbuf_tp.is_some() && !hidden_heap_attrs.is_empty();
             let _ = &cand_def_pre;
             if arm_allocs_buf {
-                let tp = vec_hbuf_tp.unwrap_or_default();
+                let tp = self.type_lit(vec_hbuf_tp.unwrap_or_default());
                 write!(
                     w,
                     "{{ let mut __vc_hbuf: DbRef = stores.null_named(\"__vc_hbuf\"); \
-                     __vc_hbuf = OpDatabase(cell, __vc_hbuf, {tp}_i32); let __vc_r = "
+                     __vc_hbuf = OpDatabase(cell, __vc_hbuf, {tp}); let __vc_r = "
                 )?;
             }
             // Build synthetic args matching this candidate's attribute list.
@@ -1903,7 +1903,10 @@ impl Output<'_> {
                             None => lent.push((tp, 1)),
                         }
                         crate::rewrite_census::fired("R-WorkBuffer/lent", 1);
-                        synthetic.push(Value::RawExpr(format!("__fwb.lend({tp}_i32, {k}_u32)")));
+                        synthetic.push(Value::RawExpr(format!(
+                            "__fwb.lend({}, {k}_u32)",
+                            self.type_lit(tp)
+                        )));
                     }
                 } else if a.hidden
                     && matches!(
@@ -2188,6 +2191,50 @@ impl Output<'_> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// @PLN199 G0a — the literal a type id is written as in generated code, where the
+    /// runtime takes it as an `i32` (`OpDatabase(cell, r, 100_i32)`).  Every site that
+    /// writes a type id goes through here or [`Self::type_lit_u16`], so the code a library
+    /// artifact carries can name its types by a table filled when it loads instead.
+    pub(super) fn type_lit(&self, tp: u16) -> String {
+        self.type_lit_as(tp, "i32")
+    }
+
+    /// [`Self::type_lit`] where the runtime takes the type id as a `u16`.
+    pub(super) fn type_lit_u16(&self, tp: u16) -> String {
+        self.type_lit_as(tp, "u16")
+    }
+
+    /// [`Self::type_lit`] with `flags` or-ed into the bits above the id (`0x8000`, a call
+    /// that frees its source).
+    #[expect(
+        clippy::unused_self,
+        reason = "a library artifact reads its ids through `self` (@PLN199 G0b-2)"
+    )]
+    pub(super) fn type_lit_flagged(&self, tp: u16, flags: i32) -> String {
+        format!("{}_i32", i32::from(tp) | flags)
+    }
+
+    /// [`Self::type_lit`] at the integer type `ty` a `#rust` template's parameter has.
+    #[expect(
+        clippy::unused_self,
+        reason = "a library artifact reads its ids through `self` (@PLN199 G0b-2)"
+    )]
+    pub(super) fn type_lit_as(&self, tp: u16, ty: &str) -> String {
+        format!("{tp}_{ty}")
+    }
+
+    /// Emit an operator argument that is a type id ([`super::TYPE_ID_PARAMS`]): a constant one
+    /// through [`Self::type_lit`], anything else as the `i32` slot it is.
+    pub(super) fn emit_type_slot(&mut self, w: &mut dyn Write, val: &Value) -> std::io::Result<()> {
+        match val.unspan() {
+            Value::Int(tp) => match u16::try_from(*tp) {
+                Ok(tp) => write!(w, "{}", self.type_lit(tp)),
+                Err(_) => self.emit_i32_slot(w, val),
+            },
+            _ => self.emit_i32_slot(w, val),
         }
     }
 
@@ -3393,8 +3440,8 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
-            ks.tp
+            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}, {keys});",
+            self.type_lit_u16(ks.tp)
         )?;
         for wr in &writes {
             self.indent(w)?;
@@ -3404,8 +3451,8 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}_u16, {keys});",
-            ks.tp
+            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}, {keys});",
+            self.type_lit_u16(ks.tp)
         )?;
         self.indent(w)?;
         writeln!(w, "}}")?;
@@ -3437,8 +3484,8 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __kp{site} = stores.keyed_entry_ints(&({coll}), {}_u16, {parts});",
-            ks.tp
+            "let __kp{site} = stores.keyed_entry_ints(&({coll}), {}, {parts});",
+            self.type_lit_u16(ks.tp)
         )?;
         for wr in writes {
             self.indent(w)?;
@@ -3507,8 +3554,8 @@ impl Output<'_> {
                 .collect();
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}_u16, {}_u16, &[{}]);",
-                ke.parent_tp,
+                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}, {}_u16, &[{}]);",
+                self.type_lit_u16(ke.parent_tp),
                 ke.field,
                 list.join(", ")
             )?;
@@ -3516,15 +3563,17 @@ impl Output<'_> {
             let key = key.unwrap_or_else(|| "\"\"".to_string());
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}_u16, {}_u16, &*({key}));",
-                ke.parent_tp, ke.field
+                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}, {}_u16, &*({key}));",
+                self.type_lit_u16(ke.parent_tp),
+                ke.field
             )?;
         } else {
             let key = key.unwrap_or_else(|| "i64::MIN".to_string());
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
-                ke.parent_tp, ke.field
+                "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}, {}_u16, ({key}) as i64);",
+                self.type_lit_u16(ke.parent_tp),
+                ke.field
             )?;
         }
         for wr in &writes {
@@ -3630,7 +3679,7 @@ impl Output<'_> {
         for (d, vt) in filled.iter().rev() {
             write!(w, "stores.remove_claims(&(")?;
             self.output_code_inner(w, d)?;
-            write!(w, "), ({vt}_u16)); ")?;
+            write!(w, "), ({})); ", self.type_lit_u16(*vt))?;
         }
         self.output_code_inner(w, level.else_v)?;
         writeln!(w, " }};")?;
@@ -4235,7 +4284,8 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(
                     w,
-                    "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {tp}_i32); }}"
+                    "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {}); }}",
+                    self.type_lit(tp)
                 )?;
                 self.refill_text_pending = Some((b, tp, block_serial));
                 continue;
@@ -5316,15 +5366,16 @@ impl Output<'_> {
         let mut out: Vec<u8> = Vec::new();
         self.output_code_inner(&mut out, &Value::Var(pair.out))?;
         let out = String::from_utf8_lossy(&out).into_owned();
+        let tp_lit = self.type_lit(u16::try_from(tp).unwrap_or(u16::MAX));
         if fld == 65535 {
             writeln!(
                 w,
-                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp_lit}, 65535_i32); //@PLN157 § V-z element minted at the declaration"
             )
         } else {
             writeln!(
                 w,
-                "var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+                "var_{elmn} = OpNewRecord(cell, {out}, {tp_lit}, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
             )
         }
     }

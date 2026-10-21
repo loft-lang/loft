@@ -71,6 +71,9 @@ impl OpEmitter for OpGetRecordEmitter {
             return super::default::DefaultEmitter.emit(ctx, args);
         }
         let db_tp = *db_tp;
+        let db_tp_lit = ctx
+            .output
+            .type_lit(u16::try_from(db_tp).unwrap_or(u16::MAX));
         let row = ctx
             .output
             .stores
@@ -92,7 +95,7 @@ impl OpEmitter for OpGetRecordEmitter {
             crate::rewrite_census::fired("R-TypedKeyed", 1);
             write!(ctx.w, "OpGetHashLong(cell,")?;
             ctx.emit(&args[0])?;
-            write!(ctx.w, ", {db_tp}_i32, ")?;
+            write!(ctx.w, ", {db_tp_lit}, ")?;
             ctx.output.emit_long_key(&mut *ctx.w, &key_vals[0])?;
             return write!(ctx.w, ")");
         }
@@ -107,7 +110,7 @@ impl OpEmitter for OpGetRecordEmitter {
             crate::rewrite_census::fired("R-TypedKeyed/compound", 1);
             write!(ctx.w, "OpGetHashInts(cell,")?;
             ctx.emit(&args[0])?;
-            write!(ctx.w, ", {db_tp}_i32, &[")?;
+            write!(ctx.w, ", {db_tp_lit}, &[")?;
             for (i, v) in key_vals.iter().enumerate() {
                 if i > 0 {
                     write!(ctx.w, ", ")?;
@@ -125,13 +128,13 @@ impl OpEmitter for OpGetRecordEmitter {
             crate::rewrite_census::fired("R-TypedKeyed/text", 1);
             write!(ctx.w, "OpGetHashText(cell,")?;
             ctx.emit(&args[0])?;
-            write!(ctx.w, ", {db_tp}_i32, ")?;
+            write!(ctx.w, ", {db_tp_lit}, ")?;
             ctx.output.emit_str_key(&mut *ctx.w, &key_vals[0])?;
             return write!(ctx.w, ")");
         }
         write!(ctx.w, "OpGetRecord(cell,")?;
         ctx.emit(&args[0])?;
-        write!(ctx.w, ", {db_tp}_i32, ")?;
+        write!(ctx.w, ", {db_tp_lit}, ")?;
         emit_content_array(ctx, key_vals, &key_types)?;
         write!(ctx.w, ")")
     }
@@ -172,9 +175,9 @@ impl OpEmitter for OpIterateEmitter {
         write!(ctx.w, "OpIterate(cell,")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[1])?;
+        ctx.emit_param_slot(1, &args[1])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[2])?;
+        ctx.emit_param_slot(2, &args[2])?;
         // Keys array — emitted inline because `Key` is its own
         // struct shape (not a Content wrapper).
         write!(ctx.w, ", &[")?;
@@ -211,7 +214,7 @@ impl OpEmitter for OpReplaceKeyedEmitter {
             write!(ctx.w, ", ")?;
             ctx.emit(dst)?;
             write!(ctx.w, ", ")?;
-            ctx.emit_i32_slot(tp_val)?;
+            ctx.emit_type_slot(tp_val)?;
             write!(ctx.w, ")")?;
         }
         Ok(())
@@ -245,7 +248,7 @@ impl OpEmitter for OpSetKeyedEmitter {
             write!(ctx.w, ", ")?;
             ctx.emit(value)?;
             write!(ctx.w, ", ")?;
-            ctx.emit_i32_slot(tp_val)?;
+            ctx.emit_type_slot(tp_val)?;
             write!(ctx.w, ", ")?;
             emit_content_array(ctx, keys, &key_types)?;
             write!(ctx.w, ")")?;
@@ -266,7 +269,7 @@ impl OpEmitter for OpClearKeyedEmitter {
             write!(ctx.w, "OpClearKeyed(cell,")?;
             ctx.emit(dst)?;
             write!(ctx.w, ", ")?;
-            ctx.emit_i32_slot(tp_val)?;
+            ctx.emit_type_slot(tp_val)?;
             write!(ctx.w, ")")?;
         }
         Ok(())

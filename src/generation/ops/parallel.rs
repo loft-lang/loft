@@ -381,7 +381,7 @@ impl OpEmitter for ParallelForEmitter {
         write!(ctx.w, "{par_fn}(cell, ")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[1])?;
+        ctx.emit_param_slot(1, &args[1])?;
         write!(ctx.w, ", ")?;
         if shape == ClosureShape::HeapRef {
             // Ref mode: emit struct_size and known_type instead of
@@ -390,10 +390,10 @@ impl OpEmitter for ParallelForEmitter {
             let (struct_size, known_type) = heap_ref_kt(ctx, &worker_ret);
             write!(ctx.w, "{struct_size}, {known_type}, ")?;
         } else {
-            ctx.emit_i32_slot(&args[2])?;
+            ctx.emit_param_slot(2, &args[2])?;
             write!(ctx.w, ", ")?;
         }
-        ctx.emit_i32_slot(&args[3])?;
+        ctx.emit_param_slot(3, &args[3])?;
 
         // Closure args: `, _ex0, _ex1, …` appended after `elm`.
         let extras = {
@@ -558,16 +558,16 @@ impl OpEmitter for ParallelQueueEmitter {
         write!(ctx.w, "{par_fn}(cell, ")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[1])?;
+        ctx.emit_param_slot(1, &args[1])?;
         write!(ctx.w, ", ")?;
         if shape == ClosureShape::HeapRef {
             let (struct_size, known_type) = heap_ref_kt(ctx, &worker_ret);
             write!(ctx.w, "{struct_size}, {known_type}, ")?;
         } else {
-            ctx.emit_i32_slot(&args[2])?;
+            ctx.emit_param_slot(2, &args[2])?;
             write!(ctx.w, ", ")?;
         }
-        ctx.emit_i32_slot(&args[3])?;
+        ctx.emit_param_slot(3, &args[3])?;
 
         let extras = {
             use std::fmt::Write as _;
@@ -705,9 +705,9 @@ impl OpEmitter for ParallelDiscardEmitter {
         write!(ctx.w, "n_parallel_discard_native(cell, ")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[1])?;
+        ctx.emit_param_slot(1, &args[1])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[3])?;
+        ctx.emit_param_slot(3, &args[3])?;
 
         let extras = {
             use std::fmt::Write as _;
@@ -805,7 +805,7 @@ impl OpEmitter for ParallelFoldEmitter {
         write!(ctx.w, ", ")?;
         ctx.emit(&args[1])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[3])?;
+        ctx.emit_param_slot(3, &args[3])?;
         write!(
             ctx.w,
             ", |cell, acc, row| {{ {worker_name}(cell, acc, row) }})"

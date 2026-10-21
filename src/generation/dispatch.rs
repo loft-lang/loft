@@ -56,10 +56,10 @@ impl Output<'_> {
             let buf = sanitize(variables.name(a.buf));
             let tp_str = self.local_rust_type(var, variables.tp(var));
             self.declared.insert(var);
-            let db_tp = a.db_tp;
+            let db_tp = self.type_lit(u16::try_from(a.db_tp).unwrap_or(u16::MAX));
             return write!(
                 w,
-                "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} else {{ stores.clear_vector_release(&var_{buf}); }} var_{buf} }}"
+                "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}); }} else {{ stores.clear_vector_release(&var_{buf}); }} var_{buf} }}"
             );
         }
         // `@FR-R-LazySplit` — the bind of a lazy split's vector is the iterator's: the
@@ -1372,6 +1372,7 @@ impl Output<'_> {
                 || !crate::use_analysis::adopts_minted_at_bind(self.data, variables, var, to))
         {
             let tp_nr = self.data.def(d_nr).known_type();
+            let tp_lit = self.type_lit(tp_nr);
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
@@ -1419,11 +1420,11 @@ impl Output<'_> {
             // on a protected argument's store and allows it on a callee-minted one — so
             // the bit is set exactly when this site brackets every ref argument.
             // The interpreter reads the same fact and runs the same bracket.
-            let tp_with_free: i32 =
+            let tp_with_free =
                 if crate::use_analysis::call_return_frees_source(self.data, self.def_nr, to) {
-                    i32::from(tp_nr) | 0x8000
+                    self.type_lit_flagged(tp_nr, 0x8000)
                 } else {
-                    i32::from(tp_nr)
+                    self.type_lit(tp_nr)
                 };
             // Only a borrowed-view return needs the bracket; every other call keeps its
             // previous emit byte-for-byte.
@@ -1626,11 +1627,11 @@ impl Output<'_> {
             // store into the destination without resetting it first, when it can.
             let copy = if crate::keys::swap_rebind_enabled() {
                 crate::rewrite_census::fired("H-SwapRebind", 1);
-                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free}_i32);")
+                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free});")
             } else {
                 format!(
-                    "var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
-                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32);"
+                    "var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
+                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free});"
                 )
             };
             // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
@@ -1696,6 +1697,7 @@ impl Output<'_> {
             to_unspanned,
         ) {
             let tp_nr = self.data.def(rec).known_type();
+            let tp_lit = self.type_lit(tp_nr);
             let witness = sanitize(variables.name(base));
             let first_bind = !self.declared.contains(&var);
             if first_bind {
@@ -1715,8 +1717,8 @@ impl Output<'_> {
                 w,
                 "; if _src.store_nr == u16::MAX || _src.store_nr != var_{witness}.store_nr \
                  {{ {disp}var_{name} = _src; }} \
-                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
-                 OpCopyRecord(cell,_src, var_{name}, {tp_nr}_i32); }} }}"
+                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
+                 OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }} }}"
             )?;
             // A MAY-copy site: the branch is decided at run time, and the manifest asks
             // whether the diagnostic accounts for the site, not which arm ran.
@@ -1743,6 +1745,7 @@ impl Output<'_> {
             )
         {
             let tp_nr = self.data.def(rec).known_type();
+            let tp_lit = self.type_lit(tp_nr);
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
@@ -1760,8 +1763,8 @@ impl Output<'_> {
             write!(
                 w,
                 "; if codegen_runtime::cr_fnref_adopt(_src) {{ {disp}var_{name} = _src; }} \
-                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
-                 OpCopyRecord(cell,_src, var_{name}, {tp_nr}_i32); }} }}"
+                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
+                 OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }} }}"
             )?;
             crate::copy_manifest::record(
                 self.def_nr,
@@ -1791,6 +1794,7 @@ impl Output<'_> {
             && self.materialises_element(var, to)
         {
             let tp_nr = self.data.def(d_nr).known_type();
+            let tp_lit = self.type_lit(tp_nr);
             let first_bind = !self.declared.contains(&var);
             if first_bind {
                 self.declared.insert(var);
@@ -1833,8 +1837,8 @@ impl Output<'_> {
             write!(
                 w,
                 "if _src.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
-                 else {{ var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32); \
-                 OpCopyRecord(cell,_src, var_{name}, {tp_nr}_i32); }} }}"
+                 else {{ var_{name} = OpDatabase(cell,{target}, {tp_lit}); \
+                 OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }} }}"
             )?;
             crate::copy_manifest::record(
                 self.def_nr,
@@ -1879,6 +1883,7 @@ impl Output<'_> {
             };
             let variables = self.data.def(self.def_nr).variables();
             let tp_nr = self.data.def(d_nr).known_type();
+            let tp_lit = self.type_lit(tp_nr);
             let first_bind = !self.declared.contains(&var);
             if self.declared.contains(&var) {
                 // Reassignment: the variable was pre-declared via null_named
@@ -1939,8 +1944,8 @@ impl Output<'_> {
                 write!(
                     w,
                     "if {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
-                     else {{ var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32); \
-                     OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32); }}"
+                     else {{ var_{name} = OpDatabase(cell,{target}, {tp_lit}); \
+                     OpCopyRecord(cell,{src_expr}, var_{name}, {tp_lit}); }}"
                 )?;
                 crate::copy_manifest::record(
                     self.def_nr,
@@ -2710,14 +2715,19 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(
                     w,
-                    "{lvalue} = OpDatabase(cell,{lvalue}, {ref_buf_type_id}_i32)"
+                    "{lvalue} = OpDatabase(cell,{lvalue}, {})",
+                    self.type_lit(ref_buf_type_id)
                 )?;
             } else {
                 // @P302 reassignment / `s = []` clear: the slot already holds a
                 // live DbRef → OpDatabase clears that store in place (no
                 // null_named, which would reset to a sentinel and leak the
                 // old store).  The caller already wrote the `var_{name} = `.
-                write!(w, "OpDatabase(cell,{lvalue}, {ref_buf_type_id}_i32)")?;
+                write!(
+                    w,
+                    "OpDatabase(cell,{lvalue}, {})",
+                    self.type_lit(ref_buf_type_id)
+                )?;
             }
         } else {
             write!(w, "DbRef::NULL")?;

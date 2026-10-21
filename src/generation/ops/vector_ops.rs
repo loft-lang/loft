@@ -798,9 +798,9 @@ impl OpEmitter for NewRecordEmitter {
                 write!(ctx.w, "OpNewRecordNP(cell,")?;
                 ctx.emit(&args[0])?;
                 write!(ctx.w, ", ")?;
-                ctx.emit_i32_slot(&args[1])?;
+                ctx.emit_param_slot(1, &args[1])?;
                 write!(ctx.w, ", ")?;
-                ctx.emit_i32_slot(&args[2])?;
+                ctx.emit_param_slot(2, &args[2])?;
                 return write!(ctx.w, ")");
             }
             return super::default::DefaultEmitter.emit(ctx, args);
@@ -968,6 +968,9 @@ impl OpEmitter for KeepRangeEmitter {
         let (Some(hdr), Some(Value::Int(tp))) = (held, args.get(3).map(Value::unspan)) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
+        let tp_lit = ctx
+            .output
+            .type_lit_u16(u16::try_from(*tp).unwrap_or(u16::MAX));
         crate::rewrite_census::fired("R-Refresh", 1);
         let verify = verify(ctx);
         write!(ctx.w, "{{ let _kl: i64 = (")?;
@@ -978,7 +981,7 @@ impl OpEmitter for KeepRangeEmitter {
         ctx.emit(&args[0])?;
         write!(
             ctx.w,
-            "), _kl, _kh, {tp}_u16) {{ let _l = i64::from({hdr}.h.len); let _lo = _kl.clamp(0, _l); {hdr}.h.len = (_kh.clamp(_lo, _l) - _lo) as u32; if {verify} {{ vector::verify_kept_header(&{hdr}.h, &("
+            "), _kl, _kh, {tp_lit}) {{ let _l = i64::from({hdr}.h.len); let _lo = _kl.clamp(0, _l); {hdr}.h.len = (_kh.clamp(_lo, _l) - _lo) as u32; if {verify} {{ vector::verify_kept_header(&{hdr}.h, &("
         )?;
         ctx.emit(&args[0])?;
         write!(

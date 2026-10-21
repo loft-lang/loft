@@ -54,10 +54,10 @@ impl Output<'_> {
                 let texts: Vec<String> = k.texts.iter().map(|t| format!("{t}_u32")).collect();
                 write!(
                     w,
-                    "let __rk_keep: u32 = stores.refill_keep_open(&{v_nr}, {}_u16, {}_u32); \
+                    "let __rk_keep: u32 = stores.refill_keep_open(&{v_nr}, {}, {}_u32); \
                      let __rk_end: u32 = 8 + __rk_keep * {}_u32; \
                      let _rk_guard = loft::codegen_runtime::RefillKeepGuard::new(cell, {v_nr}, {}_u32, __rk_keep, {}_u32, &[{}]);",
-                    k.wrapper_tp,
+                    self.type_lit_u16(k.wrapper_tp),
                     k.field,
                     k.size,
                     k.field,

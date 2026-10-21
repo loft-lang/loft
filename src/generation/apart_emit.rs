@@ -387,8 +387,8 @@ impl Output<'_> {
         value(self, w)?;
         write!(
             w,
-            "; return codegen_runtime::ap_store_f64(cell, var_{rb}, {}_i32, &[",
-            layout.rec_tp
+            "; return codegen_runtime::ap_store_f64(cell, var_{rb}, {}, &[",
+            self.type_lit(layout.rec_tp)
         )?;
         for (k, f) in layout.fields.iter().enumerate() {
             write!(w, "({}_u32, &__apr.f{k}[..]), ", f.off)?;

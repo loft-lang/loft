@@ -80,6 +80,27 @@ impl EmitCtx<'_, '_> {
         self.output.emit_i32_slot(&mut *self.w, v)
     }
 
+    /// Emit an operator argument that is a type id (`Output::emit_type_slot`).
+    pub fn emit_type_slot(&mut self, v: &Value) -> io::Result<()> {
+        self.output.emit_type_slot(&mut *self.w, v)
+    }
+
+    /// Emit argument `idx` of this operator at its `i32` slot: through
+    /// [`Self::emit_type_slot`] when the parameter is a type id
+    /// ([`super::TYPE_ID_PARAMS`]), so no emitter has to remember which of its arguments is one.
+    pub fn emit_param_slot(&mut self, idx: usize, v: &Value) -> io::Result<()> {
+        let is_type = self
+            .def_fn
+            .attributes()
+            .get(idx)
+            .is_some_and(|a| super::TYPE_ID_PARAMS.contains(&a.name.as_str()));
+        if is_type {
+            self.emit_type_slot(v)
+        } else {
+            self.emit_i32_slot(v)
+        }
+    }
+
     /// Emit a `Value` that the runtime helper takes as a `DbRef`.
     ///
     /// [`Self::emit`] renders a bare `Value::Null` as `()`, because it knows the value and

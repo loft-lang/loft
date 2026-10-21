@@ -739,6 +739,11 @@ enum PackageLink {
     StaticBound,
 }
 
+/// @PLN199 G0a — the operator parameters that carry a type id (`OpDatabase(pos, db_tp)`,
+/// `OpNewRecord(data, parent_tp, fld)`, …): the `default/*.loft` spelling of one.  An
+/// argument at such a parameter is written through `Output::type_lit`.
+pub(crate) const TYPE_ID_PARAMS: [&str; 4] = ["tp", "db_tp", "parent_tp", "enum_tp"];
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -4345,8 +4350,9 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "{{ let _pn = {count}; if _pn > 0 && {h}.store_nr != u16::MAX && {h}.rec != 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}_u16); }} }} //@FR-R-PushFill hash reservation",
-            hf.per_pass, hf.tp
+            "{{ let _pn = {count}; if _pn > 0 && {h}.store_nr != u16::MAX && {h}.rec != 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}); }} }} //@FR-R-PushFill hash reservation",
+            hf.per_pass,
+            self.type_lit_u16(hf.tp)
         )?;
         crate::rewrite_census::fired("R-PushFill/hash", 1);
         Ok(())
@@ -7793,10 +7799,10 @@ impl Output<'_> {
                 if self.dest_twin.is_none()
                     && let Some(key) = self.value_records.fns.get(&self.def_nr)
                 {
-                    let tp = hoist::layout_record(*key);
+                    let tp = self.type_lit(hoist::layout_record(*key));
                     let _ = write!(
                         pre,
-                        " let __lrb: DbRef = OpDatabase(cell, DbRef::NULL, {tp}_i32);"
+                        " let __lrb: DbRef = OpDatabase(cell, DbRef::NULL, {tp});"
                     );
                     let _ = write!(pushes, " st.put_stack(__lrb);");
                     let _ = write!(post, " OpFreeRef(cell, __lrb, \"__lrb\");");
@@ -9415,7 +9421,8 @@ extern crate loft;"
                     let v = format!("__entry_ret_{i}");
                     let _ = write!(
                         prelude,
-                        "    let mut {v}: DbRef = {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.null_named(\"{v}\") }};\n    {v} = OpDatabase(&cell, {v}, {tp}_i32);\n"
+                        "    let mut {v}: DbRef = {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.null_named(\"{v}\") }};\n    {v} = OpDatabase(&cell, {v}, {});\n",
+                        self.type_lit(tp)
                     );
                     let _ = write!(args, ", {v}");
                 }
