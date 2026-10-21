@@ -276,6 +276,7 @@ impl Program {
     }
 
     /// The fill function of each (type, field) whose default the program must run.
+    #[cfg(feature = "mmap")]
     fn upgrade_fills(&self) -> crate::database::Fills {
         let mut fills = crate::database::Fills::new();
         for d_nr in 0..self.data.definitions() {
