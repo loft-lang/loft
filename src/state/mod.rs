@@ -6892,11 +6892,14 @@ impl State {
     /// undefended-`v[i]` warning already nudges toward `??`; this is the
     /// runtime mirror.
     pub fn raise_recoverable(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
+        // `@FR-E-Report`: the position is the recoverable fault's in both surfaces — the span
+        // lookup alone (`raise`) names nothing for an op with no span of its own, and
+        // `--dev-soft-halt` then printed `at ?` for a division in an assignment or a `return`.
+        let position = self.recoverable_position();
         if dev_soft_halt_enabled() {
-            self.raise(kind);
+            self.raise_at(kind, position);
             return;
         }
-        let position = self.recoverable_position();
         if let Some(logger) = &self.database.logger
             && let Ok(mut lg) = logger.lock()
         {

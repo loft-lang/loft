@@ -533,6 +533,28 @@ impl State {
         result
     }
 
+    /// Record that the code from `start` to here was generated for a construct at `pos`.  The
+    /// table holds one span per start pc, and the spans generated INSIDE this construct are
+    /// already in it, so a nested span that starts at `start` keeps its range: this one takes
+    /// the code after it, skipping over each inner span that begins where the last one ended.
+    /// An inner span covering the whole range is the more specific construct and stays.  Before,
+    /// the outer span replaced an inner one starting at the same pc, so a fault inside it —
+    /// a body `(R-InlineLeaf)` put in place of its call, an argument moved into the body's
+    /// result — was named at the outer one (loft#2111).
+    fn record_span(&mut self, start: u32, pos: crate::lexer::Position) {
+        let end = self.code_pos;
+        let mut at = start;
+        while let Some(&(_, inner_end)) = self.source_spans.get(&at) {
+            if inner_end >= end {
+                return;
+            }
+            at = inner_end;
+        }
+        if at < end {
+            self.source_spans.insert(at, (pos, end));
+        }
+    }
+
     /// @PLN11 G2 — lower one IR node.  Dispatches entirely on `node.kind()`
     /// and reads payloads through `IrNode` accessors, so the SAME codegen runs
     /// once the backing flips from native to store-read (M5).  The remaining
@@ -750,8 +772,7 @@ impl State {
                 // The published snapshot is now behind the table it snapshots.
                 self.published_spans = None;
                 let inner = self.generate_inner(node.span_inner(), stack, top);
-                self.source_spans
-                    .insert(start, (node.span_pos(), self.code_pos));
+                self.record_span(start, node.span_pos());
                 inner
             }
             ValueType::Iter => {
