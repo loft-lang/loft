@@ -17,7 +17,10 @@ All notable changes to the loft language and interpreter.
   notation.  Seven written from the cells the defects left: `H-Spent` with `H-Move`, `G-Hold`
   and `H-Copy-Refuse`; `H-Drop` with `H-Move`, `O-Latest` and `L-CapOwn`; `N-Decl` with
   `I-Narrow`; `F-Ret` with `B-Copy`, `O-Move` and `G-Mono`; `B-Copy` with `B-View`,
-  `B-Ref-Alias` and `T-Cons`; `B-Ref-Uniform` with `B-Ref-Intro`; `L-CapOwn` with `H-Drop`.
+  `B-Ref-Alias` and `T-Cons`; `B-Ref-Uniform` with `B-Ref-Intro`; `L-CapOwn` with `H-Drop`;
+  then `O-NoDiverge` with `B-Copy`, `O-Complete` with `O-NoDiverge`, `O-Buffer` with `O-Move`
+  and `R-Reuse`, `L-CapHeap` with `O-Latest` and `L-CapOwn` — every pair three or more
+  defect-born cells cited together.
 - `rule_tags.py pairs` reads a rule named bare or in backticks as well as in parentheses or
   by tag (517 pairs named, from 311), tells a STATED composition (the naming sentence carries a
   conditional or ordering connective: 302) from a cross-reference, and `--unstated` lists the

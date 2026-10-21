@@ -74,6 +74,12 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  F-ParamHeap — capture, like a call, shares heap state, copies scalars).  A
                  captured FN-REF is such a value: its closure record is shared, and owned or
                  borrowed by (L-CapOwn) exactly as a captured struct is.
+                 WHICH store is shared is (O-Latest)'s answer — the backing the capture named AT
+                 THE BUILD — so a local rebound after the capture does not release the store it
+                 displaces, since the closure still shares it (loft#1085), the record keeps that
+                 store whatever the local is rebound to, a join chosen by an `if` (loft#1725) or
+                 a null that arrived as a value (loft#1715) included, and the one release is
+                 then (L-CapOwn)'s.
   (L-CapWrite)   a captured SCALAR the closure REASSIGNS is SHARED IN THE WRITE DIRECTION:
                  the closure's write reaches the outer variable, and a later call sees what
                  the previous one wrote.  This does not weaken (L-CapScalar) — the closure
