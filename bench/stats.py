@@ -74,6 +74,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
+def release_rustc_args():
+    """The shipped tier's rustc arguments (`src/native_release_args.txt`, the list loft
+    compiles in), then `LOFT_NATIVE_RELEASE_FLAGS` as loft appends it."""
+    with open(os.path.join(ROOT, "src", "native_release_args.txt")) as f:
+        args = [x.strip() for x in f if x.strip() and not x.strip().startswith("#")]
+    return args + os.environ.get("LOFT_NATIVE_RELEASE_FLAGS", "").split()
+
+
 def host_key():
     """The name a machine's results are filed under (`portal/results/<host>.tsv`).  A box's
     node name follows the network it is on (`firewall02.lan.betterbe.com` at the office,
@@ -190,9 +198,7 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
         run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
                      os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit", times,
                     "native-emit", reserve_gb)
-        # `LOFT_NATIVE_RELEASE_FLAGS`: the shipped tier's extra flags, as loft passes them.
-        extra = os.environ.get("LOFT_NATIVE_RELEASE_FLAGS", "").split()
-        run_checked(["rustc", "-C", "opt-level=3", "-C", "codegen-units=1", *extra, "--edition=2024",
+        run_checked(["rustc", *release_rustc_args(), "--edition=2024",
                      "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
                      "-o", exe, rs], f"{bench}: rustc (native lane)", times, "native-rustc",
                     reserve_gb)

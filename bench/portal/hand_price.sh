@@ -14,10 +14,10 @@
 # A price counts only when the hash is unchanged and two runs agree.  It is a CEILING for
 # the form, not a proof of the rewrite: the conditions under which the form is sound are the
 # rule's to state and the emitter's to validate (formal/rewrites.md).  The flags are the ones
-# `src/main.rs` passes for a shipped binary; `target/release` must be current (it links the
-# DEVELOPMENT runtime, with `strict-stores`: a price is a difference, the absolute numbers are
-# `bench/stats.py`'s, which measures the production pair) — `cargo build --release --lib
-# --bin loft`, `make check-rlib`.
+# loft passes for a shipped binary (`src/native_release_args.txt`); `target/release` must be
+# current (it links the DEVELOPMENT runtime, with `strict-stores`: a price is a difference, the
+# absolute numbers are `bench/stats.py`'s, which measures the production pair) — `cargo build
+# --release --lib --bin loft`, `make check-rlib`.
 #
 # A RUNTIME change (an edit to the rlib, not to the emitter) is A/B'd the same way without
 # editing any Rust: emit once, save `target/release/deps/libloft.rlib` from each build, copy
@@ -72,7 +72,8 @@ if [ ! -f "$rel/deps/libloft.rlib" ] || [ -z "$ffi" ]; then
   echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft (scripts/lean_build.sh --lib --bin loft for target/install-lib)" >&2
   exit 2
 fi
-args=(--edition=2024 -o "$2" "$1" -C opt-level=3 -C codegen-units=1
+mapfile -t release < <(grep -vE '^[[:space:]]*(#|$)' "$root/src/native_release_args.txt")
+args=(--edition=2024 -o "$2" "$1" "${release[@]}"
       --extern "loft=$rel/deps/libloft.rlib" -L "dependency=$rel/deps"
       --extern "loft_ffi=$ffi")
 [ -n "$ring" ] && args+=(-L "native=$ring")

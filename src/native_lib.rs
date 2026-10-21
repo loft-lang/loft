@@ -1560,19 +1560,15 @@ pub fn build_shared_cdylib(
         "--edition=2024".to_string(),
         "-C".to_string(),
         "debuginfo=0".to_string(),
-        // Full optimisation, as `--native-release` compiles a program (see its
-        // rustc arguments in `main.rs`): a library cdylib is a shipped binary.
-        "-C".to_string(),
-        "opt-level=3".to_string(),
-        "-C".to_string(),
-        "codegen-units=1".to_string(),
         "--crate-type".to_string(),
         "cdylib".to_string(),
         "-o".to_string(),
         tmp_so.display().to_string(),
         rs.display().to_string(),
     ];
-    args.extend(crate::cache::native_release_flags());
+    // Full optimisation, as `--native-release` compiles a program: a library cdylib is a
+    // shipped binary (`src/native_release_args.txt`).
+    args.extend(crate::cache::release_rustc_args());
     args.extend(crate::native_lib::loft_extern_args(&rlib));
     args.extend(["-L".to_string(), deps.display().to_string()]);
     // macOS records the `-o` path inside the Mach-O as its INSTALL NAME, and the
