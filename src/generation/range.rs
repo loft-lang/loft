@@ -463,8 +463,18 @@ thread_local! {
     /// How many longer-body analyses `call_range` is nested in right now.
     static LONG_DEPTH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     /// `call_range`'s memo for longer bodies: (callee definition address, argument ranges).
+    /// A fact about ONE program: once its `Data` is freed, another program's definition can
+    /// take the same address, and kept, the memo handed it the first one's range — a proof
+    /// for the wrong body, which can drop an overflow guard.  [`begin_generation`] clears it.
     static CALL_MEMO: std::cell::RefCell<HashMap<(usize, Vec<Option<Range>>), Option<Range>>> =
         std::cell::RefCell::new(HashMap::new());
+}
+
+/// Forget every memoised call range: a new run is about a new program.  Called by
+/// [`crate::generation::Output::new`], beside `non_sentinel::begin_generation`, and by
+/// `leaf_inline::rewrite_program`, which asks the memo before generation does.
+pub(crate) fn begin_generation() {
+    CALL_MEMO.with(|m| m.borrow_mut().clear());
 }
 
 /// `LOFT_NO_RANGED_CALLS=1` — `@FR-R-RangedCall` off: no callee body longer than one

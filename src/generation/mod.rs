@@ -2401,6 +2401,7 @@ impl<'a> Output<'a> {
         // A generation run is about ONE program; per-definition facts from the previous
         // run name other functions by the same numbers.
         non_sentinel::begin_generation();
+        range::begin_generation();
         Output {
             data,
             stores,
