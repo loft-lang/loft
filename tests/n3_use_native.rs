@@ -152,12 +152,11 @@ fn use_compile_native_library_dispatches_on_real_binary() {
     let _ = fa::remove_dir_all(native_auto);
 }
 
-/// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where one
-/// public function is shared-store-dispatchable (`triple`) and another is not
-/// (`apply_inc` calls through a function reference — a `CallRef` the gate
-/// conservatively excludes).  The gate splits the library silently — `triple`
-/// compiles into the cdylib + dispatches native; `apply_inc` stays interpreted —
-/// with no user-facing error and the script calling both alike.
+/// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where two
+/// public functions compile (`triple`, and `apply_inc`, which calls through a function
+/// value, @PLN199 C2) and one does not (`label`, whose function value returns a text the
+/// compiled library cannot be called back with).  The gate splits the library silently —
+/// `label` stays interpreted — with no user-facing error and the script calling all alike.
 ///
 /// Also verifies the synthetic-exclusion invariant: `apply_inc`'s nested lambda
 /// (`__lambda_N`, made `pub_visible` by the enclosing `pub fn`) is NOT a dispatch
@@ -186,6 +185,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
          fn main() {\n\
          \x20   println(\"{triple(7)}\");\n\
          \x20   println(\"{apply_inc(10)}\");\n\
+         \x20   println(\"{label(4)}\");\n\
          }\n",
     )
     .unwrap();
@@ -206,11 +206,12 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         out.status.success(),
         "loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    // triple(7)=21 (native), apply_inc(10)=11 (interpreted) — identical to all-interp.
-    assert_eq!(stdout, "21\n11\n", "mixed-library output");
+    // triple(7)=21, apply_inc(10)=11 (both native), label(4)="n4" (interpreted) — identical
+    // to all-interp.
+    assert_eq!(stdout, "21\n11\nn4\n", "mixed-library output");
 
-    // The gate split the library: the cdylib exports the dispatchable `triple` but
-    // NOT `apply_inc` (CallRef → interpreted), and NOT its synthetic lambda.
+    // The gate split the library: the cdylib exports `triple` and `apply_inc` but NOT
+    // `label`, and NOT the synthetic lambdas.
     // loft#715 — the generated source is named for the caller's type-layout
     // fingerprint, like the cdylib beside it, so find it by prefix.
     let rs_path = fa::read_dir(native_auto)
@@ -228,11 +229,15 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         "triple should have a native bridge"
     );
     assert!(
-        !lib_rs.contains("loft_shared_n_apply_inc"),
-        "apply_inc (CallRef) must NOT be dispatched native — it stays interpreted"
+        lib_rs.contains("loft_shared_n_apply_inc"),
+        "apply_inc calls a function value the cdylib carries — it compiles (@PLN199 C2)"
     );
     assert!(
-        !lib_rs.contains("__lambda"),
+        !lib_rs.contains("loft_shared_n_label"),
+        "label (a text-returning function value) must NOT be dispatched native — it stays interpreted"
+    );
+    assert!(
+        !lib_rs.contains("loft_shared_n___lambda"),
         "a synthetic lambda must NOT be a native dispatch target"
     );
 
@@ -248,21 +253,15 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 /// [`GATEFULL_INTERPRETED`] is what still runs interpreted, with the reason.  The list is
 /// exact: a step of the plan that compiles one more shape deletes its line here, and a
 /// function that silently drops back to the interpreter adds one and fails.
-const GATEFULL_INTERPRETED: &[(&str, &str)] = &[
-    ("n_arg_fn", "a call through a function value"),
-    ("n_gen", "a generator (`yield`)"),
-    ("n_local_lambda", "a call through a function value"),
-    ("n_ret_fn", "returns `fn(integer) -> integer`"),
-    (
-        "n_sum_gen",
-        "calls `n_gen`, which uses a generator (`yield`)",
-    ),
-];
+const GATEFULL_INTERPRETED: &[(&str, &str)] = &[(
+    "n_local_lambda_text",
+    "a call through a function value of a signature the interpreter cannot be called back with",
+)];
 
-/// The callable functions the trace counts for `gatefull`: its twenty-three non-generic `pub fn`s,
+/// The callable functions the trace counts for `gatefull`: its twenty-eight non-generic `pub fn`s,
 /// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs
 /// the `Numeric` bound declares (`t_6T_6_g1_OpMin`, …).
-const GATEFULL_CALLABLE: usize = 28;
+const GATEFULL_CALLABLE: usize = 33;
 
 #[test]
 fn the_native_gate_trace_names_what_stays_interpreted_and_why() {

@@ -129,6 +129,49 @@ impl WorkerProgram {
     }
 }
 
+impl WorkerProgram {
+    /// The program the interpreter installed in `ctx` (`Stores::parallel_ctx`), for a worker
+    /// that starts from a store rather than from the interpreter's `State`.
+    #[must_use]
+    pub fn from_ctx(ctx: &ParallelCtx) -> WorkerProgram {
+        let data = ctx.data();
+        WorkerProgram {
+            bytecode: unsafe { Arc::clone(&*ctx.bytecode) },
+            library: unsafe { Arc::clone(&*ctx.library) },
+            stack_trace_lib_nr: ctx.stack_trace_lib_nr,
+            data_ptr: ctx.data.clone(),
+            fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+            const_refs: Arc::clone(&ctx.const_refs),
+            frame_headroom: Arc::clone(&ctx.frame_headroom),
+            line_numbers: Arc::new(std::collections::BTreeMap::new()),
+        }
+    }
+}
+
+/// @PLN199 C2 — run `body` in an interpreter over `stores`, on a thread no interpreter runs
+/// on: a compiled library's own `par` worker calling a function value it does not carry.
+/// The stores move into a worker `State` built from the program they carry
+/// (`Stores::parallel_ctx`) and back out after, as `live_dispatch` swaps its world; the
+/// compiled caller touches them only through the cell they sit in, which stays put.
+///
+/// # Panics
+/// When `stores` carry no interpreter context: they were never run by one.
+pub fn with_worker_state<R>(
+    stores: &mut crate::database::Stores,
+    body: impl FnOnce(&mut State) -> R,
+) -> R {
+    let program = WorkerProgram::from_ctx(
+        ParallelCtx::of(stores)
+            .expect("a function value of the script was called where no interpreter ran"),
+    );
+    let mut state = program.new_state_inner(WorkerStores::new(std::mem::take(stores)));
+    let result = body(&mut state);
+    let frame = state.stack_cur;
+    state.database.free(&frame);
+    *stores = std::mem::take(&mut state.database);
+    result
+}
+
 // ── Plan-06 phase 3a — Stitch policy enum (DESIGN.md D1) ─────────────────────
 //
 // The unified runtime entry point that phase 3b lands will be

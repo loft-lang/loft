@@ -51,9 +51,25 @@ pub fn local_lambda(x: integer) -> integer {
     f = fn(a: integer) -> integer { a + 1 };
     f(x)
 }
+// A function value whose result the interpreter cannot be called back with (text): this
+// one stays interpreted (`fnref::upcall_carries`).
+pub fn local_lambda_text(x: integer) -> text {
+    f = fn(a: integer) -> text { "n{a}" };
+    f(x)
+}
 
 // Generators: returned to the script, and iterated inside the library.
 pub fn gen(n: integer) -> iterator<integer> { for i in 0..n { yield i * 10; } }
+pub fn gen_float(n: integer) -> iterator<float> { for i in 0..n { yield i as float * 0.5; } }
+pub fn gen_bool(n: integer) -> iterator<boolean> { for i in 0..n { yield i % 2 == 0; } }
+pub fn gen_rec(n: integer) -> iterator<Ck> { for i in 0..n { yield Ck { k: i, v: i * i }; } }
+pub fn gen_buf(n: integer) -> iterator<integer> {
+    buf: vector<integer> = [];
+    for i in 0..n {
+        buf += [i * 3];
+        yield len(buf) + buf[len(buf) - 1];
+    }
+}
 pub fn sum_gen(n: integer) -> integer {
     s = 0;
     for v in gen(n) { s += v; }

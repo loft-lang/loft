@@ -1,0 +1,28 @@
+// @PLN199 C2 — a compiled library calling function values it does not carry: the script's
+// functions and lambdas, through the call back into the interpreter that loaded it
+// (`HostTable::call_ref`).  `tests/n3_parity.rs` runs `callback_main.loft` in every mode.
+
+pub struct Box2 { pub a: integer, pub b: integer }
+pub fn hold_and_call(f: fn(integer) -> integer, n: integer) -> integer {
+  r = Box2 { a: n, b: n * 2 };
+  v = f(n);
+  r.a + r.b + v
+}
+pub fn twice_lib(x: integer) -> integer { x * 2 }
+pub fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+pub fn apply_text(f: fn(text, integer) -> integer, s: text) -> integer { f(s, 3) }
+pub fn apply_float(f: fn(float, boolean) -> float, x: float) -> float { f(x, true) }
+pub fn apply_rec(f: fn(Box2) -> integer) -> integer { f(Box2 { a: 4, b: 5 }) }
+pub fn adder(k: integer) -> fn(integer) -> integer { fn(x: integer) -> integer { x + k } }
+pub fn sum_par(f: fn(integer) -> integer, xs: vector<integer>) -> integer {
+  s = 0;
+  for x in xs { s += f(x); }
+  s
+}
+pub struct Holder { pub f: fn(integer) -> integer, pub v: integer }
+pub fn run_holder(h: Holder) -> integer { g = h.f; g(h.v) }
+pub fn par_holders(hs: vector<Holder>) -> integer {
+  s = 0;
+  for h in hs par(r = run_holder(h), 2) { s += r; }
+  s
+}

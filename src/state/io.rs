@@ -784,6 +784,11 @@ impl State {
             self.free_coroutine(&db);
             return;
         }
+        // @PLN199 D1 — a compiled library's generator lives in the host's native table.
+        if db.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            crate::codegen_runtime::free_native_coroutine(db, &mut self.database);
+            return;
+        }
         // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
         self.database.free(&db);
     }

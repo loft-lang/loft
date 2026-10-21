@@ -1484,6 +1484,11 @@ fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef
   } /*block_1: text["result"]*/
 
 
+#[allow(dead_code)]
+fn __host() -> &'static loft::native_lib::HostTable {
+    &loft::native_lib::HOST_TABLE
+}
+
 pub extern "C" fn loft_shared_t_4File_lines(
     stores: *mut Stores,
     args: *const loft::native_lib::LibArg,
@@ -1580,10 +1585,11 @@ pub extern "C" fn loft_shared_t_4text_dir(
     let a = unsafe { std::slice::from_raw_parts(args, n) };
     let _ = (1, a);
     let p0: &str = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(a[0].text_ptr, a[0].text_len)) };
+    let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
     let __r = (t_4text_dir(cell, p0));
     let __t: &str = __r.as_str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
-    if let Some(__d) = __st.bridge_text_dest.take() {
+    if let Some(__d) = __text_dest {
     if !__t.is_empty() {
     __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);
     }
@@ -1601,10 +1607,11 @@ pub extern "C" fn loft_shared_t_4text_basename(
     let a = unsafe { std::slice::from_raw_parts(args, n) };
     let _ = (1, a);
     let p0: &str = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(a[0].text_ptr, a[0].text_len)) };
+    let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
     let __r = (t_4text_basename(cell, p0));
     let __t: &str = __r.as_str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
-    if let Some(__d) = __st.bridge_text_dest.take() {
+    if let Some(__d) = __text_dest {
     if !__t.is_empty() {
     __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);
     }
@@ -1626,10 +1633,11 @@ pub extern "C" fn loft_shared_t_4text_resolve(
     let mut p2: String = String::new();
     let mut p3: String = String::new();
     let mut p4: String = String::new();
+    let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
     let __r = (t_4text_resolve(cell, p0, p1, &mut p2, &mut p3, &mut p4));
     let __t = __r.str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
-    if let Some(__d) = __st.bridge_text_dest.take() {
+    if let Some(__d) = __text_dest {
     if !__t.is_empty() {
     __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);
     }
@@ -1650,10 +1658,11 @@ pub extern "C" fn loft_shared_t_4text_char_slice(
     let p1: i64 = a[1].scalar;
     let p2: i64 = a[2].scalar;
     let mut p3: String = String::new();
+    let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
     let __r = (t_4text_char_slice(cell, p0, p1, p2, &mut p3));
     let __t = __r.str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
-    if let Some(__d) = __st.bridge_text_dest.take() {
+    if let Some(__d) = __text_dest {
     if !__t.is_empty() {
     __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);
     }
@@ -1764,10 +1773,11 @@ pub extern "C" fn loft_shared_t_6vector_join(
     let p0: DbRef = a[0].dbref;
     let p1: &str = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(a[1].text_ptr, a[1].text_len)) };
     let mut p2: String = String::new();
+    let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
     let __r = (t_6vector_join(cell, p0, p1, &mut p2));
     let __t = __r.str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
-    if let Some(__d) = __st.bridge_text_dest.take() {
+    if let Some(__d) = __text_dest {
     if !__t.is_empty() {
     __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);
     }

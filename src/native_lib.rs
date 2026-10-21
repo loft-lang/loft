@@ -725,6 +725,118 @@ impl LibArg {
     };
 }
 
+/// @PLN199 C0 — the one channel from the interpreter into a library cdylib it loaded.
+///
+/// The cdylib links its OWN copy of libloft: `Stores`, `DbRef` and [`LibArg`] have the same
+/// layout on both sides (the same rlib builds both), but every `static` and `thread_local!` in
+/// libloft exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
+/// sides must agree on therefore crosses as a function of the HOST, reached through this
+/// table, which the host hands every generated cdylib once, at load (`c_libs::load_one`
+/// calls its `loft_shared_init`).
+#[repr(C)]
+pub struct HostTable {
+    /// [`HOST_ABI`] of the host that filled the table.
+    pub abi: u32,
+    /// Register a generator the cdylib built in the HOST's coroutine table and write its
+    /// handle into `ret.dbref`.  `coro` is a `Box<Box<dyn LoftCoroutine>>`, thinned.
+    pub coroutine_adopt:
+        unsafe extern "C" fn(stores: *mut Stores, coro: *mut std::ffi::c_void, ret: *mut LibArg),
+    /// @PLN199 C2 — call the function value `(d_nr, closure.dbref)` with the `n` visible
+    /// arguments at `args`, in the interpreter running this bridge call, writing its result
+    /// into `ret` (`State::call_back`).
+    pub call_ref: unsafe extern "C" fn(
+        stores: *mut Stores,
+        d_nr: u32,
+        closure: *const LibArg,
+        args: *const LibArg,
+        n: usize,
+        ret: *mut LibArg,
+    ),
+}
+
+/// The [`HostTable`] layout version; a cdylib refuses a table of another.
+pub const HOST_ABI: u32 = 3;
+
+/// The table this process hands to every library cdylib it loads.
+pub static HOST_TABLE: HostTable = HostTable {
+    abi: HOST_ABI,
+    coroutine_adopt: host_coroutine_adopt,
+    call_ref: host_call_ref,
+};
+
+/// [`HostTable::call_ref`] — the interpreter is the one `State::invoke_native` recorded for
+/// this thread's bridge call, or, on a compiled library's own worker thread, one made over
+/// that worker's stores (`parallel::with_worker_state`).
+unsafe extern "C" fn host_call_ref(
+    stores: *mut Stores,
+    d_nr: u32,
+    closure: *const LibArg,
+    args: *const LibArg,
+    n: usize,
+    ret: *mut LibArg,
+) {
+    let args = unsafe { std::slice::from_raw_parts(args, n) };
+    let closure = unsafe { (*closure).dbref };
+    let state = crate::extensions::host_state();
+    let result = if state.is_null() {
+        // A compiled library's own `par` worker: no interpreter runs on this thread, so one
+        // is made over the worker's stores for the call.
+        crate::parallel::with_worker_state(unsafe { &mut *stores }, |st| {
+            st.call_back(d_nr, closure, args)
+        })
+    } else {
+        unsafe { (*state).call_back(d_nr, closure, args) }
+    };
+    unsafe { *ret = result };
+}
+
+/// [`HostTable::coroutine_adopt`] — the generator's frame takes holds on its argument stores
+/// in the host's table (`@FR-G-Arg-Rebind`), exactly as a `--native` caller's
+/// `alloc_coroutine_held` does in its own.  The box was allocated in the cdylib by the same
+/// system allocator this process frees with.
+unsafe extern "C" fn host_coroutine_adopt(
+    stores: *mut Stores,
+    coro: *mut std::ffi::c_void,
+    ret: *mut LibArg,
+) {
+    let coro: Box<Box<dyn crate::codegen_runtime::LoftCoroutine>> =
+        unsafe { Box::from_raw(coro.cast()) };
+    let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
+    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, *coro);
+    unsafe { (*ret).dbref = handle };
+}
+
+/// The part of every library cdylib that receives the [`HostTable`]: `loft_shared_init`
+/// stores it, and `__host()` reads it.  Appended by [`generate_shared_cdylib_lib_rs`]; the
+/// compiled standard library, which is built INTO the host, swaps it for
+/// [`IN_HOST_TABLE_SRC`].
+pub(crate) const HOST_INIT_SRC: &str = "
+static __HOST: std::sync::OnceLock<&'static loft::native_lib::HostTable> = std::sync::OnceLock::new();
+
+#[unsafe(no_mangle)]
+pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable) -> u32 {
+    let table: &'static loft::native_lib::HostTable = unsafe { &*table };
+    if table.abi != loft::native_lib::HOST_ABI {
+        return 0;
+    }
+    let _ = __HOST.set(table);
+    1
+}
+
+#[allow(dead_code)]
+fn __host() -> &'static loft::native_lib::HostTable {
+    __HOST.get().expect(\"a library cdylib is called only after its host ran loft_shared_init\")
+}
+";
+
+/// [`HOST_INIT_SRC`] for code linked into the host itself: its table is the host's own.
+pub(crate) const IN_HOST_TABLE_SRC: &str = "
+#[allow(dead_code)]
+fn __host() -> &'static loft::native_lib::HostTable {
+    &loft::native_lib::HOST_TABLE
+}
+";
+
 /// Build the shared `--native` program (header + `init` + only the functions
 /// reachable from `entry` + their deps) for `data`.  Both cdylib generators
 /// append their export wrappers to this.
@@ -797,6 +909,7 @@ pub fn generate_shared_cdylib_lib_rs(
     let mut entry: Vec<u32> = export_set.iter().copied().collect();
     entry.sort_unstable();
     let mut src = emit_program(data, stores, &entry);
+    src.push_str(HOST_INIT_SRC);
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
@@ -1038,6 +1151,15 @@ fn shared_bridge_wrapper(
     }
 
     let call = format!("{inner}(cell{fwd})");
+    // @PLN199 C2 — a text return's destination is taken at ENTRY, before the inner fn runs:
+    // the inner fn may call back into the interpreter, whose own bridge calls set and take
+    // the same `Stores::bridge_text_dest`, and taken afterwards it would read theirs.
+    if ret_text {
+        let _ = writeln!(
+            body,
+            "    let __text_dest = unsafe {{ (&mut *cell.get()).bridge_text_dest.take() }};"
+        );
+    }
     let ret_stmt = if let (Some(fields), Some(dest)) = (&value_fields, &value_dest) {
         let mut w = format!("    let __vt = {call};\n    let __vd = {dest};\n");
         let present = value_presence.map_or_else(|| "true".to_string(), |at| format!("__vt.{at}"));
@@ -1192,10 +1314,12 @@ fn bridge_read(t: &Type, slot: &str) -> String {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => format!("{slot}.dbref"),
+        // @PLN199 C1 — a function value: the `(d_nr, closure)` pair `--native` passes.
+        Type::Function(..) => format!("({slot}.scalar as u32, {slot}.dbref)"),
         // @PLN199 A4 — `&T` to a scalar: a pointer into the slot the caller's `DbRef` names,
         // null for a null reference, as `--native`'s `*mut T` parameter takes it.
         Type::RefVar(inner) if crate::native_gate::is_ref_scalar(inner) => {
-            let rt = match **inner {
+            let rt = match inner.base() {
                 Type::Float => "f64",
                 Type::Boolean => "u8",
                 _ => "i64",
@@ -1235,6 +1359,17 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => format!("unsafe {{ (*ret).dbref = ({expr}); }}"),
+        // @PLN199 C1 — a function value, as the `(d_nr, closure)` pair.
+        Type::Function(..) => format!(
+            "let __f = ({expr});\n    unsafe {{ (*ret).scalar = i64::from(__f.0); (*ret).dbref = __f.1; }}"
+        ),
+        // @PLN199 D1 — a generator: the inner fn answers its state machine, which the host
+        // registers in ITS coroutine table (the cdylib's is a copy of its own), writing the
+        // handle into `ret`.
+        Type::Iterator(_, _) => format!(
+            "let __b: Box<Box<dyn loft::codegen_runtime::LoftCoroutine>> = Box::new({expr});\n    \
+             unsafe {{ (__host().coroutine_adopt)(stores, Box::into_raw(__b).cast(), ret) }};"
+        ),
         // Text return: the inner fn returns a `Str` pointing into a local work
         // `String` (about to drop).  @PLN10 — destination-passing, not `scratch`:
         // the interpreter caller routes this call through `gen_cdylib_text_dest_call`
@@ -1255,7 +1390,7 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
                 "let __r = ({expr});\n    \
                  {borrow}\n    \
                  let __st: &mut Stores = unsafe {{ &mut *cell.get() }};\n    \
-                 if let Some(__d) = __st.bridge_text_dest.take() {{\n    \
+                 if let Some(__d) = __text_dest {{\n    \
                      if !__t.is_empty() {{\n    \
                          __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);\n    \
                      }}\n    \
@@ -2283,7 +2418,10 @@ pub fn cached_or_build_shared_cdylib(
         ),
         mix_fp(
             contributing_fingerprint(contributing),
-            crate::cache::native_release_flags_fingerprint(),
+            mix_fp(
+                crate::cache::native_release_flags_fingerprint(),
+                fn_numbering_fingerprint(data, export_set),
+            ),
         ),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
@@ -2380,6 +2518,27 @@ pub fn cached_or_build_shared_cdylib(
     } else {
         Ok(None) // still being edited → interpret this run, no rustc
     }
+}
+
+/// @PLN199 C1 — the numbers the artifact's code gives the functions it can reach.  Generated
+/// code writes a function value's `d_nr` as a literal (a fn-ref dispatch arm, a `FnRef` it
+/// makes), and the interpreter hands it values of ITS numbering, so an artifact serves only
+/// a program that numbers those functions the same way.  A library's functions are numbered
+/// before the script's, so editing the script does not change this.  Names alone would not
+/// do: a lambda's name is its position in the parse (`__lambda_N`).
+fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let roots: Vec<u32> = export_set.iter().copied().collect();
+    let mut reach: Vec<u32> = crate::generation::reachable_functions(data, &roots)
+        .into_iter()
+        .collect();
+    reach.sort_unstable();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for d in reach {
+        d.hash(&mut h);
+        data.def(d).name().hash(&mut h);
+    }
+    h.finish()
 }
 
 /// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source

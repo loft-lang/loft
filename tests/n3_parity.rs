@@ -216,6 +216,25 @@ fn datalib_store_touching_types_parity() {
 /// bar) and the store guard, and the mixed mode once more under `LOFT_POISON=1`.
 #[test]
 fn gatefull_every_gate_shape_parity() {
+    assert_package_parity("gatefull");
+}
+
+/// @PLN199 C2 — a compiled library calling the script's function values back through the
+/// interpreter (`HostTable::call_ref`): a callee that allocates while the library holds a
+/// record, one that calls the library again, text / float / boolean / record arguments, a
+/// capturing lambda, a function value the library returns and is handed back, the
+/// interpreter's `par` worker calling through the library, and the library's own `par`
+/// worker reaching a function value through a record (`parallel::with_worker_state`).
+#[test]
+fn callback_function_values_parity() {
+    assert_package_parity("callback");
+}
+
+/// `tests/lib/<pkg>_main.loft` against `tests/lib/<pkg>_main.out` — the package copied to a
+/// directory of the test's own, so the cdylib it builds is this run's — interpreted, mixed
+/// and `--native` under `LOFT_STORES=warn` and the store guard, and mixed under
+/// `LOFT_POISON=1`.
+fn assert_package_parity(pkg: &str) {
     if loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
@@ -224,20 +243,24 @@ fn gatefull_every_gate_shape_parity() {
         eprintln!("skip: rustc unavailable (mixed + native modes need it)");
         return;
     }
-    let tmp = std::env::temp_dir().join(format!("loft_n3_gatefull_{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("loft_n3_{pkg}_{}", std::process::id()));
     let _ = fa::remove_dir_all(&tmp);
     let lib = tmp.join("lib");
-    fa::create_dir_all(lib.join("gatefull/src")).unwrap();
-    for f in ["loft.toml", "src/gatefull.loft"] {
+    fa::create_dir_all(lib.join(pkg).join("src")).unwrap();
+    for f in ["loft.toml".to_string(), format!("src/{pkg}.loft")] {
         fa::copy(
-            Path::new("tests/lib/gatefull").join(f),
-            lib.join("gatefull").join(f),
+            Path::new("tests/lib").join(pkg).join(&f),
+            lib.join(pkg).join(&f),
         )
         .unwrap();
     }
     let prog = tmp.join("main.loft");
-    fa::copy(Path::new("tests/lib/gatefull_main.loft"), &prog).unwrap();
-    let expected = fa::read_to_string("tests/lib/gatefull_main.out").unwrap();
+    fa::copy(
+        Path::new("tests/lib").join(format!("{pkg}_main.loft")),
+        &prog,
+    )
+    .unwrap();
+    let expected = fa::read_to_string(format!("tests/lib/{pkg}_main.out")).unwrap();
 
     let warn = ("LOFT_STORES", "warn");
     let guard = ("LOFT_STORE_GUARD", "1");
@@ -271,17 +294,17 @@ fn gatefull_every_gate_shape_parity() {
     ] {
         assert!(
             r.success,
-            "{name} failed.\nstdout:\n{}\nstderr:\n{}",
+            "{pkg} {name} failed.\nstdout:\n{}\nstderr:\n{}",
             r.stdout, r.stderr
         );
         assert_eq!(
             r.stdout, expected,
-            "{name}: wrong answers.\nstderr:\n{}",
+            "{pkg} {name}: wrong answers.\nstderr:\n{}",
             r.stderr
         );
         assert!(
             !r.stderr.contains("[store] WARNING") && !r.stderr.contains("[store-guard]"),
-            "{name}: a store outlived its use.\nstderr:\n{}",
+            "{pkg} {name}: a store outlived its use.\nstderr:\n{}",
             r.stderr
         );
     }

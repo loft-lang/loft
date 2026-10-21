@@ -1576,7 +1576,22 @@ impl State {
         stack.pos = 8 + self.stack_pos;
         // PKG.5: set library index for auto-marshal dispatch.
         crate::extensions::set_current_lib_idx(call);
-        self.library[call as usize](&mut self.database, &mut stack);
+        let f = self.library[call as usize];
+        if crate::extensions::is_shared_dispatch(f) {
+            // @PLN199 C2 — a compiled library may call back into this interpreter (a function
+            // value it cannot run itself), so the bridge call reaches the stores through a
+            // pointer derived from the same `State` the call-back uses, never through a
+            // `&mut Stores` held across it.
+            let state: *mut State = self;
+            let outer = crate::extensions::enter_host_state(state);
+            crate::extensions::shared_store_dispatch_raw(
+                unsafe { &raw mut (*state).database },
+                &mut stack,
+            );
+            crate::extensions::leave_host_state(outer);
+        } else {
+            f(&mut self.database, &mut stack);
+        }
         self.stack_pos = stack.pos - 8;
         // `@FR-R-DispatchStop` — the events only a native starts: a frame yield, a runtime
         // error it raised, a `par` worker's fatal noticed after the join this native waited on.
@@ -1934,6 +1949,7 @@ impl State {
                 // reference in the slot; skip anything whose store is no longer allocated
                 // rather than free it twice.
                 if db.store_nr != COROUTINE_STORE
+                    && db.store_nr != crate::database::NATIVE_COROUTINE_STORE
                     && ((db.store_nr as usize) >= self.database.allocations.len()
                         || self.database.allocations[db.store_nr as usize].free)
                 {
@@ -2325,6 +2341,10 @@ impl State {
         // generator answers reads it; a live advance moves what the generator yields.
         let gen_ref = self.get_stack::<DbRef>();
 
+        if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            self.native_coroutine_next(gen_ref, packed_size);
+            return;
+        }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             // CO1.6c: push typed null sentinel.
             self.push_null_value(packed_size);
@@ -2498,9 +2518,45 @@ impl State {
         }
     }
 
+    /// @PLN199 D1 — advance a generator a compiled library made: its handle names a slot of
+    /// the host's native coroutine table (`HostTable::coroutine_adopt`), and the advance runs
+    /// the generator's compiled body.  The yield is read on the channel `--native`'s consumer
+    /// reads for the same operand (`generation/ops/coroutine.rs`) and pushed as the
+    /// interpreter's own advance pushes it; exhaustion answers the same typed null.  The
+    /// gate admits only the yields read here (`native_gate::generator_crosses`).
+    fn native_coroutine_next(&mut self, gen_ref: DbRef, packed_size: u32) {
+        use crate::codegen_runtime as cr;
+        let size = packed_size & 0xFF;
+        let tag = packed_size >> 8;
+        match (tag, size) {
+            (3, _) => {
+                let bits = cr::coroutine_next_i64(gen_ref, &mut self.database);
+                self.put_stack(f64::from_bits(bits as u64));
+            }
+            (0, 8) => {
+                let v = cr::coroutine_next_i64(gen_ref, &mut self.database);
+                self.put_stack(v);
+            }
+            // The transport carries the boolean's storage byte; exhaustion's `i64::MIN`
+            // truncates to 0, the interpreter's false.
+            (0, 1) => {
+                let v = cr::coroutine_next_i64(gen_ref, &mut self.database);
+                self.put_stack(v as u8 == 1);
+            }
+            (0, n) if n == size_ref() => {
+                let v = cr::coroutine_next_dbref(gen_ref, &mut self.database);
+                self.put_stack(v);
+            }
+            _ => self.push_null_value(packed_size),
+        }
+    }
+
     // CO1.6: check if a coroutine is exhausted.
     #[must_use]
     pub fn coroutine_exhausted(&self, gen_ref: &DbRef) -> bool {
+        if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            return crate::codegen_runtime::coroutine_is_exhausted(*gen_ref);
+        }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             return true; // null iterator is exhausted
         }
@@ -2523,6 +2579,9 @@ impl State {
     /// loft#1708).  A handle naming no live frame — null, or exhausted and its slot freed —
     /// takes nothing, and its holders' releases are no-ops for the same reason.
     pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
+        if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            return crate::codegen_runtime::coroutine_retain(gen_ref);
+        }
         if self.coroutine_slot_matches(&gen_ref)
             && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
         {
@@ -8378,6 +8437,59 @@ impl State {
     ///
     /// # Panics
     /// When the callee yields mid-call (not supported in v1).
+    /// @PLN199 C2 — a compiled library's call through a function value whose callee it does
+    /// not carry: a function of the script, or of a library compiled apart.  Runs `d_nr` with
+    /// `args` (its visible parameters, in order) and `closure`, through [`Self::reenter_ret`]
+    /// — above every live frame, restoring the PC and the stack after — and answers the
+    /// result in a [`LibArg`].  The gate admits only the signatures marshalled here
+    /// (`generation::fnref::upcall_carries`): scalar, text and reference parameters, and a
+    /// scalar or void return, so the callee has no hidden buffer.
+    ///
+    /// [`LibArg`]: crate::native_lib::LibArg
+    pub(crate) fn call_back(
+        &mut self,
+        d_nr: u32,
+        closure: DbRef,
+        args: &[crate::native_lib::LibArg],
+    ) -> crate::native_lib::LibArg {
+        use crate::data::Type;
+        let handle = self.data_ptr.clone();
+        let data = handle
+            .get()
+            .expect("a call back into the interpreter needs the program's definitions");
+        let def = data.def(d_nr);
+        let pos = self.fn_positions[d_nr as usize];
+        let push = |st: &mut Self| {
+            let mut at = 0;
+            for a in def.attributes() {
+                if a.name == "__closure" {
+                    st.put_stack(closure);
+                    continue;
+                }
+                let arg = args[at];
+                at += 1;
+                match a.typedef.base() {
+                    Type::Float => st.put_stack(f64::from_bits(arg.scalar as u64)),
+                    Type::Boolean => st.put_stack(arg.scalar != 0),
+                    Type::Text(_) => st.put_stack(Str {
+                        ptr: arg.text_ptr,
+                        len: arg.text_len as u32,
+                    }),
+                    t if crate::data::is_dbref(t) => st.put_stack(arg.dbref),
+                    _ => st.put_stack(arg.scalar),
+                }
+            }
+        };
+        let mut ret = crate::native_lib::LibArg::ZERO;
+        match def.returned().base() {
+            Type::Void | Type::Null => self.reenter(d_nr, pos, push),
+            Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
+            Type::Boolean => ret.scalar = i64::from(self.reenter_ret::<u8>(d_nr, pos, push)),
+            _ => ret.scalar = self.reenter_ret::<i64>(d_nr, pos, push),
+        }
+        ret
+    }
+
     pub fn reenter_ret<T: Copy + 'static>(
         &mut self,
         d_nr: u32,

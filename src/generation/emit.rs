@@ -2018,7 +2018,13 @@ impl Output<'_> {
         // range), and the call answers the return type's null, as the interpreter's guard in
         // `generate_call_ref` does; the program continues (@C80).
         write!(w, " _ => ")?;
-        if let Some(fields) = &value_fields {
+        if self.library_unit && crate::fnref::upcall_carries(&fn_type) {
+            // @PLN199 C2 — in a library cdylib the set of functions is not closed: a value the
+            // script handed in names a callee this cdylib does not carry, and the interpreter
+            // that loaded it runs that callee (`HostTable::call_ref`).  An absent fn-ref
+            // reaches the interpreter's own `@FR-L-FnAbsent` guard there.
+            Self::write_upcall_arm(w, &param_types, &ret_type, &place, &closure_expr)?;
+        } else if let Some(fields) = &value_fields {
             write!(
                 w,
                 "{}",
@@ -2044,6 +2050,48 @@ impl Output<'_> {
             write!(w, " }}")?;
         }
         Ok(())
+    }
+
+    /// The upcall arm of a fn-ref dispatch in a library cdylib (@PLN199 C2): the bound
+    /// arguments `_farg_<i>` into `LibArg`s, the call through the host table, and the
+    /// result read back at the return type — the marshalling `State::call_back` reverses.
+    fn write_upcall_arm(
+        w: &mut dyn Write,
+        param_types: &[Type],
+        ret_type: &Type,
+        place: &str,
+        closure_expr: &str,
+    ) -> std::io::Result<()> {
+        let n = param_types.len();
+        write!(w, "{{ let __ua: [loft::native_lib::LibArg; {n}] = [")?;
+        for (i, p) in param_types.iter().enumerate() {
+            let field = match p.base() {
+                Type::Float => format!("scalar: _farg_{i}.to_bits() as i64"),
+                Type::Boolean => format!("scalar: i64::from(_farg_{i})"),
+                Type::Text(_) => format!("text_ptr: _farg_{i}.as_ptr(), text_len: _farg_{i}.len()"),
+                t if crate::data::is_dbref(t) => format!("dbref: _farg_{i}"),
+                _ => format!("scalar: _farg_{i}"),
+            };
+            write!(
+                w,
+                "loft::native_lib::LibArg {{ {field}, ..loft::native_lib::LibArg::ZERO }}, "
+            )?;
+        }
+        write!(
+            w,
+            "]; let __uc = loft::native_lib::LibArg {{ dbref: {closure_expr}, \
+             ..loft::native_lib::LibArg::ZERO }}; \
+             let mut __ur = loft::native_lib::LibArg::ZERO; \
+             unsafe {{ (__host().call_ref)(cell.get(), {place}.0, &raw const __uc, __ua.as_ptr(), \
+             {n}, &raw mut __ur) }}; "
+        )?;
+        let read = match ret_type.base() {
+            Type::Void | Type::Null => "()",
+            Type::Float => "f64::from_bits(__ur.scalar as u64)",
+            Type::Boolean => "(__ur.scalar as u8)",
+            _ => "__ur.scalar",
+        };
+        write!(w, "{read} }}")
     }
 
     /// Use this to emit an `if/else` expression. Handles whether branches are bare

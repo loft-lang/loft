@@ -1,0 +1,8 @@
+[package]
+name    = "callback"
+version = "0.1.0"
+loft    = ">=0.8"
+
+[library]
+entry   = "src/callback.loft"
+compile = "native"

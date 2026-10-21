@@ -149,6 +149,9 @@ enum ArgT {
     Text,
     Ref, // DbRef — struct reference (rec/pos point to the struct)
     Vec, // DbRef — vector reference (indirect: dereference rec/pos to get data record)
+    /// @PLN199 C1 — a function value: the interpreter's 20-byte slot (`d_nr` as `i64`, then
+    /// the closure `DbRef`), carried in one `LibArg` as `scalar` + `dbref`.
+    FnRef,
 }
 
 /// Mirror of `loft_ffi::LoftStoreCtx` — `#[repr(C)]` so layout matches.
@@ -376,6 +379,10 @@ fn marshal_arg_t(t: &crate::data::Type) -> Option<ArgT> {
         Type::Vector(_, _) => ArgT::Vec,
         // @PLN199 A4 — a `&T` argument is the `DbRef` of the slot it names.
         Type::RefVar(_) => ArgT::Ref,
+        // @PLN199 D1 — a generator crosses as its handle in the host's coroutine table.
+        Type::Iterator(_, _) => ArgT::Ref,
+        // @PLN199 C1 — a function value.
+        Type::Function(..) => ArgT::FnRef,
         _ => return None,
     })
 }
@@ -989,6 +996,14 @@ mod impl_symbol_tests {
 /// they handle disjoint symbol sets, `wire_native_fns` skips `loft_shared_…`).
 #[cfg(feature = "native-extensions")]
 pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::data::Data) {
+    // @PLN199 C0 — every library cdylib receives the host's table before any of its bridges
+    // can be called.  Idempotent: the cdylib keeps the first table it is handed.
+    type InitFn = unsafe extern "C" fn(*const crate::native_lib::HostTable) -> u32;
+    for init in crate::c_libs::dlsym_in_each("loft_shared_init") {
+        let init: InitFn = unsafe { std::mem::transmute(init) };
+        let accepted = unsafe { init(&raw const crate::native_lib::HOST_TABLE) };
+        debug_assert_eq!(accepted, 1, "a library cdylib refused this host's table");
+    }
     // Phase 1: collect resolvable shared bridges (no lock held).
     let mut wired: Vec<(String, u16, *const (), SharedSig)> = Vec::new();
     for d_nr in 0..data.definitions() {
@@ -1063,10 +1078,68 @@ pub fn wire_shared_native_fns(_state: &mut crate::state::State, _data: &crate::d
 /// caller's `*mut Stores` directly (zero-marshalling shared store), calls the
 /// bridge, and writes the return back onto the stack.
 #[cfg(feature = "native-extensions")]
-#[expect(clippy::too_many_lines, reason = "inherited")]
 fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
+    shared_store_dispatch_raw(stores, stack);
+}
+
+/// Is `call` the shared-bridge dispatcher?  `State::invoke_native` asks, to enter it through
+/// [`shared_store_dispatch_raw`] with the interpreter reachable for an upcall (@PLN199 C2).
+#[cfg(feature = "native-extensions")]
+#[must_use]
+pub fn is_shared_dispatch(call: crate::database::Call) -> bool {
+    std::ptr::fn_addr_eq(call, shared_store_dispatch as crate::database::Call)
+}
+
+#[cfg(not(feature = "native-extensions"))]
+#[must_use]
+pub fn is_shared_dispatch(_call: crate::database::Call) -> bool {
+    false
+}
+
+#[cfg(not(feature = "native-extensions"))]
+pub fn shared_store_dispatch_raw(
+    _stores_raw: *mut crate::database::Stores,
+    _stack: &mut crate::keys::DbRef,
+) {
+}
+
+std::thread_local! {
+    /// @PLN199 C2 — the interpreter running the shared-bridge call on this thread, for a
+    /// compiled library's call back into it (`HostTable::call_ref`).  Null outside one.
+    static HOST_STATE: std::cell::Cell<*mut crate::state::State> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// Record `state` as the interpreter a bridge call on this thread may call back into, and
+/// answer the one it replaces, which [`leave_host_state`] restores — so a nested bridge call
+/// (a callback that calls the library again) leaves the outer one reachable.
+pub fn enter_host_state(state: *mut crate::state::State) -> *mut crate::state::State {
+    HOST_STATE.with(|c| c.replace(state))
+}
+
+/// Restore the interpreter [`enter_host_state`] replaced.
+pub fn leave_host_state(prev: *mut crate::state::State) {
+    HOST_STATE.with(|c| c.set(prev));
+}
+
+/// The interpreter running the current bridge call on this thread, or null.
+pub(crate) fn host_state() -> *mut crate::state::State {
+    HOST_STATE.with(std::cell::Cell::get)
+}
+
+/// [`shared_store_dispatch`] through a raw store pointer, the entry `State::invoke_native`
+/// takes (@PLN199 C2).  No `&mut Stores` stays alive across the bridge call: the bridge may
+/// call back into the interpreter, which reaches the same `Stores` through its `State`.  The
+/// pops reborrow before the call and the pushes after it.
+#[cfg(feature = "native-extensions")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
+pub fn shared_store_dispatch_raw(
+    stores_raw: *mut crate::database::Stores,
+    stack: &mut crate::keys::DbRef,
+) {
     use crate::keys::DbRef;
     use crate::native_lib::LibArg;
+    let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let lib_idx = crate::call_frames::current_lib_idx();
@@ -1075,7 +1148,7 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     // `Cannot add to none-structure '<type>'` names a type, never the library
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
-    crate::call_frames::enter_shared_bridge(lib_idx);
+    let outer_bridge = crate::call_frames::enter_shared_bridge(lib_idx);
     let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&SHARED_SIG_CACHE, &SHARED_SIGS, lib_idx)
     else {
         panic!("no shared signature for lib_idx {lib_idx}")
@@ -1119,6 +1192,14 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
                     ..LibArg::ZERO
                 }
             }
+            ArgT::FnRef => {
+                let (d_nr, closure) = read_fn_ref(stores.get::<[u8; FN_REF_SIZE]>(stack));
+                LibArg {
+                    scalar: d_nr,
+                    dbref: closure,
+                    ..LibArg::ZERO
+                }
+            }
         };
         popped.push(slot);
     }
@@ -1154,7 +1235,7 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     };
 
     let mut ret = LibArg::ZERO;
-    let stores_ptr: *mut crate::database::Stores = stores;
+    let stores_ptr: *mut crate::database::Stores = stores_raw;
     // SAFETY: `bridge_ptr` is a `loft_shared_…` export of an auto-generated cdylib
     // that links this exact `LibArg` / `Stores` / `DbRef` from libloft, so the ABI
     // matches.  `stores_ptr` is borrowed from the live `&mut Stores`; the bridge
@@ -1173,6 +1254,8 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
             std::ptr::from_mut(&mut ret),
         )
     };
+    // Reborrowed after the call: the bridge may have called back into the interpreter.
+    let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
     // @PLN118 arc F — non-perturbing attribution of the shared-return orphan.
     // For a struct/vector return the caller pre-allocates a retbuf and forwards
@@ -1213,6 +1296,7 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
         Some(ArgT::F32) => stores.put::<f64>(stack, f64::from(f32::from_bits(ret.scalar as u32))),
         Some(ArgT::Bool) => stores.put(stack, ret.scalar != 0),
         Some(ArgT::Ref | ArgT::Vec) => stores.put::<DbRef>(stack, ret.dbref),
+        Some(ArgT::FnRef) => stores.put(stack, write_fn_ref(ret.scalar, ret.dbref)),
         // @PLN10 — dest-passing: in dest-mode the bridge wrote the result into the
         // caller-owned `bridge_text_dest` record and left `ret` text null; the value
         // lives in its destination, so push NOTHING (matches the dest-mode codegen).
@@ -1244,7 +1328,31 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
             }
         }
     }
-    crate::call_frames::leave_shared_bridge();
+    crate::call_frames::leave_shared_bridge(outer_bridge);
+}
+
+/// The interpreter's function-value slot: an 8-byte `d_nr`, then the closure `DbRef`
+/// (`OpVarFnRef`, `data::element_stack_size_in`).
+const FN_REF_SIZE: usize = 20;
+
+const _: () = assert!(FN_REF_SIZE == 8 + std::mem::size_of::<crate::keys::DbRef>());
+
+/// The `(d_nr, closure)` a function-value slot holds.
+fn read_fn_ref(raw: [u8; FN_REF_SIZE]) -> (i64, crate::keys::DbRef) {
+    let d_nr = i64::from_ne_bytes(raw[0..8].try_into().unwrap_or_default());
+    let closure =
+        unsafe { std::ptr::read_unaligned(raw[8..].as_ptr().cast::<crate::keys::DbRef>()) };
+    (d_nr, closure)
+}
+
+/// The function-value slot for `(d_nr, closure)`.
+fn write_fn_ref(d_nr: i64, closure: crate::keys::DbRef) -> [u8; FN_REF_SIZE] {
+    let mut raw = [0u8; FN_REF_SIZE];
+    raw[0..8].copy_from_slice(&d_nr.to_ne_bytes());
+    unsafe {
+        std::ptr::write_unaligned(raw[8..].as_mut_ptr().cast::<crate::keys::DbRef>(), closure)
+    };
+    raw
 }
 
 /// Generic auto-marshal dispatcher. Called via `OpStaticCall` for all
@@ -1389,6 +1497,7 @@ fn dispatch_via_bridge(
             ArgT::Bool => Raw::Bool(stores.get::<bool>(stack)),
             ArgT::Text => Raw::Text(stores.get::<Str>(stack)),
             ArgT::Ref | ArgT::Vec => Raw::Heap(stores.get::<crate::keys::DbRef>(stack)),
+            ArgT::FnRef => unreachable!("a native library's signature carries no function value"),
         };
     }
     let raw = raw.as_mut();
