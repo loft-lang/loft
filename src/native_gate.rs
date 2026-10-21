@@ -241,6 +241,11 @@ fn is_bridge_type(t: &Type) -> bool {
     if let Type::Tuple(elems) = t.base() {
         return elems.iter().all(is_tuple_leaf);
     }
+    // @PLN199 A4 — a `&T` to a scalar crosses as the `DbRef` of the caller's slot; the bridge
+    // hands the inner fn a pointer into it (`*mut i64`), the form `--native` passes.
+    if let Type::RefVar(inner) = t {
+        return is_ref_scalar(inner);
+    }
     is_scalar_type(t)
         || matches!(
             t.base(),
@@ -254,6 +259,18 @@ fn is_bridge_type(t: &Type) -> bool {
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _)
         )
+}
+
+/// @PLN199 A4 — may `&t` cross the bridge?  A full-width integer, a float or a boolean: the
+/// slot the `DbRef` names holds exactly the `i64` / `f64` / `u8` the inner fn's `*mut` reads
+/// and writes.  `&text`, `&vector` and `&(…)` each want their own pointer form, and a narrow
+/// integer, a `single` or a `character` a slot read at its own width.
+pub(crate) fn is_ref_scalar(t: &Type) -> bool {
+    match t {
+        Type::Integer(s) => s.forced_size.is_none(),
+        Type::Float | Type::Boolean => true,
+        _ => false,
+    }
 }
 
 /// @PLN199 A3 — may `t` be an element of a tuple PARAMETER?  The dispatcher pops a tuple

@@ -40,6 +40,9 @@ pub fn arg_tuple_ref(t: (Ck, integer)) -> integer { t.0.v * t.1 }
 
 // A reference to the caller's variable.
 pub fn arg_ref(n: &integer) { n += 5; }
+pub fn arg_ref_float(f: &float) { f = f * 2.0; }
+pub fn arg_ref_bool(b: &boolean) { b = !b; }
+pub fn arg_ref_two(a: &integer, k: integer) -> integer { a = a * k; a + 1 }
 
 // Function values: passed in, returned, and local.
 pub fn arg_fn(f: fn(integer) -> integer, x: integer) -> integer { f(x) + 1 }

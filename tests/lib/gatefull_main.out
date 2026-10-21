@@ -12,6 +12,8 @@ arg_tuple_var 709 x7
 arg_tuple_nested 6 0
 arg_tuple_ref 33
 arg_ref 6
+arg_ref_more 3 true 12 13
+arg_ref_field 7 5000
 arg_fn 11
 ret_fn 21
 local_lambda 11

@@ -1192,6 +1192,19 @@ fn bridge_read(t: &Type, slot: &str) -> String {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => format!("{slot}.dbref"),
+        // @PLN199 A4 — `&T` to a scalar: a pointer into the slot the caller's `DbRef` names,
+        // null for a null reference, as `--native`'s `*mut T` parameter takes it.
+        Type::RefVar(inner) if crate::native_gate::is_ref_scalar(inner) => {
+            let rt = match **inner {
+                Type::Float => "f64",
+                Type::Boolean => "u8",
+                _ => "i64",
+            };
+            format!(
+                "{{ let __d = {slot}.dbref; if __d.rec == 0 {{ std::ptr::null_mut() }} else {{ \
+                 std::ptr::from_mut(unsafe {{ (&mut *cell.get()).store_mut(&__d).addr_mut::<{rt}>(__d.rec, __d.pos) }}) }} }}"
+            )
+        }
         // Not bridge-able — the gate excludes these, so this is unreachable for a
         // shared-store-dispatchable function; emit a clearly-wrong token so a gate
         // bug surfaces as a compile error rather than silent corruption.

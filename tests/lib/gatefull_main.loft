@@ -44,6 +44,18 @@ fn main() {
     n = 1;
     arg_ref(n);
     println("arg_ref {n}"); // 6
+    fl = 1.5;
+    arg_ref_float(fl);
+    bo = false;
+    arg_ref_bool(bo);
+    am = 3;
+    rx = arg_ref_two(am, 4);
+    println("arg_ref_more {fl} {bo} {am} {rx}"); // 3 true 12 13
+    rec = Ck { k: 1, v: 2 };
+    arg_ref(rec.v);
+    acc = 0;
+    for _ in 0..1000 { arg_ref(acc); }
+    println("arg_ref_field {rec.v} {acc}"); // 7 5000
     println("arg_fn {arg_fn(twice, 5)}"); // 11
     f = ret_fn();
     println("ret_fn {f(3)}"); // 21

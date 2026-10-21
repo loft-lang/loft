@@ -374,6 +374,8 @@ fn marshal_arg_t(t: &crate::data::Type) -> Option<ArgT> {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => ArgT::Ref,
         Type::Vector(_, _) => ArgT::Vec,
+        // @PLN199 A4 — a `&T` argument is the `DbRef` of the slot it names.
+        Type::RefVar(_) => ArgT::Ref,
         _ => return None,
     })
 }
