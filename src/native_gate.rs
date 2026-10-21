@@ -112,7 +112,16 @@ fn is_scalar_type(t: &Type) -> bool {
 pub fn shared_store_dispatchable(data: &Data) -> HashSet<u32> {
     native_compilable(data)
         .into_iter()
-        .filter(|&d| {
+        .filter(|&d| bridge_decline(data, d).is_none())
+        .collect()
+}
+
+/// Why a function the gate admits cannot cross the shared-store bridge, in words, or `None`
+/// when its signature can — the judgment [`shared_store_dispatchable`] filters on.
+#[must_use]
+pub fn bridge_decline(data: &Data, d: u32) -> Option<String> {
+    {
+        {
             let def = data.def(d);
             // `Optional(τ)` rides the same sentinel layout as τ (@PLN25) — gate on
             // the peeled type so a nullable return/param stays dispatchable.
@@ -150,14 +159,27 @@ pub fn shared_store_dispatchable(data: &Data) -> HashSet<u32> {
                     .attributes()
                     .iter()
                     .any(|a| is_text_work_buffer(&a.typedef));
-            ret_ok
-                && text_ret_has_buffer
-                && def
-                    .attributes()
-                    .iter()
-                    .all(|a| classify_bridge_attr(a, ret_text).is_some())
-        })
-        .collect()
+            if !ret_ok {
+                return Some(format!(
+                    "it returns `{}`, which the bridge cannot carry",
+                    ret.name(data)
+                ));
+            }
+            if !text_ret_has_buffer {
+                return Some("it returns a text it does not own (no work buffer)".to_string());
+            }
+            def.attributes()
+                .iter()
+                .find(|a| classify_bridge_attr(a, ret_text).is_none())
+                .map(|a| {
+                    format!(
+                        "its parameter `{}: {}` cannot cross the bridge",
+                        a.name,
+                        a.typedef.name(data)
+                    )
+                })
+        }
+    }
 }
 
 /// How a shared-bridge function's attribute is satisfied at the dispatch
@@ -244,15 +266,38 @@ fn is_bridge_type(t: &Type) -> bool {
 /// treated as native — the function's own body is checked on its first visit),
 /// mirroring `scopes::walk_par_safe`.
 fn fn_native_compilable(data: &Data, d_nr: u32, visited: &mut HashSet<u32>) -> bool {
+    fn_decline(data, d_nr, visited).is_none()
+}
+
+/// Why a function stays interpreted — the first construct the gate met that a compiled
+/// library cannot carry.  `None` means it compiles.  The `bool` gate above is this with the
+/// reason dropped, so the trace and the decision cannot disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decline {
+    /// Not a function (or out of range): nothing to compile.
+    NotFunction,
+    /// A `#c` binding: the C symbol is the implementation.
+    CBinding,
+    /// The body uses `yield` — it is a generator.
+    Yield,
+    /// The body uses `parallel` / `par_for`.
+    Parallel,
+    /// The body calls through a function value, whose callee cannot be proven compiled.
+    CallRef,
+    /// The body calls this function, which itself stays interpreted.
+    Callee(u32),
+}
+
+fn fn_decline(data: &Data, d_nr: u32, visited: &mut HashSet<u32>) -> Option<Decline> {
     if d_nr == u32::MAX || d_nr >= data.definitions() {
-        return false; // unknown / out-of-range callee → conservative
+        return Some(Decline::NotFunction); // unknown / out-of-range callee → conservative
     }
     if !visited.insert(d_nr) {
-        return true; // cycle — already being checked higher up the stack
+        return None; // cycle — already being checked higher up the stack
     }
     let def = data.def(d_nr);
     if !matches!(def.def_type(), DefType::Function) {
-        return false;
+        return Some(Decline::NotFunction);
     }
     // @PLN24 — a `#c` definition is ALREADY bound, to a C symbol, and its empty
     // body is a declaration rather than compilable loft. Left in, the auto-native
@@ -262,41 +307,50 @@ fn fn_native_compilable(data: &Data, d_nr: u32, visited: &mut HashSet<u32>) -> b
     // it will panic". The binding is the implementation; nothing here may
     // replace it.
     if !def.c_sig.is_empty() {
-        return false;
+        return Some(Decline::CBinding);
     }
-    walk(def.code(), data, visited)
+    walk_decline(def.code(), data, visited)
+}
+
+/// [`walk_decline`] as the yes/no the gate asks (the unit tests' spelling).
+#[cfg(test)]
+fn walk(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> bool {
+    walk_decline(v, data, visited).is_none()
 }
 
 /// Exhaustive walk of a `Value` tree — **no `_` arm by design**: a future IR
 /// variant must be classified here, so an un-native-able construct can never
 /// silently slip through as "native" and produce broken Rust (Goal F:
-/// conservative-silent, never a compile error in the user's face).  Returns
-/// `false` the moment an un-native-able construct (or a non-native callee) is hit.
-fn walk(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> bool {
+/// conservative-silent, never a compile error in the user's face).  Answers the first
+/// un-native-able construct (or non-native callee) met, `None` when there is none.
+fn walk_decline(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> Option<Decline> {
+    let all = |vs: &[Value], visited: &mut HashSet<u32>| {
+        vs.iter().find_map(|x| walk_decline(x, data, visited))
+    };
     match v {
         // The native backend cannot emit these (concurrency / coroutine) — see
         // `generation/emit.rs` (Parallel emits a non-code comment).
-        Value::Parallel(_) | Value::Yield(_) => false,
+        Value::Parallel(_) => Some(Decline::Parallel),
+        Value::Yield(_) => Some(Decline::Yield),
         // Dynamic dispatch: the runtime callee is unknown → can't prove native.
-        Value::CallRef(_, _) => false,
+        Value::CallRef(_, _) => Some(Decline::CallRef),
         // A static call: the callee must itself be native, and so must the args.
-        Value::Call(callee, args) => {
-            fn_native_compilable(data, *callee, visited)
-                && args.iter().all(|a| walk(a, data, visited))
-        }
+        Value::Call(callee, args) => fn_decline(data, *callee, visited)
+            .map(|_| Decline::Callee(*callee))
+            .or_else(|| all(args, visited)),
         // Structural nodes carrying children — recurse into all of them.
-        Value::Span(b) => walk(&b.1, data, visited),
-        Value::Block(b) | Value::Loop(b) => b.operators.iter().all(|x| walk(x, data, visited)),
-        Value::Insert(vs) | Value::Tuple(vs) => vs.iter().all(|x| walk(x, data, visited)),
+        Value::Span(b) => walk_decline(&b.1, data, visited),
+        Value::Block(b) | Value::Loop(b) => all(&b.operators, visited),
+        Value::Insert(vs) | Value::Tuple(vs) => all(vs, visited),
         Value::Set(_, x) | Value::Return(x) | Value::Drop(x) | Value::TuplePut(_, _, x) => {
-            walk(x, data, visited)
+            walk_decline(x, data, visited)
         }
-        Value::If(c, t, e) => {
-            walk(c, data, visited) && walk(t, data, visited) && walk(e, data, visited)
-        }
-        Value::Iter(_, create, next, init) => {
-            walk(create, data, visited) && walk(next, data, visited) && walk(init, data, visited)
-        }
+        Value::If(c, t, e) => walk_decline(c, data, visited)
+            .or_else(|| walk_decline(t, data, visited))
+            .or_else(|| walk_decline(e, data, visited)),
+        Value::Iter(_, create, next, init) => walk_decline(create, data, visited)
+            .or_else(|| walk_decline(next, data, visited))
+            .or_else(|| walk_decline(init, data, visited)),
         // Leaves — literals, var reads, fn-ref construction, keys, raw-expr.
         Value::Null
         | Value::Line(_)
@@ -314,10 +368,47 @@ fn walk(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> bool {
         | Value::TupleGet(_, _)
         | Value::FnRef(_, _, _)
         | Value::FnRefDnr(_)
-        | Value::RawExpr(_) => true,
+        | Value::RawExpr(_) => None,
     }
 }
 
+/// Why function `d_nr` stays INTERPRETED when its library compiles, in words, or `None`
+/// when it is compiled and dispatched over the shared-store bridge.  The gate's reason
+/// first, followed down a chain of interpreted callees to the construct at its root; then
+/// the bridge's, for a function the gate admits but whose signature cannot cross.  What
+/// `LOFT_TRACE_NATIVE_GATE=1` prints for each export of a `use`d library.
+#[must_use]
+pub fn explain_interpreted(data: &Data, d_nr: u32) -> Option<String> {
+    let mut chain = Vec::new();
+    let mut at = d_nr;
+    loop {
+        match fn_decline(data, at, &mut HashSet::new()) {
+            None => break,
+            Some(Decline::Callee(c)) if chain.len() < 8 && c != at => {
+                chain.push(data.def(c).name().to_string());
+                at = c;
+            }
+            Some(d) => {
+                let why = match d {
+                    Decline::NotFunction => "an unknown callee".to_string(),
+                    Decline::CBinding => {
+                        "a `#c` binding (the C symbol is the implementation)".to_string()
+                    }
+                    Decline::Yield => "a generator (`yield`)".to_string(),
+                    Decline::Parallel => "`parallel` / `par_for`".to_string(),
+                    Decline::CallRef => "a call through a function value".to_string(),
+                    Decline::Callee(c) => format!("a cycle through `{}`", data.def(c).name()),
+                };
+                return Some(if chain.is_empty() {
+                    format!("its body uses {why}")
+                } else {
+                    format!("it calls `{}`, which uses {why}", chain.join("` → `"))
+                });
+            }
+        }
+    }
+    bridge_decline(data, d_nr)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

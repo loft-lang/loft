@@ -9882,6 +9882,9 @@ fn main() {
         {
             continue;
         }
+        if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+            loft::native_lib::trace_partition(&p.data, pkg_dir);
+        }
         let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
         if export.is_empty() {
             continue;

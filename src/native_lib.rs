@@ -517,7 +517,17 @@ pub fn probe_and_mark_exports(
 /// [`mark_exports`] only on success.
 #[must_use]
 pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
-    let candidates: HashSet<u32> = (0..data.definitions())
+    let candidates = library_candidates(data, pkg_dir);
+    crate::native_gate::shared_store_dispatchable(data)
+        .intersection(&candidates)
+        .copied()
+        .collect()
+}
+
+/// The functions of the library at `pkg_dir` a script can name and call — the candidates
+/// [`library_export_set`] narrows to those that compile.
+fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
+    (0..data.definitions())
         .filter(|&d| {
             let def = data.def(d);
             matches!(def.def_type(), DefType::Function)
@@ -525,11 +535,35 @@ pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
                 && !is_synthetic_name(def.name())
                 && crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
         })
-        .collect();
-    crate::native_gate::shared_store_dispatchable(data)
-        .intersection(&candidates)
-        .copied()
         .collect()
+}
+
+/// `LOFT_TRACE_NATIVE_GATE=1` — how the library at `pkg_dir` splits: how many of the
+/// functions a script can call run compiled, and for each that stays interpreted, the rule
+/// that kept it there (`native_gate::explain_interpreted`).  A library's build reports only
+/// failure, so without this a function left out ran slower in silence.
+pub fn trace_partition(data: &Data, pkg_dir: &str) {
+    let mut names: Vec<(String, Option<String>)> = library_candidates(data, pkg_dir)
+        .into_iter()
+        .map(|d| {
+            (
+                data.def(d).name().to_string(),
+                crate::native_gate::explain_interpreted(data, d),
+            )
+        })
+        .collect();
+    names.sort();
+    let compiled = names.iter().filter(|(_, why)| why.is_none()).count();
+    let pkg = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string());
+    eprintln!(
+        "[native-gate] {pkg}: {compiled} of {} callable functions compiled",
+        names.len()
+    );
+    for (name, why) in names {
+        if let Some(why) = why {
+            eprintln!("[native-gate]   `{name}` interpreted — {why}");
+        }
+    }
 }
 
 /// @PLN11 Arc N / N3 — mark a `use`d library's **public API** functions native.

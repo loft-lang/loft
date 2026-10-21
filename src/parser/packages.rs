@@ -1933,6 +1933,18 @@ impl Parser {
         if m.native.is_none() && !self.pending_native_compile.iter().any(|d| d == pkg_dir) {
             self.pending_native_compile.push(pkg_dir.to_string());
         }
+        // `LOFT_TRACE_NATIVE_GATE=1` — the one library the partition trace never reaches: a
+        // hand-written native crate takes the place of compiling the library, so its LOFT
+        // functions (the wrappers around its natives) all run interpreted.
+        if let Some(stem) = &m.native
+            && std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some()
+        {
+            let pkg = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string());
+            eprintln!(
+                "[native-gate] {pkg}: its loft functions are interpreted — the library ships a \
+                 native crate (`{stem}`), which takes the place of compiling it"
+            );
+        }
         self.record_placement(m, pkg_dir);
         // PKG.4: register native function symbols and package crate info.
         self.register_c_libraries(m, pkg_dir);

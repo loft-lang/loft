@@ -240,6 +240,61 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     let _ = fa::remove_dir_all(native_auto);
 }
 
+/// `LOFT_TRACE_NATIVE_GATE=1` names, per `use`d library, how many of the functions a script
+/// can call run compiled and, for each that stays interpreted, the rule that kept it there —
+/// before it, a function left out of the compiled library ran slower and nothing said so.
+/// `mathmixed` is the split the test above pins: `triple` compiles, `apply_inc` calls
+/// through a function value and stays interpreted.
+#[test]
+fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_gate_trace_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
+    let prog = tmp.join("main.loft");
+    fa::write(
+        &prog,
+        "use mathmixed::*;\nfn main() { println(\"{triple(7)} {apply_inc(10)}\"); }\n",
+    )
+    .unwrap();
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--lib")
+        .arg("tests/lib")
+        .arg(&prog)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TRACE_NATIVE_GATE", "1")
+        .output()
+        .expect("run the loft binary");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fa::remove_dir_all(&tmp);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "21 11\n", "{stderr}");
+    let gate: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("[native-gate]"))
+        .collect();
+    assert!(
+        gate.iter()
+            .any(|l| l.contains("mathmixed:") && l.contains("callable functions compiled")),
+        "a summary line for the library:\n{stderr}"
+    );
+    assert!(
+        gate.iter()
+            .any(|l| l.contains("`n_apply_inc` interpreted") && l.contains("function value")),
+        "apply_inc named with its reason:\n{stderr}"
+    );
+    assert!(
+        !gate.iter().any(|l| l.contains("`n_triple`")),
+        "a compiled function is not listed:\n{stderr}"
+    );
+}
+
 /// A native build failure with a `rustc` toolchain present is a HARD ERROR — loft
 /// refuses to silently degrade to the interpreter — and `LOFT_REQUIRE_NATIVE` names
 /// itself as the reason.  This guards the **library** chokepoint:
