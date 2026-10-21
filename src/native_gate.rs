@@ -96,7 +96,8 @@ fn is_scalar_type(t: &Type) -> bool {
 ///
 /// **Parameters** may be any bridge type — scalars **plus** the `DbRef`-backed
 /// aggregates (`vector`/`reference`/data-`enum`/sorted/index/hash/spatial), passed
-/// as the raw stack `DbRef`.  **Returns** may be scalar, `void`, or a `vector`.  A
+/// as the raw stack `DbRef`.  **Returns** may be scalar, `void`, a keyed collection
+/// (a fresh store the caller owns, like a struct), or a `vector`.  A
 /// `vector` return triggers `--native`'s **hidden destination-parameter** convention
 /// (`ref_return` appends a trailing `DbRef` work-vector marked `Attribute::hidden`
 /// that the caller pre-allocates with `stores.null_named` + `OpDatabase(<type_id>)`);
@@ -140,7 +141,17 @@ pub fn bridge_decline(data: &Data, d: u32) -> Option<String> {
                 || is_scalar_type(ret)
                 || matches!(
                     ret,
-                    Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, _, _)
+                    Type::Vector(_, _)
+                        | Type::Reference(_, _)
+                        | Type::Enum(_, _, _)
+                        // @PLN199 A1 — a keyed collection is returned like a struct: the
+                        // body allocates a fresh store and answers its `DbRef`, with no
+                        // hidden destination, and the caller owns it.
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Hash(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _)
                 )
                 || ret_text;
             // loft#773 — a text return crosses the bridge THROUGH the `text_return`

@@ -261,9 +261,6 @@ const GATEFULL_INTERPRETED: &[(&str, &str)] = &[
     ("n_gen", "a generator (`yield`)"),
     ("n_local_lambda", "a call through a function value"),
     ("n_ret_fn", "returns `fn(integer) -> integer`"),
-    ("n_ret_hash", "returns `hash<Ck"),
-    ("n_ret_index", "returns `index<Ck"),
-    ("n_ret_sorted", "returns `sorted<Ck"),
     (
         "n_sum_gen",
         "calls `n_gen`, which uses a generator (`yield`)",
