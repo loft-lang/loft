@@ -168,6 +168,52 @@ fn a_long_op_is_charged_to_the_line_that_made_it() {
     );
 }
 
+/// A frame-driven program — a game's loop, `yield_frame()` here — is profiled over every
+/// frame, not its first.  After a yield the run continues through `State::resume`, which had
+/// a bare dispatch loop of its own with no profiler hook: three hundred frames reported 155
+/// samples and 0.5 ms of a 139 ms run, under a banner that read like a whole profile.
+const FRAME_LOOP: &str = r#"
+fn frame_work(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += i % 7; }
+  t
+}
+fn main() {
+  total = 0;
+  for _f in 0..300 {
+    total += frame_work(20000);
+    yield_frame();
+  }
+  println("{total}");
+}
+"#;
+
+#[test]
+fn a_frame_driven_program_is_profiled_after_its_first_frame() {
+    let out = run("frames", FRAME_LOOP, &[("LOFT_PROFILE", "1")]);
+    assert!(
+        out.contains("17999100"),
+        "the program ran to its end:\n{out}"
+    );
+    let samples: u64 = out
+        .lines()
+        .find(|l| l.contains("loft CPU profile"))
+        .and_then(|l| l.split(" — ").nth(1))
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    // One frame is ~140k ops, ~140 samples at the default rate; the run is 300 of them.
+    assert!(
+        samples > 10_000,
+        "{samples} samples: only the first frame was sampled\n{out}"
+    );
+    let row = top_row(&out, "── by function");
+    assert!(
+        row.ends_with("frame_work"),
+        "the work is `frame_work`:\n{out}"
+    );
+}
+
 /// A profiler that cannot name `main` names nothing: four out of five real programs
 /// would also pass an instrument that simply reported the deepest frame.
 #[test]

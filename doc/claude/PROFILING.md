@@ -41,7 +41,8 @@ Prefer `make profile`, which picks the instrument. Off costs nothing. **Armed co
 +9–18 %** on `bench/01`–`05`: a run only the CPU profiler watches keeps the lean dispatch
 loop, with the profiler's per-op state in the loop's own locals (a tick read and a count);
 allocation paths, the op census or a breakpoint take the full loop, which costs +46–116 % on
-its own. PERFORMANCE.md § Profiling.
+its own. A frame-driven program (a game loop, `yield_frame()`) is sampled over every frame:
+the run continues through the same dispatch after each yield. PERFORMANCE.md § Profiling.
 
 ## `LOFT_NATIVE_CHECKPOINTS` (native, wasm)
 

@@ -212,6 +212,14 @@ impl Operands {
     }
 }
 
+/// How [`State::dispatch`] ended: the entry function returned, or the run was suspended (a
+/// frame yield, a debugger pause, a halt handed back) and is still live.
+#[derive(PartialEq, Eq)]
+enum Dispatch {
+    Ended,
+    Suspended,
+}
+
 /// What the lean dispatch loop does once its one exit test fired (`@FR-R-DispatchStop`).
 enum LeanStop {
     /// Nothing ends the loop: carry on with the next op.
@@ -7489,6 +7497,36 @@ impl State {
             }
         }
         self.put_stack(u32::MAX);
+        if self.dispatch(data) == Dispatch::Suspended {
+            return;
+        }
+
+        // Fix #88: pop the synthetic entry-function frame.
+        if !self.database.frame_yield {
+            self.free_entry_return(&heap_ret_slots, &text_bufs);
+            // The argv vector dies with the frame that was handed it.  Guarded by
+            // `frame_yield` like the rest of this block: a yielded frame is still live and
+            // will read its arguments again when it resumes.
+            if let Some(args_vec) = argv_store {
+                self.database.free(&args_vec);
+            }
+            self.call_stack.pop();
+            self.database.parallel_ctx = None;
+        }
+    }
+
+    /// Run the bytecode from `code_pos` until the entry function returns or the run is
+    /// suspended — a frame yield, a debugger pause, a halt the lean loop hands back — on the
+    /// loop the run needs: the lean register loop, the lean loop with the CPU profiler's hook
+    /// (`PROF`), or the full loop for a debugger or an op-watching instrument.  One home for
+    /// that choice, which a fresh run ([`Self::execute_argv`]) and a resumed one
+    /// ([`Self::resume`]) both make: `resume` had a bare loop of its own, so a frame-driven
+    /// program was profiled, and could be paused, during its first frame only.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the dispatch loops, moved as they were"
+    )]
+    fn dispatch(&mut self, data: &Data) -> Dispatch {
         #[cfg(debug_assertions)]
         let mut step: u64 = 0;
         // loft#919 — read the ceiling once, outside the loop: the guard runs on every
@@ -7582,7 +7620,7 @@ impl State {
                     (false, true) => self.lean_register_loop::<true, false, true>(bytecode_len),
                 };
                 if yielded {
-                    return;
+                    return Dispatch::Suspended;
                 }
             } else {
                 while self.code_pos < bytecode_len {
@@ -7602,7 +7640,7 @@ impl State {
                     {
                         match self.lean_stop(false) {
                             LeanStop::Continue => {}
-                            LeanStop::Return => return,
+                            LeanStop::Return => return Dispatch::Suspended,
                             LeanStop::Leave => break,
                         }
                     }
@@ -7636,7 +7674,7 @@ impl State {
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
             // not debugging.
             if self.debug.is_some() && self.debug_check(op_pos_rt, data) {
-                return;
+                return Dispatch::Suspended;
             }
             #[cfg(debug_assertions)]
             let op_pos = self.code_pos;
@@ -7759,7 +7797,7 @@ impl State {
             }
             // FY.1: frame yield — return to caller (JS requestAnimationFrame).
             if self.database.frame_yield {
-                return;
+                return Dispatch::Suspended;
             }
             #[cfg(debug_assertions)]
             {
@@ -7824,19 +7862,7 @@ impl State {
                 break;
             }
         }
-
-        // Fix #88: pop the synthetic entry-function frame.
-        if !self.database.frame_yield {
-            self.free_entry_return(&heap_ret_slots, &text_bufs);
-            // The argv vector dies with the frame that was handed it.  Guarded by
-            // `frame_yield` like the rest of this block: a yielded frame is still live and
-            // will read its arguments again when it resumes.
-            if let Some(args_vec) = argv_store {
-                self.database.free(&args_vec);
-            }
-            self.call_stack.pop();
-            self.database.parallel_ctx = None;
-        }
+        Dispatch::Ended
     }
 
     /// #629 follow-up — free the entry fn's hidden return buffer(s) as the entry
@@ -8491,6 +8517,16 @@ impl State {
 
     pub fn resume(&mut self) -> bool {
         self.database.frame_yield = false;
+        // The loop a fresh run takes — lean, profiled, or full for a debugger — so a
+        // frame-driven program is sampled, and can be paused, after its first frame too.
+        let data = self.data_ptr.clone();
+        if let Some(data) = data.get() {
+            if self.dispatch(data) == Dispatch::Suspended {
+                return true; // yielded again, or paused — still running
+            }
+            self.call_stack.pop();
+            return false;
+        }
         let bytecode_len = self.bytecode.len() as u32;
         while self.code_pos < bytecode_len {
             let op = self.code::<u8>();
