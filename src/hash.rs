@@ -110,7 +110,8 @@ pub fn ent0(count: u32) -> u32 {
     BUCKET0 + count * 8
 }
 
-#[inline]
+#[inline(always)]
+#[allow(clippy::inline_always)]
 fn hdr(store: &Store, claim: u32) -> Hdr {
     let words = store.record_words(claim).saturating_sub(RESERVED_WORDS);
     let flags = store.get_u32_raw(claim, STRIDE_FLD);
@@ -676,6 +677,10 @@ pub fn entry_one_int(
     if claim == 0 {
         return None;
     }
+    if let Some(entry) = inline_entry_int(hash, claim, kp, value, stores) {
+        return Some(entry);
+    }
+    let store = keys::store(hash, stores);
     if store.record_words(claim) <= RESERVED_WORDS {
         return None;
     }
@@ -1464,6 +1469,11 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
+    if matches!(kind, 1 | 2)
+        && let Some(entry) = inline_find_int(store, hash_ref.store_nr, claim, u32::from(key.position), value)
+    {
+        return Some(entry);
+    }
     let h = hdr(store, claim);
     let (count, sb) = (h.count, h.sb);
     let digest = keys::long_hash(value, read_seed(store, claim));
@@ -2251,4 +2261,105 @@ fn inline_entries(store: &Store, store_nr: u16, claim: u32) -> Vec<DbRef> {
     live.into_iter()
         .map(|(_, at)| DbRef { store_nr, rec: claim, pos: base + at * h.stride })
         .collect()
+}
+
+// ---- `(Col-Inline)` — the one-integer-key paths over a table checked once ----
+
+#[inline(always)]
+#[allow(clippy::inline_always)]
+fn raw_u32(base: *const u8, off: u32) -> u32 {
+    unsafe { base.add(off as usize).cast::<u32>().read_unaligned() }
+}
+
+#[inline(always)]
+#[allow(clippy::inline_always)]
+fn raw_i64(base: *const u8, off: u32) -> i64 {
+    unsafe { base.add(off as usize).cast::<i64>().read_unaligned() }
+}
+
+/// The base of inline table `claim`, its bucket count and stride, when the table is inline and
+/// its record holds what its header says — the one bounds test every access below stands on:
+/// each offset is a bucket below `count` or an entry field below `stride`, inside the record.
+#[inline]
+fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32, u32)> {
+    let words = store.record_words(claim);
+    if words <= RESERVED_WORDS || u64::from(claim) + u64::from(words) > u64::from(store.capacity_words()) {
+        return None;
+    }
+    let base = unsafe { store.base_ptr().add(claim as usize * 8) }.cast_const();
+    let flags = raw_u32(base, STRIDE_FLD);
+    if flags & INLINE == 0 {
+        return None;
+    }
+    let stride = flags & !(TAGGED | INLINE);
+    let count = raw_u32(base, arena::DIR_FLD);
+    if stride == 0 || !count.is_power_of_two() || kp + 8 > stride || inline_words(count, stride) > words {
+        return None;
+    }
+    Some((base, count, stride))
+}
+
+/// [`entry_one_int`] on an inline table: `None` where the general path must answer (not
+/// inline, or a miss that grows the table first), else its answer.
+fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &mut [Store]) -> Option<DbRef> {
+    let store = keys::store(hash, stores);
+    let (base, count, stride) = inline_checked(store, claim, kp)?;
+    let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
+    let tag = tag_of(keys::ints_hash(&[value], seed));
+    let (mask, e0) = (count - 1, ent0(count));
+    let mut at = tag & mask;
+    for _ in 0..count {
+        let seq = raw_u32(base, BUCKET0 + at * 8);
+        if seq == 0 {
+            break;
+        }
+        if seq != TOMB
+            && raw_u32(base, BUCKET0 + at * 8 + 4) == tag
+            && raw_i64(base, e0 + at * stride + kp) == value
+        {
+            return Some(DbRef { store_nr: hash.store_nr, rec: claim, pos: e0 + at * stride });
+        }
+        at = (at + 1) & mask;
+    }
+    let len = raw_u32(base, LEN_FLD);
+    if raw_u32(base, BUCKET0 + at * 8) != 0 || is_full(len + raw_u32(base, arena::FREE_FLD), count) {
+        return None;
+    }
+    let store = keys::mut_store(hash, stores);
+    let base = unsafe { store.base_ptr().add(claim as usize * 8) };
+    let seq = raw_u32(base, arena::NEXT_FLD).max(1);
+    let pos = e0 + at * stride;
+    unsafe {
+        base.add(arena::NEXT_FLD as usize).cast::<u32>().write_unaligned(seq + 1);
+        base.add((BUCKET0 + at * 8) as usize).cast::<u32>().write_unaligned(seq);
+        base.add((BUCKET0 + at * 8 + 4) as usize).cast::<u32>().write_unaligned(tag);
+        base.add(LEN_FLD as usize).cast::<u32>().write_unaligned(len + 1);
+        base.add(pos as usize).write_bytes(0, stride as usize);
+        base.add((pos + kp) as usize).cast::<i64>().write_unaligned(value);
+    }
+    Some(DbRef { store_nr: hash.store_nr, rec: claim, pos })
+}
+
+/// [`find_long`] on an inline table with an 8-byte integer key: `None` where the general walk
+/// must answer, else the entry (record 0 for a miss).
+fn inline_find_int(store: &Store, store_nr: u16, claim: u32, kp: u32, value: i64) -> Option<DbRef> {
+    let (base, count, stride) = inline_checked(store, claim, kp)?;
+    let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
+    let tag = tag_of(keys::long_hash(value, seed));
+    let (mask, e0) = (count - 1, ent0(count));
+    let mut at = tag & mask;
+    for _ in 0..count {
+        let seq = raw_u32(base, BUCKET0 + at * 8);
+        if seq == 0 {
+            break;
+        }
+        if seq != TOMB
+            && raw_u32(base, BUCKET0 + at * 8 + 4) == tag
+            && raw_i64(base, e0 + at * stride + kp) == value
+        {
+            return Some(DbRef { store_nr, rec: claim, pos: e0 + at * stride });
+        }
+        at = (at + 1) & mask;
+    }
+    Some(DbRef { store_nr, rec: 0, pos: 0 })
 }
