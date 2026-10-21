@@ -5823,35 +5823,113 @@ impl State {
     /// point credit the interval since the previous sample to this position and this
     /// call path.
     fn profile_tick(&mut self, pc: u32) {
-        // The frames are read BEFORE the profiler is borrowed mutably, so the two
-        // never overlap and the sampler needs no access to the rest of `State`.
-        let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) else {
-            return;
-        };
-        if !p.cpu_armed() {
-            return;
+        if self.debug.as_deref().is_some_and(|d| {
+            d.prof
+                .as_deref()
+                .is_some_and(crate::profiler::Profiler::cpu_armed)
+        }) {
+            self.profile_op(pc);
         }
-        // @PLN179 finding 022 — the op that just ended ran long (a native, a sort, a read):
-        // its time goes to ITS position, not to wherever the next sample lands.  A native
-        // adds no loft frame, so the frames are still the ones it ran under.
-        if let Some(long) = p.op_boundary(pc) {
-            let frames = self.profile_frames();
-            if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
-                p.settle_op(long, &frames);
-            }
+    }
+
+    /// The profiler's per-op state, for the lean loop to keep in locals.
+    fn profile_cursor(&self) -> crate::profiler::Cursor {
+        self.debug
+            .as_deref()
+            .and_then(|d| d.prof.as_deref())
+            .map_or_else(
+                crate::profiler::Cursor::default,
+                crate::profiler::Profiler::cursor,
+            )
+    }
+
+    /// Hand the lean loop's per-op state back, so the full loop or a later lean entry
+    /// continues where this one stopped.
+    fn profile_restore(&mut self, cur: &crate::profiler::Cursor) {
+        if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
+            p.restore(cur);
         }
-        let due = self
+    }
+
+    /// The lean loop saw the op at `cur.op_pc` run `ran` ticks: settle it (@PLN179 finding
+    /// 022) when it was long enough once measured exactly.
+    #[cold]
+    #[inline(never)]
+    fn profile_long(&mut self, cur: &crate::profiler::Cursor, ran: u64) {
+        let long = self
             .debug
+            .as_deref()
+            .and_then(|d| d.prof.as_deref())
+            .and_then(|p| p.long_op(cur.op_pc, ran));
+        if long.is_some() {
+            self.profile_credit(cur.op_pc, long, false);
+        }
+    }
+
+    /// A sample is due at `pc` in the lean loop: record it, make the flush check the full
+    /// loop makes per op (a signal or a periodic report is answered within one interval),
+    /// and answer the length of the next interval.
+    #[cold]
+    #[inline(never)]
+    fn profile_lean_sample(&mut self, pc: u32) -> u32 {
+        self.profile_credit(pc, None, true);
+        let data = self.data_ptr.clone();
+        if let Some(data) = data.get() {
+            self.profile_flush_check(data);
+        }
+        self.debug
             .as_deref_mut()
             .and_then(|d| d.prof.as_mut())
-            .is_some_and(|p| p.tick());
-        if !due {
-            return;
+            .map_or(u32::MAX, |p| p.next_interval())
+    }
+
+    /// Count one op at `pc` against an armed CPU profiler: settle the op that just ended if
+    /// it ran long (@PLN179 finding 022 — a native, a sort, a read; its time goes to ITS
+    /// position, not to wherever the next sample lands), and record a sample when one is
+    /// due.  Answers whether it was.  The frames are read only on those rare paths, out of
+    /// line, so an ordinary op pays a tick read and a count.
+    #[inline]
+    fn profile_op(&mut self, pc: u32) -> bool {
+        let Some(p) = self
+            .debug
+            .as_deref_mut()
+            .and_then(|d| d.prof.as_deref_mut())
+        else {
+            return false;
+        };
+        let long = p.op_boundary(pc);
+        let due = p.tick();
+        if long.is_some() || due {
+            self.profile_credit(pc, long, due);
         }
+        due
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn profile_credit(&mut self, pc: u32, long: Option<crate::profiler::LongOp>, due: bool) {
+        // A native adds no loft frame, so the frames a long op ran under are still these.
         let frames = self.profile_frames();
         if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
-            p.record(pc, &frames);
+            if let Some(long) = long {
+                p.settle_op(long, &frames);
+            }
+            if due {
+                p.record(pc, &frames);
+            }
         }
+    }
+
+    /// Whether the run needs the full dispatch loop: a debugger that does more than the CPU
+    /// profiler ([`crate::debugger::Debugger::only_cpu_profiling`]), or the op census, which
+    /// keys every op.  One home for the question, which the lean loop's entry and its stop
+    /// path both ask.
+    fn needs_full_loop(&self) -> bool {
+        crate::op_census::armed()
+            || self
+                .debug
+                .as_deref()
+                .is_some_and(|d| !d.only_cpu_profiling())
     }
 
     /// `LOFT_OP_CENSUS` — the op at `pc` is about to run: key it by the line of the entry
@@ -6464,9 +6542,9 @@ impl State {
         // `code_pos == u32::MAX` the loop condition reads.
         if self.worker_lean_ok() {
             if Self::no_hot() {
-                self.lean_register_loop::<false, true>(bytecode_len);
+                self.lean_register_loop::<false, true, false>(bytecode_len);
             } else {
-                self.lean_register_loop::<true, true>(bytecode_len);
+                self.lean_register_loop::<true, true, false>(bytecode_len);
             }
             return;
         }
@@ -6558,14 +6636,37 @@ impl State {
     /// published fault of a SIBLING worker to the parent that collects it, where the main
     /// loop raises it.
     #[inline(never)]
-    fn lean_register_loop<const HOT: bool, const WORKER: bool>(
+    fn lean_register_loop<const HOT: bool, const WORKER: bool, const PROF: bool>(
         &mut self,
         bytecode_len: u32,
     ) -> bool {
         let reg_ops = crate::fill::OPERATORS_REG;
         let mut r = self.regs_out();
+        // The profiler's per-op state lives in locals while the loop runs — a call through
+        // `debug` → `prof` per op cost a profiled run +46–60 % on its own — and goes back to
+        // the `Profiler` at every exit below.
+        let mut cur = if PROF {
+            self.profile_cursor()
+        } else {
+            crate::profiler::Cursor::default()
+        };
         while r.pc < bytecode_len {
             self.database.alloc_pc = r.pc;
+            if PROF {
+                // The profiler reads `call_stack` only, which the call and return operators
+                // keep in `State` whatever the registers hold.
+                let t = crate::platform::ticks();
+                let ran = t.wrapping_sub(cur.op_ticks);
+                if ran >= cur.settle_ticks && cur.op_pc != u32::MAX {
+                    self.profile_long(&cur, ran);
+                }
+                cur.op_ticks = t;
+                cur.op_pc = r.pc;
+                cur.left -= 1;
+                if cur.left == 0 {
+                    cur.left = self.profile_lean_sample(r.pc);
+                }
+            }
             if r.pc + 1 > self.code_len {
                 code_out_of_range(r.pc, 1, self.code_len as usize);
             }
@@ -6596,12 +6697,25 @@ impl State {
                 self.regs_in(r);
                 match self.lean_stop(WORKER) {
                     LeanStop::Continue => r = self.regs_out(),
-                    LeanStop::Return => return true,
-                    LeanStop::Leave => return false,
+                    LeanStop::Return => {
+                        if PROF {
+                            self.profile_restore(&cur);
+                        }
+                        return true;
+                    }
+                    LeanStop::Leave => {
+                        if PROF {
+                            self.profile_restore(&cur);
+                        }
+                        return false;
+                    }
                 }
             }
         }
         self.regs_in(r);
+        if PROF {
+            self.profile_restore(&cur);
+        }
         false
     }
 
@@ -6719,13 +6833,12 @@ impl State {
             self.database.had_fatal = true;
         }
         self.note_runtime_error_halt();
+        let full = self.needs_full_loop();
         self.database.dispatch_stop.store(
-            self.database.runtime_error.is_some()
-                || self.debug.is_some()
-                || Self::headroom_verify(),
+            self.database.runtime_error.is_some() || full || Self::headroom_verify(),
             std::sync::atomic::Ordering::Relaxed,
         );
-        if self.debug.is_some() {
+        if full {
             LeanStop::Leave
         } else {
             LeanStop::Continue
@@ -7439,7 +7552,13 @@ impl State {
         // event that ends or diverts it sets where it happens; the cold path below does what
         // the per-op tests did.  The end of the run needs no test of its own: a halt and the
         // entry function's return set `code_pos` to `u32::MAX`, which the loop condition ends.
-        if lean_loop && self.debug.is_none() {
+        // A run that only the CPU profiler watches stays lean, on the register table, with the
+        // profiler's per-op hook (`PROF`); anything more needs the full loop.
+        let prof = self.debug.is_some();
+        if lean_loop
+            && !self.needs_full_loop()
+            && (!prof || (self.fast_stack && !Self::no_register_table()))
+        {
             // `@FR-R-DispatchPublish` — the crash context is derived from the position the
             // loop stores for the allocator and the bytecode, registered once, instead of being
             // written per op.
@@ -7456,10 +7575,11 @@ impl State {
                 std::ptr::addr_of!(self.code_len),
             );
             if self.fast_stack && !Self::no_register_table() {
-                let yielded = if Self::no_hot() {
-                    self.lean_register_loop::<false, false>(bytecode_len)
-                } else {
-                    self.lean_register_loop::<true, false>(bytecode_len)
+                let yielded = match (Self::no_hot(), prof) {
+                    (true, false) => self.lean_register_loop::<false, false, false>(bytecode_len),
+                    (false, false) => self.lean_register_loop::<true, false, false>(bytecode_len),
+                    (true, true) => self.lean_register_loop::<false, false, true>(bytecode_len),
+                    (false, true) => self.lean_register_loop::<true, false, true>(bytecode_len),
                 };
                 if yielded {
                     return;

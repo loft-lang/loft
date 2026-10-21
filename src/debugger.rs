@@ -408,4 +408,21 @@ impl Debugger {
     pub fn is_breakpoint(&self, offset: u32) -> bool {
         self.breakpoints.contains(&offset)
     }
+
+    /// Whether nothing but the CPU profiler watches the run: no breakpoint, no stepping, no
+    /// watchpoint, no reverse recording, no allocation paths (those count stores per op).
+    /// Such a run keeps the lean dispatch loop with only the profiler's per-op hook
+    /// (`State::lean_register_loop`'s `PROF`), where the full loop cost a profiled run
+    /// +46–116 % before the profiler did any work of its own.
+    #[must_use]
+    pub fn only_cpu_profiling(&self) -> bool {
+        self.breakpoints.is_empty()
+            && !self.stepping
+            && self.watchpoints.is_empty()
+            && !self.reverse
+            && self
+                .prof
+                .as_deref()
+                .is_some_and(|p| p.cpu_armed() && !p.alloc_armed())
+    }
 }

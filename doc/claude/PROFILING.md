@@ -37,11 +37,11 @@ another function (@PLN179 finding 022; the banner counts them).
 and their time lands on the CALLING line, so a library doing the work reads as a hot
 caller — `main`'s call line, where `LOFT_NO_NATIVE_LIBS=1` reads `99 % lib_grind`. The
 report says so whenever a library was called.
-Prefer `make profile`, which picks the instrument. Off costs nothing (the
-sampler rides the existing per-op debug branch). **Armed costs +90–210 %**, measured on
-`bench/01` and `bench/02`: a profiled run leaves the lean dispatch loop (+46–116 % alone) and
-pays its per-op hook on top — loft code reads slower against a timed native op than it
-runs. PERFORMANCE.md § Profiling.
+Prefer `make profile`, which picks the instrument. Off costs nothing. **Armed costs
++9–18 %** on `bench/01`–`05`: a run only the CPU profiler watches keeps the lean dispatch
+loop, with the profiler's per-op state in the loop's own locals (a tick read and a count);
+allocation paths, the op census or a breakpoint take the full loop, which costs +46–116 % on
+its own. PERFORMANCE.md § Profiling.
 
 ## `LOFT_NATIVE_CHECKPOINTS` (native, wasm)
 

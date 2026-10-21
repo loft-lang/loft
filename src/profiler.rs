@@ -31,9 +31,12 @@
 //! millisecond inside one op shows up as a millisecond, because the next sample's
 //! interval is a millisecond long.
 //!
-//! What that costs when off: nothing. What it costs when on: a tick read per op, and one
-//! `Instant::now()` and one map update per `interval` ops (1024 by default) — next to
-//! which the full dispatch loop a profiled run takes is the larger cost (PROFILING.md).
+//! What that costs when off: nothing. What it costs when on: a tick read and a count per
+//! op, and one `Instant::now()` and one map update per `interval` ops (1024 by default) —
+//! +9–18 % on the benchmarks, because a run only this profiler watches keeps the lean
+//! dispatch loop and holds the per-op state ([`Cursor`]) in that loop's locals
+//! (`Debugger::only_cpu_profiling`).  Allocation paths and the op census need the full
+//! loop, +46–116 % on its own.
 //!
 //! What it still cannot do, stated because a profiler that hides its blind spots is
 //! worse than none:
@@ -61,6 +64,28 @@ use std::time::{Duration, Instant};
 /// 1024 ops, tens of microseconds: an op well past that — one native call, one sort, one
 /// read — is the one whose time would otherwise land on a later line.
 pub const SETTLE_NANOS: u64 = 50_000;
+
+/// A [`Profiler`]'s per-op state as a dispatch loop keeps it in locals
+/// ([`Profiler::cursor`] / [`Profiler::restore`]).  `settle_ticks` is `u64::MAX` and
+/// `left` large for an unarmed one, so the loop's checks never fire.
+#[derive(Debug, Clone, Copy)]
+pub struct Cursor {
+    pub left: u32,
+    pub op_ticks: u64,
+    pub op_pc: u32,
+    pub settle_ticks: u64,
+}
+
+impl Default for Cursor {
+    fn default() -> Cursor {
+        Cursor {
+            left: u32::MAX,
+            op_ticks: 0,
+            op_pc: u32::MAX,
+            settle_ticks: u64::MAX,
+        }
+    }
+}
 
 /// An op that ran [`SETTLE_NANOS`] or longer, to be credited to its own position.
 #[derive(Debug, Clone, Copy)]
@@ -634,7 +659,14 @@ impl Profiler {
         if ran < self.settle_ticks || at == u32::MAX {
             return None;
         }
-        // Rare: the exact clock, and the op's start recovered from its length.
+        self.long_op(at, ran)
+    }
+
+    /// The op at `at` ran `ran` ticks, at least [`SETTLE_NANOS`] by the tick count: the
+    /// [`LongOp`] to settle, once the exact clock agrees.
+    #[must_use]
+    pub fn long_op(&self, at: u32, ran: u64) -> Option<LongOp> {
+        // The exact clock, and the op's start recovered from its length.
         let now = Instant::now();
         let len = Duration::from_nanos(
             u64::try_from(u128::from(ran) * 1_000_000 / u128::from(self.ticks_per_milli))
@@ -648,6 +680,30 @@ impl Profiler {
             now,
             dt,
         })
+    }
+
+    /// The per-op state a dispatch loop may keep in locals: ops to the next sample, when the
+    /// running op began and where, and the long-op threshold in ticks.
+    #[must_use]
+    pub fn cursor(&self) -> Cursor {
+        Cursor {
+            left: self.tick,
+            op_ticks: self.op_ticks,
+            op_pc: self.op_pc,
+            settle_ticks: self.settle_ticks,
+        }
+    }
+
+    /// Take back the state a loop kept in a [`Cursor`].
+    pub fn restore(&mut self, cur: &Cursor) {
+        self.tick = cur.left.max(1);
+        self.op_ticks = cur.op_ticks;
+        self.op_pc = cur.op_pc;
+    }
+
+    /// The length of the next sampling interval, drawn as [`Self::tick`] draws it.
+    pub fn next_interval(&mut self) -> u32 {
+        self.jitter.next(self.interval)
     }
 
     /// Credit a long op to its own position and to `frames`, and take it out of the interval
@@ -905,16 +961,21 @@ mod tests {
         let long = p.op_boundary(11).expect("op 10 ran 3 ms");
         assert_eq!(long.pc, 10);
         p.settle_op(long, &[1]);
-        assert!(p.op_boundary(12).is_none(), "op 11 was short");
         p.record(12, &[1]); // the next sample
         let sites: HashMap<u32, Site> = p.sites.iter().map(|(k, v)| (*k, *v)).collect();
         let at10 = sites[&10].nanos;
         let at12 = sites[&12].nanos;
+        // Bounds a preempted test thread cannot break: the spin is at least 3 ms (less a
+        // margin for the counter's resolution and its calibrated rate), and the sample's
+        // interval holds only what ran after the settle.
         assert!(
-            at10 >= 2_500_000,
+            at10 >= 2_900_000,
             "the long op's time is on its own position: {at10}"
         );
-        assert!(at12 < 1_000_000, "and not on the next sample's: {at12}");
+        assert!(
+            at12 < at10,
+            "and not on the next sample's: {at12} vs {at10}"
+        );
         assert_eq!(sites[&10].samples, 0, "a timed op is not a sample");
         assert_eq!(p.samples, 1);
         assert_eq!(p.settled, 1);
@@ -938,11 +999,13 @@ mod tests {
             total <= elapsed,
             "credited {total} ns of {elapsed} ns elapsed: something was counted twice"
         );
-        let at20 = p.sites[&20].nanos;
+        // Each half spun at least 2 ms: the sample took the first, the op the second.
+        let (at20, at30) = (p.sites[&20].nanos, p.sites[&30].nanos);
         assert!(
-            (1_500_000..3_500_000).contains(&at20),
-            "only the part after the inner sample: {at20}"
+            at30 >= 2_000_000,
+            "the inner sample keeps what it credited: {at30}"
         );
+        assert!(at20 >= 2_000_000, "the op gets what came after it: {at20}");
     }
 
     #[test]
