@@ -280,12 +280,12 @@ in both directions (measured), so a hash-only flip needs no conversion of its ow
 | 7 | Every save writes the version-2 sidecar; a binary build prints its description; `loft layout upgrade <store>`: new file beside, atomic swap, old kept. | A refusal and an interrupted run both leave the old store byte-identical. |
 | 8 | **Callers**: `store_load` converting an older layout in memory (open question 3), the whole-program swap carrying the world through the converter instead of the JSON snapshot ([`08-live-build-swap.md`](18-engine-host/08-live-build-swap.md) loses references, hashes and sorted collections there), and the wasm build. | The swap scenarios keep a world with a hash and a reference; the converter builds for `wasm32` and passes the matrix there. |
 
-| 9 | **Skipped versions — the layout history.** A store converts along every layout the software went through, never across a gap it cannot see; see § Skipped versions. | A v1 store opened by v3, where v2 moved a field and v3 dropped it, arrives with the moved value, in as few passes as the history allows; a store whose layout the history does not hold converts only when nothing is dropped. |
+| 9 | **Skipped versions.** The sidecar records the writing release; a store from the previous release takes the one-step conversion, an older one the programmer's `upgrade(from, old, item)` routine after it; see § Skipped versions. | A v1 store opened by v3, where v2 moved a field and v3 dropped it, arrives with the moved value through the routine, both backends, in the program and in a separate upgrade module; without a routine the drop is refused, naming 1.x; a store below the minimum is refused naming the bridge release, byte for byte untouched. |
 
 Steps 0 and 1 settle the design: if the two producers cannot agree, or the
 description-driven reader cannot reproduce `copy_claims`, the plan changes before step 2.
 
-## Skipped versions — the layout history
+## Skipped versions
 
 A conversion pairs two layouts: the one recorded beside the store and the program's own.  That
 is enough for a live swap, which always comes from the build just before, and for a store
@@ -305,40 +305,42 @@ value is lost, and nothing says so.  The one-step rename refusal catches this on
 two fields share a type.  This is data safety, not a swap question, so it outranks the
 browser swap.
 
-**The rule:** a store converts along the chain of layouts the software shipped, from the one
-recorded beside it to the program's own, and never across a gap.
+**The design** (owner, 2026-10-21):
 
-- **The history.**  `loft layout accept` appends the accepted layout to the project's
-  history (`layout/` beside `loft.toml`, committed): one `.dschema` per accepted version,
-  named by its layout hash, in order, with the struct definitions of that version — the
-  types and the defaults, the part of the source a hop needs to run its fills.  A build
-  compiles the history in (owner, 2026-10-21), because the program that upgrades a user's
-  data is the one the user installed.
-- **The oldest accepted version** is the programmer's to set, never set automatically
-  (owner, 2026-10-21): one line in `loft.toml` names it, the build compiles in the history
-  from there on, and a store older than it is refused with a reason that names the minimum
-  and the release that still reads it.  Raising it is how old conversions are retired; no
-  tool raises it or prunes the history on its own.
-- **The bridge** (owner, 2026-10-21).  For the user, a refused save means: this release is
-  too new to read it, so open it once with an older release that can, and the data stays
-  safe.  The refusal names that release, so every history entry records the version that
-  accepted it (`loft.toml`'s `version`), and raising the minimum keeps a one-line tombstone
-  per retired layout: its hash and the newest release that still reads it.  The message then
-  reads, for a save written by 1.4 into a program whose minimum is 3.0: *this save was
-  written by 1.4; open it once with 2.3 (or any release from 1.4 to 2.3), then with this
-  one*.  A refused save is left byte for byte as it was.  A layout no release ever accepted
-  (another branch, a hand-built store) is refused as unknown, without a bridge.
-- **The path.**  The stored layout's hash is looked up in the history; the hops from there to
-  the program are the path.  Hops whose fields all arrive by name, by widening or by a
-  constant default compose into ONE conversion.  A hop whose computed default reads a field a
-  later hop drops runs as its own pass, with that version's fills.  The cost is one pass plus
-  one per such moving hop, not one per version.
-- **A layout the history does not hold** (a store from before the history began, or from
-  another branch) converts directly only when nothing is dropped; a conversion that would
-  drop a field is refused, naming the missing history.
-- **The gate.**  `loft layout check` checks the program against every entry of the history,
-  so a release that breaks an old path fails its BUILD, the same moment a live swap is
-  decided.
+- **The version is the identity.**  The sidecar records the release that wrote the store
+  (`loft.toml`'s `version`) beside its layout.  No history of old layouts is kept: the store
+  carries its own layout, and the version says which steps it still needs.
+- **The normal case is one step.**  A store from the previous release converts by the
+  upgrade map with the new defaults, as steps 1–8 build it: the fast path, in the program.
+- **Older stores go through ONE loft routine** the programmer writes, which takes the version
+  the store came from and runs the steps that version still needs.  It is called after the
+  fields carried by name are in place.  It reads only the old fields it declares, as a small
+  struct the converter fills by name from the stored record, through the layout the file
+  records — typed, so it compiles like any other code, natively too:
+
+  ```loft
+  struct Item { id: integer, count: integer }       // release 3.0
+
+  struct ItemBefore2 { label: text }                // the old fields the routine reads
+  fn upgrade(from: version, old: ItemBefore2, item: Item) {
+    if from < "2.0" { item.count = len(old.label) } // 2.0 moved label into count
+  }
+  ```
+
+  A field the routine declares that the stored record lacks refuses the load with its name.
+- **Where it lives is the programmer's choice.**  In the program, it ships with every build;
+  in a separate upgrade module, the normal build carries no code for a one-time conversion,
+  and the module is used to bring old stores forward (`loft layout upgrade`).
+- **A store older than the previous release with no routine for it** converts directly only
+  when nothing is dropped; a conversion that would drop a field is refused, naming the
+  version that wrote it.
+- **The oldest accepted version** is the programmer's to set in `loft.toml`, never raised
+  automatically; raising it is how branches of the routine are retired.  A store older than
+  it is refused, and the refusal names the release that bridges the gap: raising the minimum
+  records the last release that still read the older versions, so the message reads, for a
+  store written by 1.4 into a program whose minimum is 3.0: *this store was written by 1.4;
+  open it once with 2.3 (or any release from 1.4 to 2.3), then with this one*.  A refused
+  store is left byte for byte as it was.
 
 ## Acceptance — the setup the claim is made in
 
