@@ -278,10 +278,15 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — the closed entries, `D-match-1` to `-24`, are in
+OPEN: **1** — the closed entries, `D-match-1` to `-24`, are in
 [matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
 arm (`|` and `,` alike), a tuple subject, a tuple element, a field, a slice element, and the arm
-root's `name: pattern`.
+root's `name: pattern` — except the one below.
+
+- **D-match-25** — `(P-Multi)`: an arm of SLICE patterns does not take alternation.
+  `[9, ..] | [1, ..] => …` is refused `Expect token =>` on both backends, with or without
+  bindings, a repetition or a rest; each pattern alone matches.  The in-bracket group `[( … |
+  … )]` is no substitute (struct-enum elements only, no rest).  loft#2107.
 
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
