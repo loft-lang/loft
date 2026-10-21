@@ -1,5 +1,5 @@
 diff --git a/src/data.rs b/src/data.rs
-index 11defdbef..109ef31c2 100644
+index 11defdbe..109ef31c 100644
 --- a/src/data.rs
 +++ b/src/data.rs
 @@ -7148,25 +7148,6 @@ impl Data {
@@ -29,7 +29,7 @@ index 11defdbef..109ef31c2 100644
      /// path walks, asked with the arity and receiver instead of the name alone.
      ///
 diff --git a/src/parser/convert.rs b/src/parser/convert.rs
-index a7c7cde48..bde98c91a 100644
+index a7c7cde4..bde98c91 100644
 --- a/src/parser/convert.rs
 +++ b/src/parser/convert.rs
 @@ -1240,7 +1240,11 @@ impl Parser {
@@ -46,7 +46,7 @@ index a7c7cde48..bde98c91a 100644
                  // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
                  // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),
 diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
-index 1ee5d82ff..1a50a2dca 100644
+index 55049f51..67eec21a 100644
 --- a/src/parser/dispatch.rs
 +++ b/src/parser/dispatch.rs
 @@ -126,7 +126,7 @@ impl Parser {
@@ -87,8 +87,8 @@ index 1ee5d82ff..1a50a2dca 100644
      /// Every overload of `name` that takes the routed argument types, with its rank vector,
      /// or `None` when the name has no overload set or an argument has no spelling.
      fn ranked_overloads(
-@@ -766,9 +744,6 @@ impl Parser {
-         at: Option<&crate::lexer::Position>,
+@@ -829,9 +807,6 @@ impl Parser {
+         args: &[Value],
      ) {
          let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
 -        // `@FR-Disp-Ambiguous` is the one refusal of the two with a frozen code: a tie is
@@ -97,7 +97,7 @@ index 1ee5d82ff..1a50a2dca 100644
          let text = match sel {
              Selection::Ambiguous(taken) => {
                  let by: Vec<String> = taken
-@@ -802,29 +777,11 @@ impl Parser {
+@@ -866,29 +841,11 @@ impl Parser {
              }
              _ => return,
          };
