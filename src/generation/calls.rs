@@ -160,6 +160,19 @@ impl Output<'_> {
         crate::generation::ops::emit_op(&mut ctx, &name, vals)
     }
 
+    /// The suffix of a call with a twin of its own, which no other twin form applies to: a
+    /// destination's (`__d`), an apart record's (`__apr`, `@FR-R-Apart`), or the rotate's
+    /// `__nk` (`@FR-R-HandOver`).
+    fn own_twin(&mut self, dest: bool, vals: &[Value]) -> Option<&'static str> {
+        if dest {
+            Some("__d")
+        } else if self.apr_call(self.current_call_def, vals) {
+            Some("__apr")
+        } else {
+            self.nokeep_call(vals).then_some("__nk")
+        }
+    }
+
     /// `@FR-R-HandOver`'s rotate clause — is this the rotate site's call of the suffix-keep
     /// callee (matched by callee and argument slice)?  It calls the `__nk` twin, the body
     /// without its keep, and records the request for it.
@@ -297,17 +310,13 @@ impl Output<'_> {
         if !dest && self.vr_call(w, def_fn, vals)? {
             return Ok(());
         }
-        // `own`: a call with a twin of its own — a destination's, an apart record's
-        // (`@FR-R-Apart`), or (`@FR-R-HandOver`) the rotate's `__nk` — which no other
-        // twin form applies to.
-        let apr = !dest && self.apr_call(self.current_call_def, vals);
-        let own = dest || apr || self.nokeep_call(vals);
-        let append = !own
+        let own = self.own_twin(dest, vals);
+        let append = own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.append_call(self.current_call_def, vals);
         let twin_args = if !append
-            && !own
+            && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
@@ -332,7 +341,7 @@ impl Output<'_> {
         // within its bound.  Not for a forward site, which spells its own call shape.
         let ranged = forward.is_none()
             && !append
-            && !own
+            && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -340,24 +349,17 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append || own,
+            twin_args.is_some() || ranged || forward.is_some() || append || own.is_some(),
         )?;
         write!(
             w,
-            "{}{}{}{}{}{}{}(",
+            "{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
-            if dest { "__d" } else { "" },
-            if apr {
-                "__apr"
-            } else if own && !dest {
-                "__nk"
-            } else {
-                ""
-            }
+            own.unwrap_or("")
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {

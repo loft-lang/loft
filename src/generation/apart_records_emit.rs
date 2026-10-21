@@ -209,16 +209,20 @@ impl Output<'_> {
     }
 
     /// The statements of an owner's life and the boundary: what each becomes.
-    fn apr_statement(&self, w: &mut dyn Write, x: &Value) -> std::io::Result<bool> {
+    fn apr_statement(&self, w: &mut dyn Write, stmt: &Value) -> std::io::Result<bool> {
         let Some(roles) = self.apr_roles() else {
             return Ok(false);
         };
-        let owner = |v: &Value| match v.unspan() {
-            Value::Var(u) if roles.vars.contains_key(u) && roles.param != Some(*u) => Some(*u),
+        let owner = |var: &Value| match var.unspan() {
+            Value::Var(var_nr)
+                if roles.vars.contains_key(var_nr) && roles.param != Some(*var_nr) =>
+            {
+                Some(*var_nr)
+            }
             _ => None,
         };
-        match x.unspan() {
-            Value::Set(v, rhs) if owner(&Value::Var(*v)).is_some() => {
+        match stmt.unspan() {
+            Value::Set(var, rhs) if owner(&Value::Var(*var)).is_some() => {
                 if !matches!(rhs.unspan(), Value::Null) {
                     return Ok(false);
                 }
@@ -226,31 +230,33 @@ impl Output<'_> {
                 Ok(true)
             }
             Value::Set(elm, rhs) if roles.elems.contains_key(elm) => {
-                let (v, f) = roles.elems[elm];
+                let (var, fld) = roles.elems[elm];
                 let Value::Call(..) = rhs.unspan() else {
                     return Ok(false);
                 };
                 write!(
                     w,
-                    "let {} = {}.f{f}.push_elem()",
+                    "let {} = {}.f{fld}.push_elem()",
                     self.apo_name(*elm),
-                    self.ap_apr_name(v)
+                    self.ap_apr_name(var)
                 )?;
                 Ok(true)
             }
-            Value::Call(d, a) => {
-                let first = a.first();
-                match self.data.def(*d).name() {
+            Value::Call(def, args) => {
+                let first = args.first();
+                match self.data.def(*def).name() {
                     "OpDatabase" if first.and_then(owner).is_some() => {
-                        let v = first.and_then(owner).unwrap_or_default();
-                        write!(w, "{}.clear_all()", self.ap_apr_name(v))?;
+                        let var = first.and_then(owner).unwrap_or_default();
+                        write!(w, "{}.clear_all()", self.ap_apr_name(var))?;
                         Ok(true)
                     }
                     "OpSetInt4" if first.and_then(owner).is_some() => {
-                        let Some((v, f)) = a.get(1).and_then(|o| self.apr_field(&a[0], o)) else {
+                        let Some((var, fld)) =
+                            args.get(1).and_then(|o| self.apr_field(&args[0], o))
+                        else {
                             return Ok(false);
                         };
-                        write!(w, "{}.f{f}.clear()", self.ap_apr_name(v))?;
+                        write!(w, "{}.f{fld}.clear()", self.ap_apr_name(var))?;
                         Ok(true)
                     }
                     "OpFinishRecord" | "OpFreeRef" if first.and_then(owner).is_some() => {
@@ -258,17 +264,18 @@ impl Output<'_> {
                         Ok(true)
                     }
                     "OpCopyRecord" => {
-                        let (Some(Value::Var(p)), Some(dst)) = (first.map(Value::unspan), a.get(1))
+                        let (Some(Value::Var(param)), Some(dst)) =
+                            (first.map(Value::unspan), args.get(1))
                         else {
                             return Ok(false);
                         };
-                        let Some(parts) = self.apr_parts(*p) else {
+                        let Some(parts) = self.apr_parts(*param) else {
                             return Ok(false);
                         };
-                        let Value::Var(e) = dst.unspan() else {
+                        let Value::Var(elm_var) = dst.unspan() else {
                             return Ok(false);
                         };
-                        let dst = sanitize(self.data.def(self.def_nr).variables().name(*e));
+                        let dst = sanitize(self.data.def(self.def_nr).variables().name(*elm_var));
                         write!(
                             w,
                             "stores.apart_write_fresh(&(var_{dst}), {parts}) /*@FR-R-Apart boundary*/"

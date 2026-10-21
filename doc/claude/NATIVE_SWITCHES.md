@@ -513,6 +513,12 @@ the dropping callee runs as its `__nk` twin (dryopea `truncate_to` −17 %).  Th
 step for a wrong element, order, length or cursor after such a push;
 `LOFT_TRACE_HAND_OVER=1` names each site admitted; cells `tests/scripts/158-rotate.loft`.
 
+**`LOFT_NO_APART_RECORDS=1`** (`@FR-R-Apart` instance 4, default-ON, generation time,
+`--native-release` only) keeps a record of record vectors built in a frame in the store —
+with it on, the frame holds its elements as bytes and its callees run as `__apr` twins that
+copy them into the collection (dryopea `truncate_to` −42 %).  The first bisect step for a
+wrong element after a frame-built record is appended; cells `tests/scripts/158-apart-records.loft`.
+
 **`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
 sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
 fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
