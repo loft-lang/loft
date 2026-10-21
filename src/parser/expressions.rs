@@ -630,22 +630,23 @@ impl Parser {
     ///
     /// @PLN199 A2 — a `use`d library's functions are marked for the bridge after the whole
     /// program is parsed (`native_lib::probe_and_mark_exports`), and so are the standard
-    /// library's compiled bodies (`compiled_stdlib::mark`), so `def.native` is still empty
+    /// library's compiled bodies (`compiled_stdlib::mark`, named in [`Self::compiled_bridges`]),
+    /// so `def.native` is still empty
     /// when the calls to them are parsed: [`text_calls::is_cdylib_text_call`] alone answered
     /// no, the call went unwrapped, and a function whose text it does not own (a field read,
     /// a literal, `"/a/b".basename()`) answered `""` in every value position (loft#773).  A
     /// BUFFERLESS text function that is to be compiled is wrapped too
-    /// (`generation::def_returns_owned_text`); a buffered one already writes into the call's
+    /// (`Definition::returns_bufferless_text`); a buffered one already writes into the call's
     /// own work buffer.  When it ends up interpreted, the temporary costs one copy.
     ///
     /// [`text_calls::is_cdylib_text_call`]: crate::text_calls::is_cdylib_text_call
     pub(crate) fn crosses_text_bridge(&self, d_nr: u32) -> bool {
         let def = self.data.def(d_nr);
         crate::text_calls::is_cdylib_text_call(def)
-            || (crate::generation::def_returns_owned_text(def)
+            || (def.returns_bufferless_text()
                 && def.native().is_empty()
                 && def.c_sig.is_empty()
-                && (crate::compiled_stdlib::carries(def.name())
+                && (self.compiled_bridges.contains(def.name())
                     || (def.pub_visible
                         && self.pending_native_compile.iter().any(|dir| {
                             crate::file_access::is_under(def.position().file.as_str(), dir)

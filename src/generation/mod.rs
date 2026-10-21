@@ -2036,22 +2036,7 @@ fn native_returns_owned_string(name: &str) -> bool {
 /// instability.  Disjoint from `native_returns_owned_string` (that gates `#native`
 /// / `codegen_runtime` stubs; this gates `Block` bodies).
 pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
-    // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
-    // work buffer.  The discriminator is the Block body itself, NOT
-    // `rust()/native()` emptiness: an auto-native library fn inlined into a
-    // consumer build (main's @C71) has a Block body AND `native()` set, yet is
-    // still an ordinary user text fn whose buffered-vs-bufferless shape is
-    // decided solely by the presence of the work-buffer attribute.  emit.rs only
-    // ever runs this on Block bodies, so a non-Block (FFI-direct / `#rust` / Null)
-    // body is correctly excluded here and handled by the other owned-String signals.
-    // @PLN25 slice (b): peel `Optional` — a `text?` return uses the same owned-text ABI.
-    matches!(def.returned().base(), Type::Text(_))
-        && matches!(def.code(), Value::Block(_))
-        && !def.name().starts_with("Op")
-        // A user `&text` parameter is not a work buffer: the buffered-vs-bufferless
-        // shape reads the HIDDEN buffers only (`text_work_buffers`), else a function
-        // with such a parameter is emitted buffered and returns THROUGH it (loft#1338).
-        && def.text_work_buffers() == 0
+    def.returns_bufferless_text()
 }
 
 /// @PLN10 — does this function's generated `--native` wrapper return an owned

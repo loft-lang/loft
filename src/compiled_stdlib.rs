@@ -190,12 +190,15 @@ pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
     marked
 }
 
-/// Does the standard library carry a compiled body for the function stored as `name`?
-/// [`mark`] points its calls at that body after the program is parsed, so the parser asks
-/// this to give such a call what a bridged call needs (`Parser::crosses_text_bridge`).
+/// The functions the standard library carries a compiled body for, by stored name.
+/// [`mark`] points their calls at those bodies after the program is parsed, so the driver
+/// hands this set to the parser first (`Parser::compiled_bridges`).
 #[must_use]
-pub fn carries(name: &str) -> bool {
-    generated::BRIDGES.iter().any(|(n, _, _)| *n == name)
+pub fn names() -> std::collections::HashSet<String> {
+    generated::BRIDGES
+        .iter()
+        .map(|(n, _, _)| (*n).to_string())
+        .collect()
 }
 
 /// The compiled bridge for a `loft_shared_…` symbol, when the standard library carries it.

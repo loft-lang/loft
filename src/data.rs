@@ -4826,6 +4826,30 @@ impl Definition {
     /// want ([`Data::fnref_text_buffers`]) and the excess is popped where the target IS
     /// known (`State::fn_call_ref`).  One home for the count, so the two sides of that ABI
     /// cannot disagree about what a buffer is.
+    /// @PLN10 Phase A — a USER function returning text with no hidden work buffer ("nwb"):
+    /// on `--native` it returns an owned `String` (`generation::def_returns_owned_text`),
+    /// and through the shared-store bridge it needs the caller's destination
+    /// (`Parser::crosses_text_bridge`).  One home, so the two cannot disagree.
+    #[must_use]
+    pub fn returns_bufferless_text(&self) -> bool {
+        // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
+        // work buffer.  The discriminator is the Block body itself, NOT
+        // `rust()/native()` emptiness: an auto-native library fn inlined into a
+        // consumer build (main's @C71) has a Block body AND `native()` set, yet is
+        // still an ordinary user text fn whose buffered-vs-bufferless shape is
+        // decided solely by the presence of the work-buffer attribute.  emit.rs only
+        // ever runs this on Block bodies, so a non-Block (FFI-direct / `#rust` / Null)
+        // body is correctly excluded here and handled by the other owned-String signals.
+        // @PLN25 slice (b): peel `Optional` — a `text?` return uses the same owned-text ABI.
+        matches!(self.returned().base(), Type::Text(_))
+            && matches!(self.code(), Value::Block(_))
+            && !self.name().starts_with("Op")
+            // A user `&text` parameter is not a work buffer: the buffered-vs-bufferless
+            // shape reads the HIDDEN buffers only (`text_work_buffers`), else a function
+            // with such a parameter is emitted buffered and returns THROUGH it (loft#1338).
+            && self.text_work_buffers() == 0
+    }
+
     #[must_use]
     pub fn text_work_buffers(&self) -> usize {
         self.attributes

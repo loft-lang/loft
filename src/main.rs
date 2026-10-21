@@ -9374,6 +9374,11 @@ fn main() {
         .collect();
     let mut p = parser::Parser::new();
     p.lib_dirs = lib_dirs;
+    // @PLN199 A2 — the functions `compiled_stdlib::mark` will route below, under the same
+    // condition, named to the parser before it reads a call to one.
+    if !native_mode && html_out.is_none() {
+        p.compiled_bridges = loft::compiled_stdlib::names();
+    }
     // @P363: join with a path separator (Path::join) instead of string
     // concat.  `project_dir()` returns a trailing-separator path, but
     // `--path <dir>` sets `dir` to the raw CLI argument with no trailing

@@ -655,6 +655,11 @@ pub struct Parser {
     /// `byte_code`) and builds + loads the cdylib (after `byte_code`).  A library's
     /// functions are identified by `def.position().file.starts_with(pkg_dir)`.
     pub pending_native_compile: Vec<String>,
+    /// @PLN199 A2 — the standard library functions whose compiled bodies the driver points
+    /// their calls at after parsing (`compiled_stdlib::mark`), named here by the driver
+    /// before the program is read, so a call to one gets what a bridged call needs
+    /// ([`Parser::crosses_text_bridge`]).  Empty for a run that compiles the program.
+    pub compiled_bridges: std::collections::HashSet<String>,
     /// @PLN119 arc A — libraries that declared `[library] placement = "process"`,
     /// as (library name, package dir).  Recorded during `use` processing; the
     /// driver (`main.rs`) starts one worker per entry after `scopes::check` and
@@ -1963,6 +1968,7 @@ impl Parser {
             pending_native_libs: Vec::new(),
             native_lib_regs: Vec::new(),
             pending_native_compile: Vec::new(),
+            compiled_bridges: std::collections::HashSet::new(),
             pending_placed_libs: Vec::new(),
             pending_pkg_deps: Vec::new(),
             auto_use_scan_cache: std::collections::HashMap::new(),
