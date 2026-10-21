@@ -649,7 +649,11 @@ task.  `make rule-coverage` reports the position against the contract-1 FLOORS �
 carrying a code annotation, 40 % an active guard — and how many rules short it is.  Those are
 MINIMUMS for the freeze, not targets to stop at; no position figure is written here, because it
 rots and the floor does not.  Read it as work LEFT and never readiness, since the walk takes the
-most-changed and most-error-prone rules FIRST and the tail is the low-yield half /
+most-changed and most-error-prone rules FIRST and the tail is the low-yield half.  Once a
+rule is NAMED by a test, `make rule-depth` asks the next question — would its cells FAIL
+without it, and how much of the rule's domain do they reach (both backends, defects named, a
+falsification receipt, the composition axes of `scripts/rule_axes.tsv`, the enforcing sites) —
+and ranks the shallow ones by the defects behind them; a report, never a gate /
 [_SWEEP](doc/claude/STABILITY_SWEEP.md) / [_HOTSPOTS](doc/claude/STABILITY_HOTSPOTS.md) /
 [_REDFLAGS](doc/claude/STABILITY_REDFLAGS.md) · [BRITTLE.md](doc/claude/BRITTLE.md) (the
 survey of routines most likely to answer silently wrong, each with its hardening path) · [DEPS_INVENTORY.md](doc/claude/DEPS_INVENTORY.md) ·

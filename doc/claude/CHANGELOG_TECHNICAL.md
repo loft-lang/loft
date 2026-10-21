@@ -10,6 +10,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The per-rule depth report: how thoroughly the tests match a formal rule
+
+- `make rule-depth` (`scripts/rule_depth.py`): where `rule_tags.py coverage` counts a rule
+  NAMED by a test (97 % of rules with the language suite beside the tree), this reads each
+  guarded rule's cells — how many, on both backends, the defects they name, a falsification
+  receipt (`@falsified-at`, a `tests/falsified` control, a rewrite-census admission, a
+  `LOFT_NO_*` A/B), the reach over the composition axes the rule's chapter quantifies over
+  (`scripts/rule_axes.tsv`, by hand; `matrix_axes.py` measures), an axis every cell pins at one
+  value named, and the enforcing sites in `src/` — and ranks the shallow rules by the defects
+  behind them.  First read: of 517 guarded rules, 415 have two or more cell files, 508 a cell
+  on both backends, 439 a receipt, 320 of 480 pin no axis, 157 carry no shallow flag.  A
+  report, never a gate (STABILITY_METHOD.md § Depth, once presence is done).
+
 ### A run-time fault logs at every unguarded site, on both backends (@C80, owner 2026-10-21)
 
 An uncomputable divide, modulo or index logs one Warn line wherever it sits.  A format-string

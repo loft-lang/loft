@@ -2862,6 +2862,10 @@ linkcheck-external:
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
 
+.PHONY: rule-depth
+rule-depth:  ## How THOROUGHLY the tests match each guarded rule: cells, both backends, defects named, a falsification receipt, axis reach, enforcing sites — the shallowest first (ARGS="--rule B-Copy" one rule in full, "--all", "--family H", "--tsv")
+	@python3 scripts/rule_depth.py $(ARGS)
+
 .PHONY: stability-read
 stability-read:  ## The weekly stability read: every meter of the owner's directive, one row per week (ARGS="--since 2026-08-03 --record" keeps the series)
 	@python3 scripts/stability_read.py $(ARGS)
